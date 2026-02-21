@@ -8,13 +8,24 @@ export type BotStatus = "running" | "stopped" | "restarting";
 
 export type LogLevel = "info" | "warn" | "error";
 
-export interface BotStatusResponse {
+export interface BotRecord {
+  id: string;
+  name: string;
+  tokenMasked: string;
+  adminChatIds: number[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+export interface BotWithStatus extends BotRecord {
   status: BotStatus;
   uptime: number | null;
 }
 
 export interface LogEntry {
   id: number;
+  botId: string | null;
   level: LogLevel;
   message: string;
   meta: unknown;

@@ -9,7 +9,7 @@ packages/
   shared/    # 领域类型 + 工具函数
   database/  # Drizzle ORM schema + PostgreSQL 客户端
   bot/       # grammY Bot（createBot 工厂函数）
-  server/    # Hono API 入口 + BotManager + DbLogger
+  server/    # Hono API 入口 + BotPool + DbLogger
   panel/     # React 19 + Refine v4 + Tailwind CSS v4 管理面板
 ```
 
@@ -27,10 +27,12 @@ pnpm lint             # oxlint 代码检查
 ## 环境变量
 
 ```bash
-BOT_TOKEN=             # Telegram Bot Token
-ADMIN_IDS=[]           # 管理员 Chat ID 数组
 DATABASE_URL=          # PostgreSQL 连接字符串
+JWT_SECRET=            # JWT 签名密钥
 PANEL_PASSWORD=        # 管理面板登录密码
+ENCRYPTION_KEY=        # Bot Token 加密密钥
+BOT_TOKEN=             # (可选) Telegram Bot Token，仅首次迁移用
+ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 ```
 
 ## 部署

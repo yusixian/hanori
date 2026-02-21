@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { client } from "@/lib/client";
-import type { LogEntry } from "@cos-tool-bot/shared";
+import type { BotWithStatus, LogEntry } from "@cos-tool-bot/shared";
 import { useInvalidate, useList } from "@refinedev/core";
 import { ChevronLeft, ChevronRight, Radio, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 
 type LogMeta = Record<string, unknown> | null | undefined;
 
@@ -37,23 +38,41 @@ const levelBadge: Record<string, "success" | "warning" | "destructive"> = {
 };
 
 export function LogsListPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [level, setLevel] = useState("");
+  const [botId, setBotId] = useState(searchParams.get("botId") ?? "");
+  const [botOptions, setBotOptions] = useState<BotWithStatus[]>([]);
   const [sseConnected, setSseConnected] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Fetch bot options for filter
+  useEffect(() => {
+    client.api.bots
+      .$get()
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.ok) setBotOptions(json.data as BotWithStatus[]);
+      })
+      .catch((err) => console.error("Failed to fetch bot options", err));
+  }, []);
+
+  const filters = [];
+  if (level) filters.push({ field: "level", operator: "eq" as const, value: level });
+  if (botId) filters.push({ field: "botId", operator: "eq" as const, value: botId });
+
   const { data, isLoading } = useList<LogEntry>({
     resource: "logs",
     pagination: { current: page, pageSize: 50 },
-    filters: level ? [{ field: "level", operator: "eq", value: level }] : [],
+    filters,
   });
 
   const invalidate = useInvalidate();
 
   const clearLogs = async () => {
     if (!window.confirm("确认清空所有日志？")) return;
-    await client.api.logs.$delete();
+    await client.api.logs.$delete({ query: botId ? { botId } : {} });
     setLiveLogs([]);
     setPage(1);
     invalidate({ resource: "logs", invalidates: ["list"] });
@@ -70,7 +89,8 @@ export function LogsListPage() {
     abortRef.current = controller;
 
     const token = localStorage.getItem("token");
-    fetch("/api/logs/stream", {
+    const url = botId ? `/api/logs/stream?botId=${botId}` : "/api/logs/stream";
+    fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })
@@ -106,7 +126,7 @@ export function LogsListPage() {
         /* aborted or network error */
       })
       .finally(() => setSseConnected(false));
-  }, []);
+  }, [botId]);
 
   useEffect(() => {
     connectSSE();
@@ -179,6 +199,26 @@ export function LogsListPage() {
           <option value="info">Info</option>
           <option value="warn">Warn</option>
           <option value="error">Error</option>
+        </Select>
+        <Select
+          value={botId}
+          onChange={(e) => {
+            setBotId(e.target.value);
+            setPage(1);
+            setLiveLogs([]);
+            if (e.target.value) {
+              setSearchParams({ botId: e.target.value });
+            } else {
+              setSearchParams({});
+            }
+          }}
+        >
+          <option value="">All Bots</option>
+          {botOptions.map((bot) => (
+            <option key={bot.id} value={bot.id}>
+              {bot.name}
+            </option>
+          ))}
         </Select>
       </div>
 

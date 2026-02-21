@@ -6,12 +6,15 @@ export class DbLogger {
   constructor(
     private db: Database,
     private pino: Logger,
+    private botId?: string,
   ) {}
 
   async log(level: "info" | "warn" | "error", message: string, meta?: unknown) {
     this.pino[level](meta, message);
     try {
-      await this.db.insert(botLogs).values({ level, message, meta: meta ?? null });
+      await this.db
+        .insert(botLogs)
+        .values({ level, message, meta: meta ?? null, botId: this.botId ?? null });
     } catch (err) {
       this.pino.error(err, "Failed to write log to database");
     }

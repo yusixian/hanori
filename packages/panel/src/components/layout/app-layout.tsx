@@ -1,13 +1,18 @@
 import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
-import { Bot, LogOut, LayoutDashboard, ScrollText } from "lucide-react";
+import { Bot, LogOut, ScrollText } from "lucide-react";
 import { Link, Outlet, useLocation } from "react-router";
 import { Button } from "../ui/button";
 
 const navItems = [
-  { label: "Dashboard", path: "/", icon: LayoutDashboard },
+  { label: "Bots", path: "/", icon: Bot },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];
+
+function isNavActive(itemPath: string, pathname: string) {
+  if (itemPath === "/") return pathname === "/" || pathname.startsWith("/bots");
+  return pathname.startsWith(itemPath);
+}
 
 export function AppLayout() {
   const location = useLocation();
@@ -29,7 +34,7 @@ export function AppLayout() {
               to={item.path}
               className={cn(
                 "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                location.pathname === item.path
+                isNavActive(item.path, location.pathname)
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
               )}

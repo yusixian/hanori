@@ -37,11 +37,11 @@ pnpm --filter @cos-tool-bot/<package> typecheck
 pnpm monorepo with 5 packages. A grammy Telegram Bot + Hono API server + React management panel.
 
 ```
-shared    ← Pure types (BotStatus, LogLevel, LogEntry) + utilities (parseParams)
-database  ← Drizzle ORM schema (botLogs, settings tables) + PostgreSQL client
+shared    ← Pure types (BotStatus, LogLevel, LogEntry, BotRecord, BotWithStatus) + utilities (parseParams)
+database  ← Drizzle ORM schema (bots, botLogs, settings tables) + PostgreSQL client
 bot       ← grammy Bot, createBot(config) factory function
-server    ← Hono API, BotManager lifecycle, DbLogger, exports AppType
-panel     ← React 19 + Refine v4 SPA (Login, Dashboard, Logs)
+server    ← Hono API, BotPool multi-bot lifecycle, DbLogger, exports AppType
+panel     ← React 19 + Refine v4 SPA (Login, Bots, Logs)
 ```
 
 Dependency flow: `panel → server → bot → shared`, `server → database → shared`.
@@ -85,4 +85,4 @@ If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed fil
 
 ## Environment
 
-Copy `.env.example` to `.env`. Required vars: `DATABASE_URL`, `BOT_TOKEN`, `JWT_SECRET`, `PANEL_PASSWORD`. See `.env.example` for all options including S3 backup and log retention settings.
+Copy `.env.example` to `.env`. Required vars: `DATABASE_URL`, `JWT_SECRET`, `PANEL_PASSWORD`, `ENCRYPTION_KEY`. Optional: `BOT_TOKEN` (only for initial migration of a single-bot setup). See `.env.example` for all options including S3 backup and log retention settings.

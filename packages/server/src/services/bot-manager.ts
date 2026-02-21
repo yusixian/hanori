@@ -5,6 +5,7 @@ import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
 
 interface BotManagerOptions {
+  botId: string;
   token: string;
   adminChatIds: number[];
   logger: Logger;
@@ -12,6 +13,7 @@ interface BotManagerOptions {
 }
 
 export class BotManager {
+  readonly botId: string;
   private bot: ReturnType<typeof createBot> | null = null;
   private botConfig: BotConfig;
   private dbLogger: DbLogger;
@@ -19,6 +21,7 @@ export class BotManager {
   private startedAt: number | null = null;
 
   constructor(options: BotManagerOptions) {
+    this.botId = options.botId;
     this.dbLogger = options.dbLogger;
     this.botConfig = {
       token: options.token,

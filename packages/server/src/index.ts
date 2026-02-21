@@ -3,9 +3,10 @@ import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app.js";
 import { env } from "./env.js";
-import { BotManager } from "./services/bot-manager.js";
+import { BotPool } from "./services/bot-pool.js";
 import { DbLogger } from "./services/db-logger.js";
 import { LogCleaner } from "./services/log-cleaner.js";
+import { migrateEnvBot } from "./services/migrate-env-bot.js";
 
 export type { AppType } from "./app.js";
 
@@ -16,11 +17,18 @@ const logger = pino({
   },
 });
 
+// Warn about default encryption key
+if (env.USING_DEFAULT_ENCRYPTION_KEY) {
+  logger.warn(
+    "⚠ ENCRYPTION_KEY is not set — using built-in default. Set ENCRYPTION_KEY in .env for production!",
+  );
+}
+
 // Database
 const db = createDb(env.DATABASE_URL);
 logger.info("Database connected");
 
-// Database Logger
+// Database Logger (system-level, no botId)
 const dbLogger = new DbLogger(db, logger);
 
 // Log Cleaner
@@ -33,24 +41,22 @@ const logCleaner = new LogCleaner({
 });
 logCleaner.start();
 
-// Bot Manager
-const botManager = new BotManager({
-  token: env.BOT_TOKEN,
-  adminChatIds: env.ADMIN_CHAT_IDS,
-  logger,
-  dbLogger,
-});
+// Migrate BOT_TOKEN from env to bots table (one-time)
+await migrateEnvBot(db, logger);
+
+// Bot Pool
+const botPool = new BotPool(db, logger);
 
 // Hono App
 const app = createApp({
   db,
-  botManager,
+  botPool,
   panelPassword: env.PANEL_PASSWORD,
   jwtSecret: env.JWT_SECRET,
 });
 
-// Start bot
-await botManager.start();
+// Start all active bots
+await botPool.startAll();
 
 // Start HTTP server
 serve(
@@ -67,7 +73,7 @@ serve(
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
   logCleaner.stop();
-  await botManager.stop();
+  await botPool.stopAll();
   process.exit(0);
 };
 
