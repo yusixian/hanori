@@ -6,7 +6,7 @@ import { useState } from "react";
 
 interface BotFormData {
   name: string;
-  token: string;
+  token: string | undefined;
   adminChatIds: number[];
   isActive: boolean;
 }
@@ -43,7 +43,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
       await onSubmit({
         name,
-        token,
+        token: isEdit && !token ? undefined : token,
         adminChatIds: ids,
         isActive,
       });

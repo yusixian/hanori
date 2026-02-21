@@ -82,7 +82,3 @@ If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed fil
 - **Panel styling** — Tailwind CSS v4, utility classes via `clsx` + `tailwind-merge`
 - **State** — Refine v4 for data/auth, jotai for local state
 - **No test framework** — currently no tests configured
-
-## Environment
-
-Copy `.env.example` to `.env`. Required vars: `DATABASE_URL`, `JWT_SECRET`, `PANEL_PASSWORD`, `ENCRYPTION_KEY`. Optional: `BOT_TOKEN` (only for initial migration of a single-bot setup). See `.env.example` for all options including S3 backup and log retention settings.

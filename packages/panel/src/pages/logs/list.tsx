@@ -50,7 +50,7 @@ export function LogsListPage() {
   // Fetch bot options for filter
   useEffect(() => {
     client.api.bots
-      .$get()
+      .$get({ query: { page: "1", limit: "100" } })
       .then((res) => res.json())
       .then((json) => {
         if (json.ok) setBotOptions(json.data as BotWithStatus[]);

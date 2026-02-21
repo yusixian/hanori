@@ -39,12 +39,17 @@ export const dataProvider: DataProvider = {
     }
 
     if (resource === "bots") {
-      const res = await client.api.bots.$get();
+      const page = pagination?.current ?? 1;
+      const limit = pagination?.pageSize ?? 20;
+
+      const res = await client.api.bots.$get({
+        query: { page: String(page), limit: String(limit) },
+      });
       const json = await res.json();
       if (json.ok) {
         return {
           data: json.data as any[],
-          total: json.data.length,
+          total: json.total,
         };
       }
       throw new Error("Failed to fetch bots");

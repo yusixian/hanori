@@ -4,49 +4,32 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatUptime, statusBadge } from "@/lib/bot-utils";
 import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
+import { useDelete, useInvalidate, useOne } from "@refinedev/core";
 import { ArrowLeft, Pencil, Play, RefreshCw, ScrollText, Square, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 export function BotDashboardPage() {
   const { botId } = useParams<{ botId: string }>();
   const navigate = useNavigate();
-  const [bot, setBot] = useState<BotWithStatus | null>(null);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const invalidate = useInvalidate();
 
-  const fetchBot = useCallback(async () => {
-    if (!botId) return;
-    try {
-      const res = await client.api.bots[":botId"].$get({ param: { botId } });
-      const json = await res.json();
-      if (json.ok) setBot(json.data as BotWithStatus);
-    } catch (err) {
-      console.error("Failed to fetch bot", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId]);
+  const { data, isLoading } = useOne<BotWithStatus>({
+    resource: "bots",
+    id: botId!,
+    queryOptions: { enabled: !!botId, refetchInterval: 5000 },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      await fetchBot();
-      if (!cancelled) timerRef.current = setTimeout(poll, 5000);
-    };
-    poll();
-    return () => {
-      cancelled = true;
-      clearTimeout(timerRef.current);
-    };
-  }, [fetchBot]);
+  const { mutateAsync: deleteBot } = useDelete();
+
+  const bot = data?.data;
 
   const action = async (fn: () => Promise<unknown>) => {
     setBusy(true);
     try {
       await fn();
-      await fetchBot();
+      invalidate({ resource: "bots", invalidates: ["detail", "list"] });
     } finally {
       setBusy(false);
     }
@@ -54,11 +37,11 @@ export function BotDashboardPage() {
 
   const handleDelete = async () => {
     if (!botId || !window.confirm("Are you sure you want to delete this bot?")) return;
-    await client.api.bots[":botId"].$delete({ param: { botId } });
+    await deleteBot({ resource: "bots", id: botId });
     navigate("/");
   };
 
-  if (loading) {
+  if (isLoading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
 

@@ -1,35 +1,25 @@
 import { BotForm } from "@/components/bots/bot-form";
 import { Button } from "@/components/ui/button";
-import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
+import { useOne, useUpdate } from "@refinedev/core";
 import { ArrowLeft } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 
 export function BotEditPage() {
   const { botId } = useParams<{ botId: string }>();
   const navigate = useNavigate();
-  const [bot, setBot] = useState<BotWithStatus | null>(null);
-  const [loading, setLoading] = useState(true);
 
-  const fetchBot = useCallback(async () => {
-    if (!botId) return;
-    try {
-      const res = await client.api.bots[":botId"].$get({ param: { botId } });
-      const json = await res.json();
-      if (json.ok) setBot(json.data as BotWithStatus);
-    } catch (err) {
-      console.error("Failed to fetch bot", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId]);
+  const { data, isLoading } = useOne<BotWithStatus>({
+    resource: "bots",
+    id: botId!,
+    queryOptions: { enabled: !!botId },
+  });
 
-  useEffect(() => {
-    fetchBot();
-  }, [fetchBot]);
+  const { mutateAsync: update } = useUpdate();
 
-  if (loading) {
+  const bot = data?.data;
+
+  if (isLoading) {
     return <p className="text-muted-foreground text-sm">Loading...</p>;
   }
 
@@ -58,15 +48,16 @@ export function BotEditPage() {
           isActive: bot.isActive,
         }}
         submitLabel="Save Changes"
-        onSubmit={async (data) => {
+        onSubmit={async (formData) => {
           if (!botId) return;
-          await client.api.bots[":botId"].$put({
-            param: { botId },
-            json: {
-              name: data.name,
-              adminChatIds: data.adminChatIds,
-              isActive: data.isActive,
-              ...(data.token ? { token: data.token } : {}),
+          await update({
+            resource: "bots",
+            id: botId,
+            values: {
+              name: formData.name,
+              adminChatIds: formData.adminChatIds,
+              isActive: formData.isActive,
+              ...(formData.token ? { token: formData.token } : {}),
             },
           });
           navigate(`/bots/${botId}`);

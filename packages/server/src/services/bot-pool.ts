@@ -28,7 +28,8 @@ export class BotPool {
       try {
         await this.startBot(bot.id);
       } catch (err) {
-        this.logger.error(err, `Failed to start bot "${bot.name}" (${bot.id})`);
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(err, `Failed to start bot "${bot.name}" (${bot.id}): ${msg}`);
       }
     }
   }
@@ -39,7 +40,8 @@ export class BotPool {
       try {
         await this.stopBot(id);
       } catch (err) {
-        this.logger.error(err, `Failed to stop bot ${id}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.error(err, `Failed to stop bot ${id}: ${msg}`);
       }
     }
   }

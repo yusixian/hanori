@@ -1,11 +1,12 @@
 import { BotForm } from "@/components/bots/bot-form";
 import { Button } from "@/components/ui/button";
-import { client } from "@/lib/client";
+import { useCreate } from "@refinedev/core";
 import { ArrowLeft } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 
 export function BotCreatePage() {
   const navigate = useNavigate();
+  const { mutateAsync: create } = useCreate();
 
   return (
     <div className="space-y-6">
@@ -22,8 +23,9 @@ export function BotCreatePage() {
       <BotForm
         submitLabel="Create Bot"
         onSubmit={async (data) => {
-          await client.api.bots.$post({
-            json: {
+          await create({
+            resource: "bots",
+            values: {
               name: data.name,
               token: data.token,
               adminChatIds: data.adminChatIds,

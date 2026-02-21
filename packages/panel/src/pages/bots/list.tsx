@@ -4,41 +4,23 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatUptime, statusBadge } from "@/lib/bot-utils";
 import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
+import { useInvalidate, useList } from "@refinedev/core";
 import { Play, Plus, Square } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 
 export function BotListPage() {
-  const [bots, setBots] = useState<BotWithStatus[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<string | null>(null);
   const navigate = useNavigate();
-  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const [busy, setBusy] = useState<string | null>(null);
+  const invalidate = useInvalidate();
 
-  const fetchBots = useCallback(async () => {
-    try {
-      const res = await client.api.bots.$get();
-      const json = await res.json();
-      if (json.ok) setBots(json.data as BotWithStatus[]);
-    } catch (err) {
-      console.error("Failed to fetch bots", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const { data, isLoading } = useList<BotWithStatus>({
+    resource: "bots",
+    pagination: { current: 1, pageSize: 100 },
+    queryOptions: { refetchInterval: 5000 },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      await fetchBots();
-      if (!cancelled) timerRef.current = setTimeout(poll, 5000);
-    };
-    poll();
-    return () => {
-      cancelled = true;
-      clearTimeout(timerRef.current);
-    };
-  }, [fetchBots]);
+  const bots = data?.data ?? [];
 
   const toggleBot = async (bot: BotWithStatus) => {
     setBusy(bot.id);
@@ -48,7 +30,7 @@ export function BotListPage() {
       } else {
         await client.api.bots[":botId"].start.$post({ param: { botId: bot.id } });
       }
-      await fetchBots();
+      invalidate({ resource: "bots", invalidates: ["list"] });
     } finally {
       setBusy(null);
     }
@@ -66,7 +48,7 @@ export function BotListPage() {
         </Link>
       </div>
 
-      {loading ? (
+      {isLoading ? (
         <p className="text-muted-foreground text-sm">Loading...</p>
       ) : bots.length === 0 ? (
         <Card>

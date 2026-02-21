@@ -2,7 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { env } from "../env.js";
@@ -41,11 +41,28 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
 
 export function botsRoutes(db: Database, botPool: BotPool) {
   return new Hono()
-    .get("/", async (c) => {
-      const allBots = await db.select().from(bots);
-      const data = allBots.map((b) => toBotWithStatus(b, botPool));
-      return c.json({ ok: true as const, data });
-    })
+    .get(
+      "/",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(20),
+        }),
+      ),
+      async (c) => {
+        const { page, limit } = c.req.valid("query");
+        const offset = (page - 1) * limit;
+
+        const [allBots, [countResult]] = await Promise.all([
+          db.select().from(bots).limit(limit).offset(offset),
+          db.select({ total: count() }).from(bots),
+        ]);
+
+        const data = allBots.map((b) => toBotWithStatus(b, botPool));
+        return c.json({ ok: true as const, data, total: Number(countResult?.total ?? 0) });
+      },
+    )
     .get("/:botId", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
@@ -91,14 +108,28 @@ export function botsRoutes(db: Database, botPool: BotPool) {
       const rows = await db.update(bots).set(updates).where(eq(bots.id, botId)).returning();
       const updated = rows[0]!;
 
-      // Restart running bot if token or adminChatIds changed
-      const needsRestart = body.token !== undefined || body.adminChatIds !== undefined;
       const manager = botPool.getManager(botId);
-      if (manager && needsRestart) {
+
+      // Handle isActive lifecycle changes
+      if (body.isActive !== undefined && body.isActive !== existing.isActive) {
         try {
-          await botPool.restartBot(botId);
+          if (!body.isActive && manager) {
+            await botPool.stopBot(botId);
+          } else if (body.isActive && !manager) {
+            await botPool.startBot(botId);
+          }
         } catch {
           // continue
+        }
+      } else {
+        // Restart running bot if token or adminChatIds changed
+        const needsRestart = body.token !== undefined || body.adminChatIds !== undefined;
+        if (manager && needsRestart) {
+          try {
+            await botPool.restartBot(botId);
+          } catch {
+            // continue
+          }
         }
       }
 

@@ -1,9 +1,11 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botLogs } from "@cos-tool-bot/database";
+import { zValidator } from "@hono/zod-validator";
 import { and, count, desc, eq, gt } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { z } from "zod";
 
 export function logRoutes(db: Database) {
   return new Hono()
@@ -36,15 +38,19 @@ export function logRoutes(db: Database) {
         total: Number(countResult?.total ?? 0),
       });
     })
-    .delete("/", async (c) => {
-      const botId = c.req.query("botId");
-      if (botId) {
-        await db.delete(botLogs).where(eq(botLogs.botId, botId));
-      } else {
-        await db.delete(botLogs);
-      }
-      return c.json({ ok: true as const });
-    })
+    .delete(
+      "/",
+      zValidator("query", z.object({ botId: z.string().uuid().optional() })),
+      async (c) => {
+        const { botId } = c.req.valid("query");
+        if (botId) {
+          await db.delete(botLogs).where(eq(botLogs.botId, botId));
+        } else {
+          await db.delete(botLogs);
+        }
+        return c.json({ ok: true as const });
+      },
+    )
     .get("/stream", (c) => {
       const botId = c.req.query("botId");
       return streamSSE(c, async (stream) => {
