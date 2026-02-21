@@ -12,23 +12,23 @@
     "@cos-tool-bot/shared": "workspace:*",
     "@refinedev/core": "^4",
     "@refinedev/react-router": "^1",
-    "react": "^19",
-    "react-dom": "^19",
-    "react-router": "^7",
+    "clsx": "^2",
     "hono": "^4",
     "jotai": "^2",
     "lucide-react": "latest",
-    "clsx": "^2",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-router": "^7",
     "tailwind-merge": "^3"
   },
   "devDependencies": {
     "@cos-tool-bot/server": "workspace:*",
-    "@vitejs/plugin-react": "^4",
     "@tailwindcss/vite": "^4",
-    "tailwindcss": "^4",
-    "vite": "^6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "typescript": "^5"
+    "@vitejs/plugin-react": "^4",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vite": "^6"
   }
 }

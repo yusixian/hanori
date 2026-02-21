@@ -1,0 +1,4 @@
+{
+  "setup": ["ni\ncp \\\"$SUPERSET_ROOT_PATH/.env\\\" .env"],
+  "teardown": []
+}

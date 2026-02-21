@@ -16,9 +16,12 @@ function LogMeta({ meta }: { meta: LogMeta }) {
   if (entries.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1">
+    <div className="mt-1 flex flex-wrap gap-1.5">
       {entries.map(([key, value]) => (
-        <span key={key} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground">
+        <span
+          key={key}
+          className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px]"
+        >
           <span className="text-primary/70">{key}:</span>
           <span className="max-w-[300px] truncate">{String(value)}</span>
         </span>
@@ -92,12 +95,16 @@ export function LogsListPage() {
               try {
                 const entry = JSON.parse(line.slice(5).trim()) as LogEntry;
                 setLiveLogs((prev) => [entry, ...prev].slice(0, 20));
-              } catch { /* ignore parse errors */ }
+              } catch {
+                /* ignore parse errors */
+              }
             }
           }
         }
       })
-      .catch(() => { /* aborted or network error */ })
+      .catch(() => {
+        /* aborted or network error */
+      })
       .finally(() => setSseConnected(false));
   }, []);
 
@@ -121,8 +128,12 @@ export function LogsListPage() {
             Clear Logs
           </Button>
           <div className="flex items-center gap-2">
-            <Radio className={`h-4 w-4 ${sseConnected ? "text-emerald-400" : "text-muted-foreground"}`} />
-            <span className="text-xs text-muted-foreground">{sseConnected ? "Live" : "Disconnected"}</span>
+            <Radio
+              className={`h-4 w-4 ${sseConnected ? "text-emerald-400" : "text-muted-foreground"}`}
+            />
+            <span className="text-muted-foreground text-xs">
+              {sseConnected ? "Live" : "Disconnected"}
+            </span>
           </div>
         </div>
       </div>
@@ -131,15 +142,22 @@ export function LogsListPage() {
       {liveLogs.length > 0 && (
         <Card>
           <CardHeader className="py-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Real-time</CardTitle>
+            <CardTitle className="text-muted-foreground text-sm font-medium">Real-time</CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 pt-0">
             {liveLogs.slice(0, 5).map((log) => (
-              <div key={log.id} className="rounded border border-primary/20 bg-primary/5 p-2 text-xs animate-in fade-in">
+              <div
+                key={log.id}
+                className="border-primary/20 bg-primary/5 animate-in fade-in rounded border p-2 text-xs"
+              >
                 <div className="flex items-center gap-2">
-                  <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">{log.level}</Badge>
-                  <span className="flex-1 min-w-0 truncate font-mono">{log.message}</span>
-                  <span className="shrink-0 text-muted-foreground">{formatTime(log.createdAt)}</span>
+                  <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">
+                    {log.level}
+                  </Badge>
+                  <span className="min-w-0 flex-1 truncate font-mono">{log.message}</span>
+                  <span className="text-muted-foreground shrink-0">
+                    {formatTime(log.createdAt)}
+                  </span>
                 </div>
                 <LogMeta meta={log.meta as LogMeta} />
               </div>
@@ -150,7 +168,13 @@ export function LogsListPage() {
 
       {/* Filters */}
       <div className="flex items-center gap-3">
-        <Select value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }}>
+        <Select
+          value={level}
+          onChange={(e) => {
+            setLevel(e.target.value);
+            setPage(1);
+          }}
+        >
           <option value="">All Levels</option>
           <option value="info">Info</option>
           <option value="warn">Warn</option>
@@ -162,17 +186,23 @@ export function LogsListPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <p className="p-6 text-sm text-muted-foreground">Loading...</p>
+            <p className="text-muted-foreground p-6 text-sm">Loading...</p>
           ) : logs.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">No logs found</p>
+            <p className="text-muted-foreground p-6 text-sm">No logs found</p>
           ) : (
             <div className="divide-y">
               {logs.map((log) => (
                 <div key={log.id} className="px-4 py-3">
                   <div className="flex items-center gap-3">
-                    <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">{log.level}</Badge>
-                    <p className="flex-1 min-w-0 truncate text-sm font-mono" title={log.message}>{log.message}</p>
-                    <span className="shrink-0 text-xs text-muted-foreground">{formatTime(log.createdAt)}</span>
+                    <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">
+                      {log.level}
+                    </Badge>
+                    <p className="min-w-0 flex-1 truncate font-mono text-sm" title={log.message}>
+                      {log.message}
+                    </p>
+                    <span className="text-muted-foreground shrink-0 text-xs">
+                      {formatTime(log.createdAt)}
+                    </span>
                   </div>
                   <LogMeta meta={log.meta as LogMeta} />
                 </div>
@@ -185,11 +215,23 @@ export function LogsListPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+          <span className="text-muted-foreground text-sm">
+            {page} / {totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>

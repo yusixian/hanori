@@ -26,4 +26,3 @@ export interface BotLogEntry {
   message: string;
   meta?: Record<string, unknown>;
 }
-

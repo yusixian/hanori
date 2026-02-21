@@ -29,7 +29,11 @@ export class LogCleaner {
 
   start() {
     this.logger.info(
-      { retentionDays: this.retentionDays, retentionDaysError: this.retentionDaysError, intervalHours: this.intervalHours },
+      {
+        retentionDays: this.retentionDays,
+        retentionDaysError: this.retentionDaysError,
+        intervalHours: this.intervalHours,
+      },
       "Log cleaner started",
     );
 

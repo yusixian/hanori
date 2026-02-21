@@ -37,8 +37,7 @@ export function createBot(config: BotConfig) {
 
   bot.catch((err) => {
     const ctx = err.ctx;
-    let errorMsg =
-      "处理消息 " + ctx.update.update_id + " 时出错:\n```\n";
+    let errorMsg = "处理消息 " + ctx.update.update_id + " 时出错:\n```\n";
 
     const e = err.error;
     if (e instanceof GrammyError) {
@@ -46,8 +45,7 @@ export function createBot(config: BotConfig) {
     } else if (e instanceof HttpError) {
       errorMsg += "Could not contact Telegram:" + e;
     } else {
-      errorMsg +=
-        "Unknown error:" + ((e as Error)?.message ?? String(e));
+      errorMsg += "Unknown error:" + ((e as Error)?.message ?? String(e));
     }
     errorMsg += "\n```";
     logger.error(errorMsg);

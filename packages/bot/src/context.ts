@@ -43,27 +43,17 @@ export class WrapperContext extends Context {
   async directlyReply(
     message: string,
     parse_mode?: ParseMode,
-    reply_markup?:
-      | InlineKeyboardMarkup
-      | ReplyKeyboardMarkup
-      | ReplyKeyboardRemove
-      | ForceReply,
+    reply_markup?: InlineKeyboardMarkup | ReplyKeyboardMarkup | ReplyKeyboardRemove | ForceReply,
   ) {
     return await this.reply(message, {
-      reply_to_message_id:
-        this.chat?.type === "private" ? undefined : this.message?.message_id,
+      reply_to_message_id: this.chat?.type === "private" ? undefined : this.message?.message_id,
       parse_mode,
       reply_markup,
     });
   }
 
-  async wait(
-    message: string,
-    auto_delete?: boolean,
-    parse_mode?: ParseMode,
-  ) {
-    if (!this.waiting_message)
-      this.waiting_message = await this.directlyReply(message, parse_mode);
+  async wait(message: string, auto_delete?: boolean, parse_mode?: ParseMode) {
+    if (!this.waiting_message) this.waiting_message = await this.directlyReply(message, parse_mode);
     if (auto_delete) this.autoDelete();
   }
 
@@ -79,7 +69,6 @@ export class WrapperContext extends Context {
   }
 
   async deleteWaiting() {
-    if (this.waiting_message)
-      this.deleteMessages([this.waiting_message.message_id]);
+    if (this.waiting_message) this.deleteMessages([this.waiting_message.message_id]);
   }
 }

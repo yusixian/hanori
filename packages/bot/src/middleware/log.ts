@@ -17,7 +17,7 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
       chatType: ctx.chat?.type,
     };
 
-    const hasCommand = ctx.message?.entities?.some(e => e.type === "bot_command");
+    const hasCommand = ctx.message?.entities?.some((e) => e.type === "bot_command");
 
     if (hasCommand && ctx.message?.text) {
       const match = ctx.message.text.match(/^\/(\w+)(?:@\S+)?(?:\s+(.*))?/);
@@ -27,7 +27,11 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
         onLog({ level: "info", message: `Command /${match[1]} from ${username}`, meta });
       }
     } else if (ctx.message?.text) {
-      onLog({ level: "info", message: `Message from ${username}`, meta: { ...meta, text: ctx.message.text } });
+      onLog({
+        level: "info",
+        message: `Message from ${username}`,
+        meta: { ...meta, text: ctx.message.text },
+      });
     } else if (ctx.message) {
       const msg = ctx.message;
       let type: string;
@@ -37,7 +41,9 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
       } else if (msg.photo) {
         type = msg.caption ? `Photo: ${msg.caption}` : "Photo";
       } else if (msg.video) {
-        type = msg.caption ? `Video: ${msg.caption}` : `Video${msg.video.file_name ? `: ${msg.video.file_name}` : ""}`;
+        type = msg.caption
+          ? `Video: ${msg.caption}`
+          : `Video${msg.video.file_name ? `: ${msg.video.file_name}` : ""}`;
       } else if (msg.document) {
         type = `Document: ${msg.document.file_name ?? "unknown"}`;
       } else if (msg.voice) {

@@ -18,7 +18,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center">
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center">
-          <Bot className="mb-2 h-10 w-10 text-primary" />
+          <Bot className="text-primary mb-2 h-10 w-10" />
           <CardTitle>cos-tool-bot</CardTitle>
           <CardDescription>输入密码访问管理面板</CardDescription>
         </CardHeader>

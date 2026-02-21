@@ -18,9 +18,7 @@ export const env = {
   BOT_TOKEN: required("BOT_TOKEN"),
   JWT_SECRET: required("JWT_SECRET"),
   PANEL_PASSWORD: required("PANEL_PASSWORD"),
-  ADMIN_CHAT_IDS: JSON.parse(
-    optional("ADMIN_CHAT_IDS", "[]"),
-  ) as number[],
+  ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],
   PORT: optionalInt("PORT", 3000),
   LOG_RETENTION_DAYS: optionalInt("LOG_RETENTION_DAYS", 30),
   LOG_RETENTION_DAYS_ERROR: optionalInt("LOG_RETENTION_DAYS_ERROR", 90),

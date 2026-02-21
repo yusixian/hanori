@@ -8,12 +8,8 @@ export const md2tgCommand: CommandMiddleware<WrapperContext> = async (ctx) => {
   const args = ctx.command?.args ?? [];
   const validStrategies = ["escape", "remove", "keep"] as const;
   const hasOpt =
-    args.length &&
-    args[0] &&
-    validStrategies.includes(args[0] as UnsupportedTagsStrategy);
-  const opt: UnsupportedTagsStrategy = hasOpt
-    ? (args[0] as UnsupportedTagsStrategy)
-    : "escape";
+    args.length && args[0] && validStrategies.includes(args[0] as UnsupportedTagsStrategy);
+  const opt: UnsupportedTagsStrategy = hasOpt ? (args[0] as UnsupportedTagsStrategy) : "escape";
 
   const text = hasOpt
     ? ctx.command.original_msg.slice(args[0]?.length ?? 0)
@@ -32,10 +28,9 @@ export const md2tgCommand: CommandMiddleware<WrapperContext> = async (ctx) => {
     );
   }
   try {
-    return ctx.reply(
-      convertMarkdownToTelegramMarkdown(text, opt) ?? "转换失败",
-      { parse_mode: "MarkdownV2" },
-    );
+    return ctx.reply(convertMarkdownToTelegramMarkdown(text, opt) ?? "转换失败", {
+      parse_mode: "MarkdownV2",
+    });
   } catch {
     return ctx.reply("转换失败，请检查输入的 Markdown 格式是否正确");
   }

@@ -22,10 +22,7 @@ export function logRoutes(db: Database) {
           .orderBy(desc(botLogs.createdAt))
           .limit(limit)
           .offset(offset),
-        db
-          .select({ total: count() })
-          .from(botLogs)
-          .where(conditions),
+        db.select({ total: count() }).from(botLogs).where(conditions),
       ]);
 
       return c.json({
@@ -42,7 +39,9 @@ export function logRoutes(db: Database) {
       return streamSSE(c, async (stream) => {
         let lastId = 0;
         let aborted = false;
-        stream.onAbort(() => { aborted = true; });
+        stream.onAbort(() => {
+          aborted = true;
+        });
 
         const latest = await db
           .select({ id: botLogs.id })

@@ -1,0 +1,5 @@
+{
+  "experimentalTailwindcss": {
+    "attributes": ["class", "className"]
+  }
+}

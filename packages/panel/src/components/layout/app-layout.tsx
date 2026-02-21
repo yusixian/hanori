@@ -16,9 +16,9 @@ export function AppLayout() {
   return (
     <div className="flex h-screen">
       {/* Sidebar */}
-      <aside className="flex w-56 flex-col border-r bg-card">
+      <aside className="bg-card flex w-56 flex-col border-r">
         <div className="flex items-center gap-2 border-b px-4 py-4">
-          <Bot className="h-6 w-6 text-primary" />
+          <Bot className="text-primary h-6 w-6" />
           <span className="text-sm font-semibold">cos-tool-bot</span>
         </div>
 
@@ -41,7 +41,12 @@ export function AppLayout() {
         </nav>
 
         <div className="border-t p-2">
-          <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => logout()}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full justify-start"
+            onClick={() => logout()}
+          >
             <LogOut className="h-4 w-4" />
             Logout
           </Button>

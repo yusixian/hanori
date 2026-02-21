@@ -15,7 +15,10 @@ function formatUptime(ms: number | null): string {
   return `${h}h ${m}m ${s}s`;
 }
 
-const statusBadge: Record<BotStatus, { label: string; variant: "success" | "destructive" | "warning" }> = {
+const statusBadge: Record<
+  BotStatus,
+  { label: string; variant: "success" | "destructive" | "warning" }
+> = {
   running: { label: "Running", variant: "success" },
   stopped: { label: "Stopped", variant: "destructive" },
   restarting: { label: "Restarting", variant: "warning" },
@@ -36,8 +39,11 @@ export function DashboardPage() {
       const res = await client.api.bot.status.$get();
       const json = await res.json();
       if (json.ok) setStatus(json.data);
-    } catch { /* ignore */ }
-    finally { setLoading(false); }
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -69,22 +75,22 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             {loading ? (
-              <p className="text-sm text-muted-foreground">Loading...</p>
+              <p className="text-muted-foreground text-sm">Loading...</p>
             ) : status ? (
               <>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Status:</span>
+                  <span className="text-muted-foreground text-sm">Status:</span>
                   <Badge variant={statusBadge[status.status].variant}>
                     {statusBadge[status.status].label}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-muted-foreground">Uptime:</span>
-                  <span className="text-sm font-mono">{formatUptime(status.uptime)}</span>
+                  <span className="text-muted-foreground text-sm">Uptime:</span>
+                  <span className="font-mono text-sm">{formatUptime(status.uptime)}</span>
                 </div>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">Unable to fetch status</p>
+              <p className="text-muted-foreground text-sm">Unable to fetch status</p>
             )}
           </CardContent>
         </Card>
@@ -95,15 +101,29 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={isRunning || busy} onClick={() => action(() => client.api.bot.start.$post())}>
+              <Button
+                size="sm"
+                disabled={isRunning || busy}
+                onClick={() => action(() => client.api.bot.start.$post())}
+              >
                 <Play className="h-4 w-4" />
                 Start
               </Button>
-              <Button size="sm" variant="destructive" disabled={!isRunning || busy} onClick={() => action(() => client.api.bot.stop.$post())}>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={!isRunning || busy}
+                onClick={() => action(() => client.api.bot.stop.$post())}
+              >
                 <Square className="h-4 w-4" />
                 Stop
               </Button>
-              <Button size="sm" variant="outline" disabled={!isRunning || busy} onClick={() => action(() => client.api.bot.restart.$post())}>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!isRunning || busy}
+                onClick={() => action(() => client.api.bot.restart.$post())}
+              >
                 <RefreshCw className="h-4 w-4" />
                 Restart
               </Button>

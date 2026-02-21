@@ -11,9 +11,7 @@ function getSecretKey(secret: string): Uint8Array {
   return secretKey;
 }
 
-export async function createToken(
-  jwtSecret: string,
-): Promise<string> {
+export async function createToken(jwtSecret: string): Promise<string> {
   const key = getSecretKey(jwtSecret);
   return new jose.SignJWT({ role: "admin" })
     .setProtectedHeader({ alg: "HS256" })

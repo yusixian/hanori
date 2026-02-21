@@ -8,7 +8,8 @@ export const dataProvider: DataProvider = {
       const limit = pagination?.pageSize ?? 50;
 
       const levelFilter = filters?.find((f) => "field" in f && f.field === "level");
-      const level = levelFilter && "value" in levelFilter ? (levelFilter.value as string) : undefined;
+      const level =
+        levelFilter && "value" in levelFilter ? (levelFilter.value as string) : undefined;
 
       const query: Record<string, string> = {
         page: String(page),

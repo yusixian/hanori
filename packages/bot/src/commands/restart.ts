@@ -15,8 +15,7 @@ export function createRestartCommand(
         await onRestart();
       }, 2000);
     } catch (error: unknown) {
-      const msg =
-        error instanceof Error ? error.message : "未知错误";
+      const msg = error instanceof Error ? error.message : "未知错误";
       return ctx.resolveWait(`执行出错: ${msg}`);
     }
   };
