@@ -2,20 +2,31 @@ import type { BotConfig } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
 import type { BotStatus } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
+import type { DbLogger } from "./db-logger.js";
+
+interface BotManagerOptions {
+  token: string;
+  adminChatIds: number[];
+  logger: Logger;
+  dbLogger: DbLogger;
+}
 
 export class BotManager {
   private bot: ReturnType<typeof createBot> | null = null;
-  private config: BotConfig;
-  private logger: Logger;
+  private botConfig: BotConfig;
+  private dbLogger: DbLogger;
   private _status: BotStatus = "stopped";
   private startedAt: number | null = null;
 
-  constructor(config: BotConfig) {
-    this.config = {
-      ...config,
+  constructor(options: BotManagerOptions) {
+    this.dbLogger = options.dbLogger;
+    this.botConfig = {
+      token: options.token,
+      adminChatIds: options.adminChatIds,
+      logger: options.logger,
       onRestart: () => this.restart(),
+      onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
     };
-    this.logger = config.logger;
   }
 
   get status(): BotStatus {
@@ -29,24 +40,24 @@ export class BotManager {
 
   async start() {
     if (this._status === "running") {
-      this.logger.warn("Bot is already running");
+      await this.dbLogger.warn("Bot is already running");
       return;
     }
 
-    this.bot = createBot(this.config);
+    this.bot = createBot(this.botConfig);
     this._status = "running";
     this.startedAt = Date.now();
 
     this.bot.start({
       onStart: () => {
-        this.logger.info("Bot started");
+        this.dbLogger.info("Bot started").catch(() => {});
       },
     });
   }
 
   async stop() {
     if (!this.bot || this._status === "stopped") {
-      this.logger.warn("Bot is not running");
+      await this.dbLogger.warn("Bot is not running");
       return;
     }
 
@@ -54,12 +65,12 @@ export class BotManager {
     this.startedAt = null;
     this.bot.stop();
     this.bot = null;
-    this.logger.info("Bot stopped");
+    await this.dbLogger.info("Bot stopped");
   }
 
   async restart() {
     this._status = "restarting";
-    this.logger.info("Bot restarting...");
+    await this.dbLogger.info("Bot restarting...");
     await this.stop();
     await this.start();
   }

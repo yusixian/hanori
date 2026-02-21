@@ -27,6 +27,9 @@ drizzle/
 # Docker volumes
 pgdata/
 
+# Claude Code skills
+.claude/skills/
+
 # Misc
 temp/
 downloads/

@@ -1,3 +1,4 @@
+import type { BotLogEntry } from "@cos-tool-bot/shared";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
 import { commands, helpCommand } from "./commands/help.js";
@@ -6,12 +7,14 @@ import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { WrapperContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
+import { createLogMiddleware } from "./middleware/log.js";
 
 export interface BotConfig {
   token: string;
   adminChatIds: number[];
   logger: Logger;
   onRestart?: () => void | Promise<void>;
+  onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
 export function createBot(config: BotConfig) {
@@ -22,6 +25,8 @@ export function createBot(config: BotConfig) {
   });
 
   const authGuard = createAuthGuard(adminChatIds);
+
+  bot.use(createLogMiddleware(config.onLog));
 
   bot.command("start", startCommand);
   bot.command("help", helpCommand);
@@ -46,6 +51,7 @@ export function createBot(config: BotConfig) {
     }
     errorMsg += "\n```";
     logger.error(errorMsg);
+    config.onLog?.({ level: "error", message: errorMsg, meta: { updateId: ctx.update.update_id } });
     ctx.resolveWait(errorMsg, "Markdown");
   });
 

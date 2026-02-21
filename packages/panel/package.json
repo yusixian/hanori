@@ -6,19 +6,29 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@cos-tool-bot/shared": "workspace:*",
-    "pinia": "^3.0.1",
-    "vue": "^3.5.13",
-    "vue-router": "^4.5.0"
+    "@refinedev/core": "^4",
+    "@refinedev/react-router": "^1",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-router": "^7",
+    "hono": "^4",
+    "jotai": "^2",
+    "lucide-react": "latest",
+    "clsx": "^2",
+    "tailwind-merge": "^3"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.2.3",
-    "@tailwindcss/vite": "^4.0.9",
-    "tailwindcss": "^4.0.9",
-    "vite": "^6.2.0",
-    "vue-tsc": "^2.2.8"
+    "@cos-tool-bot/server": "workspace:*",
+    "@vitejs/plugin-react": "^4",
+    "@tailwindcss/vite": "^4",
+    "tailwindcss": "^4",
+    "vite": "^6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "typescript": "^5"
   }
 }

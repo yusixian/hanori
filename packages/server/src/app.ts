@@ -19,27 +19,21 @@ interface AppOptions {
 export function createApp(options: AppOptions) {
   const { db, botManager, panelPassword, jwtSecret } = options;
 
-  const app = new Hono();
+  const app = new Hono()
+    .use("*", honoLogger())
+    .use("/api/*", cors())
+    .route("/api/auth", authRoutes(panelPassword, jwtSecret))
+    .use("/api/bot/*", jwtAuth(jwtSecret))
+    .route("/api/bot", botRoutes(botManager))
+    .use("/api/logs/*", jwtAuth(jwtSecret))
+    .route("/api/logs", logRoutes(db))
+    .get("/api/health", (c) => c.json({ ok: true as const }));
 
-  app.use("*", honoLogger());
-  app.use("/api/*", cors());
-
-  // Public routes
-  app.route("/api/auth", authRoutes(panelPassword, jwtSecret));
-
-  // Protected routes
-  const protectedApi = new Hono();
-  protectedApi.use("*", jwtAuth(jwtSecret));
-  protectedApi.route("/bot", botRoutes(botManager));
-  protectedApi.route("/logs", logRoutes(db));
-  app.route("/api", protectedApi);
-
-  // Health check
-  app.get("/api/health", (c) => c.json({ ok: true }));
-
-  // Serve panel static files in production
+  // Serve panel static files in production (not chained - doesn't affect API types)
   app.use("/*", serveStatic({ root: "./public" }));
   app.get("/*", serveStatic({ root: "./public", path: "index.html" }));
 
   return app;
 }
+
+export type AppType = ReturnType<typeof createApp>;

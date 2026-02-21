@@ -1,0 +1,199 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
+import { client } from "@/lib/client";
+import type { LogEntry } from "@cos-tool-bot/shared";
+import { useInvalidate, useList } from "@refinedev/core";
+import { ChevronLeft, ChevronRight, Radio, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+type LogMeta = Record<string, unknown> | null | undefined;
+
+function LogMeta({ meta }: { meta: LogMeta }) {
+  if (!meta || typeof meta !== "object") return null;
+  const entries = Object.entries(meta).filter(([, v]) => v != null && v !== "");
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1">
+      {entries.map(([key, value]) => (
+        <span key={key} className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[11px] font-mono text-muted-foreground">
+          <span className="text-primary/70">{key}:</span>
+          <span className="max-w-[300px] truncate">{String(value)}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const levelBadge: Record<string, "success" | "warning" | "destructive"> = {
+  info: "success",
+  warn: "warning",
+  error: "destructive",
+};
+
+export function LogsListPage() {
+  const [page, setPage] = useState(1);
+  const [level, setLevel] = useState("");
+  const [sseConnected, setSseConnected] = useState(false);
+  const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const { data, isLoading } = useList<LogEntry>({
+    resource: "logs",
+    pagination: { current: page, pageSize: 50 },
+    filters: level ? [{ field: "level", operator: "eq", value: level }] : [],
+  });
+
+  const invalidate = useInvalidate();
+
+  const clearLogs = async () => {
+    if (!window.confirm("确认清空所有日志？")) return;
+    await client.api.logs.$delete();
+    setLiveLogs([]);
+    setPage(1);
+    invalidate({ resource: "logs", invalidates: ["list"] });
+  };
+
+  const logs = data?.data ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / 50));
+
+  // SSE real-time streaming
+  const connectSSE = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const token = localStorage.getItem("token");
+    fetch("/api/logs/stream", {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok || !res.body) return;
+        setSseConnected(true);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data:")) {
+              try {
+                const entry = JSON.parse(line.slice(5).trim()) as LogEntry;
+                setLiveLogs((prev) => [entry, ...prev].slice(0, 20));
+              } catch { /* ignore parse errors */ }
+            }
+          }
+        }
+      })
+      .catch(() => { /* aborted or network error */ })
+      .finally(() => setSseConnected(false));
+  }, []);
+
+  useEffect(() => {
+    connectSSE();
+    return () => abortRef.current?.abort();
+  }, [connectSSE]);
+
+  const formatTime = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleString("zh-CN", { hour12: false });
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Logs</h1>
+        <div className="flex items-center gap-3">
+          <Button variant="destructive" size="sm" onClick={clearLogs}>
+            <Trash2 className="mr-1 h-3.5 w-3.5" />
+            Clear Logs
+          </Button>
+          <div className="flex items-center gap-2">
+            <Radio className={`h-4 w-4 ${sseConnected ? "text-emerald-400" : "text-muted-foreground"}`} />
+            <span className="text-xs text-muted-foreground">{sseConnected ? "Live" : "Disconnected"}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Live logs */}
+      {liveLogs.length > 0 && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Real-time</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1 pt-0">
+            {liveLogs.slice(0, 5).map((log) => (
+              <div key={log.id} className="rounded border border-primary/20 bg-primary/5 p-2 text-xs animate-in fade-in">
+                <div className="flex items-center gap-2">
+                  <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">{log.level}</Badge>
+                  <span className="flex-1 min-w-0 truncate font-mono">{log.message}</span>
+                  <span className="shrink-0 text-muted-foreground">{formatTime(log.createdAt)}</span>
+                </div>
+                <LogMeta meta={log.meta as LogMeta} />
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Filters */}
+      <div className="flex items-center gap-3">
+        <Select value={level} onChange={(e) => { setLevel(e.target.value); setPage(1); }}>
+          <option value="">All Levels</option>
+          <option value="info">Info</option>
+          <option value="warn">Warn</option>
+          <option value="error">Error</option>
+        </Select>
+      </div>
+
+      {/* Log list */}
+      <Card>
+        <CardContent className="p-0">
+          {isLoading ? (
+            <p className="p-6 text-sm text-muted-foreground">Loading...</p>
+          ) : logs.length === 0 ? (
+            <p className="p-6 text-sm text-muted-foreground">No logs found</p>
+          ) : (
+            <div className="divide-y">
+              {logs.map((log) => (
+                <div key={log.id} className="px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <Badge variant={levelBadge[log.level] ?? "muted"} className="shrink-0">{log.level}</Badge>
+                    <p className="flex-1 min-w-0 truncate text-sm font-mono" title={log.message}>{log.message}</p>
+                    <span className="shrink-0 text-xs text-muted-foreground">{formatTime(log.createdAt)}</span>
+                  </div>
+                  <LogMeta meta={log.meta as LogMeta} />
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-2">
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <span className="text-sm text-muted-foreground">{page} / {totalPages}</span>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}

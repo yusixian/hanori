@@ -4,6 +4,10 @@ import pino from "pino";
 import { createApp } from "./app.js";
 import { env } from "./env.js";
 import { BotManager } from "./services/bot-manager.js";
+import { DbLogger } from "./services/db-logger.js";
+import { LogCleaner } from "./services/log-cleaner.js";
+
+export type { AppType } from "./app.js";
 
 const logger = pino({
   transport: {
@@ -16,11 +20,25 @@ const logger = pino({
 const db = createDb(env.DATABASE_URL);
 logger.info("Database connected");
 
+// Database Logger
+const dbLogger = new DbLogger(db, logger);
+
+// Log Cleaner
+const logCleaner = new LogCleaner({
+  db,
+  logger,
+  retentionDays: env.LOG_RETENTION_DAYS,
+  retentionDaysError: env.LOG_RETENTION_DAYS_ERROR,
+  intervalHours: env.LOG_CLEANUP_INTERVAL_HOURS,
+});
+logCleaner.start();
+
 // Bot Manager
 const botManager = new BotManager({
   token: env.BOT_TOKEN,
   adminChatIds: env.ADMIN_CHAT_IDS,
   logger,
+  dbLogger,
 });
 
 // Hono App
@@ -41,13 +59,14 @@ serve(
     port: env.PORT,
   },
   (info) => {
-    logger.info(`Server running on http://localhost:${info.port}`);
+    dbLogger.info(`Server running on http://localhost:${info.port}`).catch(() => {});
   },
 );
 
 // Graceful shutdown
 const shutdown = async (signal: string) => {
-  logger.info(`[${signal}] Shutting down...`);
+  await dbLogger.info(`[${signal}] Shutting down...`);
+  logCleaner.stop();
   await botManager.stop();
   process.exit(0);
 };

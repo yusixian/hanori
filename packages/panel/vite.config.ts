@@ -1,9 +1,15 @@
 import tailwindcss from "@tailwindcss/vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
+import { resolve } from "node:path";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [vue(), tailwindcss()],
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "src"),
+    },
+  },
   server: {
     port: 5173,
     proxy: {

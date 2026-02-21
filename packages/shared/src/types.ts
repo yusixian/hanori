@@ -21,12 +21,9 @@ export interface LogEntry {
   createdAt: string;
 }
 
-export interface ApiResponse<T = unknown> {
-  ok: boolean;
-  data?: T;
-  error?: string;
+export interface BotLogEntry {
+  level: LogLevel;
+  message: string;
+  meta?: Record<string, unknown>;
 }
 
-export interface AuthResponse {
-  token: string;
-}
