@@ -14,9 +14,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^0.2.14",
     "@cos-tool-bot/shared": "workspace:*",
-    "@xsai/generate-text": "^0.4.3",
-    "@xsai/shared-chat": "^0.4.3",
+    "ai": "^4.3.16",
     "grammy": "^1.22.4",
     "marked": "^17.0.3",
     "pino": "^8.17.2",

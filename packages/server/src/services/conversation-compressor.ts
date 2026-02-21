@@ -1,6 +1,7 @@
 import type { ConversationConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
-import { generateText } from "@xsai/generate-text";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { generateText } from "ai";
 import type { Logger } from "pino";
 import type { ConversationStore } from "./conversation-store.js";
 
@@ -67,9 +68,7 @@ async function compressWithLLM(
   }
 
   const result = await generateText({
-    baseURL,
-    apiKey,
-    model,
+    model: createOpenAICompatible({ name: "custom", baseURL, apiKey })(model),
     messages: [
       { role: "system", content: SUMMARIZE_PROMPT },
       { role: "user", content: contextText },

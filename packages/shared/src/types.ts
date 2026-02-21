@@ -145,6 +145,8 @@ export interface AiConfigStored {
   baseURL: string;
   model: string;
   systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   triggerConfig: AiTriggerConfig;
   groupOverrides: Record<string, AiGroupOverride>;
   conversationConfig?: ConversationConfig;
@@ -158,6 +160,8 @@ export interface AiConfigPublic {
   baseURL: string;
   model: string;
   systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   triggerConfig: AiTriggerConfig;
   groupOverrides: Record<string, AiGroupOverride>;
   conversationConfig?: ConversationConfig;

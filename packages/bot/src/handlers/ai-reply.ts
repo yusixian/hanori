@@ -9,8 +9,9 @@ import type {
   MemoryConfig,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
-import { generateText } from "@xsai/generate-text";
-import type { Tool } from "@xsai/shared-chat";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import type { CoreTool } from "ai";
+import { generateText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { WrapperContext } from "../context.js";
 import { createActionTools, createMemoryTools } from "../tools/index.js";
@@ -22,6 +23,8 @@ export interface AiReplyConfig {
   baseURL: string;
   model: string;
   systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   triggerConfig: AiTriggerConfig;
   groupOverrides: Record<string, AiGroupOverride>;
   adminChatIds: number[];
@@ -40,6 +43,12 @@ interface BufferedMessage {
   userName: string;
   text: string;
   timestamp: number;
+}
+
+interface ToolResultEntry {
+  toolName: string;
+  result: unknown;
+  toolCallId: string;
 }
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -219,9 +228,16 @@ async function loadStickerPacks(
 export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperContext> {
   const cooldownMap = new Map<number, number>();
 
+  // Create AI provider
+  const provider = createOpenAICompatible({
+    name: "custom",
+    baseURL: config.baseURL,
+    apiKey: config.apiKey,
+  });
+
   // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-  let memoryTools: Tool[] | undefined;
+  let memoryTools: Record<string, CoreTool> | undefined;
   if (memoryCfg.enabled && config.memory) {
     memoryTools = createMemoryTools(config.memory);
   }
@@ -417,6 +433,28 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
         messages.push({ role: "system", content: effectivePrompt });
       }
 
+      // Inject chat environment context + behavioral prompts into system prompt
+      if (messages.length > 0 && messages[0]!.role === "system") {
+        let envInfo: string;
+
+        if (isPrivate) {
+          envInfo = `[System: The user "${userName}"${ctx.from?.username ? ` (@${ctx.from.username})` : ""} is chatting with you in a PRIVATE chat.]`;
+        } else {
+          const chatTitle = ctx.chat?.title ?? "Unknown";
+          envInfo = `[System: The user "${userName}"${ctx.from?.username ? ` (@${ctx.from.username})` : ""} is chatting with you in a GROUP CHAT named "${chatTitle}" (chatId: ${chatId}).]`;
+        }
+
+        const suffix = [
+          config.behavioralPrompt,
+          !isPrivate ? config.groupBehavioralPrompt : undefined,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
+
+        messages[0]!.content =
+          envInfo + "\n\n" + messages[0]!.content + (suffix ? `\n\n${suffix}` : "");
+      }
+
       // Memory system: inject system prompt and auto-read profile
       if (memoryTools && config.memory) {
         // Append memory management instructions to the first system message
@@ -467,7 +505,7 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
       messages.push({ role: "user", content: currentContent });
 
       // Combine all tools
-      const allTools = [...(memoryTools ?? []), ...actionTools];
+      const allTools: Record<string, CoreTool> = { ...(memoryTools ?? {}), ...actionTools };
       const maxSteps = Math.max(memoryCfg.maxSteps || 3, 2);
       const toolChoice = memoryCfg.toolChoice ?? "auto";
 
@@ -481,7 +519,7 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
           baseURL: config.baseURL,
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
-          toolsEnabled: allTools.map((t) => t.function.name),
+          toolsEnabled: Object.keys(allTools),
           maxSteps,
           toolChoice,
           chatId,
@@ -494,17 +532,15 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
 
       let stepCounter = 0;
       const result = await generateText({
-        baseURL: config.baseURL,
-        apiKey: config.apiKey,
-        model: config.model,
+        model: provider(config.model),
         messages,
         tools: allTools,
         maxSteps,
         toolChoice,
-        onStepFinish: (step) => {
+        onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
-          if (step.toolCalls?.length) {
-            const lastTool = step.toolCalls[step.toolCalls.length - 1]!.toolName;
+          if (toolCalls?.length) {
+            const lastTool = toolCalls[toolCalls.length - 1]!.toolName;
             const status = TOOL_STATUS_MAP[lastTool] ?? `🔧 ${lastTool}...`;
             // First tool call sends the status message; subsequent ones edit it
             if (ctx.waiting_message) {
@@ -514,7 +550,7 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
             }
 
             // Debug: AI tool calls
-            for (const tc of step.toolCalls) {
+            for (const tc of toolCalls) {
               config.onLog?.({
                 level: "debug",
                 message: "AI tool call",
@@ -528,8 +564,8 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
             }
           }
           // Debug: AI tool results
-          if (step.toolResults?.length) {
-            for (const tr of step.toolResults) {
+          if (toolResults?.length) {
+            for (const tr of toolResults as ToolResultEntry[]) {
               config.onLog?.({
                 level: "debug",
                 message: "AI tool result",
@@ -546,27 +582,20 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
       });
 
       const durationMs = Date.now() - startTime;
-      let text = result.text?.trim();
+      const text = result.text?.trim();
 
-      // Fallback: if text is empty, retry without tools to force text generation
+      // Warn if AI returned empty text (skip if action tools produced visible effects)
       if (!text) {
-        config.onLog?.({
-          level: "warn",
-          message: "AI returned empty text, retrying without tools",
-          meta: {
-            chatId,
-            userId,
-            reasoningText: truncate(result.reasoningText ?? "", 200),
-          },
-        });
-        const retryResult = await generateText({
-          baseURL: config.baseURL,
-          apiKey: config.apiKey,
-          model: config.model,
-          messages,
-          maxSteps: 1,
-        });
-        text = retryResult.text?.trim();
+        const hasActionToolCalls = result.steps.some((s) =>
+          s.toolCalls.some((tc) => ACTION_TOOL_NAMES.has(tc.toolName)),
+        );
+        if (!hasActionToolCalls) {
+          config.onLog?.({
+            level: "warn",
+            message: "AI returned empty text",
+            meta: { chatId, userId, finishReason: result.finishReason },
+          });
+        }
       }
 
       // Debug: AI response
@@ -639,12 +668,12 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
               content: tc.toolName,
               meta: {
                 toolName: tc.toolName,
-                args: tc.args,
+                args: JSON.stringify(tc.args),
                 toolCallId: tc.toolCallId,
               },
             });
           }
-          for (const tr of step.toolResults) {
+          for (const tr of step.toolResults as ToolResultEntry[]) {
             if (ACTION_TOOL_NAMES.has(tr.toolName)) continue;
             toSave.push({
               chatId,

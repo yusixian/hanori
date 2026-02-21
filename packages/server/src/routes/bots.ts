@@ -2,7 +2,6 @@ import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
 import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { listModels } from "@xsai/model";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -66,6 +65,8 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     baseURL: config.baseURL,
     model: config.model,
     systemPrompt: config.systemPrompt,
+    behavioralPrompt: config.behavioralPrompt,
+    groupBehavioralPrompt: config.groupBehavioralPrompt,
     triggerConfig: config.triggerConfig,
     groupOverrides: config.groupOverrides,
     conversationConfig: config.conversationConfig,
@@ -80,6 +81,8 @@ const aiConfigSchema = z
     baseURL: z.string(),
     model: z.string(),
     systemPrompt: z.string(),
+    behavioralPrompt: z.string().optional(),
+    groupBehavioralPrompt: z.string().optional(),
     triggerConfig: z.object({
       replyToBot: z.boolean(),
       mentionBot: z.boolean(),
@@ -288,10 +291,13 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         baseURL: body.baseURL,
         model: body.model,
         systemPrompt: body.systemPrompt,
+        behavioralPrompt: body.behavioralPrompt,
+        groupBehavioralPrompt: body.groupBehavioralPrompt,
         triggerConfig: body.triggerConfig,
         groupOverrides: body.groupOverrides,
         conversationConfig: body.conversationConfig,
         memoryConfig: body.memoryConfig,
+        stickerPacks: bot.aiConfig?.stickerPacks,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));
@@ -469,7 +475,13 @@ export function botsRoutes(db: Database, botPool: BotPool) {
       }
 
       try {
-        const models = await listModels({ baseURL, apiKey });
+        const res = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, {
+          headers: { Authorization: `Bearer ${apiKey}` },
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const { data: models } = (await res.json()) as {
+          data: Array<{ id: string; owned_by: string }>;
+        };
         return c.json({
           ok: true as const,
           data: models.map((m) => ({ id: m.id, owned_by: m.owned_by })),

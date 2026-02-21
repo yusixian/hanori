@@ -33,6 +33,8 @@ const DEFAULT_CONFIG: AiConfigPublic = {
   baseURL: "",
   model: "",
   systemPrompt: "",
+  behavioralPrompt: "",
+  groupBehavioralPrompt: "",
   triggerConfig: DEFAULT_TRIGGER,
   groupOverrides: {},
 };
@@ -85,6 +87,8 @@ export function BotAiSettingsPage() {
           baseURL: config.baseURL,
           model: config.model,
           systemPrompt: config.systemPrompt,
+          behavioralPrompt: config.behavioralPrompt || undefined,
+          groupBehavioralPrompt: config.groupBehavioralPrompt || undefined,
           triggerConfig: config.triggerConfig,
           groupOverrides: config.groupOverrides,
           conversationConfig: config.conversationConfig,
@@ -311,6 +315,34 @@ export function BotAiSettingsPage() {
                 ))}
               </select>
             )}
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Behavioral Prompt</label>
+            <textarea
+              className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+              value={config.behavioralPrompt ?? ""}
+              onChange={(e) => setConfig((prev) => ({ ...prev, behavioralPrompt: e.target.value }))}
+              placeholder="General behavioral instructions (persona, tone, rules...). Injected before system prompt for both private and group chats."
+            />
+            <p className="text-muted-foreground text-xs">
+              Injected before the system prompt in all chats (private + group).
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Group Behavioral Prompt</label>
+            <textarea
+              className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+              value={config.groupBehavioralPrompt ?? ""}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, groupBehavioralPrompt: e.target.value }))
+              }
+              placeholder="Group-only behavioral instructions (group etiquette, multi-user rules...). Only injected in group chats."
+            />
+            <p className="text-muted-foreground text-xs">
+              Only injected in group chats, after the general behavioral prompt.
+            </p>
           </div>
 
           <div className="space-y-1.5">

@@ -170,6 +170,8 @@ export class BotPool {
         baseURL: aiConfig.baseURL,
         model: aiConfig.model,
         systemPrompt: aiConfig.systemPrompt,
+        behavioralPrompt: aiConfig.behavioralPrompt,
+        groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
         triggerConfig: aiConfig.triggerConfig,
         groupOverrides: aiConfig.groupOverrides,
         conversationConfig: conversationCfg,

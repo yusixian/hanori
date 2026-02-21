@@ -16,13 +16,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "^0.2.14",
     "@cos-tool-bot/bot": "workspace:*",
     "@cos-tool-bot/database": "workspace:*",
     "@cos-tool-bot/shared": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "@hono/zod-validator": "^0.7.6",
-    "@xsai/generate-text": "^0.4.3",
-    "@xsai/model": "^0.4.3",
+    "ai": "^4.3.16",
     "drizzle-orm": "^0.39.3",
     "hono": "^4.7.5",
     "jose": "^6.0.8",

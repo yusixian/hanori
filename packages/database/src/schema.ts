@@ -19,6 +19,8 @@ interface AiConfigJson {
   baseURL: string;
   model: string;
   systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   triggerConfig: {
     replyToBot: boolean;
     mentionBot: boolean;
