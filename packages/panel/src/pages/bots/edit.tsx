@@ -1,9 +1,7 @@
 import { BotForm } from "@/components/bots/bot-form";
-import { Button } from "@/components/ui/button";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useOne, useUpdate } from "@refinedev/core";
-import { ArrowLeft } from "lucide-react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 export function BotEditPage() {
   const { botId } = useParams<{ botId: string }>();
@@ -29,15 +27,7 @@ export function BotEditPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to={`/bots/${botId}`}>
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Button>
-        </Link>
-        <h1 className="text-2xl font-bold">Edit Bot</h1>
-      </div>
+      <h1 className="text-2xl font-bold">Edit Bot</h1>
 
       <BotForm
         isEdit

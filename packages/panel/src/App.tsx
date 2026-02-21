@@ -9,6 +9,9 @@ import { BotListPage } from "@/pages/bots/list";
 import { BotCreatePage } from "@/pages/bots/create";
 import { BotEditPage } from "@/pages/bots/edit";
 import { BotDashboardPage } from "@/pages/bots/dashboard";
+import { BotAiSettingsPage } from "@/pages/bots/ai-settings";
+import { BotConversationsPage } from "@/pages/bots/conversations";
+import { BotProfilesPage } from "@/pages/bots/profiles";
 import { LogsListPage } from "@/pages/logs/list";
 
 export function App() {
@@ -36,6 +39,9 @@ export function App() {
             <Route path="/bots/new" element={<BotCreatePage />} />
             <Route path="/bots/:botId" element={<BotDashboardPage />} />
             <Route path="/bots/:botId/edit" element={<BotEditPage />} />
+            <Route path="/bots/:botId/ai" element={<BotAiSettingsPage />} />
+            <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
+            <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
             <Route path="/logs" element={<LogsListPage />} />
           </Route>
 

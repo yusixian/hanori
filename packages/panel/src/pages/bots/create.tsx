@@ -1,8 +1,6 @@
 import { BotForm } from "@/components/bots/bot-form";
-import { Button } from "@/components/ui/button";
 import { useCreate } from "@refinedev/core";
-import { ArrowLeft } from "lucide-react";
-import { Link, useNavigate } from "react-router";
+import { useNavigate } from "react-router";
 
 export function BotCreatePage() {
   const navigate = useNavigate();
@@ -10,15 +8,7 @@ export function BotCreatePage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Link to="/">
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Button>
-        </Link>
-        <h1 className="text-2xl font-bold">Add Bot</h1>
-      </div>
+      <h1 className="text-2xl font-bold">Add Bot</h1>
 
       <BotForm
         submitLabel="Create Bot"

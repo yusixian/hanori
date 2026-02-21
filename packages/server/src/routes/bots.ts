@@ -1,7 +1,8 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
-import type { BotWithStatus } from "@cos-tool-bot/shared";
+import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
+import { listModels } from "@xsai/model";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -32,12 +33,113 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     tokenMasked: maskToken(token),
     adminChatIds: bot.adminChatIds,
     isActive: bot.isActive,
+    aiEnabled: bot.aiConfig?.enabled ?? false,
+    aiHasApiKey: !!bot.aiConfig?.encryptedApiKey,
     createdAt: bot.createdAt.toISOString(),
     updatedAt: bot.updatedAt?.toISOString() ?? null,
     status: manager?.status ?? "stopped",
     uptime: manager?.uptime ?? null,
   };
 }
+
+function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPublic {
+  if (!config) {
+    return {
+      enabled: false,
+      hasApiKey: false,
+      baseURL: "",
+      model: "",
+      systemPrompt: "",
+      triggerConfig: {
+        replyToBot: true,
+        mentionBot: true,
+        triggerWords: [],
+        randomReplyPercent: 0,
+        randomReplyCooldown: 60,
+      },
+      groupOverrides: {},
+    };
+  }
+  return {
+    enabled: config.enabled,
+    hasApiKey: !!config.encryptedApiKey,
+    baseURL: config.baseURL,
+    model: config.model,
+    systemPrompt: config.systemPrompt,
+    triggerConfig: config.triggerConfig,
+    groupOverrides: config.groupOverrides,
+    conversationConfig: config.conversationConfig,
+    memoryConfig: config.memoryConfig,
+  };
+}
+
+const aiConfigSchema = z
+  .object({
+    enabled: z.boolean(),
+    apiKey: z.string().optional(),
+    baseURL: z.string(),
+    model: z.string(),
+    systemPrompt: z.string(),
+    triggerConfig: z.object({
+      replyToBot: z.boolean(),
+      mentionBot: z.boolean(),
+      triggerWords: z.array(z.string()),
+      randomReplyPercent: z.number().min(0).max(100),
+      randomReplyCooldown: z.number().min(0),
+    }),
+    groupOverrides: z.record(
+      z.string(),
+      z.object({
+        chatId: z.number(),
+        chatTitle: z.string().optional(),
+        enabled: z.boolean().optional(),
+        whitelisted: z.boolean(),
+        systemPrompt: z.string().optional(),
+        triggerConfig: z
+          .object({
+            replyToBot: z.boolean(),
+            mentionBot: z.boolean(),
+            triggerWords: z.array(z.string()),
+            randomReplyPercent: z.number().min(0).max(100),
+            randomReplyCooldown: z.number().min(0),
+          })
+          .partial()
+          .optional(),
+        conversationEnabled: z.boolean().optional(),
+        maxContextMessages: z.number().min(1).max(100).optional(),
+      }),
+    ),
+    conversationConfig: z
+      .object({
+        enabled: z.boolean(),
+        maxContextMessages: z.number().min(1).max(100),
+        historyFormat: z.enum(["prompt", "messages"]).optional(),
+        groupBufferSize: z.number().min(10).max(200),
+        groupContextMode: z.enum(["all", "random_only", "none"]),
+        saveGroupContext: z.enum(["random_only", "all", "none"]),
+        autoSummarize: z.boolean(),
+        summarizeThreshold: z.number().min(10).max(200),
+        retentionDays: z.number().min(0).max(365),
+      })
+      .optional(),
+    memoryConfig: z
+      .object({
+        enabled: z.boolean(),
+        maxSteps: z.number().min(1).max(10),
+        autoReadProfile: z.boolean(),
+        autoUpdateLastSeen: z.boolean(),
+        toolChoice: z.enum(["auto", "required"]),
+      })
+      .optional(),
+  })
+  .refine((data) => !data.enabled || (data.baseURL.length > 0 && data.model.length > 0), {
+    message: "baseURL and model are required when AI is enabled",
+  });
+
+const aiModelsSchema = z.object({
+  baseURL: z.string().url().optional(),
+  apiKey: z.string().optional(),
+});
 
 export function botsRoutes(db: Database, botPool: BotPool) {
   return new Hono()
@@ -161,5 +263,220 @@ export function botsRoutes(db: Database, botPool: BotPool) {
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       await botPool.restartBot(botId);
       return c.json({ ok: true as const });
+    })
+    .get("/:botId/ai-config", async (c) => {
+      const botId = c.req.param("botId");
+      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      return c.json({ ok: true as const, data: toAiConfigPublic(bot.aiConfig) });
+    })
+    .put("/:botId/ai-config", zValidator("json", aiConfigSchema), async (c) => {
+      const botId = c.req.param("botId");
+      const body = c.req.valid("json");
+
+      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+      let encryptedApiKey = bot.aiConfig?.encryptedApiKey ?? null;
+      if (body.apiKey !== undefined && body.apiKey !== "") {
+        encryptedApiKey = encrypt(body.apiKey, env.ENCRYPTION_KEY);
+      }
+
+      const aiConfig: AiConfigStored = {
+        enabled: body.enabled,
+        encryptedApiKey,
+        baseURL: body.baseURL,
+        model: body.model,
+        systemPrompt: body.systemPrompt,
+        triggerConfig: body.triggerConfig,
+        groupOverrides: body.groupOverrides,
+        conversationConfig: body.conversationConfig,
+        memoryConfig: body.memoryConfig,
+      };
+
+      await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));
+
+      // Restart bot if running so new config takes effect
+      const manager = botPool.getManager(botId);
+      if (manager) {
+        try {
+          await botPool.restartBot(botId);
+        } catch {
+          // continue
+        }
+      }
+
+      return c.json({ ok: true as const, data: toAiConfigPublic(aiConfig) });
+    })
+    .get(
+      "/:botId/conversations",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(20),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const { page, limit } = c.req.valid("query");
+        const store = botPool.getConversationStore();
+        const result = await store.getConversationList(botId, page, limit);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .get(
+      "/:botId/conversations/:chatId",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(50),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const chatId = Number(c.req.param("chatId"));
+        const { page, limit } = c.req.valid("query");
+        const store = botPool.getConversationStore();
+        const result = await store.getConversationMessages(botId, chatId, page, limit);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .delete("/:botId/conversations", async (c) => {
+      const botId = c.req.param("botId");
+      const store = botPool.getConversationStore();
+      await store.clearAllForBot(botId);
+      return c.json({ ok: true as const });
+    })
+    .delete("/:botId/conversations/:chatId", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      const store = botPool.getConversationStore();
+      await store.clearHistory(botId, chatId);
+      return c.json({ ok: true as const });
+    })
+    .get(
+      "/:botId/profiles",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(20),
+          search: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const { page, limit, search } = c.req.valid("query");
+        const store = botPool.getProfileStore();
+        if (search) {
+          const profiles = await store.searchProfiles(botId, search);
+          return c.json({
+            ok: true as const,
+            data: profiles.map((p) => ({
+              id: p.id,
+              telegramId: p.telegramId,
+              username: p.username,
+              displayName: p.displayName,
+              notes: p.notes,
+              traits: p.traits,
+              interests: p.interests,
+              relationship: p.relationship,
+              firstSeen: p.firstSeen.toISOString(),
+              lastSeen: p.lastSeen.toISOString(),
+            })),
+            total: profiles.length,
+          });
+        }
+        const result = await store.listProfiles(botId, page, limit);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .delete("/:botId/profiles/:profileId", async (c) => {
+      const botId = c.req.param("botId");
+      const profileId = Number(c.req.param("profileId"));
+      const store = botPool.getProfileStore();
+      await store.deleteProfile(botId, profileId);
+      return c.json({ ok: true as const });
+    })
+    .put(
+      "/:botId/profiles/:profileId",
+      zValidator(
+        "json",
+        z.object({
+          displayName: z.string().nullable().optional(),
+          username: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
+          traits: z.array(z.string()).nullable().optional(),
+          interests: z.array(z.string()).nullable().optional(),
+          relationship: z.string().nullable().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const profileId = Number(c.req.param("profileId"));
+        const store = botPool.getProfileStore();
+        const updated = await store.updateProfile(botId, profileId, c.req.valid("json"));
+        if (!updated) return c.json({ ok: false as const, error: "Profile not found" }, 404);
+        return c.json({ ok: true as const, data: updated });
+      },
+    )
+    .post(
+      "/:botId/profiles",
+      zValidator(
+        "json",
+        z.object({
+          telegramId: z.number(),
+          displayName: z.string().nullable().optional(),
+          username: z.string().nullable().optional(),
+          notes: z.string().nullable().optional(),
+          traits: z.array(z.string()).optional(),
+          interests: z.array(z.string()).optional(),
+          relationship: z.string().nullable().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const store = botPool.getProfileStore();
+        const created = await store.createProfile(botId, c.req.valid("json"));
+        return c.json({ ok: true as const, data: created }, 201);
+      },
+    )
+    .post("/:botId/ai-models", zValidator("json", aiModelsSchema), async (c) => {
+      const botId = c.req.param("botId");
+      const body = c.req.valid("json");
+
+      let apiKey = body.apiKey;
+      let baseURL = body.baseURL;
+
+      // Fall back to stored values
+      if (!apiKey || !baseURL) {
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+        if (!baseURL) baseURL = bot.aiConfig?.baseURL;
+        if (!apiKey && bot.aiConfig?.encryptedApiKey) {
+          apiKey = decrypt(bot.aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
+        }
+      }
+
+      if (!baseURL) {
+        return c.json({ ok: false as const, error: "No base URL configured" }, 400);
+      }
+      if (!apiKey) {
+        return c.json({ ok: false as const, error: "No API key configured" }, 400);
+      }
+
+      try {
+        const models = await listModels({ baseURL, apiKey });
+        return c.json({
+          ok: true as const,
+          data: models.map((m) => ({ id: m.id, owned_by: m.owned_by })),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return c.json({ ok: false as const, error: `Failed to fetch models: ${msg}` }, 502);
+      }
     });
 }

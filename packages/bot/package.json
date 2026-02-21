@@ -15,9 +15,13 @@
   },
   "dependencies": {
     "@cos-tool-bot/shared": "workspace:*",
+    "@xsai/generate-text": "^0.4.3",
+    "@xsai/shared-chat": "^0.4.3",
     "grammy": "^1.22.4",
+    "marked": "^17.0.3",
     "pino": "^8.17.2",
-    "telegramify-markdown": "^1.2.2"
+    "telegramify-markdown": "^1.2.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "tsdown": "^0.9.3"

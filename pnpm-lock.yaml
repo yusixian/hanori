@@ -38,15 +38,27 @@ importers:
       '@cos-tool-bot/shared':
         specifier: workspace:*
         version: link:../shared
+      '@xsai/generate-text':
+        specifier: ^0.4.3
+        version: 0.4.3
+      '@xsai/shared-chat':
+        specifier: ^0.4.3
+        version: 0.4.3
       grammy:
         specifier: ^1.22.4
         version: 1.40.0
+      marked:
+        specifier: ^17.0.3
+        version: 17.0.3
       pino:
         specifier: ^8.17.2
         version: 8.21.0
       telegramify-markdown:
         specifier: ^1.2.2
         version: 1.3.2
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       tsdown:
         specifier: ^0.9.3
@@ -97,6 +109,9 @@ importers:
       react-dom:
         specifier: ^19
         version: 19.2.4(react@19.2.4)
+      react-json-view-lite:
+        specifier: ^2.5.0
+        version: 2.5.0(react@19.2.4)
       react-router:
         specifier: ^7
         version: 7.13.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
@@ -146,6 +161,12 @@ importers:
       '@hono/zod-validator':
         specifier: ^0.7.6
         version: 0.7.6(hono@4.12.1)(zod@4.3.6)
+      '@xsai/generate-text':
+        specifier: ^0.4.3
+        version: 0.4.3
+      '@xsai/model':
+        specifier: ^0.4.3
+        version: 0.4.3
       drizzle-orm:
         specifier: ^0.39.3
         version: 0.39.3(postgres@3.4.8)
@@ -1560,6 +1581,18 @@ packages:
     peerDependencies:
       vite: ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0
 
+  '@xsai/generate-text@0.4.3':
+    resolution: {integrity: sha512-3WWD/n8DVzI3HkdUtQYfz1/gNQfvOD4ULjG0z5mPTeWkdanWRbHODmVdlhgmL/2FU8VMJ5qydVFtPDH9WSyP6g==}
+
+  '@xsai/model@0.4.3':
+    resolution: {integrity: sha512-fHqHiRlcSiU9rbyTbXIok6NrFqt/CucLx1p6tewgWiQhsUxlVIV3Wu1RNPG73So52zJhFYhZm9kc9LEaq2gszg==}
+
+  '@xsai/shared-chat@0.4.3':
+    resolution: {integrity: sha512-/xXyr1inY0I6PFZ0YP47DSdAp8Qrcf8dU/FICW8XeQK3JljscAGgGziATr7EI9x0vh77bARj5G8xPR1GMlREUA==}
+
+  '@xsai/shared@0.4.3':
+    resolution: {integrity: sha512-yrpwOigtriiGvE+gnpwVBqc9G9ZCQ6OPTow419ArROaSJ/JuMwyc5CJzKOAxpEsZmXpyN3yBCbzQlZIQjheBuQ==}
+
   abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
@@ -2204,6 +2237,11 @@ packages:
   markdown-table@2.0.0:
     resolution: {integrity: sha512-Ezda85ToJUBhM6WGaG6veasyym+Tbs3cMAw/ZhOPqXiYsr0jgocBV3j3nx+4lk47plLlIqjwuTm/ywVI+zjJ/A==}
 
+  marked@17.0.3:
+    resolution: {integrity: sha512-jt1v2ObpyOKR8p4XaUJVk3YWRJ5n+i4+rjQopxvV32rSndTJXvIzuUdWWIy/1pFQMkQmvTXawzDNqOH/CUmx6A==}
+    engines: {node: '>= 20'}
+    hasBin: true
+
   math-intrinsics@1.1.0:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
@@ -2398,6 +2436,12 @@ packages:
     resolution: {integrity: sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ==}
     peerDependencies:
       react: ^19.2.4
+
+  react-json-view-lite@2.5.0:
+    resolution: {integrity: sha512-tk7o7QG9oYyELWHL8xiMQ8x4WzjCzbWNyig3uexmkLb54r8jO0yH3WCWx8UZS0c49eSA4QUmG5caiRJ8fAn58g==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      react: ^18.0.0 || ^19.0.0
 
   react-refresh@0.17.0:
     resolution: {integrity: sha512-z6F7K9bV85EfseRCp2bzrpyQ0Gkw1uLoCel9XBVWPg/TjRj94SkJzUTGfOa4bs7iJvBWtQG0Wq7wnI0syw3EBQ==}
@@ -3763,6 +3807,21 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  '@xsai/generate-text@0.4.3':
+    dependencies:
+      '@xsai/shared': 0.4.3
+      '@xsai/shared-chat': 0.4.3
+
+  '@xsai/model@0.4.3':
+    dependencies:
+      '@xsai/shared': 0.4.3
+
+  '@xsai/shared-chat@0.4.3':
+    dependencies:
+      '@xsai/shared': 0.4.3
+
+  '@xsai/shared@0.4.3': {}
+
   abort-controller@3.0.0:
     dependencies:
       event-target-shim: 5.0.1
@@ -4322,6 +4381,8 @@ snapshots:
     dependencies:
       repeat-string: 1.6.1
 
+  marked@17.0.3: {}
+
   math-intrinsics@1.1.0: {}
 
   mdast-util-find-and-replace@1.1.1:
@@ -4613,6 +4674,10 @@ snapshots:
     dependencies:
       react: 19.2.4
       scheduler: 0.27.0
+
+  react-json-view-lite@2.5.0(react@19.2.4):
+    dependencies:
+      react: 19.2.4
 
   react-refresh@0.17.0: {}
 

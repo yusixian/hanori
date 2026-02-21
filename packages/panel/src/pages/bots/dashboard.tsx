@@ -5,9 +5,9 @@ import { formatUptime, statusBadge } from "@/lib/bot-utils";
 import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useDelete, useInvalidate, useOne } from "@refinedev/core";
-import { ArrowLeft, Pencil, Play, RefreshCw, ScrollText, Square, Trash2 } from "lucide-react";
+import { Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 
 export function BotDashboardPage() {
   const { botId } = useParams<{ botId: string }>();
@@ -53,35 +53,9 @@ export function BotDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Link to="/">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="h-4 w-4" />
-              Back
-            </Button>
-          </Link>
-          <h1 className="text-2xl font-bold">{bot.name}</h1>
-          <Badge variant={statusBadge[bot.status].variant}>{statusBadge[bot.status].label}</Badge>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link to={`/bots/${botId}/edit`}>
-            <Button variant="outline" size="sm">
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
-          </Link>
-          <Link to={`/logs?botId=${botId}`}>
-            <Button variant="outline" size="sm">
-              <ScrollText className="h-4 w-4" />
-              Logs
-            </Button>
-          </Link>
-          <Button variant="destructive" size="sm" onClick={handleDelete}>
-            <Trash2 className="h-4 w-4" />
-            Delete
-          </Button>
-        </div>
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-bold">{bot.name}</h1>
+        <Badge variant={statusBadge[bot.status].variant}>{statusBadge[bot.status].label}</Badge>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -102,6 +76,12 @@ export function BotDashboardPage() {
               <span className="text-muted-foreground text-sm">Auto-start:</span>
               <span className="text-sm">{bot.isActive ? "Yes" : "No"}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground text-sm">AI Reply:</span>
+              <Badge variant={bot.aiEnabled ? "default" : "muted"}>
+                {bot.aiEnabled ? "Enabled" : "Disabled"}
+              </Badge>
+            </div>
             {bot.adminChatIds.length > 0 && (
               <div className="flex items-center gap-2">
                 <span className="text-muted-foreground text-sm">Admins:</span>
@@ -115,7 +95,7 @@ export function BotDashboardPage() {
           <CardHeader>
             <CardTitle className="text-base">Controls</CardTitle>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
@@ -148,6 +128,12 @@ export function BotDashboardPage() {
               >
                 <RefreshCw className="h-4 w-4" />
                 Restart
+              </Button>
+            </div>
+            <div className="border-t pt-4">
+              <Button variant="destructive" size="sm" onClick={handleDelete}>
+                <Trash2 className="h-4 w-4" />
+                Delete Bot
               </Button>
             </div>
           </CardContent>

@@ -1,6 +1,6 @@
-import type { BotConfig } from "@cos-tool-bot/bot";
+import type { AiReplyBotConfig, BotConfig } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
-import type { BotStatus } from "@cos-tool-bot/shared";
+import type { BotStatus, ConversationCallbacks } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
 
@@ -10,6 +10,8 @@ interface BotManagerOptions {
   adminChatIds: number[];
   logger: Logger;
   dbLogger: DbLogger;
+  aiReply?: AiReplyBotConfig;
+  conversation?: ConversationCallbacks;
 }
 
 export class BotManager {
@@ -29,6 +31,8 @@ export class BotManager {
       logger: options.logger,
       onRestart: () => this.restart(),
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
+      aiReply: options.aiReply,
+      conversation: options.conversation,
     };
   }
 

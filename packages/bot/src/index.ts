@@ -1,13 +1,17 @@
-import type { BotLogEntry } from "@cos-tool-bot/shared";
+import type { BotLogEntry, ConversationCallbacks } from "@cos-tool-bot/shared";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
+import { createClearCommand } from "./commands/clear.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { WrapperContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
+import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
 import { createLogMiddleware } from "./middleware/log.js";
+
+export type AiReplyBotConfig = Omit<AiReplyConfig, "adminChatIds" | "onLog">;
 
 export interface BotConfig {
   token: string;
@@ -15,6 +19,8 @@ export interface BotConfig {
   logger: Logger;
   onRestart?: () => void | Promise<void>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  aiReply?: AiReplyBotConfig;
+  conversation?: ConversationCallbacks;
 }
 
 export function createBot(config: BotConfig) {
@@ -32,8 +38,23 @@ export function createBot(config: BotConfig) {
   bot.command("help", helpCommand);
   bot.command("md2tg", md2tgCommand);
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
+  bot.command("clear", authGuard, createClearCommand(config.conversation));
 
-  bot.api.setMyCommands(commands);
+  if (config.aiReply) {
+    bot.on(
+      "message:text",
+      createAiReplyHandler({
+        ...config.aiReply,
+        adminChatIds,
+        onLog: config.onLog,
+      }),
+    );
+  }
+
+  bot.api.setMyCommands([
+    ...commands,
+    { command: "clear", description: "清除当前对话历史 (Admin)" },
+  ]);
 
   bot.catch((err) => {
     const ctx = err.ctx;
