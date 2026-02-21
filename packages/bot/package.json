@@ -1,0 +1,25 @@
+{
+  "name": "@cos-tool-bot/bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown src/index.ts --format esm --dts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@cos-tool-bot/shared": "workspace:*",
+    "grammy": "^1.22.4",
+    "pino": "^8.17.2",
+    "telegramify-markdown": "^1.2.2"
+  },
+  "devDependencies": {
+    "tsdown": "^0.9.3"
+  }
+}

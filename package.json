@@ -1,46 +1,36 @@
 {
-  "name": "cosine-tool-bot",
-  "version": "0.1.0",
-  "description": "一个SQLite + grammy + prisma 的 TG 机器人",
+  "name": "cos-tool-bot",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "A grammy Telegram bot with Hono API and Vue panel",
   "scripts": {
-    "db:init": "npx prisma migrate dev --name init",
-    "start": "ts-node -r tsconfig-paths/register ./src/app.ts --files",
-    "db:push": "npx prisma db push",
-    "db:migrate": "npx prisma migrate dev",
-    "db:view": "npx prisma studio",
-    "lint": "eslint src/**/*.ts --fix",
-    "pm2": "pm2 start ecosystem.config.js",
-    "pm2:restart": "pm2 restart ecosystem.config.js",
-    "pm2:stop": "pm2 stop ecosystem.config.js",
-    "pm2:log": "pm2 log ecosystem.config.js"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.490.0",
-    "@prisma/client": "5.13.0",
-    "axios": "^1.6.8",
-    "dotenv": "^16.3.1",
-    "grammy": "^1.22.4",
-    "mime-types": "^2.1.35",
-    "pino": "^8.17.2",
-    "pino-pretty": "^10.3.1",
-    "sqlite3": "^5.1.7",
-    "telegramify-markdown": "^1.2.2",
-    "ts-node": "^10.9.2",
-    "tsconfig-paths": "^4.2.0",
-    "typescript": "^5.3.3"
+    "dev": "concurrently \"pnpm --filter @cos-tool-bot/server dev\" \"pnpm --filter @cos-tool-bot/panel dev\"",
+    "dev:db": "docker compose -f docker-compose.dev.yml up -d",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @cos-tool-bot/database generate",
+    "db:migrate": "pnpm --filter @cos-tool-bot/database migrate",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "lint": "oxlint .",
+    "typecheck": "tsc -b"
   },
   "devDependencies": {
-    "@types/mime-types": "^2.1.4",
-    "@types/node": "^20.11.0",
-    "@typescript-eslint/eslint-plugin": "^6.18.1",
-    "@typescript-eslint/parser": "^6.18.1",
-    "eslint": "^8.56.0",
-    "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-prettier": "^5.1.3",
-    "prettier": "^3.1.1",
-    "prisma": "^5.13.0"
+    "@types/node": "^22.13.5",
+    "concurrently": "^9.1.2",
+    "oxlint": "^0.15.7",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  },
+  "packageManager": "pnpm@10.5.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "rolldown",
+      "@tailwindcss/oxide"
+    ]
   }
 }
