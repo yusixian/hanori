@@ -70,7 +70,7 @@ export class BotManager {
 
     this._status = "stopped";
     this.startedAt = null;
-    this.bot.stop();
+    await this.bot.stop();
     this.bot = null;
     await this.dbLogger.info("Bot stopped");
   }

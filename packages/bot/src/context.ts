@@ -58,7 +58,7 @@ export class WrapperContext extends Context {
     if (auto_delete) this.autoDelete();
   }
 
-  async resolveWait(message: string, parse_mode?: ParseMode) {
+  async resolveWait(message: string, parse_mode?: ParseMode): Promise<number> {
     if (this.waiting_message) {
       await this.api.editMessageText(
         this.waiting_message.chat.id,
@@ -66,8 +66,10 @@ export class WrapperContext extends Context {
         message,
         { parse_mode },
       );
+      return this.waiting_message.message_id;
     } else {
-      await this.directlyReply(message, parse_mode);
+      const sent = await this.directlyReply(message, parse_mode);
+      return sent.message_id;
     }
   }
 

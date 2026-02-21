@@ -73,8 +73,8 @@ export function BotProfilesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
-  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -130,7 +130,15 @@ export function BotProfilesPage() {
   const startEdit = (p: ProfileItem) => {
     setEditingId(p.id);
     setEditForm(profileToEditForm(p));
-    setExpandedId(p.id);
+  };
+
+  const toggleNotes = (id: number) => {
+    setExpandedNotes((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const cancelEdit = () => {
@@ -341,160 +349,161 @@ export function BotProfilesPage() {
           {profiles.map((p) => (
             <Card key={p.id}>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    className="flex items-center gap-3 text-left"
-                    onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
-                  >
-                    <CardTitle className="text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <CardTitle className="truncate text-sm">
                       {p.displayName || "Unknown"}{" "}
                       {p.username && (
                         <span className="text-muted-foreground font-normal">@{p.username}</span>
                       )}
                     </CardTitle>
-                    <span className="text-muted-foreground font-mono text-xs">
+                    <span className="text-muted-foreground shrink-0 font-mono text-xs">
                       ID: {p.telegramId}
                     </span>
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <span className="text-muted-foreground text-xs">
-                      Last seen: {new Date(p.lastSeen).toLocaleDateString()}
-                    </span>
-                    <Button variant="ghost" size="sm" onClick={() => startEdit(p)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(p.id)}>
-                      <Trash2 className="h-4 w-4 text-red-500" />
-                    </Button>
                   </div>
+                  <span className="text-muted-foreground shrink-0 text-xs">
+                    Last seen: {new Date(p.lastSeen).toLocaleDateString()}
+                  </span>
                 </div>
               </CardHeader>
-              {expandedId === p.id && (
-                <CardContent className="space-y-3 pt-0">
-                  {editingId === p.id && editForm ? (
-                    <div className="space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-muted-foreground text-xs">Display Name</label>
-                          <Input
-                            value={editForm.displayName}
-                            onChange={(e) =>
-                              setEditForm({
-                                ...editForm,
-                                displayName: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                        <div>
-                          <label className="text-muted-foreground text-xs">Username</label>
-                          <Input
-                            value={editForm.username}
-                            onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-muted-foreground text-xs">Relationship</label>
-                          <Input
-                            value={editForm.relationship}
-                            onChange={(e) =>
-                              setEditForm({
-                                ...editForm,
-                                relationship: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
-                      </div>
+              <CardContent className="space-y-2 pt-0">
+                {editingId === p.id && editForm ? (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
-                        <label className="text-muted-foreground text-xs">Notes</label>
-                        <textarea
-                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                          rows={3}
-                          value={editForm.notes}
-                          onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                        <label className="text-muted-foreground text-xs">Display Name</label>
+                        <Input
+                          value={editForm.displayName}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              displayName: e.target.value,
+                            })
+                          }
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div>
-                          <label className="text-muted-foreground text-xs">
-                            Traits (comma separated)
-                          </label>
-                          <Input
-                            value={editForm.traits}
-                            onChange={(e) => setEditForm({ ...editForm, traits: e.target.value })}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-muted-foreground text-xs">
-                            Interests (comma separated)
-                          </label>
-                          <Input
-                            value={editForm.interests}
-                            onChange={(e) =>
-                              setEditForm({
-                                ...editForm,
-                                interests: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
+                      <div>
+                        <label className="text-muted-foreground text-xs">Username</label>
+                        <Input
+                          value={editForm.username}
+                          onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                        />
                       </div>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={handleSave} disabled={saving}>
-                          {saving ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Check className="h-4 w-4" />
-                          )}
-                          Save
+                      <div>
+                        <label className="text-muted-foreground text-xs">Relationship</label>
+                        <Input
+                          value={editForm.relationship}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              relationship: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-muted-foreground text-xs">Notes</label>
+                      <textarea
+                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                        rows={3}
+                        value={editForm.notes}
+                        onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-muted-foreground text-xs">
+                          Traits (comma separated)
+                        </label>
+                        <Input
+                          value={editForm.traits}
+                          onChange={(e) => setEditForm({ ...editForm, traits: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-muted-foreground text-xs">
+                          Interests (comma separated)
+                        </label>
+                        <Input
+                          value={editForm.interests}
+                          onChange={(e) =>
+                            setEditForm({
+                              ...editForm,
+                              interests: e.target.value,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={handleSave} disabled={saving}>
+                        {saving ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="h-4 w-4" />
+                        )}
+                        Save
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={cancelEdit}>
+                        <X className="h-4 w-4" />
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {p.relationship && (
+                      <p className="text-muted-foreground text-sm">{p.relationship}</p>
+                    )}
+                    {((p.traits?.length ?? 0) > 0 || (p.interests?.length ?? 0) > 0) && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {p.traits?.map((t) => (
+                          <Badge key={t} variant="default">
+                            {t}
+                          </Badge>
+                        ))}
+                        {(p.traits?.length ?? 0) > 0 && (p.interests?.length ?? 0) > 0 && (
+                          <span className="text-muted-foreground mx-1 text-xs">|</span>
+                        )}
+                        {p.interests?.map((i) => (
+                          <Badge key={i} variant="muted">
+                            {i}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {p.notes && (
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        onClick={() => toggleNotes(p.id)}
+                      >
+                        <p
+                          className={`text-sm whitespace-pre-wrap ${
+                            expandedNotes.has(p.id) ? "" : "line-clamp-3"
+                          }`}
+                        >
+                          {p.notes}
+                        </p>
+                      </button>
+                    )}
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-muted-foreground text-xs">
+                        First seen: {new Date(p.firstSeen).toLocaleString()}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => startEdit(p)}>
+                          <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={cancelEdit}>
-                          <X className="h-4 w-4" />
-                          Cancel
+                        <Button variant="ghost" size="sm" onClick={() => handleDelete(p.id)}>
+                          <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       </div>
                     </div>
-                  ) : (
-                    <>
-                      {(p.traits?.length ?? 0) > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {p.traits!.map((t) => (
-                            <Badge key={t} variant="default">
-                              {t}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                      {(p.interests?.length ?? 0) > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {p.interests!.map((i) => (
-                            <Badge key={i} variant="muted">
-                              {i}
-                            </Badge>
-                          ))}
-                        </div>
-                      )}
-                      {p.relationship && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Relationship:</span>{" "}
-                          <span className="text-sm">{p.relationship}</span>
-                        </div>
-                      )}
-                      {p.notes && (
-                        <div>
-                          <span className="text-muted-foreground text-xs">Notes:</span>
-                          <p className="mt-1 text-sm whitespace-pre-wrap">{p.notes}</p>
-                        </div>
-                      )}
-                      <div className="text-muted-foreground text-xs">
-                        First seen: {new Date(p.firstSeen).toLocaleString()}
-                      </div>
-                    </>
-                  )}
-                </CardContent>
-              )}
+                  </>
+                )}
+              </CardContent>
             </Card>
           ))}
         </div>

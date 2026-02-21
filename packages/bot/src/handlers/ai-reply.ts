@@ -1,4 +1,5 @@
 import type {
+  AgentToolsConfig,
   AiGroupOverride,
   AiTriggerConfig,
   BotLogEntry,
@@ -7,6 +8,7 @@ import type {
   ConversationRole,
   MemoryCallbacks,
   MemoryConfig,
+  WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -14,7 +16,19 @@ import type { CoreTool } from "ai";
 import { generateText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { WrapperContext } from "../context.js";
-import { createActionTools, createMemoryTools } from "../tools/index.js";
+import { PendingActionRegistry } from "../services/pending-actions.js";
+import type { ContinueChatConfig } from "../services/continue-chat.js";
+import { continueChat } from "../services/continue-chat.js";
+import {
+  createActionTools,
+  createAgentTools,
+  createBehaviorTools,
+  createMemoryTools,
+  createTelegramTools,
+  createWebTools,
+  getAvailableAgentNames,
+} from "../tools/index.js";
+import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
 
@@ -33,6 +47,8 @@ export interface AiReplyConfig {
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
   stickerPacks?: string[];
+  webToolsConfig?: WebToolsConfig;
+  agentToolsConfig?: AgentToolsConfig;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
@@ -64,28 +80,80 @@ const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_STALE_MS = 30 * 60 * 1000;
 
-const ACTION_TOOL_NAMES = new Set(["react_to_message", "send_sticker"]);
+// Tools that produce visible side effects but should NOT be saved to conversation history
+const ACTION_TOOL_NAMES = new Set([
+  "react_to_message",
+  "send_sticker",
+  // Telegram tools
+  "send_photo",
+  "send_voice",
+  "send_document",
+  "send_poll",
+  "send_choice",
+  "close_poll",
+  "set_timer",
+  "cancel_timer",
+  "send_dice",
+  "edit_own_message",
+  "delete_own_message",
+  "pin_message",
+  "get_chat_info",
+  "reply_to_specific",
+  // Behavior tools
+  "think",
+  "multi_message",
+  "set_mood",
+]);
 
-async function safeReply(ctx: WrapperContext, text: string): Promise<void> {
+async function safeReply(ctx: WrapperContext, text: string): Promise<number | undefined> {
   try {
     const html = markdownToTelegramHtml(text);
-    await ctx.resolveWait(html, "HTML");
+    return await ctx.resolveWait(html, "HTML");
   } catch {
     try {
-      await ctx.resolveWait(text);
+      return await ctx.resolveWait(text);
     } catch {
-      await ctx.directlyReply(text).catch(() => {});
+      const sent = await ctx.directlyReply(text).catch(() => undefined);
+      return sent?.message_id;
     }
   }
 }
 
 const TOOL_STATUS_MAP: Record<string, string> = {
+  // Memory tools
   get_profile: "🔍 查询用户档案...",
   update_profile: "📝 更新用户档案...",
   search_profiles: "🔎 搜索人物...",
   search_history: "📜 查找历史对话...",
+  // Action tools
   react_to_message: "💫 添加表情...",
   send_sticker: "🎨 发送贴纸...",
+  // Telegram tools
+  send_photo: "📷 发送图片...",
+  send_voice: "🎙️ 发送语音...",
+  send_document: "📎 发送文件...",
+  send_poll: "📊 发起投票...",
+  send_choice: "🎮 发送选择...",
+  close_poll: "📊 关闭投票...",
+  set_timer: "⏱️ 设置定时器...",
+  cancel_timer: "⏱️ 取消定时器...",
+  send_dice: "🎲 掷骰子...",
+  edit_own_message: "✏️ 编辑消息...",
+  delete_own_message: "🗑️ 撤回消息...",
+  pin_message: "📌 置顶消息...",
+  get_chat_info: "ℹ️ 获取聊天信息...",
+  reply_to_specific: "↩️ 回复消息...",
+  // Behavior tools
+  think: "💭 思考中...",
+  multi_message: "💬 组织回复...",
+  set_mood: "🎭 调整情绪...",
+  // Web tools
+  web_search: "🌐 搜索中...",
+  fetch_webpage: "📄 阅读网页...",
+  get_current_time: "🕐 获取时间...",
+  generate_image: "🎨 生成图片...",
+  // Agent tools
+  delegate_task: "🤖 委派任务...",
 };
 
 function resolveGroupConfig(
@@ -188,16 +256,93 @@ const MEMORY_SYSTEM_PROMPT = `
 - 不要告诉用户你在使用工具，自然地回复即可
 `.trim();
 
-function buildActionToolsPrompt(hasStickerPacks: boolean): string {
-  const lines = [
-    "你还可以使用以下互动工具:",
-    "- react_to_message: 对当前消息添加 emoji 表情回应（如 👍 ❤ 🔥 😂 😢 🎉 🤩 😱 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 等），在觉得合适时自然使用",
-  ];
-  if (hasStickerPacks) {
-    lines.push("- send_sticker: 发送一个贴纸来表达情绪，提供一个 emoji 来匹配合适的贴纸");
+interface ExtendedToolsPromptOptions {
+  hasStickerPacks: boolean;
+  hasTTS: boolean;
+  hasWebTools: boolean;
+  hasSearchTool: boolean;
+  hasImageGeneration: boolean;
+  hasAgentTools: boolean;
+  availableAgents: string[];
+  isPrivate: boolean;
+}
+
+function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
+  const lines: string[] = [];
+
+  // Behavior tools (always available)
+  lines.push("你拥有以下高级行为工具:");
+  lines.push("- think: 内部推理，用于深度思考和规划。内容不会发送给用户。");
+  lines.push("- multi_message: 分多条消息回复（像真人那样）。使用后不需要再生成普通文本回复。");
+  lines.push("- set_mood: 设置你的情绪状态，影响后续回复语气。");
+
+  // Telegram interaction tools
+  lines.push("");
+  lines.push("Telegram 互动工具:");
+  lines.push("- react_to_message: 对当前消息添加 emoji 表情回应（如 👍 ❤ 🔥 😂 😢 🎉 🤩 😱 等）");
+  if (opts.hasStickerPacks) {
+    lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }
-  lines.push("注意: 这些工具用于增强互动体验，不要每条消息都使用。");
-  lines.push("重要: 无论是否使用了工具，你都必须生成文字回复内容，不要只调用工具而不回复文字。");
+  lines.push("- send_photo: 发送图片（URL 或 file_id）");
+  if (opts.hasTTS) {
+    lines.push("- send_voice: 发送语音消息（文本转语音）");
+  }
+  lines.push("- send_document: 发送文件");
+  lines.push("- send_poll: 发起投票（非匿名时投票结果会自动通知你）");
+  lines.push("- send_choice: 发送 inline keyboard 选择按钮（用户点击后你会自动收到通知）");
+  lines.push("- close_poll: 手动关闭投票并获取最终结果");
+  lines.push("- set_timer: 设置定时器，到期后你会自动收到通知继续对话");
+  lines.push("- cancel_timer: 取消定时器");
+  lines.push("- send_dice: 发送骰子/随机动画");
+  lines.push("- edit_own_message: 编辑 bot 之前发的消息");
+  lines.push("- delete_own_message: 删除/撤回 bot 之前发的消息");
+  lines.push("- pin_message: 置顶消息（需管理员权限）");
+  lines.push("- get_chat_info: 获取当前聊天信息");
+  lines.push("- reply_to_specific: 回复某条特定历史消息");
+
+  // Web tools
+  if (opts.hasWebTools) {
+    lines.push("");
+    lines.push("信息获取工具:");
+    lines.push("- get_current_time: 获取当前时间");
+    if (opts.hasSearchTool) {
+      lines.push("- web_search: 搜索网络获取最新信息");
+    }
+    lines.push("- fetch_webpage: 获取网页正文内容");
+    if (opts.hasImageGeneration) {
+      lines.push("- generate_image: AI 生成图片，配合 send_photo 发送");
+    }
+  }
+
+  // Agent tools
+  if (opts.hasAgentTools && opts.availableAgents.length > 0) {
+    lines.push("");
+    lines.push("子任务委派工具:");
+    lines.push(
+      `- delegate_task: 将复杂任务委派给专门的 agent (${opts.availableAgents.join(", ")})`,
+    );
+  }
+
+  lines.push("");
+  lines.push("使用指南:");
+  lines.push("- 互动工具用于增强体验，不要每条消息都使用");
+  lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
+  lines.push("- 使用 think 来思考复杂问题，但不要过度使用");
+  lines.push("");
+  lines.push("**选择交互规则（重要）**:");
+  lines.push(
+    "- 当你需要让用户做选择（如 galgame 剧情分支、多选一问答、互动游戏选项等），**禁止**在文本中用「1. 2. 3. 选数字」的方式，必须使用交互工具：",
+  );
+  if (opts.isPrivate) {
+    lines.push("  - 当前为私聊：使用 send_choice 发送 inline keyboard 按钮让用户点选");
+  } else {
+    lines.push("  - 当前为群聊：使用 send_poll 发起投票让群成员投票选择");
+    lines.push(
+      "  - 如果选项仅面向特定用户而非群体决策，也可以使用 send_choice 并指定 target_user_id",
+    );
+  }
+  lines.push("- 你可以先用文字描述选项内容/背景，然后紧跟 send_choice 或 send_poll 工具调用");
+
   return lines.join("\n");
 }
 
@@ -225,7 +370,22 @@ async function loadStickerPacks(
   }
 }
 
-export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperContext> {
+export interface BotRuntimeState {
+  getMood(chatId: number): MoodInfo | undefined;
+  getAllMoods(): ReadonlyMap<number, MoodInfo>;
+  getActiveGroupCount(): number;
+  getPendingActions(): PendingActionRegistry;
+  getContinueChatConfig(): ContinueChatConfig;
+  isPrivateChat(chatId: number): boolean;
+}
+
+const MAX_RECENT_BOT_MESSAGES = 20;
+const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
+
+export function createAiReplyHandler(config: AiReplyConfig): {
+  handler: Middleware<WrapperContext>;
+  state: BotRuntimeState;
+} {
   const cooldownMap = new Map<number, number>();
 
   // Create AI provider
@@ -241,11 +401,83 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
   if (memoryCfg.enabled && config.memory) {
     memoryTools = createMemoryTools(config.memory);
   }
+
+  // Web tools setup (singleton, not per-request)
+  let webTools: Record<string, CoreTool> | undefined;
+  if (config.webToolsConfig?.enabled) {
+    webTools = createWebTools({ config: config.webToolsConfig });
+  }
+
+  // Recent bot message IDs per chat (for edit/delete tools)
+  const recentBotMessageIds = new Map<number, number[]>();
+
+  // Mood state per chat
+  const moodState = new Map<number, MoodInfo>();
+
+  // Pending actions registry for interactive tools
+  const pendingActions = new PendingActionRegistry();
+
+  // Track known private chats
+  const knownPrivateChats = new Set<number>();
+
+  // Captured bot API reference (set on first request)
+  let botApi: Api | undefined;
+
+  // Timer fired callback - triggers continueChat
+  const onTimerFired = (timerChatId: number, timerId: string, reason: string) => {
+    if (!botApi) return;
+    const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
+    continueChat(botApi, buildContinueChatConfig(), {
+      chatId: timerChatId,
+      eventDescription,
+    }).catch((err) => {
+      config.onLog?.({
+        level: "error",
+        message: `Timer continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
+        meta: { chatId: timerChatId, timerId },
+      });
+    });
+  };
+
+  function buildContinueChatConfig(): ContinueChatConfig {
+    return {
+      model: provider(config.model),
+      systemPrompt: config.systemPrompt,
+      behavioralPrompt: config.behavioralPrompt,
+      conversationConfig: config.conversationConfig,
+      conversation: config.conversation,
+      memoryConfig: config.memoryConfig,
+      memory: config.memory,
+      webToolsConfig: config.webToolsConfig,
+      agentToolsConfig: config.agentToolsConfig,
+      webTools,
+      agentToolsFactory: config.agentToolsConfig?.enabled
+        ? () =>
+            createAgentTools({
+              provider: (m) => provider(m),
+              model: config.model,
+              agentConfig: config.agentToolsConfig!,
+              webToolsConfig: config.webToolsConfig,
+              onLog: config.onLog,
+            })
+        : undefined,
+      pendingActions,
+      recentBotMessageIds,
+      moodState,
+      onTimerFired,
+      onLog: config.onLog,
+    };
+  }
+
   const cleanupTimer = setInterval(() => {
     const now = Date.now();
     const maxCooldown = config.triggerConfig.randomReplyCooldown * 1000;
     for (const [chatId, lastTime] of cooldownMap) {
       if (now - lastTime > maxCooldown * 2) cooldownMap.delete(chatId);
+    }
+    // Clean expired moods
+    for (const [chatId, mood] of moodState) {
+      if (now - mood.timestamp > MOOD_EXPIRE_MS) moodState.delete(chatId);
     }
   }, COOLDOWN_CLEANUP_INTERVAL);
   cleanupTimer.unref();
@@ -283,7 +515,23 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
     return entry.buffer;
   }
 
-  return async (ctx, next) => {
+  const state: BotRuntimeState = {
+    getMood: (chatId) => {
+      const mood = moodState.get(chatId);
+      if (mood && Date.now() - mood.timestamp > MOOD_EXPIRE_MS) {
+        moodState.delete(chatId);
+        return undefined;
+      }
+      return mood;
+    },
+    getAllMoods: () => moodState,
+    getActiveGroupCount: () => groupBuffers.size,
+    getPendingActions: () => pendingActions,
+    getContinueChatConfig: () => buildContinueChatConfig(),
+    isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
+  };
+
+  const handler: Middleware<WrapperContext> = async (ctx, next) => {
     if (!ctx.message?.text) return next();
 
     // Skip commands
@@ -298,6 +546,10 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
     const isPrivate = ctx.chat?.type === "private";
     const userId = ctx.from?.id;
     if (!userId) return next();
+
+    // Capture API reference and track private chats for event handlers
+    botApi = ctx.api;
+    if (isPrivate) knownPrivateChats.add(chatId);
 
     const isAdmin = config.adminChatIds.includes(userId);
     const userName = getUserDisplayName(ctx);
@@ -347,6 +599,15 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
       }
       if (stickerCachePromise) await stickerCachePromise;
 
+      // Per-chat recent bot message IDs
+      let chatBotMsgIds = recentBotMessageIds.get(chatId);
+      if (!chatBotMsgIds) {
+        chatBotMsgIds = [];
+        recentBotMessageIds.set(chatId, chatBotMsgIds);
+      }
+      // Trim old IDs
+      while (chatBotMsgIds.length > MAX_RECENT_BOT_MESSAGES) chatBotMsgIds.shift();
+
       // Create per-request action tools
       const actionTools = createActionTools({
         api: ctx.api,
@@ -354,6 +615,36 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
         messageId: ctx.message.message_id,
         stickerCache,
       });
+
+      // Create per-request telegram tools
+      const telegramTools = createTelegramTools({
+        api: ctx.api,
+        chatId,
+        recentBotMessageIds: chatBotMsgIds,
+        pendingActions,
+        onTimerFired,
+      });
+
+      // Create per-request behavior tools
+      const behaviorTools = createBehaviorTools({
+        api: ctx.api,
+        chatId,
+        recentBotMessageIds: chatBotMsgIds,
+        moodState,
+        onLog: config.onLog,
+      });
+
+      // Create agent tools if enabled
+      let agentTools: Record<string, CoreTool> = {};
+      if (config.agentToolsConfig?.enabled) {
+        agentTools = createAgentTools({
+          provider: (m) => provider(m),
+          model: config.model,
+          agentConfig: config.agentToolsConfig,
+          webToolsConfig: config.webToolsConfig,
+          onLog: config.onLog,
+        });
+      }
 
       // Build messages array
       const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
@@ -494,10 +785,31 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
         }
       }
 
-      // Inject action tools prompt
+      // Inject mood state into system prompt
+      const currentMood = moodState.get(chatId);
+      if (currentMood && messages.length > 0 && messages[0]!.role === "system") {
+        const moodStr = currentMood.reason
+          ? `[当前情绪: ${currentMood.mood}，原因: ${currentMood.reason}]`
+          : `[当前情绪: ${currentMood.mood}]`;
+        messages[0]!.content += `\n\n${moodStr}`;
+      }
+
+      // Inject extended tools prompt
       if (messages.length > 0 && messages[0]!.role === "system") {
-        const actionPrompt = buildActionToolsPrompt(!!config.stickerPacks?.length);
-        messages[0]!.content += `\n\n${actionPrompt}`;
+        const availableAgents = config.agentToolsConfig?.enabled
+          ? getAvailableAgentNames(config.agentToolsConfig, config.webToolsConfig)
+          : [];
+        const extendedPrompt = buildExtendedToolsPrompt({
+          hasStickerPacks: !!config.stickerPacks?.length,
+          hasTTS: false,
+          hasWebTools: !!config.webToolsConfig?.enabled,
+          hasSearchTool: !!webTools?.web_search,
+          hasImageGeneration: !!config.webToolsConfig?.imageGeneration,
+          hasAgentTools: !!config.agentToolsConfig?.enabled,
+          availableAgents,
+          isPrivate,
+        });
+        messages[0]!.content += `\n\n${extendedPrompt}`;
       }
 
       // Current user message
@@ -505,8 +817,18 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
       messages.push({ role: "user", content: currentContent });
 
       // Combine all tools
-      const allTools: Record<string, CoreTool> = { ...(memoryTools ?? {}), ...actionTools };
-      const maxSteps = Math.max(memoryCfg.maxSteps || 3, 2);
+      const allTools: Record<string, CoreTool> = {
+        ...memoryTools,
+        ...actionTools,
+        ...telegramTools,
+        ...behaviorTools,
+        ...webTools,
+        ...agentTools,
+      };
+      // Increase maxSteps when agent tools or web tools are available
+      const baseMaxSteps = memoryCfg.maxSteps || 3;
+      const hasAdvancedTools = config.agentToolsConfig?.enabled || config.webToolsConfig?.enabled;
+      const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
       const toolChoice = memoryCfg.toolChoice ?? "auto";
 
       // Debug: AI request
@@ -711,20 +1033,30 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
         config.conversation!.triggerCompression(chatId);
       }
 
+      // Check if multi_message was used (already sent messages directly)
+      const hasMultiMessage = result.steps.some((s) =>
+        s.toolCalls.some((tc) => tc.toolName === "multi_message"),
+      );
+
       // Final response: edit the waiting message
-      if (text) {
+      if (hasMultiMessage) {
+        // multi_message already sent messages, just clean up waiting message
+        await ctx.deleteWaiting();
+      } else if (text) {
         const replyText =
           text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
-        await safeReply(ctx, replyText);
+        const replyMsgId = await safeReply(ctx, replyText);
+        if (replyMsgId) chatBotMsgIds.push(replyMsgId);
       } else {
-        // Check if any action tools produced visible effects (sticker, reaction)
+        // Check if any action tools produced visible effects (sticker, reaction, telegram actions)
         const hasVisibleAction = result.steps.some((s) =>
           s.toolCalls.some((tc) => ACTION_TOOL_NAMES.has(tc.toolName)),
         );
         if (hasVisibleAction) {
           await ctx.deleteWaiting();
         } else {
-          await safeReply(ctx, "(AI 未生成回复内容)");
+          const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
+          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
         }
       }
 
@@ -755,4 +1087,6 @@ export function createAiReplyHandler(config: AiReplyConfig): Middleware<WrapperC
       }
     }
   };
+
+  return { handler, state };
 }

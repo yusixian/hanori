@@ -179,6 +179,8 @@ export class BotPool {
         memoryConfig: memoryCfg,
         memory,
         stickerPacks: aiConfig.stickerPacks,
+        webToolsConfig: aiConfig.webToolsConfig,
+        agentToolsConfig: aiConfig.agentToolsConfig,
       };
     }
 

@@ -4,8 +4,14 @@ import type { WrapperContext } from "../context.js";
 
 export function createClearCommand(
   conversation?: ConversationCallbacks,
+  adminChatIds: number[] = [],
 ): CommandMiddleware<WrapperContext> {
   return async (ctx) => {
+    // 群聊中仅 admin 可用，私聊任何人都能清除自己的上下文
+    if (ctx.chat?.type !== "private" && !adminChatIds.includes(ctx.from?.id ?? 0)) {
+      return ctx.reply("权限不足：群聊中仅管理员可使用此命令");
+    }
+
     if (!conversation) {
       return ctx.reply("对话历史功能未启用");
     }

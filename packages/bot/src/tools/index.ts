@@ -1,20 +1,10 @@
 import type { MemoryCallbacks } from "@cos-tool-bot/shared";
-import type { CoreTool, JSONValue } from "ai";
-import { jsonSchema, tool } from "ai";
+import type { CoreTool } from "ai";
+import { tool } from "ai";
 import type { Api } from "grammy";
 import type { ReactionType } from "grammy/types";
 import { z } from "zod";
-
-/**
- * Convert a Zod v4 schema to an AI SDK-compatible JSON Schema.
- * The AI SDK internally uses `zod-to-json-schema` (designed for Zod v3),
- * which produces invalid output with Zod v4. This helper uses Zod v4's
- * native `z.toJSONSchema()` and wraps the result with AI SDK's `jsonSchema()`.
- */
-function zodToAiSchema<T extends z.ZodType>(schema: T) {
-  const json = z.toJSONSchema(schema, { unrepresentable: "any", io: "input" });
-  return jsonSchema<z.infer<T>>(json as JSONValue);
-}
+import { zodToAiSchema } from "./utils.js";
 
 export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreTool> {
   return {
@@ -170,3 +160,14 @@ export function createActionTools(options: ActionToolsOptions): Record<string, C
     }),
   };
 }
+
+// Re-export all tool factories
+export { createTelegramTools } from "./telegram.js";
+export type { TelegramToolsOptions } from "./telegram.js";
+export { createBehaviorTools } from "./behavior.js";
+export type { BehaviorToolsOptions, MoodInfo } from "./behavior.js";
+export { createWebTools } from "./web.js";
+export type { WebToolsOptions } from "./web.js";
+export { createAgentTools, getAvailableAgentNames } from "./agents.js";
+export type { AgentToolsOptions } from "./agents.js";
+export { PendingActionRegistry } from "../services/pending-actions.js";

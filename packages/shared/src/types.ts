@@ -139,6 +139,35 @@ export interface ConversationCallbacks {
   clearHistory(chatId: number): Promise<void>;
 }
 
+export interface WebToolsConfig {
+  enabled: boolean;
+  search?: {
+    provider: "tavily" | "searxng" | "custom";
+    apiKey?: string;
+    baseURL?: string;
+  };
+  imageGeneration?: {
+    provider: "openai" | "custom";
+    apiKey?: string;
+    baseURL?: string;
+    model?: string;
+    size?: string;
+  };
+}
+
+export interface AgentToolsConfig {
+  enabled: boolean;
+  subAgentModel?: string;
+  maxSubAgentSteps?: number;
+  agents?: Record<
+    string,
+    {
+      enabled?: boolean;
+      systemPrompt?: string;
+    }
+  >;
+}
+
 export interface AiConfigStored {
   enabled: boolean;
   encryptedApiKey: string | null;
@@ -152,6 +181,8 @@ export interface AiConfigStored {
   conversationConfig?: ConversationConfig;
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
+  webToolsConfig?: WebToolsConfig;
+  agentToolsConfig?: AgentToolsConfig;
 }
 
 export interface AiConfigPublic {
@@ -167,6 +198,8 @@ export interface AiConfigPublic {
   conversationConfig?: ConversationConfig;
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
+  webToolsConfig?: WebToolsConfig;
+  agentToolsConfig?: AgentToolsConfig;
 }
 
 export type CommandEntity = {

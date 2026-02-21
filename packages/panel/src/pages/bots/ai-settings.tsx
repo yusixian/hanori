@@ -3,11 +3,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { client } from "@/lib/client";
 import type {
+  AgentToolsConfig,
   AiConfigPublic,
   AiGroupOverride,
   AiTriggerConfig,
   ConversationConfig,
   MemoryConfig,
+  WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { Loader2, Plus, Trash2 } from "lucide-react";
@@ -25,6 +27,14 @@ const DEFAULT_TRIGGER: AiTriggerConfig = {
   triggerWords: [],
   randomReplyPercent: 0,
   randomReplyCooldown: 60,
+};
+
+const DEFAULT_WEB_TOOLS: WebToolsConfig = {
+  enabled: false,
+};
+
+const DEFAULT_AGENT_TOOLS: AgentToolsConfig = {
+  enabled: false,
 };
 
 const DEFAULT_CONFIG: AiConfigPublic = {
@@ -51,6 +61,7 @@ export function BotAiSettingsPage() {
 
   // New group form
   const [triggerWordsText, setTriggerWordsText] = useState("");
+  const [stickerPacksText, setStickerPacksText] = useState("");
   const [newChatId, setNewChatId] = useState("");
   const [newChatTitle, setNewChatTitle] = useState("");
 
@@ -62,6 +73,7 @@ export function BotAiSettingsPage() {
       if (json.ok) {
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
+        setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
       }
     } catch {
       setMessage({ type: "error", text: "Failed to load AI config" });
@@ -93,12 +105,19 @@ export function BotAiSettingsPage() {
           groupOverrides: config.groupOverrides,
           conversationConfig: config.conversationConfig,
           memoryConfig: config.memoryConfig,
+          webToolsConfig: config.webToolsConfig,
+          agentToolsConfig: config.agentToolsConfig,
+          stickerPacks: stickerPacksText
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
         },
       });
       const json = await res.json();
       if (json.ok) {
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
+        setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
         setApiKey("");
         setMessage({ type: "success", text: "AI config saved" });
       } else {
@@ -192,6 +211,22 @@ export function BotAiSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       conversationConfig: { ...convCfg, ...prev.conversationConfig, ...updates },
+    }));
+  };
+
+  const webCfg = config.webToolsConfig ?? DEFAULT_WEB_TOOLS;
+  const updateWebTools = (updates: Partial<WebToolsConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      webToolsConfig: { ...webCfg, ...prev.webToolsConfig, ...updates },
+    }));
+  };
+
+  const agentCfg = config.agentToolsConfig ?? DEFAULT_AGENT_TOOLS;
+  const updateAgentTools = (updates: Partial<AgentToolsConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      agentToolsConfig: { ...agentCfg, ...prev.agentToolsConfig, ...updates },
     }));
   };
 
@@ -692,6 +727,289 @@ export function BotAiSettingsPage() {
             <label htmlFor="autoUpdateLastSeen" className="text-sm">
               Auto-update last seen on message
             </label>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Web Tools */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Web Tools</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="webToolsEnabled"
+              checked={webCfg.enabled}
+              onChange={(e) => updateWebTools({ enabled: e.target.checked })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="webToolsEnabled" className="text-sm font-medium">
+              Enable Web Tools
+            </label>
+          </div>
+
+          {/* Search */}
+          <div className="space-y-4 border-t pt-4">
+            <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+              Web Search
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Provider</label>
+              <select
+                className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
+                disabled={!webCfg.enabled}
+                value={webCfg.search?.provider ?? "tavily"}
+                onChange={(e) =>
+                  updateWebTools({
+                    search: {
+                      ...webCfg.search,
+                      provider: e.target.value as "tavily" | "searxng" | "custom",
+                    },
+                  })
+                }
+              >
+                <option value="tavily">Tavily</option>
+                <option value="searxng">SearXNG</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            {(webCfg.search?.provider ?? "tavily") === "tavily" && (
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">API Key</label>
+                <Input
+                  type="password"
+                  disabled={!webCfg.enabled}
+                  value={webCfg.search?.apiKey ?? ""}
+                  onChange={(e) =>
+                    updateWebTools({
+                      search: {
+                        ...webCfg.search,
+                        provider: "tavily",
+                        apiKey: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="Tavily API key"
+                />
+              </div>
+            )}
+            {(webCfg.search?.provider ?? "tavily") !== "tavily" && (
+              <>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Base URL</label>
+                  <Input
+                    disabled={!webCfg.enabled}
+                    value={webCfg.search?.baseURL ?? ""}
+                    onChange={(e) =>
+                      updateWebTools({
+                        search: {
+                          ...webCfg.search,
+                          provider: webCfg.search?.provider ?? "searxng",
+                          baseURL: e.target.value,
+                        },
+                      })
+                    }
+                    placeholder={
+                      webCfg.search?.provider === "searxng"
+                        ? "https://searxng.example.com"
+                        : "https://api.example.com"
+                    }
+                  />
+                </div>
+                {webCfg.search?.provider === "custom" && (
+                  <div className="space-y-1.5">
+                    <label className="text-sm font-medium">API Key</label>
+                    <Input
+                      type="password"
+                      disabled={!webCfg.enabled}
+                      value={webCfg.search?.apiKey ?? ""}
+                      onChange={(e) =>
+                        updateWebTools({
+                          search: {
+                            ...webCfg.search,
+                            provider: "custom",
+                            apiKey: e.target.value,
+                          },
+                        })
+                      }
+                      placeholder="Custom search API key"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Image Generation */}
+          <div className="space-y-4 border-t pt-4">
+            <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+              Image Generation
+            </p>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Provider</label>
+              <select
+                className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
+                disabled={!webCfg.enabled}
+                value={webCfg.imageGeneration?.provider ?? "openai"}
+                onChange={(e) =>
+                  updateWebTools({
+                    imageGeneration: {
+                      ...webCfg.imageGeneration,
+                      provider: e.target.value as "openai" | "custom",
+                    },
+                  })
+                }
+              >
+                <option value="openai">OpenAI</option>
+                <option value="custom">Custom</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">API Key</label>
+              <Input
+                type="password"
+                disabled={!webCfg.enabled}
+                value={webCfg.imageGeneration?.apiKey ?? ""}
+                onChange={(e) =>
+                  updateWebTools({
+                    imageGeneration: {
+                      ...webCfg.imageGeneration,
+                      provider: webCfg.imageGeneration?.provider ?? "openai",
+                      apiKey: e.target.value,
+                    },
+                  })
+                }
+                placeholder="Image generation API key"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Base URL</label>
+              <Input
+                disabled={!webCfg.enabled}
+                value={webCfg.imageGeneration?.baseURL ?? ""}
+                onChange={(e) =>
+                  updateWebTools({
+                    imageGeneration: {
+                      ...webCfg.imageGeneration,
+                      provider: webCfg.imageGeneration?.provider ?? "openai",
+                      baseURL: e.target.value,
+                    },
+                  })
+                }
+                placeholder="https://api.openai.com/v1/"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Model</label>
+                <Input
+                  disabled={!webCfg.enabled}
+                  value={webCfg.imageGeneration?.model ?? ""}
+                  onChange={(e) =>
+                    updateWebTools({
+                      imageGeneration: {
+                        ...webCfg.imageGeneration,
+                        provider: webCfg.imageGeneration?.provider ?? "openai",
+                        model: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="dall-e-3"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Size</label>
+                <Input
+                  disabled={!webCfg.enabled}
+                  value={webCfg.imageGeneration?.size ?? ""}
+                  onChange={(e) =>
+                    updateWebTools({
+                      imageGeneration: {
+                        ...webCfg.imageGeneration,
+                        provider: webCfg.imageGeneration?.provider ?? "openai",
+                        size: e.target.value,
+                      },
+                    })
+                  }
+                  placeholder="1024x1024"
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Agent Tools */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Agent Tools</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="agentToolsEnabled"
+              checked={agentCfg.enabled}
+              onChange={(e) => updateAgentTools({ enabled: e.target.checked })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="agentToolsEnabled" className="text-sm font-medium">
+              Enable Agent Tools
+            </label>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            Allow the AI to delegate tasks to sub-agents for complex multi-step work.
+          </p>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Sub-agent Model</label>
+            <Input
+              disabled={!agentCfg.enabled}
+              value={agentCfg.subAgentModel ?? ""}
+              onChange={(e) => updateAgentTools({ subAgentModel: e.target.value || undefined })}
+              placeholder="Leave empty to use main model"
+            />
+            <p className="text-muted-foreground text-xs">
+              Optional model for sub-agents. Leave empty to use the same model as the main AI.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Max Sub-agent Steps</label>
+            <Input
+              type="number"
+              min={1}
+              max={15}
+              disabled={!agentCfg.enabled}
+              value={agentCfg.maxSubAgentSteps ?? 5}
+              onChange={(e) => updateAgentTools({ maxSubAgentSteps: Number(e.target.value) })}
+            />
+            <p className="text-muted-foreground text-xs">
+              Maximum tool-calling rounds per sub-agent (1-15)
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sticker Packs */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Sticker Packs</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Sticker Pack Names</label>
+            <Input
+              value={stickerPacksText}
+              onChange={(e) => setStickerPacksText(e.target.value)}
+              placeholder="pack_name_1, pack_name_2"
+            />
+            <p className="text-muted-foreground text-xs">
+              Comma-separated sticker pack names. The AI can use stickers from these packs in
+              replies.
+            </p>
           </div>
         </CardContent>
       </Card>

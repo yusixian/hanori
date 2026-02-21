@@ -71,6 +71,9 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     groupOverrides: config.groupOverrides,
     conversationConfig: config.conversationConfig,
     memoryConfig: config.memoryConfig,
+    stickerPacks: config.stickerPacks,
+    webToolsConfig: config.webToolsConfig,
+    agentToolsConfig: config.agentToolsConfig,
   };
 }
 
@@ -134,6 +137,44 @@ const aiConfigSchema = z
         toolChoice: z.enum(["auto", "required"]),
       })
       .optional(),
+    webToolsConfig: z
+      .object({
+        enabled: z.boolean(),
+        search: z
+          .object({
+            provider: z.enum(["tavily", "searxng", "custom"]),
+            apiKey: z.string().optional(),
+            baseURL: z.string().optional(),
+          })
+          .optional(),
+        imageGeneration: z
+          .object({
+            provider: z.enum(["openai", "custom"]),
+            apiKey: z.string().optional(),
+            baseURL: z.string().optional(),
+            model: z.string().optional(),
+            size: z.string().optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+    agentToolsConfig: z
+      .object({
+        enabled: z.boolean(),
+        subAgentModel: z.string().optional(),
+        maxSubAgentSteps: z.number().min(1).max(15).optional(),
+        agents: z
+          .record(
+            z.string(),
+            z.object({
+              enabled: z.boolean().optional(),
+              systemPrompt: z.string().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .optional(),
+    stickerPacks: z.array(z.string()).optional(),
   })
   .refine((data) => !data.enabled || (data.baseURL.length > 0 && data.model.length > 0), {
     message: "baseURL and model are required when AI is enabled",
@@ -297,7 +338,9 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         groupOverrides: body.groupOverrides,
         conversationConfig: body.conversationConfig,
         memoryConfig: body.memoryConfig,
-        stickerPacks: bot.aiConfig?.stickerPacks,
+        stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
+        webToolsConfig: body.webToolsConfig,
+        agentToolsConfig: body.agentToolsConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

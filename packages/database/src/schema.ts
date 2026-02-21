@@ -66,6 +66,33 @@ interface AiConfigJson {
     toolChoice: "auto" | "required";
   };
   stickerPacks?: string[];
+  webToolsConfig?: {
+    enabled: boolean;
+    search?: {
+      provider: "tavily" | "searxng" | "custom";
+      apiKey?: string;
+      baseURL?: string;
+    };
+    imageGeneration?: {
+      provider: "openai" | "custom";
+      apiKey?: string;
+      baseURL?: string;
+      model?: string;
+      size?: string;
+    };
+  };
+  agentToolsConfig?: {
+    enabled: boolean;
+    subAgentModel?: string;
+    maxSubAgentSteps?: number;
+    agents?: Record<
+      string,
+      {
+        enabled?: boolean;
+        systemPrompt?: string;
+      }
+    >;
+  };
 }
 
 export const settings = pgTable("settings", {
