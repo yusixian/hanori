@@ -18,6 +18,8 @@ pnpm db:migrate       # Run Drizzle migrations
 
 # Quality
 pnpm lint             # oxlint (no ESLint/Prettier)
+pnpm fmt:check        # oxfmt format check
+pnpm fmt              # oxfmt auto-fix formatting
 pnpm typecheck        # tsc -b (monorepo composite build)
 
 # Docker
@@ -58,11 +60,24 @@ Commands live in `packages/bot/src/commands/`. Admin commands use `createAuthGua
 
 `DbLogger` writes to both pino stdout and the `botLogs` database table. The panel receives real-time logs via SSE at `GET /api/logs/stream` using fetch + ReadableStream (not EventSource).
 
+## Pre-commit Checklist
+
+**Every commit MUST pass lint and format checks.** Pre-commit hooks (simple-git-hooks + lint-staged) run automatically, but you should also verify manually before committing:
+
+```bash
+pnpm lint             # must pass with no errors
+pnpm fmt:check        # must pass with no format issues
+pnpm typecheck        # must pass with no type errors
+```
+
+If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed files.
+
 ## Conventions
 
 - **ESM only** — all packages use `"type": "module"`, imports require `.js` extensions in non-bundled code
 - **Build tools** — tsdown for backend packages, Vite for panel
 - **Linting** — oxlint only, no ESLint or Prettier
+- **Formatting** — oxfmt (with Tailwind class sorting via `.oxfmtrc.json`)
 - **TypeScript** — strict mode, `module: "ESNext"`, `moduleResolution: "bundler"`
 - **Panel styling** — Tailwind CSS v4, utility classes via `clsx` + `tailwind-merge`
 - **State** — Refine v4 for data/auth, jotai for local state
