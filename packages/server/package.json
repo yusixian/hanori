@@ -6,11 +6,12 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
-    "dev": "tsx --env-file=../../.env --watch src/index.ts",
+    "dev": "PORT=3000 tsx --conditions=development --env-file=../../.env --watch src/index.ts",
     "build": "tsdown src/index.ts --format esm",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"

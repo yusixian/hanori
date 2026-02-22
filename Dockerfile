@@ -33,13 +33,18 @@ COPY --from=deps /app/packages/database/node_modules ./packages/database/node_mo
 COPY --from=deps /app/packages/bot/node_modules ./packages/bot/node_modules
 COPY --from=deps /app/packages/server/node_modules ./packages/server/node_modules
 COPY package.json pnpm-workspace.yaml ./
-COPY packages/shared/package.json packages/shared/dist ./packages/shared/
-COPY packages/database/package.json packages/database/dist ./packages/database/
-COPY packages/bot/package.json packages/bot/dist ./packages/bot/
-COPY packages/server/package.json packages/server/dist ./packages/server/
+COPY --from=builder /app/packages/shared/package.json ./packages/shared/
+COPY --from=builder /app/packages/shared/dist ./packages/shared/dist
+COPY --from=builder /app/packages/database/package.json ./packages/database/
+COPY --from=builder /app/packages/database/dist ./packages/database/dist
+COPY --from=builder /app/packages/database/drizzle ./packages/database/drizzle
+COPY --from=builder /app/packages/bot/package.json ./packages/bot/
+COPY --from=builder /app/packages/bot/dist ./packages/bot/dist
+COPY --from=builder /app/packages/server/package.json ./packages/server/
+COPY --from=builder /app/packages/server/dist ./packages/server/dist
 
 # Copy panel build output as static files for Hono to serve
-COPY --from=builder /app/packages/panel/dist ./packages/server/public
+COPY --from=builder /app/packages/panel/dist ./public
 
 EXPOSE 3000
 CMD ["node", "packages/server/dist/index.js"]

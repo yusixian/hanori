@@ -1,4 +1,4 @@
-import { createDb } from "@cos-tool-bot/database";
+import { createDb, runMigrations } from "@cos-tool-bot/database";
 import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app.js";
@@ -25,6 +25,8 @@ if (env.USING_DEFAULT_ENCRYPTION_KEY) {
 }
 
 // Database
+await runMigrations(env.DATABASE_URL);
+logger.info("Database migrated");
 const db = createDb(env.DATABASE_URL);
 logger.info("Database connected");
 
