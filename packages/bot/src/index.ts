@@ -100,7 +100,10 @@ export function createBot(config: BotConfig) {
     bot.on("message:text", aiHandler);
   }
 
-  bot.api.setMyCommands(commands);
+  bot.api.setMyCommands(commands).catch((err) => {
+    const desc = err instanceof GrammyError ? err.description : String(err);
+    logger.warn(`Failed to set commands: ${desc}`);
+  });
 
   bot.catch((err) => {
     const ctx = err.ctx;

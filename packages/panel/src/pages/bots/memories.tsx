@@ -218,7 +218,7 @@ export function BotMemoriesPage() {
                 placeholder="Memory content..."
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-muted-foreground text-xs">Category</label>
                 <Input
@@ -359,7 +359,7 @@ export function BotMemoriesPage() {
                         onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <label className="text-muted-foreground text-xs">Category</label>
                         <Input

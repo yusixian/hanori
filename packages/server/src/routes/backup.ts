@@ -30,6 +30,21 @@ const storageConfigSchema = z.discriminatedUnion("type", [
     accessKeyId: z.string().min(1),
     secretAccessKey: z.string().min(1),
     prefix: z.string().optional(),
+    forcePathStyle: z.boolean().optional(),
+    storageClass: z
+      .enum([
+        "STANDARD",
+        "REDUCED_REDUNDANCY",
+        "STANDARD_IA",
+        "ONEZONE_IA",
+        "INTELLIGENT_TIERING",
+        "GLACIER",
+        "DEEP_ARCHIVE",
+        "GLACIER_IR",
+      ])
+      .optional(),
+    serverSideEncryption: z.enum(["AES256", "aws:kms", "aws:kms:dsse"]).optional(),
+    sseKmsKeyId: z.string().optional(),
   }),
 ]);
 
@@ -73,6 +88,10 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
 
       const record = await backupService.getBackup(id);
       if (!record) return c.json({ ok: false as const, error: "Backup not found" }, 404);
+
+      if (record.status === "failed") {
+        return c.json({ ok: false as const, error: "Cannot download a failed backup" }, 400);
+      }
 
       const filePath = backupService.getBackupFilePath(record.filename);
       try {
@@ -159,6 +178,10 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
           accessKeyId: body.storage.accessKeyId,
           encryptedSecretKey,
           prefix: body.storage.prefix,
+          forcePathStyle: body.storage.forcePathStyle,
+          storageClass: body.storage.storageClass,
+          serverSideEncryption: body.storage.serverSideEncryption,
+          sseKmsKeyId: body.storage.sseKmsKeyId,
         } satisfies BackupConfigS3;
       }
 
@@ -188,7 +211,17 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
               data: { ok: false, error: "No existing WebDAV config" },
             });
           }
-          password = decrypt(existing.storage.encryptedPassword, encryptionKey);
+          try {
+            password = decrypt(existing.storage.encryptedPassword, encryptionKey);
+          } catch {
+            return c.json({
+              ok: true as const,
+              data: {
+                ok: false,
+                error: "Encryption key mismatch, cannot decrypt storage credentials",
+              },
+            });
+          }
         } else {
           password = body.storage.password;
         }
@@ -208,7 +241,17 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
               data: { ok: false, error: "No existing S3 config" },
             });
           }
-          secretAccessKey = decrypt(existing.storage.encryptedSecretKey, encryptionKey);
+          try {
+            secretAccessKey = decrypt(existing.storage.encryptedSecretKey, encryptionKey);
+          } catch {
+            return c.json({
+              ok: true as const,
+              data: {
+                ok: false,
+                error: "Encryption key mismatch, cannot decrypt storage credentials",
+              },
+            });
+          }
         } else {
           secretAccessKey = body.storage.secretAccessKey;
         }
@@ -220,6 +263,10 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
           accessKeyId: body.storage.accessKeyId,
           encryptedSecretKey: encrypt(secretAccessKey, encryptionKey),
           prefix: body.storage.prefix,
+          forcePathStyle: body.storage.forcePathStyle,
+          storageClass: body.storage.storageClass,
+          serverSideEncryption: body.storage.serverSideEncryption,
+          sseKmsKeyId: body.storage.sseKmsKeyId,
         };
       }
 

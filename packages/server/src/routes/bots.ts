@@ -321,19 +321,34 @@ export function botsRoutes(db: Database, botPool: BotPool) {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
-      await botPool.startBot(botId);
+      try {
+        await botPool.startBot(botId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return c.json({ ok: false as const, error: msg }, 500);
+      }
       return c.json({ ok: true as const });
     })
     .post("/:botId/stop", async (c) => {
       const botId = c.req.param("botId");
-      await botPool.stopBot(botId);
+      try {
+        await botPool.stopBot(botId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return c.json({ ok: false as const, error: msg }, 500);
+      }
       return c.json({ ok: true as const });
     })
     .post("/:botId/restart", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
-      await botPool.restartBot(botId);
+      try {
+        await botPool.restartBot(botId);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return c.json({ ok: false as const, error: msg }, 500);
+      }
       return c.json({ ok: true as const });
     })
     .get("/:botId/ai-config", async (c) => {
@@ -537,7 +552,14 @@ export function botsRoutes(db: Database, botPool: BotPool) {
 
         if (!baseURL) baseURL = bot.aiConfig?.baseURL;
         if (!apiKey && bot.aiConfig?.encryptedApiKey) {
-          apiKey = decrypt(bot.aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
+          try {
+            apiKey = decrypt(bot.aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
+          } catch {
+            return c.json(
+              { ok: false as const, error: "Encryption key mismatch, cannot decrypt API Key" },
+              500,
+            );
+          }
         }
       }
 

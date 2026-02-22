@@ -2,10 +2,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { client } from "@/lib/client";
+import { authFetch, client } from "@/lib/client";
+import type { BackupRecord, BackupStorageType } from "@cos-tool-bot/shared";
 import {
   AlertCircle,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Download,
   HardDrive,
   Loader2,
@@ -15,41 +18,6 @@ import {
   Wifi,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-
-// ── Types ──
-
-interface BackupRecord {
-  id: number;
-  filename: string;
-  sizeBytes: number;
-  durationMs: number;
-  remoteUrl: string | null;
-  remoteProvider: string | null;
-  status: string;
-  error: string | null;
-  createdAt: string;
-}
-
-type StorageType = "local" | "webdav" | "s3";
-
-interface BackupConfigData {
-  storage: {
-    type: StorageType;
-    url?: string;
-    username?: string;
-    encryptedPassword?: string;
-    bucket?: string;
-    region?: string;
-    endpoint?: string;
-    accessKeyId?: string;
-    encryptedSecretKey?: string;
-    prefix?: string;
-  };
-  filePrefix?: string;
-  retention?: {
-    maxCount?: number;
-  };
-}
 
 // ── Helpers ──
 
@@ -153,11 +121,7 @@ function BackupHistorySection({
   const handleDownload = async (record: BackupRecord) => {
     setDownloadingId(record.id);
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) headers.Authorization = `Bearer ${token}`;
-
-      const res = await fetch(`/api/backup/${record.id}/download`, { headers });
+      const res = await authFetch(`/api/backup/${record.id}/download`);
       if (!res.ok) {
         alert("Download failed");
         return;
@@ -299,7 +263,7 @@ function StorageConfigSection() {
   const [success, setSuccess] = useState<string | null>(null);
 
   // Form state
-  const [storageType, setStorageType] = useState<StorageType>("local");
+  const [storageType, setStorageType] = useState<BackupStorageType>("local");
   const [filePrefix, setFilePrefix] = useState("cos-tool-bot");
   const [maxCount, setMaxCount] = useState("");
 
@@ -316,28 +280,48 @@ function StorageConfigSection() {
   const [s3SecretAccessKey, setS3SecretAccessKey] = useState("");
   const [s3Prefix, setS3Prefix] = useState("");
 
+  // S3 advanced fields
+  const [s3ForcePathStyle, setS3ForcePathStyle] = useState(false);
+  const [s3StorageClass, setS3StorageClass] = useState("");
+  const [s3ServerSideEncryption, setS3ServerSideEncryption] = useState("");
+  const [s3SseKmsKeyId, setS3SseKmsKeyId] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   useEffect(() => {
     (async () => {
       try {
         const res = await client.api.backup.config.$get();
         const json = await res.json();
         if (json.ok && json.data) {
-          const cfg = json.data as unknown as BackupConfigData;
+          const cfg = json.data;
           setStorageType(cfg.storage.type);
           setFilePrefix(cfg.filePrefix ?? "cos-tool-bot");
           setMaxCount(cfg.retention?.maxCount ? String(cfg.retention.maxCount) : "");
 
           if (cfg.storage.type === "webdav") {
-            setWebdavUrl(cfg.storage.url ?? "");
-            setWebdavUsername(cfg.storage.username ?? "");
-            setWebdavPassword(cfg.storage.encryptedPassword ?? "");
+            setWebdavUrl(cfg.storage.url);
+            setWebdavUsername(cfg.storage.username);
+            setWebdavPassword(cfg.storage.encryptedPassword);
           } else if (cfg.storage.type === "s3") {
-            setS3Bucket(cfg.storage.bucket ?? "");
-            setS3Region(cfg.storage.region ?? "");
+            setS3Bucket(cfg.storage.bucket);
+            setS3Region(cfg.storage.region);
             setS3Endpoint(cfg.storage.endpoint ?? "");
-            setS3AccessKeyId(cfg.storage.accessKeyId ?? "");
-            setS3SecretAccessKey(cfg.storage.encryptedSecretKey ?? "");
+            setS3AccessKeyId(cfg.storage.accessKeyId);
+            setS3SecretAccessKey(cfg.storage.encryptedSecretKey);
             setS3Prefix(cfg.storage.prefix ?? "");
+            setS3ForcePathStyle(cfg.storage.forcePathStyle ?? false);
+            setS3StorageClass(cfg.storage.storageClass ?? "");
+            setS3ServerSideEncryption(cfg.storage.serverSideEncryption ?? "");
+            setS3SseKmsKeyId(cfg.storage.sseKmsKeyId ?? "");
+            // Auto-expand advanced section if any advanced option is set
+            if (
+              cfg.storage.forcePathStyle ||
+              cfg.storage.storageClass ||
+              cfg.storage.serverSideEncryption ||
+              cfg.storage.sseKmsKeyId
+            ) {
+              setShowAdvanced(true);
+            }
           }
         }
       } catch {
@@ -372,6 +356,10 @@ function StorageConfigSection() {
           accessKeyId: s3AccessKeyId,
           secretAccessKey: s3SecretAccessKey,
           prefix: s3Prefix || undefined,
+          forcePathStyle: s3ForcePathStyle || undefined,
+          storageClass: (s3StorageClass || undefined) as "STANDARD" | undefined,
+          serverSideEncryption: (s3ServerSideEncryption || undefined) as "AES256" | undefined,
+          sseKmsKeyId: s3SseKmsKeyId || undefined,
         },
         filePrefix: filePrefix || undefined,
         retention,
@@ -496,7 +484,7 @@ function StorageConfigSection() {
         {/* S3 fields */}
         {storageType === "s3" && (
           <div className="space-y-3 rounded-md border p-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium">Bucket</label>
                 <Input
@@ -522,7 +510,7 @@ function StorageConfigSection() {
                 placeholder="https://s3.example.com (for MinIO/R2)"
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium">Access Key ID</label>
                 <Input
@@ -549,11 +537,68 @@ function StorageConfigSection() {
                 placeholder="backups/"
               />
             </div>
+
+            {/* Advanced Options */}
+            <div className="border-t pt-3">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm font-medium transition-colors"
+              >
+                {showAdvanced ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronRight className="h-4 w-4" />
+                )}
+                Advanced Options
+              </button>
+              {showAdvanced && (
+                <div className="mt-3 space-y-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={s3ForcePathStyle}
+                      onChange={(e) => setS3ForcePathStyle(e.target.checked)}
+                    />
+                    <span className="font-medium">Force Path Style</span>
+                    <span className="text-muted-foreground">
+                      (MinIO / R2 / other S3-compatible services)
+                    </span>
+                  </label>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Storage Class</label>
+                    <Input
+                      value={s3StorageClass}
+                      onChange={(e) => setS3StorageClass(e.target.value)}
+                      placeholder="STANDARD"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium">Server-Side Encryption</label>
+                    <Input
+                      value={s3ServerSideEncryption}
+                      onChange={(e) => setS3ServerSideEncryption(e.target.value)}
+                      placeholder="AES256 or aws:kms"
+                    />
+                  </div>
+                  {s3ServerSideEncryption === "aws:kms" && (
+                    <div>
+                      <label className="mb-1 block text-sm font-medium">KMS Key ID</label>
+                      <Input
+                        value={s3SseKmsKeyId}
+                        onChange={(e) => setS3SseKmsKeyId(e.target.value)}
+                        placeholder="arn:aws:kms:..."
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         {/* General settings */}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-sm font-medium">File Prefix</label>
             <Input
@@ -646,7 +691,7 @@ export function BackupPage() {
       const res = await client.api.backup.$get();
       const json = await res.json();
       if (json.ok) {
-        setRecords(json.data as unknown as BackupRecord[]);
+        setRecords(json.data);
       }
     } catch {
       // ignore

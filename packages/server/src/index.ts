@@ -63,6 +63,7 @@ const backupService = new BackupService({
   databaseUrl: env.DATABASE_URL,
   backupDir: env.BACKUP_DIR,
   encryptionKey: env.ENCRYPTION_KEY,
+  logger,
 });
 
 // Bot Pool

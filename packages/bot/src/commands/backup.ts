@@ -1,11 +1,8 @@
+import type { BackupResult } from "@cos-tool-bot/shared";
 import type { CommandMiddleware } from "grammy";
 import type { WrapperContext } from "../context.js";
 
-export interface BackupResult {
-  ok: boolean;
-  filename?: string;
-  error?: string;
-}
+export type { BackupResult };
 
 export function createBackupCommand(
   onBackup?: () => Promise<BackupResult>,

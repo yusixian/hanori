@@ -8,6 +8,7 @@ import { mkdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
+import type { Logger } from "pino";
 import { decrypt, encrypt } from "../utils/crypto.js";
 import { createStorageProvider, type StorageProvider } from "./storage/index.js";
 
@@ -18,6 +19,7 @@ interface BackupServiceOptions {
   databaseUrl: string;
   backupDir: string;
   encryptionKey: string;
+  logger: Logger;
 }
 
 export class BackupService {
@@ -25,6 +27,7 @@ export class BackupService {
   private databaseUrl: string;
   private backupDir: string;
   private encryptionKey: string;
+  private logger: Logger;
   private isBackingUp = false;
 
   constructor(options: BackupServiceOptions) {
@@ -32,6 +35,7 @@ export class BackupService {
     this.databaseUrl = options.databaseUrl;
     this.backupDir = options.backupDir;
     this.encryptionKey = options.encryptionKey;
+    this.logger = options.logger;
   }
 
   async createBackup(): Promise<BackupRecord> {
@@ -137,22 +141,25 @@ export class BackupService {
     const [row] = await this.db.select().from(backups).where(eq(backups.id, id));
     if (!row) throw new Error("Backup not found");
 
-    // Delete local file
-    const filePath = join(this.backupDir, row.filename);
-    await unlink(filePath).catch(() => {});
+    // Skip file cleanup for failed backups (no real file exists)
+    if (row.status !== "failed") {
+      // Delete local file
+      const filePath = join(this.backupDir, row.filename);
+      await unlink(filePath).catch(() => {});
 
-    // Delete remote file
-    if (row.remoteProvider) {
-      try {
-        const config = await this.getConfig();
-        if (config?.storage && config.storage.type !== "local") {
-          const provider = await this.getStorageProvider(config.storage);
-          if (provider) {
-            await provider.delete(row.filename);
+      // Delete remote file
+      if (row.remoteProvider) {
+        try {
+          const config = await this.getConfig();
+          if (config?.storage && config.storage.type !== "local") {
+            const provider = await this.getStorageProvider(config.storage);
+            if (provider) {
+              await provider.delete(row.filename);
+            }
           }
+        } catch (err) {
+          this.logger.warn({ err, backupId: id }, "Failed to delete remote backup file");
         }
-      } catch {
-        // Ignore remote deletion errors
       }
     }
 
@@ -194,15 +201,13 @@ export class BackupService {
     if (!maxCount || maxCount <= 0) return;
 
     const rows = await this.db
-      .select()
+      .select({ id: backups.id })
       .from(backups)
       .where(eq(backups.status, "completed"))
-      .orderBy(desc(backups.createdAt));
+      .orderBy(desc(backups.createdAt))
+      .offset(maxCount);
 
-    if (rows.length <= maxCount) return;
-
-    const toDelete = rows.slice(maxCount);
-    for (const row of toDelete) {
+    for (const row of rows) {
       try {
         await this.deleteBackup(row.id);
       } catch {
@@ -217,6 +222,26 @@ export class BackupService {
 
   private runPgDump(filePath: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let pipelineDone = false;
+      let exitCode: number | null = null;
+
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const tryResolve = () => {
+        if (!pipelineDone || exitCode === null) return;
+        if (exitCode !== 0) {
+          settle(new Error(`pg_dump exited with code ${exitCode}`));
+        } else {
+          settle();
+        }
+      };
+
       const child = execFile(
         "pg_dump",
         [this.databaseUrl, "--no-owner", "--no-privileges", "--clean", "--if-exists"],
@@ -224,27 +249,31 @@ export class BackupService {
       );
 
       if (!child.stdout) {
-        reject(new Error("pg_dump stdout not available"));
+        settle(new Error("pg_dump stdout not available"));
         return;
       }
 
       child.on("error", (err) => {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          reject(new Error("pg_dump not found. Install postgresql-client to enable backups."));
+          settle(new Error("pg_dump not found. Install postgresql-client to enable backups."));
         } else {
-          reject(err);
+          settle(err);
         }
       });
 
       const gzip = createGzip();
       const outStream = createWriteStream(filePath);
 
-      pipeline(child.stdout, gzip, outStream).then(resolve).catch(reject);
+      pipeline(child.stdout, gzip, outStream)
+        .then(() => {
+          pipelineDone = true;
+          tryResolve();
+        })
+        .catch((err) => settle(err));
 
       child.on("exit", (code) => {
-        if (code !== 0) {
-          reject(new Error(`pg_dump exited with code ${code}`));
-        }
+        exitCode = code ?? 1;
+        if (pipelineDone) tryResolve();
       });
     });
   }
@@ -257,7 +286,7 @@ export class BackupService {
       durationMs: row.durationMs,
       remoteUrl: row.remoteUrl,
       remoteProvider: row.remoteProvider,
-      status: row.status,
+      status: row.status === "completed" || row.status === "failed" ? row.status : "failed",
       error: row.error,
       createdAt: row.createdAt.toISOString(),
     };

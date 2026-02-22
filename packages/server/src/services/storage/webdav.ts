@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import type { StorageProvider } from "./types.js";
 
 export class WebDAVProvider implements StorageProvider {
@@ -11,7 +13,9 @@ export class WebDAVProvider implements StorageProvider {
   }
 
   async upload(localPath: string, remoteName: string): Promise<string> {
-    const data = await readFile(localPath);
+    const fileStats = await stat(localPath);
+    const nodeStream = createReadStream(localPath);
+    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
     const remoteUrl = `${this.baseUrl}/${remoteName}`;
 
     const res = await fetch(remoteUrl, {
@@ -19,10 +23,11 @@ export class WebDAVProvider implements StorageProvider {
       headers: {
         Authorization: this.authHeader,
         "Content-Type": "application/octet-stream",
-        "Content-Length": String(data.length),
+        "Content-Length": String(fileStats.size),
       },
-      body: data,
-    });
+      body: webStream,
+      duplex: "half",
+    } as RequestInit);
 
     if (!res.ok) {
       const text = await res.text().catch(() => res.statusText);

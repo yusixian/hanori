@@ -292,6 +292,10 @@ function ImportSection() {
       });
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText);
+        if (!text) {
+          setImportError(`Import failed: server returned ${res.status} with no details`);
+          return;
+        }
         try {
           const parsed = superjson.parse<{ ok: false; error: string }>(text);
           setImportError(parsed.error);
@@ -305,8 +309,12 @@ function ImportSection() {
         setImportResult(json.data);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setImportError(`Import failed: ${msg}`);
+      if (err instanceof TypeError && /fetch|network/i.test(err.message)) {
+        setImportError("Import failed: unable to connect to server");
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        setImportError(`Import failed: ${msg}`);
+      }
     } finally {
       setImporting(false);
     }

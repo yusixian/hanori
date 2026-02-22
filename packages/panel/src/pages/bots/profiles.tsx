@@ -226,7 +226,7 @@ export function BotProfilesPage() {
             <CardTitle className="text-sm">New Profile</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-muted-foreground text-xs">Telegram ID *</label>
                 <Input
@@ -266,7 +266,7 @@ export function BotProfilesPage() {
                 onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-muted-foreground text-xs">Traits (comma separated)</label>
                 <Input
@@ -369,7 +369,7 @@ export function BotProfilesPage() {
               <CardContent className="space-y-2 pt-0">
                 {editingId === p.id && editForm ? (
                   <div className="space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <label className="text-muted-foreground text-xs">Display Name</label>
                         <Input
@@ -411,7 +411,7 @@ export function BotProfilesPage() {
                         onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                       />
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <label className="text-muted-foreground text-xs">
                           Traits (comma separated)

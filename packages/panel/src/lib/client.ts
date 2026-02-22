@@ -1,7 +1,7 @@
 import type { AppType } from "@cos-tool-bot/server";
 import { hc } from "hono/client";
 
-const customFetch: typeof fetch = async (input, init) => {
+export const authFetch: typeof fetch = async (input, init) => {
   const token = localStorage.getItem("token");
   const headers = new Headers(init?.headers);
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -14,4 +14,4 @@ const customFetch: typeof fetch = async (input, init) => {
   return response;
 };
 
-export const client = hc<AppType>("/", { fetch: customFetch });
+export const client = hc<AppType>("/", { fetch: authFetch });

@@ -149,7 +149,7 @@ export function BotLogsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">Logs</h1>
         <div className="flex items-center gap-3">
           <Button variant="destructive" size="sm" onClick={clearLogs}>
@@ -196,7 +196,7 @@ export function BotLogsPage() {
       )}
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <Select
           value={level}
           onChange={(e) => {

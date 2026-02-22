@@ -506,7 +506,7 @@ export function BotAiSettingsPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Random Reply %</label>
               <Input
@@ -575,7 +575,7 @@ export function BotAiSettingsPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Max Context Messages</label>
                 <Input
@@ -622,7 +622,7 @@ export function BotAiSettingsPage() {
                 In-memory ring buffer capacity for group messages
               </p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Include Group Context</label>
                 <select
@@ -717,7 +717,7 @@ export function BotAiSettingsPage() {
             threshold to 0 to disable.
           </p>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Auto-Split Threshold</label>
               <Input
@@ -774,7 +774,7 @@ export function BotAiSettingsPage() {
             conversation history via tool calls.
           </p>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Max Steps</label>
               <Input
@@ -1063,7 +1063,7 @@ export function BotAiSettingsPage() {
                 placeholder="https://api.openai.com/v1/"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium">Model</label>
                 <Input

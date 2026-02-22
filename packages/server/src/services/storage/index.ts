@@ -25,6 +25,10 @@ export async function createStorageProvider(
         accessKeyId: config.accessKeyId,
         secretAccessKey,
         prefix: config.prefix,
+        forcePathStyle: config.forcePathStyle,
+        storageClass: config.storageClass,
+        serverSideEncryption: config.serverSideEncryption,
+        sseKmsKeyId: config.sseKmsKeyId,
       });
     }
   }

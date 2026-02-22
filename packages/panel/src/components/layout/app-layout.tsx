@@ -1,5 +1,7 @@
+import { sidebarOpenAtom } from "@/atoms/sidebar";
 import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
+import { useAtom } from "jotai";
 import {
   ArrowLeft,
   BookOpen,
@@ -9,11 +11,14 @@ import {
   Download,
   HardDrive,
   LogOut,
+  Menu,
   MessageSquare,
   Pencil,
   ScrollText,
   Users,
+  X,
 } from "lucide-react";
+import { useEffect } from "react";
 import { Link, Outlet, useLocation } from "react-router";
 import { Button } from "../ui/button";
 
@@ -32,6 +37,21 @@ function isNavActive(itemPath: string, pathname: string) {
 export function AppLayout() {
   const location = useLocation();
   const { mutate: logout } = useLogout();
+  const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
+
+  // Close sidebar on navigation
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, setSidebarOpen]);
+
+  // Close sidebar on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [setSidebarOpen]);
 
   // Detect bot context from URL
   const botIdMatch = location.pathname.match(/^\/bots\/([^/]+)/);
@@ -52,15 +72,47 @@ export function AppLayout() {
     : [];
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-dvh flex-col md:flex-row">
+      {/* Mobile top bar */}
+      <header className="bg-card z-30 flex items-center gap-2 border-b px-3 py-2 md:hidden">
+        <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(true)}>
+          <Menu className="h-5 w-5" />
+        </Button>
+        <Bot className="text-primary h-5 w-5" />
+        <span className="text-sm font-semibold">cos-tool-bot</span>
+      </header>
+
+      {/* Overlay backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="bg-card flex w-56 flex-col border-r">
-        <div className="flex items-center gap-2 border-b px-4 py-4">
-          <Bot className="text-primary h-6 w-6" />
-          <span className="text-sm font-semibold">cos-tool-bot</span>
+      <aside
+        className={cn(
+          "bg-card fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r transition-transform duration-200 ease-in-out md:static md:z-auto md:w-56 md:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
+        <div className="flex items-center justify-between border-b px-4 py-4">
+          <div className="flex items-center gap-2">
+            <Bot className="text-primary h-6 w-6" />
+            <span className="text-sm font-semibold">cos-tool-bot</span>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          >
+            <X className="h-4 w-4" />
+          </Button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 p-2">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
           {isBotContext ? (
             <>
               <Link
@@ -126,7 +178,7 @@ export function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto p-6">
+      <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6">
         <Outlet />
       </main>
     </div>

@@ -27,6 +27,10 @@ export function createApp(options: AppOptions) {
   const app = new Hono()
     .use("*", honoLogger())
     .use("/api/*", cors())
+    .onError((err, c) => {
+      console.error("Unhandled error:", err);
+      return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
+    })
     .route("/api/auth", authRoutes(panelPassword, jwtSecret))
     .use("/api/bots/*", jwtAuth(jwtSecret))
     .route("/api/bots", botsRoutes(db, botPool))
