@@ -65,6 +65,7 @@ const app = createApp({
   botPool,
   panelPassword: env.PANEL_PASSWORD,
   jwtSecret: env.JWT_SECRET,
+  encryptionKey: env.ENCRYPTION_KEY,
 });
 
 // Start all active bots

@@ -5,6 +5,7 @@ import {
   BookOpen,
   Bot,
   Brain,
+  HardDriveDownload,
   LogOut,
   MessageSquare,
   Pencil,
@@ -41,6 +42,7 @@ export function AppLayout() {
         { label: "Conversations", path: `/bots/${botId}/conversations`, icon: MessageSquare },
         { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
         { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
+        { label: "Data", path: `/bots/${botId}/data`, icon: HardDriveDownload },
         { label: "Logs", path: `/bots/${botId}/logs`, icon: ScrollText },
       ]
     : [];

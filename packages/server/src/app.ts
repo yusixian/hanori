@@ -7,6 +7,7 @@ import { jwtAuth } from "./middleware/auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { botsRoutes } from "./routes/bots.js";
 import { logRoutes } from "./routes/logs.js";
+import { dataTransferRoutes } from "./routes/data-transfer.js";
 import type { BotPool } from "./services/bot-pool.js";
 
 interface AppOptions {
@@ -14,10 +15,11 @@ interface AppOptions {
   botPool: BotPool;
   panelPassword: string;
   jwtSecret: string;
+  encryptionKey: string;
 }
 
 export function createApp(options: AppOptions) {
-  const { db, botPool, panelPassword, jwtSecret } = options;
+  const { db, botPool, panelPassword, jwtSecret, encryptionKey } = options;
 
   const app = new Hono()
     .use("*", honoLogger())
@@ -25,6 +27,7 @@ export function createApp(options: AppOptions) {
     .route("/api/auth", authRoutes(panelPassword, jwtSecret))
     .use("/api/bots/*", jwtAuth(jwtSecret))
     .route("/api/bots", botsRoutes(db, botPool))
+    .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
     .get("/api/health", (c) => c.json({ ok: true as const }));
