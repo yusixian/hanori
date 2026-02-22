@@ -17,6 +17,16 @@ const logger = pino({
   },
 });
 
+// Uncaught exception / unhandled rejection — log and exit, let Docker restart
+process.on("uncaughtException", (err) => {
+  logger.fatal(err, "Uncaught exception — exiting");
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  logger.fatal({ reason }, "Unhandled rejection — exiting");
+  process.exit(1);
+});
+
 // Warn about default encryption key
 if (env.USING_DEFAULT_ENCRYPTION_KEY) {
   logger.warn(
@@ -27,7 +37,7 @@ if (env.USING_DEFAULT_ENCRYPTION_KEY) {
 // Database
 await runMigrations(env.DATABASE_URL);
 logger.info("Database migrated");
-const db = createDb(env.DATABASE_URL);
+const { db, client: dbClient } = createDb(env.DATABASE_URL);
 logger.info("Database connected");
 
 // Database Logger (system-level, no botId)
@@ -76,6 +86,7 @@ const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
   logCleaner.stop();
   await botPool.stopAll();
+  await dbClient.end();
   process.exit(0);
 };
 

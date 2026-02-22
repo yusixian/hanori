@@ -17,8 +17,12 @@ export async function runMigrations(databaseUrl: string) {
 }
 
 export function createDb(databaseUrl: string) {
-  const client = postgres(databaseUrl);
-  return drizzle(client, { schema });
+  const client = postgres(databaseUrl, {
+    max: 20,
+    idle_timeout: 30,
+    connect_timeout: 10,
+  });
+  return { db: drizzle(client, { schema }), client };
 }
 
-export type Database = ReturnType<typeof createDb>;
+export type Database = ReturnType<typeof createDb>["db"];

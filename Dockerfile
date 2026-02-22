@@ -26,6 +26,7 @@ RUN pnpm -r build
 # Production
 FROM base AS runner
 ENV NODE_ENV=production
+RUN corepack disable 2>/dev/null; rm -rf /root/.cache /tmp/*
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
@@ -47,4 +48,4 @@ COPY --from=builder /app/packages/server/dist ./packages/server/dist
 COPY --from=builder /app/packages/panel/dist ./public
 
 EXPOSE 3000
-CMD ["node", "packages/server/dist/index.js"]
+CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]

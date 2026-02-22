@@ -7,3 +7,9 @@ node_modules
 !.env.example
 data
 *.log
+.claude
+.cursor
+.vscode
+*.md
+!packages/*/README.md
+.github
