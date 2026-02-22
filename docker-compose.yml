@@ -2,7 +2,7 @@ services:
   app:
     build: .
     ports:
-      - "${PORT:-3000}:3000"
+      - "${PORT:-9600}:3000"
     environment:
       - DATABASE_URL=postgresql://bot:${DB_PASSWORD}@db:5432/cos_tool_bot
       - BOT_TOKEN=${BOT_TOKEN}
