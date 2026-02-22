@@ -2,6 +2,7 @@ import type {
   AgentToolsConfig,
   AiGroupOverride,
   AiTriggerConfig,
+  ArtworkToolsConfig,
   BotLogEntry,
   BotMemoryCallbacks,
   BotMemoryConfig,
@@ -28,11 +29,13 @@ import { continueChat } from "../services/continue-chat.js";
 import {
   createActionTools,
   createAgentTools,
+  createArtworkTools,
   createBehaviorTools,
   createBotMemoryTools,
   createMemoryTools,
   createTelegramTools,
   createWebTools,
+  getArtworkPlatforms,
   getAvailableAgentNames,
 } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
@@ -56,6 +59,7 @@ export interface AiReplyConfig {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
@@ -112,6 +116,8 @@ const ACTION_TOOL_NAMES = new Set([
   "think",
   "multi_message",
   "set_mood",
+  // Artwork tools
+  "send_artwork",
 ]);
 
 async function safeReply(ctx: WrapperContext, text: string): Promise<number | undefined> {
@@ -167,6 +173,9 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   save_memory: "💾 保存记忆...",
   recall_memories: "🧠 回忆中...",
   delete_memory: "🗑️ 删除记忆...",
+  // Artwork tools
+  fetch_artwork_info: "🖼️ 获取作品信息...",
+  send_artwork: "🖼️ 发送作品图片...",
 };
 
 function resolveGroupConfig(
@@ -295,6 +304,7 @@ interface ExtendedToolsPromptOptions {
   hasAgentTools: boolean;
   availableAgents: string[];
   hasBotMemory: boolean;
+  hasArtworkTools: boolean;
   isPrivate: boolean;
 }
 
@@ -361,6 +371,26 @@ function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
     lines.push("- save_memory: 保存一条长期记忆（通用或关联特定用户）");
     lines.push("- recall_memories: 搜索已保存的记忆");
     lines.push("- delete_memory: 删除不再需要的记忆");
+  }
+
+  // Artwork tools
+  if (opts.hasArtworkTools) {
+    const platforms = getArtworkPlatforms();
+    lines.push("");
+    lines.push(`作品图片抓取工具（支持: ${platforms.join(", ")}）:`);
+    lines.push("- fetch_artwork_info: 从 URL 获取作品信息（标题、作者、图片列表、标签等）");
+    lines.push("- send_artwork: 发送作品图片（支持单图/多图、NSFW 遮罩）");
+    lines.push("");
+    lines.push("**重要 — 作品链接自动处理规则:**");
+    lines.push(
+      "- 当用户消息中包含 pixiv.net/artworks/、twitter.com/.../status/、x.com/.../status/ 等链接时，**必须**立即调用 fetch_artwork_info 获取作品信息",
+    );
+    lines.push("- 获取成功后**必须**调用 send_artwork 发送图片给用户");
+    lines.push(
+      "- 不要对这些链接使用 fetch_webpage，fetch_artwork_info 能获取更完整的结构化信息和图片",
+    );
+    lines.push("- 对 NSFW/R18 内容开启 has_spoiler 遮罩");
+    lines.push("- 发完图片后可以用自然语言评论作品");
   }
 
   lines.push("");
@@ -509,6 +539,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       botMemory: config.botMemory,
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
+      artworkToolsConfig: config.artworkToolsConfig,
       webTools,
       agentToolsFactory: config.agentToolsConfig?.enabled
         ? () =>
@@ -705,6 +736,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         });
       }
 
+      // Create artwork tools if enabled
+      let artworkTools: Record<string, CoreTool> = {};
+      if (config.artworkToolsConfig?.enabled) {
+        artworkTools = createArtworkTools({
+          api: ctx.api,
+          chatId,
+          recentBotMessageIds: chatBotMsgIds,
+          config: config.artworkToolsConfig,
+        });
+      }
+
       // Build messages array
       const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
       const historyFormat = conversationCfg.historyFormat ?? "prompt";
@@ -888,6 +930,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           hasAgentTools: !!config.agentToolsConfig?.enabled,
           availableAgents,
           hasBotMemory: !!botMemoryTools,
+          hasArtworkTools: !!config.artworkToolsConfig?.enabled,
           isPrivate,
         });
         messages[0]!.content += `\n\n${extendedPrompt}`;
@@ -906,10 +949,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...behaviorTools,
         ...webTools,
         ...agentTools,
+        ...artworkTools,
       };
-      // Increase maxSteps when agent tools or web tools are available
+      // Increase maxSteps when agent tools, web tools, or artwork tools are available
       const baseMaxSteps = memoryCfg.maxSteps || 3;
-      const hasAdvancedTools = config.agentToolsConfig?.enabled || config.webToolsConfig?.enabled;
+      const hasAdvancedTools =
+        config.agentToolsConfig?.enabled ||
+        config.webToolsConfig?.enabled ||
+        config.artworkToolsConfig?.enabled;
       const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
       const toolChoice = memoryCfg.toolChoice ?? "auto";
 

@@ -171,4 +171,9 @@ export type { WebToolsOptions } from "./web.js";
 export { createAgentTools, getAvailableAgentNames } from "./agents.js";
 export type { AgentToolsOptions } from "./agents.js";
 export { createBotMemoryTools } from "./bot-memory.js";
+export {
+  createArtworkTools,
+  getSupportedPlatforms as getArtworkPlatforms,
+} from "./artwork/index.js";
+export type { ArtworkToolsOptions } from "./artwork/index.js";
 export { PendingActionRegistry } from "../services/pending-actions.js";

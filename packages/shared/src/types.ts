@@ -168,6 +168,15 @@ export interface AgentToolsConfig {
   >;
 }
 
+export interface ArtworkToolsConfig {
+  enabled: boolean;
+  pixivCookie?: string;
+}
+
+export const DEFAULT_ARTWORK_TOOLS_CONFIG: ArtworkToolsConfig = {
+  enabled: false,
+};
+
 // Bot Memory types
 export interface BotMemory {
   id: number;
@@ -223,6 +232,7 @@ export interface AiConfigStored {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
 }
 
@@ -241,6 +251,7 @@ export interface AiConfigPublic {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
 }
 

@@ -7,12 +7,14 @@ import type {
   AiConfigPublic,
   AiGroupOverride,
   AiTriggerConfig,
+  ArtworkToolsConfig,
   BotMemoryConfig,
   ConversationConfig,
   MemoryConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
+  DEFAULT_ARTWORK_TOOLS_CONFIG,
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
@@ -113,6 +115,7 @@ export function BotAiSettingsPage() {
           botMemoryConfig: config.botMemoryConfig,
           webToolsConfig: config.webToolsConfig,
           agentToolsConfig: config.agentToolsConfig,
+          artworkToolsConfig: config.artworkToolsConfig,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -233,6 +236,14 @@ export function BotAiSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       agentToolsConfig: { ...agentCfg, ...prev.agentToolsConfig, ...updates },
+    }));
+  };
+
+  const artworkCfg = config.artworkToolsConfig ?? DEFAULT_ARTWORK_TOOLS_CONFIG;
+  const updateArtworkTools = (updates: Partial<ArtworkToolsConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      artworkToolsConfig: { ...artworkCfg, ...prev.artworkToolsConfig, ...updates },
     }));
   };
 
@@ -1057,6 +1068,46 @@ export function BotAiSettingsPage() {
             />
             <p className="text-muted-foreground text-xs">
               Maximum tool-calling rounds per sub-agent (1-15)
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Artwork Tools */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Artwork Tools</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="artworkToolsEnabled"
+              checked={artworkCfg.enabled}
+              onChange={(e) => updateArtworkTools({ enabled: e.target.checked })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="artworkToolsEnabled" className="text-sm font-medium">
+              Enable Artwork Tools
+            </label>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            When enabled, the AI can fetch artwork info and send images from supported platforms
+            (Pixiv, Twitter/X). More platforms can be added in the future.
+          </p>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Pixiv Cookie</label>
+            <Input
+              type="password"
+              disabled={!artworkCfg.enabled}
+              value={artworkCfg.pixivCookie ?? ""}
+              onChange={(e) => updateArtworkTools({ pixivCookie: e.target.value || undefined })}
+              placeholder="Pixiv login cookie (required for Pixiv support)"
+            />
+            <p className="text-muted-foreground text-xs">
+              Required for Pixiv artwork fetching. Get it from your browser's DevTools (cookie
+              header from pixiv.net). Twitter/X works without any credentials.
             </p>
           </div>
         </CardContent>

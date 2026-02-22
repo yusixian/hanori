@@ -206,6 +206,7 @@ export class BotPool {
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
         agentToolsConfig: aiConfig.agentToolsConfig,
+        artworkToolsConfig: aiConfig.artworkToolsConfig,
         botMemoryConfig: botMemoryCfg,
         botMemory,
       };

@@ -93,6 +93,10 @@ interface AiConfigJson {
       }
     >;
   };
+  artworkToolsConfig?: {
+    enabled: boolean;
+    pixivCookie?: string;
+  };
   botMemoryConfig?: {
     enabled: boolean;
     maxMemories: number;

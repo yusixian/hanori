@@ -1,7 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import * as schema from "@cos-tool-bot/database";
 import type { ExportManifest, ExportPayload, ImportResult } from "@cos-tool-bot/shared";
-import { eq, getTableName, sql } from "drizzle-orm";
+import { eq, getTableName, isTable, sql } from "drizzle-orm";
 import type { PgTable, TableConfig } from "drizzle-orm/pg-core";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { encrypt } from "../utils/crypto.js";
@@ -50,22 +50,13 @@ function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
-function isPgTable(value: unknown): value is PgTable<TableConfig> {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    "_" in value &&
-    typeof (value as Record<string, unknown>)._ === "object"
-  );
-}
-
 function discoverBotChildTables(): ChildTableInfo[] {
   const childTables: ChildTableInfo[] = [];
 
   for (const [key, value] of Object.entries(schema)) {
-    if (!isPgTable(value)) continue;
+    if (!isTable(value)) continue;
 
-    const table = value;
+    const table = value as PgTable<TableConfig>;
     const config = getTableConfig(table);
     const dbName = config.name;
 

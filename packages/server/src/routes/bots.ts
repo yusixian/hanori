@@ -75,6 +75,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     stickerPacks: config.stickerPacks,
     webToolsConfig: config.webToolsConfig,
     agentToolsConfig: config.agentToolsConfig,
+    artworkToolsConfig: config.artworkToolsConfig,
     botMemoryConfig: config.botMemoryConfig,
   };
 }
@@ -174,6 +175,12 @@ const aiConfigSchema = z
             }),
           )
           .optional(),
+      })
+      .optional(),
+    artworkToolsConfig: z
+      .object({
+        enabled: z.boolean(),
+        pixivCookie: z.string().optional(),
       })
       .optional(),
     botMemoryConfig: z
@@ -350,6 +357,7 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
         webToolsConfig: body.webToolsConfig,
         agentToolsConfig: body.agentToolsConfig,
+        artworkToolsConfig: body.artworkToolsConfig,
         botMemoryConfig: body.botMemoryConfig,
       };
 

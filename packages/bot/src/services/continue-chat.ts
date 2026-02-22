@@ -1,5 +1,6 @@
 import type {
   AgentToolsConfig,
+  ArtworkToolsConfig,
   BotLogEntry,
   BotMemoryCallbacks,
   BotMemoryConfig,
@@ -40,6 +41,7 @@ export interface ContinueChatConfig {
   botMemory?: BotMemoryCallbacks;
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  artworkToolsConfig?: ArtworkToolsConfig;
   webTools?: Record<string, CoreTool>;
   agentToolsFactory?: () => Record<string, CoreTool>;
   pendingActions: PendingActionRegistry;
@@ -184,6 +186,20 @@ async function doContinueChat(
     if (botMemCfg.enabled && config.botMemory) {
       const { createBotMemoryTools } = await import("../tools/bot-memory.js");
       Object.assign(allTools, createBotMemoryTools(config.botMemory));
+    }
+
+    // Artwork tools
+    if (config.artworkToolsConfig?.enabled) {
+      const { createArtworkTools } = await import("../tools/artwork/index.js");
+      Object.assign(
+        allTools,
+        createArtworkTools({
+          api,
+          chatId,
+          recentBotMessageIds: chatBotMsgIds,
+          config: config.artworkToolsConfig,
+        }),
+      );
     }
 
     const result = await generateText({
