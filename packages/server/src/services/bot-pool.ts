@@ -1,13 +1,18 @@
 import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
-import type { ConversationCallbacks, MemoryCallbacks } from "@cos-tool-bot/shared";
+import type {
+  BotMemoryCallbacks,
+  ConversationCallbacks,
+  MemoryCallbacks,
+} from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { env } from "../env.js";
 import { decrypt } from "../utils/crypto.js";
 import { BotManager } from "./bot-manager.js";
+import { BotMemoryStore } from "./bot-memory-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
@@ -17,6 +22,7 @@ export class BotPool {
   private managers = new Map<string, BotManager>();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
+  private botMemoryStore: BotMemoryStore;
 
   constructor(
     private db: Database,
@@ -24,6 +30,7 @@ export class BotPool {
   ) {
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
+    this.botMemoryStore = new BotMemoryStore(db);
   }
 
   getConversationStore(): ConversationStore {
@@ -32,6 +39,10 @@ export class BotPool {
 
   getProfileStore(): PeopleProfileStore {
     return this.profileStore;
+  }
+
+  getBotMemoryStore(): BotMemoryStore {
+    return this.botMemoryStore;
   }
 
   async startAll() {
@@ -165,6 +176,20 @@ export class BotPool {
         };
       }
 
+      // Build bot memory callbacks (independent of people profile memory)
+      const botMemoryCfg = aiConfig.botMemoryConfig;
+      let botMemory: BotMemoryCallbacks | undefined;
+      if (botMemoryCfg?.enabled) {
+        const ms = this.botMemoryStore;
+        botMemory = {
+          saveMemory: (params) => ms.saveMemory(botId, params),
+          recallMemories: (params) => ms.recallMemories(botId, params),
+          deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
+          getMemoriesForPrompt: (telegramId, limit) =>
+            ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
+        };
+      }
+
       aiReply = {
         apiKey,
         baseURL: aiConfig.baseURL,
@@ -181,6 +206,8 @@ export class BotPool {
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
         agentToolsConfig: aiConfig.agentToolsConfig,
+        botMemoryConfig: botMemoryCfg,
+        botMemory,
       };
     }
 

@@ -168,6 +168,46 @@ export interface AgentToolsConfig {
   >;
 }
 
+// Bot Memory types
+export interface BotMemory {
+  id: number;
+  botId: string;
+  telegramId: number | null;
+  content: string;
+  category: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BotMemoryConfig {
+  enabled: boolean;
+  maxMemories: number;
+  autoInjectMemories: boolean;
+}
+
+export const DEFAULT_BOT_MEMORY_CONFIG: BotMemoryConfig = {
+  enabled: false,
+  maxMemories: 20,
+  autoInjectMemories: true,
+};
+
+export interface BotMemoryCallbacks {
+  saveMemory(params: {
+    content: string;
+    category?: string;
+    telegramId?: number;
+  }): Promise<BotMemory>;
+  recallMemories(params: {
+    query?: string;
+    category?: string;
+    telegramId?: number;
+    scope?: "general_only" | "user_only" | "all";
+    limit?: number;
+  }): Promise<BotMemory[]>;
+  deleteMemory(memoryId: number): Promise<boolean>;
+  getMemoriesForPrompt(telegramId?: number, limit?: number): Promise<BotMemory[]>;
+}
+
 export interface AiConfigStored {
   enabled: boolean;
   encryptedApiKey: string | null;
@@ -183,6 +223,7 @@ export interface AiConfigStored {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  botMemoryConfig?: BotMemoryConfig;
 }
 
 export interface AiConfigPublic {
@@ -200,6 +241,7 @@ export interface AiConfigPublic {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  botMemoryConfig?: BotMemoryConfig;
 }
 
 export type CommandEntity = {

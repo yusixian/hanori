@@ -12,6 +12,7 @@ import { BotDashboardPage } from "@/pages/bots/dashboard";
 import { BotAiSettingsPage } from "@/pages/bots/ai-settings";
 import { BotConversationsPage } from "@/pages/bots/conversations";
 import { BotProfilesPage } from "@/pages/bots/profiles";
+import { BotMemoriesPage } from "@/pages/bots/memories";
 import { BotLogsPage } from "@/pages/bots/logs";
 import { LogsListPage } from "@/pages/logs/list";
 
@@ -43,6 +44,7 @@ export function App() {
             <Route path="/bots/:botId/ai" element={<BotAiSettingsPage />} />
             <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
             <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
+            <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
             <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
             <Route path="/logs" element={<LogsListPage />} />
           </Route>

@@ -1,6 +1,8 @@
 import type {
   AgentToolsConfig,
   BotLogEntry,
+  BotMemoryCallbacks,
+  BotMemoryConfig,
   ConversationCallbacks,
   ConversationConfig,
   ConversationRole,
@@ -8,7 +10,11 @@ import type {
   MemoryConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_BOT_MEMORY_CONFIG,
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_MEMORY_CONFIG,
+} from "@cos-tool-bot/shared";
 import type { CoreTool, LanguageModelV1 } from "ai";
 import { generateText } from "ai";
 import type { Api } from "grammy";
@@ -30,6 +36,8 @@ export interface ContinueChatConfig {
   conversation?: ConversationCallbacks;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
+  botMemoryConfig?: BotMemoryConfig;
+  botMemory?: BotMemoryCallbacks;
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   webTools?: Record<string, CoreTool>;
@@ -169,6 +177,13 @@ async function doContinueChat(
     if (memCfg.enabled && config.memory) {
       const { createMemoryTools } = await import("../tools/index.js");
       Object.assign(allTools, createMemoryTools(config.memory));
+    }
+
+    // Bot memory tools
+    const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
+    if (botMemCfg.enabled && config.botMemory) {
+      const { createBotMemoryTools } = await import("../tools/bot-memory.js");
+      Object.assign(allTools, createBotMemoryTools(config.botMemory));
     }
 
     const result = await generateText({

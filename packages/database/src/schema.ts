@@ -93,6 +93,11 @@ interface AiConfigJson {
       }
     >;
   };
+  botMemoryConfig?: {
+    enabled: boolean;
+    maxMemories: number;
+    autoInjectMemories: boolean;
+  };
 }
 
 export const settings = pgTable("settings", {
@@ -187,4 +192,22 @@ export const peopleProfiles = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [index("people_bot_telegram_idx").on(t.botId, t.telegramId)],
+);
+
+export const botMemories = pgTable(
+  "bot_memories",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    telegramId: bigint("telegram_id", { mode: "number" }),
+    content: text("content").notNull(),
+    category: text("category"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId)],
 );

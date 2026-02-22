@@ -3,6 +3,8 @@ import type {
   AiGroupOverride,
   AiTriggerConfig,
   BotLogEntry,
+  BotMemoryCallbacks,
+  BotMemoryConfig,
   ConversationCallbacks,
   ConversationConfig,
   ConversationRole,
@@ -10,7 +12,11 @@ import type {
   MemoryConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_BOT_MEMORY_CONFIG,
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_MEMORY_CONFIG,
+} from "@cos-tool-bot/shared";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { CoreTool } from "ai";
 import { generateText } from "ai";
@@ -23,6 +29,7 @@ import {
   createActionTools,
   createAgentTools,
   createBehaviorTools,
+  createBotMemoryTools,
   createMemoryTools,
   createTelegramTools,
   createWebTools,
@@ -49,6 +56,8 @@ export interface AiReplyConfig {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  botMemoryConfig?: BotMemoryConfig;
+  botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
@@ -154,6 +163,10 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   generate_image: "🎨 生成图片...",
   // Agent tools
   delegate_task: "🤖 委派任务...",
+  // Bot memory tools
+  save_memory: "💾 保存记忆...",
+  recall_memories: "🧠 回忆中...",
+  delete_memory: "🗑️ 删除记忆...",
 };
 
 function resolveGroupConfig(
@@ -252,8 +265,25 @@ const MEMORY_SYSTEM_PROMPT = `
 使用指南:
 - 当用户分享个人信息（喜好、工作、名字等）时，主动使用 update_profile 记录
 - 当用户问「你还记得…」或需要回忆之前的对话时，使用 search_history
-- 不要在每条消息都调用工具，只在有需要时使用
+- 在对话中发现有价值的信息时积极记录，不必等用户要求
 - 不要告诉用户你在使用工具，自然地回复即可
+`.trim();
+
+const BOT_MEMORY_SYSTEM_PROMPT = `
+你拥有长期记忆管理工具，可以保存和检索跨对话持久保存的信息。
+
+可用工具:
+- save_memory: 保存一条记忆（通用或关联特定用户）
+- recall_memories: 搜索已保存的记忆（支持按关键词、分类、用户过滤）
+- delete_memory: 删除不再准确或不再需要的记忆
+
+使用指南:
+- 当你学到重要事实、规则或偏好时，使用 save_memory 保存
+- 当你需要回忆之前保存的信息时，使用 recall_memories
+- 通用记忆（不指定 telegram_id）对所有对话可见
+- 用户专属记忆（指定 telegram_id）仅在与该用户对话时可见
+- 使用 category 来组织记忆（如 fact、preference、rule、event）
+- 学到重要信息时及时保存，不必犹豫
 `.trim();
 
 interface ExtendedToolsPromptOptions {
@@ -264,6 +294,7 @@ interface ExtendedToolsPromptOptions {
   hasImageGeneration: boolean;
   hasAgentTools: boolean;
   availableAgents: string[];
+  hasBotMemory: boolean;
   isPrivate: boolean;
 }
 
@@ -323,11 +354,30 @@ function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
     );
   }
 
+  // Bot memory tools
+  if (opts.hasBotMemory) {
+    lines.push("");
+    lines.push("长期记忆工具:");
+    lines.push("- save_memory: 保存一条长期记忆（通用或关联特定用户）");
+    lines.push("- recall_memories: 搜索已保存的记忆");
+    lines.push("- delete_memory: 删除不再需要的记忆");
+  }
+
   lines.push("");
   lines.push("使用指南:");
-  lines.push("- 互动工具用于增强体验，不要每条消息都使用");
+  lines.push("- 积极使用互动工具让对话更生动，像真人聊天一样自然表达");
   lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
-  lines.push("- 使用 think 来思考复杂问题，但不要过度使用");
+  lines.push("- 遇到需要分析或规划的问题时，先用 think 整理思路");
+  lines.push("");
+  lines.push("**主动行为建议**:");
+  lines.push("- 用户说了有趣/感动/搞笑的话 → react_to_message 加个表情");
+  lines.push("- 回复内容较长或包含多个话题 → 用 multi_message 分条发送");
+  lines.push("- 对话氛围变化时 → 用 set_mood 调整情绪状态");
+  lines.push("- 用户分享了个人信息 → 用记忆工具记录");
+  if (opts.hasSearchTool) {
+    lines.push("- 用户提到时事/不确定的事实 → 用 web_search 查证");
+  }
+  lines.push("- 需要用户做选择时 → 用 send_choice 或 send_poll，禁止文本选数字");
   lines.push("");
   lines.push("**选择交互规则（重要）**:");
   lines.push(
@@ -402,6 +452,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     memoryTools = createMemoryTools(config.memory);
   }
 
+  // Bot memory tools setup
+  const botMemoryCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
+  let botMemoryTools: Record<string, CoreTool> | undefined;
+  if (botMemoryCfg.enabled && config.botMemory) {
+    botMemoryTools = createBotMemoryTools(config.botMemory);
+  }
+
   // Web tools setup (singleton, not per-request)
   let webTools: Record<string, CoreTool> | undefined;
   if (config.webToolsConfig?.enabled) {
@@ -448,6 +505,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       conversation: config.conversation,
       memoryConfig: config.memoryConfig,
       memory: config.memory,
+      botMemoryConfig: config.botMemoryConfig,
+      botMemory: config.botMemory,
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
       webTools,
@@ -794,6 +853,27 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         messages[0]!.content += `\n\n${moodStr}`;
       }
 
+      // Bot memory: inject system prompt and memories
+      if (botMemoryTools && config.botMemory && botMemoryCfg.autoInjectMemories) {
+        if (messages.length > 0 && messages[0]!.role === "system") {
+          messages[0]!.content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
+        }
+        try {
+          const memories = await config.botMemory.getMemoriesForPrompt(
+            userId,
+            botMemoryCfg.maxMemories,
+          );
+          if (memories.length > 0) {
+            const lines = memories.map((m) =>
+              m.category ? `- [${m.category}] ${m.content}` : `- ${m.content}`,
+            );
+            messages.push({ role: "system", content: `[长期记忆]\n${lines.join("\n")}` });
+          }
+        } catch (err) {
+          console.error("Failed to load bot memories for prompt:", err);
+        }
+      }
+
       // Inject extended tools prompt
       if (messages.length > 0 && messages[0]!.role === "system") {
         const availableAgents = config.agentToolsConfig?.enabled
@@ -807,6 +887,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           hasImageGeneration: !!config.webToolsConfig?.imageGeneration,
           hasAgentTools: !!config.agentToolsConfig?.enabled,
           availableAgents,
+          hasBotMemory: !!botMemoryTools,
           isPrivate,
         });
         messages[0]!.content += `\n\n${extendedPrompt}`;
@@ -819,6 +900,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       // Combine all tools
       const allTools: Record<string, CoreTool> = {
         ...memoryTools,
+        ...botMemoryTools,
         ...actionTools,
         ...telegramTools,
         ...behaviorTools,

@@ -170,4 +170,5 @@ export { createWebTools } from "./web.js";
 export type { WebToolsOptions } from "./web.js";
 export { createAgentTools, getAvailableAgentNames } from "./agents.js";
 export type { AgentToolsOptions } from "./agents.js";
+export { createBotMemoryTools } from "./bot-memory.js";
 export { PendingActionRegistry } from "../services/pending-actions.js";

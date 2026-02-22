@@ -74,6 +74,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     stickerPacks: config.stickerPacks,
     webToolsConfig: config.webToolsConfig,
     agentToolsConfig: config.agentToolsConfig,
+    botMemoryConfig: config.botMemoryConfig,
   };
 }
 
@@ -172,6 +173,13 @@ const aiConfigSchema = z
             }),
           )
           .optional(),
+      })
+      .optional(),
+    botMemoryConfig: z
+      .object({
+        enabled: z.boolean(),
+        maxMemories: z.number().min(1).max(100),
+        autoInjectMemories: z.boolean(),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -341,6 +349,7 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
         webToolsConfig: body.webToolsConfig,
         agentToolsConfig: body.agentToolsConfig,
+        botMemoryConfig: body.botMemoryConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));
@@ -533,5 +542,90 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         const msg = err instanceof Error ? err.message : String(err);
         return c.json({ ok: false as const, error: `Failed to fetch models: ${msg}` }, 502);
       }
+    })
+    .get("/:botId/memories/meta", async (c) => {
+      const botId = c.req.param("botId");
+      const store = botPool.getBotMemoryStore();
+      const categories = await store.getCategories(botId);
+      return c.json({ ok: true as const, data: { categories } });
+    })
+    .get(
+      "/:botId/memories",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(20),
+          category: z.string().optional(),
+          telegramId: z.string().optional(),
+          search: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const { page, limit, category, telegramId, search } = c.req.valid("query");
+        const store = botPool.getBotMemoryStore();
+
+        let tidFilter: number | "general" | undefined;
+        if (telegramId === "general") {
+          tidFilter = "general";
+        } else if (telegramId) {
+          const num = Number(telegramId);
+          if (!Number.isNaN(num)) tidFilter = num;
+        }
+
+        const result = await store.listMemories(botId, page, limit, {
+          category,
+          telegramId: tidFilter,
+          search,
+        });
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .post(
+      "/:botId/memories",
+      zValidator(
+        "json",
+        z.object({
+          content: z.string().min(1),
+          category: z.string().optional(),
+          telegramId: z.number().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const body = c.req.valid("json");
+        const store = botPool.getBotMemoryStore();
+        const memory = await store.saveMemory(botId, body);
+        return c.json({ ok: true as const, data: memory }, 201);
+      },
+    )
+    .put(
+      "/:botId/memories/:memoryId",
+      zValidator(
+        "json",
+        z.object({
+          content: z.string().min(1).optional(),
+          category: z.string().nullable().optional(),
+          telegramId: z.number().nullable().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const memoryId = Number(c.req.param("memoryId"));
+        const body = c.req.valid("json");
+        const store = botPool.getBotMemoryStore();
+        const updated = await store.updateMemory(botId, memoryId, body);
+        if (!updated) return c.json({ ok: false as const, error: "Memory not found" }, 404);
+        return c.json({ ok: true as const, data: updated });
+      },
+    )
+    .delete("/:botId/memories/:memoryId", async (c) => {
+      const botId = c.req.param("botId");
+      const memoryId = Number(c.req.param("memoryId"));
+      const store = botPool.getBotMemoryStore();
+      const deleted = await store.deleteMemory(botId, memoryId);
+      if (!deleted) return c.json({ ok: false as const, error: "Memory not found" }, 404);
+      return c.json({ ok: true as const });
     });
 }

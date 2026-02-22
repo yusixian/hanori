@@ -1,4 +1,4 @@
 {
-  "setup": ["ni\ncp \\\"$SUPERSET_ROOT_PATH/.env\\\" .env"],
+  "setup": ["ni\ncp \\\"$SUPERSET_ROOT_PATH/.env\\\" .env\nnr db:migrate"],
   "teardown": []
 }

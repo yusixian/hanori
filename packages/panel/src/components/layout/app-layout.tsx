@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
 import {
   ArrowLeft,
+  BookOpen,
   Bot,
   Brain,
   LogOut,
@@ -39,6 +40,7 @@ export function AppLayout() {
         { label: "AI Settings", path: `/bots/${botId}/ai`, icon: Brain },
         { label: "Conversations", path: `/bots/${botId}/conversations`, icon: MessageSquare },
         { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
+        { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
         { label: "Logs", path: `/bots/${botId}/logs`, icon: ScrollText },
       ]
     : [];
