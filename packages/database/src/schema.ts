@@ -202,6 +202,18 @@ export const peopleProfiles = pgTable(
   (t) => [index("people_bot_telegram_idx").on(t.botId, t.telegramId)],
 );
 
+export const backups = pgTable("backups", {
+  id: serial("id").primaryKey(),
+  filename: text("filename").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  remoteUrl: text("remote_url"),
+  remoteProvider: text("remote_provider"),
+  status: text("status").notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const botMemories = pgTable(
   "bot_memories",
   {

@@ -25,8 +25,13 @@ const updateBotSchema = z.object({
 
 function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWithStatus {
   const manager = botPool.getManager(bot.id);
-  const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
-  const tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
+  let tokenMasked: string;
+  try {
+    const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
+  } catch {
+    tokenMasked = "(密钥不匹配)";
+  }
   return {
     id: bot.id,
     name: bot.name,

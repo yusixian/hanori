@@ -10,14 +10,9 @@ services:
       - PANEL_PASSWORD=${PANEL_PASSWORD}
       - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
-      - ENABLE_S3_BACKUP=${ENABLE_S3_BACKUP:-false}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-}
-      - S3_ENDPOINT=${S3_ENDPOINT:-}
-      - S3_REGION=${S3_REGION:-auto}
-      - S3_PUBLIC_URL=${S3_PUBLIC_URL:-}
-      - BACKUP_FILE_PREFIX=${BACKUP_FILE_PREFIX:-}
+      - BACKUP_DIR=/data/backups
+    volumes:
+      - backups:/data/backups
     depends_on:
       db:
         condition: service_healthy
@@ -88,3 +83,4 @@ services:
 
 volumes:
   pgdata:
+  backups:

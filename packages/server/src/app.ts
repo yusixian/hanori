@@ -5,9 +5,11 @@ import { cors } from "hono/cors";
 import { logger as honoLogger } from "hono/logger";
 import { jwtAuth } from "./middleware/auth.js";
 import { authRoutes } from "./routes/auth.js";
+import { backupRoutes } from "./routes/backup.js";
 import { botsRoutes } from "./routes/bots.js";
 import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
+import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 
 interface AppOptions {
@@ -16,10 +18,11 @@ interface AppOptions {
   panelPassword: string;
   jwtSecret: string;
   encryptionKey: string;
+  backupService: BackupService;
 }
 
 export function createApp(options: AppOptions) {
-  const { db, botPool, panelPassword, jwtSecret, encryptionKey } = options;
+  const { db, botPool, panelPassword, jwtSecret, encryptionKey, backupService } = options;
 
   const app = new Hono()
     .use("*", honoLogger())
@@ -30,6 +33,8 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
+    .use("/api/backup/*", jwtAuth(jwtSecret))
+    .route("/api/backup", backupRoutes(backupService, encryptionKey))
     .get("/api/health", (c) => c.json({ ok: true as const }));
 
   // Serve panel static files in production (not chained - doesn't affect API types)

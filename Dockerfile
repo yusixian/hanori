@@ -27,6 +27,8 @@ RUN pnpm -r build
 FROM base AS runner
 ENV NODE_ENV=production
 RUN corepack disable 2>/dev/null; rm -rf /root/.cache /tmp/*
+RUN apk add --no-cache postgresql17-client
+RUN mkdir -p /data/backups
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules

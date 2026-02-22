@@ -27,4 +27,5 @@ export const env = {
   LOG_RETENTION_DAYS: optionalInt("LOG_RETENTION_DAYS", 30),
   LOG_RETENTION_DAYS_ERROR: optionalInt("LOG_RETENTION_DAYS_ERROR", 90),
   LOG_CLEANUP_INTERVAL_HOURS: optionalInt("LOG_CLEANUP_INTERVAL_HOURS", 24),
+  BACKUP_DIR: optional("BACKUP_DIR", "/data/backups"),
 } as const;

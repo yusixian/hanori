@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app.js";
 import { env } from "./env.js";
+import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
 import { DbLogger } from "./services/db-logger.js";
 import { LogCleaner } from "./services/log-cleaner.js";
@@ -56,8 +57,17 @@ logCleaner.start();
 // Migrate BOT_TOKEN from env to bots table (one-time)
 await migrateEnvBot(db, logger);
 
+// Backup Service
+const backupService = new BackupService({
+  db,
+  databaseUrl: env.DATABASE_URL,
+  backupDir: env.BACKUP_DIR,
+  encryptionKey: env.ENCRYPTION_KEY,
+});
+
 // Bot Pool
 const botPool = new BotPool(db, logger);
+botPool.setBackupService(backupService);
 
 // Hono App
 const app = createApp({
@@ -66,6 +76,7 @@ const app = createApp({
   panelPassword: env.PANEL_PASSWORD,
   jwtSecret: env.JWT_SECRET,
   encryptionKey: env.ENCRYPTION_KEY,
+  backupService,
 });
 
 // Start all active bots

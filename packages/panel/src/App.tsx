@@ -5,6 +5,7 @@ import { authProvider } from "@/providers/auth-provider";
 import { dataProvider } from "@/providers/data-provider";
 import { AppLayout } from "@/components/layout/app-layout";
 import { LoginPage } from "@/pages/login";
+import { BackupPage } from "@/pages/backup";
 import { BotListPage } from "@/pages/bots/list";
 import { BotCreatePage } from "@/pages/bots/create";
 import { BotEditPage } from "@/pages/bots/edit";
@@ -50,6 +51,7 @@ export function App() {
             <Route path="/bots/:botId/export" element={<BotExportPage />} />
             <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
             <Route path="/data" element={<DataPage />} />
+            <Route path="/backup" element={<BackupPage />} />
             <Route path="/logs" element={<LogsListPage />} />
           </Route>
 

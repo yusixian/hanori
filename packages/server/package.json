@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^0.2.14",
+    "@aws-sdk/client-s3": "^3.995.0",
     "@cos-tool-bot/bot": "workspace:*",
     "@cos-tool-bot/database": "workspace:*",
     "@cos-tool-bot/shared": "workspace:*",

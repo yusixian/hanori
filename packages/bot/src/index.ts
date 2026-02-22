@@ -2,6 +2,7 @@ import type { BotLogEntry, ConversationCallbacks } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
+import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createClearCommand } from "./commands/clear.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
@@ -21,6 +22,7 @@ export interface BotConfig {
   adminChatIds: number[];
   logger: Logger;
   onRestart?: () => void | Promise<void>;
+  onBackup?: () => Promise<BackupResult>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
@@ -67,6 +69,7 @@ export function createBot(config: BotConfig) {
   bot.command("md2tg", md2tgCommand);
   bot.command("status", authGuard, createStatusCommand(statusConfig, aiState));
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
+  bot.command("backup", authGuard, createBackupCommand(config.onBackup));
   bot.command("clear", createClearCommand(config.conversation, adminChatIds));
 
   if (aiHandler && aiState) {

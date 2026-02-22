@@ -7,6 +7,7 @@ import {
   Brain,
   Database,
   Download,
+  HardDrive,
   LogOut,
   MessageSquare,
   Pencil,
@@ -19,6 +20,7 @@ import { Button } from "../ui/button";
 const globalNavItems = [
   { label: "Bots", path: "/", icon: Bot },
   { label: "Data", path: "/data", icon: Database },
+  { label: "Backup", path: "/backup", icon: HardDrive },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];
 

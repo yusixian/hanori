@@ -12,6 +12,7 @@ interface BotManagerOptions {
   dbLogger: DbLogger;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
+  onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
 }
 
 export class BotManager {
@@ -30,6 +31,7 @@ export class BotManager {
       adminChatIds: options.adminChatIds,
       logger: options.logger,
       onRestart: () => this.restart(),
+      onBackup: options.onBackup,
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
       aiReply: options.aiReply,
       conversation: options.conversation,

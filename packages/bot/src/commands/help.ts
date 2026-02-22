@@ -12,6 +12,7 @@ const commands = [
   { command: "status", description: "(admin) 查看 Bot 运行状态" },
   { command: "clear", description: "(admin) 清除当前对话历史" },
   { command: "restart", description: "(admin) 重启服务" },
+  { command: "backup", description: "(admin) 创建数据库备份" },
 ];
 
 export { commands };

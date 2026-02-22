@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { env } from "../env.js";
 import { decrypt } from "../utils/crypto.js";
+import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
 import { compressConversation } from "./conversation-compressor.js";
@@ -23,6 +24,7 @@ export class BotPool {
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
+  private backupService?: BackupService;
 
   constructor(
     private db: Database,
@@ -31,6 +33,10 @@ export class BotPool {
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
+  }
+
+  setBackupService(service: BackupService) {
+    this.backupService = service;
   }
 
   getConversationStore(): ConversationStore {
@@ -214,6 +220,18 @@ export class BotPool {
       };
     }
 
+    const backupSvc = this.backupService;
+    const onBackup = backupSvc
+      ? async () => {
+          try {
+            const record = await backupSvc.createBackup();
+            return { ok: true, filename: record.filename };
+          } catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) };
+          }
+        }
+      : undefined;
+
     const manager = new BotManager({
       botId,
       token,
@@ -222,6 +240,7 @@ export class BotPool {
       dbLogger,
       aiReply,
       conversation,
+      onBackup,
     });
 
     this.managers.set(botId, manager);
