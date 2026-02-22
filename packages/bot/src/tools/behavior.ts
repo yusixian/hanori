@@ -4,11 +4,8 @@ import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { sleep } from "../utils/sleep.js";
 import { zodToAiSchema } from "./utils.js";
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export interface MoodInfo {
   mood: string;

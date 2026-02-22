@@ -1,8 +1,5 @@
 const TELEGRAM_MAX = 4096;
 
-// Sentence-ending patterns (followed by space or end)
-const SENTENCE_ENDS = /[.。！？!?;；]\s/g;
-
 /**
  * Split a long message into chunks at natural boundaries.
  *
@@ -19,20 +16,27 @@ export function splitMessage(text: string, threshold: number): string[] {
   while (remaining.length > threshold) {
     const window = remaining.slice(0, threshold);
 
-    // 1. Paragraph boundary (\n\n)
-    let cutIdx = window.lastIndexOf("\n\n");
-    // 2. Line boundary (\n)
-    if (cutIdx <= 0) cutIdx = window.lastIndexOf("\n");
-    // 3. Sentence boundary
+    let cutIdx = -1;
+
+    // 1. Paragraph boundary (\n\n) — cut after the separator
+    const paraIdx = window.lastIndexOf("\n\n");
+    if (paraIdx > 0) cutIdx = paraIdx + 2;
+
+    // 2. Line boundary (\n) — cut after the newline
+    if (cutIdx <= 0) {
+      const lineIdx = window.lastIndexOf("\n");
+      if (lineIdx > 0) cutIdx = lineIdx + 1;
+    }
+
+    // 3. Sentence boundary (punctuation followed by whitespace)
     if (cutIdx <= 0) {
       let lastSentenceEnd = -1;
-      SENTENCE_ENDS.lastIndex = 0;
-      let m: RegExpExecArray | null;
-      while ((m = SENTENCE_ENDS.exec(window)) !== null) {
+      for (const m of window.matchAll(/[.。！？!?;；]\s/g)) {
         lastSentenceEnd = m.index + m[0].length;
       }
       if (lastSentenceEnd > 0) cutIdx = lastSentenceEnd;
     }
+
     // 4. Hard cut
     if (cutIdx <= 0) cutIdx = threshold;
 

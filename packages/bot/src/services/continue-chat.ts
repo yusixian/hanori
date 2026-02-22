@@ -24,12 +24,11 @@ import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Per-chat promise chain to prevent concurrent generateText calls
 const chatLocks = new Map<number, Promise<void>>();
@@ -229,22 +228,33 @@ async function doContinueChat(
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
 
-      for (let i = 0; i < chunks.length; i++) {
-        if (i > 0) {
-          await api.sendChatAction(chatId, "typing");
-          await sleep(msgCfg.splitDelayMs);
-        }
-        const chunk =
-          chunks.length <= 1 && text.length > MAX_MESSAGE_LENGTH
-            ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..."
-            : chunks[i]!;
+      if (chunks.length <= 1) {
+        // Single chunk: keep original truncation behavior
+        const replyText =
+          text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
         try {
-          const html = markdownToTelegramHtml(chunk);
+          const html = markdownToTelegramHtml(replyText);
           const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
           chatBotMsgIds.push(sent.message_id);
         } catch {
-          const sent = await api.sendMessage(chatId, chunk).catch(() => undefined);
+          const sent = await api.sendMessage(chatId, replyText).catch(() => undefined);
           if (sent) chatBotMsgIds.push(sent.message_id);
+        }
+      } else {
+        // Multi-chunk: send each chunk with typing delay
+        for (let i = 0; i < chunks.length; i++) {
+          if (i > 0) {
+            await api.sendChatAction(chatId, "typing");
+            await sleep(msgCfg.splitDelayMs);
+          }
+          try {
+            const html = markdownToTelegramHtml(chunks[i]!);
+            const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
+            chatBotMsgIds.push(sent.message_id);
+          } catch {
+            const sent = await api.sendMessage(chatId, chunks[i]!).catch(() => undefined);
+            if (sent) chatBotMsgIds.push(sent.message_id);
+          }
         }
       }
     }

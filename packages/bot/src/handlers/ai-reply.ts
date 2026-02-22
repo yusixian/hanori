@@ -43,6 +43,7 @@ import {
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
+import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
 
 export interface AiReplyConfig {
@@ -137,8 +138,6 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
     }
   }
 }
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const TOOL_STATUS_MAP: Record<string, string> = {
   // Memory tools
