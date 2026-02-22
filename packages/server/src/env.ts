@@ -5,7 +5,7 @@ function required(name: string): string {
 }
 
 function optional(name: string, fallback = ""): string {
-  return process.env[name] ?? fallback;
+  return process.env[name] || fallback;
 }
 
 function optionalInt(name: string, fallback: number): number {
