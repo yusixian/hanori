@@ -13,7 +13,8 @@ import { BotAiSettingsPage } from "@/pages/bots/ai-settings";
 import { BotConversationsPage } from "@/pages/bots/conversations";
 import { BotProfilesPage } from "@/pages/bots/profiles";
 import { BotMemoriesPage } from "@/pages/bots/memories";
-import { BotDataTransferPage } from "@/pages/bots/data-transfer";
+import { BotExportPage } from "@/pages/bots/data-transfer";
+import { DataPage } from "@/pages/data";
 import { BotLogsPage } from "@/pages/bots/logs";
 import { LogsListPage } from "@/pages/logs/list";
 
@@ -46,8 +47,9 @@ export function App() {
             <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
             <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
             <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
-            <Route path="/bots/:botId/data" element={<BotDataTransferPage />} />
+            <Route path="/bots/:botId/export" element={<BotExportPage />} />
             <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
+            <Route path="/data" element={<DataPage />} />
             <Route path="/logs" element={<LogsListPage />} />
           </Route>
 

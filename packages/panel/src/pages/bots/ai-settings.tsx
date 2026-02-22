@@ -78,6 +78,10 @@ export function BotAiSettingsPage() {
       const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
       const json = await res.json();
       if (json.ok) {
+        console.log(
+          "[ai-config] loaded, groupOverrides count:",
+          Object.keys(json.data.groupOverrides).length,
+        );
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
@@ -122,8 +126,28 @@ export function BotAiSettingsPage() {
             .filter(Boolean),
         },
       });
+      if (!res.ok) {
+        try {
+          const errorJson = JSON.parse(await res.text());
+          const detail = errorJson?.error?.issues
+            ? (errorJson.error.issues as Array<{ path: string[]; message: string }>)
+                .map(
+                  (i: { path: string[]; message: string }) => `${i.path.join(".")}: ${i.message}`,
+                )
+                .join("; ")
+            : JSON.stringify(errorJson);
+          setMessage({ type: "error", text: `Save failed: ${detail}` });
+        } catch {
+          setMessage({ type: "error", text: `Save failed (HTTP ${res.status})` });
+        }
+        return;
+      }
       const json = await res.json();
       if (json.ok) {
+        console.log(
+          "[ai-config] saved, groupOverrides count:",
+          Object.keys(json.data.groupOverrides).length,
+        );
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
@@ -187,7 +211,8 @@ export function BotAiSettingsPage() {
     const override: AiGroupOverride = {
       chatId,
       chatTitle: newChatTitle || undefined,
-      whitelisted: false,
+      enabled: true,
+      whitelisted: true,
     };
     setConfig((prev) => ({
       ...prev,
@@ -1140,6 +1165,10 @@ export function BotAiSettingsPage() {
           <CardTitle className="text-base">Group Overrides</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-xs">
+            Configure per-group AI behavior. "Allow All Users" lets everyone in the group trigger
+            the bot; when off, only admins can use it.
+          </p>
           {Object.entries(config.groupOverrides).map(([key, override]) => (
             <GroupOverrideRow
               key={key}
@@ -1210,14 +1239,17 @@ function GroupOverrideRow({
           )}
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-sm">
+          <label
+            className="flex items-center gap-1.5 text-sm"
+            title="Allow all users in this group to trigger the bot. When off, only admins can use it."
+          >
             <input
               type="checkbox"
               checked={override.whitelisted}
               onChange={(e) => onUpdate({ whitelisted: e.target.checked })}
               className="border-input h-4 w-4 rounded"
             />
-            Whitelist
+            Allow All Users
           </label>
           <label className="flex items-center gap-1.5 text-sm">
             <input

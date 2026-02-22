@@ -5,7 +5,8 @@ import {
   BookOpen,
   Bot,
   Brain,
-  HardDriveDownload,
+  Database,
+  Download,
   LogOut,
   MessageSquare,
   Pencil,
@@ -17,6 +18,7 @@ import { Button } from "../ui/button";
 
 const globalNavItems = [
   { label: "Bots", path: "/", icon: Bot },
+  { label: "Data", path: "/data", icon: Database },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];
 
@@ -42,7 +44,7 @@ export function AppLayout() {
         { label: "Conversations", path: `/bots/${botId}/conversations`, icon: MessageSquare },
         { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
         { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
-        { label: "Data", path: `/bots/${botId}/data`, icon: HardDriveDownload },
+        { label: "Export", path: `/bots/${botId}/export`, icon: Download },
         { label: "Logs", path: `/bots/${botId}/logs`, icon: ScrollText },
       ]
     : [];

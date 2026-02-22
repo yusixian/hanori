@@ -50,18 +50,22 @@ export function dataTransferRoutes(db: Database, encryptionKey: string) {
         try {
           const payload = await service.exportBot(botId, excludeSet);
 
+          const botName = (bot.name ?? "bot").replace(/[^a-zA-Z0-9_-]/g, "_");
+          const date = new Date().toISOString().slice(0, 10);
+
           if (format === "gzip") {
-            const compressed = gzipSync(superjson.stringify(payload));
-            const botName = (bot.name ?? "bot").replace(/[^a-zA-Z0-9_-]/g, "_");
-            const date = new Date().toISOString().slice(0, 10);
+            const compressed = gzipSync(JSON.stringify(payload));
             return c.body(compressed, 200, {
               "Content-Type": "application/gzip",
               "Content-Disposition": `attachment; filename="cos-tool-bot_${botName}_${date}.json.gz"`,
             });
           }
 
-          const body = superjson.stringify({ ok: true as const, data: payload });
-          return c.body(body, 200, { "Content-Type": "application/superjson" });
+          const body = JSON.stringify(payload, null, 2);
+          return c.body(body, 200, {
+            "Content-Type": "application/json",
+            "Content-Disposition": `attachment; filename="cos-tool-bot_${botName}_${date}.json"`,
+          });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           const body = superjson.stringify({ ok: false as const, error: msg });
@@ -82,11 +86,11 @@ export function dataTransferRoutes(db: Database, encryptionKey: string) {
         } else {
           text = new TextDecoder().decode(bytes);
         }
-        // Try superjson first, fall back to plain JSON for backward compatibility
+        // Try plain JSON first, fall back to superjson for backward compatibility
         try {
-          body = superjson.parse<ExportPayload>(text);
-        } catch {
           body = JSON.parse(text) as ExportPayload;
+        } catch {
+          body = superjson.parse<ExportPayload>(text);
         }
 
         const result = await service.importData(body);
