@@ -50,6 +50,24 @@ function snakeToCamel(s: string): string {
   return s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
 }
 
+/** Convert date strings back to Date objects for timestamp columns before Drizzle insert */
+function rehydrateDates(
+  table: PgTable<TableConfig>,
+  row: Record<string, unknown>,
+): Record<string, unknown> {
+  const config = getTableConfig(table);
+  const timestampCols = new Set(
+    config.columns.filter((c) => c.dataType === "date").map((c) => snakeToCamel(c.name)),
+  );
+  const result = { ...row };
+  for (const col of timestampCols) {
+    if (typeof result[col] === "string") {
+      result[col] = new Date(result[col] as string);
+    }
+  }
+  return result;
+}
+
 function discoverBotChildTables(): ChildTableInfo[] {
   const childTables: ChildTableInfo[] = [];
 
@@ -207,7 +225,7 @@ export class DataTransferService {
           const idColName = idCol?.name;
 
           const rows = tableData.map((row: Record<string, unknown>) => {
-            const newRow = { ...row };
+            const newRow = rehydrateDates(child.table, row);
             // Replace botId with new UUID
             // Map DB column name to JS field name
             const botField = snakeToCamel(botColName);
