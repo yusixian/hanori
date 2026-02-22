@@ -77,6 +77,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     agentToolsConfig: config.agentToolsConfig,
     artworkToolsConfig: config.artworkToolsConfig,
     botMemoryConfig: config.botMemoryConfig,
+    messageConfig: config.messageConfig,
   };
 }
 
@@ -188,6 +189,12 @@ const aiConfigSchema = z
         enabled: z.boolean(),
         maxMemories: z.number().min(1).max(100),
         autoInjectMemories: z.boolean(),
+      })
+      .optional(),
+    messageConfig: z
+      .object({
+        autoSplitThreshold: z.number().min(0).max(4096),
+        splitDelayMs: z.number().min(0).max(5000),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -359,6 +366,7 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         agentToolsConfig: body.agentToolsConfig,
         artworkToolsConfig: body.artworkToolsConfig,
         botMemoryConfig: body.botMemoryConfig,
+        messageConfig: body.messageConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

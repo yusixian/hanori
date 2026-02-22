@@ -55,11 +55,20 @@ export class BotManager {
     this._status = "running";
     this.startedAt = Date.now();
 
-    this.bot.start({
-      onStart: () => {
-        this.dbLogger.info("Bot started").catch(() => {});
-      },
-    });
+    this.bot
+      .start({
+        onStart: () => {
+          this.dbLogger.info("Bot started").catch(() => {});
+        },
+      })
+      .catch((err) => {
+        this._status = "stopped";
+        this.startedAt = null;
+        this.bot = null;
+        this.dbLogger
+          .error(`Bot crashed: ${err instanceof Error ? err.message : String(err)}`)
+          .catch(() => {});
+      });
   }
 
   async stop() {

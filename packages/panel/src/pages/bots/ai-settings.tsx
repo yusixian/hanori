@@ -11,6 +11,7 @@ import type {
   BotMemoryConfig,
   ConversationConfig,
   MemoryConfig,
+  MessageConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -18,6 +19,7 @@ import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
 } from "@cos-tool-bot/shared";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -120,6 +122,7 @@ export function BotAiSettingsPage() {
           webToolsConfig: config.webToolsConfig,
           agentToolsConfig: config.agentToolsConfig,
           artworkToolsConfig: config.artworkToolsConfig,
+          messageConfig: config.messageConfig,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -277,6 +280,14 @@ export function BotAiSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       botMemoryConfig: { ...botMemCfg, ...prev.botMemoryConfig, ...updates },
+    }));
+  };
+
+  const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+  const updateMessageConfig = (updates: Partial<MessageConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      messageConfig: { ...msgCfg, ...prev.messageConfig, ...updates },
     }));
   };
 
@@ -688,6 +699,52 @@ export function BotAiSettingsPage() {
               />
               <p className="text-muted-foreground text-xs">
                 Trigger compression when message count exceeds this
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Message Splitting */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Message Splitting</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-muted-foreground text-xs">
+            When the AI reply exceeds the threshold, it is automatically split at natural boundaries
+            (paragraphs, lines, sentences) and sent as multiple messages with typing delay. Set
+            threshold to 0 to disable.
+          </p>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Auto-Split Threshold</label>
+              <Input
+                type="number"
+                min={0}
+                max={4096}
+                value={msgCfg.autoSplitThreshold}
+                onChange={(e) =>
+                  updateMessageConfig({ autoSplitThreshold: Number(e.target.value) })
+                }
+              />
+              <p className="text-muted-foreground text-xs">
+                0 = disabled. Recommended: 1500-2500. Max per chunk: 4096 (Telegram limit).
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Split Delay (ms)</label>
+              <Input
+                type="number"
+                min={0}
+                max={5000}
+                disabled={msgCfg.autoSplitThreshold === 0}
+                value={msgCfg.splitDelayMs}
+                onChange={(e) => updateMessageConfig({ splitDelayMs: Number(e.target.value) })}
+              />
+              <p className="text-muted-foreground text-xs">
+                Delay between split messages. Shows typing indicator.
               </p>
             </div>
           </div>

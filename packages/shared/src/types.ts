@@ -200,6 +200,16 @@ export const DEFAULT_BOT_MEMORY_CONFIG: BotMemoryConfig = {
   autoInjectMemories: true,
 };
 
+export interface MessageConfig {
+  autoSplitThreshold: number; // 0 = disabled, >0 = auto-split when text exceeds this character count
+  splitDelayMs: number; // delay between split segments (ms), shows typing status
+}
+
+export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
+  autoSplitThreshold: 0, // disabled by default
+  splitDelayMs: 800,
+};
+
 export interface BotMemoryCallbacks {
   saveMemory(params: {
     content: string;
@@ -234,6 +244,7 @@ export interface AiConfigStored {
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
+  messageConfig?: MessageConfig;
 }
 
 export interface AiConfigPublic {
@@ -253,6 +264,7 @@ export interface AiConfigPublic {
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
+  messageConfig?: MessageConfig;
 }
 
 export type CommandEntity = {

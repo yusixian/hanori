@@ -53,6 +53,7 @@ export class BotPool {
       this.logger.warn(err, "Failed to query active bots (table may not exist — run migrations)");
       return;
     }
+    if (activeBots.length === 0) return;
     this.logger.info(`Starting ${activeBots.length} active bot(s)...`);
     for (const bot of activeBots) {
       try {
@@ -209,6 +210,7 @@ export class BotPool {
         artworkToolsConfig: aiConfig.artworkToolsConfig,
         botMemoryConfig: botMemoryCfg,
         botMemory,
+        messageConfig: aiConfig.messageConfig,
       };
     }
 

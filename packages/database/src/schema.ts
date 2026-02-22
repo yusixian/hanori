@@ -102,6 +102,10 @@ interface AiConfigJson {
     maxMemories: number;
     autoInjectMemories: boolean;
   };
+  messageConfig?: {
+    autoSplitThreshold: number;
+    splitDelayMs: number;
+  };
 }
 
 export const settings = pgTable("settings", {

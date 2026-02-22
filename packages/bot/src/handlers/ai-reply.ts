@@ -11,12 +11,14 @@ import type {
   ConversationRole,
   MemoryCallbacks,
   MemoryConfig,
+  MessageConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
 } from "@cos-tool-bot/shared";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { CoreTool } from "ai";
@@ -41,6 +43,7 @@ import {
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
+import { splitMessage } from "../utils/split-message.js";
 
 export interface AiReplyConfig {
   apiKey: string;
@@ -61,6 +64,7 @@ export interface AiReplyConfig {
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
+  messageConfig?: MessageConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
@@ -133,6 +137,8 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
     }
   }
 }
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 const TOOL_STATUS_MAP: Record<string, string> = {
   // Memory tools
@@ -537,6 +543,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       memory: config.memory,
       botMemoryConfig: config.botMemoryConfig,
       botMemory: config.botMemory,
+      messageConfig: config.messageConfig,
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsConfig: config.artworkToolsConfig,
@@ -936,6 +943,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         messages[0]!.content += `\n\n${extendedPrompt}`;
       }
 
+      // Inject split-friendly writing hint when auto-split is enabled
+      if (
+        (config.messageConfig?.autoSplitThreshold ?? 0) > 0 &&
+        messages.length > 0 &&
+        messages[0]!.role === "system"
+      ) {
+        messages[0]!.content +=
+          "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
+      }
+
       // Current user message
       const currentContent = !isPrivate ? `[${userName}]: ${ctx.message.text}` : ctx.message.text;
       messages.push({ role: "user", content: currentContent });
@@ -1172,10 +1189,36 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         // multi_message already sent messages, just clean up waiting message
         await ctx.deleteWaiting();
       } else if (text) {
-        const replyText =
-          text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
-        const replyMsgId = await safeReply(ctx, replyText);
-        if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+        const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+        const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
+
+        if (chunks.length <= 1) {
+          // Single chunk: keep original truncation behavior
+          const replyText =
+            text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
+          const replyMsgId = await safeReply(ctx, replyText);
+          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+        } else {
+          // Multi-chunk: first chunk edits the waiting message, rest are new messages
+          const firstMsgId = await safeReply(ctx, chunks[0]!);
+          if (firstMsgId) chatBotMsgIds.push(firstMsgId);
+          for (let i = 1; i < chunks.length; i++) {
+            await ctx.api.sendChatAction(chatId, "typing");
+            await sleep(msgCfg.splitDelayMs);
+            try {
+              const html = markdownToTelegramHtml(chunks[i]!);
+              const sent = await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+              chatBotMsgIds.push(sent.message_id);
+            } catch {
+              try {
+                const sent = await ctx.api.sendMessage(chatId, chunks[i]!);
+                chatBotMsgIds.push(sent.message_id);
+              } catch {
+                // skip failed chunk
+              }
+            }
+          }
+        }
       } else {
         // Check if any action tools produced visible effects (sticker, reaction, telegram actions)
         const hasVisibleAction = result.steps.some((s) =>

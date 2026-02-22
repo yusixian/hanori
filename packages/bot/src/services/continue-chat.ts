@@ -9,12 +9,14 @@ import type {
   ConversationRole,
   MemoryCallbacks,
   MemoryConfig,
+  MessageConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
 } from "@cos-tool-bot/shared";
 import type { CoreTool, LanguageModelV1 } from "ai";
 import { generateText } from "ai";
@@ -22,9 +24,12 @@ import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { splitMessage } from "../utils/split-message.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // Per-chat promise chain to prevent concurrent generateText calls
 const chatLocks = new Map<number, Promise<void>>();
@@ -39,6 +44,7 @@ export interface ContinueChatConfig {
   memory?: MemoryCallbacks;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
+  messageConfig?: MessageConfig;
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
@@ -125,6 +131,12 @@ async function doContinueChat(
     // Inject behavioral prompt
     if (config.behavioralPrompt && messages[0]) {
       messages[0].content += `\n\n${config.behavioralPrompt}`;
+    }
+
+    // Inject split-friendly writing hint when auto-split is enabled
+    if ((config.messageConfig?.autoSplitThreshold ?? 0) > 0 && messages[0]) {
+      messages[0].content +=
+        "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
     }
 
     // Inject mood
@@ -214,15 +226,26 @@ async function doContinueChat(
 
     // Send reply and track message ID
     if (text) {
-      const replyText =
-        text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
-      try {
-        const html = markdownToTelegramHtml(replyText);
-        const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
-        chatBotMsgIds.push(sent.message_id);
-      } catch {
-        const sent = await api.sendMessage(chatId, replyText).catch(() => undefined);
-        if (sent) chatBotMsgIds.push(sent.message_id);
+      const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+      const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (i > 0) {
+          await api.sendChatAction(chatId, "typing");
+          await sleep(msgCfg.splitDelayMs);
+        }
+        const chunk =
+          chunks.length <= 1 && text.length > MAX_MESSAGE_LENGTH
+            ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..."
+            : chunks[i]!;
+        try {
+          const html = markdownToTelegramHtml(chunk);
+          const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
+          chatBotMsgIds.push(sent.message_id);
+        } catch {
+          const sent = await api.sendMessage(chatId, chunk).catch(() => undefined);
+          if (sent) chatBotMsgIds.push(sent.message_id);
+        }
       }
     }
 
