@@ -1,0 +1,93 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import type { AiTriggerConfig } from "@cos-tool-bot/shared";
+
+export function TriggerSettingsSection({
+  config,
+  triggerWordsText,
+  onTriggerWordsTextChange,
+  onUpdate,
+}: {
+  config: AiTriggerConfig;
+  triggerWordsText: string;
+  onTriggerWordsTextChange: (text: string) => void;
+  onUpdate: (key: keyof AiTriggerConfig, value: AiTriggerConfig[keyof AiTriggerConfig]) => void;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Default Trigger Settings</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="replyToBot"
+            checked={config.replyToBot}
+            onChange={(e) => onUpdate("replyToBot", e.target.checked)}
+            className="border-input h-4 w-4 rounded"
+          />
+          <label htmlFor="replyToBot" className="text-sm">
+            Trigger when replying to bot
+          </label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="mentionBot"
+            checked={config.mentionBot}
+            onChange={(e) => onUpdate("mentionBot", e.target.checked)}
+            className="border-input h-4 w-4 rounded"
+          />
+          <label htmlFor="mentionBot" className="text-sm">
+            Trigger when @mentioning bot
+          </label>
+        </div>
+
+        <div className="space-y-1.5">
+          <label className="text-sm font-medium">Trigger Words</label>
+          <Input
+            value={triggerWordsText}
+            onChange={(e) => onTriggerWordsTextChange(e.target.value)}
+            onBlur={() =>
+              onUpdate(
+                "triggerWords",
+                triggerWordsText
+                  .split(",")
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              )
+            }
+            placeholder="ai, help, ask"
+          />
+          <p className="text-muted-foreground text-xs">
+            Comma-separated keywords (case-insensitive)
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Random Reply %</label>
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              value={config.randomReplyPercent}
+              onChange={(e) => onUpdate("randomReplyPercent", Number(e.target.value))}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Cooldown (seconds)</label>
+            <Input
+              type="number"
+              min={0}
+              value={config.randomReplyCooldown}
+              onChange={(e) => onUpdate("randomReplyCooldown", Number(e.target.value))}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}

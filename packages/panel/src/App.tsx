@@ -16,6 +16,7 @@ import { BotProfilesPage } from "@/pages/bots/profiles";
 import { BotMemoriesPage } from "@/pages/bots/memories";
 import { BotExportPage } from "@/pages/bots/data-transfer";
 import { DataPage } from "@/pages/data";
+import { ApiTestPage } from "@/pages/api-test";
 import { BotLogsPage } from "@/pages/bots/logs";
 import { LogsListPage } from "@/pages/logs/list";
 
@@ -52,6 +53,7 @@ export function App() {
             <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
             <Route path="/data" element={<DataPage />} />
             <Route path="/backup" element={<BackupPage />} />
+            <Route path="/api-test" element={<ApiTestPage />} />
             <Route path="/logs" element={<LogsListPage />} />
           </Route>
 

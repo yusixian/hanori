@@ -5,6 +5,7 @@ import { createApp } from "./app.js";
 import { env } from "./env.js";
 import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
+import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
@@ -65,6 +66,11 @@ const backupService = new BackupService({
   encryptionKey: env.ENCRYPTION_KEY,
   logger,
 });
+await backupService.init();
+
+// Model Capability Service
+const modelCapabilityService = new ModelCapabilityService(logger);
+await modelCapabilityService.init();
 
 // Bot Pool
 const botPool = new BotPool(db, logger);
@@ -78,6 +84,7 @@ const app = createApp({
   jwtSecret: env.JWT_SECRET,
   encryptionKey: env.ENCRYPTION_KEY,
   backupService,
+  modelCapabilityService,
 });
 
 // Start all active bots
@@ -97,6 +104,7 @@ serve(
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
+  modelCapabilityService.stop();
   logCleaner.stop();
   await botPool.stopAll();
   await dbClient.end();

@@ -7,6 +7,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
+import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 
 const createBotSchema = z.object({
@@ -83,6 +84,8 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     artworkToolsConfig: config.artworkToolsConfig,
     botMemoryConfig: config.botMemoryConfig,
     messageConfig: config.messageConfig,
+    models: config.models,
+    modelCommandAccess: config.modelCommandAccess,
   };
 }
 
@@ -203,17 +206,46 @@ const aiConfigSchema = z
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
+    models: z
+      .array(
+        z.object({
+          id: z.string(),
+          label: z.string().optional(),
+          capabilities: z
+            .array(
+              z.enum(["vision", "tool_calling", "web_search", "reasoning", "long_context", "code"]),
+            )
+            .optional(),
+          temperature: z.number().min(0).max(2).optional(),
+          maxTokens: z.number().positive().optional(),
+        }),
+      )
+      .optional(),
+    modelCommandAccess: z.enum(["admin", "all"]).optional(),
   })
-  .refine((data) => !data.enabled || (data.baseURL.length > 0 && data.model.length > 0), {
-    message: "baseURL and model are required when AI is enabled",
-  });
+  .refine(
+    (data) => {
+      if (!data.enabled) return true;
+      if (data.baseURL.length === 0) return false;
+      // model can be empty if models array is non-empty (first model used as default)
+      if (data.model.length === 0 && (!data.models || data.models.length === 0)) return false;
+      return true;
+    },
+    {
+      message: "baseURL is required when AI is enabled; model or models must be configured",
+    },
+  );
 
 const aiModelsSchema = z.object({
   baseURL: z.string().url().optional(),
   apiKey: z.string().optional(),
 });
 
-export function botsRoutes(db: Database, botPool: BotPool) {
+export function botsRoutes(
+  db: Database,
+  botPool: BotPool,
+  modelCapabilityService: ModelCapabilityService,
+) {
   return new Hono()
     .get(
       "/",
@@ -369,11 +401,15 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         encryptedApiKey = encrypt(body.apiKey, env.ENCRYPTION_KEY);
       }
 
+      // If model is empty but models array has entries, use first model as default
+      const effectiveModel =
+        body.model || (body.models?.length ? body.models[0]!.id : (bot.aiConfig?.model ?? ""));
+
       const aiConfig: AiConfigStored = {
         enabled: body.enabled,
         encryptedApiKey,
         baseURL: body.baseURL,
-        model: body.model,
+        model: effectiveModel,
         systemPrompt: body.systemPrompt,
         behavioralPrompt: body.behavioralPrompt,
         groupBehavioralPrompt: body.groupBehavioralPrompt,
@@ -387,6 +423,8 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         artworkToolsConfig: body.artworkToolsConfig,
         botMemoryConfig: body.botMemoryConfig,
         messageConfig: body.messageConfig,
+        models: body.models,
+        modelCommandAccess: body.modelCommandAccess,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));
@@ -556,8 +594,11 @@ export function botsRoutes(db: Database, botPool: BotPool) {
             apiKey = decrypt(bot.aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
           } catch {
             return c.json(
-              { ok: false as const, error: "Encryption key mismatch, cannot decrypt API Key" },
-              500,
+              {
+                ok: false as const,
+                error: "密钥不匹配，无法解密 API Key，请重新输入 API Key",
+              },
+              400,
             );
           }
         }
@@ -580,7 +621,11 @@ export function botsRoutes(db: Database, botPool: BotPool) {
         };
         return c.json({
           ok: true as const,
-          data: models.map((m) => ({ id: m.id, owned_by: m.owned_by })),
+          data: models.map((m) => ({
+            id: m.id,
+            owned_by: m.owned_by,
+            capabilities: modelCapabilityService.inferCapabilities(m.id),
+          })),
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

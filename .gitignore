@@ -30,6 +30,9 @@ pgdata/
 # Claude Code skills
 .claude/skills/
 
+# Backups (local dev)
+backups/
+
 # Misc
 temp/
 downloads/

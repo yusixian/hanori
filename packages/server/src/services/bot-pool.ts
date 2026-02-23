@@ -10,10 +10,11 @@ import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bo
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { env } from "../env.js";
-import { decrypt } from "../utils/crypto.js";
+import { tryDecrypt } from "../utils/crypto.js";
 import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
+import { ChatModelStore } from "./chat-model-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
@@ -24,6 +25,7 @@ export class BotPool {
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
+  private chatModelStore: ChatModelStore;
   private backupService?: BackupService;
 
   constructor(
@@ -33,6 +35,7 @@ export class BotPool {
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
+    this.chatModelStore = new ChatModelStore(db);
   }
 
   setBackupService(service: BackupService) {
@@ -92,7 +95,12 @@ export class BotPool {
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
     if (!bot) throw new Error(`Bot ${botId} not found`);
 
-    const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    if (!token) {
+      throw new Error(
+        "Encryption key mismatch: cannot decrypt bot token. Please update the token in bot settings.",
+      );
+    }
     const dbLogger = new DbLogger(this.db, this.logger, botId);
 
     // Build AI reply config if configured
@@ -100,72 +108,64 @@ export class BotPool {
     let conversation: ConversationCallbacks | undefined;
     const aiConfig = bot.aiConfig;
     if (aiConfig?.enabled && aiConfig.encryptedApiKey) {
-      const apiKey = decrypt(aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
-      const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
-      const store = this.conversationStore;
+      const apiKey = tryDecrypt(aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
+      if (!apiKey) {
+        dbLogger.warn(
+          "Encryption key mismatch: cannot decrypt AI API key. AI features disabled. Please update the API key in settings.",
+        );
+      } else {
+        const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+        const store = this.conversationStore;
 
-      conversation = {
-        getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
-        addMessage: (p) => store.addMessage({ botId, ...p }),
-        addMessages: (msgs) => store.addMessages(msgs.map((m) => ({ botId, ...m }))),
-        triggerCompression: (chatId) => {
-          compressConversation({
-            botId,
-            chatId,
-            store,
-            conversationConfig: conversationCfg,
-            apiKey,
-            baseURL: aiConfig.baseURL,
-            model: aiConfig.model,
-            logger: this.logger,
-          }).catch((err) => {
-            this.logger.error(
-              err,
-              `Conversation compression failed for bot=${botId} chat=${chatId}`,
-            );
-          });
-        },
-        clearHistory: (chatId) => store.clearHistory(botId, chatId),
-      };
+        conversation = {
+          getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
+          addMessage: (p) => store.addMessage({ botId, ...p }),
+          addMessages: (msgs) => store.addMessages(msgs.map((m) => ({ botId, ...m }))),
+          triggerCompression: (chatId) => {
+            compressConversation({
+              botId,
+              chatId,
+              store,
+              conversationConfig: conversationCfg,
+              apiKey,
+              baseURL: aiConfig.baseURL,
+              model: aiConfig.model,
+              logger: this.logger,
+            }).catch((err) => {
+              this.logger.error(
+                err,
+                `Conversation compression failed for bot=${botId} chat=${chatId}`,
+              );
+            });
+          },
+          clearHistory: (chatId) => store.clearHistory(botId, chatId),
+        };
 
-      // Build memory callbacks if memory is enabled
-      const memoryCfg = aiConfig.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-      let memory: MemoryCallbacks | undefined;
-      if (memoryCfg.enabled) {
-        const ps = this.profileStore;
-        const cs = this.conversationStore;
-        memory = {
-          getProfile: (telegramId) =>
-            ps.getProfile(botId, telegramId).then((p) =>
-              p
-                ? {
-                    telegramId: p.telegramId,
-                    username: p.username,
-                    displayName: p.displayName,
-                    notes: p.notes,
-                    traits: p.traits ?? [],
-                    interests: p.interests ?? [],
-                    relationship: p.relationship,
-                    firstSeen: p.firstSeen.toISOString(),
-                    lastSeen: p.lastSeen.toISOString(),
-                  }
-                : null,
-            ),
-          upsertProfile: (data) =>
-            ps.upsertProfile(botId, data).then((p) => ({
-              telegramId: p.telegramId,
-              username: p.username,
-              displayName: p.displayName,
-              notes: p.notes,
-              traits: p.traits ?? [],
-              interests: p.interests ?? [],
-              relationship: p.relationship,
-              firstSeen: p.firstSeen.toISOString(),
-              lastSeen: p.lastSeen.toISOString(),
-            })),
-          searchProfiles: (query) =>
-            ps.searchProfiles(botId, query).then((profiles) =>
-              profiles.map((p) => ({
+        // Build memory callbacks if memory is enabled
+        const memoryCfg = aiConfig.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
+        let memory: MemoryCallbacks | undefined;
+        if (memoryCfg.enabled) {
+          const ps = this.profileStore;
+          const cs = this.conversationStore;
+          memory = {
+            getProfile: (telegramId) =>
+              ps.getProfile(botId, telegramId).then((p) =>
+                p
+                  ? {
+                      telegramId: p.telegramId,
+                      username: p.username,
+                      displayName: p.displayName,
+                      notes: p.notes,
+                      traits: p.traits ?? [],
+                      interests: p.interests ?? [],
+                      relationship: p.relationship,
+                      firstSeen: p.firstSeen.toISOString(),
+                      lastSeen: p.lastSeen.toISOString(),
+                    }
+                  : null,
+              ),
+            upsertProfile: (data) =>
+              ps.upsertProfile(botId, data).then((p) => ({
                 telegramId: p.telegramId,
                 username: p.username,
                 displayName: p.displayName,
@@ -176,48 +176,79 @@ export class BotPool {
                 firstSeen: p.firstSeen.toISOString(),
                 lastSeen: p.lastSeen.toISOString(),
               })),
-            ),
-          searchHistory: (params) => cs.searchMessages(botId, params),
-          touchProfile: (telegramId, displayName, username) =>
-            ps.touchProfile(botId, telegramId, displayName, username),
+            searchProfiles: (query) =>
+              ps.searchProfiles(botId, query).then((profiles) =>
+                profiles.map((p) => ({
+                  telegramId: p.telegramId,
+                  username: p.username,
+                  displayName: p.displayName,
+                  notes: p.notes,
+                  traits: p.traits ?? [],
+                  interests: p.interests ?? [],
+                  relationship: p.relationship,
+                  firstSeen: p.firstSeen.toISOString(),
+                  lastSeen: p.lastSeen.toISOString(),
+                })),
+              ),
+            searchHistory: (params) => cs.searchMessages(botId, params),
+            touchProfile: (telegramId, displayName, username) =>
+              ps.touchProfile(botId, telegramId, displayName, username),
+          };
+        }
+
+        // Build bot memory callbacks (independent of people profile memory)
+        const botMemoryCfg = aiConfig.botMemoryConfig;
+        let botMemory: BotMemoryCallbacks | undefined;
+        if (botMemoryCfg?.enabled) {
+          const ms = this.botMemoryStore;
+          botMemory = {
+            saveMemory: (params) => ms.saveMemory(botId, params),
+            recallMemories: (params) => ms.recallMemories(botId, params),
+            deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
+            getMemoriesForPrompt: (telegramId, limit) =>
+              ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
+          };
+        }
+
+        // Load persisted per-chat model overrides
+        const chatModelMap = await this.chatModelStore.loadOverrides(botId);
+        const chatModelStoreRef = this.chatModelStore;
+
+        aiReply = {
+          apiKey,
+          baseURL: aiConfig.baseURL,
+          model: aiConfig.model,
+          systemPrompt: aiConfig.systemPrompt,
+          behavioralPrompt: aiConfig.behavioralPrompt,
+          groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
+          triggerConfig: aiConfig.triggerConfig,
+          groupOverrides: aiConfig.groupOverrides,
+          conversationConfig: conversationCfg,
+          conversation,
+          memoryConfig: memoryCfg,
+          memory,
+          stickerPacks: aiConfig.stickerPacks,
+          webToolsConfig: aiConfig.webToolsConfig,
+          agentToolsConfig: aiConfig.agentToolsConfig,
+          artworkToolsConfig: aiConfig.artworkToolsConfig,
+          botMemoryConfig: botMemoryCfg,
+          botMemory,
+          messageConfig: aiConfig.messageConfig,
+          models: aiConfig.models,
+          modelCommandAccess: aiConfig.modelCommandAccess,
+          modelOverride: {
+            getModelForChat: (chatId) => chatModelMap.get(chatId),
+            setModelForChat: (chatId, modelId) => {
+              chatModelMap.set(chatId, modelId);
+              chatModelStoreRef.setOverride(botId, chatId, modelId).catch(() => {});
+            },
+            resetModelForChat: (chatId) => {
+              chatModelMap.delete(chatId);
+              chatModelStoreRef.removeOverride(botId, chatId).catch(() => {});
+            },
+          },
         };
       }
-
-      // Build bot memory callbacks (independent of people profile memory)
-      const botMemoryCfg = aiConfig.botMemoryConfig;
-      let botMemory: BotMemoryCallbacks | undefined;
-      if (botMemoryCfg?.enabled) {
-        const ms = this.botMemoryStore;
-        botMemory = {
-          saveMemory: (params) => ms.saveMemory(botId, params),
-          recallMemories: (params) => ms.recallMemories(botId, params),
-          deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
-          getMemoriesForPrompt: (telegramId, limit) =>
-            ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
-        };
-      }
-
-      aiReply = {
-        apiKey,
-        baseURL: aiConfig.baseURL,
-        model: aiConfig.model,
-        systemPrompt: aiConfig.systemPrompt,
-        behavioralPrompt: aiConfig.behavioralPrompt,
-        groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
-        triggerConfig: aiConfig.triggerConfig,
-        groupOverrides: aiConfig.groupOverrides,
-        conversationConfig: conversationCfg,
-        conversation,
-        memoryConfig: memoryCfg,
-        memory,
-        stickerPacks: aiConfig.stickerPacks,
-        webToolsConfig: aiConfig.webToolsConfig,
-        agentToolsConfig: aiConfig.agentToolsConfig,
-        artworkToolsConfig: aiConfig.artworkToolsConfig,
-        botMemoryConfig: botMemoryCfg,
-        botMemory,
-        messageConfig: aiConfig.messageConfig,
-      };
     }
 
     const backupSvc = this.backupService;

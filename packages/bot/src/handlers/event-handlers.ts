@@ -11,7 +11,7 @@ const GROUP_DEBOUNCE_MS = 5000;
 export interface PollAnswerHandlerOptions {
   api: Api;
   pendingActions: PendingActionRegistry;
-  getContinueChatConfig: () => ContinueChatConfig;
+  getContinueChatConfig: (chatId?: number) => ContinueChatConfig;
   isPrivateChat: (chatId: number) => boolean;
 }
 
@@ -57,7 +57,7 @@ export function createPollAnswerHandler(options: PollAnswerHandlerOptions) {
       ].join("\n");
 
       try {
-        await continueChat(api, getContinueChatConfig(), {
+        await continueChat(api, getContinueChatConfig(poll.chatId), {
           chatId: poll.chatId,
           eventDescription,
         });
@@ -71,7 +71,7 @@ export function createPollAnswerHandler(options: PollAnswerHandlerOptions) {
 export interface CallbackQueryHandlerOptions {
   api: Api;
   pendingActions: PendingActionRegistry;
-  getContinueChatConfig: () => ContinueChatConfig;
+  getContinueChatConfig: (chatId?: number) => ContinueChatConfig;
 }
 
 export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions) {
@@ -149,7 +149,7 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     ].join("\n");
 
     try {
-      await continueChat(api, getContinueChatConfig(), {
+      await continueChat(api, getContinueChatConfig(choice.chatId), {
         chatId: choice.chatId,
         eventDescription,
         userId: ctx.callbackQuery.from.id,

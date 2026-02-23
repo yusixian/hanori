@@ -1,4 +1,4 @@
-import { sidebarOpenAtom } from "@/atoms/sidebar";
+import { sidebarCollapsedAtom, sidebarOpenAtom } from "@/atoms/sidebar";
 import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
 import { useAtom } from "jotai";
@@ -9,10 +9,13 @@ import {
   Brain,
   Database,
   Download,
+  FlaskConical,
   HardDrive,
   LogOut,
   Menu,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   ScrollText,
   Users,
@@ -26,6 +29,7 @@ const globalNavItems = [
   { label: "Bots", path: "/", icon: Bot },
   { label: "Data", path: "/data", icon: Database },
   { label: "Backup", path: "/backup", icon: HardDrive },
+  { label: "API Test", path: "/api-test", icon: FlaskConical },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];
 
@@ -38,6 +42,7 @@ export function AppLayout() {
   const location = useLocation();
   const { mutate: logout } = useLogout();
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
+  const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom);
 
   // Close sidebar on navigation
   useEffect(() => {
@@ -93,15 +98,41 @@ export function AppLayout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "bg-card fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r transition-transform duration-200 ease-in-out md:static md:z-auto md:w-56 md:translate-x-0",
+          "bg-card fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-hidden border-r transition-all duration-200 ease-in-out md:static md:z-auto md:translate-x-0",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
+          collapsed ? "md:w-14" : "md:w-56",
         )}
       >
+        {/* Header */}
         <div className="flex items-center justify-between border-b px-4 py-4">
-          <div className="flex items-center gap-2">
-            <Bot className="text-primary h-6 w-6" />
-            <span className="text-sm font-semibold">cos-tool-bot</span>
-          </div>
+          {collapsed ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mx-auto hidden md:flex"
+              onClick={() => setCollapsed(false)}
+              title="Expand sidebar"
+            >
+              <PanelLeftOpen className="h-4 w-4" />
+            </Button>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Bot className="text-primary h-6 w-6 shrink-0" />
+                <span className="text-sm font-semibold whitespace-nowrap">cos-tool-bot</span>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="hidden shrink-0 md:flex"
+                onClick={() => setCollapsed(true)}
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </Button>
+            </>
+          )}
+          {/* Mobile close - always visible on mobile */}
           <Button
             variant="ghost"
             size="sm"
@@ -117,10 +148,14 @@ export function AppLayout() {
             <>
               <Link
                 to="/"
-                className="text-muted-foreground hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors"
+                title="Back to Bots"
+                className={cn(
+                  "text-muted-foreground hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  collapsed && "md:justify-center",
+                )}
               >
-                <ArrowLeft className="h-4 w-4" />
-                Back to Bots
+                <ArrowLeft className="h-4 w-4 shrink-0" />
+                <span className={cn(collapsed && "md:hidden")}>Back to Bots</span>
               </Link>
               <div className="mx-3 my-1 border-t" />
               {botNavItems.map((item) => {
@@ -132,15 +167,17 @@ export function AppLayout() {
                   <Link
                     key={item.path}
                     to={item.path}
+                    title={item.label}
                     className={cn(
                       "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+                      collapsed && "md:justify-center",
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
-                    {item.label}
+                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
                   </Link>
                 );
               })}
@@ -150,15 +187,17 @@ export function AppLayout() {
               <Link
                 key={item.path}
                 to={item.path}
+                title={item.label}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   isNavActive(item.path, location.pathname)
                     ? "bg-accent text-accent-foreground"
                     : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+                  collapsed && "md:justify-center",
                 )}
               >
-                <item.icon className="h-4 w-4" />
-                {item.label}
+                <item.icon className="h-4 w-4 shrink-0" />
+                <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
               </Link>
             ))
           )}
@@ -168,17 +207,18 @@ export function AppLayout() {
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-start"
+            className={cn("w-full", collapsed ? "md:justify-center" : "justify-start")}
             onClick={() => logout()}
+            title="Logout"
           >
-            <LogOut className="h-4 w-4" />
-            Logout
+            <LogOut className="h-4 w-4 shrink-0" />
+            <span className={cn(collapsed && "md:hidden")}>Logout</span>
           </Button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto p-3 sm:p-4 md:p-6">
+      <main className="min-w-0 flex-1 overflow-auto p-3 sm:p-4 md:p-6">
         <Outlet />
       </main>
     </div>

@@ -6,6 +6,7 @@ import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createClearCommand } from "./commands/clear.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
+import { createModelCommand } from "./commands/model.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
@@ -42,6 +43,9 @@ export function createBot(config: BotConfig) {
   // Build AI handler + runtime state (created before commands so state is available)
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
   let aiState: ReturnType<typeof createAiReplyHandler>["state"] | undefined;
+  let aiSetModelForChat: ReturnType<typeof createAiReplyHandler>["setModelForChat"] | undefined;
+  let aiGetModelForChat: ReturnType<typeof createAiReplyHandler>["getModelForChat"] | undefined;
+  let aiResetModelForChat: ReturnType<typeof createAiReplyHandler>["resetModelForChat"] | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -62,6 +66,9 @@ export function createBot(config: BotConfig) {
     });
     aiHandler = result.handler;
     aiState = result.state;
+    aiSetModelForChat = result.setModelForChat;
+    aiGetModelForChat = result.getModelForChat;
+    aiResetModelForChat = result.resetModelForChat;
   }
 
   bot.command("start", startCommand);
@@ -72,6 +79,23 @@ export function createBot(config: BotConfig) {
   bot.command("backup", authGuard, createBackupCommand(config.onBackup));
   bot.command("clear", createClearCommand(config.conversation, adminChatIds));
 
+  // Register /model command if models are configured
+  if (config.aiReply?.models?.length && aiSetModelForChat && aiGetModelForChat) {
+    const modelAccess = config.aiReply.modelCommandAccess ?? "admin";
+    const modelCmd = createModelCommand({
+      getModelForChat: aiGetModelForChat,
+      setModelForChat: aiSetModelForChat,
+      resetModelForChat: aiResetModelForChat,
+      models: config.aiReply.models,
+      defaultModel: config.aiReply.model,
+    });
+    if (modelAccess === "admin") {
+      bot.command("model", authGuard, modelCmd);
+    } else {
+      bot.command("model", modelCmd);
+    }
+  }
+
   if (aiHandler && aiState) {
     // Register event handlers for interactive tools (polls, choices)
     const pendingActions = aiState.getPendingActions();
@@ -79,14 +103,14 @@ export function createBot(config: BotConfig) {
     const pollAnswerHandler = createPollAnswerHandler({
       api: bot.api,
       pendingActions,
-      getContinueChatConfig: () => aiState!.getContinueChatConfig(),
+      getContinueChatConfig: (chatId) => aiState!.getContinueChatConfig(chatId),
       isPrivateChat: (chatId) => aiState!.isPrivateChat(chatId),
     });
 
     const callbackQueryHandler = createCallbackQueryHandler({
       api: bot.api,
       pendingActions,
-      getContinueChatConfig: () => aiState!.getContinueChatConfig(),
+      getContinueChatConfig: (chatId) => aiState!.getContinueChatConfig(chatId),
     });
 
     bot.on("poll_answer", async (ctx) => {

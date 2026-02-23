@@ -34,6 +34,14 @@ export function decrypt(encrypted: string, key: string): string {
   return decipher.update(ciphertext) + decipher.final("utf8");
 }
 
+export function tryDecrypt(encrypted: string, key: string): string | null {
+  try {
+    return decrypt(encrypted, key);
+  } catch {
+    return null;
+  }
+}
+
 export function maskToken(token: string): string {
   const colonIdx = token.indexOf(":");
   if (colonIdx === -1) {

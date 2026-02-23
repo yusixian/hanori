@@ -1,5 +1,21 @@
 // AI Reply types
 
+export type ModelCapability =
+  | "vision"
+  | "tool_calling"
+  | "web_search"
+  | "reasoning"
+  | "long_context"
+  | "code";
+
+export interface ModelEntry {
+  id: string;
+  label?: string;
+  capabilities?: ModelCapability[];
+  temperature?: number;
+  maxTokens?: number;
+}
+
 // Memory system types
 export interface MemoryConfig {
   enabled: boolean;
@@ -245,6 +261,8 @@ export interface AiConfigStored {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  models?: ModelEntry[];
+  modelCommandAccess?: "admin" | "all";
 }
 
 export interface AiConfigPublic {
@@ -265,6 +283,8 @@ export interface AiConfigPublic {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  models?: ModelEntry[];
+  modelCommandAccess?: "admin" | "all";
 }
 
 export type CommandEntity = {

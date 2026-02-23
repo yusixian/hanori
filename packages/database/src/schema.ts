@@ -8,6 +8,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -106,6 +107,16 @@ interface AiConfigJson {
     autoSplitThreshold: number;
     splitDelayMs: number;
   };
+  models?: Array<{
+    id: string;
+    label?: string;
+    capabilities?: Array<
+      "vision" | "tool_calling" | "web_search" | "reasoning" | "long_context" | "code"
+    >;
+    temperature?: number;
+    maxTokens?: number;
+  }>;
+  modelCommandAccess?: "admin" | "all";
 }
 
 export const settings = pgTable("settings", {
@@ -230,4 +241,20 @@ export const botMemories = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId)],
+);
+
+export const chatModelOverrides = pgTable(
+  "chat_model_overrides",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    modelId: text("model_id").notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("chat_model_bot_chat_uniq").on(t.botId, t.chatId)],
 );

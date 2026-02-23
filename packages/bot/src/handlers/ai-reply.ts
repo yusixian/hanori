@@ -12,6 +12,7 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  ModelEntry,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -68,6 +69,13 @@ export interface AiReplyConfig {
   messageConfig?: MessageConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  models?: ModelEntry[];
+  modelCommandAccess?: "admin" | "all";
+  modelOverride?: {
+    getModelForChat: (chatId: number) => string | undefined;
+    setModelForChat: (chatId: number, modelId: string) => void;
+    resetModelForChat: (chatId: number) => void;
+  };
 }
 
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
@@ -460,7 +468,7 @@ export interface BotRuntimeState {
   getAllMoods(): ReadonlyMap<number, MoodInfo>;
   getActiveGroupCount(): number;
   getPendingActions(): PendingActionRegistry;
-  getContinueChatConfig(): ContinueChatConfig;
+  getContinueChatConfig(chatId?: number): ContinueChatConfig;
   isPrivateChat(chatId: number): boolean;
 }
 
@@ -470,8 +478,37 @@ const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 export function createAiReplyHandler(config: AiReplyConfig): {
   handler: Middleware<WrapperContext>;
   state: BotRuntimeState;
+  setModelForChat: (chatId: number, modelId: string) => void;
+  getModelForChat: (chatId: number) => string;
+  resetModelForChat: (chatId: number) => void;
 } {
   const cooldownMap = new Map<number, number>();
+
+  // Per-chat model override (in-memory fallback)
+  const chatModelMap = new Map<number, string>();
+
+  function getModelForChat(chatId: number): string {
+    if (config.modelOverride) {
+      return config.modelOverride.getModelForChat(chatId) ?? config.model;
+    }
+    return chatModelMap.get(chatId) ?? config.model;
+  }
+
+  function setModelForChat(chatId: number, modelId: string) {
+    if (config.modelOverride) {
+      config.modelOverride.setModelForChat(chatId, modelId);
+    } else {
+      chatModelMap.set(chatId, modelId);
+    }
+  }
+
+  function resetModelForChat(chatId: number) {
+    if (config.modelOverride) {
+      config.modelOverride.resetModelForChat(chatId);
+    } else {
+      chatModelMap.delete(chatId);
+    }
+  }
 
   // Create AI provider
   const provider = createOpenAICompatible({
@@ -519,7 +556,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   const onTimerFired = (timerChatId: number, timerId: string, reason: string) => {
     if (!botApi) return;
     const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
-    continueChat(botApi, buildContinueChatConfig(), {
+    continueChat(botApi, buildContinueChatConfig(timerChatId), {
       chatId: timerChatId,
       eventDescription,
     }).catch((err) => {
@@ -531,9 +568,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     });
   };
 
-  function buildContinueChatConfig(): ContinueChatConfig {
+  function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
+    const modelId = chatId != null ? getModelForChat(chatId) : config.model;
     return {
-      model: provider(config.model),
+      model: provider(modelId),
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
       conversationConfig: config.conversationConfig,
@@ -551,7 +589,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ? () =>
             createAgentTools({
               provider: (m) => provider(m),
-              model: config.model,
+              model: modelId,
               agentConfig: config.agentToolsConfig!,
               webToolsConfig: config.webToolsConfig,
               onLog: config.onLog,
@@ -623,7 +661,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     getAllMoods: () => moodState,
     getActiveGroupCount: () => groupBuffers.size,
     getPendingActions: () => pendingActions,
-    getContinueChatConfig: () => buildContinueChatConfig(),
+    getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
 
@@ -730,12 +768,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onLog: config.onLog,
       });
 
+      // Resolve model for this chat
+      const currentModel = getModelForChat(chatId);
+
       // Create agent tools if enabled
       let agentTools: Record<string, CoreTool> = {};
       if (config.agentToolsConfig?.enabled) {
         agentTools = createAgentTools({
           provider: (m) => provider(m),
-          model: config.model,
+          model: currentModel,
           agentConfig: config.agentToolsConfig,
           webToolsConfig: config.webToolsConfig,
           onLog: config.onLog,
@@ -982,7 +1023,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         level: "debug",
         message: "AI request",
         meta: {
-          model: config.model,
+          model: currentModel,
           baseURL: config.baseURL,
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
@@ -999,7 +1040,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       let stepCounter = 0;
       const result = await generateText({
-        model: provider(config.model),
+        model: provider(currentModel),
         messages,
         tools: allTools,
         maxSteps,
@@ -1160,7 +1201,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           role: "assistant",
           content: text || "",
           meta: {
-            model: config.model,
+            model: currentModel,
             trigger: triggerResult,
             usage: result.usage,
           },
@@ -1259,5 +1300,5 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     }
   };
 
-  return { handler, state };
+  return { handler, state, setModelForChat, getModelForChat, resetModelForChat };
 }

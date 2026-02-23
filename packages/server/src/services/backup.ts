@@ -38,6 +38,11 @@ export class BackupService {
     this.logger = options.logger;
   }
 
+  async init(): Promise<void> {
+    await mkdir(this.backupDir, { recursive: true });
+    this.logger.info({ backupDir: this.backupDir }, "Backup directory ready");
+  }
+
   async createBackup(): Promise<BackupRecord> {
     if (this.isBackingUp) {
       throw new Error("A backup is already in progress");
@@ -217,7 +222,12 @@ export class BackupService {
   }
 
   private async getStorageProvider(config: BackupStorageConfig): Promise<StorageProvider | null> {
-    return createStorageProvider(config, (encrypted) => decrypt(encrypted, this.encryptionKey));
+    try {
+      return createStorageProvider(config, (encrypted) => decrypt(encrypted, this.encryptionKey));
+    } catch {
+      this.logger.error("Encryption key mismatch: cannot decrypt storage credentials");
+      return null;
+    }
   }
 
   private runPgDump(filePath: string): Promise<void> {
