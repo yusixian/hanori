@@ -4,7 +4,8 @@ import { tool } from "ai";
 import type { Api } from "grammy";
 import type { ReactionType } from "grammy/types";
 import { z } from "zod";
-import { zodToAiSchema } from "./utils.js";
+import type { OnceGuardContext } from "./utils.js";
+import { wrapOnce, zodToAiSchema } from "./utils.js";
 
 export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreTool> {
   return {
@@ -107,12 +108,13 @@ export interface ActionToolsOptions {
   chatId: number;
   messageId: number;
   stickerCache: Map<string, string[]>;
+  onceGuard?: OnceGuardContext;
 }
 
 export function createActionTools(options: ActionToolsOptions): Record<string, CoreTool> {
-  const { api, chatId, messageId, stickerCache } = options;
+  const { api, chatId, messageId, stickerCache, onceGuard } = options;
 
-  return {
+  const tools: Record<string, CoreTool> = {
     react_to_message: tool({
       description: "对当前用户消息添加 emoji 表情回应，如 👍 ❤️ 🔥 😂 😢 🎉 等。",
       parameters: zodToAiSchema(
@@ -159,6 +161,16 @@ export function createActionTools(options: ActionToolsOptions): Record<string, C
       },
     }),
   };
+
+  // Wrap side-effect tools with once guard
+  if (onceGuard) {
+    const t = tools.send_sticker;
+    if (t && "execute" in t && typeof t.execute === "function") {
+      t.execute = wrapOnce("send_sticker", onceGuard, t.execute);
+    }
+  }
+
+  return tools;
 }
 
 // Re-export all tool factories

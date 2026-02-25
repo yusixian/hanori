@@ -21,11 +21,20 @@ import {
 import type { CoreTool, LanguageModelV1 } from "ai";
 import { generateText } from "ai";
 import type { Api } from "grammy";
-import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
+import {
+  createBehaviorTools,
+  createTelegramTools,
+  getAvailableAgentNames,
+} from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
+import { createOnceGuard } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
+import {
+  buildExtendedToolsPrompt,
+  type ExtendedToolsPromptOptions,
+} from "../utils/tools-prompt.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -52,6 +61,7 @@ export interface ContinueChatConfig {
   pendingActions: PendingActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
   moodState: Map<number, MoodInfo>;
+  stickerPacks?: string[];
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
@@ -61,6 +71,7 @@ export interface ContinueChatEvent {
   eventDescription: string;
   userId?: number;
   userName?: string;
+  timerDepth?: number;
 }
 
 export async function continueChat(
@@ -147,6 +158,28 @@ async function doContinueChat(
       messages[0].content += `\n\n${moodStr}`;
     }
 
+    // Inject extended tools prompt
+    if (messages[0]) {
+      const availableAgents = config.agentToolsConfig?.enabled
+        ? getAvailableAgentNames(config.agentToolsConfig, config.webToolsConfig)
+        : [];
+      const toolsPromptOpts: ExtendedToolsPromptOptions = {
+        hasStickerPacks: !!config.stickerPacks?.length,
+        hasTTS: false,
+        hasWebTools: !!config.webToolsConfig?.enabled,
+        hasSearchTool: !!config.webTools?.web_search,
+        hasImageGeneration: !!config.webToolsConfig?.imageGeneration,
+        hasAgentTools: !!config.agentToolsConfig?.enabled,
+        availableAgents,
+        hasBotMemory: !!(
+          (config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG).enabled && config.botMemory
+        ),
+        hasArtworkTools: !!config.artworkToolsConfig?.enabled,
+        isPrivate: chatId > 0,
+      };
+      messages[0].content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
+    }
+
     // Inject event as a system notification
     messages.push({
       role: "user",
@@ -160,12 +193,38 @@ async function doContinueChat(
       config.recentBotMessageIds.set(chatId, chatBotMsgIds);
     }
 
+    const onceGuard = createOnceGuard();
+    const timerDepth = event.timerDepth ?? 0;
+
+    // Wrap onTimerFired to increment depth.
+    // We bypass the original config.onTimerFired (which hardcodes timerDepth: 1)
+    // and call continueChat directly so we can increment timerDepth properly.
+    // The reused `config` still carries the original onTimerFired, so the next
+    // doContinueChat will re-wrap it with the correct depth.
+    const wrappedOnTimerFired = config.onTimerFired
+      ? (tChatId: number, timerId: string, reason: string) => {
+          const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
+          continueChat(api, config, {
+            chatId: tChatId,
+            eventDescription,
+            timerDepth: timerDepth + 1,
+          }).catch((err) => {
+            config.onLog?.({
+              level: "error",
+              message: `Timer continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
+              meta: { chatId: tChatId, timerId },
+            });
+          });
+        }
+      : undefined;
+
     const telegramTools = createTelegramTools({
       api,
       chatId,
       recentBotMessageIds: chatBotMsgIds,
       pendingActions: config.pendingActions,
-      onTimerFired: config.onTimerFired,
+      onTimerFired: wrappedOnTimerFired,
+      onceGuard,
     });
 
     const behaviorTools = createBehaviorTools({
@@ -174,6 +233,7 @@ async function doContinueChat(
       recentBotMessageIds: chatBotMsgIds,
       moodState: config.moodState,
       onLog: config.onLog,
+      onceGuard,
     });
 
     const allTools: Record<string, CoreTool> = {
@@ -181,6 +241,16 @@ async function doContinueChat(
       ...behaviorTools,
       ...config.webTools,
     };
+
+    // Remove set_timer when timer depth is too deep to prevent recursion
+    if (timerDepth >= 2) {
+      delete allTools.set_timer;
+      config.onLog?.({
+        level: "warn",
+        message: "set_timer disabled due to timer depth limit",
+        meta: { chatId, timerDepth },
+      });
+    }
 
     if (config.agentToolsFactory) {
       Object.assign(allTools, config.agentToolsFactory());
@@ -209,6 +279,7 @@ async function doContinueChat(
           chatId,
           recentBotMessageIds: chatBotMsgIds,
           config: config.artworkToolsConfig,
+          onceGuard,
         }),
       );
     }
@@ -223,8 +294,13 @@ async function doContinueChat(
 
     const text = result.text?.trim();
 
-    // Send reply and track message ID
-    if (text) {
+    // Check if multi_message was used (already sent messages directly)
+    const hasMultiMessage = result.steps.some((s) =>
+      s.toolCalls.some((tc) => tc.toolName === "multi_message"),
+    );
+
+    // Send reply and track message ID (skip if multi_message already handled it)
+    if (!hasMultiMessage && text) {
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
 

@@ -5,7 +5,8 @@ import { InputFile } from "grammy";
 import type { Api } from "grammy";
 import type { InputMediaPhoto } from "grammy/types";
 import { z } from "zod";
-import { zodToAiSchema } from "../utils.js";
+import type { OnceGuardContext } from "../utils.js";
+import { wrapOnce, zodToAiSchema } from "../utils.js";
 import { matchProvider, getSupportedPlatforms } from "./registry.js";
 import type { ArtworkInfo } from "./types.js";
 
@@ -16,15 +17,16 @@ export interface ArtworkToolsOptions {
   chatId: number;
   recentBotMessageIds: number[];
   config: ArtworkToolsConfig;
+  onceGuard?: OnceGuardContext;
 }
 
 export function createArtworkTools(options: ArtworkToolsOptions): Record<string, CoreTool> {
-  const { api, chatId, recentBotMessageIds, config } = options;
+  const { api, chatId, recentBotMessageIds, config, onceGuard } = options;
 
   // Cache last fetched artwork for send_artwork to look up provider headers
   let lastArtworkInfo: ArtworkInfo | undefined;
 
-  return {
+  const tools: Record<string, CoreTool> = {
     fetch_artwork_info: tool({
       description:
         "从 URL 获取作品信息（支持 Pixiv、Twitter/X）。自动识别平台并返回标题、作者、图片列表、标签等。",
@@ -178,4 +180,14 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
       },
     }),
   };
+
+  // Wrap send_artwork with once guard
+  if (onceGuard) {
+    const t = tools.send_artwork;
+    if (t && "execute" in t && typeof t.execute === "function") {
+      t.execute = wrapOnce("send_artwork", onceGuard, t.execute);
+    }
+  }
+
+  return tools;
 }

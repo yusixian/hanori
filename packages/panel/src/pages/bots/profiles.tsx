@@ -1,8 +1,10 @@
 import { Badge } from "@/components/ui/badge";
+import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { client } from "@/lib/client";
+import { cn } from "@/lib/utils";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
@@ -99,8 +101,8 @@ export function BotProfilesPage() {
         setProfiles(json.data as ProfileItem[]);
         setTotal(json.total);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load profiles:", err);
     } finally {
       setLoading(false);
     }
@@ -122,8 +124,8 @@ export function BotProfilesPage() {
         param: { botId, profileId: String(profileId) },
       });
       loadProfiles();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to delete profile:", err);
     }
   };
 
@@ -165,8 +167,8 @@ export function BotProfilesPage() {
       });
       cancelEdit();
       loadProfiles();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to save profile:", err);
     } finally {
       setSaving(false);
     }
@@ -195,8 +197,8 @@ export function BotProfilesPage() {
       setShowCreate(false);
       setCreateForm(emptyCreateForm);
       loadProfiles();
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to create profile:", err);
     } finally {
       setCreating(false);
     }
@@ -228,38 +230,53 @@ export function BotProfilesPage() {
           <CardContent className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="text-muted-foreground text-xs">Telegram ID *</label>
+                <label htmlFor="create-telegram-id" className="text-muted-foreground text-xs">
+                  Telegram ID *
+                </label>
                 <Input
+                  id="create-telegram-id"
                   value={createForm.telegramId}
                   onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
                   placeholder="123456789"
                 />
               </div>
               <div>
-                <label className="text-muted-foreground text-xs">Display Name</label>
+                <label htmlFor="create-display-name" className="text-muted-foreground text-xs">
+                  Display Name
+                </label>
                 <Input
+                  id="create-display-name"
                   value={createForm.displayName}
                   onChange={(e) => setCreateForm({ ...createForm, displayName: e.target.value })}
                 />
               </div>
               <div>
-                <label className="text-muted-foreground text-xs">Username</label>
+                <label htmlFor="create-username" className="text-muted-foreground text-xs">
+                  Username
+                </label>
                 <Input
+                  id="create-username"
                   value={createForm.username}
                   onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
                 />
               </div>
               <div>
-                <label className="text-muted-foreground text-xs">Relationship</label>
+                <label htmlFor="create-relationship" className="text-muted-foreground text-xs">
+                  Relationship
+                </label>
                 <Input
+                  id="create-relationship"
                   value={createForm.relationship}
                   onChange={(e) => setCreateForm({ ...createForm, relationship: e.target.value })}
                 />
               </div>
             </div>
             <div>
-              <label className="text-muted-foreground text-xs">Notes</label>
+              <label htmlFor="create-notes" className="text-muted-foreground text-xs">
+                Notes
+              </label>
               <textarea
+                id="create-notes"
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 rows={3}
                 value={createForm.notes}
@@ -268,16 +285,22 @@ export function BotProfilesPage() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="text-muted-foreground text-xs">Traits (comma separated)</label>
+                <label htmlFor="create-traits" className="text-muted-foreground text-xs">
+                  Traits (comma separated)
+                </label>
                 <Input
+                  id="create-traits"
                   value={createForm.traits}
                   onChange={(e) => setCreateForm({ ...createForm, traits: e.target.value })}
                   placeholder="friendly, creative"
                 />
               </div>
               <div>
-                <label className="text-muted-foreground text-xs">Interests (comma separated)</label>
+                <label htmlFor="create-interests" className="text-muted-foreground text-xs">
+                  Interests (comma separated)
+                </label>
                 <Input
+                  id="create-interests"
                   value={createForm.interests}
                   onChange={(e) => setCreateForm({ ...createForm, interests: e.target.value })}
                   placeholder="music, coding"
@@ -371,8 +394,14 @@ export function BotProfilesPage() {
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="text-muted-foreground text-xs">Display Name</label>
+                        <label
+                          htmlFor={`edit-display-name-${p.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          Display Name
+                        </label>
                         <Input
+                          id={`edit-display-name-${p.id}`}
                           value={editForm.displayName}
                           onChange={(e) =>
                             setEditForm({
@@ -383,15 +412,27 @@ export function BotProfilesPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-muted-foreground text-xs">Username</label>
+                        <label
+                          htmlFor={`edit-username-${p.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          Username
+                        </label>
                         <Input
+                          id={`edit-username-${p.id}`}
                           value={editForm.username}
                           onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
                         />
                       </div>
                       <div>
-                        <label className="text-muted-foreground text-xs">Relationship</label>
+                        <label
+                          htmlFor={`edit-relationship-${p.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          Relationship
+                        </label>
                         <Input
+                          id={`edit-relationship-${p.id}`}
                           value={editForm.relationship}
                           onChange={(e) =>
                             setEditForm({
@@ -403,8 +444,14 @@ export function BotProfilesPage() {
                       </div>
                     </div>
                     <div>
-                      <label className="text-muted-foreground text-xs">Notes</label>
+                      <label
+                        htmlFor={`edit-notes-${p.id}`}
+                        className="text-muted-foreground text-xs"
+                      >
+                        Notes
+                      </label>
                       <textarea
+                        id={`edit-notes-${p.id}`}
                         className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                         rows={3}
                         value={editForm.notes}
@@ -413,19 +460,27 @@ export function BotProfilesPage() {
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="text-muted-foreground text-xs">
+                        <label
+                          htmlFor={`edit-traits-${p.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
                           Traits (comma separated)
                         </label>
                         <Input
+                          id={`edit-traits-${p.id}`}
                           value={editForm.traits}
                           onChange={(e) => setEditForm({ ...editForm, traits: e.target.value })}
                         />
                       </div>
                       <div>
-                        <label className="text-muted-foreground text-xs">
+                        <label
+                          htmlFor={`edit-interests-${p.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
                           Interests (comma separated)
                         </label>
                         <Input
+                          id={`edit-interests-${p.id}`}
                           value={editForm.interests}
                           onChange={(e) =>
                             setEditForm({
@@ -480,9 +535,10 @@ export function BotProfilesPage() {
                         onClick={() => toggleNotes(p.id)}
                       >
                         <p
-                          className={`text-sm whitespace-pre-wrap ${
-                            expandedNotes.has(p.id) ? "" : "line-clamp-3"
-                          }`}
+                          className={cn(
+                            "text-sm whitespace-pre-wrap",
+                            !expandedNotes.has(p.id) && "line-clamp-3",
+                          )}
                         >
                           {p.notes}
                         </p>
@@ -509,29 +565,7 @@ export function BotProfilesPage() {
         </div>
       )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-          <span className="text-sm">
-            {page} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

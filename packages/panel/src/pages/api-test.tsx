@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { client } from "@/lib/client";
+import { cn } from "@/lib/utils";
 import { Loader2, Play, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { JsonView, darkStyles } from "react-json-view-lite";
@@ -117,8 +118,11 @@ export function ApiTestPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Base URL</label>
+            <label htmlFor="api-base-url" className="text-sm font-medium">
+              Base URL
+            </label>
             <Input
+              id="api-base-url"
               value={baseURL}
               onChange={(e) => setBaseURL(e.target.value)}
               placeholder="https://api.openai.com/v1"
@@ -140,8 +144,11 @@ export function ApiTestPage() {
             </div>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">API Key</label>
+            <label htmlFor="api-key" className="text-sm font-medium">
+              API Key
+            </label>
             <Input
+              id="api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
@@ -203,8 +210,11 @@ export function ApiTestPage() {
 
           {method === "POST" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Request Body (JSON)</label>
+              <label htmlFor="api-request-body" className="text-sm font-medium">
+                Request Body (JSON)
+              </label>
               <textarea
+                id="api-request-body"
                 className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-32 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm focus-visible:ring-2 focus-visible:outline-none"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
@@ -262,13 +272,19 @@ export function ApiTestPage() {
                 <button
                   key={entry.id}
                   type="button"
-                  className={`flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm transition-colors ${
-                    selectedEntry?.id === entry.id ? "bg-accent" : "hover:bg-accent/50"
-                  }`}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded px-3 py-2 text-left text-sm transition-colors",
+                    selectedEntry?.id === entry.id ? "bg-accent" : "hover:bg-accent/50",
+                  )}
                   onClick={() => setSelectedEntry(entry)}
                 >
                   <span
-                    className={`rounded px-1.5 py-0.5 font-mono text-xs ${entry.method === "GET" ? "bg-blue-500/10 text-blue-600" : "bg-green-500/10 text-green-600"}`}
+                    className={cn(
+                      "rounded px-1.5 py-0.5 font-mono text-xs",
+                      entry.method === "GET"
+                        ? "bg-blue-500/10 text-blue-600"
+                        : "bg-green-500/10 text-green-600",
+                    )}
                   >
                     {entry.method}
                   </span>
@@ -276,7 +292,14 @@ export function ApiTestPage() {
                     {entry.endpoint}
                   </span>
                   <span
-                    className={`text-xs ${entry.error ? "text-red-500" : entry.status && entry.status < 300 ? "text-green-500" : "text-yellow-500"}`}
+                    className={cn(
+                      "text-xs",
+                      entry.error
+                        ? "text-red-500"
+                        : entry.status && entry.status < 300
+                          ? "text-green-500"
+                          : "text-yellow-500",
+                    )}
                   >
                     {entry.error ? "ERR" : entry.status}
                   </span>

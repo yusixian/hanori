@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -209,8 +210,11 @@ export function BotMemoriesPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <label className="text-muted-foreground text-xs">Content *</label>
+              <label htmlFor="create-mem-content" className="text-muted-foreground text-xs">
+                Content *
+              </label>
               <textarea
+                id="create-mem-content"
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 rows={3}
                 value={createForm.content}
@@ -220,16 +224,22 @@ export function BotMemoriesPage() {
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="text-muted-foreground text-xs">Category</label>
+                <label htmlFor="create-mem-category" className="text-muted-foreground text-xs">
+                  Category
+                </label>
                 <Input
+                  id="create-mem-category"
                   value={createForm.category}
                   onChange={(e) => setCreateForm({ ...createForm, category: e.target.value })}
                   placeholder="fact, preference, rule, event"
                 />
               </div>
               <div>
-                <label className="text-muted-foreground text-xs">Telegram ID (optional)</label>
+                <label htmlFor="create-mem-telegram-id" className="text-muted-foreground text-xs">
+                  Telegram ID (optional)
+                </label>
                 <Input
+                  id="create-mem-telegram-id"
                   value={createForm.telegramId}
                   onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
                   placeholder="Leave empty for general memory"
@@ -351,8 +361,14 @@ export function BotMemoriesPage() {
                 {editingId === m.id && editForm ? (
                   <div className="space-y-3">
                     <div>
-                      <label className="text-muted-foreground text-xs">Content</label>
+                      <label
+                        htmlFor={`edit-mem-content-${m.id}`}
+                        className="text-muted-foreground text-xs"
+                      >
+                        Content
+                      </label>
                       <textarea
+                        id={`edit-mem-content-${m.id}`}
                         className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                         rows={3}
                         value={editForm.content}
@@ -361,15 +377,27 @@ export function BotMemoriesPage() {
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
-                        <label className="text-muted-foreground text-xs">Category</label>
+                        <label
+                          htmlFor={`edit-mem-category-${m.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          Category
+                        </label>
                         <Input
+                          id={`edit-mem-category-${m.id}`}
                           value={editForm.category}
                           onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
                         />
                       </div>
                       <div>
-                        <label className="text-muted-foreground text-xs">Telegram ID</label>
+                        <label
+                          htmlFor={`edit-mem-telegram-id-${m.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          Telegram ID
+                        </label>
                         <Input
+                          id={`edit-mem-telegram-id-${m.id}`}
                           value={editForm.telegramId}
                           onChange={(e) => setEditForm({ ...editForm, telegramId: e.target.value })}
                           placeholder="Empty = general"
@@ -415,29 +443,7 @@ export function BotMemoriesPage() {
         </div>
       )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-          <span className="text-sm">
-            {page} / {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

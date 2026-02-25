@@ -60,8 +60,11 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label htmlFor="bot-name" className="text-sm font-medium">
+              Name
+            </label>
             <Input
+              id="bot-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="My Bot"
@@ -70,8 +73,11 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Bot Token</label>
+            <label htmlFor="bot-token" className="text-sm font-medium">
+              Bot Token
+            </label>
             <Input
+              id="bot-token"
               value={token}
               onChange={(e) => setToken(e.target.value)}
               placeholder={
@@ -87,8 +93,11 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Admin Chat IDs</label>
+            <label htmlFor="bot-admin-ids" className="text-sm font-medium">
+              Admin Chat IDs
+            </label>
             <Input
+              id="bot-admin-ids"
               value={adminChatIds}
               onChange={(e) => setAdminChatIds(e.target.value)}
               placeholder="123456, 789012"

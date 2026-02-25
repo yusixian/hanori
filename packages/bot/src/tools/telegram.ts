@@ -4,7 +4,8 @@ import type { Api } from "grammy";
 import { InlineKeyboard, InputFile } from "grammy";
 import { z } from "zod";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
-import { zodToAiSchema } from "./utils.js";
+import type { OnceGuardContext } from "./utils.js";
+import { wrapOnce, zodToAiSchema } from "./utils.js";
 
 export interface TelegramToolsOptions {
   api: Api;
@@ -13,7 +14,19 @@ export interface TelegramToolsOptions {
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
+  onceGuard?: OnceGuardContext;
 }
+
+/** Tool names whose execute functions should be guarded against duplicate calls. */
+const ONCE_GUARDED_TELEGRAM_TOOLS = [
+  "send_photo",
+  "send_document",
+  "send_poll",
+  "send_choice",
+  "send_dice",
+  "reply_to_specific",
+  "send_voice",
+] as const;
 
 export function createTelegramTools(options: TelegramToolsOptions): Record<string, CoreTool> {
   const { api, chatId, recentBotMessageIds } = options;
@@ -396,6 +409,17 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
         }
       },
     });
+  }
+
+  // Wrap side-effect tools with once guard
+  if (options.onceGuard) {
+    const guard = options.onceGuard;
+    for (const name of ONCE_GUARDED_TELEGRAM_TOOLS) {
+      const t = tools[name];
+      if (t && "execute" in t && typeof t.execute === "function") {
+        t.execute = wrapOnce(name, guard, t.execute);
+      }
+    }
   }
 
   return tools;

@@ -1,7 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { client } from "@/lib/client";
+import { authFetch, client } from "@/lib/client";
+import { triggerDownload } from "@/lib/download";
 import { AlertCircle, Download, Loader2, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import superjson from "superjson";
@@ -32,15 +33,6 @@ interface ManifestPreview {
 }
 
 // ── Helpers ──
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
 
 async function decompressGzip(buffer: ArrayBuffer): Promise<string> {
   const ds = new DecompressionStream("gzip");
@@ -117,12 +109,8 @@ function ExportSection() {
     if (!selectedBotId) return;
     setExporting(true);
     try {
-      const token = localStorage.getItem("token");
-      const headers: Record<string, string> = {};
-      if (token) headers.Authorization = `Bearer ${token}`;
-
       const query = exportFormat === "gzip" ? "?format=gzip" : "";
-      const res = await fetch(`/api/bots/${selectedBotId}/export${query}`, { headers });
+      const res = await authFetch(`/api/bots/${selectedBotId}/export${query}`);
       if (!res.ok) {
         const text = await res.text();
         alert(`Export failed: ${text}`);

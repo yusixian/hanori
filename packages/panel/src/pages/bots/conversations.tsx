@@ -1,15 +1,9 @@
+import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { client } from "@/lib/client";
-import {
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  ChevronUp,
-  Loader2,
-  MessageSquare,
-  Trash2,
-} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ChevronDown, ChevronUp, Loader2, MessageSquare, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 
@@ -137,32 +131,32 @@ function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
   );
 }
 
+const roleStyles: Record<string, string> = {
+  user: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
+  assistant: "bg-green-500/10 text-green-700 dark:text-green-300",
+  context: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
+  system: "bg-purple-500/10 text-purple-700 dark:text-purple-300",
+  tool_call: "bg-orange-500/10 text-orange-700 dark:text-orange-300",
+  tool_result: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+};
+
+const roleLabels: Record<string, string> = {
+  user: "User",
+  assistant: "AI",
+  context: "Context",
+  system: "System",
+  tool_call: "Tool Call",
+  tool_result: "Tool Result",
+};
+
 function MessageBubble({ msg }: { msg: ConversationMessage }) {
-  const roleStyles: Record<string, string> = {
-    user: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-    assistant: "bg-green-500/10 text-green-700 dark:text-green-300",
-    context: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
-    system: "bg-purple-500/10 text-purple-700 dark:text-purple-300",
-    tool_call: "bg-orange-500/10 text-orange-700 dark:text-orange-300",
-    tool_result: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
-  };
-
-  const roleLabels: Record<string, string> = {
-    user: "User",
-    assistant: "AI",
-    context: "Context",
-    system: "System",
-    tool_call: "Tool Call",
-    tool_result: "Tool Result",
-  };
-
   const isToolCall = msg.role === "tool_call" && msg.meta;
   const isAssistantWithMeta = msg.role === "assistant" && msg.meta;
   const needsCollapse =
     msg.role === "system" || msg.role === "tool_result" || msg.role === "context";
 
   return (
-    <div className={`rounded-md p-3 ${roleStyles[msg.role] ?? "bg-zinc-100 dark:bg-zinc-800"}`}>
+    <div className={cn("rounded-md p-3", roleStyles[msg.role] ?? "bg-zinc-100 dark:bg-zinc-800")}>
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium">
           {roleLabels[msg.role] ?? msg.role}
@@ -215,8 +209,8 @@ export function BotConversationsPage() {
         setConversations(json.data);
         setTotal(json.total);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load conversations:", err);
     } finally {
       setLoading(false);
     }
@@ -235,8 +229,8 @@ export function BotConversationsPage() {
         setMessages(json.data as ConversationMessage[]);
         setMsgTotal(json.total);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load messages:", err);
     } finally {
       setMsgLoading(false);
     }
@@ -260,8 +254,8 @@ export function BotConversationsPage() {
       setTotal(0);
       setSelectedChat(null);
       setMessages([]);
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to clear conversations:", err);
     }
   };
 
@@ -276,8 +270,8 @@ export function BotConversationsPage() {
         setSelectedChat(null);
         setMessages([]);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to clear chat:", err);
     }
   };
 
@@ -314,11 +308,11 @@ export function BotConversationsPage() {
                 {conversations.map((conv) => (
                   <div
                     key={conv.chatId}
-                    className={`flex cursor-pointer items-center justify-between rounded-md border p-3 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800 ${
-                      selectedChat === conv.chatId
-                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                        : ""
-                    }`}
+                    className={cn(
+                      "flex cursor-pointer items-center justify-between rounded-md border p-3 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800",
+                      selectedChat === conv.chatId &&
+                        "border-blue-500 bg-blue-50 dark:bg-blue-900/20",
+                    )}
                     onClick={() => {
                       setSelectedChat(conv.chatId);
                       setMsgPage(1);
@@ -351,29 +345,12 @@ export function BotConversationsPage() {
                   </div>
                 ))}
 
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-center gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page <= 1}
-                      onClick={() => setPage((p) => p - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="text-sm">
-                      {page} / {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={page >= totalPages}
-                      onClick={() => setPage((p) => p + 1)}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
+                <Pagination
+                  page={page}
+                  totalPages={totalPages}
+                  onPageChange={setPage}
+                  className="flex items-center justify-center gap-2 pt-2"
+                />
               </div>
             )}
           </CardContent>
@@ -403,29 +380,12 @@ export function BotConversationsPage() {
                   <MessageBubble key={msg.id} msg={msg} />
                 ))}
 
-                {msgTotalPages > 1 && (
-                  <div className="flex items-center justify-center gap-2 pt-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={msgPage <= 1}
-                      onClick={() => setMsgPage((p) => p - 1)}
-                    >
-                      <ChevronLeft className="h-4 w-4" />
-                    </Button>
-                    <span className="text-sm">
-                      {msgPage} / {msgTotalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={msgPage >= msgTotalPages}
-                      onClick={() => setMsgPage((p) => p + 1)}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                )}
+                <Pagination
+                  page={msgPage}
+                  totalPages={msgTotalPages}
+                  onPageChange={setMsgPage}
+                  className="flex items-center justify-center gap-2 pt-2"
+                />
               </div>
             )}
           </CardContent>

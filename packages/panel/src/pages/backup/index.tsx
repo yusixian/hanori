@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authFetch, client } from "@/lib/client";
+import { triggerDownload } from "@/lib/download";
+import { cn } from "@/lib/utils";
 import type { BackupRecord, BackupStorageType } from "@cos-tool-bot/shared";
 import {
   AlertCircle,
@@ -17,7 +19,7 @@ import {
   Trash2,
   Wifi,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useReducer, useState } from "react";
 
 // ── Helpers ──
 
@@ -32,15 +34,6 @@ function formatBytes(bytes: number): string {
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function triggerDownload(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ── Create Backup Section ──
@@ -254,6 +247,63 @@ function BackupHistorySection({
 
 // ── Storage Config Section ──
 
+interface StorageFormState {
+  storageType: BackupStorageType;
+  filePrefix: string;
+  maxCount: string;
+  webdavUrl: string;
+  webdavUsername: string;
+  webdavPassword: string;
+  s3Bucket: string;
+  s3Region: string;
+  s3Endpoint: string;
+  s3AccessKeyId: string;
+  s3SecretAccessKey: string;
+  s3Prefix: string;
+  s3ForcePathStyle: boolean;
+  s3StorageClass: string;
+  s3ServerSideEncryption: string;
+  s3SseKmsKeyId: string;
+  showAdvanced: boolean;
+}
+
+const initialFormState: StorageFormState = {
+  storageType: "local",
+  filePrefix: "cos-tool-bot",
+  maxCount: "",
+  webdavUrl: "",
+  webdavUsername: "",
+  webdavPassword: "",
+  s3Bucket: "",
+  s3Region: "",
+  s3Endpoint: "",
+  s3AccessKeyId: "",
+  s3SecretAccessKey: "",
+  s3Prefix: "",
+  s3ForcePathStyle: false,
+  s3StorageClass: "",
+  s3ServerSideEncryption: "",
+  s3SseKmsKeyId: "",
+  showAdvanced: false,
+};
+
+type StorageFormAction =
+  | {
+      type: "SET_FIELD";
+      field: keyof StorageFormState;
+      value: StorageFormState[keyof StorageFormState];
+    }
+  | { type: "LOAD"; state: Partial<StorageFormState> };
+
+function storageFormReducer(state: StorageFormState, action: StorageFormAction): StorageFormState {
+  switch (action.type) {
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "LOAD":
+      return { ...state, ...action.state };
+  }
+}
+
 function StorageConfigSection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -261,31 +311,10 @@ function StorageConfigSection() {
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [form, dispatch] = useReducer(storageFormReducer, initialFormState);
 
-  // Form state
-  const [storageType, setStorageType] = useState<BackupStorageType>("local");
-  const [filePrefix, setFilePrefix] = useState("cos-tool-bot");
-  const [maxCount, setMaxCount] = useState("");
-
-  // WebDAV fields
-  const [webdavUrl, setWebdavUrl] = useState("");
-  const [webdavUsername, setWebdavUsername] = useState("");
-  const [webdavPassword, setWebdavPassword] = useState("");
-
-  // S3 fields
-  const [s3Bucket, setS3Bucket] = useState("");
-  const [s3Region, setS3Region] = useState("");
-  const [s3Endpoint, setS3Endpoint] = useState("");
-  const [s3AccessKeyId, setS3AccessKeyId] = useState("");
-  const [s3SecretAccessKey, setS3SecretAccessKey] = useState("");
-  const [s3Prefix, setS3Prefix] = useState("");
-
-  // S3 advanced fields
-  const [s3ForcePathStyle, setS3ForcePathStyle] = useState(false);
-  const [s3StorageClass, setS3StorageClass] = useState("");
-  const [s3ServerSideEncryption, setS3ServerSideEncryption] = useState("");
-  const [s3SseKmsKeyId, setS3SseKmsKeyId] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const setField = <K extends keyof StorageFormState>(field: K, value: StorageFormState[K]) =>
+    dispatch({ type: "SET_FIELD", field, value });
 
   useEffect(() => {
     (async () => {
@@ -294,38 +323,40 @@ function StorageConfigSection() {
         const json = await res.json();
         if (json.ok && json.data) {
           const cfg = json.data;
-          setStorageType(cfg.storage.type);
-          setFilePrefix(cfg.filePrefix ?? "cos-tool-bot");
-          setMaxCount(cfg.retention?.maxCount ? String(cfg.retention.maxCount) : "");
+          const patch: Partial<StorageFormState> = {
+            storageType: cfg.storage.type,
+            filePrefix: cfg.filePrefix ?? "cos-tool-bot",
+            maxCount: cfg.retention?.maxCount ? String(cfg.retention.maxCount) : "",
+          };
 
           if (cfg.storage.type === "webdav") {
-            setWebdavUrl(cfg.storage.url);
-            setWebdavUsername(cfg.storage.username);
-            setWebdavPassword(cfg.storage.encryptedPassword);
+            patch.webdavUrl = cfg.storage.url;
+            patch.webdavUsername = cfg.storage.username;
+            patch.webdavPassword = cfg.storage.encryptedPassword;
           } else if (cfg.storage.type === "s3") {
-            setS3Bucket(cfg.storage.bucket);
-            setS3Region(cfg.storage.region);
-            setS3Endpoint(cfg.storage.endpoint ?? "");
-            setS3AccessKeyId(cfg.storage.accessKeyId);
-            setS3SecretAccessKey(cfg.storage.encryptedSecretKey);
-            setS3Prefix(cfg.storage.prefix ?? "");
-            setS3ForcePathStyle(cfg.storage.forcePathStyle ?? false);
-            setS3StorageClass(cfg.storage.storageClass ?? "");
-            setS3ServerSideEncryption(cfg.storage.serverSideEncryption ?? "");
-            setS3SseKmsKeyId(cfg.storage.sseKmsKeyId ?? "");
-            // Auto-expand advanced section if any advanced option is set
+            patch.s3Bucket = cfg.storage.bucket;
+            patch.s3Region = cfg.storage.region;
+            patch.s3Endpoint = cfg.storage.endpoint ?? "";
+            patch.s3AccessKeyId = cfg.storage.accessKeyId;
+            patch.s3SecretAccessKey = cfg.storage.encryptedSecretKey;
+            patch.s3Prefix = cfg.storage.prefix ?? "";
+            patch.s3ForcePathStyle = cfg.storage.forcePathStyle ?? false;
+            patch.s3StorageClass = cfg.storage.storageClass ?? "";
+            patch.s3ServerSideEncryption = cfg.storage.serverSideEncryption ?? "";
+            patch.s3SseKmsKeyId = cfg.storage.sseKmsKeyId ?? "";
             if (
               cfg.storage.forcePathStyle ||
               cfg.storage.storageClass ||
               cfg.storage.serverSideEncryption ||
               cfg.storage.sseKmsKeyId
             ) {
-              setShowAdvanced(true);
+              patch.showAdvanced = true;
             }
           }
+          dispatch({ type: "LOAD", state: patch });
         }
-      } catch {
-        // No config yet, use defaults
+      } catch (err) {
+        console.error("Failed to load backup config:", err);
       } finally {
         setLoading(false);
       }
@@ -333,41 +364,41 @@ function StorageConfigSection() {
   }, []);
 
   const buildPayload = () => {
-    const retention = maxCount ? { maxCount: Number(maxCount) } : undefined;
+    const retention = form.maxCount ? { maxCount: Number(form.maxCount) } : undefined;
 
-    if (storageType === "webdav") {
+    if (form.storageType === "webdav") {
       return {
         storage: {
           type: "webdav" as const,
-          url: webdavUrl,
-          username: webdavUsername,
-          password: webdavPassword,
+          url: form.webdavUrl,
+          username: form.webdavUsername,
+          password: form.webdavPassword,
         },
-        filePrefix: filePrefix || undefined,
+        filePrefix: form.filePrefix || undefined,
         retention,
       };
-    } else if (storageType === "s3") {
+    } else if (form.storageType === "s3") {
       return {
         storage: {
           type: "s3" as const,
-          bucket: s3Bucket,
-          region: s3Region,
-          endpoint: s3Endpoint || undefined,
-          accessKeyId: s3AccessKeyId,
-          secretAccessKey: s3SecretAccessKey,
-          prefix: s3Prefix || undefined,
-          forcePathStyle: s3ForcePathStyle || undefined,
-          storageClass: (s3StorageClass || undefined) as "STANDARD" | undefined,
-          serverSideEncryption: (s3ServerSideEncryption || undefined) as "AES256" | undefined,
-          sseKmsKeyId: s3SseKmsKeyId || undefined,
+          bucket: form.s3Bucket,
+          region: form.s3Region,
+          endpoint: form.s3Endpoint || undefined,
+          accessKeyId: form.s3AccessKeyId,
+          secretAccessKey: form.s3SecretAccessKey,
+          prefix: form.s3Prefix || undefined,
+          forcePathStyle: form.s3ForcePathStyle || undefined,
+          storageClass: (form.s3StorageClass || undefined) as "STANDARD" | undefined,
+          serverSideEncryption: (form.s3ServerSideEncryption || undefined) as "AES256" | undefined,
+          sseKmsKeyId: form.s3SseKmsKeyId || undefined,
         },
-        filePrefix: filePrefix || undefined,
+        filePrefix: form.filePrefix || undefined,
         retention,
       };
     }
     return {
       storage: { type: "local" as const },
-      filePrefix: filePrefix || undefined,
+      filePrefix: form.filePrefix || undefined,
       retention,
     };
   };
@@ -441,8 +472,8 @@ function StorageConfigSection() {
                   type="radio"
                   name="storageType"
                   value={t}
-                  checked={storageType === t}
-                  onChange={() => setStorageType(t)}
+                  checked={form.storageType === t}
+                  onChange={() => setField("storageType", t)}
                 />
                 {t === "local" ? "Local Only" : t === "webdav" ? "WebDAV" : "S3"}
               </label>
@@ -451,30 +482,39 @@ function StorageConfigSection() {
         </div>
 
         {/* WebDAV fields */}
-        {storageType === "webdav" && (
+        {form.storageType === "webdav" && (
           <div className="space-y-3 rounded-md border p-3">
             <div>
-              <label className="mb-1 block text-sm font-medium">WebDAV URL</label>
+              <label htmlFor="webdav-url" className="mb-1 block text-sm font-medium">
+                WebDAV URL
+              </label>
               <Input
-                value={webdavUrl}
-                onChange={(e) => setWebdavUrl(e.target.value)}
+                id="webdav-url"
+                value={form.webdavUrl}
+                onChange={(e) => setField("webdavUrl", e.target.value)}
                 placeholder="https://example.com/dav/backups"
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Username</label>
+              <label htmlFor="webdav-username" className="mb-1 block text-sm font-medium">
+                Username
+              </label>
               <Input
-                value={webdavUsername}
-                onChange={(e) => setWebdavUsername(e.target.value)}
+                id="webdav-username"
+                value={form.webdavUsername}
+                onChange={(e) => setField("webdavUsername", e.target.value)}
                 placeholder="username"
               />
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Password</label>
+              <label htmlFor="webdav-password" className="mb-1 block text-sm font-medium">
+                Password
+              </label>
               <Input
+                id="webdav-password"
                 type="password"
-                value={webdavPassword}
-                onChange={(e) => setWebdavPassword(e.target.value)}
+                value={form.webdavPassword}
+                onChange={(e) => setField("webdavPassword", e.target.value)}
                 placeholder="password"
               />
             </div>
@@ -482,58 +522,76 @@ function StorageConfigSection() {
         )}
 
         {/* S3 fields */}
-        {storageType === "s3" && (
+        {form.storageType === "s3" && (
           <div className="space-y-3 rounded-md border p-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-sm font-medium">Bucket</label>
+                <label htmlFor="s3-bucket" className="mb-1 block text-sm font-medium">
+                  Bucket
+                </label>
                 <Input
-                  value={s3Bucket}
-                  onChange={(e) => setS3Bucket(e.target.value)}
+                  id="s3-bucket"
+                  value={form.s3Bucket}
+                  onChange={(e) => setField("s3Bucket", e.target.value)}
                   placeholder="my-backups"
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Region</label>
+                <label htmlFor="s3-region" className="mb-1 block text-sm font-medium">
+                  Region
+                </label>
                 <Input
-                  value={s3Region}
-                  onChange={(e) => setS3Region(e.target.value)}
+                  id="s3-region"
+                  value={form.s3Region}
+                  onChange={(e) => setField("s3Region", e.target.value)}
                   placeholder="us-east-1"
                 />
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Endpoint (optional)</label>
+              <label htmlFor="s3-endpoint" className="mb-1 block text-sm font-medium">
+                Endpoint (optional)
+              </label>
               <Input
-                value={s3Endpoint}
-                onChange={(e) => setS3Endpoint(e.target.value)}
+                id="s3-endpoint"
+                value={form.s3Endpoint}
+                onChange={(e) => setField("s3Endpoint", e.target.value)}
                 placeholder="https://s3.example.com (for MinIO/R2)"
               />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-sm font-medium">Access Key ID</label>
+                <label htmlFor="s3-access-key" className="mb-1 block text-sm font-medium">
+                  Access Key ID
+                </label>
                 <Input
-                  value={s3AccessKeyId}
-                  onChange={(e) => setS3AccessKeyId(e.target.value)}
+                  id="s3-access-key"
+                  value={form.s3AccessKeyId}
+                  onChange={(e) => setField("s3AccessKeyId", e.target.value)}
                   placeholder="AKIA..."
                 />
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium">Secret Access Key</label>
+                <label htmlFor="s3-secret-key" className="mb-1 block text-sm font-medium">
+                  Secret Access Key
+                </label>
                 <Input
+                  id="s3-secret-key"
                   type="password"
-                  value={s3SecretAccessKey}
-                  onChange={(e) => setS3SecretAccessKey(e.target.value)}
+                  value={form.s3SecretAccessKey}
+                  onChange={(e) => setField("s3SecretAccessKey", e.target.value)}
                   placeholder="secret"
                 />
               </div>
             </div>
             <div>
-              <label className="mb-1 block text-sm font-medium">Prefix (optional)</label>
+              <label htmlFor="s3-prefix" className="mb-1 block text-sm font-medium">
+                Prefix (optional)
+              </label>
               <Input
-                value={s3Prefix}
-                onChange={(e) => setS3Prefix(e.target.value)}
+                id="s3-prefix"
+                value={form.s3Prefix}
+                onChange={(e) => setField("s3Prefix", e.target.value)}
                 placeholder="backups/"
               />
             </div>
@@ -542,23 +600,23 @@ function StorageConfigSection() {
             <div className="border-t pt-3">
               <button
                 type="button"
-                onClick={() => setShowAdvanced(!showAdvanced)}
+                onClick={() => setField("showAdvanced", !form.showAdvanced)}
                 className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-sm font-medium transition-colors"
               >
-                {showAdvanced ? (
+                {form.showAdvanced ? (
                   <ChevronDown className="h-4 w-4" />
                 ) : (
                   <ChevronRight className="h-4 w-4" />
                 )}
                 Advanced Options
               </button>
-              {showAdvanced && (
+              {form.showAdvanced && (
                 <div className="mt-3 space-y-3">
                   <label className="flex items-center gap-2 text-sm">
                     <input
                       type="checkbox"
-                      checked={s3ForcePathStyle}
-                      onChange={(e) => setS3ForcePathStyle(e.target.checked)}
+                      checked={form.s3ForcePathStyle}
+                      onChange={(e) => setField("s3ForcePathStyle", e.target.checked)}
                     />
                     <span className="font-medium">Force Path Style</span>
                     <span className="text-muted-foreground">
@@ -566,27 +624,36 @@ function StorageConfigSection() {
                     </span>
                   </label>
                   <div>
-                    <label className="mb-1 block text-sm font-medium">Storage Class</label>
+                    <label htmlFor="s3-storage-class" className="mb-1 block text-sm font-medium">
+                      Storage Class
+                    </label>
                     <Input
-                      value={s3StorageClass}
-                      onChange={(e) => setS3StorageClass(e.target.value)}
+                      id="s3-storage-class"
+                      value={form.s3StorageClass}
+                      onChange={(e) => setField("s3StorageClass", e.target.value)}
                       placeholder="STANDARD"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-medium">Server-Side Encryption</label>
+                    <label htmlFor="s3-sse" className="mb-1 block text-sm font-medium">
+                      Server-Side Encryption
+                    </label>
                     <Input
-                      value={s3ServerSideEncryption}
-                      onChange={(e) => setS3ServerSideEncryption(e.target.value)}
+                      id="s3-sse"
+                      value={form.s3ServerSideEncryption}
+                      onChange={(e) => setField("s3ServerSideEncryption", e.target.value)}
                       placeholder="AES256 or aws:kms"
                     />
                   </div>
-                  {s3ServerSideEncryption === "aws:kms" && (
+                  {form.s3ServerSideEncryption === "aws:kms" && (
                     <div>
-                      <label className="mb-1 block text-sm font-medium">KMS Key ID</label>
+                      <label htmlFor="s3-kms-key" className="mb-1 block text-sm font-medium">
+                        KMS Key ID
+                      </label>
                       <Input
-                        value={s3SseKmsKeyId}
-                        onChange={(e) => setS3SseKmsKeyId(e.target.value)}
+                        id="s3-kms-key"
+                        value={form.s3SseKmsKeyId}
+                        onChange={(e) => setField("s3SseKmsKeyId", e.target.value)}
                         placeholder="arn:aws:kms:..."
                       />
                     </div>
@@ -600,20 +667,26 @@ function StorageConfigSection() {
         {/* General settings */}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-sm font-medium">File Prefix</label>
+            <label htmlFor="backup-file-prefix" className="mb-1 block text-sm font-medium">
+              File Prefix
+            </label>
             <Input
-              value={filePrefix}
-              onChange={(e) => setFilePrefix(e.target.value)}
+              id="backup-file-prefix"
+              value={form.filePrefix}
+              onChange={(e) => setField("filePrefix", e.target.value)}
               placeholder="cos-tool-bot"
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium">Max Backups (0 = unlimited)</label>
+            <label htmlFor="backup-max-count" className="mb-1 block text-sm font-medium">
+              Max Backups (0 = unlimited)
+            </label>
             <Input
+              id="backup-max-count"
               type="number"
               min="0"
-              value={maxCount}
-              onChange={(e) => setMaxCount(e.target.value)}
+              value={form.maxCount}
+              onChange={(e) => setField("maxCount", e.target.value)}
               placeholder="0"
             />
           </div>
@@ -629,7 +702,7 @@ function StorageConfigSection() {
             )}
             Save
           </Button>
-          {storageType !== "local" && (
+          {form.storageType !== "local" && (
             <Button variant="outline" onClick={handleTest} disabled={testing}>
               {testing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -644,11 +717,12 @@ function StorageConfigSection() {
         {/* Feedback */}
         {testResult && (
           <div
-            className={`flex items-start gap-2 rounded-md border p-3 ${
+            className={cn(
+              "flex items-start gap-2 rounded-md border p-3",
               testResult.ok
                 ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950"
-                : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950"
-            }`}
+                : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950",
+            )}
           >
             {testResult.ok ? (
               <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
@@ -656,7 +730,12 @@ function StorageConfigSection() {
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
             )}
             <p
-              className={`text-sm ${testResult.ok ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}`}
+              className={cn(
+                "text-sm",
+                testResult.ok
+                  ? "text-green-700 dark:text-green-400"
+                  : "text-red-700 dark:text-red-400",
+              )}
             >
               {testResult.ok ? "Connection successful" : `Connection failed: ${testResult.error}`}
             </p>
@@ -693,8 +772,8 @@ export function BackupPage() {
       if (json.ok) {
         setRecords(json.data);
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("Failed to load backup records:", err);
     } finally {
       setLoading(false);
     }

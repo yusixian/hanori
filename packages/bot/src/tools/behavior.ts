@@ -5,7 +5,8 @@ import type { Api } from "grammy";
 import { z } from "zod";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sleep } from "../utils/sleep.js";
-import { zodToAiSchema } from "./utils.js";
+import type { OnceGuardContext } from "./utils.js";
+import { wrapOnce, zodToAiSchema } from "./utils.js";
 
 export interface MoodInfo {
   mood: string;
@@ -19,12 +20,13 @@ export interface BehaviorToolsOptions {
   recentBotMessageIds: number[];
   moodState: Map<number, MoodInfo>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onceGuard?: OnceGuardContext;
 }
 
 export function createBehaviorTools(options: BehaviorToolsOptions): Record<string, CoreTool> {
-  const { api, chatId, recentBotMessageIds, moodState, onLog } = options;
+  const { api, chatId, recentBotMessageIds, moodState, onLog, onceGuard } = options;
 
-  return {
+  const tools: Record<string, CoreTool> = {
     think: tool({
       description:
         "内部推理工具。用来深度思考、规划回复策略、分析上下文。内容不会发送给用户，只在内部处理。当需要仔细思考时使用。",
@@ -97,4 +99,14 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
       },
     }),
   };
+
+  // Wrap side-effect tools with once guard
+  if (onceGuard) {
+    const t = tools.multi_message;
+    if (t && "execute" in t && typeof t.execute === "function") {
+      t.execute = wrapOnce("multi_message", onceGuard, t.execute);
+    }
+  }
+
+  return tools;
 }

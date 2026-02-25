@@ -53,10 +53,6 @@ export function BotAiSettingsPage() {
       const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
       const json = await res.json();
       if (json.ok) {
-        console.log(
-          "[ai-config] loaded, groupOverrides count:",
-          Object.keys(json.data.groupOverrides).length,
-        );
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
@@ -122,10 +118,6 @@ export function BotAiSettingsPage() {
       }
       const json = await res.json();
       if (json.ok) {
-        console.log(
-          "[ai-config] saved, groupOverrides count:",
-          Object.keys(json.data.groupOverrides).length,
-        );
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
