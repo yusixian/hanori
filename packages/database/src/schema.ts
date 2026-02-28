@@ -10,7 +10,12 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
 } from "drizzle-orm/pg-core";
+
+/** Vector embedding dimensions — must match DDL column definition.
+ *  This is a one-time decision; changing it requires regenerating migrations. */
+export const EMBEDDING_DIMENSIONS = 1536;
 
 /** Mirrors AiConfigStored from @cos-tool-bot/shared — kept inline to avoid circular dependency.
  *  SYNC: update this type when changing AiConfigStored in packages/shared/src/types.ts */
@@ -117,6 +122,13 @@ interface AiConfigJson {
     maxTokens?: number;
   }>;
   modelCommandAccess?: "admin" | "all";
+  embeddingConfig?: {
+    enabled: boolean;
+    encryptedApiKey: string;
+    baseURL: string;
+    model: string;
+    dimensions: number;
+  };
 }
 
 export const settings = pgTable("settings", {
@@ -166,11 +178,13 @@ export const conversationMessages = pgTable(
     userId: bigint("user_id", { mode: "number" }),
     userName: text("user_name"),
     meta: json("meta").$type<Record<string, unknown>>(),
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
     index("conv_msg_bot_chat_idx").on(t.botId, t.chatId),
     index("conv_msg_created_idx").on(t.createdAt),
+    index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -235,12 +249,20 @@ export const botMemories = pgTable(
     telegramId: bigint("telegram_id", { mode: "number" }),
     content: text("content").notNull(),
     category: text("category"),
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    factValidAt: timestamp("fact_valid_at"),
+    supersededById: integer("superseded_by_id"),
+    isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId)],
+  (t) => [
+    index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId),
+    index("bot_memories_bot_category_idx").on(t.botId, t.category),
+    index("bot_memories_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+  ],
 );
 
 export const chatModelOverrides = pgTable(

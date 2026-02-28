@@ -40,7 +40,7 @@ services:
     stop_grace_period: 15s
 
   db:
-    image: postgres:17-alpine
+    image: pgvector/pgvector:pg17
     environment:
       - POSTGRES_USER=bot
       - POSTGRES_PASSWORD=${DB_PASSWORD}

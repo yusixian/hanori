@@ -21,22 +21,15 @@ import {
 import type { CoreTool, LanguageModelV1 } from "ai";
 import { generateText } from "ai";
 import type { Api } from "grammy";
-import {
-  createBehaviorTools,
-  createTelegramTools,
-  getAvailableAgentNames,
-} from "../tools/index.js";
+import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { createOnceGuard } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
-import {
-  buildExtendedToolsPrompt,
-  type ExtendedToolsPromptOptions,
-} from "../utils/tools-prompt.js";
-import { type DataFilesConfig, injectDataFiles } from "../utils/data-files.js";
 import { createFileTools } from "../tools/file-tools.js";
+import type { DataFilesConfig } from "../utils/data-files.js";
+import { assembleContinueChatContext } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -118,76 +111,25 @@ async function doContinueChat(
   });
 
   try {
-    // Build messages
-    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
-
-    // Load conversation history if available
-    if (config.conversation && convCfg.enabled) {
-      const history = await config.conversation.getHistory(chatId, convCfg.maxContextMessages);
-
-      const parts: string[] = [config.systemPrompt];
-      if (history.summary) parts.push(`[对话摘要]\n${history.summary}`);
-      if (history.messages.length > 0) {
-        const historyLines = history.messages.map((msg) => {
-          if (msg.role === "context") return `[群聊上下文]\n${msg.content}`;
-          const prefix = msg.role === "assistant" ? "AI" : msg.userName || "User";
-          return `${prefix}: ${msg.content}`;
-        });
-        parts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
-      }
-
-      messages.push({ role: "system", content: parts.join("\n\n") });
-    } else {
-      messages.push({ role: "system", content: config.systemPrompt });
-    }
-
-    // Inject behavioral prompt
-    if (config.behavioralPrompt && messages[0]) {
-      messages[0].content += `\n\n${config.behavioralPrompt}`;
-    }
-
-    // Inject /data directory identity files
-    if (config.dataFiles && messages[0]) {
-      await injectDataFiles(messages[0], config.dataFiles);
-    }
-
-    // Inject split-friendly writing hint when auto-split is enabled
-    if ((config.messageConfig?.autoSplitThreshold ?? 0) > 0 && messages[0]) {
-      messages[0].content +=
-        "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
-    }
-
-    // Inject mood
-    const currentMood = config.moodState.get(chatId);
-    if (currentMood && messages[0]) {
-      const moodStr = currentMood.reason
-        ? `[当前情绪: ${currentMood.mood}，原因: ${currentMood.reason}]`
-        : `[当前情绪: ${currentMood.mood}]`;
-      messages[0].content += `\n\n${moodStr}`;
-    }
-
-    // Inject extended tools prompt
-    if (messages[0]) {
-      const availableAgents = config.agentToolsConfig?.enabled
-        ? getAvailableAgentNames(config.agentToolsConfig, config.webToolsConfig)
-        : [];
-      const toolsPromptOpts: ExtendedToolsPromptOptions = {
-        hasStickerPacks: !!config.stickerPacks?.length,
-        hasTTS: false,
-        hasWebTools: !!config.webToolsConfig?.enabled,
-        hasSearchTool: !!config.webTools?.web_search,
-        hasImageGeneration: !!config.webToolsConfig?.imageGeneration,
-        hasAgentTools: !!config.agentToolsConfig?.enabled,
-        availableAgents,
-        hasBotMemory: !!(
-          (config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG).enabled && config.botMemory
-        ),
-        hasArtworkTools: !!config.artworkToolsConfig?.enabled,
-        hasFileTools: !!config.dataFiles,
-        isPrivate: chatId > 0,
-      };
-      messages[0].content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
-    }
+    // Build messages using ContextAssembler
+    const messages = await assembleContinueChatContext({
+      systemPrompt: config.systemPrompt,
+      behavioralPrompt: config.behavioralPrompt,
+      conversationConfig: config.conversationConfig,
+      conversation: config.conversation,
+      chatId,
+      messageConfig: config.messageConfig,
+      moodState: config.moodState,
+      webToolsConfig: config.webToolsConfig,
+      webTools: config.webTools,
+      agentToolsConfig: config.agentToolsConfig,
+      artworkToolsEnabled: config.artworkToolsConfig?.enabled,
+      hasFileTools: !!config.dataFiles,
+      dataFiles: config.dataFiles,
+      stickerPacks: config.stickerPacks,
+      botMemoryConfig: config.botMemoryConfig,
+      botMemory: config.botMemory,
+    });
 
     // Inject event as a system notification
     messages.push({

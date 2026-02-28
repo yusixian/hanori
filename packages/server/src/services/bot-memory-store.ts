@@ -1,11 +1,20 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botMemories } from "@cos-tool-bot/database";
 import type { BotMemory } from "@cos-tool-bot/shared";
-import { and, count, desc, eq, ilike, isNotNull, isNull, or, sql } from "drizzle-orm";
-
-function escapeLike(s: string): string {
-  return s.replace(/[%_\\]/g, "\\$&");
-}
+import {
+  and,
+  count,
+  cosineDistance,
+  desc,
+  eq,
+  ilike,
+  isNotNull,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
+import { escapeLike, rrfMerge } from "../utils/search.js";
 
 function toDto(row: typeof botMemories.$inferSelect): BotMemory {
   return {
@@ -14,6 +23,8 @@ function toDto(row: typeof botMemories.$inferSelect): BotMemory {
     telegramId: row.telegramId,
     content: row.content,
     category: row.category,
+    factValidAt: row.factValidAt?.toISOString() ?? null,
+    isActive: row.isActive,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt?.toISOString() ?? row.createdAt.toISOString(),
   };
@@ -24,7 +35,13 @@ export class BotMemoryStore {
 
   async saveMemory(
     botId: string,
-    data: { content: string; category?: string; telegramId?: number },
+    data: {
+      content: string;
+      category?: string;
+      telegramId?: number;
+      factValidAt?: string;
+      embedding?: number[];
+    },
   ): Promise<BotMemory> {
     const [created] = await this.db
       .insert(botMemories)
@@ -33,6 +50,8 @@ export class BotMemoryStore {
         content: data.content,
         category: data.category,
         telegramId: data.telegramId,
+        factValidAt: data.factValidAt ? new Date(data.factValidAt) : undefined,
+        embedding: data.embedding,
       })
       .returning();
     return toDto(created!);
@@ -46,30 +65,78 @@ export class BotMemoryStore {
       telegramId?: number;
       scope?: "general_only" | "user_only" | "all";
       limit?: number;
+      queryEmbedding?: number[];
     },
   ): Promise<BotMemory[]> {
-    const conditions = [eq(botMemories.botId, botId)];
+    const limit = params.limit ?? 20;
 
-    // Scope filtering
-    const scope = params.scope ?? "all";
-    if (scope === "general_only") {
-      conditions.push(isNull(botMemories.telegramId));
-    } else if (scope === "user_only") {
-      if (params.telegramId != null) {
-        conditions.push(eq(botMemories.telegramId, params.telegramId));
-      } else {
-        conditions.push(sql`1=0`);
+    // Build shared scope/category filter conditions
+    const buildConditions = () => {
+      const conditions = [eq(botMemories.botId, botId), eq(botMemories.isActive, true)];
+
+      const scope = params.scope ?? "all";
+      if (scope === "general_only") {
+        conditions.push(isNull(botMemories.telegramId));
+      } else if (scope === "user_only") {
+        if (params.telegramId != null) {
+          conditions.push(eq(botMemories.telegramId, params.telegramId));
+        } else {
+          conditions.push(sql`1=0`);
+        }
+      } else if (scope === "all" && params.telegramId != null) {
+        conditions.push(
+          or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
+        );
       }
-    } else if (scope === "all" && params.telegramId != null) {
-      conditions.push(
-        or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
-      );
+
+      if (params.category) {
+        conditions.push(eq(botMemories.category, params.category));
+      }
+
+      return conditions;
+    };
+
+    // If we have both query and embedding, do hybrid search
+    if (params.query && params.queryEmbedding) {
+      const conditions = buildConditions();
+
+      // Keyword search
+      const keywordConditions = [
+        ...conditions,
+        ilike(botMemories.content, `%${escapeLike(params.query)}%`),
+      ];
+      const keywordResults = await this.db
+        .select()
+        .from(botMemories)
+        .where(and(...keywordConditions))
+        .orderBy(desc(botMemories.updatedAt))
+        .limit(30);
+
+      // Vector search
+      const vectorResults = await this.db
+        .select()
+        .from(botMemories)
+        .where(and(...conditions, isNotNull(botMemories.embedding)))
+        .orderBy(cosineDistance(botMemories.embedding, params.queryEmbedding))
+        .limit(30);
+
+      return rrfMerge(keywordResults, vectorResults, 0.7, 0.3, 60, limit).map(toDto);
     }
 
-    if (params.category) {
-      conditions.push(eq(botMemories.category, params.category));
+    // Vector-only search (query embedding but no text query)
+    if (params.queryEmbedding && !params.query) {
+      const conditions = buildConditions();
+      const rows = await this.db
+        .select()
+        .from(botMemories)
+        .where(and(...conditions, isNotNull(botMemories.embedding)))
+        .orderBy(cosineDistance(botMemories.embedding, params.queryEmbedding))
+        .limit(limit);
+      return rows.map(toDto);
     }
 
+    // Keyword-only fallback
+    const conditions = buildConditions();
     if (params.query) {
       conditions.push(ilike(botMemories.content, `%${escapeLike(params.query)}%`));
     }
@@ -79,7 +146,7 @@ export class BotMemoryStore {
       .from(botMemories)
       .where(and(...conditions))
       .orderBy(desc(botMemories.updatedAt))
-      .limit(params.limit ?? 20);
+      .limit(limit);
 
     return rows.map(toDto);
   }
@@ -142,6 +209,10 @@ export class BotMemoryStore {
     return updated ? toDto(updated) : null;
   }
 
+  async updateEmbedding(memoryId: number, embedding: number[]): Promise<void> {
+    await this.db.update(botMemories).set({ embedding }).where(eq(botMemories.id, memoryId));
+  }
+
   async deleteMemory(botId: string, memoryId: number): Promise<boolean> {
     const result = await this.db
       .delete(botMemories)
@@ -151,7 +222,7 @@ export class BotMemoryStore {
   }
 
   async getMemoriesForPrompt(botId: string, telegramId?: number, limit = 20): Promise<BotMemory[]> {
-    const conditions = [eq(botMemories.botId, botId)];
+    const conditions = [eq(botMemories.botId, botId), eq(botMemories.isActive, true)];
     if (telegramId != null) {
       conditions.push(or(isNull(botMemories.telegramId), eq(botMemories.telegramId, telegramId))!);
     } else {
@@ -174,5 +245,56 @@ export class BotMemoryStore {
       .from(botMemories)
       .where(and(eq(botMemories.botId, botId), isNotNull(botMemories.category)));
     return rows.map((r) => r.category!).filter(Boolean);
+  }
+
+  /** Find memories similar to the given embedding (for deduplication). */
+  async findSimilar(
+    botId: string,
+    embedding: number[],
+    threshold: number,
+    opts?: { telegramId?: number; limit?: number },
+  ): Promise<Array<BotMemory & { distance: number }>> {
+    const limit = opts?.limit ?? 5;
+    const distance = cosineDistance(botMemories.embedding, embedding);
+    const conditions = [
+      eq(botMemories.botId, botId),
+      eq(botMemories.isActive, true),
+      isNotNull(botMemories.embedding),
+      lt(distance, threshold),
+    ];
+    // Scope: match general memories OR memories belonging to the same user
+    if (opts?.telegramId != null) {
+      conditions.push(
+        or(isNull(botMemories.telegramId), eq(botMemories.telegramId, opts.telegramId))!,
+      );
+    } else {
+      conditions.push(isNull(botMemories.telegramId));
+    }
+    const rows = await this.db
+      .select({
+        row: botMemories,
+        distance: distance.as("distance"),
+      })
+      .from(botMemories)
+      .where(and(...conditions))
+      .orderBy(distance)
+      .limit(limit);
+
+    return rows.map((r) => ({ ...toDto(r.row), distance: Number(r.distance) }));
+  }
+
+  /** Mark a memory as inactive (soft delete) and optionally point to its successor. */
+  async deactivateMemory(memoryId: number, supersededById?: number): Promise<void> {
+    const updates: Partial<typeof botMemories.$inferInsert> = { isActive: false };
+    if (supersededById != null) updates.supersededById = supersededById;
+    await this.db.update(botMemories).set(updates).where(eq(botMemories.id, memoryId));
+  }
+
+  /** Touch updatedAt of an existing memory (for dedup "seen again" scenario). */
+  async touchMemory(memoryId: number): Promise<void> {
+    await this.db
+      .update(botMemories)
+      .set({ updatedAt: new Date() })
+      .where(eq(botMemories.id, memoryId));
   }
 }

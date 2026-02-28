@@ -1,7 +1,19 @@
 import type { Database } from "@cos-tool-bot/database";
 import { conversationMessages, conversationSummaries } from "@cos-tool-bot/database";
 import type { ConversationRole } from "@cos-tool-bot/shared";
-import { and, count, desc, eq, ilike, inArray, lt, sql } from "drizzle-orm";
+import {
+  and,
+  cosineDistance,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  lt,
+  sql,
+} from "drizzle-orm";
+import { escapeLike, rrfMerge } from "../utils/search.js";
 
 export class ConversationStore {
   constructor(private db: Database) {}
@@ -36,19 +48,23 @@ export class ConversationStore {
       userName?: string;
       meta?: Record<string, unknown>;
     }>,
-  ) {
-    if (messages.length === 0) return;
-    await this.db.insert(conversationMessages).values(
-      messages.map((m) => ({
-        botId: m.botId,
-        chatId: m.chatId,
-        role: m.role,
-        content: m.content,
-        userId: m.userId,
-        userName: m.userName,
-        meta: m.meta,
-      })),
-    );
+  ): Promise<number[]> {
+    if (messages.length === 0) return [];
+    const rows = await this.db
+      .insert(conversationMessages)
+      .values(
+        messages.map((m) => ({
+          botId: m.botId,
+          chatId: m.chatId,
+          role: m.role,
+          content: m.content,
+          userId: m.userId,
+          userName: m.userName,
+          meta: m.meta,
+        })),
+      )
+      .returning({ id: conversationMessages.id });
+    return rows.map((r) => r.id);
   }
 
   async getHistory(botId: string, chatId: number, limit: number) {
@@ -224,39 +240,102 @@ export class ConversationStore {
     };
   }
 
+  async updateEmbedding(messageId: number, embedding: number[]): Promise<void> {
+    await this.db
+      .update(conversationMessages)
+      .set({ embedding })
+      .where(eq(conversationMessages.id, messageId));
+  }
+
   async searchMessages(
     botId: string,
-    params: { query: string; chatId?: number; userId?: number; limit?: number },
+    params: {
+      query: string;
+      chatId?: number;
+      userId?: number;
+      limit?: number;
+      queryEmbedding?: number[];
+    },
   ) {
-    const conditions = [
-      eq(conversationMessages.botId, botId),
-      ilike(conversationMessages.content, `%${params.query}%`),
-    ];
-    if (params.chatId !== undefined) {
-      conditions.push(eq(conversationMessages.chatId, params.chatId));
-    }
-    if (params.userId !== undefined) {
-      conditions.push(eq(conversationMessages.userId, params.userId));
-    }
-    const rows = await this.db
-      .select({
-        role: conversationMessages.role,
-        content: conversationMessages.content,
-        userName: conversationMessages.userName,
-        chatId: conversationMessages.chatId,
-        createdAt: conversationMessages.createdAt,
-      })
-      .from(conversationMessages)
-      .where(and(...conditions))
-      .orderBy(desc(conversationMessages.createdAt))
-      .limit(params.limit ?? 20);
-    return rows.map((r) => ({
+    const limit = params.limit ?? 20;
+
+    const buildBaseConditions = () => {
+      const conditions = [eq(conversationMessages.botId, botId)];
+      if (params.chatId !== undefined) {
+        conditions.push(eq(conversationMessages.chatId, params.chatId));
+      }
+      if (params.userId !== undefined) {
+        conditions.push(eq(conversationMessages.userId, params.userId));
+      }
+      return conditions;
+    };
+
+    const selectFields = {
+      id: conversationMessages.id,
+      role: conversationMessages.role,
+      content: conversationMessages.content,
+      userName: conversationMessages.userName,
+      chatId: conversationMessages.chatId,
+      createdAt: conversationMessages.createdAt,
+    };
+
+    type Row = {
+      id: number;
+      role: string;
+      content: string;
+      userName: string | null;
+      chatId: number;
+      createdAt: Date;
+    };
+    const toResult = (r: Row) => ({
       role: r.role,
       content: r.content,
       userName: r.userName,
       chatId: r.chatId,
       createdAt: r.createdAt.toISOString(),
-    }));
+    });
+
+    // Hybrid search when embedding is available
+    if (params.queryEmbedding) {
+      const baseConditions = buildBaseConditions();
+
+      // Keyword search (fix: use escapeLike)
+      const keywordResults = await this.db
+        .select(selectFields)
+        .from(conversationMessages)
+        .where(
+          and(
+            ...baseConditions,
+            ilike(conversationMessages.content, `%${escapeLike(params.query)}%`),
+          ),
+        )
+        .orderBy(desc(conversationMessages.createdAt))
+        .limit(30);
+
+      // Vector search
+      const vectorResults = await this.db
+        .select(selectFields)
+        .from(conversationMessages)
+        .where(and(...baseConditions, isNotNull(conversationMessages.embedding)))
+        .orderBy(cosineDistance(conversationMessages.embedding, params.queryEmbedding))
+        .limit(30);
+
+      const merged = rrfMerge(keywordResults, vectorResults, 0.7, 0.3, 60, limit);
+      return merged.map(toResult);
+    }
+
+    // Keyword-only fallback (fix: use escapeLike)
+    const conditions = [
+      ...buildBaseConditions(),
+      ilike(conversationMessages.content, `%${escapeLike(params.query)}%`),
+    ];
+    const rows = await this.db
+      .select(selectFields)
+      .from(conversationMessages)
+      .where(and(...conditions))
+      .orderBy(desc(conversationMessages.createdAt))
+      .limit(limit);
+    return rows.map(toResult);
   }
 
   async cleanup(retentionDays: number) {

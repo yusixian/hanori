@@ -200,6 +200,8 @@ export interface BotMemory {
   telegramId: number | null;
   content: string;
   category: string | null;
+  factValidAt: string | null;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -226,11 +228,28 @@ export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
   splitDelayMs: 800,
 };
 
+export interface EmbeddingConfig {
+  enabled: boolean;
+  encryptedApiKey: string;
+  baseURL: string;
+  model: string;
+  dimensions: number;
+}
+
+export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
+  enabled: false,
+  encryptedApiKey: "",
+  baseURL: "https://api.openai.com/v1",
+  model: "text-embedding-3-small",
+  dimensions: 1536,
+};
+
 export interface BotMemoryCallbacks {
   saveMemory(params: {
     content: string;
     category?: string;
     telegramId?: number;
+    factValidAt?: string;
   }): Promise<BotMemory>;
   recallMemories(params: {
     query?: string;
@@ -263,6 +282,15 @@ export interface AiConfigStored {
   messageConfig?: MessageConfig;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
+  embeddingConfig?: EmbeddingConfig;
+}
+
+export interface EmbeddingConfigPublic {
+  enabled: boolean;
+  hasApiKey: boolean;
+  baseURL: string;
+  model: string;
+  dimensions: number;
 }
 
 export interface AiConfigPublic {
@@ -285,6 +313,7 @@ export interface AiConfigPublic {
   messageConfig?: MessageConfig;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
+  embeddingConfig?: EmbeddingConfigPublic;
 }
 
 export type CommandEntity = {

@@ -43,6 +43,37 @@ docker compose up -d
 
 详见 `docker-compose.yml` 和 `Dockerfile`。
 
+### 从旧版本升级（pgvector 迁移）
+
+本项目使用 `pgvector/pgvector:pg17` 镜像（官方 PostgreSQL 17 超集，预装 pgvector 扩展），用于语义搜索功能。若从旧版 `postgres:17-alpine` 升级，数据库大版本相同，volume 数据完全兼容，不会丢失数据。
+
+**生产环境已有容器运行时的升级步骤：**
+
+```bash
+# 1. 拉取新镜像 + 重建应用镜像
+docker compose pull db
+docker compose build app
+
+# 2. 重启容器（db 先启动，app 自动运行迁移）
+docker compose up -d db
+docker compose up -d app
+```
+
+app 启动时会自动执行：
+
+- `CREATE EXTENSION IF NOT EXISTS vector` — 注册 pgvector 扩展
+- Drizzle 迁移 — 添加 vector 列和 HNSW 索引
+
+**（可选）回填存量数据的 embedding：**
+
+在管理面板中配置好 Bot 的 Embedding 设置后，运行回填脚本：
+
+```bash
+docker compose exec app npx tsx packages/server/src/scripts/backfill-embeddings.ts
+```
+
+> 不运行回填脚本也可以正常使用。新消息和记忆会自动生成 embedding，老数据在搜索时走纯关键词匹配。
+
 ## Claude Code 用户
 
 项目包含 `.claude/skills/grammy/` 本地 skill，提供 grammY 框架的离线 API 参考文档，开发 Bot 时可供 Claude Code 查阅。

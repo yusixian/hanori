@@ -31,6 +31,9 @@ if (!databaseUrl) {
 const client = postgres(databaseUrl, { max: 1 });
 const db = drizzle(client);
 
+// Ensure pgvector extension is available before running migrations
+await client`CREATE EXTENSION IF NOT EXISTS vector`;
+
 await migrate(db, { migrationsFolder: "./drizzle" });
 await client.end();
 
