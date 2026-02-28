@@ -179,11 +179,39 @@ export class ConversationStore {
   async getConversationList(botId: string, page: number, limit: number) {
     const offset = (page - 1) * limit;
 
+    // 1a. Main aggregate query with role counts and user info
     const rows = await this.db
       .select({
         chatId: conversationMessages.chatId,
         messageCount: count(),
         lastActive: sql<string>`max(${conversationMessages.createdAt})`.as("last_active"),
+        firstActive: sql<string>`min(${conversationMessages.createdAt})`.as("first_active"),
+        distinctUserCount: sql<number>`count(distinct ${conversationMessages.userId})
+          filter (where ${conversationMessages.userId} is not null)`.as("distinct_user_count"),
+        userNames: sql<string[]>`array_remove(array_agg(distinct ${conversationMessages.userName})
+          filter (where ${conversationMessages.userName} is not null), null)`.as("user_names"),
+        roleUser: sql<number>`count(*) filter (where ${conversationMessages.role} = 'user')`.as(
+          "role_user",
+        ),
+        roleAssistant:
+          sql<number>`count(*) filter (where ${conversationMessages.role} = 'assistant')`.as(
+            "role_assistant",
+          ),
+        roleToolCall:
+          sql<number>`count(*) filter (where ${conversationMessages.role} = 'tool_call')`.as(
+            "role_tool_call",
+          ),
+        roleToolResult:
+          sql<number>`count(*) filter (where ${conversationMessages.role} = 'tool_result')`.as(
+            "role_tool_result",
+          ),
+        roleSystem: sql<number>`count(*) filter (where ${conversationMessages.role} = 'system')`.as(
+          "role_system",
+        ),
+        roleContext:
+          sql<number>`count(*) filter (where ${conversationMessages.role} = 'context')`.as(
+            "role_context",
+          ),
       })
       .from(conversationMessages)
       .where(eq(conversationMessages.botId, botId))
@@ -199,12 +227,64 @@ export class ConversationStore {
       .from(conversationMessages)
       .where(eq(conversationMessages.botId, botId));
 
+    if (rows.length === 0) {
+      return { data: [], total: Number(totalResult?.total ?? 0) };
+    }
+
+    const chatIds = rows.map((r) => r.chatId);
+
+    // 1b. Latest message preview per chat (DISTINCT ON)
+    const lastMessages = await this.db.execute<{
+      chat_id: number;
+      content: string;
+      role: string;
+      user_name: string | null;
+    }>(
+      sql`select distinct on (chat_id) chat_id, left(content, 200) as content, role, user_name
+          from ${conversationMessages}
+          where ${and(eq(conversationMessages.botId, botId), inArray(conversationMessages.chatId, chatIds))}
+          order by chat_id, id desc`,
+    );
+    const lastMessageMap = new Map(lastMessages.map((m) => [Number(m.chat_id), m]));
+
+    // 1c. Summary counts per chat
+    const summaryCounts = await this.db
+      .select({
+        chatId: conversationSummaries.chatId,
+        summaryCount: count(),
+      })
+      .from(conversationSummaries)
+      .where(
+        and(eq(conversationSummaries.botId, botId), inArray(conversationSummaries.chatId, chatIds)),
+      )
+      .groupBy(conversationSummaries.chatId);
+    const summaryMap = new Map(summaryCounts.map((s) => [s.chatId, Number(s.summaryCount)]));
+
     return {
-      data: rows.map((r) => ({
-        chatId: r.chatId,
-        messageCount: Number(r.messageCount),
-        lastActive: r.lastActive,
-      })),
+      data: rows.map((r) => {
+        const lm = lastMessageMap.get(r.chatId);
+        const sc = summaryMap.get(r.chatId) ?? 0;
+        return {
+          chatId: r.chatId,
+          messageCount: Number(r.messageCount),
+          lastActive: r.lastActive,
+          firstActive: r.firstActive,
+          chatType: (r.chatId > 0 ? "private" : "group") as "private" | "group",
+          roleCounts: {
+            user: Number(r.roleUser),
+            assistant: Number(r.roleAssistant),
+            tool_call: Number(r.roleToolCall),
+            tool_result: Number(r.roleToolResult),
+            system: Number(r.roleSystem),
+            context: Number(r.roleContext),
+          },
+          distinctUserCount: Number(r.distinctUserCount),
+          userNames: r.userNames?.length ? r.userNames : null,
+          lastMessage: lm ? { content: lm.content, role: lm.role, userName: lm.user_name } : null,
+          hasSummaries: sc > 0,
+          summaryCount: sc,
+        };
+      }),
       total: Number(totalResult?.total ?? 0),
     };
   }

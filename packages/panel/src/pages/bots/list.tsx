@@ -70,7 +70,7 @@ export function BotListPage() {
               className="hover:border-primary/50 cursor-pointer transition-colors"
               onClick={() => navigate(`/bots/${bot.id}`)}
             >
-              <CardContent className="space-y-3 p-4">
+              <CardContent className="space-y-3 p-4 sm:p-6">
                 <div className="flex items-center justify-between">
                   <h3 className="truncate font-medium">{bot.name}</h3>
                   <Badge variant={statusBadge[bot.status].variant}>
