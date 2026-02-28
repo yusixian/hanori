@@ -77,19 +77,16 @@ export function BotFilesPage() {
 
   const isDirty = content !== originalContent;
 
-  const editorLanguage = selectedFile?.endsWith(".json")
-    ? "json"
-    : selectedFile?.endsWith(".txt")
-      ? "plaintext"
-      : selectedFile?.endsWith(".csv")
-        ? "plaintext"
-        : selectedFile?.endsWith(".html")
-          ? "html"
-          : selectedFile?.endsWith(".css")
-            ? "css"
-            : selectedFile?.endsWith(".xml")
-              ? "xml"
-              : "markdown";
+  const EXT_LANG: Record<string, string> = {
+    ".json": "json",
+    ".txt": "plaintext",
+    ".csv": "plaintext",
+    ".html": "html",
+    ".css": "css",
+    ".xml": "xml",
+  };
+  const ext = selectedFile ? selectedFile.slice(selectedFile.lastIndexOf(".")) : "";
+  const editorLanguage = EXT_LANG[ext] ?? "markdown";
 
   const loadFiles = useCallback(async () => {
     if (!botId) return;

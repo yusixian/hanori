@@ -87,8 +87,9 @@ export function createFileTools(opts: {
             dir = path.dirname(dir);
           }
           return { ok: true };
-        } catch {
-          return { error: "File not found" };
+        } catch (err: unknown) {
+          const code = (err as NodeJS.ErrnoException).code;
+          return { error: code === "ENOENT" ? "File not found" : "Failed to delete file" };
         }
       },
     }),

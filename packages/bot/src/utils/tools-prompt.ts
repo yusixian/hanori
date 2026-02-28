@@ -77,9 +77,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   if (opts.hasFileTools) {
     lines.push("");
     lines.push("文件工具:");
-    lines.push("- read_local: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
-    lines.push("- write_local: 写入文件到 data 目录（创建或覆盖）");
-    lines.push("- delete_local: 删除 data 目录中的文件（临时文件用完记得删）");
+    lines.push("- read_file: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
+    lines.push("- write_file: 写入文件到 data 目录（创建或覆盖）");
+    lines.push("- delete_file: 删除 data 目录中的文件（临时文件用完记得删）");
     lines.push("- 只有管理员在面板中标记为「可注入」的 .md 文件才会被注入到 system prompt");
     lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
   }
