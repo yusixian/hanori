@@ -6,6 +6,8 @@ export {
   ALLOWED_EXTENSIONS,
   TEXT_EXTENSIONS,
   BINARY_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  CONTENT_TYPE_MAP,
   resolveAndValidate,
   getDataDir,
 } from "./file-validation.js";

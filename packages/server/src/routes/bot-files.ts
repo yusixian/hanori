@@ -10,6 +10,7 @@ import { BOT_DATA_TEMPLATES } from "../templates/bot-data-templates.js";
 import type { BotPool } from "../services/bot-pool.js";
 import {
   ALLOWED_EXTENSIONS,
+  CONTENT_TYPE_MAP,
   MAX_FILE_SIZE,
   getDataDir,
   resolveAndValidate,
@@ -20,9 +21,9 @@ import {
  * Hono delivers `c.req.path` already percent-decoded once, so we must NOT
  * call `decodeURIComponent` again (double-decode would turn `%252e` → `..`).
  */
-function extractFilePath(reqPath: string, botId: string): string {
+function extractFilePath(reqPath: string, botId: string, segment = "files"): string {
   if (botId.includes("/")) return "";
-  const prefix = `/api/bots/${botId}/files/`;
+  const prefix = `/api/bots/${botId}/${segment}/`;
   const idx = reqPath.indexOf(prefix);
   if (idx === -1) return "";
   return reqPath.slice(idx + prefix.length);
@@ -66,6 +67,40 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         return c.json({ ok: true as const, files, injection });
       } catch {
         return c.json({ ok: true as const, files: [], injection });
+      }
+    })
+    .get("/:botId/files-raw/*", async (c) => {
+      const botId = c.req.param("botId");
+      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+      const filePath = extractFilePath(c.req.path, botId, "files-raw");
+      if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
+
+      const dataDir = getDataDir(botId);
+      const resolved = resolveAndValidate(dataDir, filePath);
+      if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
+
+      try {
+        const stat = await fs.stat(resolved);
+        if (stat.size > MAX_FILE_SIZE) {
+          return c.json({ ok: false as const, error: "File too large" }, 413);
+        }
+        const buffer = await fs.readFile(resolved);
+        const ext = path.extname(resolved).toLowerCase();
+        const contentType = CONTENT_TYPE_MAP[ext] ?? "application/octet-stream";
+        const headers: Record<string, string> = { "Content-Type": contentType };
+
+        const download = c.req.query("download");
+        if (download === "true") {
+          const fileName = path.basename(resolved);
+          headers["Content-Disposition"] =
+            `attachment; filename="${fileName.replace(/"/g, '\\"')}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+        }
+
+        return c.body(buffer, 200, headers);
+      } catch {
+        return c.json({ ok: false as const, error: "File not found" }, 404);
       }
     })
     .get("/:botId/files/*", async (c) => {

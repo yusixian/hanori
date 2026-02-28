@@ -2,12 +2,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authFetch, client } from "@/lib/client";
+import { triggerDownload } from "@/lib/download";
+import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
 import Editor from "@monaco-editor/react";
 import {
   Check,
+  Download,
   File,
   FilePlus,
   FolderOpen,
+  Image as ImageIcon,
   Loader2,
   PackagePlus,
   Save,
@@ -15,7 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
 interface FileEntry {
@@ -46,6 +50,15 @@ interface ApiErr {
 
 type ApiResult<T = unknown> = ApiOk<T> | ApiErr;
 
+type FileCategory = "text" | "image" | "binary";
+
+function getFileCategory(name: string): FileCategory {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  if (IMAGE_EXTENSIONS.has(ext)) return "image";
+  if (TEXT_EXTENSIONS.has(ext)) return "text";
+  return "binary";
+}
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const kb = bytes / 1024;
@@ -65,6 +78,10 @@ export function BotFilesPage() {
   const [newFileName, setNewFileName] = useState("");
   const [creating, setCreating] = useState(false);
   const [initializing, setInitializing] = useState(false);
+  const [fileCategory, setFileCategory] = useState<FileCategory>("text");
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const imageUrlRef = useRef<string | null>(null);
 
   // Injection config state
   const [injection, setInjection] = useState<InjectionConfig>({
@@ -113,27 +130,62 @@ export function BotFilesPage() {
     loadFiles();
   }, [loadFiles]);
 
+  // Revoke previous blob URL when switching files
+  const revokeImageUrl = useCallback(() => {
+    if (imageUrlRef.current) {
+      URL.revokeObjectURL(imageUrlRef.current);
+      imageUrlRef.current = null;
+    }
+    setImageUrl(null);
+  }, []);
+
+  // Clean up blob URL on unmount
+  useEffect(() => {
+    return () => {
+      if (imageUrlRef.current) URL.revokeObjectURL(imageUrlRef.current);
+    };
+  }, []);
+
   // Hono RPC client doesn't support wildcard routes (/:botId/files/*),
   // so file read/write/delete use raw authFetch instead of the typed client.
   const loadFile = useCallback(
     async (fileName: string) => {
       if (!botId) return;
+      revokeImageUrl();
       setFileLoading(true);
+      setContent("");
+      setOriginalContent("");
+
+      const category = getFileCategory(fileName);
+
       try {
-        const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(fileName)}`);
-        const json = (await res.json()) as ApiResult;
-        if (json.ok && json.content != null) {
-          setContent(json.content);
-          setOriginalContent(json.content);
-          setSelectedFile(fileName);
+        if (category === "text") {
+          const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(fileName)}`);
+          const json = (await res.json()) as ApiResult;
+          if (json.ok && json.content != null) {
+            setContent(json.content);
+            setOriginalContent(json.content);
+          }
+        } else if (category === "image") {
+          const res = await authFetch(
+            `/api/bots/${botId}/files-raw/${encodeURIComponent(fileName)}`,
+          );
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          imageUrlRef.current = url;
+          setImageUrl(url);
         }
+        // binary: no content to load, just select the file
+        setFileCategory(category);
+        setSelectedFile(fileName);
       } catch (err) {
         console.error("Failed to load file:", err);
       } finally {
         setFileLoading(false);
       }
     },
-    [botId],
+    [botId, revokeImageUrl],
   );
 
   const saveFile = useCallback(async () => {
@@ -156,6 +208,26 @@ export function BotFilesPage() {
       setSaving(false);
     }
   }, [botId, selectedFile, content, loadFiles]);
+
+  const downloadFile = useCallback(
+    async (fileName: string) => {
+      if (!botId) return;
+      setDownloading(true);
+      try {
+        const res = await authFetch(
+          `/api/bots/${botId}/files-raw/${encodeURIComponent(fileName)}?download=true`,
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        triggerDownload(blob, fileName);
+      } catch (err) {
+        console.error("Failed to download file:", err);
+      } finally {
+        setDownloading(false);
+      }
+    },
+    [botId],
+  );
 
   const deleteFile = useCallback(
     async (fileName: string) => {
@@ -275,17 +347,17 @@ export function BotFilesPage() {
     }
   }, [botId, maxSizeInput, injection]);
 
-  // Keyboard shortcut: Ctrl+S / Cmd+S to save
+  // Keyboard shortcut: Ctrl+S / Cmd+S to save (text files only)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        if (isDirty && selectedFile) saveFile();
+        if (fileCategory === "text" && isDirty && selectedFile) saveFile();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isDirty, selectedFile, saveFile]);
+  }, [isDirty, selectedFile, saveFile, fileCategory]);
 
   // Compute injection summary
   const injectedFiles = files.filter(
@@ -445,6 +517,7 @@ export function BotFilesPage() {
                 .map((file) => {
                   const isMd = file.name.endsWith(".md");
                   const isInjectable = injection.injectableFiles.includes(file.name);
+                  const category = getFileCategory(file.name);
                   return (
                     <div
                       key={file.name}
@@ -477,6 +550,8 @@ export function BotFilesPage() {
                           >
                             {isInjectable && <Check className="h-2.5 w-2.5" />}
                           </button>
+                        ) : category === "image" ? (
+                          <ImageIcon className="h-3.5 w-3.5 shrink-0 opacity-60" />
                         ) : (
                           <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
                         )}
@@ -502,31 +577,54 @@ export function BotFilesPage() {
           </CardContent>
         </Card>
 
-        {/* Editor area */}
+        {/* Editor / Preview area */}
         <Card className="min-w-0 flex-1 overflow-hidden">
           {selectedFile ? (
             <div className="flex h-full flex-col">
               <div className="flex items-center justify-between border-b px-4 py-2">
                 <div className="flex items-center gap-2">
-                  <File className="h-4 w-4 opacity-60" />
-                  <span className="text-sm font-medium">{selectedFile}</span>
-                  {isDirty && <span className="text-muted-foreground text-xs">(unsaved)</span>}
-                </div>
-                <Button size="sm" onClick={saveFile} disabled={saving || !isDirty}>
-                  {saving ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  {fileCategory === "image" ? (
+                    <ImageIcon className="h-4 w-4 opacity-60" />
                   ) : (
-                    <Save className="mr-1 h-4 w-4" />
+                    <File className="h-4 w-4 opacity-60" />
                   )}
-                  Save
-                </Button>
+                  <span className="text-sm font-medium">{selectedFile}</span>
+                  {fileCategory === "text" && isDirty && (
+                    <span className="text-muted-foreground text-xs">(unsaved)</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => downloadFile(selectedFile)}
+                    disabled={downloading}
+                  >
+                    {downloading ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="mr-1 h-4 w-4" />
+                    )}
+                    Download
+                  </Button>
+                  {fileCategory === "text" && (
+                    <Button size="sm" onClick={saveFile} disabled={saving || !isDirty}>
+                      {saving ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="mr-1 h-4 w-4" />
+                      )}
+                      Save
+                    </Button>
+                  )}
+                </div>
               </div>
               <div className="flex-1">
                 {fileLoading ? (
                   <div className="text-muted-foreground flex h-full items-center justify-center gap-2 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin" /> Loading file...
                   </div>
-                ) : (
+                ) : fileCategory === "text" ? (
                   <Editor
                     height="100%"
                     language={editorLanguage}
@@ -543,6 +641,32 @@ export function BotFilesPage() {
                       padding: { top: 8 },
                     }}
                   />
+                ) : fileCategory === "image" && imageUrl ? (
+                  <div className="flex h-full items-center justify-center bg-neutral-950 p-4">
+                    <img
+                      src={imageUrl}
+                      alt={selectedFile}
+                      className="max-h-full max-w-full object-contain"
+                    />
+                  </div>
+                ) : (
+                  <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3">
+                    <File className="h-12 w-12 opacity-30" />
+                    <p className="text-sm">This file cannot be previewed</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadFile(selectedFile)}
+                      disabled={downloading}
+                    >
+                      {downloading ? (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-1 h-4 w-4" />
+                      )}
+                      Download File
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>
