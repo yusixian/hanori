@@ -16,7 +16,7 @@ import {
 /** Vector embedding dimensions — must match DDL column definition.
  *  Configurable via `EMBEDDING_DIMENSIONS` env var (default 1536).
  *  Changing after deployment requires regenerating migrations + reindexing. */
-export const EMBEDDING_DIMENSIONS = Number(process.env["EMBEDDING_DIMENSIONS"]) || 1536;
+export const EMBEDDING_DIMENSIONS = Number(process.env["EMBEDDING_DIMENSIONS"]) || 768;
 
 /** Mirrors AiConfigStored from @cos-tool-bot/shared — kept inline to avoid circular dependency.
  *  SYNC: update this type when changing AiConfigStored in packages/shared/src/types.ts */

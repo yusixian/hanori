@@ -240,8 +240,8 @@ export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
   enabled: false,
   encryptedApiKey: "",
   baseURL: "https://api.openai.com/v1",
-  model: "text-embedding-3-small",
-  dimensions: 1536,
+  model: "gemini-embedding-001",
+  dimensions: 768,
 };
 
 export interface BotMemoryCallbacks {
