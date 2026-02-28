@@ -16,6 +16,7 @@ import {
   Trash2,
   User,
   Users,
+  Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
@@ -352,6 +353,7 @@ export function BotConversationsPage() {
   const [msgTotal, setMsgTotal] = useState(0);
   const [msgPage, setMsgPage] = useState(1);
   const [msgLoading, setMsgLoading] = useState(false);
+  const [showTools, setShowTools] = useState(false);
   const msgContainerRef = useRef<HTMLDivElement>(null);
 
   const limit = 20;
@@ -570,13 +572,34 @@ export function BotConversationsPage() {
               <p className="text-muted-foreground py-8 text-center text-sm">No messages</p>
             ) : (
               <>
+                <div className="mb-2 flex items-center justify-end">
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
+                      showTools
+                        ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
+                        : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700",
+                    )}
+                    onClick={() => setShowTools((v) => !v)}
+                  >
+                    <Wrench className="h-3 w-3" />
+                    {showTools ? "Hide tools" : "Show tools"}
+                  </button>
+                </div>
+
                 <div
                   ref={msgContainerRef}
-                  className="max-h-[calc(100vh-280px)] space-y-3 overflow-y-auto pr-1"
+                  className="max-h-[calc(100vh-320px)] space-y-3 overflow-y-auto pr-1"
                 >
-                  {messages.map((msg) => (
-                    <MessageBubble key={msg.id} msg={msg} />
-                  ))}
+                  {messages
+                    .filter(
+                      (msg) =>
+                        showTools || (msg.role !== "tool_call" && msg.role !== "tool_result"),
+                    )
+                    .map((msg) => (
+                      <MessageBubble key={msg.id} msg={msg} />
+                    ))}
                 </div>
 
                 <ScrollButtons containerRef={msgContainerRef} />

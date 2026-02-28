@@ -109,8 +109,8 @@ const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_STALE_MS = 30 * 60 * 1000;
 
-// Tools that produce visible side effects but should NOT be saved to conversation history
-const ACTION_TOOL_NAMES = new Set([
+// Tools that produce visible side effects (used to decide whether to delete the waiting message)
+const VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "react_to_message",
   "send_sticker",
   // Telegram tools
@@ -814,7 +814,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       // Warn if AI returned empty text (skip if action tools produced visible effects)
       if (!text) {
         const hasActionToolCalls = result.steps.some((s) =>
-          s.toolCalls.some((tc) => ACTION_TOOL_NAMES.has(tc.toolName)),
+          s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
         );
         if (!hasActionToolCalls) {
           config.onLog?.({
@@ -885,10 +885,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           userName,
         });
 
-        // Save tool calls and results from steps (skip action tools that don't need history)
+        // Save all tool calls and results from steps
         for (const step of result.steps) {
           for (const tc of step.toolCalls) {
-            if (ACTION_TOOL_NAMES.has(tc.toolName)) continue;
             toSave.push({
               chatId,
               role: "tool_call",
@@ -901,7 +900,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             });
           }
           for (const tr of step.toolResults as ToolResultEntry[]) {
-            if (ACTION_TOOL_NAMES.has(tr.toolName)) continue;
             toSave.push({
               chatId,
               role: "tool_result",
@@ -981,7 +979,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       } else {
         // Check if any action tools produced visible effects (sticker, reaction, telegram actions)
         const hasVisibleAction = result.steps.some((s) =>
-          s.toolCalls.some((tc) => ACTION_TOOL_NAMES.has(tc.toolName)),
+          s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
         );
         if (hasVisibleAction) {
           await ctx.deleteWaiting();
