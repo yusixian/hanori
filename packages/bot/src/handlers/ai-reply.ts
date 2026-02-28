@@ -152,13 +152,10 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
 
 const TOOL_STATUS_MAP: Record<string, string> = {
   // Memory tools
-  get_profile: "🔍 查询用户档案...",
-  update_profile: "📝 更新用户档案...",
-  search_profiles: "🔎 搜索人物...",
-  search_history: "📜 查找历史对话...",
-  // Action tools
-  react_to_message: "💫 添加表情...",
-  send_sticker: "🎨 发送贴纸...",
+  get_profile: "🔍 看看你是谁...",
+  update_profile: "📝 记住你的变化...",
+  search_profiles: "🔎 想想这个人...",
+  search_history: "📜 翻翻聊天记录...",
   // Telegram tools
   send_photo: "📷 发送图片...",
   send_voice: "🎙️ 发送语音...",
@@ -174,28 +171,51 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   pin_message: "📌 置顶消息...",
   get_chat_info: "ℹ️ 获取聊天信息...",
   reply_to_specific: "↩️ 回复消息...",
-  // Behavior tools
-  think: "💭 思考中...",
-  multi_message: "💬 组织回复...",
-  set_mood: "🎭 调整情绪...",
   // Web tools
   web_search: "🌐 搜索中...",
-  fetch_webpage: "📄 阅读网页...",
+  fetch_webpage: "📄 看看这个网页...",
   get_current_time: "🕐 获取时间...",
-  generate_image: "🎨 生成图片...",
+  generate_image: "🎨 画画中...",
   // Agent tools
-  delegate_task: "🤖 委派任务...",
+  delegate_task: "🤖 找帮手...",
   // Bot memory tools
-  save_memory: "💾 保存记忆...",
+  save_memory: "💾 记下来...",
   recall_memories: "🧠 回忆中...",
-  delete_memory: "🗑️ 删除记忆...",
+  delete_memory: "🗑️ 忘掉它...",
   // Artwork tools
-  fetch_artwork_info: "🖼️ 获取作品信息...",
+  fetch_artwork_info: "🖼️ 查看作品...",
   send_artwork: "🖼️ 发送作品图片...",
   // File tools
   read_file: "📄 读取文件...",
   write_file: "✏️ 写入文件...",
 };
+
+function wrapToolsWithStatus(
+  tools: Record<string, CoreTool>,
+  ctx: WrapperContext,
+): Record<string, CoreTool> {
+  const wrapped: Record<string, CoreTool> = {};
+  for (const [name, t] of Object.entries(tools)) {
+    const status = TOOL_STATUS_MAP[name];
+    if (!status || !("execute" in t) || typeof t.execute !== "function") {
+      wrapped[name] = t;
+      continue;
+    }
+    const originalExecute = t.execute;
+    wrapped[name] = {
+      ...t,
+      execute: async (...args: Parameters<typeof originalExecute>) => {
+        if (ctx.waiting_message) {
+          ctx.resolveWait(status).catch(() => {});
+        } else {
+          ctx.wait(status).catch(() => {});
+        }
+        return originalExecute(...args);
+      },
+    };
+  }
+  return wrapped;
+}
 
 function resolveGroupConfig(
   config: AiReplyConfig,
@@ -751,24 +771,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
 
       let stepCounter = 0;
+      const wrappedTools = wrapToolsWithStatus(allTools, ctx);
       const result = await generateText({
         model: provider(currentModel),
         messages,
-        tools: allTools,
+        tools: wrappedTools,
         maxSteps,
         toolChoice,
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           if (toolCalls?.length) {
-            const lastTool = toolCalls[toolCalls.length - 1]!.toolName;
-            const status = TOOL_STATUS_MAP[lastTool] ?? `🔧 ${lastTool}...`;
-            // First tool call sends the status message; subsequent ones edit it
-            if (ctx.waiting_message) {
-              ctx.resolveWait(status).catch(() => {});
-            } else {
-              ctx.wait(status).catch(() => {});
-            }
-
             // Debug: AI tool calls
             for (const tc of toolCalls) {
               config.onLog?.({
