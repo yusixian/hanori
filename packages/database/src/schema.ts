@@ -76,7 +76,7 @@ interface AiConfigJson {
   webToolsConfig?: {
     enabled: boolean;
     search?: {
-      provider: "tavily" | "searxng" | "custom";
+      provider: "tavily" | "searxng" | "brave" | "custom";
       apiKey?: string;
       baseURL?: string;
     };

@@ -29,6 +29,7 @@ class TavilyProvider implements SearchProvider {
         max_results: limit,
         search_depth: "basic",
       }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`Tavily search failed: HTTP ${res.status}`);
     const data = (await res.json()) as {
@@ -43,7 +44,7 @@ class SearXNGProvider implements SearchProvider {
 
   async search(query: string, limit = 5): Promise<SearchResult[]> {
     const url = `${this.baseURL.replace(/\/+$/, "")}/search?q=${encodeURIComponent(query)}&format=json&number_of_results=${limit}`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`SearXNG search failed: HTTP ${res.status}`);
     const data = (await res.json()) as {
       results: Array<{ title: string; url: string; content: string }>;
@@ -51,6 +52,30 @@ class SearXNGProvider implements SearchProvider {
     return data.results
       .slice(0, limit)
       .map((r) => ({ title: r.title, url: r.url, snippet: r.content }));
+  }
+}
+
+class BraveSearchProvider implements SearchProvider {
+  constructor(private apiKey: string) {}
+
+  async search(query: string, limit = 5): Promise<SearchResult[]> {
+    const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`;
+    const res = await fetch(url, {
+      headers: {
+        "X-Subscription-Token": this.apiKey,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`Brave Search failed: HTTP ${res.status}`);
+    const data = (await res.json()) as {
+      web?: { results: Array<{ title: string; url: string; description: string }> };
+    };
+    return (data.web?.results ?? []).slice(0, limit).map((r) => ({
+      title: r.title,
+      url: r.url,
+      snippet: r.description,
+    }));
   }
 }
 
@@ -67,6 +92,7 @@ class CustomSearchProvider implements SearchProvider {
       method: "POST",
       headers,
       body: JSON.stringify({ query, limit }),
+      signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) throw new Error(`Custom search failed: HTTP ${res.status}`);
     const data = (await res.json()) as { results: SearchResult[] };
@@ -82,6 +108,9 @@ function createSearchProvider(config: NonNullable<WebToolsConfig["search"]>): Se
     case "searxng":
       if (!config.baseURL) throw new Error("SearXNG requires baseURL");
       return new SearXNGProvider(config.baseURL);
+    case "brave":
+      if (!config.apiKey) throw new Error("Brave Search requires apiKey");
+      return new BraveSearchProvider(config.apiKey);
     case "custom":
       if (!config.baseURL) throw new Error("Custom search requires baseURL");
       return new CustomSearchProvider(config.baseURL, config.apiKey);

@@ -164,7 +164,7 @@ const aiConfigSchema = z
         enabled: z.boolean(),
         search: z
           .object({
-            provider: z.enum(["tavily", "searxng", "custom"]),
+            provider: z.enum(["tavily", "searxng", "brave", "custom"]),
             apiKey: z.string().optional(),
             baseURL: z.string().optional(),
           })
