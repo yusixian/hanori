@@ -1,8 +1,13 @@
 /**
  * ContextAssembler — extracts the prompt assembly logic from ai-reply.ts and continue-chat.ts.
  *
- * Step 1 (current): faithful extraction — same output, structured input.
- * Step 2 (future TODO): structured section tags, context-aware injection, priority trimming.
+ * Message ordering is optimised for AI provider prefix caching (OpenAI, Anthropic, etc.):
+ *   messages[0] — STATIC: systemPrompt + behavioral + data files + memory/tools instructions
+ *   messages[1] — DYNAMIC: env info + mood
+ *   messages[2…] — DYNAMIC: user profile, bot memories, conversation history
+ *
+ * All requests sharing the same bot config will have an identical messages[0],
+ * allowing the provider to cache that prefix and skip re-processing it.
  */
 
 import { countTokens } from "gpt-tokenizer";
@@ -118,9 +123,125 @@ const BOT_MEMORY_SYSTEM_PROMPT = `
 - 学到重要信息时及时保存，不必犹豫
 `.trim();
 
+/* ------------------------------------------------------------------ */
+/*  Helper: build the static system message content                    */
+/* ------------------------------------------------------------------ */
+
+interface StaticPromptInput {
+  systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
+  isPrivate: boolean;
+  dataFiles?: DataFilesConfig;
+  memoryTools?: Record<string, CoreTool>;
+  botMemoryTools?: Record<string, CoreTool>;
+  stickerPacks?: string[];
+  webToolsConfig?: WebToolsConfig;
+  webTools?: Record<string, CoreTool>;
+  agentToolsConfig?: AgentToolsConfig;
+  artworkToolsEnabled?: boolean;
+  hasFileTools?: boolean;
+  messageConfig?: MessageConfig;
+}
+
+/**
+ * Build the fully-static portion of the system prompt.
+ * The result is identical for every request with the same bot config + chat type.
+ */
+async function buildStaticSystemContent(input: StaticPromptInput): Promise<string> {
+  // 1. Base system prompt
+  const parts: string[] = [input.systemPrompt];
+
+  // 2. Behavioral prompts
+  if (input.behavioralPrompt) parts.push(input.behavioralPrompt);
+  if (!input.isPrivate && input.groupBehavioralPrompt) parts.push(input.groupBehavioralPrompt);
+
+  // Join into one block so data-files inject into it
+  const msg = { content: parts.join("\n\n") };
+
+  // 3. Data files (IDENTITY.md, SOUL.md, etc.)
+  if (input.dataFiles) {
+    await injectDataFiles(msg, input.dataFiles);
+  }
+
+  // 4. Memory system prompt
+  if (input.memoryTools) {
+    msg.content += `\n\n${MEMORY_SYSTEM_PROMPT}`;
+  }
+
+  // 5. Bot memory system prompt
+  if (input.botMemoryTools) {
+    msg.content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
+  }
+
+  // 6. Extended tools prompt
+  const availableAgents = input.agentToolsConfig?.enabled
+    ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
+    : [];
+  const extendedPrompt = buildExtendedToolsPrompt({
+    hasStickerPacks: !!input.stickerPacks?.length,
+    hasTTS: false,
+    hasWebTools: !!input.webToolsConfig?.enabled,
+    hasSearchTool: !!input.webTools?.web_search,
+    hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
+    hasAgentTools: !!input.agentToolsConfig?.enabled,
+    availableAgents,
+    hasBotMemory: !!input.botMemoryTools,
+    hasArtworkTools: !!input.artworkToolsEnabled,
+    hasFileTools: !!input.hasFileTools,
+    isPrivate: input.isPrivate,
+  });
+  msg.content += `\n\n${extendedPrompt}`;
+
+  // 7. Message splitting hint
+  if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0) {
+    msg.content +=
+      "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
+  }
+
+  return msg.content;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Helper: build the dynamic runtime context message                  */
+/* ------------------------------------------------------------------ */
+
+function buildDynamicContext(input: {
+  isPrivate: boolean;
+  userName: string;
+  userUsername?: string;
+  chatTitle?: string;
+  chatId: number;
+  currentMood?: MoodInfo;
+}): string {
+  // Environment info
+  let envInfo: string;
+  if (input.isPrivate) {
+    envInfo = `[System: The user "${input.userName}"${input.userUsername ? ` (@${input.userUsername})` : ""} is chatting with you in a PRIVATE chat.]`;
+  } else {
+    const chatTitle = input.chatTitle ?? "Unknown";
+    envInfo = `[System: The user "${input.userName}"${input.userUsername ? ` (@${input.userUsername})` : ""} is chatting with you in a GROUP CHAT named "${chatTitle}" (chatId: ${input.chatId}).]`;
+  }
+
+  // Mood state
+  if (input.currentMood) {
+    const moodStr = input.currentMood.reason
+      ? `[当前情绪: ${input.currentMood.mood}，原因: ${input.currentMood.reason}]`
+      : `[当前情绪: ${input.currentMood.mood}]`;
+    return `${envInfo}\n\n${moodStr}`;
+  }
+
+  return envInfo;
+}
+
 /**
  * Assemble context messages for AI generation.
- * Faithfully reproduces the logic previously inline in ai-reply.ts.
+ *
+ * Message layout (optimised for prefix caching):
+ *   [0] system — static cacheable prefix (same for every request with same bot config)
+ *   [1] system — dynamic runtime context (env info + mood)
+ *   [2…] system — user profile, bot memories (optional)
+ *   [...] conversation history (prompt or messages format)
  */
 export async function assembleContext(input: ContextAssemblyInput): Promise<AssembledContext> {
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
@@ -131,94 +252,38 @@ export async function assembleContext(input: ContextAssemblyInput): Promise<Asse
 
   const useConversation = input.conversation && (input.isPrivate ? conversationCfg.enabled : true);
 
-  if (useConversation) {
-    const history = await input.conversation!.getHistory(input.chatId, input.maxContextMessages);
+  // ── messages[0]: STATIC cacheable prefix ──────────────────────────
+  const staticContent = await buildStaticSystemContent({
+    systemPrompt: input.systemPrompt,
+    behavioralPrompt: input.behavioralPrompt,
+    groupBehavioralPrompt: input.groupBehavioralPrompt,
+    isPrivate: input.isPrivate,
+    dataFiles: input.dataFiles,
+    memoryTools: input.memoryTools,
+    botMemoryTools: input.botMemoryTools,
+    stickerPacks: input.stickerPacks,
+    webToolsConfig: input.webToolsConfig,
+    webTools: input.webTools,
+    agentToolsConfig: input.agentToolsConfig,
+    artworkToolsEnabled: input.artworkToolsEnabled,
+    hasFileTools: input.hasFileTools,
+    messageConfig: input.messageConfig,
+  });
+  messages.push({ role: "system", content: staticContent });
 
-    if (historyFormat === "prompt") {
-      // Pack everything into system prompt for maximum compatibility
-      const parts: string[] = [input.systemPrompt];
+  // ── messages[1]: DYNAMIC runtime context (env info + mood) ────────
+  const dynamicContent = buildDynamicContext({
+    isPrivate: input.isPrivate,
+    userName: input.userName,
+    userUsername: input.userUsername,
+    chatTitle: input.chatTitle,
+    chatId: input.chatId,
+    currentMood: input.currentMood,
+  });
+  messages.push({ role: "system", content: dynamicContent });
 
-      if (history.summary) {
-        parts.push(`[对话摘要]\n${history.summary}`);
-      }
-
-      if (history.messages.length > 0) {
-        const historyLines = history.messages.map((msg) => {
-          if (msg.role === "context") return `[群聊上下文]\n${msg.content}`;
-          const prefix = msg.role === "assistant" ? "AI" : msg.userName || "User";
-          return `${prefix}: ${msg.content}`;
-        });
-        parts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
-      }
-
-      if (input.ringBufferContext) {
-        parts.push(`[近期群聊消息]\n${input.ringBufferContext}`);
-      }
-
-      messages.push({ role: "system", content: parts.join("\n\n") });
-    } else {
-      // Standard multi-turn messages format
-      messages.push({ role: "system", content: input.systemPrompt });
-
-      if (history.summary) {
-        messages.push({ role: "system", content: `[对话摘要] ${history.summary}` });
-      }
-
-      for (const msg of history.messages) {
-        if (msg.role === "context") {
-          messages.push({ role: "system", content: `[近期群聊消息]\n${msg.content}` });
-        } else {
-          const role = msg.role === "assistant" ? "assistant" : "user";
-          const content =
-            !input.isPrivate && msg.userName && msg.role === "user"
-              ? `[${msg.userName}]: ${msg.content}`
-              : msg.content;
-          messages.push({ role, content });
-        }
-      }
-
-      if (input.ringBufferContext) {
-        messages.push({ role: "system", content: `[近期群聊消息]\n${input.ringBufferContext}` });
-      }
-    }
-  } else {
-    messages.push({ role: "system", content: input.systemPrompt });
-  }
-
-  // Inject chat environment context + behavioral prompts into first system message
-  if (messages.length > 0 && messages[0]!.role === "system") {
-    let envInfo: string;
-
-    if (input.isPrivate) {
-      envInfo = `[System: The user "${input.userName}"${input.userUsername ? ` (@${input.userUsername})` : ""} is chatting with you in a PRIVATE chat.]`;
-    } else {
-      const chatTitle = input.chatTitle ?? "Unknown";
-      envInfo = `[System: The user "${input.userName}"${input.userUsername ? ` (@${input.userUsername})` : ""} is chatting with you in a GROUP CHAT named "${chatTitle}" (chatId: ${input.chatId}).]`;
-    }
-
-    const suffix = [
-      input.behavioralPrompt,
-      !input.isPrivate ? input.groupBehavioralPrompt : undefined,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-
-    messages[0]!.content =
-      envInfo + "\n\n" + messages[0]!.content + (suffix ? `\n\n${suffix}` : "");
-  }
-
-  // Inject /data directory identity files
-  if (input.dataFiles && messages.length > 0 && messages[0]!.role === "system") {
-    await injectDataFiles(messages[0]!, input.dataFiles);
-  }
-
-  // Memory system: inject system prompt and auto-read profile
+  // ── User profile (auto-read) ──────────────────────────────────────
   if (input.memoryTools && input.memory) {
-    if (messages.length > 0 && messages[0]!.role === "system") {
-      messages[0]!.content += `\n\n${MEMORY_SYSTEM_PROMPT}`;
-    }
-
-    // Auto-read profile
     if (memoryCfg.autoReadProfile && input.userId) {
       try {
         const profile = await input.memory.getProfile(input.userId);
@@ -250,19 +315,8 @@ export async function assembleContext(input: ContextAssemblyInput): Promise<Asse
     }
   }
 
-  // Inject mood state
-  if (input.currentMood && messages.length > 0 && messages[0]!.role === "system") {
-    const moodStr = input.currentMood.reason
-      ? `[当前情绪: ${input.currentMood.mood}，原因: ${input.currentMood.reason}]`
-      : `[当前情绪: ${input.currentMood.mood}]`;
-    messages[0]!.content += `\n\n${moodStr}`;
-  }
-
-  // Bot memory: inject system prompt and memories
+  // ── Bot memories (auto-inject) ────────────────────────────────────
   if (input.botMemoryTools && input.botMemory && botMemoryCfg.autoInjectMemories) {
-    if (messages.length > 0 && messages[0]!.role === "system") {
-      messages[0]!.content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
-    }
     try {
       const memories = await input.botMemory.getMemoriesForPrompt(
         input.userId,
@@ -279,35 +333,56 @@ export async function assembleContext(input: ContextAssemblyInput): Promise<Asse
     }
   }
 
-  // Inject extended tools prompt
-  if (messages.length > 0 && messages[0]!.role === "system") {
-    const availableAgents = input.agentToolsConfig?.enabled
-      ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
-      : [];
-    const extendedPrompt = buildExtendedToolsPrompt({
-      hasStickerPacks: !!input.stickerPacks?.length,
-      hasTTS: false,
-      hasWebTools: !!input.webToolsConfig?.enabled,
-      hasSearchTool: !!input.webTools?.web_search,
-      hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
-      hasAgentTools: !!input.agentToolsConfig?.enabled,
-      availableAgents,
-      hasBotMemory: !!input.botMemoryTools,
-      hasArtworkTools: !!input.artworkToolsEnabled,
-      hasFileTools: !!input.hasFileTools,
-      isPrivate: input.isPrivate,
-    });
-    messages[0]!.content += `\n\n${extendedPrompt}`;
-  }
+  // ── Conversation history ──────────────────────────────────────────
+  if (useConversation) {
+    const history = await input.conversation!.getHistory(input.chatId, input.maxContextMessages);
 
-  // Inject split-friendly writing hint when auto-split is enabled
-  if (
-    (input.messageConfig?.autoSplitThreshold ?? 0) > 0 &&
-    messages.length > 0 &&
-    messages[0]!.role === "system"
-  ) {
-    messages[0]!.content +=
-      "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
+    if (historyFormat === "prompt") {
+      const historyParts: string[] = [];
+
+      if (history.summary) {
+        historyParts.push(`[对话摘要]\n${history.summary}`);
+      }
+
+      if (history.messages.length > 0) {
+        const historyLines = history.messages.map((msg) => {
+          if (msg.role === "context") return `[群聊上下文]\n${msg.content}`;
+          const prefix = msg.role === "assistant" ? "AI" : msg.userName || "User";
+          return `${prefix}: ${msg.content}`;
+        });
+        historyParts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
+      }
+
+      if (input.ringBufferContext) {
+        historyParts.push(`[近期群聊消息]\n${input.ringBufferContext}`);
+      }
+
+      if (historyParts.length > 0) {
+        messages.push({ role: "system", content: historyParts.join("\n\n") });
+      }
+    } else {
+      // Standard multi-turn messages format
+      if (history.summary) {
+        messages.push({ role: "system", content: `[对话摘要] ${history.summary}` });
+      }
+
+      for (const msg of history.messages) {
+        if (msg.role === "context") {
+          messages.push({ role: "system", content: `[近期群聊消息]\n${msg.content}` });
+        } else {
+          const role = msg.role === "assistant" ? "assistant" : "user";
+          const content =
+            !input.isPrivate && msg.userName && msg.role === "user"
+              ? `[${msg.userName}]: ${msg.content}`
+              : msg.content;
+          messages.push({ role, content });
+        }
+      }
+
+      if (input.ringBufferContext) {
+        messages.push({ role: "system", content: `[近期群聊消息]\n${input.ringBufferContext}` });
+      }
+    }
   }
 
   return { messages };
@@ -338,35 +413,30 @@ export interface PromptPreviewResult {
   estimatedTokens: number;
 }
 
+const PLACEHOLDER_ENV_INFO = "[环境信息: 运行时动态注入 — 用户名、聊天类型等]";
 const PLACEHOLDER_PROFILE = "[当前对话用户档案: 运行时动态注入]";
 const PLACEHOLDER_MOOD = "[当前情绪: 运行时动态注入]";
 const PLACEHOLDER_BOT_MEMORY = "[长期记忆: 运行时动态注入]";
+const PLACEHOLDER_HISTORY = "[对话历史: 运行时动态注入]";
 
 /**
  * Assemble a **preview** of the system prompt for the management panel.
  *
- * Dynamic-only parts (user profile, mood, bot memories, conversation history)
- * are replaced with placeholder markers. Static parts (data files, tools
- * prompt, behavioural prompts) are computed accurately.
+ * Reflects the actual message layout used at runtime:
+ *   Section 1 — Static cacheable prefix (computed accurately)
+ *   Section 2 — Dynamic runtime context (placeholder markers)
+ *   Section 3 — Conversation history (placeholder)
  */
 export async function assemblePromptPreview(
   input: PromptPreviewInput,
 ): Promise<PromptPreviewResult> {
+  // ── Section 1: Static cacheable prefix ────────────────────────────
   const parts: string[] = [];
 
-  // 1. Environment info placeholder
-  if (input.isPrivate) {
-    parts.push('[System: The user "User" is chatting with you in a PRIVATE chat.]');
-  } else {
-    parts.push(
-      '[System: The user "User" is chatting with you in a GROUP CHAT named "Group" (chatId: 0).]',
-    );
-  }
-
-  // 2. Base system prompt
+  // 1. Base system prompt
   parts.push(input.systemPrompt);
 
-  // 3. Behavioral prompts
+  // 2. Behavioral prompts
   if (input.behavioralPrompt) {
     parts.push(input.behavioralPrompt);
   }
@@ -377,29 +447,24 @@ export async function assemblePromptPreview(
   // Join into one block so data-files inject into it
   let content = parts.join("\n\n");
 
-  // 4. Data files (real content from disk)
+  // 3. Data files (real content from disk)
   if (input.dataFiles) {
     const msg = { content };
     await injectDataFiles(msg, input.dataFiles);
     content = msg.content;
   }
 
-  // 5. Memory system prompt
+  // 4. Memory system prompt
   if (input.memoryEnabled) {
     content += `\n\n${MEMORY_SYSTEM_PROMPT}`;
-    content += `\n\n${PLACEHOLDER_PROFILE}`;
   }
 
-  // 6. Mood placeholder
-  content += `\n\n${PLACEHOLDER_MOOD}`;
-
-  // 7. Bot memory system prompt
+  // 5. Bot memory system prompt
   if (input.botMemoryEnabled) {
     content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
-    content += `\n\n${PLACEHOLDER_BOT_MEMORY}`;
   }
 
-  // 8. Extended tools prompt (computed accurately)
+  // 6. Extended tools prompt (computed accurately)
   const availableAgents = input.agentToolsConfig?.enabled
     ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
     : [];
@@ -418,11 +483,29 @@ export async function assemblePromptPreview(
   });
   content += `\n\n${extendedPrompt}`;
 
-  // 9. Message splitting hint
+  // 7. Message splitting hint
   if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0) {
     content +=
       "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
   }
+
+  // ── Section 2: Dynamic runtime context ────────────────────────────
+  content += `\n\n--- 以下为动态内容（每次请求不同） ---`;
+  content += `\n\n${PLACEHOLDER_ENV_INFO}`;
+  content += `\n\n${PLACEHOLDER_MOOD}`;
+
+  // Dynamic user profile
+  if (input.memoryEnabled) {
+    content += `\n\n${PLACEHOLDER_PROFILE}`;
+  }
+
+  // Dynamic bot memories
+  if (input.botMemoryEnabled) {
+    content += `\n\n${PLACEHOLDER_BOT_MEMORY}`;
+  }
+
+  // Dynamic conversation history
+  content += `\n\n${PLACEHOLDER_HISTORY}`;
 
   return {
     fullPrompt: content,
@@ -437,6 +520,8 @@ export async function assemblePromptPreview(
 /**
  * Simplified context assembly for continueChat (event-driven continuation).
  * Uses "prompt" historyFormat only and a reduced set of inputs.
+ *
+ * Same prefix-caching-friendly layout as assembleContext().
  */
 export async function assembleContinueChatContext(input: {
   systemPrompt: string;
@@ -459,71 +544,74 @@ export async function assembleContinueChatContext(input: {
   const convCfg = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
 
-  // Load conversation history if available
+  const botMemCfg = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
+  const isPrivate = input.chatId > 0;
+
+  // ── messages[0]: STATIC cacheable prefix ──────────────────────────
+  const staticParts: string[] = [input.systemPrompt];
+  if (input.behavioralPrompt) staticParts.push(input.behavioralPrompt);
+
+  const msg = { content: staticParts.join("\n\n") };
+
+  // Data files
+  if (input.dataFiles) {
+    await injectDataFiles(msg, input.dataFiles);
+  }
+
+  // Extended tools prompt
+  const availableAgents = input.agentToolsConfig?.enabled
+    ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
+    : [];
+  const toolsPromptOpts: ExtendedToolsPromptOptions = {
+    hasStickerPacks: !!input.stickerPacks?.length,
+    hasTTS: false,
+    hasWebTools: !!input.webToolsConfig?.enabled,
+    hasSearchTool: !!input.webTools?.web_search,
+    hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
+    hasAgentTools: !!input.agentToolsConfig?.enabled,
+    availableAgents,
+    hasBotMemory: !!(botMemCfg.enabled && input.botMemory),
+    hasArtworkTools: !!input.artworkToolsEnabled,
+    hasFileTools: !!input.hasFileTools,
+    isPrivate,
+  };
+  msg.content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
+
+  // Message splitting hint
+  if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0) {
+    msg.content +=
+      "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
+  }
+
+  messages.push({ role: "system", content: msg.content });
+
+  // ── messages[1]: DYNAMIC runtime context (mood) ───────────────────
+  const currentMood = input.moodState.get(input.chatId);
+  if (currentMood) {
+    const moodStr = currentMood.reason
+      ? `[当前情绪: ${currentMood.mood}，原因: ${currentMood.reason}]`
+      : `[当前情绪: ${currentMood.mood}]`;
+    messages.push({ role: "system", content: moodStr });
+  }
+
+  // ── Conversation history ──────────────────────────────────────────
   if (input.conversation && convCfg.enabled) {
     const history = await input.conversation.getHistory(input.chatId, convCfg.maxContextMessages);
 
-    const parts: string[] = [input.systemPrompt];
-    if (history.summary) parts.push(`[对话摘要]\n${history.summary}`);
+    const historyParts: string[] = [];
+    if (history.summary) historyParts.push(`[对话摘要]\n${history.summary}`);
     if (history.messages.length > 0) {
       const historyLines = history.messages.map((msg) => {
         if (msg.role === "context") return `[群聊上下文]\n${msg.content}`;
         const prefix = msg.role === "assistant" ? "AI" : msg.userName || "User";
         return `${prefix}: ${msg.content}`;
       });
-      parts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
+      historyParts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
     }
 
-    messages.push({ role: "system", content: parts.join("\n\n") });
-  } else {
-    messages.push({ role: "system", content: input.systemPrompt });
-  }
-
-  // Inject behavioral prompt
-  if (input.behavioralPrompt && messages[0]) {
-    messages[0].content += `\n\n${input.behavioralPrompt}`;
-  }
-
-  // Inject /data directory identity files
-  if (input.dataFiles && messages[0]) {
-    await injectDataFiles(messages[0], input.dataFiles);
-  }
-
-  // Inject split-friendly writing hint
-  if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0 && messages[0]) {
-    messages[0].content +=
-      "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
-  }
-
-  // Inject mood
-  const currentMood = input.moodState.get(input.chatId);
-  if (currentMood && messages[0]) {
-    const moodStr = currentMood.reason
-      ? `[当前情绪: ${currentMood.mood}，原因: ${currentMood.reason}]`
-      : `[当前情绪: ${currentMood.mood}]`;
-    messages[0].content += `\n\n${moodStr}`;
-  }
-
-  // Inject extended tools prompt
-  if (messages[0]) {
-    const botMemCfg = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
-    const availableAgents = input.agentToolsConfig?.enabled
-      ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
-      : [];
-    const toolsPromptOpts: ExtendedToolsPromptOptions = {
-      hasStickerPacks: !!input.stickerPacks?.length,
-      hasTTS: false,
-      hasWebTools: !!input.webToolsConfig?.enabled,
-      hasSearchTool: !!input.webTools?.web_search,
-      hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
-      hasAgentTools: !!input.agentToolsConfig?.enabled,
-      availableAgents,
-      hasBotMemory: !!(botMemCfg.enabled && input.botMemory),
-      hasArtworkTools: !!input.artworkToolsEnabled,
-      hasFileTools: !!input.hasFileTools,
-      isPrivate: input.chatId > 0,
-    };
-    messages[0].content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
+    if (historyParts.length > 0) {
+      messages.push({ role: "system", content: historyParts.join("\n\n") });
+    }
   }
 
   return messages;

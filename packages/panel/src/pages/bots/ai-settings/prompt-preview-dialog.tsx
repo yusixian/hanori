@@ -16,9 +16,12 @@ interface PromptPreviewDialogProps {
 }
 
 const PLACEHOLDER_PATTERNS = [
+  "[环境信息: 运行时动态注入 — 用户名、聊天类型等]",
   "[当前对话用户档案: 运行时动态注入]",
   "[当前情绪: 运行时动态注入]",
   "[长期记忆: 运行时动态注入]",
+  "[对话历史: 运行时动态注入]",
+  "--- 以下为动态内容（每次请求不同） ---",
 ];
 
 function highlightDynamic(text: string): React.ReactNode[] {
