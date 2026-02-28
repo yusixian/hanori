@@ -1,6 +1,6 @@
 import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { bots } from "@cos-tool-bot/database";
+import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import type {
   BotMemoryCallbacks,
   ConversationCallbacks,
@@ -21,6 +21,7 @@ import { ChatModelStore } from "./chat-model-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
+import { EmbeddingService } from "./embedding-service.js";
 import { PeopleProfileStore } from "./people-profile-store.js";
 
 export class BotPool {
@@ -120,10 +121,60 @@ export class BotPool {
         const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
         const store = this.conversationStore;
 
+        // Create embedding service early so closures can reference it
+        let embeddingService: EmbeddingService | undefined;
+        const embeddingCfg = aiConfig.embeddingConfig;
+        if (embeddingCfg?.enabled && embeddingCfg.encryptedApiKey) {
+          const embeddingApiKey = tryDecrypt(embeddingCfg.encryptedApiKey, env.ENCRYPTION_KEY);
+          if (embeddingApiKey) {
+            embeddingService = new EmbeddingService(
+              {
+                apiKey: embeddingApiKey,
+                baseURL: embeddingCfg.baseURL,
+                model: embeddingCfg.model,
+                dimensions: EMBEDDING_DIMENSIONS,
+              },
+              this.logger,
+            );
+          } else {
+            dbLogger.warn(
+              "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
+            );
+          }
+        }
+
         conversation = {
           getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
           addMessage: (p) => store.addMessage({ botId, ...p }),
-          addMessages: (msgs) => store.addMessages(msgs.map((m) => ({ botId, ...m }))),
+          addMessages: async (msgs) => {
+            const ids = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
+            // Fire-and-forget: async generate embeddings (non-blocking)
+            if (embeddingService && ids.length > 0) {
+              const toEmbed = msgs
+                .map((m, i) => ({ msg: m, id: ids[i]! }))
+                .filter(
+                  ({ msg }) =>
+                    msg.content.length > 0 && (msg.role === "user" || msg.role === "assistant"),
+                );
+              if (toEmbed.length > 0) {
+                embeddingService
+                  .generateEmbeddings(toEmbed.map((e) => e.msg.content))
+                  .then((embeddings) => {
+                    for (let i = 0; i < embeddings.length; i++) {
+                      const emb = embeddings[i];
+                      if (emb) {
+                        store.updateEmbedding(toEmbed[i]!.id, emb).catch((err) => {
+                          this.logger.warn(err, "Failed to persist message embedding");
+                        });
+                      }
+                    }
+                  })
+                  .catch((err) => {
+                    this.logger.warn(err, "Batch message embedding generation failed");
+                  });
+              }
+            }
+          },
           triggerCompression: (chatId) => {
             compressConversation({
               botId,
@@ -193,7 +244,14 @@ export class BotPool {
                   lastSeen: p.lastSeen.toISOString(),
                 })),
               ),
-            searchHistory: (params) => cs.searchMessages(botId, params),
+            searchHistory: async (params) => {
+              let queryEmbedding: number[] | undefined;
+              if (embeddingService && params.query) {
+                const emb = await embeddingService.generateEmbedding(params.query);
+                if (emb) queryEmbedding = emb;
+              }
+              return cs.searchMessages(botId, { ...params, queryEmbedding });
+            },
             touchProfile: (telegramId, displayName, username) =>
               ps.touchProfile(botId, telegramId, displayName, username),
           };
@@ -204,9 +262,42 @@ export class BotPool {
         let botMemory: BotMemoryCallbacks | undefined;
         if (botMemoryCfg?.enabled) {
           const ms = this.botMemoryStore;
+          const es = embeddingService;
+
+          // Dedup threshold constants
+          const DEDUP_EXACT = 0.05; // cosine distance < 0.05 → duplicate (similarity > 0.95)
+          const DEDUP_SIMILAR = 0.15; // cosine distance < 0.15 → similar (similarity > 0.85)
+
           botMemory = {
-            saveMemory: (params) => ms.saveMemory(botId, params),
-            recallMemories: (params) => ms.recallMemories(botId, params),
+            saveMemory: async (params) => {
+              // Sync embedding generation for bot memories (for dedup)
+              let embedding: number[] | undefined;
+              if (es) {
+                const emb = await es.generateEmbedding(params.content);
+                if (emb) {
+                  embedding = emb;
+                  // Dedup check (scoped by telegramId)
+                  const similar = await ms.findSimilar(botId, emb, DEDUP_SIMILAR, {
+                    telegramId: params.telegramId,
+                  });
+                  const exact = similar.find((s) => s.distance < DEDUP_EXACT);
+                  if (exact) {
+                    // Near-duplicate: just touch updatedAt
+                    await ms.touchMemory(exact.id);
+                    return exact;
+                  }
+                }
+              }
+              return ms.saveMemory(botId, { ...params, embedding });
+            },
+            recallMemories: async (params) => {
+              let queryEmbedding: number[] | undefined;
+              if (es && params.query) {
+                const emb = await es.generateEmbedding(params.query);
+                if (emb) queryEmbedding = emb;
+              }
+              return ms.recallMemories(botId, { ...params, queryEmbedding });
+            },
             deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
             getMemoriesForPrompt: (telegramId, limit) =>
               ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),

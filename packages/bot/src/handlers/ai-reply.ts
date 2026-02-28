@@ -26,6 +26,7 @@ import type { CoreTool } from "ai";
 import { generateText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { WrapperContext } from "../context.js";
+import { assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
@@ -38,7 +39,6 @@ import {
   createMemoryTools,
   createTelegramTools,
   createWebTools,
-  getAvailableAgentNames,
 } from "../tools/index.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
@@ -47,8 +47,7 @@ import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
 import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
-import { buildExtendedToolsPrompt } from "../utils/tools-prompt.js";
-import { type DataFilesConfig, injectDataFiles } from "../utils/data-files.js";
+import type { DataFilesConfig } from "../utils/data-files.js";
 
 export interface AiReplyConfig {
   apiKey: string;
@@ -281,39 +280,6 @@ function getUserDisplayName(ctx: WrapperContext): string {
 function formatGroupContextMessages(messages: BufferedMessage[]): string {
   return messages.map((m) => `[${m.userName}]: ${m.text}`).join("\n");
 }
-
-const MEMORY_SYSTEM_PROMPT = `
-你拥有记忆管理工具，可以记住和搜索关于用户的信息。
-
-可用工具:
-- get_profile: 获取用户档案（备注、特征、兴趣等）
-- update_profile: 更新用户档案（备注会追加，特征和兴趣会合并去重）
-- search_profiles: 模糊搜索人物档案
-- search_history: 搜索历史对话记录
-
-使用指南:
-- 当用户分享个人信息（喜好、工作、名字等）时，主动使用 update_profile 记录
-- 当用户问「你还记得…」或需要回忆之前的对话时，使用 search_history
-- 在对话中发现有价值的信息时积极记录，不必等用户要求
-- 不要告诉用户你在使用工具，自然地回复即可
-`.trim();
-
-const BOT_MEMORY_SYSTEM_PROMPT = `
-你拥有长期记忆管理工具，可以保存和检索跨对话持久保存的信息。
-
-可用工具:
-- save_memory: 保存一条记忆（通用或关联特定用户）
-- recall_memories: 搜索已保存的记忆（支持按关键词、分类、用户过滤）
-- delete_memory: 删除不再准确或不再需要的记忆
-
-使用指南:
-- 当你学到重要事实、规则或偏好时，使用 save_memory 保存
-- 当你需要回忆之前保存的信息时，使用 recall_memories
-- 通用记忆（不指定 telegram_id）对所有对话可见
-- 用户专属记忆（指定 telegram_id）仅在与该用户对话时可见
-- 使用 category 来组织记忆（如 fact、preference、rule、event）
-- 学到重要信息时及时保存，不必犹豫
-`.trim();
 
 async function loadStickerPacks(
   api: Api,
@@ -686,210 +652,57 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         });
       }
 
-      // Build messages array
-      const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
-      const historyFormat = conversationCfg.historyFormat ?? "prompt";
+      // Collect group context from ring buffer
+      let ringBufferContext = "";
+      if (!isPrivate) {
+        const shouldIncludeContext =
+          conversationCfg.groupContextMode === "all" ||
+          (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
 
-      if (useConversation) {
-        const maxContext = isPrivate ? conversationCfg.maxContextMessages : groupMaxContext;
-        const history = await config.conversation!.getHistory(chatId, maxContext);
-
-        // Collect group context from ring buffer
-        let ringBufferContext = "";
-        if (!isPrivate) {
-          const shouldIncludeContext =
-            conversationCfg.groupContextMode === "all" ||
-            (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
-
-          if (shouldIncludeContext) {
-            const buffer = groupBuffers.get(chatId);
-            if (buffer) {
-              const allMessages = buffer.buffer.getAll();
-              const contextMessages = allMessages.slice(0, -1);
-              if (contextMessages.length > 0) {
-                ringBufferContext = formatGroupContextMessages(contextMessages);
-              }
+        if (shouldIncludeContext) {
+          const buffer = groupBuffers.get(chatId);
+          if (buffer) {
+            const allMessages = buffer.buffer.getAll();
+            const contextMessages = allMessages.slice(0, -1);
+            if (contextMessages.length > 0) {
+              ringBufferContext = formatGroupContextMessages(contextMessages);
             }
           }
         }
-
-        if (historyFormat === "prompt") {
-          // Pack everything into system prompt for maximum compatibility
-          const parts: string[] = [effectivePrompt];
-
-          if (history.summary) {
-            parts.push(`[对话摘要]\n${history.summary}`);
-          }
-
-          if (history.messages.length > 0) {
-            const historyLines = history.messages.map((msg) => {
-              if (msg.role === "context") return `[群聊上下文]\n${msg.content}`;
-              const prefix = msg.role === "assistant" ? "AI" : msg.userName || "User";
-              return `${prefix}: ${msg.content}`;
-            });
-            parts.push(`[对话历史]\n${historyLines.join("\n")}\n[对话历史结束]`);
-          }
-
-          if (ringBufferContext) {
-            parts.push(`[近期群聊消息]\n${ringBufferContext}`);
-          }
-
-          messages.push({ role: "system", content: parts.join("\n\n") });
-        } else {
-          // Standard multi-turn messages format
-          messages.push({ role: "system", content: effectivePrompt });
-
-          if (history.summary) {
-            messages.push({ role: "system", content: `[对话摘要] ${history.summary}` });
-          }
-
-          for (const msg of history.messages) {
-            if (msg.role === "context") {
-              messages.push({ role: "system", content: `[近期群聊消息]\n${msg.content}` });
-            } else {
-              const role = msg.role === "assistant" ? "assistant" : "user";
-              const content =
-                !isPrivate && msg.userName && msg.role === "user"
-                  ? `[${msg.userName}]: ${msg.content}`
-                  : msg.content;
-              messages.push({ role, content });
-            }
-          }
-
-          if (ringBufferContext) {
-            messages.push({ role: "system", content: `[近期群聊消息]\n${ringBufferContext}` });
-          }
-        }
-      } else {
-        messages.push({ role: "system", content: effectivePrompt });
       }
 
-      // Inject chat environment context + behavioral prompts into system prompt
-      if (messages.length > 0 && messages[0]!.role === "system") {
-        let envInfo: string;
-
-        if (isPrivate) {
-          envInfo = `[System: The user "${userName}"${ctx.from?.username ? ` (@${ctx.from.username})` : ""} is chatting with you in a PRIVATE chat.]`;
-        } else {
-          const chatTitle = ctx.chat?.title ?? "Unknown";
-          envInfo = `[System: The user "${userName}"${ctx.from?.username ? ` (@${ctx.from.username})` : ""} is chatting with you in a GROUP CHAT named "${chatTitle}" (chatId: ${chatId}).]`;
-        }
-
-        const suffix = [
-          config.behavioralPrompt,
-          !isPrivate ? config.groupBehavioralPrompt : undefined,
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-
-        messages[0]!.content =
-          envInfo + "\n\n" + messages[0]!.content + (suffix ? `\n\n${suffix}` : "");
-      }
-
-      // Inject /data directory identity files
-      if (config.dataFiles && messages.length > 0 && messages[0]!.role === "system") {
-        await injectDataFiles(messages[0]!, config.dataFiles);
-      }
-
-      // Memory system: inject system prompt and auto-read profile
-      if (memoryTools && config.memory) {
-        // Append memory management instructions to the first system message
-        if (messages.length > 0 && messages[0]!.role === "system") {
-          messages[0]!.content += `\n\n${MEMORY_SYSTEM_PROMPT}`;
-        }
-
-        // Auto-read profile: inject current user profile as context
-        if (memoryCfg.autoReadProfile && userId) {
-          try {
-            const profile = await config.memory.getProfile(userId);
-            if (profile) {
-              const profileInfo = [
-                `Telegram ID: ${profile.telegramId}`,
-                profile.displayName && `名称: ${profile.displayName}`,
-                profile.username && `用户名: @${profile.username}`,
-                profile.notes && `备注: ${profile.notes}`,
-                profile.traits?.length && `特征: ${profile.traits.join(", ")}`,
-                profile.interests?.length && `兴趣: ${profile.interests.join(", ")}`,
-                profile.relationship && `关系: ${profile.relationship}`,
-              ]
-                .filter(Boolean)
-                .join("\n");
-              messages.push({
-                role: "system",
-                content: `[当前对话用户档案]\n${profileInfo}`,
-              });
-            }
-          } catch {
-            // ignore profile read errors
-          }
-        }
-
-        // Auto-update lastSeen
-        if (memoryCfg.autoUpdateLastSeen && userId) {
-          config.memory.touchProfile(userId, userName, ctx.from?.username).catch(() => {});
-        }
-      }
-
-      // Inject mood state into system prompt
-      const currentMood = moodState.get(chatId);
-      if (currentMood && messages.length > 0 && messages[0]!.role === "system") {
-        const moodStr = currentMood.reason
-          ? `[当前情绪: ${currentMood.mood}，原因: ${currentMood.reason}]`
-          : `[当前情绪: ${currentMood.mood}]`;
-        messages[0]!.content += `\n\n${moodStr}`;
-      }
-
-      // Bot memory: inject system prompt and memories
-      if (botMemoryTools && config.botMemory && botMemoryCfg.autoInjectMemories) {
-        if (messages.length > 0 && messages[0]!.role === "system") {
-          messages[0]!.content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
-        }
-        try {
-          const memories = await config.botMemory.getMemoriesForPrompt(
-            userId,
-            botMemoryCfg.maxMemories,
-          );
-          if (memories.length > 0) {
-            const lines = memories.map((m) =>
-              m.category ? `- [${m.category}] ${m.content}` : `- ${m.content}`,
-            );
-            messages.push({ role: "system", content: `[长期记忆]\n${lines.join("\n")}` });
-          }
-        } catch (err) {
-          console.error("Failed to load bot memories for prompt:", err);
-        }
-      }
-
-      // Inject extended tools prompt
-      if (messages.length > 0 && messages[0]!.role === "system") {
-        const availableAgents = config.agentToolsConfig?.enabled
-          ? getAvailableAgentNames(config.agentToolsConfig, config.webToolsConfig)
-          : [];
-        const extendedPrompt = buildExtendedToolsPrompt({
-          hasStickerPacks: !!config.stickerPacks?.length,
-          hasTTS: false,
-          hasWebTools: !!config.webToolsConfig?.enabled,
-          hasSearchTool: !!webTools?.web_search,
-          hasImageGeneration: !!config.webToolsConfig?.imageGeneration,
-          hasAgentTools: !!config.agentToolsConfig?.enabled,
-          availableAgents,
-          hasBotMemory: !!botMemoryTools,
-          hasArtworkTools: !!config.artworkToolsConfig?.enabled,
-          hasFileTools: !!fileTools,
-          isPrivate,
-        });
-        messages[0]!.content += `\n\n${extendedPrompt}`;
-      }
-
-      // Inject split-friendly writing hint when auto-split is enabled
-      if (
-        (config.messageConfig?.autoSplitThreshold ?? 0) > 0 &&
-        messages.length > 0 &&
-        messages[0]!.role === "system"
-      ) {
-        messages[0]!.content +=
-          "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
-      }
+      // Assemble context using ContextAssembler
+      const { messages } = await assembleContext({
+        systemPrompt: effectivePrompt,
+        behavioralPrompt: config.behavioralPrompt,
+        groupBehavioralPrompt: config.groupBehavioralPrompt,
+        isPrivate,
+        chatId,
+        userName,
+        userUsername: ctx.from?.username,
+        chatTitle: ctx.chat?.title,
+        conversationConfig: config.conversationConfig,
+        conversation: useConversation ? config.conversation : undefined,
+        historyFormat: conversationCfg.historyFormat,
+        maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
+        ringBufferContext: ringBufferContext || undefined,
+        memoryConfig: config.memoryConfig,
+        memory: config.memory,
+        userId,
+        memoryTools,
+        botMemoryConfig: config.botMemoryConfig,
+        botMemory: config.botMemory,
+        botMemoryTools,
+        currentMood: moodState.get(chatId),
+        stickerPacks: config.stickerPacks,
+        webToolsConfig: config.webToolsConfig,
+        webTools,
+        agentToolsConfig: config.agentToolsConfig,
+        artworkToolsEnabled: config.artworkToolsConfig?.enabled,
+        hasFileTools: !!fileTools,
+        dataFiles: config.dataFiles,
+        messageConfig: config.messageConfig,
+      });
 
       // Current user message
       const currentContent = !isPrivate ? `[${userName}]: ${ctx.message.text}` : ctx.message.text;

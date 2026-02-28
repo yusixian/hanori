@@ -35,8 +35,19 @@ function sanitizeAiConfig(config: Record<string, unknown>): Record<string, unkno
     }
     rest.webToolsConfig = wtc;
   }
+  // Strip embedding API key
+  if (rest.embeddingConfig && typeof rest.embeddingConfig === "object") {
+    const { encryptedApiKey: _embApiKey, ...embRest } = rest.embeddingConfig as Record<
+      string,
+      unknown
+    >;
+    rest.embeddingConfig = embRest;
+  }
   return rest;
 }
+
+/** Fields to strip from exported rows (e.g. large vector data) */
+const STRIP_FIELDS = new Set(["embedding"]);
 
 interface ChildTableInfo {
   table: PgTable<TableConfig>;
@@ -257,7 +268,12 @@ export class DataTransferService {
   }
 
   private sanitizeRow(dbTableName: string, row: Record<string, unknown>): Record<string, unknown> {
+    // Strip large vector fields from all tables
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (!STRIP_FIELDS.has(key)) cleaned[key] = value;
+    }
     const sanitizer = SENSITIVE_FIELDS[dbTableName];
-    return sanitizer ? sanitizer(row) : { ...row };
+    return sanitizer ? sanitizer(cleaned) : cleaned;
   }
 }

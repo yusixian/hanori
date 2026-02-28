@@ -1,5 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
-import { bots } from "@cos-tool-bot/database";
+import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
@@ -86,6 +86,15 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     messageConfig: config.messageConfig,
     models: config.models,
     modelCommandAccess: config.modelCommandAccess,
+    embeddingConfig: config.embeddingConfig
+      ? {
+          enabled: config.embeddingConfig.enabled,
+          hasApiKey: !!config.embeddingConfig.encryptedApiKey,
+          baseURL: config.embeddingConfig.baseURL,
+          model: config.embeddingConfig.model,
+          dimensions: EMBEDDING_DIMENSIONS,
+        }
+      : undefined,
   };
 }
 
@@ -203,6 +212,14 @@ const aiConfigSchema = z
       .object({
         autoSplitThreshold: z.number().min(0).max(4096),
         splitDelayMs: z.number().min(0).max(5000),
+      })
+      .optional(),
+    embeddingConfig: z
+      .object({
+        enabled: z.boolean(),
+        apiKey: z.string().optional(),
+        baseURL: z.string(),
+        model: z.string(),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -405,6 +422,22 @@ export function botsRoutes(
       const effectiveModel =
         body.model || (body.models?.length ? body.models[0]!.id : (bot.aiConfig?.model ?? ""));
 
+      // Handle embedding config encryption
+      let embeddingConfig = bot.aiConfig?.embeddingConfig;
+      if (body.embeddingConfig) {
+        let embEncryptedApiKey = embeddingConfig?.encryptedApiKey ?? "";
+        if (body.embeddingConfig.apiKey) {
+          embEncryptedApiKey = encrypt(body.embeddingConfig.apiKey, env.ENCRYPTION_KEY);
+        }
+        embeddingConfig = {
+          enabled: body.embeddingConfig.enabled,
+          encryptedApiKey: embEncryptedApiKey,
+          baseURL: body.embeddingConfig.baseURL,
+          model: body.embeddingConfig.model,
+          dimensions: EMBEDDING_DIMENSIONS,
+        };
+      }
+
       const aiConfig: AiConfigStored = {
         enabled: body.enabled,
         encryptedApiKey,
@@ -425,6 +458,7 @@ export function botsRoutes(
         messageConfig: body.messageConfig,
         models: body.models,
         modelCommandAccess: body.modelCommandAccess,
+        embeddingConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

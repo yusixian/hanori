@@ -17,14 +17,19 @@ export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<stri
             .optional()
             .describe('记忆分类，如 "fact"、"preference"、"rule"、"event"'),
           telegram_id: z.number().optional().describe("关联的用户 Telegram ID，不提供则为通用记忆"),
+          fact_valid_at: z
+            .string()
+            .optional()
+            .describe('事实发生/有效的时间（ISO 8601格式），如 "2025-03-01T12:00:00Z"'),
         }),
       ),
-      execute: async ({ content, category, telegram_id }) => {
+      execute: async ({ content, category, telegram_id, fact_valid_at }) => {
         try {
           const memory = await callbacks.saveMemory({
             content,
             category,
             telegramId: telegram_id,
+            factValidAt: fact_valid_at,
           });
           return { success: true, memory };
         } catch (err) {

@@ -8,6 +8,7 @@ import { BotPool } from "./services/bot-pool.js";
 import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
 import { LogCleaner } from "./services/log-cleaner.js";
+import { MemoryGC } from "./services/memory-gc.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
 
 export type { AppType } from "./app.js";
@@ -54,6 +55,15 @@ const logCleaner = new LogCleaner({
   intervalHours: env.LOG_CLEANUP_INTERVAL_HOURS,
 });
 logCleaner.start();
+
+// Memory GC
+const memoryGC = new MemoryGC({
+  db,
+  logger,
+  inactiveRetentionDays: 30,
+  intervalHours: 24,
+});
+memoryGC.start();
 
 // Migrate BOT_TOKEN from env to bots table (one-time)
 await migrateEnvBot(db, logger);
@@ -106,6 +116,7 @@ const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
   modelCapabilityService.stop();
   logCleaner.stop();
+  memoryGC.stop();
   await botPool.stopAll();
   await dbClient.end();
   process.exit(0);

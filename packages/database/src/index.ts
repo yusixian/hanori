@@ -10,6 +10,8 @@ export { schema };
 export async function runMigrations(databaseUrl: string) {
   const client = postgres(databaseUrl, { max: 1 });
   const db = drizzle(client);
+  // Ensure pgvector extension is available before running migrations
+  await client`CREATE EXTENSION IF NOT EXISTS vector`;
   await migrate(db, {
     migrationsFolder: resolve(import.meta.dirname!, "../drizzle"),
   });

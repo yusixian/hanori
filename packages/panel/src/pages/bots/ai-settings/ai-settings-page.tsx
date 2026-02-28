@@ -16,6 +16,7 @@ import {
   DEFAULT_ARTWORK_TOOLS_CONFIG,
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_EMBEDDING_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
 } from "@cos-tool-bot/shared";
@@ -25,6 +26,8 @@ import { useParams } from "react-router";
 import { AgentToolsSection } from "./sections/agent-tools-section";
 import { ArtworkToolsSection } from "./sections/artwork-tools-section";
 import { BotMemorySection } from "./sections/bot-memory-section";
+import type { EmbeddingFormConfig } from "./sections/embedding-section";
+import { EmbeddingSection } from "./sections/embedding-section";
 import { ConversationSection } from "./sections/conversation-section";
 import { GlobalSettingsSection } from "./sections/global-settings-section";
 import { GroupOverridesSection } from "./sections/group-overrides-section";
@@ -46,6 +49,7 @@ export function BotAiSettingsPage() {
   const [message, setMessage] = useState<StatusMessage | null>(null);
   const [triggerWordsText, setTriggerWordsText] = useState("");
   const [stickerPacksText, setStickerPacksText] = useState("");
+  const [embeddingApiKey, setEmbeddingApiKey] = useState("");
 
   const loadConfig = useCallback(async () => {
     if (!botId) return;
@@ -94,6 +98,14 @@ export function BotAiSettingsPage() {
           messageConfig: config.messageConfig,
           models: config.models,
           modelCommandAccess: config.modelCommandAccess,
+          embeddingConfig: config.embeddingConfig
+            ? {
+                enabled: config.embeddingConfig.enabled,
+                apiKey: embeddingApiKey || undefined,
+                baseURL: config.embeddingConfig.baseURL,
+                model: config.embeddingConfig.model,
+              }
+            : undefined,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -122,6 +134,7 @@ export function BotAiSettingsPage() {
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
         setApiKey("");
+        setEmbeddingApiKey("");
         setMessage({ type: "success", text: "AI config saved" });
       } else {
         setMessage({
@@ -194,6 +207,35 @@ export function BotAiSettingsPage() {
       ...prev,
       botMemoryConfig: { ...botMemCfg, ...prev.botMemoryConfig, ...updates },
     }));
+  };
+
+  const embCfg: EmbeddingFormConfig = {
+    enabled: config.embeddingConfig?.enabled ?? DEFAULT_EMBEDDING_CONFIG.enabled,
+    hasApiKey: config.embeddingConfig?.hasApiKey ?? false,
+    baseURL: config.embeddingConfig?.baseURL ?? DEFAULT_EMBEDDING_CONFIG.baseURL,
+    model: config.embeddingConfig?.model ?? DEFAULT_EMBEDDING_CONFIG.model,
+    dimensions: config.embeddingConfig?.dimensions ?? DEFAULT_EMBEDDING_CONFIG.dimensions,
+    apiKey: embeddingApiKey,
+  };
+  const updateEmbedding = (updates: Partial<EmbeddingFormConfig>) => {
+    if ("apiKey" in updates) {
+      setEmbeddingApiKey(updates.apiKey ?? "");
+    }
+    const { apiKey: _, hasApiKey: __, ...configUpdates } = updates;
+    if (Object.keys(configUpdates).length > 0) {
+      setConfig((prev) => ({
+        ...prev,
+        embeddingConfig: {
+          ...prev.embeddingConfig,
+          enabled: prev.embeddingConfig?.enabled ?? DEFAULT_EMBEDDING_CONFIG.enabled,
+          hasApiKey: prev.embeddingConfig?.hasApiKey ?? false,
+          baseURL: prev.embeddingConfig?.baseURL ?? DEFAULT_EMBEDDING_CONFIG.baseURL,
+          model: prev.embeddingConfig?.model ?? DEFAULT_EMBEDDING_CONFIG.model,
+          dimensions: prev.embeddingConfig?.dimensions ?? DEFAULT_EMBEDDING_CONFIG.dimensions,
+          ...configUpdates,
+        },
+      }));
+    }
   };
 
   const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
@@ -299,6 +341,8 @@ export function BotAiSettingsPage() {
       <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
 
       <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
+
+      <EmbeddingSection config={embCfg} onUpdate={updateEmbedding} />
 
       <WebToolsSection config={webCfg} onUpdate={updateWebTools} />
 
