@@ -1,5 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
-import { bots } from "@cos-tool-bot/database";
+import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
@@ -92,7 +92,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
           hasApiKey: !!config.embeddingConfig.encryptedApiKey,
           baseURL: config.embeddingConfig.baseURL,
           model: config.embeddingConfig.model,
-          dimensions: config.embeddingConfig.dimensions,
+          dimensions: EMBEDDING_DIMENSIONS,
         }
       : undefined,
   };
@@ -220,7 +220,6 @@ const aiConfigSchema = z
         apiKey: z.string().optional(),
         baseURL: z.string(),
         model: z.string(),
-        dimensions: z.number().min(1).max(4096),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -435,7 +434,7 @@ export function botsRoutes(
           encryptedApiKey: embEncryptedApiKey,
           baseURL: body.embeddingConfig.baseURL,
           model: body.embeddingConfig.model,
-          dimensions: body.embeddingConfig.dimensions,
+          dimensions: EMBEDDING_DIMENSIONS,
         };
       }
 

@@ -10,7 +10,13 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createDb, bots, botMemories, conversationMessages } from "@cos-tool-bot/database";
+import {
+  createDb,
+  bots,
+  botMemories,
+  conversationMessages,
+  EMBEDDING_DIMENSIONS,
+} from "@cos-tool-bot/database";
 import { and, eq, isNull, inArray } from "drizzle-orm";
 import { EmbeddingService } from "../services/embedding-service.js";
 import { tryDecrypt } from "../utils/crypto.js";
@@ -66,7 +72,7 @@ try {
       apiKey,
       baseURL: embCfg.baseURL,
       model: embCfg.model,
-      dimensions: embCfg.dimensions,
+      dimensions: EMBEDDING_DIMENSIONS,
     });
 
     console.log(`Bot "${bot.name}" (${bot.id}): starting backfill...`);

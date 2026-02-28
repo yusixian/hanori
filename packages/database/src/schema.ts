@@ -14,8 +14,9 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** Vector embedding dimensions — must match DDL column definition.
- *  This is a one-time decision; changing it requires regenerating migrations. */
-export const EMBEDDING_DIMENSIONS = 1536;
+ *  Configurable via `EMBEDDING_DIMENSIONS` env var (default 1536).
+ *  Changing after deployment requires regenerating migrations + reindexing. */
+export const EMBEDDING_DIMENSIONS = Number(process.env["EMBEDDING_DIMENSIONS"]) || 1536;
 
 /** Mirrors AiConfigStored from @cos-tool-bot/shared — kept inline to avoid circular dependency.
  *  SYNC: update this type when changing AiConfigStored in packages/shared/src/types.ts */

@@ -76,17 +76,10 @@ export function EmbeddingSection({
 
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Dimensions</label>
-          <Input
-            type="number"
-            min={1}
-            max={4096}
-            disabled={!config.enabled}
-            value={config.dimensions}
-            onChange={(e) => onUpdate({ dimensions: Number(e.target.value) })}
-          />
+          <Input type="number" disabled value={config.dimensions} readOnly />
           <p className="text-muted-foreground text-xs">
-            Vector dimensions (default 1536). Must match the database schema. Changing this after
-            deployment requires re-generating migrations.
+            System-level setting controlled by the <code>EMBEDDING_DIMENSIONS</code> environment
+            variable (default 1536). Changing requires redeployment and migration regeneration.
           </p>
         </div>
       </CardContent>

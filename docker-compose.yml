@@ -10,6 +10,7 @@ services:
       - PANEL_PASSWORD=${PANEL_PASSWORD}
       - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
       - BACKUP_DIR=/data/backups
     volumes:
       - backups:/data/backups

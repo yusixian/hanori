@@ -104,7 +104,6 @@ export function BotAiSettingsPage() {
                 apiKey: embeddingApiKey || undefined,
                 baseURL: config.embeddingConfig.baseURL,
                 model: config.embeddingConfig.model,
-                dimensions: config.embeddingConfig.dimensions,
               }
             : undefined,
           stickerPacks: stickerPacksText

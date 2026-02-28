@@ -127,11 +127,6 @@ export class BotPool {
         if (embeddingCfg?.enabled && embeddingCfg.encryptedApiKey) {
           const embeddingApiKey = tryDecrypt(embeddingCfg.encryptedApiKey, env.ENCRYPTION_KEY);
           if (embeddingApiKey) {
-            if (embeddingCfg.dimensions !== EMBEDDING_DIMENSIONS) {
-              dbLogger.warn(
-                `Embedding dimensions mismatch: config=${embeddingCfg.dimensions} schema=${EMBEDDING_DIMENSIONS}. Using schema dimensions.`,
-              );
-            }
             embeddingService = new EmbeddingService(
               {
                 apiKey: embeddingApiKey,
