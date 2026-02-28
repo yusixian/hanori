@@ -1,4 +1,4 @@
-import { resolveAndValidate } from "@cos-tool-bot/shared";
+import { MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -10,6 +10,14 @@ import type { PendingActionRegistry } from "../services/pending-actions.js";
 import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
 
+export interface ReceivedFile {
+  type: "photo" | "document";
+  file_id: string;
+  file_name?: string;
+  file_size?: number;
+  mime_type?: string;
+}
+
 export interface TelegramToolsOptions {
   api: Api;
   chatId: number;
@@ -19,6 +27,8 @@ export interface TelegramToolsOptions {
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onceGuard?: OnceGuardContext;
   dataDir?: string;
+  token?: string;
+  receivedFiles?: ReceivedFile[];
 }
 
 async function resolveInput(source: string, dataDir?: string): Promise<string | InputFile> {
@@ -482,6 +492,52 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           return { success: true, message_id: sent.message_id };
         } catch (err) {
           return { error: String(err) };
+        }
+      },
+    });
+  }
+
+  // Conditionally add save_received_file if token and dataDir are available
+  if (options.token && dataDir) {
+    const token = options.token;
+    const receivedFiles = options.receivedFiles ?? [];
+    const receivedDir = path.join(dataDir, "received");
+
+    tools.save_received_file = tool({
+      description:
+        "保存用户发来的文件/图片到 data/received 目录。保存后可用 send_photo/send_document 的 local:received/filename 发送回去。",
+      parameters: zodToAiSchema(
+        z.object({
+          index: z.number().optional().describe("附件序号（从0开始），默认0"),
+          filename: z.string().describe("保存的文件名，如 photo.jpg、report.pdf"),
+        }),
+      ),
+      execute: async ({ index, filename }) => {
+        const idx = index ?? 0;
+        if (!receivedFiles.length) return { error: "当前没有收到文件附件" };
+        if (idx < 0 || idx >= receivedFiles.length)
+          return { error: `无效序号，当前有 ${receivedFiles.length} 个附件` };
+
+        const file = receivedFiles[idx]!;
+        const resolved = resolveAndValidate(receivedDir, filename);
+        if (!resolved) return { error: "无效文件名或路径" };
+
+        try {
+          const tgFile = await api.getFile(file.file_id);
+          if (!tgFile.file_path) return { error: "无法获取文件路径" };
+
+          const url = `https://api.telegram.org/file/bot${token}/${tgFile.file_path}`;
+          const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+          if (!res.ok) return { error: `下载失败: HTTP ${res.status}` };
+
+          const buffer = Buffer.from(await res.arrayBuffer());
+          if (buffer.length > MAX_FILE_SIZE) return { error: "文件过大（超过 20MB）" };
+
+          await fs.mkdir(path.dirname(resolved), { recursive: true });
+          await fs.writeFile(resolved, buffer);
+          return { ok: true, path: `received/${filename}`, size: buffer.length };
+        } catch (err) {
+          return { error: `保存失败: ${err instanceof Error ? err.message : String(err)}` };
         }
       },
     });

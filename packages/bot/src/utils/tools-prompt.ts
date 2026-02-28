@@ -79,6 +79,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push("- read_file: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
     lines.push("- write_file: 写入文件到 data 目录（创建或覆盖）");
     lines.push("- delete_file: 删除 data 目录中的文件（临时文件用完记得删）");
+    lines.push(
+      "- save_received_file: 保存用户发来的文件/图片到 data/received 目录（之后可用 local:received/xxx 发送）",
+    );
+    lines.push("- 当用户发送文件或图片时，消息中会标注附件信息");
+    lines.push("- 如果你判断需要保存该文件，应在当前回合立即调用 save_received_file");
     lines.push("- 只有管理员在面板中标记为「可注入」的 .md 文件才会被注入到 system prompt");
     lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
   }

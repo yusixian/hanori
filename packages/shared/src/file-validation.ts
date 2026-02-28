@@ -1,6 +1,6 @@
 import * as path from "node:path";
 
-export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
+export const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 export const TEXT_EXTENSIONS = new Set([".md", ".txt", ".json", ".csv", ".xml", ".html", ".css"]);
 export const BINARY_EXTENSIONS = new Set([
   ".png",

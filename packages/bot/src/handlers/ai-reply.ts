@@ -20,9 +20,10 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  inferCapabilities,
 } from "@cos-tool-bot/shared";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { CoreTool } from "ai";
+import type { CoreMessage, CoreTool, CoreUserMessage } from "ai";
 import { generateText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { WrapperContext } from "../context.js";
@@ -40,6 +41,7 @@ import {
   createTelegramTools,
   createWebTools,
 } from "../tools/index.js";
+import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
 import { createOnceGuard } from "../tools/utils.js";
@@ -79,6 +81,13 @@ export interface AiReplyConfig {
     resetModelForChat: (chatId: number) => void;
   };
   dataFiles?: DataFilesConfig;
+  token: string;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
@@ -185,6 +194,7 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   read_file: "📄 读取文件...",
   write_file: "✏️ 写入文件...",
   delete_file: "🗑️ 删除文件...",
+  save_received_file: "💾 保存文件...",
 };
 
 function wrapToolsWithStatus(
@@ -253,7 +263,7 @@ function checkTrigger(
   chatId: number,
   cooldownMap: Map<number, number>,
 ): TriggerResult {
-  const text = ctx.message?.text ?? "";
+  const text = ctx.message?.text ?? ctx.message?.caption ?? "";
 
   if (triggerConfig.replyToBot && ctx.message?.reply_to_message?.from?.id === ctx.me.id) {
     return "reply";
@@ -405,6 +415,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     });
   }
 
+  // Per-chat recently received files (for save_received_file tool)
+  const recentReceivedFiles = new Map<number, ReceivedFile[]>();
+
   // Recent bot message IDs per chat (for edit/delete tools)
   const recentBotMessageIds = new Map<number, number[]>();
 
@@ -542,10 +555,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   };
 
   const handler: Middleware<WrapperContext> = async (ctx, next) => {
-    if (!ctx.message?.text) return next();
+    const msg = ctx.message;
+    if (!msg) return next();
+    if (!msg.text && !msg.photo && !msg.document) return next();
 
     // Skip commands
-    const entities = ctx.message.entities ?? [];
+    const entities = msg.entities ?? [];
     if (entities.some((e) => e.type === "bot_command" && e.offset === 0)) {
       return next();
     }
@@ -567,12 +582,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     // Push to ring buffer for group chats (before trigger check)
     if (!isPrivate) {
       const buffer = getOrCreateBuffer(chatId);
-      buffer.push({
-        userId,
-        userName,
-        text: ctx.message.text,
-        timestamp: Date.now(),
-      });
+      const bufferText =
+        msg.text ??
+        msg.caption ??
+        (msg.photo
+          ? "[图片]"
+          : msg.document
+            ? `[文件: ${msg.document.file_name ?? "unknown"}]`
+            : "");
+      buffer.push({ userId, userName, text: bufferText, timestamp: Date.now() });
     }
 
     let effectivePrompt = config.systemPrompt;
@@ -625,10 +643,34 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const actionTools = createActionTools({
         api: ctx.api,
         chatId,
-        messageId: ctx.message.message_id,
+        messageId: msg.message_id,
         stickerCache,
         onceGuard,
       });
+
+      // Extract received files metadata
+      const receivedFiles: ReceivedFile[] = [];
+      if (msg.photo) {
+        const largest = msg.photo[msg.photo.length - 1]!;
+        receivedFiles.push({
+          type: "photo",
+          file_id: largest.file_id,
+          file_size: largest.file_size,
+        });
+      }
+      if (msg.document) {
+        receivedFiles.push({
+          type: "document",
+          file_id: msg.document.file_id,
+          file_name: msg.document.file_name ?? undefined,
+          file_size: msg.document.file_size,
+          mime_type: msg.document.mime_type ?? undefined,
+        });
+      }
+      if (receivedFiles.length) {
+        recentReceivedFiles.set(chatId, receivedFiles);
+      }
+      const messageText = msg.text ?? msg.caption ?? "";
 
       // Create per-request telegram tools
       const telegramTools = createTelegramTools({
@@ -639,6 +681,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onTimerFired,
         onceGuard,
         dataDir: config.dataFiles?.dataDir,
+        token: config.token,
+        receivedFiles: recentReceivedFiles.get(chatId),
       });
 
       // Create per-request behavior tools
@@ -730,9 +774,58 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         messageConfig: config.messageConfig,
       });
 
-      // Current user message
-      const currentContent = !isPrivate ? `[${userName}]: ${ctx.message.text}` : ctx.message.text;
-      messages.push({ role: "user", content: currentContent });
+      // --- Download images for vision ---
+      const hasVision = inferCapabilities(currentModel).includes("vision");
+      const imageBuffers: Array<{ buffer: Buffer; mimeType: string }> = [];
+
+      if (hasVision && receivedFiles.length) {
+        for (const f of receivedFiles) {
+          const isImage = f.type === "photo" || f.mime_type?.startsWith("image/");
+          if (!isImage) continue;
+          try {
+            const tgFile = await ctx.api.getFile(f.file_id);
+            if (!tgFile.file_path) continue;
+            const url = `https://api.telegram.org/file/bot${config.token}/${tgFile.file_path}`;
+            const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+            if (!res.ok) continue;
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.length <= 5 * 1024 * 1024) {
+              imageBuffers.push({ buffer: buf, mimeType: f.mime_type ?? "image/jpeg" });
+            }
+          } catch {
+            // Download failed, fall back to text description
+          }
+        }
+      }
+
+      // --- Build text description (always needed for history and non-vision) ---
+      let attachmentDesc = "";
+      for (const f of receivedFiles) {
+        const sizeStr = f.file_size ? ` ${formatFileSize(f.file_size)}` : "";
+        if (f.type === "photo") {
+          attachmentDesc += `[收到图片附件${sizeStr}]\n`;
+        } else {
+          const nameStr = f.file_name ? ` "${f.file_name}"` : "";
+          const typeStr = f.mime_type ? ` (${f.mime_type})` : "";
+          attachmentDesc += `[收到文件附件${nameStr}${typeStr}${sizeStr}]\n`;
+        }
+      }
+      const rawContent = `${attachmentDesc}${messageText}`.trim();
+      const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+
+      // --- Assemble final user message (multimodal or text-only) ---
+      const aiMessages = messages as CoreMessage[];
+      if (imageBuffers.length > 0) {
+        const parts: CoreUserMessage["content"] = imageBuffers.map((img) => ({
+          type: "image" as const,
+          image: img.buffer,
+          mimeType: img.mimeType,
+        }));
+        parts.push({ type: "text" as const, text: textContent || "用户发送了一张图片" });
+        aiMessages.push({ role: "user", content: parts });
+      } else {
+        aiMessages.push({ role: "user", content: textContent });
+      }
 
       // Combine all tools
       const allTools: Record<string, CoreTool> = {
@@ -908,11 +1001,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           }
         }
 
-        // Save user message
+        // Save user message (text only, no image data)
         toSave.push({
           chatId,
           role: "user",
-          content: ctx.message.text,
+          content: rawContent || messageText,
           userId,
           userName,
         });

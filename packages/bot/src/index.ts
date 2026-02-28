@@ -4,6 +4,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createClearCommand } from "./commands/clear.js";
+import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
@@ -16,7 +17,7 @@ import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js
 import { createPollAnswerHandler, createCallbackQueryHandler } from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
 
-export type AiReplyBotConfig = Omit<AiReplyConfig, "adminChatIds" | "onLog">;
+export type AiReplyBotConfig = Omit<AiReplyConfig, "adminChatIds" | "onLog" | "token">;
 
 export interface BotConfig {
   token: string;
@@ -63,6 +64,7 @@ export function createBot(config: BotConfig) {
       ...config.aiReply,
       adminChatIds,
       onLog: config.onLog,
+      token,
     });
     aiHandler = result.handler;
     aiState = result.state;
@@ -78,6 +80,11 @@ export function createBot(config: BotConfig) {
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
   bot.command("backup", authGuard, createBackupCommand(config.onBackup));
   bot.command("clear", createClearCommand(config.conversation, adminChatIds));
+  bot.command(
+    "clearreceived",
+    authGuard,
+    createClearReceivedCommand(config.aiReply?.dataFiles?.dataDir),
+  );
 
   // Register /model command if models are configured
   if (config.aiReply?.models?.length && aiSetModelForChat && aiGetModelForChat) {
@@ -121,7 +128,7 @@ export function createBot(config: BotConfig) {
       await callbackQueryHandler(ctx);
     });
 
-    bot.on("message:text", aiHandler);
+    bot.on(["message:text", "message:photo", "message:document"], aiHandler);
   }
 
   bot.api.setMyCommands(commands).catch((err) => {
