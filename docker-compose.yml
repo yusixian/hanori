@@ -13,6 +13,7 @@ services:
       - BACKUP_DIR=/data/backups
     volumes:
       - backups:/data/backups
+      - botdata:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -84,3 +85,4 @@ services:
 volumes:
   pgdata:
   backups:
+  botdata:

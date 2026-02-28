@@ -40,6 +40,7 @@ import {
   createWebTools,
   getAvailableAgentNames,
 } from "../tools/index.js";
+import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
 import { createOnceGuard } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
@@ -47,6 +48,7 @@ import { RingBuffer } from "../utils/ring-buffer.js";
 import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
 import { buildExtendedToolsPrompt } from "../utils/tools-prompt.js";
+import { type DataFilesConfig, injectDataFiles } from "../utils/data-files.js";
 
 export interface AiReplyConfig {
   apiKey: string;
@@ -77,6 +79,7 @@ export interface AiReplyConfig {
     setModelForChat: (chatId: number, modelId: string) => void;
     resetModelForChat: (chatId: number) => void;
   };
+  dataFiles?: DataFilesConfig;
 }
 
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
@@ -190,6 +193,9 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   // Artwork tools
   fetch_artwork_info: "🖼️ 获取作品信息...",
   send_artwork: "🖼️ 发送作品图片...",
+  // File tools
+  read_file: "📄 读取文件...",
+  write_file: "✏️ 写入文件...",
 };
 
 function resolveGroupConfig(
@@ -407,6 +413,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     webTools = createWebTools({ config: config.webToolsConfig });
   }
 
+  // File tools setup (singleton, not per-request)
+  let fileTools: Record<string, CoreTool> | undefined;
+  if (config.dataFiles) {
+    fileTools = createFileTools({ dataDir: config.dataFiles.dataDir });
+  }
+
   // Recent bot message IDs per chat (for edit/delete tools)
   const recentBotMessageIds = new Map<number, number[]>();
 
@@ -466,6 +478,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               onLog: config.onLog,
             })
         : undefined,
+      dataFiles: config.dataFiles,
       pendingActions,
       recentBotMessageIds,
       moodState,
@@ -773,6 +786,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           envInfo + "\n\n" + messages[0]!.content + (suffix ? `\n\n${suffix}` : "");
       }
 
+      // Inject /data directory identity files
+      if (config.dataFiles && messages.length > 0 && messages[0]!.role === "system") {
+        await injectDataFiles(messages[0]!, config.dataFiles);
+      }
+
       // Memory system: inject system prompt and auto-read profile
       if (memoryTools && config.memory) {
         // Append memory management instructions to the first system message
@@ -857,6 +875,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           availableAgents,
           hasBotMemory: !!botMemoryTools,
           hasArtworkTools: !!config.artworkToolsConfig?.enabled,
+          hasFileTools: !!fileTools,
           isPrivate,
         });
         messages[0]!.content += `\n\n${extendedPrompt}`;
@@ -886,6 +905,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...webTools,
         ...agentTools,
         ...artworkTools,
+        ...fileTools,
       };
       // Increase maxSteps when agent tools, web tools, or artwork tools are available
       const baseMaxSteps = memoryCfg.maxSteps || 3;

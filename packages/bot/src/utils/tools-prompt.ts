@@ -10,6 +10,7 @@ export interface ExtendedToolsPromptOptions {
   availableAgents: string[];
   hasBotMemory: boolean;
   hasArtworkTools: boolean;
+  hasFileTools: boolean;
   isPrivate: boolean;
 }
 
@@ -67,6 +68,17 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push(
       `- delegate_task: 将复杂任务委派给专门的 agent (${opts.availableAgents.join(", ")})`,
     );
+  }
+
+  // File tools
+  if (opts.hasFileTools) {
+    lines.push("");
+    lines.push("文件读写工具:");
+    lines.push("- read_file: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
+    lines.push("- write_file: 写入文件到 data 目录（创建或覆盖）");
+    lines.push("- 你可以用这些工具查看和更新自己的身份设定、笔记等文件");
+    lines.push("- 仅 .md 文件会被自动注入到你的 system prompt，.txt/.json 不会自动注入");
+    lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
   }
 
   // Bot memory tools

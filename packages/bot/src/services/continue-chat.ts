@@ -35,6 +35,8 @@ import {
   buildExtendedToolsPrompt,
   type ExtendedToolsPromptOptions,
 } from "../utils/tools-prompt.js";
+import { type DataFilesConfig, injectDataFiles } from "../utils/data-files.js";
+import { createFileTools } from "../tools/file-tools.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
 const MAX_MESSAGE_LENGTH = 4096;
@@ -58,6 +60,7 @@ export interface ContinueChatConfig {
   artworkToolsConfig?: ArtworkToolsConfig;
   webTools?: Record<string, CoreTool>;
   agentToolsFactory?: () => Record<string, CoreTool>;
+  dataFiles?: DataFilesConfig;
   pendingActions: PendingActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
   moodState: Map<number, MoodInfo>;
@@ -143,6 +146,11 @@ async function doContinueChat(
       messages[0].content += `\n\n${config.behavioralPrompt}`;
     }
 
+    // Inject /data directory identity files
+    if (config.dataFiles && messages[0]) {
+      await injectDataFiles(messages[0], config.dataFiles);
+    }
+
     // Inject split-friendly writing hint when auto-split is enabled
     if ((config.messageConfig?.autoSplitThreshold ?? 0) > 0 && messages[0]) {
       messages[0].content +=
@@ -175,6 +183,7 @@ async function doContinueChat(
           (config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG).enabled && config.botMemory
         ),
         hasArtworkTools: !!config.artworkToolsConfig?.enabled,
+        hasFileTools: !!config.dataFiles,
         isPrivate: chatId > 0,
       };
       messages[0].content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
@@ -241,6 +250,12 @@ async function doContinueChat(
       ...behaviorTools,
       ...config.webTools,
     };
+
+    // File tools
+    if (config.dataFiles) {
+      const fileTools = createFileTools({ dataDir: config.dataFiles.dataDir });
+      Object.assign(allTools, fileTools);
+    }
 
     // Remove set_timer when timer depth is too deep to prevent recursion
     if (timerDepth >= 2) {

@@ -10,6 +10,7 @@ import {
   Database,
   Download,
   FlaskConical,
+  FolderOpen,
   HardDrive,
   LogOut,
   Menu,
@@ -71,6 +72,7 @@ export function AppLayout() {
         { label: "Conversations", path: `/bots/${botId}/conversations`, icon: MessageSquare },
         { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
         { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
+        { label: "Files", path: `/bots/${botId}/files`, icon: FolderOpen },
         { label: "Export", path: `/bots/${botId}/export`, icon: Download },
         { label: "Logs", path: `/bots/${botId}/logs`, icon: ScrollText },
       ]

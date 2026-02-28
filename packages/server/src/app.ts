@@ -9,6 +9,7 @@ import { backupRoutes } from "./routes/backup.js";
 import { botsRoutes } from "./routes/bots.js";
 import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
+import { botFilesRoutes } from "./routes/bot-files.js";
 import { apiTestRoutes } from "./routes/api-test.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
@@ -46,6 +47,7 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/*", jwtAuth(jwtSecret))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
+    .route("/api/bots", botFilesRoutes(db))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
     .use("/api/backup/*", jwtAuth(jwtSecret))

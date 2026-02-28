@@ -33,6 +33,9 @@ pgdata/
 # Backups (local dev)
 backups/
 
+# Bot data files
+data/
+
 # Misc
 temp/
 downloads/

@@ -36,6 +36,9 @@ const BotMemoriesPage = lazy(() =>
 const BotExportPage = lazy(() =>
   import("@/pages/bots/data-transfer").then((m) => ({ default: m.BotExportPage })),
 );
+const BotFilesPage = lazy(() =>
+  import("@/pages/bots/files").then((m) => ({ default: m.BotFilesPage })),
+);
 const DataPage = lazy(() => import("@/pages/data").then((m) => ({ default: m.DataPage })));
 const ApiTestPage = lazy(() =>
   import("@/pages/api-test").then((m) => ({ default: m.ApiTestPage })),
@@ -86,6 +89,7 @@ export function App() {
                 <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
                 <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
                 <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
+                <Route path="/bots/:botId/files" element={<BotFilesPage />} />
                 <Route path="/bots/:botId/export" element={<BotExportPage />} />
                 <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
                 <Route path="/data" element={<DataPage />} />
