@@ -126,7 +126,6 @@ const VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "pin_message",
   "get_chat_info",
   // Behavior tools
-  "think",
   "set_mood",
   // Artwork tools
   "send_artwork",
@@ -417,6 +416,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
   // Track known private chats
   const knownPrivateChats = new Set<number>();
+
+  // Last saved system prompt per chat (dedup: skip saving identical prompts)
+  // Capped at 500 entries to prevent unbounded growth; cleared when full.
+  const lastSystemContent = new Map<number, string>();
+  const SYSTEM_CONTENT_CAP = 500;
 
   // Captured bot API reference (set on first request)
   let botApi: Api | undefined;
@@ -780,6 +784,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         tools: wrappedTools,
         maxSteps,
         toolChoice,
+        abortSignal: AbortSignal.timeout(120_000),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           if (toolCalls?.length) {
@@ -810,6 +815,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                   toolCallId: tr.toolCallId,
                 },
               });
+            }
+            // Tool results returned, update waiting status so user knows AI is generating
+            if (ctx.waiting_message) {
+              ctx.resolveWait("💭 回复中...").catch(() => {});
             }
           }
         },
@@ -860,6 +869,22 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           userName?: string;
           meta?: Record<string, unknown>;
         }> = [];
+
+        // Save system prompt used for this reply (deduplicated per chat)
+        const sysMsg = messages.find((m) => m.role === "system")?.content;
+        if (typeof sysMsg === "string" && sysMsg) {
+          const prev = lastSystemContent.get(chatId);
+          if (prev !== sysMsg) {
+            if (lastSystemContent.size >= SYSTEM_CONTENT_CAP) lastSystemContent.clear();
+            lastSystemContent.set(chatId, sysMsg);
+            toSave.push({
+              chatId,
+              role: "system" as ConversationRole,
+              content: sysMsg,
+              meta: { model: currentModel, trigger: triggerResult },
+            });
+          }
+        }
 
         // Save group context if configured
         if (!isPrivate) {

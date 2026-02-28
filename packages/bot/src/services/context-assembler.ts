@@ -5,6 +5,7 @@
  * Step 2 (future TODO): structured section tags, context-aware injection, priority trimming.
  */
 
+import { countTokens } from "gpt-tokenizer";
 import type {
   AgentToolsConfig,
   BotMemory,
@@ -311,6 +312,127 @@ export async function assembleContext(input: ContextAssemblyInput): Promise<Asse
 
   return { messages };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Prompt Preview (static / lightweight)                             */
+/* ------------------------------------------------------------------ */
+
+export interface PromptPreviewInput {
+  systemPrompt: string;
+  behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
+  isPrivate: boolean;
+  memoryEnabled: boolean;
+  botMemoryEnabled: boolean;
+  stickerPacks?: string[];
+  webToolsConfig?: WebToolsConfig;
+  agentToolsConfig?: AgentToolsConfig;
+  artworkToolsEnabled?: boolean;
+  hasFileTools?: boolean;
+  dataFiles?: DataFilesConfig;
+  messageConfig?: MessageConfig;
+}
+
+export interface PromptPreviewResult {
+  fullPrompt: string;
+  estimatedTokens: number;
+}
+
+const PLACEHOLDER_PROFILE = "[当前对话用户档案: 运行时动态注入]";
+const PLACEHOLDER_MOOD = "[当前情绪: 运行时动态注入]";
+const PLACEHOLDER_BOT_MEMORY = "[长期记忆: 运行时动态注入]";
+
+/**
+ * Assemble a **preview** of the system prompt for the management panel.
+ *
+ * Dynamic-only parts (user profile, mood, bot memories, conversation history)
+ * are replaced with placeholder markers. Static parts (data files, tools
+ * prompt, behavioural prompts) are computed accurately.
+ */
+export async function assemblePromptPreview(
+  input: PromptPreviewInput,
+): Promise<PromptPreviewResult> {
+  const parts: string[] = [];
+
+  // 1. Environment info placeholder
+  if (input.isPrivate) {
+    parts.push('[System: The user "User" is chatting with you in a PRIVATE chat.]');
+  } else {
+    parts.push(
+      '[System: The user "User" is chatting with you in a GROUP CHAT named "Group" (chatId: 0).]',
+    );
+  }
+
+  // 2. Base system prompt
+  parts.push(input.systemPrompt);
+
+  // 3. Behavioral prompts
+  if (input.behavioralPrompt) {
+    parts.push(input.behavioralPrompt);
+  }
+  if (!input.isPrivate && input.groupBehavioralPrompt) {
+    parts.push(input.groupBehavioralPrompt);
+  }
+
+  // Join into one block so data-files inject into it
+  let content = parts.join("\n\n");
+
+  // 4. Data files (real content from disk)
+  if (input.dataFiles) {
+    const msg = { content };
+    await injectDataFiles(msg, input.dataFiles);
+    content = msg.content;
+  }
+
+  // 5. Memory system prompt
+  if (input.memoryEnabled) {
+    content += `\n\n${MEMORY_SYSTEM_PROMPT}`;
+    content += `\n\n${PLACEHOLDER_PROFILE}`;
+  }
+
+  // 6. Mood placeholder
+  content += `\n\n${PLACEHOLDER_MOOD}`;
+
+  // 7. Bot memory system prompt
+  if (input.botMemoryEnabled) {
+    content += `\n\n${BOT_MEMORY_SYSTEM_PROMPT}`;
+    content += `\n\n${PLACEHOLDER_BOT_MEMORY}`;
+  }
+
+  // 8. Extended tools prompt (computed accurately)
+  const availableAgents = input.agentToolsConfig?.enabled
+    ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
+    : [];
+  const extendedPrompt = buildExtendedToolsPrompt({
+    hasStickerPacks: !!input.stickerPacks?.length,
+    hasTTS: false,
+    hasWebTools: !!input.webToolsConfig?.enabled,
+    hasSearchTool: !!input.webToolsConfig?.enabled && !!input.webToolsConfig.search,
+    hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
+    hasAgentTools: !!input.agentToolsConfig?.enabled,
+    availableAgents,
+    hasBotMemory: input.botMemoryEnabled,
+    hasArtworkTools: !!input.artworkToolsEnabled,
+    hasFileTools: !!input.hasFileTools,
+    isPrivate: input.isPrivate,
+  });
+  content += `\n\n${extendedPrompt}`;
+
+  // 9. Message splitting hint
+  if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0) {
+    content +=
+      "\n\n[System: 回复较长内容时，请注意使用段落自然分隔（空行分段），避免在一个段落中堆砌过多内容，使回复结构清晰易读。]";
+  }
+
+  return {
+    fullPrompt: content,
+    estimatedTokens: countTokens(content),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Continue-chat context (event-driven)                              */
+/* ------------------------------------------------------------------ */
 
 /**
  * Simplified context assembly for continueChat (event-driven continuation).

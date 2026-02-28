@@ -12,28 +12,10 @@ interface AgentDefinition {
   maxSteps: number;
 }
 
-function buildThinkTool(onLog?: (entry: BotLogEntry) => void | Promise<void>): CoreTool {
-  return tool({
-    description: "内部推理工具。用来深度思考、分析问题。内容不会发送给用户。",
-    parameters: zodToAiSchema(
-      z.object({
-        thought: z.string().describe("思考过程"),
-      }),
-    ),
-    execute: async ({ thought }) => {
-      onLog?.({ level: "debug", message: `[sub-agent think] ${thought}` });
-      return { acknowledged: true };
-    },
-  });
-}
-
 function buildAgentDefinitions(
   webToolsConfig?: WebToolsConfig,
   agentConfig?: AgentToolsConfig,
-  onLog?: (entry: BotLogEntry) => void | Promise<void>,
 ): Record<string, AgentDefinition> {
-  const thinkTool = buildThinkTool(onLog);
-
   // Build web tools for researcher if available
   let webTools: Record<string, CoreTool> = {};
   if (webToolsConfig?.enabled) {
@@ -44,24 +26,23 @@ function buildAgentDefinitions(
     researcher: {
       systemPrompt:
         "你是一个研究助手。使用搜索和网页获取工具来回答问题。先搜索，再深入阅读相关页面，最后总结发现。输出简洁的研究结果。",
-      tools: { ...webTools, think: thinkTool },
+      tools: { ...webTools },
       maxSteps: 5,
     },
     creative_writer: {
-      systemPrompt:
-        "你是一个创意写作助手。擅长诗歌、故事、文案、对联等创意内容。用 think 工具来构思，然后输出成品。",
-      tools: { think: thinkTool },
+      systemPrompt: "你是一个创意写作助手。擅长诗歌、故事、文案、对联等创意内容。直接输出成品。",
+      tools: {},
       maxSteps: 3,
     },
     code_helper: {
-      systemPrompt: "你是一个代码助手。擅长代码分析、解释、生成和调试。用 think 工具来组织思路。",
-      tools: { think: thinkTool },
+      systemPrompt: "你是一个代码助手。擅长代码分析、解释、生成和调试。",
+      tools: {},
       maxSteps: 3,
     },
     translator: {
       systemPrompt:
         "你是一个专业翻译。提供准确、自然的翻译，保留原文的语气和风格。如果原文是中文则翻译为英文，反之亦然，除非另有指示。",
-      tools: { think: thinkTool },
+      tools: {},
       maxSteps: 2,
     },
   };
@@ -103,7 +84,7 @@ export interface AgentToolsOptions {
 export function createAgentTools(options: AgentToolsOptions): Record<string, CoreTool> {
   const { provider, model, agentConfig, webToolsConfig, onLog } = options;
 
-  const agentDefs = buildAgentDefinitions(webToolsConfig, agentConfig, onLog);
+  const agentDefs = buildAgentDefinitions(webToolsConfig, agentConfig);
   const availableAgents = Object.keys(agentDefs);
 
   if (availableAgents.length === 0) return {};

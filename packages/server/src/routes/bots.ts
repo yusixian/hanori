@@ -1,3 +1,4 @@
+import { assemblePromptPreview } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
@@ -9,6 +10,7 @@ import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
+import { createDataFilesLoader } from "../utils/data-files-loader.js";
 
 const createBotSchema = z.object({
   name: z.string().min(1).max(100),
@@ -407,6 +409,56 @@ export function botsRoutes(
       }
       return c.json({ ok: true as const });
     })
+    .post(
+      "/:botId/ai-config/prompt-preview",
+      zValidator(
+        "json",
+        z.object({
+          isPrivate: z.boolean().default(true),
+          systemPrompt: z.string(),
+          behavioralPrompt: z.string().optional(),
+          groupBehavioralPrompt: z.string().optional(),
+          memoryEnabled: z.boolean().default(false),
+          botMemoryEnabled: z.boolean().default(false),
+          stickerPacks: z.array(z.string()).optional(),
+          webToolsConfig: z.any().optional(),
+          agentToolsConfig: z.any().optional(),
+          artworkToolsEnabled: z.boolean().optional(),
+          messageConfig: z.any().optional(),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const body = c.req.valid("json");
+
+        // Data files are loaded from disk (not part of form state)
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        const dataFilesConfig = bot?.aiConfig?.dataFilesConfig;
+        const dataFiles = await createDataFilesLoader(botId, {
+          injectableFiles: dataFilesConfig?.injectableFiles,
+          maxTotalSize: dataFilesConfig?.maxTotalSize,
+          cacheTtlMs: 0, // no cache for preview
+        });
+
+        const result = await assemblePromptPreview({
+          systemPrompt: body.systemPrompt,
+          behavioralPrompt: body.behavioralPrompt,
+          groupBehavioralPrompt: body.groupBehavioralPrompt,
+          isPrivate: body.isPrivate,
+          memoryEnabled: body.memoryEnabled,
+          botMemoryEnabled: body.botMemoryEnabled,
+          stickerPacks: body.stickerPacks,
+          webToolsConfig: body.webToolsConfig,
+          agentToolsConfig: body.agentToolsConfig,
+          artworkToolsEnabled: body.artworkToolsEnabled,
+          hasFileTools: !!dataFilesConfig,
+          dataFiles,
+          messageConfig: body.messageConfig,
+        });
+
+        return c.json({ ok: true as const, data: result });
+      },
+    )
     .get("/:botId/ai-config", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));

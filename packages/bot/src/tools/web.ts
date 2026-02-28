@@ -64,14 +64,20 @@ class BraveSearchProvider implements SearchProvider {
       headers: {
         "X-Subscription-Token": this.apiKey,
         Accept: "application/json",
+        "Accept-Encoding": "gzip",
       },
       signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) throw new Error(`Brave Search failed: HTTP ${res.status}`);
-    const data = (await res.json()) as {
-      web?: { results: Array<{ title: string; url: string; description: string }> };
-    };
-    return (data.web?.results ?? []).slice(0, limit).map((r) => ({
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`Brave Search failed: HTTP ${res.status} ${text}`);
+    }
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!data.web) {
+      throw new Error(`Brave Search returned no results: ${JSON.stringify(data).slice(0, 200)}`);
+    }
+    const web = data.web as { results: Array<{ title: string; url: string; description: string }> };
+    return (web.results ?? []).slice(0, limit).map((r) => ({
       title: r.title,
       url: r.url,
       snippet: r.description,

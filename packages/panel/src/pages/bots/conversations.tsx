@@ -17,6 +17,7 @@ import {
   User,
   Users,
   Wrench,
+  Terminal,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
@@ -354,6 +355,7 @@ export function BotConversationsPage() {
   const [msgPage, setMsgPage] = useState(1);
   const [msgLoading, setMsgLoading] = useState(false);
   const [showTools, setShowTools] = useState(false);
+  const [showSystem, setShowSystem] = useState(false);
   const msgContainerRef = useRef<HTMLDivElement>(null);
 
   const limit = 20;
@@ -572,7 +574,20 @@ export function BotConversationsPage() {
               <p className="text-muted-foreground py-8 text-center text-sm">No messages</p>
             ) : (
               <>
-                <div className="mb-2 flex items-center justify-end">
+                <div className="mb-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
+                      showSystem
+                        ? "bg-purple-500/15 text-purple-700 dark:text-purple-300"
+                        : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700",
+                    )}
+                    onClick={() => setShowSystem((v) => !v)}
+                  >
+                    <Terminal className="h-3 w-3" />
+                    {showSystem ? "Hide system" : "Show system"}
+                  </button>
                   <button
                     type="button"
                     className={cn(
@@ -595,7 +610,8 @@ export function BotConversationsPage() {
                   {messages
                     .filter(
                       (msg) =>
-                        showTools || (msg.role !== "tool_call" && msg.role !== "tool_result"),
+                        (showTools || (msg.role !== "tool_call" && msg.role !== "tool_result")) &&
+                        (showSystem || msg.role !== "system"),
                     )
                     .map((msg) => (
                       <MessageBubble key={msg.id} msg={msg} />

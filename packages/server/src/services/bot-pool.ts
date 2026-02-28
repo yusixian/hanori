@@ -6,17 +6,10 @@ import type {
   ConversationCallbacks,
   MemoryCallbacks,
 } from "@cos-tool-bot/shared";
-import {
-  DEFAULT_CONVERSATION_CONFIG,
-  DEFAULT_INJECTABLE_FILES,
-  DEFAULT_MAX_INJECTION_SIZE,
-  DEFAULT_MEMORY_CONFIG,
-} from "@cos-tool-bot/shared";
+import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { eq } from "drizzle-orm";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import type { Logger } from "pino";
-import { getDataDir } from "../utils/file-validation.js";
+import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
 import { tryDecrypt } from "../utils/crypto.js";
 import type { BackupService } from "./backup.js";
@@ -314,52 +307,11 @@ export class BotPool {
         const chatModelStoreRef = this.chatModelStore;
 
         // Build data files config for prompt injection and file tools
-        const dataDir = getDataDir(botId);
-        await fs.mkdir(dataDir, { recursive: true });
         const dataFilesConfig = aiConfig.dataFilesConfig;
-        const injectableSet = new Set(dataFilesConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES);
-        const maxTotalSize = dataFilesConfig?.maxTotalSize ?? DEFAULT_MAX_INJECTION_SIZE;
-        const PRIORITY_FILES = ["IDENTITY.md", "SOUL.md"];
-        const CACHE_TTL_MS = 30_000; // 30s
-        let cachedFiles: Array<{ name: string; content: string }> | null = null;
-        let cacheTime = 0;
-        const dataFiles = {
-          dataDir,
-          injectableFiles: injectableSet as ReadonlySet<string>,
-          loadFiles: async () => {
-            const now = Date.now();
-            if (cachedFiles && now - cacheTime < CACHE_TTL_MS) return cachedFiles;
-            try {
-              const entries = await fs.readdir(dataDir);
-              // Only whitelisted .md files are injected into the system prompt.
-              const mdFiles = entries.filter((f) => f.endsWith(".md") && injectableSet.has(f));
-              // Sort: priority files first, then alphabetical
-              mdFiles.sort((a, b) => {
-                const ai = PRIORITY_FILES.indexOf(a);
-                const bi = PRIORITY_FILES.indexOf(b);
-                if (ai >= 0 && bi >= 0) return ai - bi;
-                if (ai >= 0) return -1;
-                if (bi >= 0) return 1;
-                return a.localeCompare(b);
-              });
-              const results: Array<{ name: string; content: string }> = [];
-              let totalSize = 0;
-              for (const name of mdFiles) {
-                const content = await fs.readFile(path.join(dataDir, name), "utf-8");
-                if (!content.trim()) continue;
-                const size = Buffer.byteLength(content, "utf-8");
-                if (totalSize + size > maxTotalSize) break;
-                totalSize += size;
-                results.push({ name, content });
-              }
-              cachedFiles = results;
-              cacheTime = now;
-              return results;
-            } catch {
-              return [];
-            }
-          },
-        };
+        const dataFiles = await createDataFilesLoader(botId, {
+          injectableFiles: dataFilesConfig?.injectableFiles,
+          maxTotalSize: dataFilesConfig?.maxTotalSize,
+        });
 
         aiReply = {
           apiKey,

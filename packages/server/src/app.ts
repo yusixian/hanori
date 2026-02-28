@@ -2,6 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { HTTPException } from "hono/http-exception";
 import { logger as honoLogger } from "hono/logger";
 import { jwtAuth } from "./middleware/auth.js";
 import { authRoutes } from "./routes/auth.js";
@@ -40,6 +41,9 @@ export function createApp(options: AppOptions) {
     .use("*", honoLogger())
     .use("/api/*", cors())
     .onError((err, c) => {
+      if (err instanceof HTTPException) {
+        return c.json({ ok: false as const, error: err.message }, err.status);
+      }
       console.error("Unhandled error:", err);
       return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
     })

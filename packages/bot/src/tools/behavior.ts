@@ -27,24 +27,6 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
   const { api, chatId, recentBotMessageIds, moodState, onLog, onceGuard } = options;
 
   const tools: Record<string, CoreTool> = {
-    think: tool({
-      description:
-        "内部推理工具。用来深度思考、规划回复策略、分析上下文。内容不会发送给用户，只在内部处理。当需要仔细思考时使用。",
-      parameters: zodToAiSchema(
-        z.object({
-          thought: z.string().describe("你的思考过程"),
-        }),
-      ),
-      execute: async ({ thought }) => {
-        onLog?.({
-          level: "debug",
-          message: `[think] ${thought}`,
-          meta: { chatId },
-        });
-        return { acknowledged: true };
-      },
-    }),
-
     multi_message: tool({
       description:
         "分多条消息回复（像真人聊天那样）。每条消息之间会有打字延迟。使用后不需要再生成普通文本回复。",

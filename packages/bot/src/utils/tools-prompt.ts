@@ -19,7 +19,6 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
 
   // Behavior tools (always available)
   lines.push("你拥有以下高级行为工具:");
-  lines.push("- think: 内部推理，用于深度思考和规划。内容不会发送给用户。");
   lines.push("- multi_message: 分多条消息回复（像真人那样）。使用后不需要再生成普通文本回复。");
   lines.push("- set_mood: 设置你的情绪状态，影响后续回复语气。");
 
@@ -117,7 +116,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("使用指南:");
   lines.push("- 积极使用互动工具让对话更生动，像真人聊天一样自然表达");
   lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
-  lines.push("- 遇到需要分析或规划的问题时，先用 think 整理思路");
+  lines.push("- 遇到需要分析或规划的问题时，先在回复前整理思路");
   lines.push("");
   lines.push("**主动行为建议**:");
   lines.push("- 用户说了有趣/感动/搞笑的话 → react_to_message 加个表情");

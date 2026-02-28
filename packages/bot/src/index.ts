@@ -151,3 +151,9 @@ export function createBot(config: BotConfig) {
 }
 
 export { WrapperContext } from "./context.js";
+export {
+  assemblePromptPreview,
+  type PromptPreviewInput,
+  type PromptPreviewResult,
+} from "./services/context-assembler.js";
+export type { DataFilesConfig } from "./utils/data-files.js";

@@ -20,8 +20,9 @@ import {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
 } from "@cos-tool-bot/shared";
-import { Loader2 } from "lucide-react";
+import { Eye, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { PromptPreviewDialog } from "./prompt-preview-dialog";
 import { useParams } from "react-router";
 import { AgentToolsSection } from "./sections/agent-tools-section";
 import { ArtworkToolsSection } from "./sections/artwork-tools-section";
@@ -50,6 +51,7 @@ export function BotAiSettingsPage() {
   const [triggerWordsText, setTriggerWordsText] = useState("");
   const [stickerPacksText, setStickerPacksText] = useState("");
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const loadConfig = useCallback(async () => {
     if (!botId) return;
@@ -285,17 +287,34 @@ export function BotAiSettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">AI Settings</h1>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            "Save"
-          )}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setPreviewOpen(true)}>
+            <Eye className="h-4 w-4" />
+            Preview Prompt
+          </Button>
+          <Button onClick={handleSave} disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              "Save"
+            )}
+          </Button>
+        </div>
       </div>
+
+      <PromptPreviewDialog
+        botId={botId!}
+        config={config}
+        stickerPacks={stickerPacksText
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)}
+        open={previewOpen}
+        onClose={() => setPreviewOpen(false)}
+      />
 
       {message && (
         <div
