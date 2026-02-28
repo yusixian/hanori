@@ -1,4 +1,4 @@
-import { MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
+import { MAX_FILE_SIZE, TEXT_EXTENSIONS, resolveAndValidate } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import * as fs from "node:fs/promises";
@@ -6,8 +6,11 @@ import * as path from "node:path";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
 
-export function createFileTools(opts: { dataDir: string }): Record<string, CoreTool> {
-  const { dataDir } = opts;
+export function createFileTools(opts: {
+  dataDir: string;
+  protectedFiles?: ReadonlySet<string>;
+}): Record<string, CoreTool> {
+  const { dataDir, protectedFiles } = opts;
 
   return {
     read_file: tool({
@@ -33,7 +36,7 @@ export function createFileTools(opts: { dataDir: string }): Record<string, CoreT
     }),
     write_file: tool({
       description:
-        "写入文件到你的 data 目录。可以创建新文件或覆盖已有文件。用于记录笔记、更新自己的设定等。仅支持 .md/.txt/.json 文件。",
+        "写入文件到你的 data 目录。可以创建新文件或覆盖已有文件。用于记录笔记、更新自己的设定等。",
       parameters: zodToAiSchema(
         z.object({
           path: z.string().describe("文件路径（相对于 data 目录），如 NOTES.md"),
@@ -42,7 +45,10 @@ export function createFileTools(opts: { dataDir: string }): Record<string, CoreT
       ),
       execute: async ({ path: filePath, content }) => {
         const resolved = resolveAndValidate(dataDir, filePath);
-        if (!resolved) return { error: "Invalid path (only .md/.txt/.json allowed)" };
+        if (!resolved) return { error: "Invalid path" };
+        const ext = path.extname(filePath).toLowerCase();
+        if (!TEXT_EXTENSIONS.has(ext))
+          return { error: "Only text files can be written (.md/.txt/.json/.csv/.xml/.html/.css)" };
         if (Buffer.byteLength(content, "utf-8") > MAX_FILE_SIZE) {
           return { error: "Content too large" };
         }
@@ -52,6 +58,37 @@ export function createFileTools(opts: { dataDir: string }): Record<string, CoreT
           return { ok: true };
         } catch (err) {
           return { error: String(err) };
+        }
+      },
+    }),
+    delete_file: tool({
+      description: "删除你的 data 目录中的文件。用于清理不再需要的临时文件。",
+      parameters: zodToAiSchema(
+        z.object({
+          path: z.string().describe("文件路径（相对于 data 目录）"),
+        }),
+      ),
+      execute: async ({ path: filePath }) => {
+        const resolved = resolveAndValidate(dataDir, filePath);
+        if (!resolved) return { error: "Invalid path" };
+        // Prevent deletion of files marked as injectable (system prompt files)
+        const baseName = path.basename(filePath);
+        if (protectedFiles?.has(baseName)) {
+          return { error: "This file is protected (injectable) and cannot be deleted" };
+        }
+        try {
+          await fs.unlink(resolved);
+          // Recursively clean up empty parent directories (up to dataDir)
+          let dir = path.dirname(resolved);
+          while (dir !== dataDir && dir.startsWith(dataDir)) {
+            const entries = await fs.readdir(dir);
+            if (entries.length > 0) break;
+            await fs.rmdir(dir);
+            dir = path.dirname(dir);
+          }
+          return { ok: true };
+        } catch {
+          return { error: "File not found" };
         }
       },
     }),

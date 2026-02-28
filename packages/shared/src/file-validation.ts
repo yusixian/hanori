@@ -1,7 +1,17 @@
 import * as path from "node:path";
 
 export const MAX_FILE_SIZE = 1024 * 1024; // 1MB
-export const ALLOWED_EXTENSIONS = new Set([".md", ".txt", ".json"]);
+export const TEXT_EXTENSIONS = new Set([".md", ".txt", ".json", ".csv", ".xml", ".html", ".css"]);
+export const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".pdf",
+]);
+export const ALLOWED_EXTENSIONS = new Set([...TEXT_EXTENSIONS, ...BINARY_EXTENSIONS]);
 
 /**
  * Resolve a relative file path against a data directory and validate:

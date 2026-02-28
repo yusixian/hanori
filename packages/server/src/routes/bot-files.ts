@@ -1,9 +1,13 @@
 import { bots, type Database } from "@cos-tool-bot/database";
+import { DEFAULT_INJECTABLE_FILES, DEFAULT_MAX_INJECTION_SIZE } from "@cos-tool-bot/shared";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { z } from "zod";
+import { zValidator } from "@hono/zod-validator";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { BOT_DATA_TEMPLATES } from "../templates/bot-data-templates.js";
+import type { BotPool } from "../services/bot-pool.js";
 import {
   ALLOWED_EXTENSIONS,
   MAX_FILE_SIZE,
@@ -24,7 +28,7 @@ function extractFilePath(reqPath: string, botId: string): string {
   return reqPath.slice(idx + prefix.length);
 }
 
-export function botFilesRoutes(db: Database) {
+export function botFilesRoutes(db: Database, botPool: BotPool) {
   return new Hono()
     .get("/:botId/files", async (c) => {
       const botId = c.req.param("botId");
@@ -32,6 +36,11 @@ export function botFilesRoutes(db: Database) {
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       const dataDir = getDataDir(botId);
+      const dfConfig = bot.aiConfig?.dataFilesConfig;
+      const injection = {
+        injectableFiles: dfConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES,
+        maxTotalSize: dfConfig?.maxTotalSize ?? DEFAULT_MAX_INJECTION_SIZE,
+      };
       try {
         await fs.mkdir(dataDir, { recursive: true });
         const entries = await fs.readdir(dataDir, { withFileTypes: true });
@@ -54,9 +63,9 @@ export function botFilesRoutes(db: Database) {
             }),
         );
         files.sort((a, b) => a.name.localeCompare(b.name));
-        return c.json({ ok: true as const, files });
+        return c.json({ ok: true as const, files, injection });
       } catch {
-        return c.json({ ok: true as const, files: [] });
+        return c.json({ ok: true as const, files: [], injection });
       }
     })
     .get("/:botId/files/*", async (c) => {
@@ -123,6 +132,19 @@ export function botFilesRoutes(db: Database) {
       const filePath = extractFilePath(c.req.path, botId);
       if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
 
+      // Prevent deletion of injectable files
+      const injectableFiles =
+        bot.aiConfig?.dataFilesConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES;
+      if (injectableFiles.includes(filePath)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: "Cannot delete injectable file. Remove it from injection list first.",
+          },
+          403,
+        );
+      }
+
       const dataDir = getDataDir(botId);
       const resolved = resolveAndValidate(dataDir, filePath);
       if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
@@ -134,6 +156,47 @@ export function botFilesRoutes(db: Database) {
         return c.json({ ok: false as const, error: "File not found" }, 404);
       }
     })
+    .put(
+      "/:botId/files-injection",
+      zValidator(
+        "json",
+        z.object({
+          injectableFiles: z.array(z.string().min(1).max(255)),
+          maxTotalSize: z.number().int().min(0).max(1048576),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const body = c.req.valid("json");
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+        const aiConfig = bot.aiConfig ?? ({} as NonNullable<typeof bot.aiConfig>);
+        const updated = {
+          ...aiConfig,
+          dataFilesConfig: {
+            injectableFiles: body.injectableFiles,
+            maxTotalSize: body.maxTotalSize,
+          },
+        };
+        await db.update(bots).set({ aiConfig: updated }).where(eq(bots.id, botId));
+
+        // Restart bot if running so new config takes effect
+        const manager = botPool.getManager(botId);
+        if (manager) {
+          try {
+            await botPool.restartBot(botId);
+          } catch {
+            // continue
+          }
+        }
+
+        return c.json({
+          ok: true as const,
+          injection: updated.dataFilesConfig,
+        });
+      },
+    )
     .post("/:botId/files-init", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
@@ -152,6 +215,23 @@ export function botFilesRoutes(db: Database) {
           await fs.writeFile(filePath, content, "utf-8");
           created.push(name);
         }
+      }
+
+      // Set default dataFilesConfig if not already configured
+      if (!bot.aiConfig?.dataFilesConfig) {
+        const aiConfig = bot.aiConfig ?? ({} as NonNullable<typeof bot.aiConfig>);
+        await db
+          .update(bots)
+          .set({
+            aiConfig: {
+              ...aiConfig,
+              dataFilesConfig: {
+                injectableFiles: DEFAULT_INJECTABLE_FILES,
+                maxTotalSize: DEFAULT_MAX_INJECTION_SIZE,
+              },
+            },
+          })
+          .where(eq(bots.id, botId));
       }
 
       return c.json({ ok: true as const, created });

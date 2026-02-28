@@ -1,5 +1,6 @@
 export interface DataFilesConfig {
   dataDir: string;
+  injectableFiles: ReadonlySet<string>;
   loadFiles: () => Promise<Array<{ name: string; content: string }>>;
 }
 

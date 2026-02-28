@@ -130,6 +130,10 @@ interface AiConfigJson {
     model: string;
     dimensions: number;
   };
+  dataFilesConfig?: {
+    injectableFiles: string[];
+    maxTotalSize: number;
+  };
 }
 
 export const settings = pgTable("settings", {

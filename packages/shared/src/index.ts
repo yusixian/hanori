@@ -4,6 +4,8 @@ export { inferCapabilities } from "./model-capabilities.js";
 export {
   MAX_FILE_SIZE,
   ALLOWED_EXTENSIONS,
+  TEXT_EXTENSIONS,
+  BINARY_EXTENSIONS,
   resolveAndValidate,
   getDataDir,
 } from "./file-validation.js";

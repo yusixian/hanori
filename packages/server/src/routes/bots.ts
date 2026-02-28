@@ -95,6 +95,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
           dimensions: EMBEDDING_DIMENSIONS,
         }
       : undefined,
+    dataFilesConfig: config.dataFilesConfig,
   };
 }
 
@@ -220,6 +221,12 @@ const aiConfigSchema = z
         apiKey: z.string().optional(),
         baseURL: z.string(),
         model: z.string(),
+      })
+      .optional(),
+    dataFilesConfig: z
+      .object({
+        injectableFiles: z.array(z.string().min(1).max(255)),
+        maxTotalSize: z.number().int().min(0).max(1048576), // max 1MB
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -459,6 +466,7 @@ export function botsRoutes(
         models: body.models,
         modelCommandAccess: body.modelCommandAccess,
         embeddingConfig,
+        dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

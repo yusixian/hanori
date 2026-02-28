@@ -6,7 +6,12 @@ import type {
   ConversationCallbacks,
   MemoryCallbacks,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_INJECTABLE_FILES,
+  DEFAULT_MAX_INJECTION_SIZE,
+  DEFAULT_MEMORY_CONFIG,
+} from "@cos-tool-bot/shared";
 import { eq } from "drizzle-orm";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -311,20 +316,23 @@ export class BotPool {
         // Build data files config for prompt injection and file tools
         const dataDir = getDataDir(botId);
         await fs.mkdir(dataDir, { recursive: true });
+        const dataFilesConfig = aiConfig.dataFilesConfig;
+        const injectableSet = new Set(dataFilesConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES);
+        const maxTotalSize = dataFilesConfig?.maxTotalSize ?? DEFAULT_MAX_INJECTION_SIZE;
         const PRIORITY_FILES = ["IDENTITY.md", "SOUL.md"];
         const CACHE_TTL_MS = 30_000; // 30s
         let cachedFiles: Array<{ name: string; content: string }> | null = null;
         let cacheTime = 0;
         const dataFiles = {
           dataDir,
+          injectableFiles: injectableSet as ReadonlySet<string>,
           loadFiles: async () => {
             const now = Date.now();
             if (cachedFiles && now - cacheTime < CACHE_TTL_MS) return cachedFiles;
             try {
               const entries = await fs.readdir(dataDir);
-              // Only .md files are injected into the system prompt (identity/soul/notes).
-              // Other formats (.txt/.json) are accessible via file tools but not auto-injected.
-              const mdFiles = entries.filter((f) => f.endsWith(".md"));
+              // Only whitelisted .md files are injected into the system prompt.
+              const mdFiles = entries.filter((f) => f.endsWith(".md") && injectableSet.has(f));
               // Sort: priority files first, then alphabetical
               mdFiles.sort((a, b) => {
                 const ai = PRIORITY_FILES.indexOf(a);
@@ -335,9 +343,14 @@ export class BotPool {
                 return a.localeCompare(b);
               });
               const results: Array<{ name: string; content: string }> = [];
+              let totalSize = 0;
               for (const name of mdFiles) {
                 const content = await fs.readFile(path.join(dataDir, name), "utf-8");
-                if (content.trim()) results.push({ name, content });
+                if (!content.trim()) continue;
+                const size = Buffer.byteLength(content, "utf-8");
+                if (totalSize + size > maxTotalSize) break;
+                totalSize += size;
+                results.push({ name, content });
               }
               cachedFiles = results;
               cacheTime = now;

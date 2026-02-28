@@ -3,7 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authFetch, client } from "@/lib/client";
 import Editor from "@monaco-editor/react";
-import { File, FilePlus, FolderOpen, Loader2, PackagePlus, Save, Trash2, X } from "lucide-react";
+import {
+  Check,
+  File,
+  FilePlus,
+  FolderOpen,
+  Loader2,
+  PackagePlus,
+  Save,
+  Shield,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 
@@ -14,11 +25,17 @@ interface FileEntry {
   type: "file" | "dir";
 }
 
+interface InjectionConfig {
+  injectableFiles: string[];
+  maxTotalSize: number;
+}
+
 interface ApiOk<T = unknown> {
   ok: true;
   content?: string;
   files?: FileEntry[];
   created?: string[];
+  injection?: InjectionConfig;
   data?: T;
 }
 
@@ -28,6 +45,12 @@ interface ApiErr {
 }
 
 type ApiResult<T = unknown> = ApiOk<T> | ApiErr;
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
+}
 
 export function BotFilesPage() {
   const { botId } = useParams<{ botId: string }>();
@@ -43,13 +66,30 @@ export function BotFilesPage() {
   const [creating, setCreating] = useState(false);
   const [initializing, setInitializing] = useState(false);
 
+  // Injection config state
+  const [injection, setInjection] = useState<InjectionConfig>({
+    injectableFiles: [],
+    maxTotalSize: 8192,
+  });
+  const [editingMaxSize, setEditingMaxSize] = useState(false);
+  const [maxSizeInput, setMaxSizeInput] = useState("");
+  const [savingInjection, setSavingInjection] = useState(false);
+
   const isDirty = content !== originalContent;
 
   const editorLanguage = selectedFile?.endsWith(".json")
     ? "json"
     : selectedFile?.endsWith(".txt")
       ? "plaintext"
-      : "markdown";
+      : selectedFile?.endsWith(".csv")
+        ? "plaintext"
+        : selectedFile?.endsWith(".html")
+          ? "html"
+          : selectedFile?.endsWith(".css")
+            ? "css"
+            : selectedFile?.endsWith(".xml")
+              ? "xml"
+              : "markdown";
 
   const loadFiles = useCallback(async () => {
     if (!botId) return;
@@ -61,6 +101,9 @@ export function BotFilesPage() {
       const json = await res.json();
       if (json.ok) {
         setFiles(json.files);
+        if (json.injection) {
+          setInjection(json.injection);
+        }
       }
     } catch (err) {
       console.error("Failed to load files:", err);
@@ -185,6 +228,56 @@ export function BotFilesPage() {
     }
   }, [botId, loadFiles]);
 
+  const toggleInjectable = useCallback(
+    async (fileName: string) => {
+      if (!botId) return;
+      const isCurrentlyInjectable = injection.injectableFiles.includes(fileName);
+      const newFiles = isCurrentlyInjectable
+        ? injection.injectableFiles.filter((f) => f !== fileName)
+        : [...injection.injectableFiles, fileName];
+
+      setSavingInjection(true);
+      try {
+        const res = await client.api.bots[":botId"]["files-injection"].$put({
+          param: { botId },
+          json: { injectableFiles: newFiles, maxTotalSize: injection.maxTotalSize },
+        });
+        const json = await res.json();
+        if (json.ok) {
+          setInjection({ injectableFiles: newFiles, maxTotalSize: injection.maxTotalSize });
+        }
+      } catch (err) {
+        console.error("Failed to update injection config:", err);
+      } finally {
+        setSavingInjection(false);
+      }
+    },
+    [botId, injection],
+  );
+
+  const saveMaxSize = useCallback(async () => {
+    if (!botId) return;
+    const parsed = Number.parseInt(maxSizeInput, 10);
+    if (Number.isNaN(parsed) || parsed < 0) return;
+
+    setSavingInjection(true);
+    try {
+      const res = await client.api.bots[":botId"]["files-injection"].$put({
+        param: { botId },
+        json: { injectableFiles: injection.injectableFiles, maxTotalSize: parsed },
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setInjection({ ...injection, maxTotalSize: parsed });
+        setEditingMaxSize(false);
+      }
+    } catch (err) {
+      console.error("Failed to update max size:", err);
+    } finally {
+      setSavingInjection(false);
+    }
+  }, [botId, maxSizeInput, injection]);
+
   // Keyboard shortcut: Ctrl+S / Cmd+S to save
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -196,6 +289,12 @@ export function BotFilesPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isDirty, selectedFile, saveFile]);
+
+  // Compute injection summary
+  const injectedFiles = files.filter(
+    (f) => f.name.endsWith(".md") && injection.injectableFiles.includes(f.name),
+  );
+  const injectedSize = injectedFiles.reduce((sum, f) => sum + f.size, 0);
 
   return (
     <div className="space-y-4">
@@ -222,7 +321,68 @@ export function BotFilesPage() {
         </div>
       </div>
 
-      <div className="flex gap-4" style={{ height: "calc(100dvh - 160px)" }}>
+      {/* Injection summary bar */}
+      <Card className="border-blue-500/20 bg-blue-500/5">
+        <CardContent className="flex items-center gap-3 px-4 py-2.5">
+          <Shield className="h-4 w-4 text-blue-500" />
+          <span className="text-sm">
+            System Prompt: {injectedFiles.length} file{injectedFiles.length !== 1 ? "s" : ""}{" "}
+            &middot; {formatBytes(injectedSize)} /{" "}
+            {editingMaxSize ? (
+              <span className="inline-flex items-center gap-1">
+                <Input
+                  value={maxSizeInput}
+                  onChange={(e) => setMaxSizeInput(e.target.value)}
+                  className="inline h-6 w-20 text-xs"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveMaxSize();
+                    if (e.key === "Escape") setEditingMaxSize(false);
+                  }}
+                />
+                <span className="text-xs">B</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={saveMaxSize}
+                  disabled={savingInjection}
+                >
+                  {savingInjection ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <Check className="h-3 w-3" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => setEditingMaxSize(false)}
+                >
+                  <X className="h-3 w-3" />
+                </Button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="cursor-pointer underline decoration-dotted underline-offset-2"
+                onClick={() => {
+                  setMaxSizeInput(String(injection.maxTotalSize));
+                  setEditingMaxSize(true);
+                }}
+              >
+                {formatBytes(injection.maxTotalSize)}
+              </button>
+            )}
+          </span>
+          {injectedSize > injection.maxTotalSize && (
+            <span className="text-xs text-red-500">(exceeded limit)</span>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="flex gap-4" style={{ height: "calc(100dvh - 220px)" }}>
         {/* File list sidebar */}
         <Card className="w-60 shrink-0 overflow-hidden">
           <CardHeader className="py-3">
@@ -285,33 +445,62 @@ export function BotFilesPage() {
             ) : (
               files
                 .filter((f) => f.type === "file")
-                .map((file) => (
-                  <div
-                    key={file.name}
-                    className={`group flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors ${
-                      selectedFile === file.name
-                        ? "bg-accent text-accent-foreground"
-                        : "hover:bg-accent/50"
-                    }`}
-                    onClick={() => loadFile(file.name)}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                      <span className="truncate">{file.name}</span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteFile(file.name);
-                      }}
+                .map((file) => {
+                  const isMd = file.name.endsWith(".md");
+                  const isInjectable = injection.injectableFiles.includes(file.name);
+                  return (
+                    <div
+                      key={file.name}
+                      className={`group flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors ${
+                        selectedFile === file.name
+                          ? "bg-accent text-accent-foreground"
+                          : "hover:bg-accent/50"
+                      }`}
+                      onClick={() => loadFile(file.name)}
                     >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        {isMd ? (
+                          <button
+                            type="button"
+                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                              isInjectable
+                                ? "border-blue-500 bg-blue-500 text-white"
+                                : "border-muted-foreground/30 hover:border-blue-400"
+                            }`}
+                            title={
+                              isInjectable
+                                ? "Injected into system prompt (click to remove)"
+                                : "Click to inject into system prompt"
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleInjectable(file.name);
+                            }}
+                            disabled={savingInjection}
+                          >
+                            {isInjectable && <Check className="h-2.5 w-2.5" />}
+                          </button>
+                        ) : (
+                          <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                        )}
+                        <span className="truncate">{file.name}</span>
+                      </div>
+                      {!isInjectable && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteFile(file.name);
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                  );
+                })
             )}
           </CardContent>
         </Card>

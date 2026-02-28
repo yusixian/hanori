@@ -25,6 +25,14 @@ export interface MemoryConfig {
   toolChoice: "auto" | "required";
 }
 
+export interface DataFilesInjectionConfig {
+  injectableFiles: string[];
+  maxTotalSize: number;
+}
+
+export const DEFAULT_INJECTABLE_FILES = ["IDENTITY.md", "SOUL.md"];
+export const DEFAULT_MAX_INJECTION_SIZE = 8192; // 8KB
+
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   enabled: false,
   maxSteps: 3,
@@ -283,6 +291,7 @@ export interface AiConfigStored {
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfig;
+  dataFilesConfig?: DataFilesInjectionConfig;
 }
 
 export interface EmbeddingConfigPublic {
@@ -314,6 +323,7 @@ export interface AiConfigPublic {
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfigPublic;
+  dataFilesConfig?: DataFilesInjectionConfig;
 }
 
 export type CommandEntity = {

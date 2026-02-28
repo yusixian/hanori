@@ -47,7 +47,7 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/*", jwtAuth(jwtSecret))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
-    .route("/api/bots", botFilesRoutes(db))
+    .route("/api/bots", botFilesRoutes(db, botPool))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
     .use("/api/backup/*", jwtAuth(jwtSecret))

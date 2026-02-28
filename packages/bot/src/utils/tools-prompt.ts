@@ -30,11 +30,14 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   if (opts.hasStickerPacks) {
     lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }
-  lines.push("- send_photo: 发送图片（URL 或 file_id）");
+  lines.push(
+    "- send_photo: 发送图片（URL、file_id，或 local:photo.png 发送 data 目录文件）。支持 has_spoiler 遮罩",
+  );
   if (opts.hasTTS) {
     lines.push("- send_voice: 发送语音消息（文本转语音）");
   }
-  lines.push("- send_document: 发送文件");
+  lines.push("- send_document: 发送文件（URL、file_id，或 local:report.csv 发送 data 目录文件）");
+  lines.push("- send_media_group: 批量发送多张图片或文档（支持 URL、file_id、local:xxx 混合）");
   lines.push("- send_poll: 发起投票（非匿名时投票结果会自动通知你）");
   lines.push("- send_choice: 发送 inline keyboard 选择按钮（用户点击后你会自动收到通知）");
   lines.push("- close_poll: 手动关闭投票并获取最终结果");
@@ -73,11 +76,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   // File tools
   if (opts.hasFileTools) {
     lines.push("");
-    lines.push("文件读写工具:");
-    lines.push("- read_file: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
-    lines.push("- write_file: 写入文件到 data 目录（创建或覆盖）");
-    lines.push("- 你可以用这些工具查看和更新自己的身份设定、笔记等文件");
-    lines.push("- 仅 .md 文件会被自动注入到你的 system prompt，.txt/.json 不会自动注入");
+    lines.push("文件工具:");
+    lines.push("- read_local: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
+    lines.push("- write_local: 写入文件到 data 目录（创建或覆盖）");
+    lines.push("- delete_local: 删除 data 目录中的文件（临时文件用完记得删）");
+    lines.push("- 只有管理员在面板中标记为「可注入」的 .md 文件才会被注入到 system prompt");
     lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
   }
 

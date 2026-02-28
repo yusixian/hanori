@@ -1,7 +1,10 @@
+import { resolveAndValidate } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { InlineKeyboard, InputFile } from "grammy";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { z } from "zod";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
 import type { OnceGuardContext } from "./utils.js";
@@ -15,12 +18,25 @@ export interface TelegramToolsOptions {
   pendingActions?: PendingActionRegistry;
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onceGuard?: OnceGuardContext;
+  dataDir?: string;
+}
+
+async function resolveInput(source: string, dataDir?: string): Promise<string | InputFile> {
+  if (source.startsWith("local:") && dataDir) {
+    const filePath = source.slice(6);
+    const resolved = resolveAndValidate(dataDir, filePath);
+    if (!resolved) throw new Error("Invalid file path");
+    const buffer = await fs.readFile(resolved);
+    return new InputFile(buffer, path.basename(resolved));
+  }
+  return source;
 }
 
 /** Tool names whose execute functions should be guarded against duplicate calls. */
 const ONCE_GUARDED_TELEGRAM_TOOLS = [
   "send_photo",
   "send_document",
+  "send_media_group",
   "send_poll",
   "send_choice",
   "send_dice",
@@ -29,20 +45,26 @@ const ONCE_GUARDED_TELEGRAM_TOOLS = [
 ] as const;
 
 export function createTelegramTools(options: TelegramToolsOptions): Record<string, CoreTool> {
-  const { api, chatId, recentBotMessageIds } = options;
+  const { api, chatId, recentBotMessageIds, dataDir } = options;
 
   const tools: Record<string, CoreTool> = {
     send_photo: tool({
-      description: "发送图片给当前聊天。可以是图片 URL 或 Telegram file_id。",
+      description:
+        "发送图片给当前聊天。支持 URL、file_id，或 local:photo.png 发送 data 目录本地文件。可选 has_spoiler 遮罩（NSFW 内容）。",
       parameters: zodToAiSchema(
         z.object({
-          photo: z.string().describe("图片 URL 或 file_id"),
+          photo: z.string().describe("图片 URL、file_id，或 local:filename 发送本地文件"),
           caption: z.string().optional().describe("图片说明文字"),
+          has_spoiler: z.boolean().optional().describe("是否添加剧透/NSFW 遮罩，默认 false"),
         }),
       ),
-      execute: async ({ photo, caption }) => {
+      execute: async ({ photo, caption, has_spoiler }) => {
         try {
-          const sent = await api.sendPhoto(chatId, photo, { caption });
+          const input = await resolveInput(photo, dataDir);
+          const sent = await api.sendPhoto(chatId, input, {
+            caption,
+            has_spoiler: has_spoiler ?? false,
+          });
           recentBotMessageIds.push(sent.message_id);
           return { success: true, message_id: sent.message_id };
         } catch (err) {
@@ -52,18 +74,72 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     }),
 
     send_document: tool({
-      description: "发送文件给当前聊天。可以是文件 URL 或 Telegram file_id。",
+      description:
+        "发送文件给当前聊天。支持 URL、file_id，或 local:report.csv 发送 data 目录本地文件。",
       parameters: zodToAiSchema(
         z.object({
-          document: z.string().describe("文件 URL 或 file_id"),
+          document: z.string().describe("文件 URL、file_id，或 local:filename 发送本地文件"),
           caption: z.string().optional().describe("文件说明文字"),
         }),
       ),
       execute: async ({ document, caption }) => {
         try {
-          const sent = await api.sendDocument(chatId, document, { caption });
+          const input = await resolveInput(document, dataDir);
+          const sent = await api.sendDocument(chatId, input, { caption });
           recentBotMessageIds.push(sent.message_id);
           return { success: true, message_id: sent.message_id };
+        } catch (err) {
+          return { error: String(err) };
+        }
+      },
+    }),
+
+    send_media_group: tool({
+      description: "批量发送多张图片或文档。支持 URL、file_id、local:xxx 混合。最多 10 张。",
+      parameters: zodToAiSchema(
+        z.object({
+          media: z
+            .array(
+              z.object({
+                type: z.enum(["photo", "document"]).describe("媒体类型"),
+                source: z.string().describe("URL、file_id 或 local:filename"),
+                caption: z.string().optional().describe("说明文字"),
+                has_spoiler: z.boolean().optional().describe("是否遮罩（仅 photo）"),
+              }),
+            )
+            .min(2)
+            .max(10)
+            .describe("媒体列表"),
+        }),
+      ),
+      execute: async ({ media }) => {
+        try {
+          const inputMedia = await Promise.all(
+            media.map(async (m) => {
+              const input = await resolveInput(m.source, dataDir);
+              if (m.type === "photo") {
+                return {
+                  type: "photo" as const,
+                  media: input,
+                  caption: m.caption,
+                  has_spoiler: m.has_spoiler ?? false,
+                };
+              }
+              return {
+                type: "document" as const,
+                media: input,
+                caption: m.caption,
+              };
+            }),
+          );
+          const sent = await api.sendMediaGroup(chatId, inputMedia);
+          for (const msg of sent) {
+            recentBotMessageIds.push(msg.message_id);
+          }
+          return {
+            success: true,
+            message_ids: sent.map((m) => m.message_id),
+          };
         } catch (err) {
           return { error: String(err) };
         }

@@ -117,6 +117,7 @@ const VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "send_photo",
   "send_voice",
   "send_document",
+  "send_media_group",
   "close_poll",
   "set_timer",
   "cancel_timer",
@@ -180,9 +181,11 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   // Artwork tools
   fetch_artwork_info: "🖼️ 查看作品...",
   send_artwork: "🖼️ 发送作品图片...",
+  send_media_group: "📷 发送多张图片...",
   // File tools
   read_file: "📄 读取文件...",
   write_file: "✏️ 写入文件...",
+  delete_file: "🗑️ 删除文件...",
 };
 
 function wrapToolsWithStatus(
@@ -397,7 +400,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   // File tools setup (singleton, not per-request)
   let fileTools: Record<string, CoreTool> | undefined;
   if (config.dataFiles) {
-    fileTools = createFileTools({ dataDir: config.dataFiles.dataDir });
+    fileTools = createFileTools({
+      dataDir: config.dataFiles.dataDir,
+      protectedFiles: config.dataFiles.injectableFiles,
+    });
   }
 
   // Recent bot message IDs per chat (for edit/delete tools)
@@ -628,6 +634,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         pendingActions,
         onTimerFired,
         onceGuard,
+        dataDir: config.dataFiles?.dataDir,
       });
 
       // Create per-request behavior tools
