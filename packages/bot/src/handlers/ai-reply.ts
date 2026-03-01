@@ -13,6 +13,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  TokenUsageRecord,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -73,6 +74,7 @@ export interface AiReplyConfig {
   messageConfig?: MessageConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   modelOverride?: {
@@ -459,6 +461,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     const modelId = chatId != null ? getModelForChat(chatId) : config.model;
     return {
       model: provider(modelId),
+      modelId,
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
       conversationConfig: config.conversationConfig,
@@ -489,6 +492,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       stickerPacks: config.stickerPacks,
       onTimerFired,
       onLog: config.onLog,
+      onTokenUsage: config.onTokenUsage,
     };
   }
 
@@ -950,6 +954,18 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           totalToolCalls,
           totalToolResults,
         },
+      });
+
+      // Record token usage
+      config.onTokenUsage?.({
+        chatId,
+        userId,
+        model: currentModel,
+        promptTokens: result.usage.promptTokens,
+        completionTokens: result.usage.completionTokens,
+        totalTokens: result.usage.totalTokens,
+        durationMs,
+        trigger: triggerResult as string,
       });
 
       // Save messages to conversation history (before checking text emptiness)

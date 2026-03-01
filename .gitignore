@@ -22,7 +22,7 @@ dist/
 
 # Database
 data.db
-drizzle/
+/drizzle/
 
 # Docker volumes
 pgdata/

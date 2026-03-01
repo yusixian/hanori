@@ -1,0 +1,1 @@
+CREATE INDEX "bot_logs_bot_id_idx" ON "bot_logs" USING btree ("bot_id");

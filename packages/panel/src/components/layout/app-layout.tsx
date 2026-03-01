@@ -4,6 +4,7 @@ import { useLogout } from "@refinedev/core";
 import { useAtom } from "jotai";
 import {
   ArrowLeft,
+  BarChart3,
   BookOpen,
   Bot,
   Brain,
@@ -28,6 +29,7 @@ import { Button } from "../ui/button";
 
 const globalNavItems = [
   { label: "Bots", path: "/", icon: Bot },
+  { label: "Usage", path: "/usage", icon: BarChart3 },
   { label: "Data", path: "/data", icon: Database },
   { label: "Backup", path: "/backup", icon: HardDrive },
   { label: "API Test", path: "/api-test", icon: FlaskConical },

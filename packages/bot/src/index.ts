@@ -1,4 +1,4 @@
-import type { BotLogEntry, ConversationCallbacks } from "@cos-tool-bot/shared";
+import type { BotLogEntry, ConversationCallbacks, TokenUsageRecord } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
@@ -17,7 +17,10 @@ import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js
 import { createPollAnswerHandler, createCallbackQueryHandler } from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
 
-export type AiReplyBotConfig = Omit<AiReplyConfig, "adminChatIds" | "onLog" | "token">;
+export type AiReplyBotConfig = Omit<
+  AiReplyConfig,
+  "adminChatIds" | "onLog" | "onTokenUsage" | "token"
+>;
 
 export interface BotConfig {
   token: string;
@@ -26,6 +29,7 @@ export interface BotConfig {
   onRestart?: () => void | Promise<void>;
   onBackup?: () => Promise<BackupResult>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
 }
@@ -64,6 +68,7 @@ export function createBot(config: BotConfig) {
       ...config.aiReply,
       adminChatIds,
       onLog: config.onLog,
+      onTokenUsage: config.onTokenUsage,
       token,
     });
     aiHandler = result.handler;

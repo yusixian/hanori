@@ -49,6 +49,7 @@ const BotLogsPage = lazy(() =>
 const LogsListPage = lazy(() =>
   import("@/pages/logs/list").then((m) => ({ default: m.LogsListPage })),
 );
+const UsagePage = lazy(() => import("@/pages/usage").then((m) => ({ default: m.UsagePage })));
 
 function LoadingFallback() {
   return (
@@ -95,6 +96,7 @@ export function App() {
                 <Route path="/data" element={<DataPage />} />
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/api-test" element={<ApiTestPage />} />
+                <Route path="/usage" element={<UsagePage />} />
                 <Route path="/logs" element={<LogsListPage />} />
               </Route>
 

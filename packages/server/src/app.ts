@@ -12,6 +12,7 @@ import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
 import { apiTestRoutes } from "./routes/api-test.js";
+import { usageRoutes } from "./routes/usage.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
@@ -58,6 +59,8 @@ export function createApp(options: AppOptions) {
     .route("/api/backup", backupRoutes(backupService, encryptionKey))
     .use("/api/api-test/*", jwtAuth(jwtSecret))
     .route("/api/api-test", apiTestRoutes())
+    .use("/api/usage/*", jwtAuth(jwtSecret))
+    .route("/api/usage", usageRoutes(db))
     .get("/api/health", (c) => c.json({ ok: true as const }));
 
   // Serve panel static files in production (not chained - doesn't affect API types)

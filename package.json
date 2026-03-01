@@ -39,7 +39,7 @@
       "oxlint",
       "oxfmt --check"
     ],
-    "*.json": [
+    "*.json !**/drizzle/**": [
       "oxfmt --check"
     ]
   },

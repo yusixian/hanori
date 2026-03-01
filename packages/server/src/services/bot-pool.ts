@@ -1,10 +1,11 @@
 import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
+import { EMBEDDING_DIMENSIONS, bots, tokenUsage } from "@cos-tool-bot/database";
 import type {
   BotMemoryCallbacks,
   ConversationCallbacks,
   MemoryCallbacks,
+  TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { eq } from "drizzle-orm";
@@ -363,6 +364,14 @@ export class BotPool {
         }
       : undefined;
 
+    const onTokenUsage = async (entry: TokenUsageRecord) => {
+      try {
+        await this.db.insert(tokenUsage).values({ botId, ...entry });
+      } catch (err) {
+        this.logger.error(err, "Failed to write token usage");
+      }
+    };
+
     const manager = new BotManager({
       botId,
       token,
@@ -372,6 +381,7 @@ export class BotPool {
       aiReply,
       conversation,
       onBackup,
+      onTokenUsage,
     });
 
     this.managers.set(botId, manager);

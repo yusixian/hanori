@@ -10,6 +10,7 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  TokenUsageRecord,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -39,6 +40,7 @@ const chatLocks = new Map<number, Promise<void>>();
 
 export interface ContinueChatConfig {
   model: LanguageModelV1;
+  modelId: string;
   systemPrompt: string;
   behavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
@@ -60,6 +62,7 @@ export interface ContinueChatConfig {
   stickerPacks?: string[];
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
 }
 
 export interface ContinueChatEvent {
@@ -241,12 +244,26 @@ async function doContinueChat(
       );
     }
 
+    const startTime = Date.now();
     const result = await generateText({
       model: config.model,
       messages,
       tools: allTools,
       maxSteps: 5,
       toolChoice: "auto",
+    });
+    const durationMs = Date.now() - startTime;
+
+    // Record token usage
+    config.onTokenUsage?.({
+      chatId,
+      userId: event.userId,
+      model: config.modelId,
+      promptTokens: result.usage.promptTokens,
+      completionTokens: result.usage.completionTokens,
+      totalTokens: result.usage.totalTokens,
+      durationMs,
+      trigger: "event_continuation",
     });
 
     const text = result.text?.trim();

@@ -285,3 +285,27 @@ export const chatModelOverrides = pgTable(
   },
   (t) => [uniqueIndex("chat_model_bot_chat_uniq").on(t.botId, t.chatId)],
 );
+
+export const tokenUsage = pgTable(
+  "token_usage",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }),
+    model: text("model").notNull(),
+    promptTokens: integer("prompt_tokens").notNull().default(0),
+    completionTokens: integer("completion_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    durationMs: integer("duration_ms"),
+    trigger: text("trigger"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("token_usage_bot_id_idx").on(t.botId),
+    index("token_usage_created_at_idx").on(t.createdAt),
+    index("token_usage_bot_created_idx").on(t.botId, t.createdAt),
+  ],
+);

@@ -1,6 +1,6 @@
 import type { AiReplyBotConfig, BotConfig } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
-import type { BotStatus, ConversationCallbacks } from "@cos-tool-bot/shared";
+import type { BotStatus, ConversationCallbacks, TokenUsageRecord } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
 
@@ -13,6 +13,7 @@ interface BotManagerOptions {
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
   onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
+  onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
 }
 
 export class BotManager {
@@ -33,6 +34,7 @@ export class BotManager {
       onRestart: () => this.restart(),
       onBackup: options.onBackup,
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
+      onTokenUsage: options.onTokenUsage,
       aiReply: options.aiReply,
       conversation: options.conversation,
     };

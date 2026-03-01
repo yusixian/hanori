@@ -427,6 +427,19 @@ export interface BackupRecord {
   createdAt: string;
 }
 
+// Token usage types
+
+export interface TokenUsageRecord {
+  chatId: number;
+  userId?: number;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  durationMs?: number;
+  trigger?: string;
+}
+
 // Data transfer types
 
 export interface ExportManifest {
