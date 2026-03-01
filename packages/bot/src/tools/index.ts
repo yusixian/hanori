@@ -2,10 +2,86 @@ import type { MemoryCallbacks } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
-import type { ReactionType } from "grammy/types";
 import { z } from "zod";
 import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
+
+/** Telegram 允许的 reaction emoji 完整列表 (来源: @grammyjs/types ReactionTypeEmoji) */
+const VALID_REACTION_EMOJIS = [
+  "👍",
+  "👎",
+  "❤",
+  "🔥",
+  "🥰",
+  "👏",
+  "😁",
+  "🤔",
+  "🤯",
+  "😱",
+  "🤬",
+  "😢",
+  "🎉",
+  "🤩",
+  "🤮",
+  "💩",
+  "🙏",
+  "👌",
+  "🕊",
+  "🤡",
+  "🥱",
+  "🥴",
+  "😍",
+  "🐳",
+  "❤‍🔥",
+  "🌚",
+  "🌭",
+  "💯",
+  "🤣",
+  "⚡",
+  "🍌",
+  "🏆",
+  "💔",
+  "🤨",
+  "😐",
+  "🍓",
+  "🍾",
+  "💋",
+  "🖕",
+  "😈",
+  "😴",
+  "😭",
+  "🤓",
+  "👻",
+  "👨‍💻",
+  "👀",
+  "🎃",
+  "🙈",
+  "😇",
+  "😨",
+  "🤝",
+  "✍",
+  "🤗",
+  "🫡",
+  "🎅",
+  "🎄",
+  "☃",
+  "💅",
+  "🤪",
+  "🗿",
+  "🆒",
+  "💘",
+  "🙉",
+  "🦄",
+  "😘",
+  "💊",
+  "🙊",
+  "😎",
+  "👾",
+  "🤷‍♂",
+  "🤷",
+  "🤷‍♀",
+  "😡",
+] as const;
 
 export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreTool> {
   return {
@@ -116,16 +192,15 @@ export function createActionTools(options: ActionToolsOptions): Record<string, C
 
   const tools: Record<string, CoreTool> = {
     react_to_message: tool({
-      description: "对当前用户消息添加 emoji 表情回应，如 👍 ❤️ 🔥 😂 😢 🎉 等。",
+      description: "对当前用户消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji。",
       parameters: zodToAiSchema(
         z.object({
-          emoji: z.string().describe("要添加的 emoji 表情"),
+          emoji: z.enum(VALID_REACTION_EMOJIS).describe("要添加的 emoji 表情"),
         }),
       ),
       execute: async ({ emoji }) => {
         try {
-          const reaction = { type: "emoji", emoji } as unknown as ReactionType;
-          await api.setMessageReaction(chatId, messageId, [reaction]);
+          await api.setMessageReaction(chatId, messageId, [{ type: "emoji", emoji }]);
           return { success: true };
         } catch (err) {
           return { error: String(err) };

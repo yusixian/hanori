@@ -25,7 +25,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   // Telegram interaction tools
   lines.push("");
   lines.push("Telegram 互动工具:");
-  lines.push("- react_to_message: 对当前消息添加 emoji 表情回应（如 👍 ❤ 🔥 😂 😢 🎉 🤩 😱 等）");
+  lines.push(
+    "- react_to_message: 对当前消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji: 👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡",
+  );
   if (opts.hasStickerPacks) {
     lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }
