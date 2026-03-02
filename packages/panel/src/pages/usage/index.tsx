@@ -1,6 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { TokenHeatmap } from "@/components/usage/token-heatmap";
 import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { formatTokens } from "@/lib/format";
 import { client } from "@/lib/client";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -17,12 +19,6 @@ import {
 } from "recharts";
 
 // ── Helpers ──
-
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
-}
 
 function daysAgo(days: number): string {
   const d = new Date();
@@ -96,6 +92,8 @@ export function UsagePage() {
   const [byModel, setByModel] = useState<ModelStat[]>([]);
   const [byBot, setByBot] = useState<BotStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [heatmapData, setHeatmapData] = useState<{ date: string; totalTokens: number }[]>([]);
+  const [heatmapLoading, setHeatmapLoading] = useState(true);
 
   // Load bot list
   useEffect(() => {
@@ -148,6 +146,22 @@ export function UsagePage() {
     fetchData();
   }, [fetchData]);
 
+  // Heatmap: always fetch 365 days, independent of range
+  useEffect(() => {
+    setHeatmapLoading(true);
+    const from = daysAgo(365);
+    const params: Record<string, string> = { from, granularity: "day" };
+    if (botId) params.botId = botId;
+    client.api.usage.trend
+      .$get({ query: params })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) setHeatmapData(d.data);
+      })
+      .catch(() => {})
+      .finally(() => setHeatmapLoading(false));
+  }, [botId]);
+
   const granLabel = range <= 7 ? "hourly" : "daily";
 
   return (
@@ -192,6 +206,16 @@ export function UsagePage() {
         <StatCard title="Completion Tokens" value={formatTokens(summary?.completionTokens ?? 0)} />
         <StatCard title="Requests" value={String(summary?.requestCount ?? 0)} />
       </div>
+
+      {/* Daily Activity Heatmap */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Daily Activity</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <TokenHeatmap data={heatmapData} loading={heatmapLoading} />
+        </CardContent>
+      </Card>
 
       {/* Trend Chart */}
       <Card>
