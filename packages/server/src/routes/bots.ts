@@ -157,7 +157,7 @@ const aiConfigSchema = z
     memoryConfig: z
       .object({
         enabled: z.boolean(),
-        maxSteps: z.number().min(1).max(10),
+        maxSteps: z.number().min(1),
         autoReadProfile: z.boolean(),
         autoUpdateLastSeen: z.boolean(),
         toolChoice: z.enum(["auto", "required"]),

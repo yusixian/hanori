@@ -38,13 +38,12 @@ export function MemorySystemSection({
             <Input
               type="number"
               min={1}
-              max={10}
               disabled={!config.enabled}
               value={config.maxSteps}
               onChange={(e) => onUpdate({ maxSteps: Number(e.target.value) })}
             />
             <p className="text-muted-foreground text-xs">
-              Max tool-calling rounds per reply (1-10)
+              Max tool-calling rounds per reply (min 1)
             </p>
           </div>
           <div className="space-y-1.5">
