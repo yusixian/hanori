@@ -1,4 +1,5 @@
-import type { WebToolsConfig } from "@cos-tool-bot/shared";
+import type { TimeoutConfig, WebToolsConfig } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -13,13 +14,13 @@ interface SearchResult {
 }
 
 interface SearchProvider {
-  search(query: string, limit?: number): Promise<SearchResult[]>;
+  search(query: string, limit?: number, timeoutMs?: number): Promise<SearchResult[]>;
 }
 
 class TavilyProvider implements SearchProvider {
   constructor(private apiKey: string) {}
 
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
+  async search(query: string, limit = 5, timeoutMs?: number): Promise<SearchResult[]> {
     const res = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -29,7 +30,7 @@ class TavilyProvider implements SearchProvider {
         max_results: limit,
         search_depth: "basic",
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs),
     });
     if (!res.ok) throw new Error(`Tavily search failed: HTTP ${res.status}`);
     const data = (await res.json()) as {
@@ -42,9 +43,11 @@ class TavilyProvider implements SearchProvider {
 class SearXNGProvider implements SearchProvider {
   constructor(private baseURL: string) {}
 
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
+  async search(query: string, limit = 5, timeoutMs?: number): Promise<SearchResult[]> {
     const url = `${this.baseURL.replace(/\/+$/, "")}/search?q=${encodeURIComponent(query)}&format=json&number_of_results=${limit}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs),
+    });
     if (!res.ok) throw new Error(`SearXNG search failed: HTTP ${res.status}`);
     const data = (await res.json()) as {
       results: Array<{ title: string; url: string; content: string }>;
@@ -58,7 +61,7 @@ class SearXNGProvider implements SearchProvider {
 class BraveSearchProvider implements SearchProvider {
   constructor(private apiKey: string) {}
 
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
+  async search(query: string, limit = 5, timeoutMs?: number): Promise<SearchResult[]> {
     const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${limit}`;
     const res = await fetch(url, {
       headers: {
@@ -66,7 +69,7 @@ class BraveSearchProvider implements SearchProvider {
         Accept: "application/json",
         "Accept-Encoding": "gzip",
       },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");
@@ -91,14 +94,14 @@ class CustomSearchProvider implements SearchProvider {
     private apiKey?: string,
   ) {}
 
-  async search(query: string, limit = 5): Promise<SearchResult[]> {
+  async search(query: string, limit = 5, timeoutMs?: number): Promise<SearchResult[]> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (this.apiKey) headers["Authorization"] = `Bearer ${this.apiKey}`;
     const res = await fetch(`${this.baseURL.replace(/\/+$/, "")}/search`, {
       method: "POST",
       headers,
       body: JSON.stringify({ query, limit }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs),
     });
     if (!res.ok) throw new Error(`Custom search failed: HTTP ${res.status}`);
     const data = (await res.json()) as { results: SearchResult[] };
@@ -165,6 +168,7 @@ const MAX_HTML_SIZE = 2 * 1024 * 1024; // 2MB
 
 async function extractPageContent(
   url: string,
+  timeoutMs?: number,
 ): Promise<{ title: string; content: string; url: string }> {
   if (isPrivateUrl(url)) {
     throw new Error("Access to private/internal URLs is not allowed");
@@ -175,7 +179,7 @@ async function extractPageContent(
       "User-Agent": "Mozilla/5.0 (compatible; CosToolBot/1.0; +https://github.com/cos-tool-bot)",
       Accept: "text/html,application/xhtml+xml",
     },
-    signal: AbortSignal.timeout(10_000),
+    signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs),
   });
   if (!res.ok) throw new Error(`Fetch failed: HTTP ${res.status}`);
 
@@ -229,10 +233,15 @@ async function extractPageContent(
 
 export interface WebToolsOptions {
   config: WebToolsConfig;
+  timeoutConfig?: TimeoutConfig;
 }
 
 export function createWebTools(options: WebToolsOptions): Record<string, CoreTool> {
-  const { config } = options;
+  const { config, timeoutConfig } = options;
+  const searchMs = timeoutConfig?.searchMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs;
+  const fetchPageMs = timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
+  const imageGenerationMs =
+    timeoutConfig?.imageGenerationMs ?? DEFAULT_TIMEOUT_CONFIG.imageGenerationMs;
   const tools: Record<string, CoreTool> = {};
 
   // Always include get_current_time
@@ -269,7 +278,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
         ),
         execute: async ({ query, limit }) => {
           try {
-            const results = await searchProvider.search(query, limit ?? 5);
+            const results = await searchProvider.search(query, limit ?? 5, searchMs);
             return { count: results.length, results };
           } catch (err) {
             return { error: String(err) };
@@ -291,7 +300,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
     ),
     execute: async ({ url }) => {
       try {
-        return await extractPageContent(url);
+        return await extractPageContent(url, fetchPageMs);
       } catch (err) {
         return { error: String(err) };
       }
@@ -324,7 +333,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
               n: 1,
               size: size || imgCfg.size || "1024x1024",
             }),
-            signal: AbortSignal.timeout(60_000),
+            signal: AbortSignal.timeout(imageGenerationMs),
           });
 
           if (!res.ok) {

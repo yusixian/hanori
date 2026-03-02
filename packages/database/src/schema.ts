@@ -135,6 +135,15 @@ interface AiConfigJson {
     maxTotalSize: number;
   };
   privateChatWhitelist?: number[];
+  timeoutConfig?: {
+    aiReplyMs?: number;
+    searchMs?: number;
+    fetchPageMs?: number;
+    imageGenerationMs?: number;
+    researcherAgentMs?: number;
+    defaultAgentMs?: number;
+    imageDownloadMs?: number;
+  };
 }
 
 export const settings = pgTable("settings", {

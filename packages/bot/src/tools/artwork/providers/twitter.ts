@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type {
   ArtworkImage,
   ArtworkInfo,
@@ -41,12 +42,13 @@ export class TwitterProvider implements ArtworkProvider {
     return m ? m[1]! : null;
   }
 
-  async fetch(postId: string, _config: ArtworkProviderConfig): Promise<ArtworkInfo> {
+  async fetch(postId: string, config: ArtworkProviderConfig): Promise<ArtworkInfo> {
+    const fetchTimeout = config.timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
     const res = await fetch(`https://api.fxtwitter.com/placeholder/status/${postId}`, {
       headers: {
         "User-Agent": "CosToolBot/1.0",
       },
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(fetchTimeout),
     });
 
     if (!res.ok) throw new Error(`FxTwitter API error: HTTP ${res.status}`);

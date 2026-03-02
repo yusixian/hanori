@@ -13,6 +13,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  TimeoutConfig,
   TokenUsageRecord,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
@@ -21,6 +22,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  DEFAULT_TIMEOUT_CONFIG,
   inferCapabilities,
 } from "@cos-tool-bot/shared";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
@@ -82,6 +84,7 @@ export interface AiReplyConfig {
     setModelForChat: (chatId: number, modelId: string) => void;
     resetModelForChat: (chatId: number) => void;
   };
+  timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
   privateChatWhitelist?: number[];
   token: string;
@@ -406,7 +409,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   // Web tools setup (singleton, not per-request)
   let webTools: Record<string, CoreTool> | undefined;
   if (config.webToolsConfig?.enabled) {
-    webTools = createWebTools({ config: config.webToolsConfig });
+    webTools = createWebTools({
+      config: config.webToolsConfig,
+      timeoutConfig: config.timeoutConfig,
+    });
   }
 
   // File tools setup (singleton, not per-request)
@@ -475,6 +481,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsConfig: config.artworkToolsConfig,
+      timeoutConfig: config.timeoutConfig,
       webTools,
       agentToolsFactory: config.agentToolsConfig?.enabled
         ? () =>
@@ -484,6 +491,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               agentConfig: config.agentToolsConfig!,
               webToolsConfig: config.webToolsConfig,
               onLog: config.onLog,
+              timeoutConfig: config.timeoutConfig,
             })
         : undefined,
       dataFiles: config.dataFiles,
@@ -688,6 +696,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         dataDir: config.dataFiles?.dataDir,
         token: config.token,
         receivedFiles: recentReceivedFiles.get(chatId),
+        timeoutConfig: config.timeoutConfig,
       });
 
       // Create per-request behavior tools
@@ -712,6 +721,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           agentConfig: config.agentToolsConfig,
           webToolsConfig: config.webToolsConfig,
           onLog: config.onLog,
+          timeoutConfig: config.timeoutConfig,
         });
       }
 
@@ -724,6 +734,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           recentBotMessageIds: chatBotMsgIds,
           config: config.artworkToolsConfig,
           onceGuard,
+          timeoutConfig: config.timeoutConfig,
         });
       }
 
@@ -791,7 +802,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             const tgFile = await ctx.api.getFile(f.file_id);
             if (!tgFile.file_path) continue;
             const url = `https://api.telegram.org/file/bot${config.token}/${tgFile.file_path}`;
-            const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+            const res = await fetch(url, {
+              signal: AbortSignal.timeout(
+                config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs,
+              ),
+            });
             if (!res.ok) continue;
             const buf = Buffer.from(await res.arrayBuffer());
             if (buf.length <= 5 * 1024 * 1024) {
@@ -882,7 +897,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         tools: wrappedTools,
         maxSteps,
         toolChoice,
-        abortSignal: AbortSignal.timeout(120_000),
+        abortSignal: AbortSignal.timeout(
+          config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
+        ),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           if (toolCalls?.length) {
