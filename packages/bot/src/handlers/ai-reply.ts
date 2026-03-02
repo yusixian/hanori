@@ -83,6 +83,7 @@ export interface AiReplyConfig {
     resetModelForChat: (chatId: number) => void;
   };
   dataFiles?: DataFilesConfig;
+  privateChatWhitelist?: number[];
   token: string;
 }
 
@@ -603,7 +604,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     let groupMaxContext = conversationCfg.maxContextMessages;
 
     if (isPrivate) {
-      if (!isAdmin) return next();
+      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) return next();
       triggerResult = "reply"; // Private always triggers
     } else {
       const groupCfg = resolveGroupConfig(config, chatId);

@@ -348,6 +348,7 @@ export class BotPool {
             },
           },
           dataFiles,
+          privateChatWhitelist: aiConfig.privateChatWhitelist,
         };
       }
     }

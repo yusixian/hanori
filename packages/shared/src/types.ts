@@ -292,6 +292,7 @@ export interface AiConfigStored {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfig;
   dataFilesConfig?: DataFilesInjectionConfig;
+  privateChatWhitelist?: number[];
 }
 
 export interface EmbeddingConfigPublic {
@@ -324,6 +325,7 @@ export interface AiConfigPublic {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfigPublic;
   dataFilesConfig?: DataFilesInjectionConfig;
+  privateChatWhitelist?: number[];
 }
 
 export type CommandEntity = {

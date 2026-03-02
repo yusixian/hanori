@@ -35,6 +35,7 @@ import { GroupOverridesSection } from "./sections/group-overrides-section";
 import { MemorySystemSection } from "./sections/memory-system-section";
 import { MessageSplittingSection } from "./sections/message-splitting-section";
 import { ModelsSection } from "./sections/models-section";
+import { PrivateChatWhitelistSection } from "./sections/private-whitelist-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { WebToolsSection } from "./sections/web-tools-section";
@@ -108,6 +109,7 @@ export function BotAiSettingsPage() {
                 model: config.embeddingConfig.model,
               }
             : undefined,
+          privateChatWhitelist: config.privateChatWhitelist,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -248,6 +250,20 @@ export function BotAiSettingsPage() {
     }));
   };
 
+  const addWhitelistUser = (userId: number) => {
+    setConfig((prev) => ({
+      ...prev,
+      privateChatWhitelist: [...(prev.privateChatWhitelist ?? []), userId],
+    }));
+  };
+
+  const removeWhitelistUser = (userId: number) => {
+    setConfig((prev) => ({
+      ...prev,
+      privateChatWhitelist: (prev.privateChatWhitelist ?? []).filter((id) => id !== userId),
+    }));
+  };
+
   const addGroupOverride = (chatId: number, chatTitle?: string) => {
     const key = String(chatId);
     const override: AiGroupOverride = {
@@ -372,6 +388,12 @@ export function BotAiSettingsPage() {
       <StickerPacksSection
         stickerPacksText={stickerPacksText}
         onStickerPacksTextChange={setStickerPacksText}
+      />
+
+      <PrivateChatWhitelistSection
+        whitelist={config.privateChatWhitelist ?? []}
+        onAdd={addWhitelistUser}
+        onRemove={removeWhitelistUser}
       />
 
       <GroupOverridesSection

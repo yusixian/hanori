@@ -98,6 +98,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
         }
       : undefined,
     dataFilesConfig: config.dataFilesConfig,
+    privateChatWhitelist: config.privateChatWhitelist,
   };
 }
 
@@ -248,6 +249,7 @@ const aiConfigSchema = z
       )
       .optional(),
     modelCommandAccess: z.enum(["admin", "all"]).optional(),
+    privateChatWhitelist: z.array(z.number().int()).optional(),
   })
   .refine(
     (data) => {
@@ -519,6 +521,7 @@ export function botsRoutes(
         modelCommandAccess: body.modelCommandAccess,
         embeddingConfig,
         dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
+        privateChatWhitelist: body.privateChatWhitelist,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

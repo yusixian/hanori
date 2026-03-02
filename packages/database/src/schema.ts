@@ -134,6 +134,7 @@ interface AiConfigJson {
     injectableFiles: string[];
     maxTotalSize: number;
   };
+  privateChatWhitelist?: number[];
 }
 
 export const settings = pgTable("settings", {
