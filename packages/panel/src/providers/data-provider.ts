@@ -1,5 +1,10 @@
-import type { DataProvider } from "@refinedev/core";
+import type { CrudFilter, DataProvider } from "@refinedev/core";
 import { client } from "@/lib/client";
+
+function getFilterValue(filters: CrudFilter[] | undefined, field: string): string | undefined {
+  const f = filters?.find((filter) => "field" in filter && filter.field === field);
+  return f && "value" in f ? (f.value as string) : undefined;
+}
 
 // Refine DataProvider methods use generics (<TData extends BaseRecord>),
 // so concrete types cannot satisfy TData. The `as any` casts on return
@@ -11,13 +16,9 @@ export const dataProvider: DataProvider = {
       const page = pagination?.current ?? 1;
       const limit = pagination?.pageSize ?? 50;
 
-      const levelFilter = filters?.find((f) => "field" in f && f.field === "level");
-      const level =
-        levelFilter && "value" in levelFilter ? (levelFilter.value as string) : undefined;
-
-      const botIdFilter = filters?.find((f) => "field" in f && f.field === "botId");
-      const botId =
-        botIdFilter && "value" in botIdFilter ? (botIdFilter.value as string) : undefined;
+      const level = getFilterValue(filters, "level");
+      const botId = getFilterValue(filters, "botId");
+      const search = getFilterValue(filters, "search");
 
       const query: Record<string, string> = {
         page: String(page),
@@ -25,6 +26,7 @@ export const dataProvider: DataProvider = {
       };
       if (level) query.level = level;
       if (botId) query.botId = botId;
+      if (search) query.search = search;
 
       const res = await client.api.logs.$get({ query });
       const json = await res.json();

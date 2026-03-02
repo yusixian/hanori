@@ -1,11 +1,12 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botLogs } from "@cos-tool-bot/database";
 import { zValidator } from "@hono/zod-validator";
-import { and, count, desc, eq, gt } from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { escapeLike } from "../utils/search.js";
 
 export function logRoutes(db: Database) {
   return new Hono()
@@ -14,11 +15,13 @@ export function logRoutes(db: Database) {
       const limit = Number(c.req.query("limit") ?? "50");
       const level = c.req.query("level");
       const botId = c.req.query("botId");
+      const search = c.req.query("search");
       const offset = (page - 1) * limit;
 
       const conditions: SQL[] = [];
       if (level) conditions.push(eq(botLogs.level, level));
       if (botId) conditions.push(eq(botLogs.botId, botId));
+      if (search) conditions.push(ilike(botLogs.message, `%${escapeLike(search)}%`));
       const where = conditions.length > 0 ? and(...conditions) : undefined;
 
       const [logs, [countResult]] = await Promise.all([

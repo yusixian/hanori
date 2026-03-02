@@ -4,20 +4,35 @@ import { Pagination } from "@/components/ui/pagination";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useSSEConnection } from "@/hooks/use-sse-connection";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import type { LogEntry } from "@cos-tool-bot/shared";
 import { useInvalidate, useList } from "@refinedev/core";
-import { Radio, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { Radio, Search, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 
 export function BotLogsPage() {
   const { botId } = useParams<{ botId: string }>();
   const [page, setPage] = useState(1);
   const [level, setLevel] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchInput]);
 
   const { connected, liveLogs, clearLiveLogs } = useSSEConnection(
     `/api/logs/stream?botId=${botId}`,
@@ -25,6 +40,7 @@ export function BotLogsPage() {
 
   const filters = [{ field: "botId", operator: "eq" as const, value: botId! }];
   if (level) filters.push({ field: "level", operator: "eq" as const, value: level });
+  if (search) filters.push({ field: "search", operator: "eq" as const, value: search });
 
   const { data, isLoading } = useList<LogEntry>({
     resource: "logs",
@@ -96,6 +112,15 @@ export function BotLogsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative">
+          <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
+          <Input
+            className="w-56 pl-8"
+            placeholder="搜索日志..."
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </div>
         <Select
           value={level}
           onChange={(e) => {
