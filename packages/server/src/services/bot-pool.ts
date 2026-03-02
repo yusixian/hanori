@@ -334,6 +334,7 @@ export class BotPool {
           botMemoryConfig: botMemoryCfg,
           botMemory,
           messageConfig: aiConfig.messageConfig,
+          timeoutConfig: aiConfig.timeoutConfig,
           models: aiConfig.models,
           modelCommandAccess: aiConfig.modelCommandAccess,
           modelOverride: {

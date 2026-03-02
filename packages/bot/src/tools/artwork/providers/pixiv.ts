@@ -1,3 +1,4 @@
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type {
   ArtworkImage,
   ArtworkInfo,
@@ -73,15 +74,17 @@ export class PixivProvider implements ArtworkProvider {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     };
 
+    const fetchTimeout = config.timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
+
     // Fetch illust info + pages in parallel
     const [illustRes, pagesRes] = await Promise.all([
       fetch(`https://www.pixiv.net/ajax/illust/${postId}`, {
         headers,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(fetchTimeout),
       }),
       fetch(`https://www.pixiv.net/ajax/illust/${postId}/pages`, {
         headers,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(fetchTimeout),
       }),
     ]);
 

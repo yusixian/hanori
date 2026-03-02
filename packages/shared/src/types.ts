@@ -82,6 +82,33 @@ export interface MemoryCallbacks {
   touchProfile(telegramId: number, displayName: string, username?: string): Promise<void>;
 }
 
+export interface TimeoutConfig {
+  /** 主 AI generateText 总超时 (ms) */
+  aiReplyMs?: number;
+  /** 搜索请求超时 (ms) */
+  searchMs?: number;
+  /** 网页抓取超时 (ms) */
+  fetchPageMs?: number;
+  /** 图片生成超时 (ms) */
+  imageGenerationMs?: number;
+  /** researcher agent 超时 (ms) */
+  researcherAgentMs?: number;
+  /** 其他 agent 超时 (ms) */
+  defaultAgentMs?: number;
+  /** 图片下载超时 (ms) */
+  imageDownloadMs?: number;
+}
+
+export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
+  aiReplyMs: 300_000,
+  searchMs: 30_000,
+  fetchPageMs: 20_000,
+  imageGenerationMs: 120_000,
+  researcherAgentMs: 120_000,
+  defaultAgentMs: 60_000,
+  imageDownloadMs: 60_000,
+};
+
 export interface AiTriggerConfig {
   replyToBot: boolean;
   mentionBot: boolean;
@@ -292,6 +319,7 @@ export interface AiConfigStored {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfig;
   dataFilesConfig?: DataFilesInjectionConfig;
+  timeoutConfig?: TimeoutConfig;
 }
 
 export interface EmbeddingConfigPublic {
@@ -324,6 +352,7 @@ export interface AiConfigPublic {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfigPublic;
   dataFilesConfig?: DataFilesInjectionConfig;
+  timeoutConfig?: TimeoutConfig;
 }
 
 export type CommandEntity = {

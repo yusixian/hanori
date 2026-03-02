@@ -1,4 +1,5 @@
-import type { ArtworkToolsConfig } from "@cos-tool-bot/shared";
+import type { ArtworkToolsConfig, TimeoutConfig } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import { InputFile } from "grammy";
@@ -18,10 +19,12 @@ export interface ArtworkToolsOptions {
   recentBotMessageIds: number[];
   config: ArtworkToolsConfig;
   onceGuard?: OnceGuardContext;
+  timeoutConfig?: TimeoutConfig;
 }
 
 export function createArtworkTools(options: ArtworkToolsOptions): Record<string, CoreTool> {
-  const { api, chatId, recentBotMessageIds, config, onceGuard } = options;
+  const { api, chatId, recentBotMessageIds, config, onceGuard, timeoutConfig } = options;
+  const imageDownloadMs = timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
 
   // Cache last fetched artwork for send_artwork to look up provider headers
   let lastArtworkInfo: ArtworkInfo | undefined;
@@ -47,6 +50,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
           const { provider, postId } = match;
           const info = await provider.fetch(postId, {
             pixivCookie: config.pixivCookie,
+            timeoutConfig,
           });
 
           // Cache for send_artwork
@@ -132,7 +136,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
                   "User-Agent":
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 },
-                signal: AbortSignal.timeout(30_000),
+                signal: AbortSignal.timeout(imageDownloadMs),
               });
               if (!res.ok) throw new Error(`Failed to download image: HTTP ${res.status}`);
               const buffer = Buffer.from(await res.arrayBuffer());

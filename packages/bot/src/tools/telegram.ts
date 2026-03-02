@@ -1,4 +1,5 @@
-import { MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
+import type { TimeoutConfig } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG, MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -29,6 +30,7 @@ export interface TelegramToolsOptions {
   dataDir?: string;
   token?: string;
   receivedFiles?: ReceivedFile[];
+  timeoutConfig?: TimeoutConfig;
 }
 
 async function resolveInput(source: string, dataDir?: string): Promise<string | InputFile> {
@@ -527,7 +529,9 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           if (!tgFile.file_path) return { error: "无法获取文件路径" };
 
           const url = `https://api.telegram.org/file/bot${token}/${tgFile.file_path}`;
-          const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+          const imageDownloadMs =
+            options.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
+          const res = await fetch(url, { signal: AbortSignal.timeout(imageDownloadMs) });
           if (!res.ok) return { error: `下载失败: HTTP ${res.status}` };
 
           const buffer = Buffer.from(await res.arrayBuffer());

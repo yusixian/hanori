@@ -98,6 +98,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
         }
       : undefined,
     dataFilesConfig: config.dataFilesConfig,
+    timeoutConfig: config.timeoutConfig,
   };
 }
 
@@ -229,6 +230,17 @@ const aiConfigSchema = z
       .object({
         injectableFiles: z.array(z.string().min(1).max(255)),
         maxTotalSize: z.number().int().min(0).max(1048576), // max 1MB
+      })
+      .optional(),
+    timeoutConfig: z
+      .object({
+        aiReplyMs: z.number().int().min(10_000).max(600_000).optional(),
+        searchMs: z.number().int().min(5_000).max(120_000).optional(),
+        fetchPageMs: z.number().int().min(5_000).max(120_000).optional(),
+        imageGenerationMs: z.number().int().min(10_000).max(600_000).optional(),
+        researcherAgentMs: z.number().int().min(10_000).max(600_000).optional(),
+        defaultAgentMs: z.number().int().min(10_000).max(300_000).optional(),
+        imageDownloadMs: z.number().int().min(5_000).max(300_000).optional(),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),
@@ -515,6 +527,7 @@ export function botsRoutes(
         artworkToolsConfig: body.artworkToolsConfig,
         botMemoryConfig: body.botMemoryConfig,
         messageConfig: body.messageConfig,
+        timeoutConfig: body.timeoutConfig,
         models: body.models,
         modelCommandAccess: body.modelCommandAccess,
         embeddingConfig,

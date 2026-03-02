@@ -1,4 +1,10 @@
-import type { AgentToolsConfig, BotLogEntry, WebToolsConfig } from "@cos-tool-bot/shared";
+import type {
+  AgentToolsConfig,
+  BotLogEntry,
+  TimeoutConfig,
+  WebToolsConfig,
+} from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { CoreTool } from "ai";
 import { generateText, tool } from "ai";
 import type { LanguageModelV1 } from "ai";
@@ -15,11 +21,12 @@ interface AgentDefinition {
 function buildAgentDefinitions(
   webToolsConfig?: WebToolsConfig,
   agentConfig?: AgentToolsConfig,
+  timeoutConfig?: TimeoutConfig,
 ): Record<string, AgentDefinition> {
   // Build web tools for researcher if available
   let webTools: Record<string, CoreTool> = {};
   if (webToolsConfig?.enabled) {
-    webTools = createWebTools({ config: webToolsConfig });
+    webTools = createWebTools({ config: webToolsConfig, timeoutConfig });
   }
 
   const defaults: Record<string, AgentDefinition> = {
@@ -62,14 +69,12 @@ function buildAgentDefinitions(
 }
 
 const MAX_SUB_AGENT_RESULT_LENGTH = 3000;
-const RESEARCHER_TIMEOUT_MS = 60_000;
-const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function getAvailableAgentNames(
   agentConfig?: AgentToolsConfig,
   webToolsConfig?: WebToolsConfig,
 ): string[] {
-  const defs = buildAgentDefinitions(webToolsConfig, agentConfig);
+  const defs = buildAgentDefinitions(webToolsConfig, agentConfig, undefined);
   return Object.keys(defs);
 }
 
@@ -79,12 +84,17 @@ export interface AgentToolsOptions {
   agentConfig?: AgentToolsConfig;
   webToolsConfig?: WebToolsConfig;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  timeoutConfig?: TimeoutConfig;
 }
 
 export function createAgentTools(options: AgentToolsOptions): Record<string, CoreTool> {
-  const { provider, model, agentConfig, webToolsConfig, onLog } = options;
+  const { provider, model, agentConfig, webToolsConfig, onLog, timeoutConfig } = options;
+  const researcherTimeoutMs =
+    timeoutConfig?.researcherAgentMs ?? DEFAULT_TIMEOUT_CONFIG.researcherAgentMs;
+  const defaultAgentTimeoutMs =
+    timeoutConfig?.defaultAgentMs ?? DEFAULT_TIMEOUT_CONFIG.defaultAgentMs;
 
-  const agentDefs = buildAgentDefinitions(webToolsConfig, agentConfig);
+  const agentDefs = buildAgentDefinitions(webToolsConfig, agentConfig, timeoutConfig);
   const availableAgents = Object.keys(agentDefs);
 
   if (availableAgents.length === 0) return {};
@@ -122,7 +132,7 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Cor
             tools: def.tools,
             maxSteps,
             abortSignal: AbortSignal.timeout(
-              agent === "researcher" ? RESEARCHER_TIMEOUT_MS : DEFAULT_TIMEOUT_MS,
+              agent === "researcher" ? researcherTimeoutMs : defaultAgentTimeoutMs,
             ),
           });
 

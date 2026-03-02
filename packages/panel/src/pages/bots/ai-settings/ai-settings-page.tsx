@@ -10,6 +10,7 @@ import type {
   ConversationConfig,
   MemoryConfig,
   MessageConfig,
+  TimeoutConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -34,6 +35,7 @@ import { GlobalSettingsSection } from "./sections/global-settings-section";
 import { GroupOverridesSection } from "./sections/group-overrides-section";
 import { MemorySystemSection } from "./sections/memory-system-section";
 import { MessageSplittingSection } from "./sections/message-splitting-section";
+import { TimeoutSection } from "./sections/timeout-section";
 import { ModelsSection } from "./sections/models-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
@@ -98,6 +100,7 @@ export function BotAiSettingsPage() {
           agentToolsConfig: config.agentToolsConfig,
           artworkToolsConfig: config.artworkToolsConfig,
           messageConfig: config.messageConfig,
+          timeoutConfig: config.timeoutConfig,
           models: config.models,
           modelCommandAccess: config.modelCommandAccess,
           embeddingConfig: config.embeddingConfig
@@ -240,6 +243,16 @@ export function BotAiSettingsPage() {
     }
   };
 
+  const timeoutCfg = config.timeoutConfig ?? {};
+  const updateTimeoutConfig = (updates: Partial<TimeoutConfig>) => {
+    setConfig((prev) => {
+      const merged = { ...prev.timeoutConfig, ...updates };
+      // If all values are undefined, remove the key entirely
+      const hasValue = Object.values(merged).some((v) => v != null);
+      return { ...prev, timeoutConfig: hasValue ? merged : undefined };
+    });
+  };
+
   const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
   const updateMessageConfig = (updates: Partial<MessageConfig>) => {
     setConfig((prev) => ({
@@ -356,6 +369,8 @@ export function BotAiSettingsPage() {
       <ConversationSection config={convCfg} onUpdate={updateConv} />
 
       <MessageSplittingSection config={msgCfg} onUpdate={updateMessageConfig} />
+
+      <TimeoutSection config={timeoutCfg} onUpdate={updateTimeoutConfig} />
 
       <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
 

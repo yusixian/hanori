@@ -10,6 +10,7 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  TimeoutConfig,
   TokenUsageRecord,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
@@ -18,6 +19,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  DEFAULT_TIMEOUT_CONFIG,
 } from "@cos-tool-bot/shared";
 import type { CoreTool, LanguageModelV1 } from "ai";
 import { generateText } from "ai";
@@ -53,6 +55,7 @@ export interface ContinueChatConfig {
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
+  timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, CoreTool>;
   agentToolsFactory?: () => Record<string, CoreTool>;
   dataFiles?: DataFilesConfig;
@@ -240,6 +243,7 @@ async function doContinueChat(
           recentBotMessageIds: chatBotMsgIds,
           config: config.artworkToolsConfig,
           onceGuard,
+          timeoutConfig: config.timeoutConfig,
         }),
       );
     }
@@ -251,6 +255,9 @@ async function doContinueChat(
       tools: allTools,
       maxSteps: 5,
       toolChoice: "auto",
+      abortSignal: AbortSignal.timeout(
+        config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
+      ),
     });
     const durationMs = Date.now() - startTime;
 

@@ -38,4 +38,5 @@ export interface ArtworkProvider {
 /** Config passed to providers from ArtworkToolsConfig */
 export interface ArtworkProviderConfig {
   pixivCookie?: string;
+  timeoutConfig?: import("@cos-tool-bot/shared").TimeoutConfig;
 }
