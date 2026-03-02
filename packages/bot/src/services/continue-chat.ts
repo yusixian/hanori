@@ -26,7 +26,12 @@ import { generateText } from "ai";
 import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
-import { createOnceGuard } from "../tools/utils.js";
+import {
+  createOnceGuard,
+  createPerStepAbort,
+  createRequestCache,
+  wrapToolsWithCache,
+} from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sleep } from "../utils/sleep.js";
 import { splitMessage } from "../utils/split-message.js";
@@ -249,16 +254,27 @@ async function doContinueChat(
     }
 
     const startTime = Date.now();
-    const result = await generateText({
-      model: config.model,
-      messages,
-      tools: allTools,
-      maxSteps: 5,
-      toolChoice: "auto",
-      abortSignal: AbortSignal.timeout(
-        config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
-      ),
-    });
+    const requestCache = createRequestCache();
+    const perStepAbort = createPerStepAbort(
+      config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
+      AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+    );
+    let result: Awaited<ReturnType<typeof generateText>>;
+    try {
+      result = await generateText({
+        model: config.model,
+        messages,
+        tools: wrapToolsWithCache(allTools, requestCache),
+        maxSteps: 5,
+        toolChoice: "auto",
+        abortSignal: perStepAbort.signal,
+        onStepFinish: () => {
+          perStepAbort.reset();
+        },
+      });
+    } finally {
+      perStepAbort.cleanup();
+    }
     const durationMs = Date.now() - startTime;
 
     // Record token usage

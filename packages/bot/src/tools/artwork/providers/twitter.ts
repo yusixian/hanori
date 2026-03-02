@@ -27,6 +27,14 @@ interface FxTwitterResponse {
         width: number;
         height: number;
       }>;
+      videos?: Array<{
+        url: string;
+        width: number;
+        height: number;
+        thumbnail_url: string;
+        format: string;
+        duration: number;
+      }>;
     };
     possibly_sensitive?: boolean;
   };
@@ -46,7 +54,8 @@ export class TwitterProvider implements ArtworkProvider {
     const fetchTimeout = config.timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
     const res = await fetch(`https://api.fxtwitter.com/placeholder/status/${postId}`, {
       headers: {
-        "User-Agent": "CosToolBot/1.0",
+        "User-Agent":
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       },
       signal: AbortSignal.timeout(fetchTimeout),
     });
@@ -60,13 +69,27 @@ export class TwitterProvider implements ArtworkProvider {
 
     const tweet = data.tweet;
     const photos = tweet.media?.photos ?? [];
+    const videos = tweet.media?.videos ?? [];
 
-    const images: ArtworkImage[] = photos.map((photo) => ({
-      thumbnailUrl: `${photo.url}?name=medium`,
-      originalUrl: `${photo.url}?name=orig`,
-      width: photo.width,
-      height: photo.height,
-    }));
+    let images: ArtworkImage[];
+    if (photos.length > 0) {
+      images = photos.map((photo) => ({
+        thumbnailUrl: `${photo.url}?name=medium`,
+        originalUrl: `${photo.url}?name=orig`,
+        width: photo.width,
+        height: photo.height,
+      }));
+    } else if (videos.length > 0) {
+      // Use video thumbnails when no photos available
+      images = videos.map((video) => ({
+        thumbnailUrl: video.thumbnail_url,
+        originalUrl: video.thumbnail_url,
+        width: video.width,
+        height: video.height,
+      }));
+    } else {
+      images = [];
+    }
 
     return {
       platform: "twitter",

@@ -18,6 +18,12 @@ const TIMEOUT_FIELDS: TimeoutField[] = [
     min: 10,
   },
   {
+    key: "perStepMs",
+    label: "Per-Step Timeout",
+    description: "Timeout for each individual AI model call within a multi-step request.",
+    min: 10,
+  },
+  {
     key: "searchMs",
     label: "Search Timeout",
     description: "Web search request timeout.",

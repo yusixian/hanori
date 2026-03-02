@@ -47,7 +47,12 @@ import {
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
-import { createOnceGuard } from "../tools/utils.js";
+import {
+  createOnceGuard,
+  createPerStepAbort,
+  createRequestCache,
+  wrapToolsWithCache,
+} from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
 import { sleep } from "../utils/sleep.js";
@@ -890,54 +895,63 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
 
       let stepCounter = 0;
-      const wrappedTools = wrapToolsWithStatus(allTools, ctx);
-      const result = await generateText({
-        model: provider(currentModel),
-        messages,
-        tools: wrappedTools,
-        maxSteps,
-        toolChoice,
-        abortSignal: AbortSignal.timeout(
-          config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
-        ),
-        onStepFinish: ({ toolCalls, toolResults }) => {
-          stepCounter++;
-          if (toolCalls?.length) {
-            // Debug: AI tool calls
-            for (const tc of toolCalls) {
-              config.onLog?.({
-                level: "debug",
-                message: "AI tool call",
-                meta: {
-                  step: stepCounter,
-                  toolName: tc.toolName,
-                  args: truncate(tc.args),
-                  toolCallId: tc.toolCallId,
-                },
-              });
+      const requestCache = createRequestCache();
+      const wrappedTools = wrapToolsWithStatus(wrapToolsWithCache(allTools, requestCache), ctx);
+      const perStepAbort = createPerStepAbort(
+        config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
+        AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+      );
+      let result: Awaited<ReturnType<typeof generateText>>;
+      try {
+        result = await generateText({
+          model: provider(currentModel),
+          messages,
+          tools: wrappedTools,
+          maxSteps,
+          toolChoice,
+          abortSignal: perStepAbort.signal,
+          onStepFinish: ({ toolCalls, toolResults }) => {
+            stepCounter++;
+            perStepAbort.reset();
+            if (toolCalls?.length) {
+              // Debug: AI tool calls
+              for (const tc of toolCalls) {
+                config.onLog?.({
+                  level: "debug",
+                  message: "AI tool call",
+                  meta: {
+                    step: stepCounter,
+                    toolName: tc.toolName,
+                    args: truncate(tc.args),
+                    toolCallId: tc.toolCallId,
+                  },
+                });
+              }
             }
-          }
-          // Debug: AI tool results
-          if (toolResults?.length) {
-            for (const tr of toolResults as ToolResultEntry[]) {
-              config.onLog?.({
-                level: "debug",
-                message: "AI tool result",
-                meta: {
-                  step: stepCounter,
-                  toolName: tr.toolName,
-                  result: truncate(tr.result),
-                  toolCallId: tr.toolCallId,
-                },
-              });
+            // Debug: AI tool results
+            if (toolResults?.length) {
+              for (const tr of toolResults as ToolResultEntry[]) {
+                config.onLog?.({
+                  level: "debug",
+                  message: "AI tool result",
+                  meta: {
+                    step: stepCounter,
+                    toolName: tr.toolName,
+                    result: truncate(tr.result),
+                    toolCallId: tr.toolCallId,
+                  },
+                });
+              }
+              // Tool results returned, update waiting status so user knows AI is generating
+              if (ctx.waiting_message) {
+                ctx.resolveWait("💭 回复中...").catch(() => {});
+              }
             }
-            // Tool results returned, update waiting status so user knows AI is generating
-            if (ctx.waiting_message) {
-              ctx.resolveWait("💭 回复中...").catch(() => {});
-            }
-          }
-        },
-      });
+          },
+        });
+      } finally {
+        perStepAbort.cleanup();
+      }
 
       const durationMs = Date.now() - startTime;
       const text = result.text?.trim();

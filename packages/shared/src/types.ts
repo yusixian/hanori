@@ -85,6 +85,8 @@ export interface MemoryCallbacks {
 export interface TimeoutConfig {
   /** 主 AI generateText 总超时 (ms) */
   aiReplyMs?: number;
+  /** 每个 AI step（单轮 API 调用）超时 (ms) */
+  perStepMs?: number;
   /** 搜索请求超时 (ms) */
   searchMs?: number;
   /** 网页抓取超时 (ms) */
@@ -101,6 +103,7 @@ export interface TimeoutConfig {
 
 export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
   aiReplyMs: 300_000,
+  perStepMs: 60_000,
   searchMs: 30_000,
   fetchPageMs: 20_000,
   imageGenerationMs: 120_000,

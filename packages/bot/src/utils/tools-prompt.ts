@@ -117,6 +117,12 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     );
     lines.push("- 对 NSFW/R18 内容开启 has_spoiler 遮罩");
     lines.push("- 发完图片后可以用自然语言评论作品");
+    lines.push(
+      "- fetch_artwork_info 成功后直接 send_artwork，**不要**再用 fetch_webpage/web_search 获取同一作品",
+    );
+    lines.push(
+      "- 如果 fetch_artwork_info 返回 imageCount: 0，说明该推文没有可发送的图片，直接文字描述即可",
+    );
   }
 
   lines.push("");
@@ -124,6 +130,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- 积极使用互动工具让对话更生动，像真人聊天一样自然表达");
   lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
   lines.push("- 遇到需要分析或规划的问题时，先在回复前整理思路");
+  lines.push("- 避免对同一内容反复调用不同工具，每次工具调用前先检查是否已有足够信息");
   lines.push("");
   lines.push("**主动行为建议**:");
   lines.push("- 用户说了有趣/感动/搞笑的话 → react_to_message 加个表情");
