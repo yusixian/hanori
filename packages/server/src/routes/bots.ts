@@ -235,13 +235,13 @@ const aiConfigSchema = z
       .optional(),
     timeoutConfig: z
       .object({
-        aiReplyMs: z.number().int().min(10_000).max(600_000).optional(),
-        searchMs: z.number().int().min(5_000).max(120_000).optional(),
-        fetchPageMs: z.number().int().min(5_000).max(120_000).optional(),
-        imageGenerationMs: z.number().int().min(10_000).max(600_000).optional(),
-        researcherAgentMs: z.number().int().min(10_000).max(600_000).optional(),
-        defaultAgentMs: z.number().int().min(10_000).max(300_000).optional(),
-        imageDownloadMs: z.number().int().min(5_000).max(300_000).optional(),
+        aiReplyMs: z.number().int().min(10_000).optional(),
+        searchMs: z.number().int().min(5_000).optional(),
+        fetchPageMs: z.number().int().min(5_000).optional(),
+        imageGenerationMs: z.number().int().min(10_000).optional(),
+        researcherAgentMs: z.number().int().min(10_000).optional(),
+        defaultAgentMs: z.number().int().min(10_000).optional(),
+        imageDownloadMs: z.number().int().min(5_000).optional(),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),

@@ -8,7 +8,6 @@ interface TimeoutField {
   label: string;
   description: string;
   min: number;
-  max: number;
 }
 
 const TIMEOUT_FIELDS: TimeoutField[] = [
@@ -17,49 +16,42 @@ const TIMEOUT_FIELDS: TimeoutField[] = [
     label: "AI Reply Timeout",
     description: "Main AI generateText total timeout.",
     min: 10,
-    max: 600,
   },
   {
     key: "searchMs",
     label: "Search Timeout",
     description: "Web search request timeout.",
     min: 5,
-    max: 120,
   },
   {
     key: "fetchPageMs",
     label: "Fetch Page Timeout",
     description: "Web page / API fetch timeout.",
     min: 5,
-    max: 120,
   },
   {
     key: "imageGenerationMs",
     label: "Image Generation Timeout",
     description: "AI image generation request timeout.",
     min: 10,
-    max: 600,
   },
   {
     key: "researcherAgentMs",
     label: "Researcher Agent Timeout",
     description: "Sub-agent timeout for researcher tasks.",
     min: 10,
-    max: 600,
   },
   {
     key: "defaultAgentMs",
     label: "Default Agent Timeout",
     description: "Sub-agent timeout for other tasks.",
     min: 10,
-    max: 300,
   },
   {
     key: "imageDownloadMs",
     label: "Image Download Timeout",
     description: "Image/file download timeout.",
     min: 5,
-    max: 300,
   },
 ];
 
@@ -91,7 +83,6 @@ export function TimeoutSection({
                 <Input
                   type="number"
                   min={field.min}
-                  max={field.max}
                   placeholder={String(defaultMs / 1000)}
                   value={valueSec}
                   onChange={(e) => {
