@@ -266,3 +266,5 @@ export {
 } from "./artwork/index.js";
 export type { ArtworkToolsOptions } from "./artwork/index.js";
 export { PendingActionRegistry } from "../services/pending-actions.js";
+export { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
+export type { RateLimitStats, RateLimitResult } from "../services/pixai-rate-limiter.js";

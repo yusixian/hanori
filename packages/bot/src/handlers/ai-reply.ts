@@ -55,6 +55,8 @@ import {
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
+import { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
+import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import {
   createOnceGuard,
   createPerStepAbort,
@@ -411,6 +413,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  getPixaiRateLimitStats: () => RateLimitStats;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -480,6 +483,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     };
   }
 
+  // PixAI rate limiter (per-bot singleton, must be declared before updatePixaiConfig)
+  const pixaiRateLimiter = new PixAIRateLimiter(
+    config.webToolsConfig?.imageGeneration?.pixaiConfig?.rateLimit,
+  );
+
   async function updatePixaiConfig(updates: {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
@@ -489,7 +497,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
     if (updates.model !== undefined) imgCfg.model = updates.model;
     if (updates.pixaiConfig) {
-      imgCfg.pixaiConfig = { ...imgCfg.pixaiConfig, ...updates.pixaiConfig };
+      // Deep-merge rateLimit to preserve existing fields
+      const { rateLimit: rlUpdate, ...rest } = updates.pixaiConfig;
+      imgCfg.pixaiConfig = { ...imgCfg.pixaiConfig, ...rest };
+      if (rlUpdate) {
+        imgCfg.pixaiConfig.rateLimit = { ...imgCfg.pixaiConfig.rateLimit, ...rlUpdate };
+        pixaiRateLimiter.updateConfig(rlUpdate);
+      }
     }
     await config.onPixaiConfigUpdate?.(updates);
   }
@@ -628,6 +642,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       onTokenUsage: config.onTokenUsage,
       onGenerationTrack: config.onGenerationTrack,
       imageGenerationAllowed,
+      rateLimiter: pixaiRateLimiter,
+      adminIds: config.adminChatIds,
     };
   }
 
@@ -641,6 +657,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     for (const [chatId, mood] of moodState) {
       if (now - mood.timestamp > MOOD_EXPIRE_MS) moodState.delete(chatId);
     }
+    // Clean rate limiter expired state
+    pixaiRateLimiter.cleanup();
   }, COOLDOWN_CLEANUP_INTERVAL);
   cleanupTimer.unref();
 
@@ -986,7 +1004,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...fileTools,
       };
 
-      // PixAI image generation (per-request, fire-and-forget) + permission control
+      // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
       injectPixAITool(allTools, {
         allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
         webToolsConfig: config.webToolsConfig,
@@ -997,6 +1015,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         timeoutConfig: config.timeoutConfig,
         onLog: config.onLog,
         onGenerationTrack: config.onGenerationTrack,
+        rateLimiter: pixaiRateLimiter,
+        adminIds: config.adminChatIds,
       });
 
       // Stream mode and segment mode are mutually exclusive:
@@ -1364,5 +1384,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     setImageGenEnabled,
     getPixaiFullConfig,
     updatePixaiConfig,
+    getPixaiRateLimitStats: () => pixaiRateLimiter.getStats(),
   };
 }

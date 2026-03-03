@@ -10,6 +10,7 @@ import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
+import type { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
 import { sleep } from "../utils/sleep.js";
 import { zodToAiSchema } from "./utils.js";
 
@@ -362,6 +363,8 @@ export interface PixAIToolsOptions {
   timeoutConfig?: TimeoutConfig;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  rateLimiter?: PixAIRateLimiter;
+  adminIds?: number[];
 }
 
 function resolvePrompt(prompt: string, pixaiConfig: PixAIConfig): string {
@@ -381,11 +384,101 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
     timeoutConfig,
     onLog,
     onGenerationTrack,
+    rateLimiter,
+    adminIds,
   } = options;
   const pixaiConfig = config.pixaiConfig ?? {};
   const apiMode: ApiMode = pixaiConfig.apiMode ?? "graphql";
   const client = new PixAIClient(config.apiKey!, apiMode);
   const modelId = config.model || PIXAI_DEFAULT_MODEL_ID;
+
+  /** Shared logic: create task, register, poll & send */
+  function startTaskInBackground(
+    resolvedParams: CreateTaskParams,
+    ctx: {
+      resolvedPrompt: string;
+      resolvedWidth: number;
+      resolvedHeight: number;
+      resolvedBatchSize: number;
+      resolvedNegativePrompt?: string;
+      resolvedSamplingSteps?: number;
+      resolvedCfgScale?: number;
+      resolvedModelStyle?: CreateTaskParams["modelStyle"];
+      startTime: number;
+    },
+  ): Promise<{ taskId: string; status: string; message: string }> {
+    return client.createTask(resolvedParams).then((task) => {
+      const configSnapshot: PixAIConfig = {
+        ...pixaiConfig,
+        modelStyle: ctx.resolvedModelStyle,
+      };
+
+      const baseRecord: Omit<PixAIGenerationRecord, "status"> = {
+        chatId,
+        userId,
+        taskId: task.id,
+        prompt: ctx.resolvedPrompt,
+        negativePrompt: ctx.resolvedNegativePrompt,
+        modelId,
+        width: ctx.resolvedWidth,
+        height: ctx.resolvedHeight,
+        batchSize: ctx.resolvedBatchSize,
+        samplingSteps: ctx.resolvedSamplingSteps,
+        cfgScale: ctx.resolvedCfgScale,
+        promptHelper: !!pixaiConfig.promptHelper,
+        pixaiConfig: configSnapshot,
+      };
+
+      onLog?.({
+        level: "info",
+        message: `PixAI task created (${apiMode}): ${task.id}`,
+        meta: { chatId, taskId: task.id, apiMode, prompt: ctx.resolvedPrompt.slice(0, 200) },
+      });
+
+      onGenerationTrack?.({ ...baseRecord, status: "pending" });
+
+      rateLimiter?.registerTask(task.id, chatId, userId);
+
+      const taskTimeoutMs = timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
+      pollAndSend(client, task.id, taskTimeoutMs, {
+        api,
+        chatId,
+        recentBotMessageIds,
+        prompt: ctx.resolvedPrompt,
+        baseRecord,
+        onLog,
+        onGenerationTrack,
+        startTime: ctx.startTime,
+        onDone: rateLimiter ? () => rateLimiter.releaseTask(task.id) : undefined,
+      }).catch((err) => {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        onLog?.({
+          level: "error",
+          message: `PixAI background task failed: ${errMsg}`,
+          meta: { chatId, taskId: task.id },
+        });
+        onGenerationTrack?.({
+          ...baseRecord,
+          status: "failed",
+          errorMessage: errMsg,
+          durationMs: Date.now() - ctx.startTime,
+        });
+        api.sendMessage(chatId, `图片生成失败: ${errMsg}`).catch((sendErr) => {
+          onLog?.({
+            level: "warn",
+            message: `Failed to notify user about PixAI error: ${sendErr}`,
+            meta: { chatId, taskId: task.id },
+          });
+        });
+      });
+
+      return {
+        taskId: task.id,
+        status: "started",
+        message: "图片正在后台生成，完成后会自动发送到聊天",
+      };
+    });
+  }
 
   return {
     generate_image: tool({
@@ -416,104 +509,126 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         const resolvedNegativePrompt = negative_prompt ?? pixaiConfig.negativePrompts;
         const resolvedSamplingSteps = pixaiConfig.samplingSteps;
         const resolvedCfgScale = pixaiConfig.cfgScale;
-        // Resolve modelStyle: AI style_key → panel config → undefined
         const resolvedModelStyle: CreateTaskParams["modelStyle"] = style_key
           ? { type: "key", keyId: style_key }
           : pixaiConfig.modelStyle;
 
-        try {
-          const task = await client.createTask({
-            prompts: resolvedPrompt,
-            modelId,
-            negativePrompts: resolvedNegativePrompt,
-            width: resolvedWidth,
-            height: resolvedHeight,
-            batchSize: resolvedBatchSize,
-            samplingSteps: resolvedSamplingSteps,
-            cfgScale: resolvedCfgScale,
-            promptHelper: pixaiConfig.promptHelper,
-            seed: seed ?? pixaiConfig.seed,
-            priority: pixaiConfig.priority,
-            clipSkip: pixaiConfig.clipSkip,
-            lightning: pixaiConfig.lightning,
-            modelStyle: resolvedModelStyle,
-            inferenceProfile: pixaiConfig.inferenceProfile,
-            samplingMethod: pixaiConfig.samplingMethod,
-            qualityTag: pixaiConfig.qualityTag,
-            isPrivate: pixaiConfig.isPrivate,
-          });
+        const taskParams: CreateTaskParams = {
+          prompts: resolvedPrompt,
+          modelId,
+          negativePrompts: resolvedNegativePrompt,
+          width: resolvedWidth,
+          height: resolvedHeight,
+          batchSize: resolvedBatchSize,
+          samplingSteps: resolvedSamplingSteps,
+          cfgScale: resolvedCfgScale,
+          promptHelper: pixaiConfig.promptHelper,
+          seed: seed ?? pixaiConfig.seed,
+          priority: pixaiConfig.priority,
+          clipSkip: pixaiConfig.clipSkip,
+          lightning: pixaiConfig.lightning,
+          modelStyle: resolvedModelStyle,
+          inferenceProfile: pixaiConfig.inferenceProfile,
+          samplingMethod: pixaiConfig.samplingMethod,
+          qualityTag: pixaiConfig.qualityTag,
+          isPrivate: pixaiConfig.isPrivate,
+        };
 
-          // Snapshot config with resolved modelStyle for tracking
-          const configSnapshot: PixAIConfig = {
-            ...pixaiConfig,
-            modelStyle: resolvedModelStyle,
-          };
+        const taskCtx = {
+          resolvedPrompt,
+          resolvedWidth,
+          resolvedHeight,
+          resolvedBatchSize,
+          resolvedNegativePrompt,
+          resolvedSamplingSteps,
+          resolvedCfgScale,
+          resolvedModelStyle,
+          startTime,
+        };
 
-          // Shared base fields for all generation tracking calls
-          const baseRecord: Omit<PixAIGenerationRecord, "status"> = {
-            chatId,
-            userId,
-            taskId: task.id,
-            prompt: resolvedPrompt,
-            negativePrompt: resolvedNegativePrompt,
-            modelId,
-            width: resolvedWidth,
-            height: resolvedHeight,
-            batchSize: resolvedBatchSize,
-            samplingSteps: resolvedSamplingSteps,
-            cfgScale: resolvedCfgScale,
-            promptHelper: !!pixaiConfig.promptHelper,
-            pixaiConfig: configSnapshot,
-          };
+        // --- No rate limiter: original flow ---
+        if (!rateLimiter) {
+          try {
+            return await startTaskInBackground(taskParams, taskCtx);
+          } catch (err) {
+            return { error: String(err) };
+          }
+        }
 
-          onLog?.({
-            level: "info",
-            message: `PixAI task created (${apiMode}): ${task.id}`,
-            meta: { chatId, taskId: task.id, apiMode, prompt: resolvedPrompt.slice(0, 200) },
-          });
+        // --- Rate limiter flow ---
+        const isAdmin = userId != null && adminIds?.includes(userId) === true;
+        const result = rateLimiter.tryAcquire(chatId, userId, isAdmin);
 
-          onGenerationTrack?.({ ...baseRecord, status: "pending" });
+        if (result.allowed) {
+          try {
+            return await startTaskInBackground(taskParams, taskCtx);
+          } catch (err) {
+            return { error: String(err) };
+          }
+        }
 
-          // Fire-and-forget: poll and send in background
-          const taskTimeoutMs = timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
-          pollAndSend(client, task.id, taskTimeoutMs, {
-            api,
-            chatId,
-            recentBotMessageIds,
-            prompt: resolvedPrompt,
-            baseRecord,
-            onLog,
-            onGenerationTrack,
-            startTime,
-          }).catch((err) => {
-            const errMsg = err instanceof Error ? err.message : String(err);
-            onLog?.({
-              level: "error",
-              message: `PixAI background task failed: ${errMsg}`,
-              meta: { chatId, taskId: task.id },
-            });
-            onGenerationTrack?.({
-              ...baseRecord,
-              status: "failed",
-              errorMessage: errMsg,
-              durationMs: Date.now() - startTime,
-            });
-            api.sendMessage(chatId, `图片生成失败: ${errMsg}`).catch((sendErr) => {
-              onLog?.({
-                level: "warn",
-                message: `Failed to notify user about PixAI error: ${sendErr}`,
-                meta: { chatId, taskId: task.id },
+        // Not allowed — check reason
+        switch (result.reason) {
+          case "user_cooldown":
+            return {
+              error: "user_cooldown",
+              message: `生图冷却中，请等待 ${result.cooldownSec} 秒`,
+              cooldownSec: result.cooldownSec,
+            };
+          case "chat_cooldown":
+            return {
+              error: "chat_cooldown",
+              message: `本群生图冷却中，请等待 ${result.cooldownSec} 秒`,
+              cooldownSec: result.cooldownSec,
+            };
+          case "hourly_exceeded":
+            return {
+              error: "hourly_exceeded",
+              message: `本小时生图次数已达上限 (${result.hourlyUsed}/${result.hourlyLimit})，请稍后再试`,
+              used: result.hourlyUsed,
+              limit: result.hourlyLimit,
+            };
+          case "concurrent_full": {
+            // Try to enqueue
+            const slot = rateLimiter.enqueue(chatId, userId, isAdmin);
+            if (!slot) {
+              return { error: "queue_full", message: "当前生图请求过多，请稍后再试" };
+            }
+
+            // Fire-and-forget: wait for slot then create task
+            slot.promise
+              .then(async () => {
+                try {
+                  await startTaskInBackground(taskParams, taskCtx);
+                } catch (err) {
+                  const errMsg = err instanceof Error ? err.message : String(err);
+                  onLog?.({
+                    level: "error",
+                    message: `PixAI queued task failed: ${errMsg}`,
+                    meta: { chatId },
+                  });
+                  api.sendMessage(chatId, `排队的图片生成失败: ${errMsg}`).catch(() => {});
+                }
+              })
+              .catch((err) => {
+                const errMsg = err instanceof Error ? err.message : String(err);
+                onLog?.({
+                  level: "warn",
+                  message: `PixAI queue request rejected: ${errMsg}`,
+                  meta: { chatId },
+                });
               });
-            });
-          });
 
-          return {
-            taskId: task.id,
-            status: "started",
-            message: "图片正在后台生成，完成后会自动发送到聊天",
-          };
-        } catch (err) {
-          return { error: String(err) };
+            return {
+              status: "queued",
+              message: `已排队，当前第 ${slot.position} 位`,
+              position: slot.position,
+            };
+          }
+          case "queue_full":
+            return { error: "queue_full", message: "当前生图请求过多，请稍后再试" };
+          default:
+            return { error: "rate_limited", message: "生图请求被限流，请稍后再试" };
         }
       },
     }),
@@ -534,6 +649,8 @@ export function injectPixAITool(
     timeoutConfig?: TimeoutConfig;
     onLog?: (entry: BotLogEntry) => void | Promise<void>;
     onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+    rateLimiter?: PixAIRateLimiter;
+    adminIds?: number[];
   },
 ): void {
   const { allowed, webToolsConfig } = options;
@@ -554,6 +671,8 @@ export function injectPixAITool(
         timeoutConfig: options.timeoutConfig,
         onLog: options.onLog,
         onGenerationTrack: options.onGenerationTrack,
+        rateLimiter: options.rateLimiter,
+        adminIds: options.adminIds,
       }),
     );
   } else {
@@ -576,39 +695,44 @@ async function pollAndSend(
     onLog?: (entry: BotLogEntry) => void | Promise<void>;
     onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
     startTime: number;
+    onDone?: () => void;
   },
 ): Promise<void> {
-  const { urls, mediaIds } = await client.pollUntilComplete(taskId, timeoutMs);
-  const caption = ctx.prompt.length > 200 ? `${ctx.prompt.slice(0, 200)}...` : ctx.prompt;
+  try {
+    const { urls, mediaIds } = await client.pollUntilComplete(taskId, timeoutMs);
+    const caption = ctx.prompt.length > 200 ? `${ctx.prompt.slice(0, 200)}...` : ctx.prompt;
 
-  if (urls.length === 1) {
-    const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, { caption });
-    ctx.recentBotMessageIds.push(sent.message_id);
-  } else {
-    // Multiple images: use sendMediaGroup
-    const media = urls.map((url, i) => ({
-      type: "photo" as const,
-      media: url,
-      ...(i === 0 ? { caption } : {}),
-    }));
-    const sent = await ctx.api.sendMediaGroup(ctx.chatId, media);
-    for (const msg of sent) {
-      ctx.recentBotMessageIds.push(msg.message_id);
+    if (urls.length === 1) {
+      const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, { caption });
+      ctx.recentBotMessageIds.push(sent.message_id);
+    } else {
+      // Multiple images: use sendMediaGroup
+      const media = urls.map((url, i) => ({
+        type: "photo" as const,
+        media: url,
+        ...(i === 0 ? { caption } : {}),
+      }));
+      const sent = await ctx.api.sendMediaGroup(ctx.chatId, media);
+      for (const msg of sent) {
+        ctx.recentBotMessageIds.push(msg.message_id);
+      }
     }
+
+    // Track completed generation
+    ctx.onGenerationTrack?.({
+      ...ctx.baseRecord,
+      status: "completed",
+      mediaUrls: urls,
+      mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
+      durationMs: Date.now() - ctx.startTime,
+    });
+
+    ctx.onLog?.({
+      level: "info",
+      message: `PixAI task completed, sent ${urls.length} image(s)`,
+      meta: { chatId: ctx.chatId, taskId, imageCount: urls.length },
+    });
+  } finally {
+    ctx.onDone?.();
   }
-
-  // Track completed generation
-  ctx.onGenerationTrack?.({
-    ...ctx.baseRecord,
-    status: "completed",
-    mediaUrls: urls,
-    mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
-    durationMs: Date.now() - ctx.startTime,
-  });
-
-  ctx.onLog?.({
-    level: "info",
-    message: `PixAI task completed, sent ${urls.length} image(s)`,
-    meta: { chatId: ctx.chatId, taskId, imageCount: urls.length },
-  });
 }

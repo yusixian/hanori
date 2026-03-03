@@ -15,6 +15,7 @@ import type {
   TokenUsageRecord,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
+import type { PixAIRateLimiter } from "./pixai-rate-limiter.js";
 import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
@@ -74,6 +75,8 @@ export interface ContinueChatConfig {
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   imageGenerationAllowed?: boolean;
+  rateLimiter?: PixAIRateLimiter;
+  adminIds?: number[];
 }
 
 export interface ContinueChatEvent {
@@ -240,7 +243,7 @@ async function doContinueChat(
       Object.assign(allTools, createBotMemoryTools(config.botMemory));
     }
 
-    // PixAI image generation (per-request, fire-and-forget) + permission control
+    // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
     injectPixAITool(allTools, {
       allowed: !!config.imageGenerationAllowed,
       webToolsConfig: config.webToolsConfig,
@@ -251,6 +254,8 @@ async function doContinueChat(
       timeoutConfig: config.timeoutConfig,
       onLog: config.onLog,
       onGenerationTrack: config.onGenerationTrack,
+      rateLimiter: config.rateLimiter,
+      adminIds: config.adminIds,
     });
 
     // Artwork tools

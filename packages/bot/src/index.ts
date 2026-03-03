@@ -80,6 +80,9 @@ export function createBot(config: BotConfig) {
     | ReturnType<typeof createAiReplyHandler>["getPixaiFullConfig"]
     | undefined;
   let aiUpdatePixaiConfig: ReturnType<typeof createAiReplyHandler>["updatePixaiConfig"] | undefined;
+  let aiGetPixaiRateLimitStats:
+    | ReturnType<typeof createAiReplyHandler>["getPixaiRateLimitStats"]
+    | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -112,6 +115,7 @@ export function createBot(config: BotConfig) {
     aiSetImageGenEnabled = result.setImageGenEnabled;
     aiGetPixaiFullConfig = result.getPixaiFullConfig;
     aiUpdatePixaiConfig = result.updatePixaiConfig;
+    aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
   }
 
   bot.command("start", startCommand);
@@ -184,6 +188,7 @@ export function createBot(config: BotConfig) {
       createImgCfgCommand({
         getFullConfig: aiGetPixaiFullConfig,
         updateConfig: aiUpdatePixaiConfig,
+        getRateLimitStats: aiGetPixaiRateLimitStats,
       }),
     );
   }

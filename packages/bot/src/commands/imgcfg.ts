@@ -1,5 +1,7 @@
-import type { PixAIConfig } from "@cos-tool-bot/shared";
+import type { PixAIConfig, PixAIRateLimitConfig } from "@cos-tool-bot/shared";
+import { DEFAULT_PIXAI_RATE_LIMIT } from "@cos-tool-bot/shared";
 import type { CommandMiddleware } from "grammy";
+import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import type { WrapperContext } from "../context.js";
 
 export interface ImgCfgCommandConfig {
@@ -8,6 +10,7 @@ export interface ImgCfgCommandConfig {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  getRateLimitStats?: () => RateLimitStats;
 }
 
 // --- Flag definitions ---
@@ -16,6 +19,15 @@ interface FlagDef {
   key: string;
   field: "model" | keyof PixAIConfig;
   type: "string" | "int" | "float" | "bool";
+  min?: number;
+  max?: number;
+  label: string;
+}
+
+interface RateLimitFlagDef {
+  key: string;
+  field: keyof PixAIRateLimitConfig;
+  type: "int" | "bool";
   min?: number;
   max?: number;
   label: string;
@@ -44,12 +56,63 @@ const FLAG_DEFS: Record<string, FlagDef> = {
   "-lightning": { key: "lightning", field: "lightning", type: "bool", label: "Lightning Mode" },
 };
 
-// Sorted flags for matching: longer flags first (e.g. -np before -n)
-const SORTED_FLAG_KEYS = Object.keys(FLAG_DEFS).sort((a, b) => b.length - a.length);
+const RL_FLAG_DEFS: Record<string, RateLimitFlagDef> = {
+  "-rl.max": {
+    key: "rl.max",
+    field: "maxConcurrentTasks",
+    type: "int",
+    min: 1,
+    max: 20,
+    label: "Max Concurrent",
+  },
+  "-rl.queue": {
+    key: "rl.queue",
+    field: "maxQueueDepth",
+    type: "int",
+    min: 0,
+    max: 50,
+    label: "Queue Depth",
+  },
+  "-rl.user": {
+    key: "rl.user",
+    field: "userCooldownSec",
+    type: "int",
+    min: 0,
+    max: 3600,
+    label: "User Cooldown (s)",
+  },
+  "-rl.chat": {
+    key: "rl.chat",
+    field: "chatCooldownSec",
+    type: "int",
+    min: 0,
+    max: 3600,
+    label: "Chat Cooldown (s)",
+  },
+  "-rl.hourly": {
+    key: "rl.hourly",
+    field: "hourlyLimit",
+    type: "int",
+    min: 1,
+    max: 1000,
+    label: "Hourly Limit",
+  },
+  "-rl.admin": {
+    key: "rl.admin",
+    field: "adminBypass",
+    type: "bool",
+    label: "Admin Bypass",
+  },
+};
+
+// Merge all flag keys for regex
+const ALL_FLAG_KEYS = [...Object.keys(FLAG_DEFS), ...Object.keys(RL_FLAG_DEFS)].sort(
+  (a, b) => b.length - a.length,
+);
 
 // Pre-compiled flag regex (use matchAll to avoid stateful lastIndex issues)
 const FLAG_PATTERN = new RegExp(
-  `(${SORTED_FLAG_KEYS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s`,
+  `(${ALL_FLAG_KEYS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s`,
   "g",
 );
 
@@ -101,7 +164,11 @@ function validateBool(value: string, label: string): boolean | string {
 
 // --- Config display ---
 
-function formatConfigHtml(model: string | undefined, cfg: PixAIConfig): string {
+function formatConfigHtml(
+  model: string | undefined,
+  cfg: PixAIConfig,
+  stats?: RateLimitStats,
+): string {
   const lines: string[] = ["<b>当前生图配置</b>", ""];
 
   // Model & dimensions
@@ -130,6 +197,27 @@ function formatConfigHtml(model: string | undefined, cfg: PixAIConfig): string {
   lines.push(`  Private: ${cfg.isPrivate ? "on" : "off"}`);
   lines.push(`  Prompt Helper: ${cfg.promptHelper ? "on" : "off"}`);
   lines.push(`  Lightning: ${cfg.lightning ? "on" : "off"}`);
+  lines.push("");
+
+  // Rate limit config
+  const rl = cfg.rateLimit ?? {};
+  const d = DEFAULT_PIXAI_RATE_LIMIT;
+  lines.push("<b>限流配置</b>");
+  lines.push(`  并发上限: ${rl.maxConcurrentTasks ?? d.maxConcurrentTasks}`);
+  lines.push(`  队列深度: ${rl.maxQueueDepth ?? d.maxQueueDepth}`);
+  lines.push(`  用户冷却: ${rl.userCooldownSec ?? d.userCooldownSec}s`);
+  lines.push(`  群聊冷却: ${rl.chatCooldownSec ?? d.chatCooldownSec}s`);
+  lines.push(`  每小时限额: ${rl.hourlyLimit ?? d.hourlyLimit}`);
+  lines.push(`  管理员绕过: ${(rl.adminBypass ?? d.adminBypass) ? "on" : "off"}`);
+
+  // Runtime stats
+  if (stats) {
+    lines.push("");
+    lines.push("<b>运行时状态</b>");
+    lines.push(`  活跃任务: ${stats.active}/${stats.maxConcurrent}`);
+    lines.push(`  排队中: ${stats.queued}/${stats.maxQueue}`);
+    lines.push(`  本小时已用: ${stats.hourlyUsed}/${stats.hourlyLimit}`);
+  }
 
   return lines.join("\n");
 }
@@ -143,22 +231,47 @@ export function createImgCfgCommand(cfg: ImgCfgCommandConfig): CommandMiddleware
     // No args: show config
     if (!input) {
       const { model, pixaiConfig } = cfg.getFullConfig();
-      await ctx.reply(formatConfigHtml(model, pixaiConfig), { parse_mode: "HTML" });
+      const stats = cfg.getRateLimitStats?.();
+      await ctx.reply(formatConfigHtml(model, pixaiConfig, stats), { parse_mode: "HTML" });
       return;
     }
 
     // Parse flags
     const flags = parseFlags(input);
     if (flags.size === 0) {
-      await ctx.reply("无法解析参数。用法示例:\n/imgcfg -w 1024 -h 1024 -b 2");
+      await ctx.reply(
+        "无法解析参数。用法示例:\n/imgcfg -w 1024 -h 1024 -b 2\n/imgcfg -rl.user 120 -rl.hourly 20",
+      );
       return;
     }
 
     const errors: string[] = [];
     const modelUpdate: { model?: string } = {};
     const pixaiUpdate: Partial<PixAIConfig> = {};
+    const rlUpdate: Partial<PixAIRateLimitConfig> = {};
 
     for (const [flag, value] of flags) {
+      // Check rate limit flags first (they start with -rl.)
+      const rlDef = RL_FLAG_DEFS[flag];
+      if (rlDef) {
+        switch (rlDef.type) {
+          case "int": {
+            const result = validateInt(value, rlDef.min!, rlDef.max!, rlDef.label);
+            if (typeof result === "string") errors.push(result);
+            else (rlUpdate as Record<string, unknown>)[rlDef.field] = result;
+            break;
+          }
+          case "bool": {
+            const result = validateBool(value, rlDef.label);
+            if (typeof result === "string") errors.push(result);
+            else (rlUpdate as Record<string, unknown>)[rlDef.field] = result;
+            break;
+          }
+        }
+        continue;
+      }
+
+      // Check standard flags
       const def = FLAG_DEFS[flag];
       if (!def) continue;
 
@@ -202,6 +315,11 @@ export function createImgCfgCommand(cfg: ImgCfgCommandConfig): CommandMiddleware
       return;
     }
 
+    // Merge rate limit updates into pixaiUpdate
+    if (Object.keys(rlUpdate).length > 0) {
+      pixaiUpdate.rateLimit = rlUpdate;
+    }
+
     // Apply updates
     const updates: Parameters<typeof cfg.updateConfig>[0] = {};
     if (modelUpdate.model !== undefined) updates.model = modelUpdate.model;
@@ -211,7 +329,8 @@ export function createImgCfgCommand(cfg: ImgCfgCommandConfig): CommandMiddleware
 
     // Show updated config
     const { model, pixaiConfig } = cfg.getFullConfig();
-    await ctx.reply("配置已更新\n\n" + formatConfigHtml(model, pixaiConfig), {
+    const stats = cfg.getRateLimitStats?.();
+    await ctx.reply("配置已更新\n\n" + formatConfigHtml(model, pixaiConfig, stats), {
       parse_mode: "HTML",
     });
   };
