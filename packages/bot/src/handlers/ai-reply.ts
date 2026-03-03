@@ -14,6 +14,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  ReplyMode,
   TimeoutConfig,
   TokenUsageRecord,
   WebToolsConfig,
@@ -25,13 +26,15 @@ import {
   DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
   inferCapabilities,
+  isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
-import { generateText, stepCountIs } from "ai";
+import { stepCountIs, streamText } from "ai";
 import type { Api, Middleware } from "grammy";
-import type { WrapperContext } from "../context.js";
+import type { Message } from "grammy/types";
+import type { BotContext, WrapperContext } from "../context.js";
 import { assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
@@ -57,8 +60,7 @@ import {
 } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
-import { sleep } from "../utils/sleep.js";
-import { splitMessage } from "../utils/split-message.js";
+import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 
 export interface AiReplyConfig {
@@ -119,7 +121,6 @@ interface ToolResultEntry {
   toolCallId: string;
 }
 
-const MAX_MESSAGE_LENGTH = 4096;
 const DEBUG_TRUNCATE_LEN = 500;
 
 function truncate(value: unknown, maxLen = DEBUG_TRUNCATE_LEN): string {
@@ -359,11 +360,13 @@ const MAX_RECENT_BOT_MESSAGES = 20;
 const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 
 export function createAiReplyHandler(config: AiReplyConfig): {
-  handler: Middleware<WrapperContext>;
+  handler: Middleware<BotContext>;
   state: BotRuntimeState;
   setModelForChat: (chatId: number, modelId: string) => void;
   getModelForChat: (chatId: number) => string;
   resetModelForChat: (chatId: number) => void;
+  getReplyMode: () => ReplyMode;
+  setReplyMode: (mode: ReplyMode) => void;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -391,6 +394,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     } else {
       chatModelMap.delete(chatId);
     }
+  }
+
+  // Reply mode runtime override (takes precedence over config)
+  let replyModeOverride: ReplyMode | undefined;
+
+  function getEffectiveMessageConfig(): MessageConfig {
+    const base = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+    if (replyModeOverride !== undefined) {
+      return { ...base, replyMode: replyModeOverride };
+    }
+    return base;
   }
 
   // Create AI provider (singleton — avoid recreating on every call)
@@ -491,7 +505,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       memory: config.memory,
       botMemoryConfig: config.botMemoryConfig,
       botMemory: config.botMemory,
-      messageConfig: config.messageConfig,
+      messageConfig: getEffectiveMessageConfig(),
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsConfig: config.artworkToolsConfig,
@@ -581,7 +595,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
 
-  const handler: Middleware<WrapperContext> = async (ctx, next) => {
+  const handler: Middleware<BotContext> = async (ctx, next) => {
     const msg = ctx.message;
     if (!msg) return next();
     if (!msg.text && !msg.photo && !msg.document) return next();
@@ -801,7 +815,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         artworkToolsEnabled: config.artworkToolsConfig?.enabled,
         hasFileTools: !!fileTools,
         dataFiles: config.dataFiles,
-        messageConfig: config.messageConfig,
+        messageConfig: getEffectiveMessageConfig(),
       });
 
       // --- Download images for vision ---
@@ -873,6 +887,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...artworkTools,
         ...fileTools,
       };
+
+      // Remove multi_message tool in stream mode
+      const msgCfg = getEffectiveMessageConfig();
+      const isStreamMode = isStreamReplyMode(msgCfg);
+      if (isStreamMode) {
+        delete allTools.multi_message;
+      }
+
       // Increase maxSteps when agent tools, web tools, or artwork tools are available
       const baseMaxSteps = memoryCfg.maxSteps || 3;
       const hasAdvancedTools =
@@ -916,84 +938,123 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
         AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
       );
-      let result: Awaited<ReturnType<typeof generateText>>;
-      try {
-        result = await generateText({
-          model: provider(currentModel),
-          messages,
-          tools: wrappedTools,
-          stopWhen: stepCountIs(maxSteps),
-          toolChoice,
-          abortSignal: perStepAbort.signal,
-          onStepFinish: ({ toolCalls, toolResults }) => {
-            stepCounter++;
-            perStepAbort.reset();
-            if (toolCalls?.length) {
-              // Debug: AI tool calls
-              for (const tc of toolCalls) {
-                config.onLog?.({
-                  level: "debug",
-                  message: "AI tool call",
-                  meta: {
-                    step: stepCounter,
-                    toolName: tc.toolName,
-                    args: truncate(tc.input),
-                    toolCallId: tc.toolCallId,
-                  },
-                });
-              }
+
+      // ─── streamText (ai v6 API) ───
+      // In segment mode, multiMessageUsed tracks whether AI used the multi_message tool.
+      // In stream mode, multi_message is deleted so this stays false.
+      let multiMessageUsed = false;
+      const result = streamText({
+        model: provider(currentModel),
+        messages,
+        tools: wrappedTools,
+        stopWhen: stepCountIs(maxSteps),
+        toolChoice,
+        abortSignal: perStepAbort.signal,
+        onStepFinish: ({ toolCalls, toolResults }) => {
+          stepCounter++;
+          perStepAbort.reset();
+          if (toolCalls?.length) {
+            for (const tc of toolCalls) {
+              if (!isStreamMode && tc.toolName === "multi_message") multiMessageUsed = true;
+              config.onLog?.({
+                level: "debug",
+                message: "AI tool call",
+                meta: {
+                  step: stepCounter,
+                  toolName: tc.toolName,
+                  args: truncate(tc.input),
+                  toolCallId: tc.toolCallId,
+                },
+              });
             }
-            // Debug: AI tool results
-            if (toolResults?.length) {
-              for (const tr of toolResults as ToolResultEntry[]) {
-                config.onLog?.({
-                  level: "debug",
-                  message: "AI tool result",
-                  meta: {
-                    step: stepCounter,
-                    toolName: tr.toolName,
-                    result: truncate(tr.output),
-                    toolCallId: tr.toolCallId,
-                  },
-                });
-              }
-              // Tool results returned, update waiting status so user knows AI is generating
-              if (ctx.waiting_message) {
-                ctx.resolveWait("💭 回复中...").catch(() => {});
-              }
+          }
+          if (toolResults?.length) {
+            for (const tr of toolResults as ToolResultEntry[]) {
+              config.onLog?.({
+                level: "debug",
+                message: "AI tool result",
+                meta: {
+                  step: stepCounter,
+                  toolName: tr.toolName,
+                  result: truncate(tr.output),
+                  toolCallId: tr.toolCallId,
+                },
+              });
             }
-          },
-        });
-      } finally {
-        perStepAbort.cleanup();
+            if (ctx.waiting_message) {
+              ctx.resolveWait("💭 回复中...").catch(() => {});
+            }
+          }
+        },
+      });
+
+      // ─── Stream text to Telegram via replyWithStream ───
+      // Wrap textStream: delete waiting message on first chunk, skip if multi_message was used
+      let streamStarted = false;
+      async function* managedTextStream() {
+        for await (const chunk of result.textStream) {
+          // In segment mode, don't stream — text is sent via multi_message or safeReply fallback
+          if (!isStreamMode || multiMessageUsed) continue;
+          if (!streamStarted) {
+            streamStarted = true;
+            await ctx.deleteWaiting();
+          }
+          yield chunk;
+        }
       }
 
-      const durationMs = Date.now() - startTime;
-      const text = result.text?.trim();
+      let sentMessages: Message.TextMessage[] = [];
+      try {
+        sentMessages = await ctx.replyWithStream(managedTextStream());
+      } catch {
+        // Stream failed, fall back to awaiting full text below
+      }
+      perStepAbort.cleanup();
 
-      // Warn if AI returned empty text (skip if action tools produced visible effects)
-      if (!text) {
-        const hasActionToolCalls = result.steps.some((s) =>
-          s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
-        );
-        if (!hasActionToolCalls) {
-          config.onLog?.({
-            level: "warn",
-            message: "AI returned empty text",
-            meta: { chatId, userId, finishReason: result.finishReason },
-          });
+      // ─── Await full results for post-processing ───
+      const text = (await result.text)?.trim();
+      const steps = await result.steps;
+      const usage = await result.usage;
+      const finishReason = await result.finishReason;
+      const durationMs = Date.now() - startTime;
+
+      // ─── Format: edit sent messages from plain text to HTML ───
+      await formatSentMessagesHtml(ctx.api, sentMessages);
+      for (const msg of sentMessages) {
+        chatBotMsgIds.push(msg.message_id);
+      }
+
+      // ─── Handle cases where streaming didn't send anything ───
+      if (!streamStarted) {
+        if (multiMessageUsed) {
+          // multi_message already sent messages, just clean up waiting
+          await ctx.deleteWaiting();
+        } else if (text) {
+          // Stream failed but AI produced text — fallback to safeReply
+          const replyMsgId = await safeReply(ctx, text);
+          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+        } else {
+          // No text at all — check for visible tool effects
+          const hasVisibleAction = steps.some((s) =>
+            s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
+          );
+          if (hasVisibleAction) {
+            await ctx.deleteWaiting();
+          } else {
+            config.onLog?.({
+              level: "warn",
+              message: "AI returned empty text",
+              meta: { chatId, userId, finishReason },
+            });
+            const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
+            if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+          }
         }
       }
 
       // Debug: AI response
-      const totalToolCalls = result.steps.reduce((n, s) => n + s.toolCalls.length, 0);
-      const totalToolResults = result.steps.reduce((n, s) => n + s.toolResults.length, 0);
-      // Provider metadata keys: google → cachedContentTokenCount, openai → cachedPromptTokens
-      const pm = result.providerMetadata;
-      const cachedTokens =
-        (pm?.google as Record<string, unknown> | undefined)?.cachedContentTokenCount ??
-        (pm?.openai as Record<string, unknown> | undefined)?.cachedPromptTokens ??
-        0;
+      const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);
+      const totalToolResults = steps.reduce((n, s) => n + s.toolResults.length, 0);
       config.onLog?.({
         level: "debug",
         message: "AI response",
@@ -1001,10 +1062,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           durationMs,
           responseLength: text?.length ?? 0,
           responsePreview: truncate(text ?? "", 200),
-          totalSteps: result.steps.length,
-          finishReason: result.finishReason,
-          usage: result.usage,
-          cachedTokens,
+          totalSteps: steps.length,
+          finishReason,
+          usage,
           totalToolCalls,
           totalToolResults,
         },
@@ -1015,9 +1075,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         chatId,
         userId,
         model: currentModel,
-        promptTokens: result.usage.inputTokens ?? 0,
-        completionTokens: result.usage.outputTokens ?? 0,
-        totalTokens: result.usage.totalTokens ?? 0,
+        promptTokens: usage.inputTokens ?? 0,
+        completionTokens: usage.outputTokens ?? 0,
+        totalTokens: usage.totalTokens ?? 0,
         durationMs,
         trigger: triggerResult as string,
       });
@@ -1081,7 +1141,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         });
 
         // Save all tool calls and results from steps
-        for (const step of result.steps) {
+        for (const step of steps) {
           for (const tc of step.toolCalls) {
             toSave.push({
               chatId,
@@ -1115,7 +1175,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           meta: {
             model: currentModel,
             trigger: triggerResult,
-            usage: result.usage,
+            usage,
           },
         });
 
@@ -1129,59 +1189,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
         // Trigger compression check asynchronously
         config.conversation!.triggerCompression(chatId);
-      }
-
-      // Check if multi_message was used (already sent messages directly)
-      const hasMultiMessage = result.steps.some((s) =>
-        s.toolCalls.some((tc) => tc.toolName === "multi_message"),
-      );
-
-      // Final response: edit the waiting message
-      if (hasMultiMessage) {
-        // multi_message already sent messages, just clean up waiting message
-        await ctx.deleteWaiting();
-      } else if (text) {
-        const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
-        const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
-
-        if (chunks.length <= 1) {
-          // Single chunk: keep original truncation behavior
-          const replyText =
-            text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
-          const replyMsgId = await safeReply(ctx, replyText);
-          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
-        } else {
-          // Multi-chunk: first chunk edits the waiting message, rest are new messages
-          const firstMsgId = await safeReply(ctx, chunks[0]!);
-          if (firstMsgId) chatBotMsgIds.push(firstMsgId);
-          for (let i = 1; i < chunks.length; i++) {
-            await ctx.api.sendChatAction(chatId, "typing");
-            await sleep(msgCfg.splitDelayMs);
-            try {
-              const html = markdownToTelegramHtml(chunks[i]!);
-              const sent = await ctx.api.sendMessage(chatId, html, { parse_mode: "HTML" });
-              chatBotMsgIds.push(sent.message_id);
-            } catch {
-              try {
-                const sent = await ctx.api.sendMessage(chatId, chunks[i]!);
-                chatBotMsgIds.push(sent.message_id);
-              } catch {
-                // skip failed chunk
-              }
-            }
-          }
-        }
-      } else {
-        // Check if any action tools produced visible effects (sticker, reaction, telegram actions)
-        const hasVisibleAction = result.steps.some((s) =>
-          s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
-        );
-        if (hasVisibleAction) {
-          await ctx.deleteWaiting();
-        } else {
-          const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
-          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
-        }
       }
 
       config.onLog?.({
@@ -1212,5 +1219,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     }
   };
 
-  return { handler, state, setModelForChat, getModelForChat, resetModelForChat };
+  return {
+    handler,
+    state,
+    setModelForChat,
+    getModelForChat,
+    resetModelForChat,
+    getReplyMode: (): ReplyMode => replyModeOverride ?? config.messageConfig?.replyMode ?? "stream",
+    setReplyMode: (mode: ReplyMode) => {
+      replyModeOverride = mode;
+    },
+  };
 }

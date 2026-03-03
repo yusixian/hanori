@@ -256,15 +256,23 @@ export const DEFAULT_BOT_MEMORY_CONFIG: BotMemoryConfig = {
   autoInjectMemories: true,
 };
 
+export type ReplyMode = "stream" | "segment";
+
 export interface MessageConfig {
+  replyMode?: ReplyMode; // "stream" = streaming draft, "segment" = multi_message tool
   autoSplitThreshold: number; // 0 = disabled, >0 = auto-split when text exceeds this character count
   splitDelayMs: number; // delay between split segments (ms), shows typing status
 }
 
 export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
+  replyMode: "stream", // streaming draft by default
   autoSplitThreshold: 0, // disabled by default
   splitDelayMs: 800,
 };
+
+export function isStreamReplyMode(config?: MessageConfig): boolean {
+  return (config?.replyMode ?? DEFAULT_MESSAGE_CONFIG.replyMode) === "stream";
+}
 
 export interface EmbeddingConfig {
   enabled: boolean;

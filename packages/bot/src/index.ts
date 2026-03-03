@@ -1,5 +1,7 @@
 import type { BotLogEntry, ConversationCallbacks, TokenUsageRecord } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
+import { autoRetry } from "@grammyjs/auto-retry";
+import { stream } from "@grammyjs/stream";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
@@ -8,10 +10,11 @@ import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
+import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
-import { WrapperContext } from "./context.js";
+import { WrapperContext, type BotContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
 import { createPollAnswerHandler, createCallbackQueryHandler } from "./handlers/event-handlers.js";
@@ -37,12 +40,17 @@ export interface BotConfig {
 export function createBot(config: BotConfig) {
   const { token, adminChatIds, logger } = config;
 
-  const bot = new Bot<WrapperContext>(token, {
-    ContextConstructor: WrapperContext,
+  // WrapperContext provides the base class; stream() middleware injects replyWithStream at runtime
+  const bot = new Bot<BotContext>(token, {
+    ContextConstructor: WrapperContext as unknown as new (
+      ...args: ConstructorParameters<typeof WrapperContext>
+    ) => BotContext,
   });
+  bot.api.config.use(autoRetry());
 
   const authGuard = createAuthGuard(adminChatIds);
 
+  bot.use(stream());
   bot.use(createLogMiddleware(config.onLog));
 
   // Build AI handler + runtime state (created before commands so state is available)
@@ -51,6 +59,8 @@ export function createBot(config: BotConfig) {
   let aiSetModelForChat: ReturnType<typeof createAiReplyHandler>["setModelForChat"] | undefined;
   let aiGetModelForChat: ReturnType<typeof createAiReplyHandler>["getModelForChat"] | undefined;
   let aiResetModelForChat: ReturnType<typeof createAiReplyHandler>["resetModelForChat"] | undefined;
+  let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
+  let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -76,6 +86,8 @@ export function createBot(config: BotConfig) {
     aiSetModelForChat = result.setModelForChat;
     aiGetModelForChat = result.getModelForChat;
     aiResetModelForChat = result.resetModelForChat;
+    aiGetReplyMode = result.getReplyMode;
+    aiSetReplyMode = result.setReplyMode;
   }
 
   bot.command("start", startCommand);
@@ -106,6 +118,18 @@ export function createBot(config: BotConfig) {
     } else {
       bot.command("model", modelCmd);
     }
+  }
+
+  // Register /replymode command (admin only)
+  if (config.aiReply && aiGetReplyMode && aiSetReplyMode) {
+    bot.command(
+      "replymode",
+      authGuard,
+      createReplyModeCommand({
+        getReplyMode: aiGetReplyMode,
+        setReplyMode: aiSetReplyMode,
+      }),
+    );
   }
 
   if (aiHandler && aiState) {
@@ -162,7 +186,7 @@ export function createBot(config: BotConfig) {
   return bot;
 }
 
-export { WrapperContext } from "./context.js";
+export { WrapperContext, type BotContext } from "./context.js";
 export {
   assemblePromptPreview,
   type PromptPreviewInput,

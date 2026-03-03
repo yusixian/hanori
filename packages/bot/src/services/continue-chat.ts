@@ -18,31 +18,28 @@ import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
-  DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
+  isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import type { LanguageModel, Tool } from "ai";
-import { generateText, stepCountIs } from "ai";
+import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
+import { markdownToTelegramHtml } from "../utils/format.js";
 import {
   createOnceGuard,
   createPerStepAbort,
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
-import { markdownToTelegramHtml } from "../utils/format.js";
-import { sleep } from "../utils/sleep.js";
-import { splitMessage } from "../utils/split-message.js";
 import { createFileTools } from "../tools/file-tools.js";
+import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { assembleContinueChatContext } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
-const MAX_MESSAGE_LENGTH = 4096;
-
-// Per-chat promise chain to prevent concurrent generateText calls
+// Per-chat promise chain to prevent concurrent streamText calls
 const chatLocks = new Map<number, Promise<void>>();
 
 export interface ContinueChatConfig {
@@ -253,28 +250,79 @@ async function doContinueChat(
       );
     }
 
+    // Remove multi_message tool in stream mode
+    const isStreamMode = isStreamReplyMode(config.messageConfig);
+    if (isStreamMode) {
+      delete allTools.multi_message;
+    }
+
     const startTime = Date.now();
     const requestCache = createRequestCache();
     const perStepAbort = createPerStepAbort(
       config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
       AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
     );
-    let result: Awaited<ReturnType<typeof generateText>>;
-    try {
-      result = await generateText({
-        model: config.model,
-        messages,
-        tools: wrapToolsWithCache(allTools, requestCache),
-        stopWhen: stepCountIs(5),
-        toolChoice: "auto",
-        abortSignal: perStepAbort.signal,
-        onStepFinish: () => {
-          perStepAbort.reset();
-        },
-      });
-    } finally {
+
+    // ─── streamText (ai v6 API) ───
+    let multiMessageUsed = false;
+    const result = streamText({
+      model: config.model,
+      messages,
+      tools: wrapToolsWithCache(allTools, requestCache),
+      stopWhen: stepCountIs(5),
+      toolChoice: "auto",
+      abortSignal: perStepAbort.signal,
+      onStepFinish: ({ toolCalls }) => {
+        perStepAbort.reset();
+        if (!isStreamMode && toolCalls?.some((tc) => tc.toolName === "multi_message")) {
+          multiMessageUsed = true;
+        }
+      },
+    });
+
+    let text: string;
+
+    if (isStreamMode) {
+      // Stream mode: pipe text chunks to Telegram via sendMessageDraft.
+      // multi_message is deleted in stream mode so multiMessageUsed stays false.
+      const { text: streamedText, sentMessages } = await streamToChat(
+        api,
+        chatId,
+        result.textStream,
+      );
       perStepAbort.cleanup();
+
+      for (const msg of sentMessages) {
+        chatBotMsgIds.push(msg.message_id);
+      }
+      text = streamedText || (await result.text)?.trim() || "";
+    } else {
+      // Segment mode: drain the stream to drive tool execution, then send text manually.
+      // We do NOT call streamToChat here to avoid sending empty drafts to Telegram.
+      // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
+      for await (const _ of result.textStream) {
+      }
+      perStepAbort.cleanup();
+
+      text = (await result.text)?.trim() || "";
+      if (!multiMessageUsed && text) {
+        try {
+          const html = markdownToTelegramHtml(text);
+          const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
+          chatBotMsgIds.push(sent.message_id);
+        } catch {
+          try {
+            const sent = await api.sendMessage(chatId, text);
+            chatBotMsgIds.push(sent.message_id);
+          } catch {
+            // Send failed
+          }
+        }
+      }
     }
+
+    // Await full results for post-processing
+    const usage = await result.usage;
     const durationMs = Date.now() - startTime;
 
     // Record token usage
@@ -282,55 +330,12 @@ async function doContinueChat(
       chatId,
       userId: event.userId,
       model: config.modelId,
-      promptTokens: result.usage.inputTokens ?? 0,
-      completionTokens: result.usage.outputTokens ?? 0,
-      totalTokens: result.usage.totalTokens ?? 0,
+      promptTokens: usage.inputTokens ?? 0,
+      completionTokens: usage.outputTokens ?? 0,
+      totalTokens: usage.totalTokens ?? 0,
       durationMs,
       trigger: "event_continuation",
     });
-
-    const text = result.text?.trim();
-
-    // Check if multi_message was used (already sent messages directly)
-    const hasMultiMessage = result.steps.some((s) =>
-      s.toolCalls.some((tc) => tc.toolName === "multi_message"),
-    );
-
-    // Send reply and track message ID (skip if multi_message already handled it)
-    if (!hasMultiMessage && text) {
-      const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
-      const chunks = splitMessage(text, msgCfg.autoSplitThreshold);
-
-      if (chunks.length <= 1) {
-        // Single chunk: keep original truncation behavior
-        const replyText =
-          text.length > MAX_MESSAGE_LENGTH ? text.slice(0, MAX_MESSAGE_LENGTH - 3) + "..." : text;
-        try {
-          const html = markdownToTelegramHtml(replyText);
-          const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
-          chatBotMsgIds.push(sent.message_id);
-        } catch {
-          const sent = await api.sendMessage(chatId, replyText).catch(() => undefined);
-          if (sent) chatBotMsgIds.push(sent.message_id);
-        }
-      } else {
-        // Multi-chunk: send each chunk with typing delay
-        for (let i = 0; i < chunks.length; i++) {
-          if (i > 0) {
-            await api.sendChatAction(chatId, "typing");
-            await sleep(msgCfg.splitDelayMs);
-          }
-          try {
-            const html = markdownToTelegramHtml(chunks[i]!);
-            const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
-            chatBotMsgIds.push(sent.message_id);
-          } catch {
-            const sent = await api.sendMessage(chatId, chunks[i]!).catch(() => undefined);
-            if (sent) chatBotMsgIds.push(sent.message_id);
-          }
-        }
-      }
-    }
 
     // Save to conversation history
     if (config.conversation && convCfg.enabled) {
@@ -374,7 +379,7 @@ async function doContinueChat(
     config.onLog?.({
       level: "info",
       message: "continueChat completed",
-      meta: { chatId, textLength: text?.length ?? 0 },
+      meta: { chatId, textLength: text?.length ?? 0, multiMessageUsed },
     });
   } catch (err) {
     config.onLog?.({
