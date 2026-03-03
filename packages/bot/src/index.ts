@@ -40,7 +40,8 @@ export interface BotConfig {
 export function createBot(config: BotConfig) {
   const { token, adminChatIds, logger } = config;
 
-  // WrapperContext provides the base class; stream() middleware injects replyWithStream at runtime
+  // StreamFlavor adds replyWithStream which is injected at runtime by stream() middleware,
+  // so we need a double assertion to satisfy the type system while using our custom WrapperContext
   const bot = new Bot<BotContext>(token, {
     ContextConstructor: WrapperContext as unknown as new (
       ...args: ConstructorParameters<typeof WrapperContext>

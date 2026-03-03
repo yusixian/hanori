@@ -888,7 +888,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...fileTools,
       };
 
-      // Remove multi_message tool in stream mode
+      // Stream mode and segment mode are mutually exclusive:
+      // - Stream: multi_message is removed; text is piped via replyWithStream (draft animation)
+      // - Segment: multi_message is available; AI sends messages via tool, no streaming
       const msgCfg = getEffectiveMessageConfig();
       const isStreamMode = isStreamReplyMode(msgCfg);
       if (isStreamMode) {
@@ -988,53 +990,82 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         },
       });
 
-      // ─── Stream text to Telegram via replyWithStream ───
-      // Wrap textStream: delete waiting message on first chunk, skip if multi_message was used
-      let streamStarted = false;
-      async function* managedTextStream() {
-        for await (const chunk of result.textStream) {
-          // In segment mode, don't stream — text is sent via multi_message or safeReply fallback
-          if (!isStreamMode || multiMessageUsed) continue;
-          if (!streamStarted) {
-            streamStarted = true;
-            await ctx.deleteWaiting();
+      let text: string | undefined;
+      let steps: Awaited<typeof result.steps>;
+      let usage: Awaited<typeof result.usage>;
+      let finishReason: Awaited<typeof result.finishReason>;
+
+      if (isStreamMode) {
+        // ─── Stream mode: pipe text to Telegram via replyWithStream ───
+        let streamStarted = false;
+        async function* managedTextStream() {
+          for await (const chunk of result.textStream) {
+            if (!streamStarted) {
+              streamStarted = true;
+              await ctx.deleteWaiting();
+            }
+            yield chunk;
           }
-          yield chunk;
         }
-      }
 
-      let sentMessages: Message.TextMessage[] = [];
-      try {
-        sentMessages = await ctx.replyWithStream(managedTextStream());
-      } catch {
-        // Stream failed, fall back to awaiting full text below
-      }
-      perStepAbort.cleanup();
+        let sentMessages: Message.TextMessage[] = [];
+        try {
+          sentMessages = await ctx.replyWithStream(managedTextStream());
+        } catch {
+          // Stream failed, fall back to awaiting full text below
+        }
+        perStepAbort.cleanup();
 
-      // ─── Await full results for post-processing ───
-      const text = (await result.text)?.trim();
-      const steps = await result.steps;
-      const usage = await result.usage;
-      const finishReason = await result.finishReason;
-      const durationMs = Date.now() - startTime;
+        text = (await result.text)?.trim();
+        steps = await result.steps;
+        usage = await result.usage;
+        finishReason = await result.finishReason;
 
-      // ─── Format: edit sent messages from plain text to HTML ───
-      await formatSentMessagesHtml(ctx.api, sentMessages);
-      for (const msg of sentMessages) {
-        chatBotMsgIds.push(msg.message_id);
-      }
+        await formatSentMessagesHtml(ctx.api, sentMessages);
+        for (const msg of sentMessages) {
+          chatBotMsgIds.push(msg.message_id);
+        }
 
-      // ─── Handle cases where streaming didn't send anything ───
-      if (!streamStarted) {
+        // If streaming didn't send anything, fall back to safeReply
+        if (!streamStarted) {
+          if (text) {
+            const replyMsgId = await safeReply(ctx, text);
+            if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+          } else {
+            const hasVisibleAction = steps.some((s) =>
+              s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
+            );
+            if (hasVisibleAction) {
+              await ctx.deleteWaiting();
+            } else {
+              config.onLog?.({
+                level: "warn",
+                message: "AI returned empty text",
+                meta: { chatId, userId, finishReason },
+              });
+              const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
+              if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+            }
+          }
+        }
+      } else {
+        // ─── Segment mode: drain stream, send text via multi_message or safeReply ───
+        // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
+        for await (const _ of result.textStream) {
+        }
+        perStepAbort.cleanup();
+
+        text = (await result.text)?.trim();
+        steps = await result.steps;
+        usage = await result.usage;
+        finishReason = await result.finishReason;
+
         if (multiMessageUsed) {
-          // multi_message already sent messages, just clean up waiting
           await ctx.deleteWaiting();
         } else if (text) {
-          // Stream failed but AI produced text — fallback to safeReply
           const replyMsgId = await safeReply(ctx, text);
           if (replyMsgId) chatBotMsgIds.push(replyMsgId);
         } else {
-          // No text at all — check for visible tool effects
           const hasVisibleAction = steps.some((s) =>
             s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
           );
@@ -1051,6 +1082,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           }
         }
       }
+
+      const durationMs = Date.now() - startTime;
 
       // Debug: AI response
       const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);

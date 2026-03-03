@@ -3,6 +3,9 @@ import type { Api } from "grammy";
 import type { Message } from "grammy/types";
 import { markdownToTelegramHtml } from "./format.js";
 
+// Monotonic counter for draft IDs to avoid collisions between concurrent streams
+let draftIdCounter = 0;
+
 /**
  * Edit sent messages in-place to apply HTML formatting (parallelized).
  * Silently keeps plain text if formatting fails for any message.
@@ -11,9 +14,11 @@ export async function formatSentMessagesHtml(
   api: Api,
   messages: Message.TextMessage[],
 ): Promise<void> {
+  if (messages.length === 0) return;
   await Promise.allSettled(
     messages.map(async (msg) => {
       const html = markdownToTelegramHtml(msg.text);
+      if (html === msg.text) return; // skip edit if formatting unchanged
       await api.editMessageText(msg.chat.id, msg.message_id, html, {
         parse_mode: "HTML",
       });
@@ -33,7 +38,7 @@ export async function streamToChat(
   textStream: AsyncIterable<string>,
 ): Promise<{ text: string; sentMessages: Message.TextMessage[] }> {
   const { streamMessage } = streamApi(api.raw);
-  const draftIdOffset = Math.floor(Math.random() * 2 ** 24);
+  const draftIdOffset = ++draftIdCounter;
 
   // Collect text for post-processing while streaming
   let accumulated = "";
