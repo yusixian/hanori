@@ -1,11 +1,13 @@
 import { bots, type Database } from "@cos-tool-bot/database";
 import { DEFAULT_INJECTABLE_FILES, DEFAULT_MAX_INJECTION_SIZE } from "@cos-tool-bot/shared";
+import archiver from "archiver";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { Readable } from "node:stream";
 import { BOT_DATA_TEMPLATES } from "../templates/bot-data-templates.js";
 import type { BotPool } from "../services/bot-pool.js";
 import {
@@ -88,6 +90,56 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         } catch {
           return c.json({ ok: true as const, files: [], injection });
         }
+      },
+    )
+    .get(
+      "/:botId/files-zip",
+      zValidator("query", z.object({ path: z.string().max(500).optional() })),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+        const dataDir = getDataDir(botId);
+        const subPath = c.req.valid("query").path ?? "";
+        const resolvedDir = resolveAndValidateDir(dataDir, subPath);
+        if (!resolvedDir) return c.json({ ok: false as const, error: "Invalid path" }, 403);
+
+        try {
+          await fs.access(resolvedDir);
+        } catch {
+          return c.json({ ok: false as const, error: "Directory not found" }, 404);
+        }
+
+        const archive = archiver("zip", { zlib: { level: 5 } });
+
+        // Recursively add only allowed file types
+        const addDir = async (dirPath: string, prefix: string) => {
+          const entries = await fs.readdir(dirPath, { withFileTypes: true });
+          for (const entry of entries) {
+            const fullPath = path.join(dirPath, entry.name);
+            const entryPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (entry.isDirectory()) {
+              await addDir(fullPath, entryPrefix);
+            } else {
+              const ext = path.extname(entry.name).toLowerCase();
+              if (ALLOWED_EXTENSIONS.has(ext)) {
+                archive.file(fullPath, { name: entryPrefix });
+              }
+            }
+          }
+        };
+
+        await addDir(resolvedDir, "");
+        archive.finalize();
+
+        const dirName = subPath ? subPath.replace(/\//g, "_") : "files";
+        return new Response(Readable.toWeb(archive) as ReadableStream, {
+          headers: {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${dirName}.zip"; filename*=UTF-8''${encodeURIComponent(dirName)}.zip`,
+          },
+        });
       },
     )
     .get("/:botId/files-raw/*", async (c) => {

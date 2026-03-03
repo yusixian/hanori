@@ -6,6 +6,7 @@ import { triggerDownload } from "@/lib/download";
 import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
 import Editor from "@monaco-editor/react";
 import {
+  Archive,
   Check,
   ChevronRight,
   Download,
@@ -93,6 +94,7 @@ export function BotFilesPage() {
   const [fileCategory, setFileCategory] = useState<FileCategory>("text");
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState<string | null>(null);
   const imageUrlRef = useRef<string | null>(null);
 
   // Directory browsing state
@@ -264,6 +266,26 @@ export function BotFilesPage() {
         console.error("Failed to download file:", err);
       } finally {
         setDownloading(false);
+      }
+    },
+    [botId],
+  );
+
+  const downloadZip = useCallback(
+    async (dirPath: string) => {
+      if (!botId) return;
+      setDownloadingZip(dirPath);
+      try {
+        const query = dirPath ? `?path=${encodeURIComponent(dirPath)}` : "";
+        const res = await authFetch(`/api/bots/${botId}/files-zip${query}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const dirName = dirPath ? dirPath.replace(/\//g, "_") : "files";
+        triggerDownload(blob, `${dirName}.zip`);
+      } catch (err) {
+        console.error("Failed to download ZIP:", err);
+      } finally {
+        setDownloadingZip(null);
       }
     },
     [botId],
@@ -482,6 +504,19 @@ export function BotFilesPage() {
           <Button
             variant="outline"
             size="sm"
+            onClick={() => downloadZip(currentPath)}
+            disabled={downloadingZip !== null}
+          >
+            {downloadingZip !== null ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Archive className="mr-1 h-4 w-4" />
+            )}
+            Download ZIP
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             onClick={() => setShowNewFile(true)}
             disabled={showNewFile}
           >
@@ -667,11 +702,29 @@ export function BotFilesPage() {
                   return (
                     <div
                       key={file.path}
-                      className="hover:bg-accent/50 group flex cursor-pointer items-center gap-1.5 rounded px-2 py-1.5 text-sm transition-colors"
+                      className="hover:bg-accent/50 group flex cursor-pointer items-center justify-between gap-1.5 rounded px-2 py-1.5 text-sm transition-colors"
                       onClick={() => navigateTo(file.path)}
                     >
-                      <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
-                      <span className="truncate">{file.name}</span>
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                        <span className="truncate">{file.name}</span>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                        disabled={downloadingZip === file.path}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          downloadZip(file.path);
+                        }}
+                      >
+                        {downloadingZip === file.path ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Archive className="h-3 w-3" />
+                        )}
+                      </Button>
                     </div>
                   );
                 }
