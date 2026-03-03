@@ -498,7 +498,13 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
               errorMessage: errMsg,
               durationMs: Date.now() - startTime,
             });
-            api.sendMessage(chatId, `图片生成失败: ${errMsg}`).catch(() => {});
+            api.sendMessage(chatId, `图片生成失败: ${errMsg}`).catch((sendErr) => {
+              onLog?.({
+                level: "warn",
+                message: `Failed to notify user about PixAI error: ${sendErr}`,
+                meta: { chatId, taskId: task.id },
+              });
+            });
           });
 
           return {

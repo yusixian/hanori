@@ -26,7 +26,7 @@ import {
 import type { LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
+import { createBehaviorTools, createTelegramTools, injectPixAITool } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { splitMessage } from "../utils/split-message.js";
@@ -241,7 +241,6 @@ async function doContinueChat(
     }
 
     // PixAI image generation (per-request, fire-and-forget) + permission control
-    const { injectPixAITool } = await import("../tools/pixai.js");
     injectPixAITool(allTools, {
       allowed: !!config.imageGenerationAllowed,
       webToolsConfig: config.webToolsConfig,
