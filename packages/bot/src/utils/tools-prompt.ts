@@ -12,6 +12,7 @@ export interface ExtendedToolsPromptOptions {
   hasArtworkTools: boolean;
   hasFileTools: boolean;
   isPrivate: boolean;
+  hasMultiMessage: boolean;
 }
 
 export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
@@ -19,7 +20,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
 
   // Behavior tools (always available)
   lines.push("你拥有以下高级行为工具:");
-  lines.push("- multi_message: 分多条消息回复（像真人那样）。使用后不需要再生成普通文本回复。");
+  if (opts.hasMultiMessage) {
+    lines.push("- multi_message: 分多条消息回复（像真人那样）。使用后不需要再生成普通文本回复。");
+  }
   lines.push("- set_mood: 设置你的情绪状态，影响后续回复语气。");
 
   // Telegram interaction tools
@@ -128,13 +131,19 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("");
   lines.push("使用指南:");
   lines.push("- 积极使用互动工具让对话更生动，像真人聊天一样自然表达");
-  lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
+  if (opts.hasMultiMessage) {
+    lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
+  } else {
+    lines.push("- 你必须生成文字回复内容");
+  }
   lines.push("- 遇到需要分析或规划的问题时，先在回复前整理思路");
   lines.push("- 避免对同一内容反复调用不同工具，每次工具调用前先检查是否已有足够信息");
   lines.push("");
   lines.push("**主动行为建议**:");
   lines.push("- 用户说了有趣/感动/搞笑的话 → react_to_message 加个表情");
-  lines.push("- 回复内容较长或包含多个话题 → 用 multi_message 分条发送");
+  if (opts.hasMultiMessage) {
+    lines.push("- 回复内容较长或包含多个话题 → 用 multi_message 分条发送");
+  }
   lines.push("- 对话氛围变化时 → 用 set_mood 调整情绪状态");
   lines.push("- 用户分享了个人信息 → 用记忆工具记录");
   if (opts.hasSearchTool) {

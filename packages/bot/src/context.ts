@@ -1,5 +1,6 @@
 import type { CommandEntity } from "@cos-tool-bot/shared";
 import { parseParams } from "@cos-tool-bot/shared";
+import type { StreamFlavor } from "@grammyjs/stream";
 import { Api, Context } from "grammy";
 import type {
   ForceReply,
@@ -11,6 +12,8 @@ import type {
   Update,
   UserFromGetMe,
 } from "grammy/types";
+
+export type BotContext = StreamFlavor<WrapperContext>;
 
 export class WrapperContext extends Context {
   waiting_message?: Message;

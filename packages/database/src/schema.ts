@@ -111,6 +111,7 @@ interface AiConfigJson {
     autoInjectMemories: boolean;
   };
   messageConfig?: {
+    replyMode?: "stream" | "segment";
     autoSplitThreshold: number;
     splitDelayMs: number;
   };

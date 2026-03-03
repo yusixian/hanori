@@ -15,6 +15,7 @@ const commands = [
   { command: "backup", description: "(admin) 创建数据库备份" },
   { command: "clearreceived", description: "(admin) 清理收到的文件缓存" },
   { command: "model", description: "查看/切换 AI 模型" },
+  { command: "replymode", description: "(admin) 切换回复模式 (stream/segment)" },
 ];
 
 export { commands };

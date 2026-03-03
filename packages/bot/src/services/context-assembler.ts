@@ -27,6 +27,7 @@ import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
@@ -178,6 +179,7 @@ async function buildStaticSystemContent(input: StaticPromptInput): Promise<strin
   const availableAgents = input.agentToolsConfig?.enabled
     ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
     : [];
+  const hasMultiMessage = !isStreamReplyMode(input.messageConfig);
   const extendedPrompt = buildExtendedToolsPrompt({
     hasStickerPacks: !!input.stickerPacks?.length,
     hasTTS: false,
@@ -190,6 +192,7 @@ async function buildStaticSystemContent(input: StaticPromptInput): Promise<strin
     hasArtworkTools: !!input.artworkToolsEnabled,
     hasFileTools: !!input.hasFileTools,
     isPrivate: input.isPrivate,
+    hasMultiMessage,
   });
   msg.content += `\n\n${extendedPrompt}`;
 
@@ -468,6 +471,7 @@ export async function assemblePromptPreview(
   const availableAgents = input.agentToolsConfig?.enabled
     ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
     : [];
+  const hasMultiMessage = !isStreamReplyMode(input.messageConfig);
   const extendedPrompt = buildExtendedToolsPrompt({
     hasStickerPacks: !!input.stickerPacks?.length,
     hasTTS: false,
@@ -480,6 +484,7 @@ export async function assemblePromptPreview(
     hasArtworkTools: !!input.artworkToolsEnabled,
     hasFileTools: !!input.hasFileTools,
     isPrivate: input.isPrivate,
+    hasMultiMessage,
   });
   content += `\n\n${extendedPrompt}`;
 
@@ -562,6 +567,7 @@ export async function assembleContinueChatContext(input: {
   const availableAgents = input.agentToolsConfig?.enabled
     ? getAvailableAgentNames(input.agentToolsConfig, input.webToolsConfig)
     : [];
+  const hasMultiMessage = !isStreamReplyMode(input.messageConfig);
   const toolsPromptOpts: ExtendedToolsPromptOptions = {
     hasStickerPacks: !!input.stickerPacks?.length,
     hasTTS: false,
@@ -574,6 +580,7 @@ export async function assembleContinueChatContext(input: {
     hasArtworkTools: !!input.artworkToolsEnabled,
     hasFileTools: !!input.hasFileTools,
     isPrivate,
+    hasMultiMessage,
   };
   msg.content += `\n\n${buildExtendedToolsPrompt(toolsPromptOpts)}`;
 
