@@ -343,6 +343,7 @@ export const pixaiGenerations = pgTable(
     samplingSteps: integer("sampling_steps"),
     cfgScale: real("cfg_scale"),
     promptHelper: boolean("prompt_helper"),
+    pixaiConfig: json("pixai_config"),
     errorMessage: text("error_message"),
     durationMs: integer("duration_ms"),
     createdAt: timestamp("created_at").defaultNow().notNull(),

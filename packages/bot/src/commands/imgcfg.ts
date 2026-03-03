@@ -47,19 +47,20 @@ const FLAG_DEFS: Record<string, FlagDef> = {
 // Sorted flags for matching: longer flags first (e.g. -np before -n)
 const SORTED_FLAG_KEYS = Object.keys(FLAG_DEFS).sort((a, b) => b.length - a.length);
 
+// Pre-compiled flag regex (use matchAll to avoid stateful lastIndex issues)
+const FLAG_PATTERN = new RegExp(
+  `(${SORTED_FLAG_KEYS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s`,
+  "g",
+);
+
 // --- Parsers ---
 
 function parseFlags(input: string): Map<string, string> {
   const result = new Map<string, string>();
-  const flagPattern = new RegExp(
-    `(${SORTED_FLAG_KEYS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s`,
-    "g",
-  );
 
   // Find all flag positions
   const positions: Array<{ flag: string; start: number; valueStart: number }> = [];
-  let match: RegExpExecArray | null;
-  while ((match = flagPattern.exec(input)) !== null) {
+  for (const match of input.matchAll(FLAG_PATTERN)) {
     positions.push({
       flag: match[1]!,
       start: match.index,

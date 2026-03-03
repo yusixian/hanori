@@ -399,9 +399,15 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
           height: z.number().int().min(512).max(1280).optional().describe("图片高度 (512-1280)"),
           batch_size: z.number().int().min(1).max(4).optional().describe("生成数量 (1-4)"),
           seed: z.string().optional().describe("随机种子（留空=随机）"),
+          style_key: z
+            .string()
+            .optional()
+            .describe(
+              "可选风格 key，根据画面需要选择最合适的风格。可选值: glossy-glass-anime / high-contrast-retro-vivid / chibi / semi-realistic / paper-watercolor / anime-watercolor-impasto / flat-anime-pastel / classic-japanese / poster-graffiti / moe-pastel / luminous-retro-impasto / lineart-watercolor-airy",
+            ),
         }),
       ),
-      execute: async ({ prompt, negative_prompt, width, height, batch_size, seed }) => {
+      execute: async ({ prompt, negative_prompt, width, height, batch_size, seed, style_key }) => {
         const startTime = Date.now();
         const resolvedPrompt = resolvePrompt(prompt, pixaiConfig);
         const resolvedWidth = width ?? pixaiConfig.width ?? 768;
@@ -410,6 +416,10 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         const resolvedNegativePrompt = negative_prompt ?? pixaiConfig.negativePrompts;
         const resolvedSamplingSteps = pixaiConfig.samplingSteps;
         const resolvedCfgScale = pixaiConfig.cfgScale;
+        // Resolve modelStyle: AI style_key → panel config → undefined
+        const resolvedModelStyle: CreateTaskParams["modelStyle"] = style_key
+          ? { type: "key", keyId: style_key }
+          : pixaiConfig.modelStyle;
 
         try {
           const task = await client.createTask({
@@ -426,12 +436,18 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             priority: pixaiConfig.priority,
             clipSkip: pixaiConfig.clipSkip,
             lightning: pixaiConfig.lightning,
-            modelStyle: pixaiConfig.modelStyle,
+            modelStyle: resolvedModelStyle,
             inferenceProfile: pixaiConfig.inferenceProfile,
             samplingMethod: pixaiConfig.samplingMethod,
             qualityTag: pixaiConfig.qualityTag,
             isPrivate: pixaiConfig.isPrivate,
           });
+
+          // Snapshot config with resolved modelStyle for tracking
+          const configSnapshot: PixAIConfig = {
+            ...pixaiConfig,
+            modelStyle: resolvedModelStyle,
+          };
 
           // Shared base fields for all generation tracking calls
           const baseRecord: Omit<PixAIGenerationRecord, "status"> = {
@@ -447,6 +463,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             samplingSteps: resolvedSamplingSteps,
             cfgScale: resolvedCfgScale,
             promptHelper: !!pixaiConfig.promptHelper,
+            pixaiConfig: configSnapshot,
           };
 
           onLog?.({
@@ -499,7 +516,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
 
 // --- Shared helper: inject PixAI tool + permission control ---
 
-export async function injectPixAITool(
+export function injectPixAITool(
   allTools: Record<string, Tool>,
   options: {
     allowed: boolean;
@@ -512,7 +529,7 @@ export async function injectPixAITool(
     onLog?: (entry: BotLogEntry) => void | Promise<void>;
     onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   },
-): Promise<void> {
+): void {
   const { allowed, webToolsConfig } = options;
 
   if (
@@ -533,9 +550,7 @@ export async function injectPixAITool(
         onGenerationTrack: options.onGenerationTrack,
       }),
     );
-  }
-
-  if (!allowed) {
+  } else {
     delete allTools.generate_image;
   }
 }

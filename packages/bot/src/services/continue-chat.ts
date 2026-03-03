@@ -242,7 +242,7 @@ async function doContinueChat(
 
     // PixAI image generation (per-request, fire-and-forget) + permission control
     const { injectPixAITool } = await import("../tools/pixai.js");
-    await injectPixAITool(allTools, {
+    injectPixAITool(allTools, {
       allowed: !!config.imageGenerationAllowed,
       webToolsConfig: config.webToolsConfig,
       api,

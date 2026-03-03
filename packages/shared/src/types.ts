@@ -525,6 +525,7 @@ export interface PixAIGenerationRecord {
   samplingSteps?: number;
   cfgScale?: number;
   promptHelper?: boolean;
+  pixaiConfig?: PixAIConfig;
   status: PixAIGenerationStatus;
   mediaUrls?: string[];
   mediaIds?: string[];

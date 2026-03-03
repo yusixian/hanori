@@ -439,6 +439,7 @@ export class BotPool {
             samplingSteps: record.samplingSteps,
             cfgScale: record.cfgScale,
             promptHelper: record.promptHelper,
+            pixaiConfig: record.pixaiConfig,
             status: record.status,
           });
         } else {

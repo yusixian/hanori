@@ -50,6 +50,7 @@ import {
   createMemoryTools,
   createTelegramTools,
   createWebTools,
+  injectPixAITool,
 } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
@@ -453,7 +454,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   function canUseImageGeneration(isPrivate: boolean, isAdmin: boolean, chatId: number): boolean {
     if (isAdmin) return true;
     if (isPrivate) return false;
-    return config.groupOverrides[String(chatId)]?.imageGenerationEnabled === true;
+    return getImageGenEnabled(chatId);
   }
 
   function getImageGenEnabled(chatId: number): boolean {
@@ -986,8 +987,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       };
 
       // PixAI image generation (per-request, fire-and-forget) + permission control
-      const { injectPixAITool } = await import("../tools/pixai.js");
-      await injectPixAITool(allTools, {
+      injectPixAITool(allTools, {
         allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
         webToolsConfig: config.webToolsConfig,
         api: ctx.api,

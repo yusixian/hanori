@@ -153,6 +153,27 @@ function ImageLightbox({
   );
 }
 
+function getStyleKeyId(pixaiConfig: unknown): string | undefined {
+  if (!pixaiConfig || typeof pixaiConfig !== "object") return undefined;
+  const ms = (pixaiConfig as Record<string, unknown>).modelStyle;
+  if (!ms || typeof ms !== "object") return undefined;
+  return (ms as { keyId?: string }).keyId;
+}
+
+function PixaiConfigDetails({ config }: { config: Record<string, unknown> }) {
+  return (
+    <details className="group/cfg mt-1 border-t pt-1">
+      <summary className="flex cursor-pointer list-none items-center gap-1 select-none">
+        <ChevronDown className="h-3 w-3 transition-transform group-open/cfg:rotate-180" />
+        <span className="text-[10px] font-semibold tracking-wider uppercase">Image Config</span>
+      </summary>
+      <pre className="bg-muted mt-1 max-h-48 overflow-auto rounded p-2 text-[11px] leading-relaxed">
+        {JSON.stringify(config, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
 export function BotGenerationsPage() {
   const { botId } = useParams<{ botId: string }>();
   const [generations, setGenerations] = useState<GenerationItem[]>([]);
@@ -309,6 +330,11 @@ export function BotGenerationsPage() {
                     >
                       {g.status}
                     </Badge>
+                    {getStyleKeyId(g.pixaiConfig) && (
+                      <Badge variant="muted" className="text-[10px]">
+                        {getStyleKeyId(g.pixaiConfig)}
+                      </Badge>
+                    )}
                     <span className="text-muted-foreground text-xs">
                       {g.width}x{g.height}
                     </span>
@@ -387,6 +413,11 @@ export function BotGenerationsPage() {
                           {new Date(g.completedAt).toLocaleString()}
                         </div>
                       )}
+                      {g.pixaiConfig &&
+                        typeof g.pixaiConfig === "object" &&
+                        !Array.isArray(g.pixaiConfig) && (
+                          <PixaiConfigDetails config={g.pixaiConfig as Record<string, unknown>} />
+                        )}
                     </div>
                   </details>
                 </CardContent>
