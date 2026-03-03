@@ -305,6 +305,7 @@ export interface AiConfigStored {
   encryptedApiKey: string | null;
   baseURL: string;
   model: string;
+  providerFormat?: "openai" | "gemini";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -339,6 +340,7 @@ export interface AiConfigPublic {
   hasApiKey: boolean;
   baseURL: string;
   model: string;
+  providerFormat?: "openai" | "gemini";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;

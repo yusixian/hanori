@@ -183,6 +183,7 @@ export class BotPool {
               apiKey,
               baseURL: aiConfig.baseURL,
               model: aiConfig.model,
+              providerFormat: aiConfig.providerFormat,
               logger: this.logger,
             }).catch((err) => {
               this.logger.error(
@@ -318,6 +319,7 @@ export class BotPool {
           apiKey,
           baseURL: aiConfig.baseURL,
           model: aiConfig.model,
+          providerFormat: aiConfig.providerFormat,
           systemPrompt: aiConfig.systemPrompt,
           behavioralPrompt: aiConfig.behavioralPrompt,
           groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,

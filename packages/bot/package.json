@@ -15,9 +15,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "^0.2.14",
+    "@ai-sdk/google": "^3.0.35",
+    "@ai-sdk/openai-compatible": "^2.0.0",
     "@cos-tool-bot/shared": "workspace:*",
-    "ai": "^4.3.16",
+    "ai": "^6.0.0",
     "gpt-tokenizer": "^3.4.0",
     "grammy": "^1.22.4",
     "marked": "^17.0.3",

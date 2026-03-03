@@ -1,5 +1,5 @@
 import type { BotLogEntry } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
@@ -23,14 +23,14 @@ export interface BehaviorToolsOptions {
   onceGuard?: OnceGuardContext;
 }
 
-export function createBehaviorTools(options: BehaviorToolsOptions): Record<string, CoreTool> {
+export function createBehaviorTools(options: BehaviorToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, moodState, onLog, onceGuard } = options;
 
-  const tools: Record<string, CoreTool> = {
+  const tools: Record<string, Tool> = {
     multi_message: tool({
       description:
         "分多条消息回复（像真人聊天那样）。每条消息之间会有打字延迟。使用后不需要再生成普通文本回复。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           messages: z
             .array(
@@ -64,7 +64,7 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
 
     set_mood: tool({
       description: "设置你当前的情绪状态。这会影响你后续回复的语气和风格。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           mood: z.string().describe("当前情绪，如：开心、疲惫、兴奋、沉思、调皮"),
           reason: z.string().optional().describe("情绪变化的原因"),

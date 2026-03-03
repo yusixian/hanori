@@ -1,6 +1,6 @@
 import type { ArtworkToolsConfig, TimeoutConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import { InputFile } from "grammy";
 import type { Api } from "grammy";
@@ -22,18 +22,18 @@ export interface ArtworkToolsOptions {
   timeoutConfig?: TimeoutConfig;
 }
 
-export function createArtworkTools(options: ArtworkToolsOptions): Record<string, CoreTool> {
+export function createArtworkTools(options: ArtworkToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, config, onceGuard, timeoutConfig } = options;
   const imageDownloadMs = timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
 
   // Cache last fetched artwork for send_artwork to look up provider headers
   let lastArtworkInfo: ArtworkInfo | undefined;
 
-  const tools: Record<string, CoreTool> = {
+  const tools: Record<string, Tool> = {
     fetch_artwork_info: tool({
       description:
         "从 URL 获取作品信息（支持 Pixiv、Twitter/X）。自动识别平台并返回标题、作者、图片列表、标签等。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           url: z.string().describe("作品 URL（如 pixiv.net/artworks/xxx 或 x.com/.../status/xxx）"),
         }),
@@ -81,7 +81,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
     send_artwork: tool({
       description:
         "发送作品图片。在调用 fetch_artwork_info 后使用。支持单图/多图发送，可设置 NSFW 遮罩。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           caption: z.string().optional().describe("图片说明文字（支持 HTML 格式）"),
           image_indices: z

@@ -28,7 +28,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
 } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { type DataFilesConfig, injectDataFiles } from "../utils/data-files.js";
@@ -63,12 +63,12 @@ export interface ContextAssemblyInput {
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
   userId?: number;
-  memoryTools?: Record<string, CoreTool>;
+  memoryTools?: Record<string, Tool>;
 
   /** Bot memory */
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
-  botMemoryTools?: Record<string, CoreTool>;
+  botMemoryTools?: Record<string, Tool>;
 
   /** Mood state */
   currentMood?: MoodInfo;
@@ -76,7 +76,7 @@ export interface ContextAssemblyInput {
   /** Tools prompt config */
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
-  webTools?: Record<string, CoreTool>;
+  webTools?: Record<string, Tool>;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -133,11 +133,11 @@ interface StaticPromptInput {
   groupBehavioralPrompt?: string;
   isPrivate: boolean;
   dataFiles?: DataFilesConfig;
-  memoryTools?: Record<string, CoreTool>;
-  botMemoryTools?: Record<string, CoreTool>;
+  memoryTools?: Record<string, Tool>;
+  botMemoryTools?: Record<string, Tool>;
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
-  webTools?: Record<string, CoreTool>;
+  webTools?: Record<string, Tool>;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -532,7 +532,7 @@ export async function assembleContinueChatContext(input: {
   messageConfig?: MessageConfig;
   moodState: Map<number, MoodInfo>;
   webToolsConfig?: WebToolsConfig;
-  webTools?: Record<string, CoreTool>;
+  webTools?: Record<string, Tool>;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;

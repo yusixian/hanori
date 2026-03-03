@@ -1,4 +1,4 @@
-import type { CoreTool, JSONValue } from "ai";
+import type { Tool, JSONValue } from "ai";
 import { jsonSchema } from "ai";
 import { z } from "zod";
 
@@ -124,10 +124,10 @@ function buildCacheKey(toolName: string, args: Record<string, unknown>): string 
  * Non-cacheable tools pass through unchanged.
  */
 export function wrapToolsWithCache(
-  tools: Record<string, CoreTool>,
+  tools: Record<string, Tool>,
   cache: RequestCache,
-): Record<string, CoreTool> {
-  const wrapped: Record<string, CoreTool> = {};
+): Record<string, Tool> {
+  const wrapped: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
     if (!CACHEABLE_TOOLS.has(name) || !("execute" in tool) || typeof tool.execute !== "function") {
       wrapped[name] = tool;

@@ -57,6 +57,26 @@ export function GlobalSettingsSection({
         </div>
 
         <div className="space-y-1.5">
+          <label className="text-sm font-medium">Provider Format</label>
+          <select
+            className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
+            value={config.providerFormat ?? "openai"}
+            onChange={(e) =>
+              onConfigChange({
+                providerFormat: e.target.value as "openai" | "gemini",
+              })
+            }
+          >
+            <option value="openai">OpenAI Compatible</option>
+            <option value="gemini">Gemini Native</option>
+          </select>
+          <p className="text-muted-foreground text-xs">
+            Gemini 原生格式支持隐式缓存和缓存命中诊断。需将 Base URL 设为代理的 Gemini 端点（如
+            /v1beta）。
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
           <label className="text-sm font-medium">API Key</label>
           <Input
             type="password"

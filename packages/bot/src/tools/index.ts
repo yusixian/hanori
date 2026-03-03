@@ -1,5 +1,5 @@
 import type { MemoryCallbacks } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
@@ -83,12 +83,12 @@ const VALID_REACTION_EMOJIS = [
   "😡",
 ] as const;
 
-export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreTool> {
+export function createMemoryTools(memory: MemoryCallbacks): Record<string, Tool> {
   return {
     get_profile: tool({
       description:
         "获取某个用户的档案信息，包括备注、性格特征、兴趣爱好、关系等。当你需要回忆某个人的信息时使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           telegram_id: z.number().describe("用户的 Telegram ID"),
         }),
@@ -106,7 +106,7 @@ export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreT
     update_profile: tool({
       description:
         "更新或创建用户档案。notes 会追加到已有备注后面，traits 和 interests 会与已有的合并去重。当你在对话中了解到用户的新信息时主动使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           telegram_id: z.number().describe("用户的 Telegram ID"),
           username: z.string().optional().describe("用户名（不含@）"),
@@ -137,7 +137,7 @@ export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreT
     search_profiles: tool({
       description:
         "模糊搜索人物档案。可以按名字、用户名、备注内容、特征或兴趣搜索。当你需要找某个人但不确定其 ID 时使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           query: z.string().describe("搜索关键词"),
         }),
@@ -154,7 +154,7 @@ export function createMemoryTools(memory: MemoryCallbacks): Record<string, CoreT
     search_history: tool({
       description:
         "搜索历史对话记录。可以按关键词搜索，可选按聊天或用户过滤。当用户问「你还记得我说过…」或你需要查找之前的对话内容时使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           query: z.string().describe("搜索关键词"),
           chat_id: z.number().optional().describe("限定在某个聊天中搜索"),
@@ -187,13 +187,13 @@ export interface ActionToolsOptions {
   onceGuard?: OnceGuardContext;
 }
 
-export function createActionTools(options: ActionToolsOptions): Record<string, CoreTool> {
+export function createActionTools(options: ActionToolsOptions): Record<string, Tool> {
   const { api, chatId, messageId, stickerCache, onceGuard } = options;
 
-  const tools: Record<string, CoreTool> = {
+  const tools: Record<string, Tool> = {
     react_to_message: tool({
       description: "对当前用户消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           emoji: z.enum(VALID_REACTION_EMOJIS).describe("要添加的 emoji 表情"),
         }),
@@ -209,7 +209,7 @@ export function createActionTools(options: ActionToolsOptions): Record<string, C
     }),
     send_sticker: tool({
       description: "发送一个贴纸来表达情绪。提供一个 emoji 来匹配贴纸包中合适的贴纸。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           emoji: z.string().describe("用于匹配贴纸的 emoji"),
         }),

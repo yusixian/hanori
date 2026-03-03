@@ -1,15 +1,15 @@
 import type { BotMemoryCallbacks } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
 
-export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<string, CoreTool> {
+export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<string, Tool> {
   return {
     save_memory: tool({
       description:
         "保存一条长期记忆。可以是通用记忆（群规则、偏好、事实等），也可以关联到特定用户。记忆会跨对话持久保存。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           content: z.string().describe("要保存的记忆内容"),
           category: z
@@ -40,7 +40,7 @@ export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<stri
     recall_memories: tool({
       description:
         "回忆/搜索已保存的记忆。可以按关键词、分类、用户过滤。用于回忆之前保存的事实、规则或偏好。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           query: z.string().optional().describe("搜索关键词"),
           category: z.string().optional().describe("按分类过滤"),
@@ -71,7 +71,7 @@ export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<stri
     }),
     delete_memory: tool({
       description: "删除一条已保存的记忆。当记忆不再准确或不再需要时使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           memory_id: z.number().describe("要删除的记忆 ID"),
         }),

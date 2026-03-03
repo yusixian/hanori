@@ -1,5 +1,5 @@
 import { MAX_FILE_SIZE, TEXT_EXTENSIONS, resolveAndValidate } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -9,14 +9,14 @@ import { zodToAiSchema } from "./utils.js";
 export function createFileTools(opts: {
   dataDir: string;
   protectedFiles?: ReadonlySet<string>;
-}): Record<string, CoreTool> {
+}): Record<string, Tool> {
   const { dataDir, protectedFiles } = opts;
 
   return {
     read_file: tool({
       description:
         "读取你的 data 目录中的文件内容。可以用来查看你自己的身份定义、笔记等文件。仅 .md 文件会被自动注入到你的 system prompt 中。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           path: z.string().describe("文件路径（相对于 data 目录），如 NOTES.md"),
         }),
@@ -37,7 +37,7 @@ export function createFileTools(opts: {
     write_file: tool({
       description:
         "写入文件到你的 data 目录。可以创建新文件或覆盖已有文件。用于记录笔记、更新自己的设定等。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           path: z.string().describe("文件路径（相对于 data 目录），如 NOTES.md"),
           content: z.string().describe("要写入的文件内容"),
@@ -63,7 +63,7 @@ export function createFileTools(opts: {
     }),
     delete_file: tool({
       description: "删除你的 data 目录中的文件。用于清理不再需要的临时文件。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           path: z.string().describe("文件路径（相对于 data 目录）"),
         }),

@@ -1,6 +1,6 @@
 import type { TimeoutConfig, WebToolsConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
@@ -236,18 +236,18 @@ export interface WebToolsOptions {
   timeoutConfig?: TimeoutConfig;
 }
 
-export function createWebTools(options: WebToolsOptions): Record<string, CoreTool> {
+export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
   const { config, timeoutConfig } = options;
   const searchMs = timeoutConfig?.searchMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs;
   const fetchPageMs = timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
   const imageGenerationMs =
     timeoutConfig?.imageGenerationMs ?? DEFAULT_TIMEOUT_CONFIG.imageGenerationMs;
-  const tools: Record<string, CoreTool> = {};
+  const tools: Record<string, Tool> = {};
 
   // Always include get_current_time
   tools.get_current_time = tool({
     description: "获取当前时间。可指定时区（默认 Asia/Shanghai）。",
-    parameters: zodToAiSchema(
+    inputSchema: zodToAiSchema(
       z.object({
         timezone: z.string().optional().describe("时区名称，如 Asia/Shanghai, America/New_York"),
       }),
@@ -270,7 +270,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
       const searchProvider = createSearchProvider(config.search);
       tools.web_search = tool({
         description: "搜索网络获取最新信息。返回搜索结果的标题、URL 和摘要。",
-        parameters: zodToAiSchema(
+        inputSchema: zodToAiSchema(
           z.object({
             query: z.string().describe("搜索关键词"),
             limit: z.number().min(1).max(10).optional().describe("返回结果数量，默认 5"),
@@ -293,7 +293,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
   // Fetch webpage tool (always available when web tools enabled)
   tools.fetch_webpage = tool({
     description: "获取网页正文内容。用于深入阅读搜索结果中的页面。内容会被截断到约 4000 字符。",
-    parameters: zodToAiSchema(
+    inputSchema: zodToAiSchema(
       z.object({
         url: z.string().describe("要获取内容的网页 URL"),
       }),
@@ -312,7 +312,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, CoreToo
     const imgCfg = config.imageGeneration;
     tools.generate_image = tool({
       description: "使用 AI 生成图片。返回图片 URL。如需发送给用户，可配合 send_photo 工具使用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           prompt: z.string().describe("图片描述/提示词（建议英文）"),
           size: z.enum(["1024x1024", "1024x1792", "1792x1024"]).optional().describe("图片尺寸"),

@@ -11,6 +11,9 @@ interface EmbeddingServiceConfig {
   dimensions: number;
 }
 
+// providerOptions key must match the `name` passed to createOpenAICompatible
+const EMBEDDING_PROVIDER_NAME = "embedding";
+
 export class EmbeddingService {
   private provider;
   private modelId: string;
@@ -19,7 +22,7 @@ export class EmbeddingService {
 
   constructor(config: EmbeddingServiceConfig, logger?: Logger) {
     this.provider = createOpenAICompatible({
-      name: "embedding",
+      name: EMBEDDING_PROVIDER_NAME,
       baseURL: config.baseURL,
       apiKey: config.apiKey,
     });
@@ -33,9 +36,11 @@ export class EmbeddingService {
   }
 
   private get model() {
-    return this.provider.textEmbeddingModel(this.modelId, {
-      dimensions: this._dimensions,
-    });
+    return this.provider.embeddingModel(this.modelId);
+  }
+
+  private get embeddingProviderOptions() {
+    return { [EMBEDDING_PROVIDER_NAME]: { dimensions: this._dimensions } };
   }
 
   async generateEmbedding(text: string): Promise<number[] | null> {
@@ -44,6 +49,7 @@ export class EmbeddingService {
       const { embedding } = await embed({
         model: this.model,
         value: truncated,
+        providerOptions: this.embeddingProviderOptions,
       });
       return embedding;
     } catch (err) {
@@ -59,6 +65,7 @@ export class EmbeddingService {
       const { embeddings } = await embedMany({
         model: this.model,
         values: truncated,
+        providerOptions: this.embeddingProviderOptions,
       });
       return embeddings;
     } catch (err) {

@@ -21,8 +21,8 @@ import {
   DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
 } from "@cos-tool-bot/shared";
-import type { CoreTool, LanguageModelV1 } from "ai";
-import { generateText } from "ai";
+import type { LanguageModel, Tool } from "ai";
+import { generateText, stepCountIs } from "ai";
 import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
@@ -46,7 +46,7 @@ const MAX_MESSAGE_LENGTH = 4096;
 const chatLocks = new Map<number, Promise<void>>();
 
 export interface ContinueChatConfig {
-  model: LanguageModelV1;
+  model: LanguageModel;
   modelId: string;
   systemPrompt: string;
   behavioralPrompt?: string;
@@ -61,8 +61,8 @@ export interface ContinueChatConfig {
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   timeoutConfig?: TimeoutConfig;
-  webTools?: Record<string, CoreTool>;
-  agentToolsFactory?: () => Record<string, CoreTool>;
+  webTools?: Record<string, Tool>;
+  agentToolsFactory?: () => Record<string, Tool>;
   dataFiles?: DataFilesConfig;
   pendingActions: PendingActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
@@ -198,7 +198,7 @@ async function doContinueChat(
       onceGuard,
     });
 
-    const allTools: Record<string, CoreTool> = {
+    const allTools: Record<string, Tool> = {
       ...telegramTools,
       ...behaviorTools,
       ...config.webTools,
@@ -265,7 +265,7 @@ async function doContinueChat(
         model: config.model,
         messages,
         tools: wrapToolsWithCache(allTools, requestCache),
-        maxSteps: 5,
+        stopWhen: stepCountIs(5),
         toolChoice: "auto",
         abortSignal: perStepAbort.signal,
         onStepFinish: () => {
@@ -282,9 +282,9 @@ async function doContinueChat(
       chatId,
       userId: event.userId,
       model: config.modelId,
-      promptTokens: result.usage.promptTokens,
-      completionTokens: result.usage.completionTokens,
-      totalTokens: result.usage.totalTokens,
+      promptTokens: result.usage.inputTokens ?? 0,
+      completionTokens: result.usage.outputTokens ?? 0,
+      totalTokens: result.usage.totalTokens ?? 0,
       durationMs,
       trigger: "event_continuation",
     });

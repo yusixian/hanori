@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AgentToolsConfig,
   AiGroupOverride,
@@ -25,9 +26,10 @@ import {
   DEFAULT_TIMEOUT_CONFIG,
   inferCapabilities,
 } from "@cos-tool-bot/shared";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { CoreMessage, CoreTool, CoreUserMessage } from "ai";
-import { generateText } from "ai";
+import type { LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
+import { generateText, stepCountIs } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { WrapperContext } from "../context.js";
 import { assembleContext } from "../services/context-assembler.js";
@@ -63,6 +65,7 @@ export interface AiReplyConfig {
   apiKey: string;
   baseURL: string;
   model: string;
+  providerFormat?: "openai" | "gemini";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -112,7 +115,7 @@ interface BufferedMessage {
 
 interface ToolResultEntry {
   toolName: string;
-  result: unknown;
+  output: unknown;
   toolCallId: string;
 }
 
@@ -209,10 +212,10 @@ const TOOL_STATUS_MAP: Record<string, string> = {
 };
 
 function wrapToolsWithStatus(
-  tools: Record<string, CoreTool>,
+  tools: Record<string, Tool>,
   ctx: WrapperContext,
-): Record<string, CoreTool> {
-  const wrapped: Record<string, CoreTool> = {};
+): Record<string, Tool> {
+  const wrapped: Record<string, Tool> = {};
   for (const [name, t] of Object.entries(tools)) {
     const status = TOOL_STATUS_MAP[name];
     if (!status || !("execute" in t) || typeof t.execute !== "function") {
@@ -390,29 +393,35 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     }
   }
 
-  // Create AI provider
-  const provider = createOpenAICompatible({
-    name: "custom",
-    baseURL: config.baseURL,
-    apiKey: config.apiKey,
-  });
+  // Create AI provider (singleton — avoid recreating on every call)
+  const provider: (modelId: string) => LanguageModel =
+    config.providerFormat === "gemini"
+      ? createGoogleGenerativeAI({
+          baseURL: config.baseURL,
+          apiKey: config.apiKey,
+        })
+      : createOpenAICompatible({
+          name: "custom",
+          baseURL: config.baseURL,
+          apiKey: config.apiKey,
+        });
 
   // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-  let memoryTools: Record<string, CoreTool> | undefined;
+  let memoryTools: Record<string, Tool> | undefined;
   if (memoryCfg.enabled && config.memory) {
     memoryTools = createMemoryTools(config.memory);
   }
 
   // Bot memory tools setup
   const botMemoryCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
-  let botMemoryTools: Record<string, CoreTool> | undefined;
+  let botMemoryTools: Record<string, Tool> | undefined;
   if (botMemoryCfg.enabled && config.botMemory) {
     botMemoryTools = createBotMemoryTools(config.botMemory);
   }
 
   // Web tools setup (singleton, not per-request)
-  let webTools: Record<string, CoreTool> | undefined;
+  let webTools: Record<string, Tool> | undefined;
   if (config.webToolsConfig?.enabled) {
     webTools = createWebTools({
       config: config.webToolsConfig,
@@ -421,7 +430,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   }
 
   // File tools setup (singleton, not per-request)
-  let fileTools: Record<string, CoreTool> | undefined;
+  let fileTools: Record<string, Tool> | undefined;
   if (config.dataFiles) {
     fileTools = createFileTools({
       dataDir: config.dataFiles.dataDir,
@@ -718,7 +727,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const currentModel = getModelForChat(chatId);
 
       // Create agent tools if enabled
-      let agentTools: Record<string, CoreTool> = {};
+      let agentTools: Record<string, Tool> = {};
       if (config.agentToolsConfig?.enabled) {
         agentTools = createAgentTools({
           provider: (m) => provider(m),
@@ -731,7 +740,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
 
       // Create artwork tools if enabled
-      let artworkTools: Record<string, CoreTool> = {};
+      let artworkTools: Record<string, Tool> = {};
       if (config.artworkToolsConfig?.enabled) {
         artworkTools = createArtworkTools({
           api: ctx.api,
@@ -839,9 +848,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
 
       // --- Assemble final user message (multimodal or text-only) ---
-      const aiMessages = messages as CoreMessage[];
+      const aiMessages = messages as ModelMessage[];
       if (imageBuffers.length > 0) {
-        const parts: CoreUserMessage["content"] = imageBuffers.map((img) => ({
+        const parts: UserModelMessage["content"] = imageBuffers.map((img) => ({
           type: "image" as const,
           image: img.buffer,
           mimeType: img.mimeType,
@@ -853,7 +862,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
 
       // Combine all tools
-      const allTools: Record<string, CoreTool> = {
+      const allTools: Record<string, Tool> = {
         ...memoryTools,
         ...botMemoryTools,
         ...actionTools,
@@ -875,14 +884,20 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // Debug: AI request
       const startTime = Date.now();
+      const staticPrefixHash = createHash("md5")
+        .update(typeof messages[0]?.content === "string" ? messages[0].content : "")
+        .digest("hex")
+        .slice(0, 8);
       config.onLog?.({
         level: "debug",
         message: "AI request",
         meta: {
           model: currentModel,
           baseURL: config.baseURL,
+          providerFormat: config.providerFormat ?? "openai",
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
+          staticPrefixHash,
           toolsEnabled: Object.keys(allTools),
           maxSteps,
           toolChoice,
@@ -907,7 +922,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           model: provider(currentModel),
           messages,
           tools: wrappedTools,
-          maxSteps,
+          stopWhen: stepCountIs(maxSteps),
           toolChoice,
           abortSignal: perStepAbort.signal,
           onStepFinish: ({ toolCalls, toolResults }) => {
@@ -922,7 +937,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                   meta: {
                     step: stepCounter,
                     toolName: tc.toolName,
-                    args: truncate(tc.args),
+                    args: truncate(tc.input),
                     toolCallId: tc.toolCallId,
                   },
                 });
@@ -937,7 +952,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                   meta: {
                     step: stepCounter,
                     toolName: tr.toolName,
-                    result: truncate(tr.result),
+                    result: truncate(tr.output),
                     toolCallId: tr.toolCallId,
                   },
                 });
@@ -973,6 +988,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       // Debug: AI response
       const totalToolCalls = result.steps.reduce((n, s) => n + s.toolCalls.length, 0);
       const totalToolResults = result.steps.reduce((n, s) => n + s.toolResults.length, 0);
+      // Provider metadata keys: google → cachedContentTokenCount, openai → cachedPromptTokens
+      const pm = result.providerMetadata;
+      const cachedTokens =
+        (pm?.google as Record<string, unknown> | undefined)?.cachedContentTokenCount ??
+        (pm?.openai as Record<string, unknown> | undefined)?.cachedPromptTokens ??
+        0;
       config.onLog?.({
         level: "debug",
         message: "AI response",
@@ -983,6 +1004,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           totalSteps: result.steps.length,
           finishReason: result.finishReason,
           usage: result.usage,
+          cachedTokens,
           totalToolCalls,
           totalToolResults,
         },
@@ -993,9 +1015,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         chatId,
         userId,
         model: currentModel,
-        promptTokens: result.usage.promptTokens,
-        completionTokens: result.usage.completionTokens,
-        totalTokens: result.usage.totalTokens,
+        promptTokens: result.usage.inputTokens ?? 0,
+        completionTokens: result.usage.outputTokens ?? 0,
+        totalTokens: result.usage.totalTokens ?? 0,
         durationMs,
         trigger: triggerResult as string,
       });
@@ -1067,7 +1089,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               content: tc.toolName,
               meta: {
                 toolName: tc.toolName,
-                args: JSON.stringify(tc.args),
+                args: JSON.stringify(tc.input),
                 toolCallId: tc.toolCallId,
               },
             });
@@ -1076,7 +1098,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             toSave.push({
               chatId,
               role: "tool_result",
-              content: typeof tr.result === "string" ? tr.result : JSON.stringify(tr.result),
+              content: typeof tr.output === "string" ? tr.output : JSON.stringify(tr.output),
               meta: {
                 toolName: tr.toolName,
                 toolCallId: tr.toolCallId,

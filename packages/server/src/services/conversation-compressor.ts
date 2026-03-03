@@ -1,5 +1,6 @@
 import type { ConversationConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { generateText } from "ai";
 import type { Logger } from "pino";
@@ -18,11 +19,12 @@ interface CompressOptions {
   apiKey: string;
   baseURL: string;
   model: string;
+  providerFormat?: "openai" | "gemini";
   logger: Logger;
 }
 
 export async function compressConversation(options: CompressOptions) {
-  const { botId, chatId, store, apiKey, baseURL, model, logger } = options;
+  const { botId, chatId, store, apiKey, baseURL, model, providerFormat, logger } = options;
   const cfg = options.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
 
   const messageCount = await store.getMessageCount(botId, chatId);
@@ -30,7 +32,7 @@ export async function compressConversation(options: CompressOptions) {
 
   if (cfg.autoSummarize) {
     try {
-      await compressWithLLM(botId, chatId, store, cfg, apiKey, baseURL, model);
+      await compressWithLLM(botId, chatId, store, cfg, apiKey, baseURL, model, providerFormat);
     } catch (err) {
       logger.warn(
         err,
@@ -51,6 +53,7 @@ async function compressWithLLM(
   apiKey: string,
   baseURL: string,
   model: string,
+  providerFormat?: "openai" | "gemini",
 ) {
   const oldMessages = await store.getOldestMessages(botId, chatId, cfg.maxContextMessages);
   if (oldMessages.length === 0) return;
@@ -68,7 +71,10 @@ async function compressWithLLM(
   }
 
   const result = await generateText({
-    model: createOpenAICompatible({ name: "custom", baseURL, apiKey })(model),
+    model:
+      providerFormat === "gemini"
+        ? createGoogleGenerativeAI({ baseURL, apiKey })(model)
+        : createOpenAICompatible({ name: "custom", baseURL, apiKey })(model),
     messages: [
       { role: "system", content: SUMMARIZE_PROMPT },
       { role: "user", content: contextText },

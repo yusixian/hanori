@@ -1,6 +1,6 @@
 import type { TimeoutConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_TIMEOUT_CONFIG, MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
+import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { InlineKeyboard, InputFile } from "grammy";
@@ -56,14 +56,14 @@ const ONCE_GUARDED_TELEGRAM_TOOLS = [
   "send_voice",
 ] as const;
 
-export function createTelegramTools(options: TelegramToolsOptions): Record<string, CoreTool> {
+export function createTelegramTools(options: TelegramToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, dataDir } = options;
 
-  const tools: Record<string, CoreTool> = {
+  const tools: Record<string, Tool> = {
     send_photo: tool({
       description:
         "发送图片给当前聊天。支持 URL、file_id，或 local:photo.png 发送 data 目录本地文件。可选 has_spoiler 遮罩（NSFW 内容）。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           photo: z.string().describe("图片 URL、file_id，或 local:filename 发送本地文件"),
           caption: z.string().optional().describe("图片说明文字"),
@@ -88,7 +88,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     send_document: tool({
       description:
         "发送文件给当前聊天。支持 URL、file_id，或 local:report.csv 发送 data 目录本地文件。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           document: z.string().describe("文件 URL、file_id，或 local:filename 发送本地文件"),
           caption: z.string().optional().describe("文件说明文字"),
@@ -108,7 +108,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     send_media_group: tool({
       description: "批量发送多张图片或文档。支持 URL、file_id、local:xxx 混合。最多 10 张。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           media: z
             .array(
@@ -161,7 +161,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     send_poll: tool({
       description:
         "在当前聊天发起投票。默认为非匿名投票，投票结果会自动通知你（AI），你可以根据结果继续对话。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           question: z.string().describe("投票问题"),
           poll_options: z.array(z.string()).min(2).max(10).describe("选项列表"),
@@ -206,7 +206,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     send_choice: tool({
       description:
         "发送 inline keyboard 选择按钮，用于快速选择场景（如 galgame 分支、问答、互动游戏等）。用户点击后你会自动收到通知并可继续对话。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           prompt: z.string().describe("选择提示文字，显示在按钮上方"),
           options: z.array(z.string()).min(2).max(8).describe("选项列表"),
@@ -253,7 +253,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     close_poll: tool({
       description: "手动关闭一个投票并获取最终结果。投票关闭后用户无法再投票。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           message_id: z.number().describe("投票消息的 message_id"),
         }),
@@ -279,7 +279,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     set_timer: tool({
       description:
         "设置一个定时器。到期后你（AI）会自动收到通知并可继续对话。可用于投票倒计时、游戏节奏控制、定时提醒等。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           seconds: z.number().min(5).max(3600).describe("定时秒数（5-3600）"),
           reason: z.string().describe("定时器用途说明，到期后会作为上下文提供给你"),
@@ -321,7 +321,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     cancel_timer: tool({
       description: "取消一个之前设置的定时器。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           timer_id: z.string().describe("要取消的定时器 ID"),
         }),
@@ -342,7 +342,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     send_dice: tool({
       description: "发送骰子/随机动画 emoji。可用的 emoji: 🎲🎯🏀⚽🎳🎰。趣味互动用。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           emoji: z
             .enum(["🎲", "🎯", "🏀", "⚽", "🎳", "🎰"])
@@ -364,7 +364,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     edit_own_message: tool({
       description:
         '编辑 bot 之前发过的消息内容。可以用来"改口"或更新信息。只能编辑 bot 自己发的消息。',
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           message_id: z.number().describe("要编辑的消息 ID（必须是 bot 自己发的消息）"),
           text: z.string().describe("新的消息内容"),
@@ -385,7 +385,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     delete_own_message: tool({
       description: '删除 bot 之前发过的消息。模拟"撤回"效果。只能删除 bot 自己发的消息。',
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           message_id: z.number().describe("要删除的消息 ID（必须是 bot 自己发的消息）"),
         }),
@@ -407,7 +407,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     pin_message: tool({
       description: "置顶一条消息。需要 bot 有管理员权限，无权限时会优雅降级。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           message_id: z.number().describe("要置顶的消息 ID"),
           disable_notification: z.boolean().optional().describe("是否静默置顶，默认 false"),
@@ -427,7 +427,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     get_chat_info: tool({
       description: "获取当前聊天的信息，包括群名、类型、人数、描述等。",
-      parameters: zodToAiSchema(z.object({})),
+      inputSchema: zodToAiSchema(z.object({})),
       execute: async () => {
         try {
           const [chat, memberCount] = await Promise.all([
@@ -450,7 +450,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     reply_to_specific: tool({
       description: "回复聊天中的某条特定历史消息。用于引用之前的某条消息进行回复。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           reply_to_message_id: z.number().describe("要回复的目标消息 ID"),
           text: z.string().describe("回复内容"),
@@ -475,7 +475,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     const ttsEndpoint = options.ttsEndpoint;
     tools.send_voice = tool({
       description: "发送语音消息。将文本转为语音后发送。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           text: z.string().describe("要转换为语音的文本"),
         }),
@@ -508,7 +508,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     tools.save_received_file = tool({
       description:
         "保存用户发来的文件/图片到 data/received 目录。保存后可用 send_photo/send_document 的 local:received/filename 发送回去。",
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           index: z.number().optional().describe("附件序号（从0开始），默认0"),
           filename: z.string().describe("保存的文件名，如 photo.jpg、report.pdf"),

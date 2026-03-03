@@ -25,6 +25,7 @@ interface AiConfigJson {
   encryptedApiKey: string | null;
   baseURL: string;
   model: string;
+  providerFormat?: "openai" | "gemini";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;

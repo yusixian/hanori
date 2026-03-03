@@ -5,16 +5,15 @@ import type {
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
-import type { CoreTool } from "ai";
-import { generateText, tool } from "ai";
-import type { LanguageModelV1 } from "ai";
+import type { LanguageModel, Tool } from "ai";
+import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
 import { createWebTools } from "./web.js";
 
 interface AgentDefinition {
   systemPrompt: string;
-  tools: Record<string, CoreTool>;
+  tools: Record<string, Tool>;
   maxSteps: number;
 }
 
@@ -24,7 +23,7 @@ function buildAgentDefinitions(
   timeoutConfig?: TimeoutConfig,
 ): Record<string, AgentDefinition> {
   // Build web tools for researcher if available
-  let webTools: Record<string, CoreTool> = {};
+  let webTools: Record<string, Tool> = {};
   if (webToolsConfig?.enabled) {
     webTools = createWebTools({ config: webToolsConfig, timeoutConfig });
   }
@@ -79,7 +78,7 @@ export function getAvailableAgentNames(
 }
 
 export interface AgentToolsOptions {
-  provider: (model: string) => LanguageModelV1;
+  provider: (model: string) => LanguageModel;
   model: string;
   agentConfig?: AgentToolsConfig;
   webToolsConfig?: WebToolsConfig;
@@ -87,7 +86,7 @@ export interface AgentToolsOptions {
   timeoutConfig?: TimeoutConfig;
 }
 
-export function createAgentTools(options: AgentToolsOptions): Record<string, CoreTool> {
+export function createAgentTools(options: AgentToolsOptions): Record<string, Tool> {
   const { provider, model, agentConfig, webToolsConfig, onLog, timeoutConfig } = options;
   const researcherTimeoutMs =
     timeoutConfig?.researcherAgentMs ?? DEFAULT_TIMEOUT_CONFIG.researcherAgentMs;
@@ -102,7 +101,7 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Cor
   return {
     delegate_task: tool({
       description: `将子任务委派给专门的 agent。可用 agents: ${availableAgents.join(", ")}。适合复杂任务分解，如深度研究、创意写作、代码分析、翻译等。`,
-      parameters: zodToAiSchema(
+      inputSchema: zodToAiSchema(
         z.object({
           agent: z.string().describe(`agent 名称，可选: ${availableAgents.join(", ")}`),
           task: z.string().describe("具体任务描述"),
@@ -130,7 +129,7 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Cor
             system: def.systemPrompt,
             prompt,
             tools: def.tools,
-            maxSteps,
+            stopWhen: stepCountIs(maxSteps),
             abortSignal: AbortSignal.timeout(
               agent === "researcher" ? researcherTimeoutMs : defaultAgentTimeoutMs,
             ),

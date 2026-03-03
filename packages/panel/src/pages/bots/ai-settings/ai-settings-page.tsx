@@ -88,6 +88,7 @@ export function BotAiSettingsPage() {
           enabled: config.enabled,
           apiKey: apiKey || undefined,
           baseURL: config.baseURL,
+          providerFormat: config.providerFormat,
           model: config.model,
           systemPrompt: config.systemPrompt,
           behavioralPrompt: config.behavioralPrompt || undefined,
