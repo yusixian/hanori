@@ -73,6 +73,7 @@ export interface ContinueChatConfig {
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  imageGenerationAllowed?: boolean;
 }
 
 export interface ContinueChatEvent {
@@ -239,26 +240,19 @@ async function doContinueChat(
       Object.assign(allTools, createBotMemoryTools(config.botMemory));
     }
 
-    // PixAI image generation (per-request, fire-and-forget)
-    if (
-      config.webToolsConfig?.imageGeneration?.provider === "pixai" &&
-      config.webToolsConfig.imageGeneration.apiKey
-    ) {
-      const { createPixAITool } = await import("../tools/pixai.js");
-      Object.assign(
-        allTools,
-        createPixAITool({
-          config: config.webToolsConfig.imageGeneration,
-          api,
-          chatId,
-          userId: event.userId,
-          recentBotMessageIds: chatBotMsgIds,
-          timeoutConfig: config.timeoutConfig,
-          onLog: config.onLog,
-          onGenerationTrack: config.onGenerationTrack,
-        }),
-      );
-    }
+    // PixAI image generation (per-request, fire-and-forget) + permission control
+    const { injectPixAITool } = await import("../tools/pixai.js");
+    await injectPixAITool(allTools, {
+      allowed: !!config.imageGenerationAllowed,
+      webToolsConfig: config.webToolsConfig,
+      api,
+      chatId,
+      userId: event.userId,
+      recentBotMessageIds: chatBotMsgIds,
+      timeoutConfig: config.timeoutConfig,
+      onLog: config.onLog,
+      onGenerationTrack: config.onGenerationTrack,
+    });
 
     // Artwork tools
     if (config.artworkToolsConfig?.enabled) {

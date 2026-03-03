@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import type { PixAIConfig, WebToolsConfig } from "@cos-tool-bot/shared";
 
 export function WebToolsSection({
@@ -333,6 +334,7 @@ function PixAIConfigFields({
 
   return (
     <>
+      {/* Model ID */}
       <div className="space-y-1.5">
         <label className="text-sm font-medium">Model ID</label>
         <Input
@@ -346,105 +348,307 @@ function PixAIConfigFields({
           (1811528826405408057)
         </p>
       </div>
+
+      {/* System Image Prompt */}
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Negative Prompts</label>
-        <Input
+        <label className="text-sm font-medium">System Image Prompt</label>
+        <textarea
           disabled={disabled}
-          value={pixaiConfig.negativePrompts ?? ""}
-          onChange={(e) => updatePixai({ negativePrompts: e.target.value || undefined })}
-          placeholder="Optional (official docs suggest leaving empty)"
+          className="border-input flex min-h-[60px] w-full rounded-md border bg-transparent px-3 py-2 text-sm disabled:opacity-50"
+          value={pixaiConfig.systemImagePrompt ?? ""}
+          onChange={(e) => updatePixai({ systemImagePrompt: e.target.value || undefined })}
+          placeholder="masterpiece, best quality, "
+          rows={2}
         />
+        <p className="text-muted-foreground text-xs">
+          附加在每次 AI 调用生图时 prompt 前面的系统提示词
+        </p>
       </div>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+
+      {/* Basic Settings */}
+      <div className="space-y-4">
+        <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+          Basic Settings
+        </p>
+
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          {/* API Mode */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">API Mode</label>
+            <Select
+              disabled={disabled}
+              value={pixaiConfig.apiMode ?? "graphql"}
+              onChange={(e) => updatePixai({ apiMode: e.target.value as "graphql" | "rest" })}
+            >
+              <option value="graphql">GraphQL (Recommended)</option>
+              <option value="rest">REST</option>
+            </Select>
+          </div>
+
+          {/* Seed */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Seed</label>
+            <Input
+              disabled={disabled}
+              value={pixaiConfig.seed ?? ""}
+              onChange={(e) => updatePixai({ seed: e.target.value || undefined })}
+              placeholder="Random"
+            />
+          </div>
+
+          {/* Priority */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Priority</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={0}
+              max={10000}
+              value={pixaiConfig.priority ?? ""}
+              onChange={(e) =>
+                updatePixai({ priority: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="1000"
+            />
+          </div>
+        </div>
+
+        {/* Negative Prompts */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Width</label>
+          <label className="text-sm font-medium">Negative Prompts</label>
           <Input
-            type="number"
             disabled={disabled}
-            min={512}
-            max={1280}
-            value={pixaiConfig.width ?? ""}
-            onChange={(e) =>
-              updatePixai({ width: e.target.value ? Number(e.target.value) : undefined })
-            }
-            placeholder="768"
+            value={pixaiConfig.negativePrompts ?? ""}
+            onChange={(e) => updatePixai({ negativePrompts: e.target.value || undefined })}
+            placeholder="Optional (official docs suggest leaving empty)"
           />
         </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Height</label>
-          <Input
-            type="number"
-            disabled={disabled}
-            min={512}
-            max={1280}
-            value={pixaiConfig.height ?? ""}
-            onChange={(e) =>
-              updatePixai({ height: e.target.value ? Number(e.target.value) : undefined })
-            }
-            placeholder="1280"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Batch Size</label>
-          <Input
-            type="number"
-            disabled={disabled}
-            min={1}
-            max={4}
-            value={pixaiConfig.batchSize ?? ""}
-            onChange={(e) =>
-              updatePixai({ batchSize: e.target.value ? Number(e.target.value) : undefined })
-            }
-            placeholder="1"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">Sampling Steps</label>
-          <Input
-            type="number"
-            disabled={disabled}
-            min={8}
-            max={50}
-            value={pixaiConfig.samplingSteps ?? ""}
-            onChange={(e) =>
-              updatePixai({
-                samplingSteps: e.target.value ? Number(e.target.value) : undefined,
-              })
-            }
-            placeholder="20"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">CFG Scale</label>
-          <Input
-            type="number"
-            disabled={disabled}
-            min={1.1}
-            max={15}
-            step={0.1}
-            value={pixaiConfig.cfgScale ?? ""}
-            onChange={(e) =>
-              updatePixai({ cfgScale: e.target.value ? Number(e.target.value) : undefined })
-            }
-            placeholder="5"
-          />
-          <p className="text-muted-foreground text-xs">建议 &lt; 7</p>
+
+        {/* Width / Height / Batch Size */}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Width</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={512}
+              max={1280}
+              value={pixaiConfig.width ?? ""}
+              onChange={(e) =>
+                updatePixai({ width: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="768"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Height</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={512}
+              max={1280}
+              value={pixaiConfig.height ?? ""}
+              onChange={(e) =>
+                updatePixai({ height: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="1280"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Batch Size</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={1}
+              max={4}
+              value={pixaiConfig.batchSize ?? ""}
+              onChange={(e) =>
+                updatePixai({ batchSize: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="1"
+            />
+          </div>
         </div>
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id="pixaiPromptHelper"
-          disabled={disabled}
-          checked={pixaiConfig.promptHelper ?? false}
-          onChange={(e) => updatePixai({ promptHelper: e.target.checked || undefined })}
-          className="border-input h-4 w-4 rounded"
-        />
-        <label htmlFor="pixaiPromptHelper" className="text-sm font-medium">
-          Prompt Helper
-        </label>
-        <span className="text-muted-foreground text-xs">(需额外扣费)</span>
+
+      {/* Generation Settings */}
+      <div className="space-y-4">
+        <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+          Generation Settings
+        </p>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Sampling Steps</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={8}
+              max={50}
+              value={pixaiConfig.samplingSteps ?? ""}
+              onChange={(e) =>
+                updatePixai({
+                  samplingSteps: e.target.value ? Number(e.target.value) : undefined,
+                })
+              }
+              placeholder="20"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">CFG Scale</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={1.1}
+              max={15}
+              step={0.1}
+              value={pixaiConfig.cfgScale ?? ""}
+              onChange={(e) =>
+                updatePixai({ cfgScale: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="5"
+            />
+            <p className="text-muted-foreground text-xs">建议 &lt; 7</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Clip Skip</label>
+            <Input
+              type="number"
+              disabled={disabled}
+              min={1}
+              max={12}
+              value={pixaiConfig.clipSkip ?? ""}
+              onChange={(e) =>
+                updatePixai({ clipSkip: e.target.value ? Number(e.target.value) : undefined })
+              }
+              placeholder="2"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Sampling Method</label>
+            <Input
+              disabled={disabled}
+              value={pixaiConfig.samplingMethod ?? ""}
+              onChange={(e) => updatePixai({ samplingMethod: e.target.value || undefined })}
+              placeholder="Euler"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Inference Profile</label>
+            <Input
+              disabled={disabled}
+              value={pixaiConfig.inferenceProfile ?? ""}
+              onChange={(e) => updatePixai({ inferenceProfile: e.target.value || undefined })}
+              placeholder="standard"
+            />
+          </div>
+        </div>
       </div>
+
+      {/* Toggles */}
+      <div className="space-y-3">
+        <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
+          Switches
+        </p>
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="pixaiPromptHelper"
+              disabled={disabled}
+              checked={pixaiConfig.promptHelper ?? false}
+              onChange={(e) => updatePixai({ promptHelper: e.target.checked || undefined })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="pixaiPromptHelper" className="text-sm font-medium">
+              Prompt Helper
+            </label>
+            <span className="text-muted-foreground text-xs">(需额外扣费)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="pixaiLightning"
+              disabled={disabled}
+              checked={pixaiConfig.lightning ?? false}
+              onChange={(e) => updatePixai({ lightning: e.target.checked || undefined })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="pixaiLightning" className="text-sm font-medium">
+              Lightning Mode
+            </label>
+            <span className="text-muted-foreground text-xs">(快速生成)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="pixaiPrivate"
+              disabled={disabled}
+              checked={pixaiConfig.isPrivate ?? false}
+              onChange={(e) => updatePixai({ isPrivate: e.target.checked || undefined })}
+              className="border-input h-4 w-4 rounded"
+            />
+            <label htmlFor="pixaiPrivate" className="text-sm font-medium">
+              Private Mode
+            </label>
+          </div>
+        </div>
+      </div>
+
+      {/* Advanced (collapsible) */}
+      <details className="space-y-4">
+        <summary className="text-muted-foreground cursor-pointer text-xs font-medium tracking-wider uppercase">
+          Advanced Settings
+        </summary>
+        <div className="mt-4 space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Model Style Key ID</label>
+            <Input
+              disabled={disabled}
+              value={pixaiConfig.modelStyle?.keyId ?? ""}
+              onChange={(e) =>
+                updatePixai({
+                  modelStyle: e.target.value ? { type: "key", keyId: e.target.value } : undefined,
+                })
+              }
+              placeholder="glossy-glass-anime"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Quality Tag Prefix</label>
+              <Input
+                disabled={disabled}
+                value={pixaiConfig.qualityTag?.prefix ?? ""}
+                onChange={(e) => {
+                  const suffix = pixaiConfig.qualityTag?.suffix ?? "";
+                  if (e.target.value || suffix) {
+                    updatePixai({ qualityTag: { prefix: e.target.value, suffix } });
+                  } else {
+                    updatePixai({ qualityTag: undefined });
+                  }
+                }}
+                placeholder="masterpiece, best quality, "
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Quality Tag Suffix</label>
+              <Input
+                disabled={disabled}
+                value={pixaiConfig.qualityTag?.suffix ?? ""}
+                onChange={(e) => {
+                  const prefix = pixaiConfig.qualityTag?.prefix ?? "";
+                  if (prefix || e.target.value) {
+                    updatePixai({ qualityTag: { prefix, suffix: e.target.value } });
+                  } else {
+                    updatePixai({ qualityTag: undefined });
+                  }
+                }}
+                placeholder=""
+              />
+            </div>
+          </div>
+        </div>
+      </details>
     </>
   );
 }

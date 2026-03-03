@@ -7,15 +7,19 @@ import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
 import Editor from "@monaco-editor/react";
 import {
   Check,
+  ChevronRight,
   Download,
   File,
   FilePlus,
+  Folder,
   FolderOpen,
   Image as ImageIcon,
   Loader2,
   PackagePlus,
   Save,
   Shield,
+  Square,
+  SquareCheckBig,
   Trash2,
   X,
 } from "lucide-react";
@@ -65,6 +69,14 @@ function formatBytes(bytes: number): string {
   return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
+/** Encode each segment of a path like `generations/foo.png` */
+function encodeFilePath(filePath: string): string {
+  return filePath
+    .split("/")
+    .map((s) => encodeURIComponent(s))
+    .join("/");
+}
+
 export function BotFilesPage() {
   const { botId } = useParams<{ botId: string }>();
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -82,6 +94,13 @@ export function BotFilesPage() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const imageUrlRef = useRef<string | null>(null);
+
+  // Directory browsing state
+  const [currentPath, setCurrentPath] = useState("");
+
+  // Multi-select state
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   // Injection config state
   const [injection, setInjection] = useState<InjectionConfig>({
@@ -105,30 +124,50 @@ export function BotFilesPage() {
   const ext = selectedFile ? selectedFile.slice(selectedFile.lastIndexOf(".")) : "";
   const editorLanguage = EXT_LANG[ext] ?? "markdown";
 
-  const loadFiles = useCallback(async () => {
-    if (!botId) return;
-    setLoading(true);
-    try {
-      const res = await client.api.bots[":botId"].files.$get({
-        param: { botId },
-      });
-      const json = await res.json();
-      if (json.ok) {
-        setFiles(json.files);
-        if (json.injection) {
-          setInjection(json.injection);
+  const loadFiles = useCallback(
+    async (dirPath?: string) => {
+      if (!botId) return;
+      const pathToLoad = dirPath ?? currentPath;
+      setLoading(true);
+      try {
+        const res = await client.api.bots[":botId"].files.$get({
+          param: { botId },
+          query: pathToLoad ? { path: pathToLoad } : {},
+        });
+        const json = await res.json();
+        if (json.ok) {
+          setFiles(json.files);
+          if (json.injection) {
+            setInjection(json.injection);
+          }
         }
+      } catch (err) {
+        console.error("Failed to load files:", err);
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      console.error("Failed to load files:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId]);
+    },
+    [botId, currentPath],
+  );
 
+  // Initial load only
   useEffect(() => {
     loadFiles();
-  }, [loadFiles]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount / botId change
+  }, [botId]);
+
+  // Clear selection when navigating directories and load new path directly
+  const navigateTo = useCallback(
+    (dirPath: string) => {
+      setCurrentPath(dirPath);
+      setSelectedFiles(new Set());
+      setSelectedFile(null);
+      setContent("");
+      setOriginalContent("");
+      loadFiles(dirPath);
+    },
+    [loadFiles],
+  );
 
   // Revoke previous blob URL when switching files
   const revokeImageUrl = useCallback(() => {
@@ -149,27 +188,25 @@ export function BotFilesPage() {
   // Hono RPC client doesn't support wildcard routes (/:botId/files/*),
   // so file read/write/delete use raw authFetch instead of the typed client.
   const loadFile = useCallback(
-    async (fileName: string) => {
+    async (filePath: string) => {
       if (!botId) return;
       revokeImageUrl();
       setFileLoading(true);
       setContent("");
       setOriginalContent("");
 
-      const category = getFileCategory(fileName);
+      const category = getFileCategory(filePath);
 
       try {
         if (category === "text") {
-          const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(fileName)}`);
+          const res = await authFetch(`/api/bots/${botId}/files/${encodeFilePath(filePath)}`);
           const json = (await res.json()) as ApiResult;
           if (json.ok && json.content != null) {
             setContent(json.content);
             setOriginalContent(json.content);
           }
         } else if (category === "image") {
-          const res = await authFetch(
-            `/api/bots/${botId}/files-raw/${encodeURIComponent(fileName)}`,
-          );
+          const res = await authFetch(`/api/bots/${botId}/files-raw/${encodeFilePath(filePath)}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
@@ -178,7 +215,7 @@ export function BotFilesPage() {
         }
         // binary: no content to load, just select the file
         setFileCategory(category);
-        setSelectedFile(fileName);
+        setSelectedFile(filePath);
       } catch (err) {
         console.error("Failed to load file:", err);
       } finally {
@@ -192,7 +229,7 @@ export function BotFilesPage() {
     if (!botId || !selectedFile) return;
     setSaving(true);
     try {
-      const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(selectedFile)}`, {
+      const res = await authFetch(`/api/bots/${botId}/files/${encodeFilePath(selectedFile)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
@@ -210,15 +247,18 @@ export function BotFilesPage() {
   }, [botId, selectedFile, content, loadFiles]);
 
   const downloadFile = useCallback(
-    async (fileName: string) => {
+    async (filePath: string) => {
       if (!botId) return;
       setDownloading(true);
       try {
         const res = await authFetch(
-          `/api/bots/${botId}/files-raw/${encodeURIComponent(fileName)}?download=true`,
+          `/api/bots/${botId}/files-raw/${encodeFilePath(filePath)}?download=true`,
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const blob = await res.blob();
+        const fileName = filePath.includes("/")
+          ? filePath.slice(filePath.lastIndexOf("/") + 1)
+          : filePath;
         triggerDownload(blob, fileName);
       } catch (err) {
         console.error("Failed to download file:", err);
@@ -230,16 +270,19 @@ export function BotFilesPage() {
   );
 
   const deleteFile = useCallback(
-    async (fileName: string) => {
+    async (filePath: string) => {
       if (!botId) return;
+      const fileName = filePath.includes("/")
+        ? filePath.slice(filePath.lastIndexOf("/") + 1)
+        : filePath;
       if (!confirm(`Delete "${fileName}"?`)) return;
       try {
-        const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(fileName)}`, {
+        const res = await authFetch(`/api/bots/${botId}/files/${encodeFilePath(filePath)}`, {
           method: "DELETE",
         });
         const json = (await res.json()) as ApiResult;
         if (json.ok) {
-          if (selectedFile === fileName) {
+          if (selectedFile === filePath) {
             setSelectedFile(null);
             setContent("");
             setOriginalContent("");
@@ -253,6 +296,33 @@ export function BotFilesPage() {
     [botId, selectedFile, loadFiles],
   );
 
+  const deleteBatch = useCallback(async () => {
+    if (!botId || selectedFiles.size === 0) return;
+    if (!confirm(`Delete ${selectedFiles.size} file(s)?`)) return;
+    setDeleting(true);
+    try {
+      const res = await authFetch(`/api/bots/${botId}/files-delete-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ files: [...selectedFiles] }),
+      });
+      const json = (await res.json()) as { ok: boolean; deleted?: string[]; skipped?: string[] };
+      if (json.ok) {
+        if (selectedFile && selectedFiles.has(selectedFile)) {
+          setSelectedFile(null);
+          setContent("");
+          setOriginalContent("");
+        }
+        setSelectedFiles(new Set());
+        await loadFiles();
+      }
+    } catch (err) {
+      console.error("Failed to batch delete:", err);
+    } finally {
+      setDeleting(false);
+    }
+  }, [botId, selectedFiles, selectedFile, loadFiles]);
+
   const createFile = useCallback(async () => {
     if (!botId || !newFileName.trim()) return;
     setCreating(true);
@@ -260,7 +330,8 @@ export function BotFilesPage() {
       const name = newFileName.trim().endsWith(".md")
         ? newFileName.trim()
         : `${newFileName.trim()}.md`;
-      const res = await authFetch(`/api/bots/${botId}/files/${encodeURIComponent(name)}`, {
+      const filePath = currentPath ? `${currentPath}/${name}` : name;
+      const res = await authFetch(`/api/bots/${botId}/files/${encodeFilePath(filePath)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: `# ${name.replace(".md", "")}\n\n` }),
@@ -270,14 +341,14 @@ export function BotFilesPage() {
         setNewFileName("");
         setShowNewFile(false);
         await loadFiles();
-        await loadFile(name);
+        await loadFile(filePath);
       }
     } catch (err) {
       console.error("Failed to create file:", err);
     } finally {
       setCreating(false);
     }
-  }, [botId, newFileName, loadFiles, loadFile]);
+  }, [botId, newFileName, currentPath, loadFiles, loadFile]);
 
   const initTemplates = useCallback(async () => {
     if (!botId) return;
@@ -359,17 +430,55 @@ export function BotFilesPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isDirty, selectedFile, saveFile, fileCategory]);
 
-  // Compute injection summary
+  // Compute injection summary (only for root-level .md files)
   const injectedFiles = files.filter(
-    (f) => f.name.endsWith(".md") && injection.injectableFiles.includes(f.name),
+    (f) =>
+      f.type === "file" && f.name.endsWith(".md") && injection.injectableFiles.includes(f.path),
   );
   const injectedSize = injectedFiles.reduce((sum, f) => sum + f.size, 0);
+
+  // Multi-select helpers
+  const selectableFiles = files.filter(
+    (f) => f.type === "file" && !injection.injectableFiles.includes(f.path),
+  );
+  const allSelected =
+    selectableFiles.length > 0 && selectableFiles.every((f) => selectedFiles.has(f.path));
+
+  const toggleFileSelect = (filePath: string) => {
+    setSelectedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filePath)) next.delete(filePath);
+      else next.add(filePath);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(selectableFiles.map((f) => f.path)));
+    }
+  };
+
+  // Breadcrumb segments
+  const pathSegments = currentPath ? currentPath.split("/") : [];
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold tracking-tight">Files</h1>
         <div className="flex items-center gap-2">
+          {selectedFiles.size > 0 && (
+            <Button variant="destructive" size="sm" onClick={deleteBatch} disabled={deleting}>
+              {deleting ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-1 h-4 w-4" />
+              )}
+              Delete Selected ({selectedFiles.size})
+            </Button>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -453,14 +562,53 @@ export function BotFilesPage() {
 
       <div className="flex gap-4" style={{ height: "calc(100dvh - 220px)" }}>
         {/* File list sidebar */}
-        <Card className="w-60 shrink-0 overflow-hidden">
+        <Card className="w-64 shrink-0 overflow-hidden">
           <CardHeader className="py-3">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <FolderOpen className="h-4 w-4" />
-              /data/{botId}
+            <CardTitle className="flex items-center gap-1 text-sm">
+              <FolderOpen className="h-4 w-4 shrink-0" />
+              <button
+                type="button"
+                className="hover:text-foreground cursor-pointer hover:underline"
+                onClick={() => navigateTo("")}
+              >
+                /data/{botId}
+              </button>
+              {pathSegments.map((seg, i) => (
+                <span
+                  key={pathSegments.slice(0, i + 1).join("/")}
+                  className="flex items-center gap-1"
+                >
+                  <ChevronRight className="h-3 w-3 shrink-0 opacity-50" />
+                  <button
+                    type="button"
+                    className="hover:text-foreground cursor-pointer truncate hover:underline"
+                    onClick={() => navigateTo(pathSegments.slice(0, i + 1).join("/"))}
+                  >
+                    {seg}
+                  </button>
+                </span>
+              ))}
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-1 overflow-y-auto px-2 pb-2">
+            {/* Select all / batch controls */}
+            {selectableFiles.length > 0 && (
+              <div className="flex items-center gap-1.5 border-b px-2 pb-1.5">
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs transition-colors"
+                  onClick={toggleSelectAll}
+                >
+                  {allSelected ? (
+                    <SquareCheckBig className="h-3.5 w-3.5" />
+                  ) : (
+                    <Square className="h-3.5 w-3.5" />
+                  )}
+                  Select all
+                </button>
+              </div>
+            )}
+
             {showNewFile && (
               <div className="flex items-center gap-1 px-1">
                 <Input
@@ -509,70 +657,101 @@ export function BotFilesPage() {
               </div>
             ) : files.length === 0 ? (
               <div className="text-muted-foreground px-2 py-4 text-center text-xs">
-                No files yet. Click "Init Templates" to create default files.
+                {currentPath
+                  ? "Empty directory."
+                  : 'No files yet. Click "Init Templates" to create default files.'}
               </div>
             ) : (
-              files
-                .filter((f) => f.type === "file")
-                .map((file) => {
-                  const isMd = file.name.endsWith(".md");
-                  const isInjectable = injection.injectableFiles.includes(file.name);
-                  const category = getFileCategory(file.name);
+              files.map((file) => {
+                if (file.type === "dir") {
                   return (
                     <div
-                      key={file.name}
-                      className={`group flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors ${
-                        selectedFile === file.name
-                          ? "bg-accent text-accent-foreground"
-                          : "hover:bg-accent/50"
-                      }`}
-                      onClick={() => loadFile(file.name)}
+                      key={file.path}
+                      className="hover:bg-accent/50 group flex cursor-pointer items-center gap-1.5 rounded px-2 py-1.5 text-sm transition-colors"
+                      onClick={() => navigateTo(file.path)}
                     >
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        {isMd ? (
-                          <button
-                            type="button"
-                            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
-                              isInjectable
-                                ? "border-blue-500 bg-blue-500 text-white"
-                                : "border-muted-foreground/30 hover:border-blue-400"
-                            }`}
-                            title={
-                              isInjectable
-                                ? "Injected into system prompt (click to remove)"
-                                : "Click to inject into system prompt"
-                            }
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleInjectable(file.name);
-                            }}
-                            disabled={savingInjection}
-                          >
-                            {isInjectable && <Check className="h-2.5 w-2.5" />}
-                          </button>
-                        ) : category === "image" ? (
-                          <ImageIcon className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                        ) : (
-                          <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
-                        )}
-                        <span className="truncate">{file.name}</span>
-                      </div>
-                      {!isInjectable && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteFile(file.name);
-                          }}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      )}
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                      <span className="truncate">{file.name}</span>
                     </div>
                   );
-                })
+                }
+
+                const isInRoot = !currentPath;
+                const isMd = file.name.endsWith(".md");
+                const isInjectable = injection.injectableFiles.includes(file.path);
+                const isSelected = selectedFiles.has(file.path);
+                const category = getFileCategory(file.name);
+
+                return (
+                  <div
+                    key={file.path}
+                    className={`group flex cursor-pointer items-center justify-between rounded px-2 py-1.5 text-sm transition-colors ${
+                      selectedFile === file.path
+                        ? "bg-accent text-accent-foreground"
+                        : "hover:bg-accent/50"
+                    }`}
+                    onClick={() => loadFile(file.path)}
+                  >
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      {isInRoot && isMd ? (
+                        <button
+                          type="button"
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                            isInjectable
+                              ? "border-blue-500 bg-blue-500 text-white"
+                              : "border-muted-foreground/30 hover:border-blue-400"
+                          }`}
+                          title={
+                            isInjectable
+                              ? "Injected into system prompt (click to remove)"
+                              : "Click to inject into system prompt"
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleInjectable(file.path);
+                          }}
+                          disabled={savingInjection}
+                        >
+                          {isInjectable && <Check className="h-2.5 w-2.5" />}
+                        </button>
+                      ) : !isInjectable ? (
+                        <button
+                          type="button"
+                          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
+                            isSelected
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-muted-foreground/30 hover:border-muted-foreground/60"
+                          }`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFileSelect(file.path);
+                          }}
+                        >
+                          {isSelected && <Check className="h-2.5 w-2.5" />}
+                        </button>
+                      ) : category === "image" ? (
+                        <ImageIcon className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                      ) : (
+                        <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                      )}
+                      <span className="truncate">{file.name}</span>
+                    </div>
+                    {!isInjectable && !isSelected && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteFile(file.path);
+                        }}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </CardContent>
         </Card>

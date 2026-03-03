@@ -255,7 +255,7 @@ export { createBehaviorTools } from "./behavior.js";
 export type { BehaviorToolsOptions, MoodInfo } from "./behavior.js";
 export { createWebTools } from "./web.js";
 export type { WebToolsOptions } from "./web.js";
-export { createPixAITool, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
+export { createPixAITool, injectPixAITool, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
 export type { PixAIToolsOptions } from "./pixai.js";
 export { createAgentTools, getAvailableAgentNames } from "./agents.js";
 export type { AgentToolsOptions } from "./agents.js";

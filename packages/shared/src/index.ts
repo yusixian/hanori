@@ -9,5 +9,6 @@ export {
   IMAGE_EXTENSIONS,
   CONTENT_TYPE_MAP,
   resolveAndValidate,
+  resolveAndValidateDir,
   getDataDir,
 } from "./file-validation.js";

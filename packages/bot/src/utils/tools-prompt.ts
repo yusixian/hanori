@@ -67,7 +67,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     if (opts.hasImageGeneration) {
       if (opts.imageGenerationProvider === "pixai") {
         lines.push(
-          "- generate_image: 使用 PixAI 生成高质量 AI 图片，图片会在后台生成完成后自动发送到聊天",
+          "- generate_image: 使用指定 AI 模型生成高质量 AI 图片，图片会在后台生成完成后自动发送到聊天",
         );
       } else {
         lines.push("- generate_image: AI 生成图片，配合 send_photo 发送");

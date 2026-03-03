@@ -132,6 +132,7 @@ export interface AiGroupOverride {
   triggerConfig?: Partial<AiTriggerConfig>;
   conversationEnabled?: boolean;
   maxContextMessages?: number;
+  imageGenerationEnabled?: boolean;
 }
 
 export interface ConversationConfig {
@@ -197,6 +198,7 @@ export interface ConversationCallbacks {
 }
 
 export interface PixAIConfig {
+  // 基本参数
   negativePrompts?: string;
   samplingSteps?: number; // default 20, range 8-50
   cfgScale?: number; // default 5, range 1.1-15
@@ -204,6 +206,27 @@ export interface PixAIConfig {
   height?: number; // default 1280, range 512-1280
   batchSize?: number; // default 1, range 1-4
   promptHelper?: boolean; // default false (额外扣费)
+
+  // 系统生图提示词（附加在每次生图 prompt 前面）
+  systemImagePrompt?: string;
+
+  // API 模式
+  apiMode?: "graphql" | "rest"; // 默认 "graphql"
+
+  // 通用参数
+  priority?: number; // 默认 1000
+  seed?: string; // 空字符串=随机
+  clipSkip?: number; // 默认 2
+  lightning?: boolean; // 快速模式
+
+  // 模型相关
+  modelStyle?: { type: "key"; keyId: string };
+  inferenceProfile?: string; // 如 "standard"
+  samplingMethod?: string; // 如 "Euler"
+  qualityTag?: { prefix: string; suffix: string };
+
+  // 高级
+  isPrivate?: boolean;
 }
 
 export interface WebToolsConfig {

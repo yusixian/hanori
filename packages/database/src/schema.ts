@@ -96,6 +96,17 @@ interface AiConfigJson {
         height?: number;
         batchSize?: number;
         promptHelper?: boolean;
+        systemImagePrompt?: string;
+        apiMode?: "graphql" | "rest";
+        priority?: number;
+        seed?: string;
+        clipSkip?: number;
+        lightning?: boolean;
+        modelStyle?: { type: "key"; keyId: string };
+        inferenceProfile?: string;
+        samplingMethod?: string;
+        qualityTag?: { prefix: string; suffix: string };
+        isPrivate?: boolean;
       };
     };
   };

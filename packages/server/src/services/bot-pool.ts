@@ -360,6 +360,44 @@ export class BotPool {
           },
           dataFiles,
           privateChatWhitelist: aiConfig.privateChatWhitelist,
+          onGroupOverrideUpdate: async (chatId, override) => {
+            try {
+              const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return;
+              await this.db
+                .update(bots)
+                .set({
+                  aiConfig: {
+                    ...current.aiConfig,
+                    groupOverrides: {
+                      ...current.aiConfig.groupOverrides,
+                      [String(chatId)]: override,
+                    },
+                  },
+                })
+                .where(eq(bots.id, botId));
+            } catch (err) {
+              this.logger.error(err, "Failed to persist group override update");
+            }
+          },
+          onPixaiConfigUpdate: async (updates) => {
+            try {
+              const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return;
+              const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
+              if (!imgGen) return;
+              if (updates.model !== undefined) imgGen.model = updates.model;
+              if (updates.pixaiConfig) {
+                imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
+              }
+              await this.db
+                .update(bots)
+                .set({ aiConfig: { ...current.aiConfig } })
+                .where(eq(bots.id, botId));
+            } catch (err) {
+              this.logger.error(err, "Failed to persist pixai config update");
+            }
+          },
         };
       }
     }

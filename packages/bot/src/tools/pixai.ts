@@ -1,5 +1,6 @@
 import type {
   BotLogEntry,
+  PixAIConfig,
   PixAIGenerationRecord,
   TimeoutConfig,
   WebToolsConfig,
@@ -15,7 +16,44 @@ import { zodToAiSchema } from "./utils.js";
 /** Default model ID: Tsubaki v1.1 */
 export const PIXAI_DEFAULT_MODEL_ID = "1935090615918113018";
 
-// --- PixAI API types ---
+// --- PixAI API endpoints ---
+
+const PIXAI_REST_URL = "https://api.pixai.art/v1";
+const GRAPHQL_ENDPOINT = "https://api.pixai.art/graphql";
+
+// --- GraphQL documents ---
+
+const CREATE_TASK_MUTATION = `
+mutation createGenerationTask($parameters: JSONObject!) {
+  createGenerationTask(parameters: $parameters) {
+    id
+    status
+    outputs
+  }
+}`;
+
+const GET_TASK_QUERY = `
+query getTaskById($id: ID!) {
+  task(id: $id) {
+    id
+    status
+    outputs
+    media {
+      id
+      urls {
+        variant
+        url
+      }
+    }
+  }
+}`;
+
+// --- Types ---
+
+interface TaskPollResult {
+  urls: string[];
+  mediaIds: string[];
+}
 
 interface PixAITaskResponse {
   id: string;
@@ -23,28 +61,194 @@ interface PixAITaskResponse {
   outputs?: {
     mediaUrls?: Array<string | null>;
     mediaIds?: Array<string | null>;
+    batch?: Array<{ mediaId?: string }>;
+    mediaId?: string;
   };
   error?: string;
+  media?: Array<{
+    id: string;
+    urls: Array<{ variant: string; url: string }>;
+  }>;
 }
 
-// --- PixAI REST client ---
+interface GraphQLResponse<T> {
+  data?: T;
+  errors?: Array<{ message: string }>;
+}
 
-const PIXAI_BASE_URL = "https://api.pixai.art/v1";
+// --- PixAI Client (dual-mode: GraphQL + REST) ---
+
+type ApiMode = "graphql" | "rest";
+
+function buildPromptHelperParam(enabled?: boolean) {
+  if (!enabled) return undefined;
+  return { withStage: true, userWantToEnable: true, enable: true };
+}
+
+interface CreateTaskParams {
+  prompts: string;
+  modelId: string;
+  negativePrompts?: string;
+  width?: number;
+  height?: number;
+  batchSize?: number;
+  samplingSteps?: number;
+  cfgScale?: number;
+  promptHelper?: boolean;
+  seed?: string;
+  priority?: number;
+  clipSkip?: number;
+  lightning?: boolean;
+  controlNets?: unknown[];
+  modelStyle?: { type: "key"; keyId: string };
+  inferenceProfile?: string;
+  samplingMethod?: string;
+  qualityTag?: { prefix: string; suffix: string };
+  isPrivate?: boolean;
+}
 
 class PixAIClient {
-  constructor(private apiKey: string) {}
+  constructor(
+    private apiKey: string,
+    private apiMode: ApiMode = "graphql",
+  ) {}
 
-  async createTask(params: {
-    prompts: string;
-    modelId: string;
-    negativePrompts?: string;
-    width?: number;
-    height?: number;
-    batchSize?: number;
-    samplingSteps?: number;
-    cfgScale?: number;
-    promptHelper?: boolean;
-  }): Promise<PixAITaskResponse> {
+  async createTask(params: CreateTaskParams): Promise<PixAITaskResponse> {
+    if (this.apiMode === "graphql") {
+      return this.createTaskGraphQL(params);
+    }
+    return this.createTaskREST(params);
+  }
+
+  async getTask(taskId: string): Promise<PixAITaskResponse> {
+    if (this.apiMode === "graphql") {
+      return this.getTaskGraphQL(taskId);
+    }
+    return this.getTaskREST(taskId);
+  }
+
+  async pollUntilComplete(
+    taskId: string,
+    timeoutMs: number,
+    intervalMs = 5000,
+  ): Promise<TaskPollResult> {
+    const deadline = Date.now() + timeoutMs;
+
+    // Initial delay: image generation takes several seconds at minimum
+    await sleep(intervalMs);
+
+    while (Date.now() < deadline) {
+      const task = await this.getTask(taskId);
+
+      if (task.status === "failed" || task.status === "cancelled") {
+        throw new Error(`PixAI task ${task.status}: ${task.error ?? "unknown error"}`);
+      }
+
+      if (task.status === "completed") {
+        return this.extractImagesFromTask(task);
+      }
+
+      // Still waiting/running — sleep then retry
+      await sleep(intervalMs);
+    }
+
+    throw new Error(`PixAI task timed out after ${timeoutMs / 1000}s`);
+  }
+
+  // --- Private: GraphQL ---
+
+  private async createTaskGraphQL(params: CreateTaskParams): Promise<PixAITaskResponse> {
+    const parameters: Record<string, unknown> = {
+      prompts: params.prompts,
+      modelId: params.modelId,
+      negativePrompts: params.negativePrompts || "",
+      width: params.width ?? 768,
+      height: params.height ?? 1280,
+      batchSize: params.batchSize ?? 1,
+      priority: params.priority ?? 1000,
+      seed: params.seed ?? "",
+      clipSkip: params.clipSkip ?? 2,
+      lightning: params.lightning ?? false,
+      controlNets: params.controlNets ?? [],
+      promptHelper: buildPromptHelperParam(params.promptHelper),
+      extra: {
+        naturalPrompts: params.prompts,
+      },
+    };
+
+    // Optional parameters — only include when explicitly set
+    if (params.samplingSteps != null) parameters.samplingSteps = params.samplingSteps;
+    if (params.cfgScale != null) parameters.cfgScale = params.cfgScale;
+    if (params.modelStyle) parameters.modelStyle = params.modelStyle;
+    if (params.inferenceProfile) parameters.inferenceProfile = params.inferenceProfile;
+    if (params.samplingMethod) parameters.samplingMethod = params.samplingMethod;
+    if (params.qualityTag) parameters.qualityTag = params.qualityTag;
+    if (params.isPrivate != null) parameters.isPrivate = params.isPrivate;
+
+    const res = await fetch(GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        query: CREATE_TASK_MUTATION,
+        variables: { parameters },
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`PixAI GraphQL create task failed: HTTP ${res.status} ${text}`);
+    }
+
+    const json = (await res.json()) as GraphQLResponse<{
+      createGenerationTask: PixAITaskResponse;
+    }>;
+
+    if (json.errors?.length) {
+      throw new Error(`PixAI GraphQL error: ${json.errors.map((e) => e.message).join(", ")}`);
+    }
+
+    if (!json.data?.createGenerationTask) {
+      throw new Error("PixAI GraphQL create task: unexpected empty response");
+    }
+    return json.data.createGenerationTask;
+  }
+
+  private async getTaskGraphQL(taskId: string): Promise<PixAITaskResponse> {
+    const res = await fetch(GRAPHQL_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        query: GET_TASK_QUERY,
+        variables: { id: taskId },
+      }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`PixAI GraphQL get task failed: HTTP ${res.status} ${text}`);
+    }
+
+    const json = (await res.json()) as GraphQLResponse<{ task: PixAITaskResponse }>;
+
+    if (json.errors?.length) {
+      throw new Error(`PixAI GraphQL error: ${json.errors.map((e) => e.message).join(", ")}`);
+    }
+
+    if (!json.data?.task) {
+      throw new Error("PixAI GraphQL get task: unexpected empty response");
+    }
+    return json.data.task;
+  }
+
+  // --- Private: REST ---
+
+  private async createTaskREST(params: CreateTaskParams): Promise<PixAITaskResponse> {
     const body = {
       parameters: {
         prompts: params.prompts,
@@ -55,11 +259,11 @@ class PixAIClient {
         batchSize: params.batchSize ?? 1,
         samplingSteps: params.samplingSteps ?? 20,
         cfgScale: params.cfgScale ?? 5,
-        promptHelper: params.promptHelper ? { enable: true } : undefined,
+        promptHelper: buildPromptHelperParam(params.promptHelper),
       },
     };
 
-    const res = await fetch(`${PIXAI_BASE_URL}/task`, {
+    const res = await fetch(`${PIXAI_REST_URL}/task`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -76,8 +280,8 @@ class PixAIClient {
     return (await res.json()) as PixAITaskResponse;
   }
 
-  async getTask(taskId: string): Promise<PixAITaskResponse> {
-    const res = await fetch(`${PIXAI_BASE_URL}/task/${taskId}`, {
+  private async getTaskREST(taskId: string): Promise<PixAITaskResponse> {
+    const res = await fetch(`${PIXAI_REST_URL}/task/${taskId}`, {
       headers: { Authorization: `Bearer ${this.apiKey}` },
     });
 
@@ -89,50 +293,61 @@ class PixAIClient {
     return (await res.json()) as PixAITaskResponse;
   }
 
-  async pollUntilComplete(
-    taskId: string,
-    timeoutMs: number,
-    intervalMs = 5000,
-  ): Promise<{ urls: string[]; mediaIds: string[] }> {
-    const deadline = Date.now() + timeoutMs;
+  // --- Private: Image extraction ---
 
-    // Initial delay: image generation takes several seconds at minimum
-    await sleep(intervalMs);
+  private extractImagesFromTask(task: PixAITaskResponse): TaskPollResult {
+    const mediaIds: string[] = [];
+    const urls: string[] = [];
 
-    while (Date.now() < deadline) {
-      const task = await this.getTask(taskId);
-
-      if (task.status === "failed" || task.status === "cancelled") {
-        throw new Error(`PixAI task ${task.status}: ${task.error ?? "unknown error"}`);
+    // 1. Try outputs.batch[].mediaId (GraphQL multi-image)
+    if (task.outputs?.batch) {
+      for (const item of task.outputs.batch) {
+        if (item.mediaId) mediaIds.push(item.mediaId);
       }
-
-      if (task.status === "completed") {
-        const mediaIds = (task.outputs?.mediaIds ?? []).filter(
-          (id): id is string => id != null && id !== "",
-        );
-
-        // Filter out null values from mediaUrls
-        const urls = (task.outputs?.mediaUrls ?? []).filter(
-          (u): u is string => u != null && u !== "",
-        );
-        if (urls.length > 0) return { urls, mediaIds };
-
-        // Fallback: use mediaIds to construct image URLs
-        if (mediaIds.length > 0) {
-          return {
-            urls: mediaIds.map((id) => `${PIXAI_BASE_URL}/media/${id}/image`),
-            mediaIds,
-          };
-        }
-
-        throw new Error("PixAI task completed but no images returned");
-      }
-
-      // Still waiting/running — sleep then retry
-      await sleep(intervalMs);
     }
 
-    throw new Error(`PixAI task timed out after ${timeoutMs / 1000}s`);
+    // 2. Try outputs.mediaId (GraphQL single-image)
+    if (task.outputs?.mediaId && mediaIds.length === 0) {
+      mediaIds.push(task.outputs.mediaId);
+    }
+
+    // 3. Try task.media[].urls where variant === "PUBLIC"
+    if (task.media?.length) {
+      for (const m of task.media) {
+        const pub = m.urls.find((u) => u.variant === "PUBLIC");
+        if (pub) {
+          urls.push(pub.url);
+          if (!mediaIds.includes(m.id)) mediaIds.push(m.id);
+        }
+      }
+    }
+
+    if (urls.length > 0) return { urls, mediaIds };
+
+    // 4. Try REST-style outputs.mediaUrls
+    const restUrls = (task.outputs?.mediaUrls ?? []).filter(
+      (u): u is string => u != null && u !== "",
+    );
+    if (restUrls.length > 0) {
+      // Also collect REST mediaIds
+      const restMediaIds = (task.outputs?.mediaIds ?? []).filter(
+        (id): id is string => id != null && id !== "",
+      );
+      return {
+        urls: restUrls,
+        mediaIds: restMediaIds.length > 0 ? restMediaIds : mediaIds,
+      };
+    }
+
+    // 5. Fallback: construct URLs from mediaIds
+    if (mediaIds.length > 0) {
+      return {
+        urls: mediaIds.map((id) => `${PIXAI_REST_URL}/media/${id}/image`),
+        mediaIds,
+      };
+    }
+
+    throw new Error("PixAI task completed but no images returned");
   }
 }
 
@@ -149,6 +364,13 @@ export interface PixAIToolsOptions {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
 }
 
+function resolvePrompt(prompt: string, pixaiConfig: PixAIConfig): string {
+  if (pixaiConfig.systemImagePrompt) {
+    return `${pixaiConfig.systemImagePrompt}, ${prompt}`;
+  }
+  return prompt;
+}
+
 export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool> {
   const {
     config,
@@ -161,7 +383,8 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
     onGenerationTrack,
   } = options;
   const pixaiConfig = config.pixaiConfig ?? {};
-  const client = new PixAIClient(config.apiKey!);
+  const apiMode: ApiMode = pixaiConfig.apiMode ?? "graphql";
+  const client = new PixAIClient(config.apiKey!, apiMode);
   const modelId = config.model || PIXAI_DEFAULT_MODEL_ID;
 
   return {
@@ -175,20 +398,22 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
           width: z.number().int().min(512).max(1280).optional().describe("图片宽度 (512-1280)"),
           height: z.number().int().min(512).max(1280).optional().describe("图片高度 (512-1280)"),
           batch_size: z.number().int().min(1).max(4).optional().describe("生成数量 (1-4)"),
+          seed: z.string().optional().describe("随机种子（留空=随机）"),
         }),
       ),
-      execute: async ({ prompt, negative_prompt, width, height, batch_size }) => {
+      execute: async ({ prompt, negative_prompt, width, height, batch_size, seed }) => {
         const startTime = Date.now();
+        const resolvedPrompt = resolvePrompt(prompt, pixaiConfig);
         const resolvedWidth = width ?? pixaiConfig.width ?? 768;
         const resolvedHeight = height ?? pixaiConfig.height ?? 1280;
         const resolvedBatchSize = batch_size ?? pixaiConfig.batchSize ?? 1;
         const resolvedNegativePrompt = negative_prompt ?? pixaiConfig.negativePrompts;
-        const resolvedSamplingSteps = pixaiConfig.samplingSteps ?? 20;
-        const resolvedCfgScale = pixaiConfig.cfgScale ?? 5;
+        const resolvedSamplingSteps = pixaiConfig.samplingSteps;
+        const resolvedCfgScale = pixaiConfig.cfgScale;
 
         try {
           const task = await client.createTask({
-            prompts: prompt,
+            prompts: resolvedPrompt,
             modelId,
             negativePrompts: resolvedNegativePrompt,
             width: resolvedWidth,
@@ -197,6 +422,15 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             samplingSteps: resolvedSamplingSteps,
             cfgScale: resolvedCfgScale,
             promptHelper: pixaiConfig.promptHelper,
+            seed: seed ?? pixaiConfig.seed,
+            priority: pixaiConfig.priority,
+            clipSkip: pixaiConfig.clipSkip,
+            lightning: pixaiConfig.lightning,
+            modelStyle: pixaiConfig.modelStyle,
+            inferenceProfile: pixaiConfig.inferenceProfile,
+            samplingMethod: pixaiConfig.samplingMethod,
+            qualityTag: pixaiConfig.qualityTag,
+            isPrivate: pixaiConfig.isPrivate,
           });
 
           // Shared base fields for all generation tracking calls
@@ -204,7 +438,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             chatId,
             userId,
             taskId: task.id,
-            prompt,
+            prompt: resolvedPrompt,
             negativePrompt: resolvedNegativePrompt,
             modelId,
             width: resolvedWidth,
@@ -217,8 +451,8 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
 
           onLog?.({
             level: "info",
-            message: `PixAI task created: ${task.id}`,
-            meta: { chatId, taskId: task.id, prompt: prompt.slice(0, 200) },
+            message: `PixAI task created (${apiMode}): ${task.id}`,
+            meta: { chatId, taskId: task.id, apiMode, prompt: resolvedPrompt.slice(0, 200) },
           });
 
           onGenerationTrack?.({ ...baseRecord, status: "pending" });
@@ -229,7 +463,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             api,
             chatId,
             recentBotMessageIds,
-            prompt,
+            prompt: resolvedPrompt,
             baseRecord,
             onLog,
             onGenerationTrack,
@@ -261,6 +495,49 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
       },
     }),
   };
+}
+
+// --- Shared helper: inject PixAI tool + permission control ---
+
+export async function injectPixAITool(
+  allTools: Record<string, Tool>,
+  options: {
+    allowed: boolean;
+    webToolsConfig?: WebToolsConfig;
+    api: Api;
+    chatId: number;
+    userId?: number;
+    recentBotMessageIds: number[];
+    timeoutConfig?: TimeoutConfig;
+    onLog?: (entry: BotLogEntry) => void | Promise<void>;
+    onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  },
+): Promise<void> {
+  const { allowed, webToolsConfig } = options;
+
+  if (
+    allowed &&
+    webToolsConfig?.imageGeneration?.provider === "pixai" &&
+    webToolsConfig.imageGeneration.apiKey
+  ) {
+    Object.assign(
+      allTools,
+      createPixAITool({
+        config: webToolsConfig.imageGeneration,
+        api: options.api,
+        chatId: options.chatId,
+        userId: options.userId,
+        recentBotMessageIds: options.recentBotMessageIds,
+        timeoutConfig: options.timeoutConfig,
+        onLog: options.onLog,
+        onGenerationTrack: options.onGenerationTrack,
+      }),
+    );
+  }
+
+  if (!allowed) {
+    delete allTools.generate_image;
+  }
 }
 
 // --- Background poll & send ---

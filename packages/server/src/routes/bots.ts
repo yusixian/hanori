@@ -141,6 +141,7 @@ const aiConfigSchema = z
           .optional(),
         conversationEnabled: z.boolean().optional(),
         maxContextMessages: z.number().min(1).max(100).optional(),
+        imageGenerationEnabled: z.boolean().optional(),
       }),
     ),
     conversationConfig: z
@@ -191,6 +192,24 @@ const aiConfigSchema = z
                 height: z.number().int().min(512).max(1280).optional(),
                 batchSize: z.number().int().min(1).max(4).optional(),
                 promptHelper: z.boolean().optional(),
+                systemImagePrompt: z.string().max(4096).optional(),
+                apiMode: z.enum(["graphql", "rest"]).optional(),
+                priority: z.number().int().min(0).max(10000).optional(),
+                seed: z.string().max(100).optional(),
+                clipSkip: z.number().int().min(1).max(12).optional(),
+                lightning: z.boolean().optional(),
+                modelStyle: z
+                  .object({ type: z.literal("key"), keyId: z.string().max(100) })
+                  .optional(),
+                inferenceProfile: z.string().max(100).optional(),
+                samplingMethod: z.string().max(100).optional(),
+                qualityTag: z
+                  .object({
+                    prefix: z.string().max(500),
+                    suffix: z.string().max(500),
+                  })
+                  .optional(),
+                isPrivate: z.boolean().optional(),
               })
               .optional(),
           })
