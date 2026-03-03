@@ -18,6 +18,7 @@ import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
   isStreamReplyMode,
 } from "@cos-tool-bot/shared";
@@ -27,6 +28,8 @@ import type { Api } from "grammy";
 import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { splitMessage } from "../utils/split-message.js";
+import { sleep } from "../utils/sleep.js";
 import {
   createOnceGuard,
   createPerStepAbort,
@@ -280,14 +283,23 @@ async function doContinueChat(
       },
     });
 
+    let streamFailed = false;
     try {
       if (isStreamMode) {
         // Stream mode: pipe text chunks to Telegram via sendMessageDraft.
         // multi_message is deleted in stream mode so multiMessageUsed stays false.
-        const { sentMessages } = await streamToChat(api, chatId, result.textStream);
-
-        for (const msg of sentMessages) {
-          chatBotMsgIds.push(msg.message_id);
+        try {
+          const { sentMessages } = await streamToChat(api, chatId, result.textStream);
+          for (const msg of sentMessages) {
+            chatBotMsgIds.push(msg.message_id);
+          }
+        } catch (streamErr) {
+          streamFailed = true;
+          config.onLog?.({
+            level: "warn",
+            message: `streamToChat failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
+            meta: { chatId },
+          });
         }
       } else {
         // Segment mode: drain the stream to drive tool execution, then send text manually.
@@ -302,27 +314,36 @@ async function doContinueChat(
 
     const text = (await result.text).trim();
 
-    // Segment mode: send text if multi_message wasn't used
-    if (!isStreamMode && !multiMessageUsed && text) {
-      try {
-        const html = markdownToTelegramHtml(text);
-        const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
-        chatBotMsgIds.push(sent.message_id);
-      } catch (htmlErr) {
-        config.onLog?.({
-          level: "warn",
-          message: `HTML send failed, falling back to plain text: ${htmlErr instanceof Error ? htmlErr.message : String(htmlErr)}`,
-          meta: { chatId },
-        });
+    // Send text if multi_message wasn't used (segment mode) or stream failed
+    if ((!isStreamMode && !multiMessageUsed && text) || (streamFailed && text)) {
+      const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+      const threshold = msgCfg.autoSplitThreshold ?? 0;
+      const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
+      for (const [i, chunk] of chunks.entries()) {
+        if (i > 0) {
+          await api.sendChatAction(chatId, "typing");
+          await sleep(msgCfg.splitDelayMs ?? 800);
+        }
         try {
-          const sent = await api.sendMessage(chatId, text);
+          const html = markdownToTelegramHtml(chunk);
+          const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
           chatBotMsgIds.push(sent.message_id);
-        } catch (plainErr) {
+        } catch (htmlErr) {
           config.onLog?.({
-            level: "error",
-            message: `Plain text send also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`,
+            level: "warn",
+            message: `HTML send failed, falling back to plain text: ${htmlErr instanceof Error ? htmlErr.message : String(htmlErr)}`,
             meta: { chatId },
           });
+          try {
+            const sent = await api.sendMessage(chatId, chunk);
+            chatBotMsgIds.push(sent.message_id);
+          } catch (plainErr) {
+            config.onLog?.({
+              level: "error",
+              message: `Plain text send also failed: ${plainErr instanceof Error ? plainErr.message : String(plainErr)}`,
+              meta: { chatId },
+            });
+          }
         }
       }
     }

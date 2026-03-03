@@ -265,7 +265,7 @@ export interface MessageConfig {
 }
 
 export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
-  replyMode: "stream", // streaming draft by default
+  replyMode: "segment", // segment mode: multi_message tool + auto-split
   autoSplitThreshold: 0, // disabled by default
   splitDelayMs: 800,
 };

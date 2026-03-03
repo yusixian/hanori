@@ -60,6 +60,8 @@ import {
 } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
+import { splitMessage } from "../utils/split-message.js";
+import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 
@@ -1038,6 +1040,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           try {
             sentMessages = await ctx.replyWithStream(managedTextStream());
           } catch (streamErr) {
+            // Reset streamStarted so the fallback safeReply path runs
+            streamStarted = false;
             config.onLog?.({
               level: "warn",
               message: `replyWithStream failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
@@ -1078,8 +1082,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         if (sentViaMultiMessage) {
           await ctx.deleteWaiting();
         } else if (text) {
-          const replyMsgId = await safeReply(ctx, text);
-          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+          const threshold = msgCfg.autoSplitThreshold ?? 0;
+          const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
+          for (const [i, chunk] of chunks.entries()) {
+            if (i > 0) {
+              await ctx.api.sendChatAction(chatId, "typing");
+              await sleep(msgCfg.splitDelayMs ?? 800);
+            }
+            const replyMsgId = await safeReply(ctx, chunk);
+            if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+          }
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
         }
