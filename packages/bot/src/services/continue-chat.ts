@@ -10,6 +10,7 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  PixAIGenerationRecord,
   TimeoutConfig,
   TokenUsageRecord,
   WebToolsConfig,
@@ -71,6 +72,7 @@ export interface ContinueChatConfig {
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
 }
 
 export interface ContinueChatEvent {
@@ -235,6 +237,27 @@ async function doContinueChat(
     if (botMemCfg.enabled && config.botMemory) {
       const { createBotMemoryTools } = await import("../tools/bot-memory.js");
       Object.assign(allTools, createBotMemoryTools(config.botMemory));
+    }
+
+    // PixAI image generation (per-request, fire-and-forget)
+    if (
+      config.webToolsConfig?.imageGeneration?.provider === "pixai" &&
+      config.webToolsConfig.imageGeneration.apiKey
+    ) {
+      const { createPixAITool } = await import("../tools/pixai.js");
+      Object.assign(
+        allTools,
+        createPixAITool({
+          config: config.webToolsConfig.imageGeneration,
+          api,
+          chatId,
+          userId: event.userId,
+          recentBotMessageIds: chatBotMsgIds,
+          timeoutConfig: config.timeoutConfig,
+          onLog: config.onLog,
+          onGenerationTrack: config.onGenerationTrack,
+        }),
+      );
     }
 
     // Artwork tools

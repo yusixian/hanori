@@ -5,6 +5,7 @@ import {
   integer,
   json,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
@@ -82,11 +83,20 @@ interface AiConfigJson {
       baseURL?: string;
     };
     imageGeneration?: {
-      provider: "openai" | "custom";
+      provider: "openai" | "custom" | "pixai";
       apiKey?: string;
       baseURL?: string;
       model?: string;
       size?: string;
+      pixaiConfig?: {
+        negativePrompts?: string;
+        samplingSteps?: number;
+        cfgScale?: number;
+        width?: number;
+        height?: number;
+        batchSize?: number;
+        promptHelper?: boolean;
+      };
     };
   };
   agentToolsConfig?: {
@@ -145,6 +155,7 @@ interface AiConfigJson {
     researcherAgentMs?: number;
     defaultAgentMs?: number;
     imageDownloadMs?: number;
+    pixaiTaskMs?: number;
   };
 }
 
@@ -296,6 +307,41 @@ export const chatModelOverrides = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [uniqueIndex("chat_model_bot_chat_uniq").on(t.botId, t.chatId)],
+);
+
+export const pixaiGenerations = pgTable(
+  "pixai_generations",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }),
+    taskId: text("task_id").notNull(),
+    prompt: text("prompt").notNull(),
+    negativePrompt: text("negative_prompt"),
+    modelId: text("model_id").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    batchSize: integer("batch_size").notNull().default(1),
+    status: text("status").notNull().default("pending"),
+    mediaUrls: json("media_urls").$type<string[]>(),
+    mediaIds: json("media_ids").$type<string[]>(),
+    localFiles: json("local_files").$type<string[]>(),
+    samplingSteps: integer("sampling_steps"),
+    cfgScale: real("cfg_scale"),
+    promptHelper: boolean("prompt_helper"),
+    errorMessage: text("error_message"),
+    durationMs: integer("duration_ms"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (t) => [
+    index("pixai_gen_bot_id_idx").on(t.botId),
+    index("pixai_gen_bot_chat_idx").on(t.botId, t.chatId),
+    index("pixai_gen_created_idx").on(t.createdAt),
+  ],
 );
 
 export const tokenUsage = pgTable(

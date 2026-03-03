@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
+import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { BackupRecord, BackupStorageType } from "@cos-tool-bot/shared";
 import {
@@ -29,11 +30,6 @@ function formatBytes(bytes: number): string {
   const sizes = ["B", "KB", "MB", "GB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 // ── Create Backup Section ──

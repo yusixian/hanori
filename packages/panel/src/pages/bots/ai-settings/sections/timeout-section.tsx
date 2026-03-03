@@ -59,6 +59,12 @@ const TIMEOUT_FIELDS: TimeoutField[] = [
     description: "Image/file download timeout.",
     min: 5,
   },
+  {
+    key: "pixaiTaskMs",
+    label: "PixAI Task Timeout",
+    description: "PixAI background task polling timeout.",
+    min: 30,
+  },
 ];
 
 export function TimeoutSection({

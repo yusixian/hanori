@@ -99,6 +99,8 @@ export interface TimeoutConfig {
   defaultAgentMs?: number;
   /** 图片下载超时 (ms) */
   imageDownloadMs?: number;
+  /** PixAI 后台任务轮询超时 (ms) */
+  pixaiTaskMs?: number;
 }
 
 export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
@@ -110,6 +112,7 @@ export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
   researcherAgentMs: 120_000,
   defaultAgentMs: 60_000,
   imageDownloadMs: 60_000,
+  pixaiTaskMs: 600_000,
 };
 
 export interface AiTriggerConfig {
@@ -193,6 +196,16 @@ export interface ConversationCallbacks {
   clearHistory(chatId: number): Promise<void>;
 }
 
+export interface PixAIConfig {
+  negativePrompts?: string;
+  samplingSteps?: number; // default 20, range 8-50
+  cfgScale?: number; // default 5, range 1.1-15
+  width?: number; // default 768, range 512-1280
+  height?: number; // default 1280, range 512-1280
+  batchSize?: number; // default 1, range 1-4
+  promptHelper?: boolean; // default false (额外扣费)
+}
+
 export interface WebToolsConfig {
   enabled: boolean;
   search?: {
@@ -201,11 +214,12 @@ export interface WebToolsConfig {
     baseURL?: string;
   };
   imageGeneration?: {
-    provider: "openai" | "custom";
+    provider: "openai" | "custom" | "pixai";
     apiKey?: string;
     baseURL?: string;
     model?: string;
     size?: string;
+    pixaiConfig?: PixAIConfig;
   };
 }
 
@@ -469,6 +483,31 @@ export interface BackupRecord {
   status: BackupStatus;
   error: string | null;
   createdAt: string;
+}
+
+// PixAI generation tracking types
+
+export type PixAIGenerationStatus = "pending" | "completed" | "failed";
+
+export interface PixAIGenerationRecord {
+  chatId: number;
+  userId?: number;
+  taskId: string;
+  prompt: string;
+  negativePrompt?: string;
+  modelId: string;
+  width: number;
+  height: number;
+  batchSize: number;
+  samplingSteps?: number;
+  cfgScale?: number;
+  promptHelper?: boolean;
+  status: PixAIGenerationStatus;
+  mediaUrls?: string[];
+  mediaIds?: string[];
+  localFiles?: string[];
+  errorMessage?: string;
+  durationMs?: number;
 }
 
 // Token usage types

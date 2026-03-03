@@ -177,11 +177,22 @@ const aiConfigSchema = z
           .optional(),
         imageGeneration: z
           .object({
-            provider: z.enum(["openai", "custom"]),
+            provider: z.enum(["openai", "custom", "pixai"]),
             apiKey: z.string().optional(),
             baseURL: z.string().optional(),
             model: z.string().optional(),
             size: z.string().optional(),
+            pixaiConfig: z
+              .object({
+                negativePrompts: z.string().max(4096).optional(),
+                samplingSteps: z.number().int().min(8).max(50).optional(),
+                cfgScale: z.number().min(1.1).max(15).optional(),
+                width: z.number().int().min(512).max(1280).optional(),
+                height: z.number().int().min(512).max(1280).optional(),
+                batchSize: z.number().int().min(1).max(4).optional(),
+                promptHelper: z.boolean().optional(),
+              })
+              .optional(),
           })
           .optional(),
       })
@@ -245,6 +256,7 @@ const aiConfigSchema = z
         researcherAgentMs: z.number().int().min(10_000).optional(),
         defaultAgentMs: z.number().int().min(10_000).optional(),
         imageDownloadMs: z.number().int().min(5_000).optional(),
+        pixaiTaskMs: z.number().int().min(30_000).optional(),
       })
       .optional(),
     stickerPacks: z.array(z.string()).optional(),

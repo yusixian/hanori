@@ -1,14 +1,22 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { EMBEDDING_DIMENSIONS, bots, tokenUsage } from "@cos-tool-bot/database";
+import { EMBEDDING_DIMENSIONS, bots, pixaiGenerations, tokenUsage } from "@cos-tool-bot/database";
 import type {
   BotMemoryCallbacks,
   ConversationCallbacks,
   MemoryCallbacks,
+  PixAIGenerationRecord,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
-import { eq } from "drizzle-orm";
+import {
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_MEMORY_CONFIG,
+  IMAGE_EXTENSIONS,
+  getDataDir,
+} from "@cos-tool-bot/shared";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
@@ -376,6 +384,56 @@ export class BotPool {
       }
     };
 
+    const onGenerationTrack = async (record: PixAIGenerationRecord) => {
+      try {
+        if (record.status === "pending") {
+          await this.db.insert(pixaiGenerations).values({
+            botId,
+            chatId: record.chatId,
+            userId: record.userId,
+            taskId: record.taskId,
+            prompt: record.prompt,
+            negativePrompt: record.negativePrompt,
+            modelId: record.modelId,
+            width: record.width,
+            height: record.height,
+            batchSize: record.batchSize,
+            samplingSteps: record.samplingSteps,
+            cfgScale: record.cfgScale,
+            promptHelper: record.promptHelper,
+            status: record.status,
+          });
+        } else {
+          // Download images to local storage
+          let localFiles: string[] | undefined;
+          if (record.status === "completed" && record.mediaUrls?.length) {
+            localFiles = await downloadGenerationImages(
+              botId,
+              record.taskId,
+              record.mediaUrls,
+              this.logger,
+            );
+          }
+          await this.db
+            .update(pixaiGenerations)
+            .set({
+              status: record.status,
+              mediaUrls: record.mediaUrls,
+              mediaIds: record.mediaIds,
+              localFiles,
+              errorMessage: record.errorMessage,
+              durationMs: record.durationMs,
+              completedAt: new Date(),
+            })
+            .where(
+              and(eq(pixaiGenerations.botId, botId), eq(pixaiGenerations.taskId, record.taskId)),
+            );
+        }
+      } catch (err) {
+        this.logger.error(err, "Failed to write PixAI generation record");
+      }
+    };
+
     const manager = new BotManager({
       botId,
       token,
@@ -386,6 +444,7 @@ export class BotPool {
       conversation,
       onBackup,
       onTokenUsage,
+      onGenerationTrack,
     });
 
     this.managers.set(botId, manager);
@@ -411,4 +470,45 @@ export class BotPool {
   getAllManagers(): Map<string, BotManager> {
     return this.managers;
   }
+}
+
+function guessExtension(url: string): string {
+  try {
+    const pathname = new URL(url).pathname;
+    const ext = path.extname(pathname).toLowerCase();
+    if (IMAGE_EXTENSIONS.has(ext)) return ext;
+  } catch {
+    // ignore
+  }
+  return ".png";
+}
+
+async function downloadGenerationImages(
+  botId: string,
+  taskId: string,
+  urls: string[],
+  logger: Logger,
+): Promise<string[]> {
+  const dir = path.join(getDataDir(botId), "generations");
+  await mkdir(dir, { recursive: true });
+  const results = await Promise.all(
+    urls.map(async (url, i) => {
+      const ext = guessExtension(url);
+      const filename = `${taskId}_${i}${ext}`;
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          logger.warn({ taskId, index: i, status: res.status }, "PixAI image download failed");
+          return null;
+        }
+        const buffer = Buffer.from(await res.arrayBuffer());
+        await writeFile(path.join(dir, filename), buffer);
+        return filename;
+      } catch (err) {
+        logger.warn(err, `PixAI image download error: task=${taskId} index=${i}`);
+        return null;
+      }
+    }),
+  );
+  return results.filter((f): f is string => f != null);
 }

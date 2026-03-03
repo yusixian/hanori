@@ -1,4 +1,9 @@
-import type { BotLogEntry, ConversationCallbacks, TokenUsageRecord } from "@cos-tool-bot/shared";
+import type {
+  BotLogEntry,
+  ConversationCallbacks,
+  PixAIGenerationRecord,
+  TokenUsageRecord,
+} from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { stream } from "@grammyjs/stream";
@@ -22,7 +27,7 @@ import { createLogMiddleware } from "./middleware/log.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
-  "adminChatIds" | "onLog" | "onTokenUsage" | "token"
+  "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token"
 >;
 
 export interface BotConfig {
@@ -33,6 +38,7 @@ export interface BotConfig {
   onBackup?: () => Promise<BackupResult>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
 }
@@ -80,6 +86,7 @@ export function createBot(config: BotConfig) {
       adminChatIds,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
+      onGenerationTrack: config.onGenerationTrack,
       token,
     });
     aiHandler = result.handler;

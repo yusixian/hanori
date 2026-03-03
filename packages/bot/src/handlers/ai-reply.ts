@@ -14,6 +14,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  PixAIGenerationRecord,
   ReplyMode,
   TimeoutConfig,
   TokenUsageRecord,
@@ -89,6 +90,7 @@ export interface AiReplyConfig {
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   modelOverride?: {
@@ -558,6 +560,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       onTimerFired,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
+      onGenerationTrack: config.onGenerationTrack,
     };
   }
 
@@ -915,6 +918,27 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...artworkTools,
         ...fileTools,
       };
+
+      // PixAI image generation (per-request, fire-and-forget)
+      if (
+        config.webToolsConfig?.imageGeneration?.provider === "pixai" &&
+        config.webToolsConfig.imageGeneration.apiKey
+      ) {
+        const { createPixAITool } = await import("../tools/pixai.js");
+        Object.assign(
+          allTools,
+          createPixAITool({
+            config: config.webToolsConfig.imageGeneration,
+            api: ctx.api,
+            chatId,
+            userId: ctx.from?.id,
+            recentBotMessageIds: chatBotMsgIds,
+            timeoutConfig: config.timeoutConfig,
+            onLog: config.onLog,
+            onGenerationTrack: config.onGenerationTrack,
+          }),
+        );
+      }
 
       // Stream mode and segment mode are mutually exclusive:
       // - Stream: multi_message is removed; text is piped via replyWithStream (draft animation)
