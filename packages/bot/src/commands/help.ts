@@ -16,6 +16,8 @@ const commands = [
   { command: "clearreceived", description: "(admin) 清理收到的文件缓存" },
   { command: "model", description: "查看/切换 AI 模型" },
   { command: "replymode", description: "(admin) 切换回复模式 (stream/segment)" },
+  { command: "imagegen", description: "(admin) 切换群组生图权限 (on/off)" },
+  { command: "imgcfg", description: "(admin) 查看/修改生图参数" },
 ];
 
 export { commands };

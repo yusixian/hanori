@@ -6,6 +6,7 @@ export interface ExtendedToolsPromptOptions {
   hasWebTools: boolean;
   hasSearchTool: boolean;
   hasImageGeneration: boolean;
+  imageGenerationProvider?: string;
   hasAgentTools: boolean;
   availableAgents: string[];
   hasBotMemory: boolean;
@@ -64,7 +65,13 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     }
     lines.push("- fetch_webpage: 获取网页正文内容");
     if (opts.hasImageGeneration) {
-      lines.push("- generate_image: AI 生成图片，配合 send_photo 发送");
+      if (opts.imageGenerationProvider === "pixai") {
+        lines.push(
+          "- generate_image: 使用指定 AI 模型生成高质量 AI 图片，图片会在后台生成完成后自动发送到聊天",
+        );
+      } else {
+        lines.push("- generate_image: AI 生成图片，配合 send_photo 发送");
+      }
     }
   }
 

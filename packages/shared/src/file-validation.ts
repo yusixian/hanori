@@ -41,6 +41,19 @@ export function resolveAndValidate(dataDir: string, filePath: string): string | 
   return resolved;
 }
 
+/**
+ * Validate a subdirectory path relative to a data directory.
+ * Empty string is valid (means root). Returns resolved absolute path or null.
+ */
+export function resolveAndValidateDir(dataDir: string, dirPath: string): string | null {
+  if (dirPath.includes("\0")) return null;
+  if (dirPath === "") return dataDir;
+  const resolved = path.resolve(dataDir, dirPath);
+  const normalizedDir = dataDir.endsWith(path.sep) ? dataDir.slice(0, -1) : dataDir;
+  if (!resolved.startsWith(normalizedDir + path.sep)) return null;
+  return resolved;
+}
+
 export function getDataDir(botId: string): string {
   if (!/^[\w-]+$/.test(botId)) throw new Error(`Invalid botId: ${botId}`);
   return path.join(process.cwd(), "data", botId);

@@ -99,6 +99,8 @@ export interface TimeoutConfig {
   defaultAgentMs?: number;
   /** 图片下载超时 (ms) */
   imageDownloadMs?: number;
+  /** PixAI 后台任务轮询超时 (ms) */
+  pixaiTaskMs?: number;
 }
 
 export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
@@ -110,6 +112,7 @@ export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
   researcherAgentMs: 120_000,
   defaultAgentMs: 60_000,
   imageDownloadMs: 60_000,
+  pixaiTaskMs: 600_000,
 };
 
 export interface AiTriggerConfig {
@@ -129,6 +132,7 @@ export interface AiGroupOverride {
   triggerConfig?: Partial<AiTriggerConfig>;
   conversationEnabled?: boolean;
   maxContextMessages?: number;
+  imageGenerationEnabled?: boolean;
 }
 
 export interface ConversationConfig {
@@ -193,6 +197,38 @@ export interface ConversationCallbacks {
   clearHistory(chatId: number): Promise<void>;
 }
 
+export interface PixAIConfig {
+  // 基本参数
+  negativePrompts?: string;
+  samplingSteps?: number; // default 20, range 8-50
+  cfgScale?: number; // default 5, range 1.1-15
+  width?: number; // default 768, range 512-1280
+  height?: number; // default 1280, range 512-1280
+  batchSize?: number; // default 1, range 1-4
+  promptHelper?: boolean; // default false (额外扣费)
+
+  // 系统生图提示词（附加在每次生图 prompt 前面）
+  systemImagePrompt?: string;
+
+  // API 模式
+  apiMode?: "graphql" | "rest"; // 默认 "graphql"
+
+  // 通用参数
+  priority?: number; // 默认 1000
+  seed?: string; // 空字符串=随机
+  clipSkip?: number; // 默认 2
+  lightning?: boolean; // 快速模式
+
+  // 模型相关
+  modelStyle?: { type: "key"; keyId: string };
+  inferenceProfile?: string; // 如 "standard"
+  samplingMethod?: string; // 如 "Euler"
+  qualityTag?: { prefix: string; suffix: string };
+
+  // 高级
+  isPrivate?: boolean;
+}
+
 export interface WebToolsConfig {
   enabled: boolean;
   search?: {
@@ -201,11 +237,12 @@ export interface WebToolsConfig {
     baseURL?: string;
   };
   imageGeneration?: {
-    provider: "openai" | "custom";
+    provider: "openai" | "custom" | "pixai";
     apiKey?: string;
     baseURL?: string;
     model?: string;
     size?: string;
+    pixaiConfig?: PixAIConfig;
   };
 }
 
@@ -469,6 +506,32 @@ export interface BackupRecord {
   status: BackupStatus;
   error: string | null;
   createdAt: string;
+}
+
+// PixAI generation tracking types
+
+export type PixAIGenerationStatus = "pending" | "completed" | "failed";
+
+export interface PixAIGenerationRecord {
+  chatId: number;
+  userId?: number;
+  taskId: string;
+  prompt: string;
+  negativePrompt?: string;
+  modelId: string;
+  width: number;
+  height: number;
+  batchSize: number;
+  samplingSteps?: number;
+  cfgScale?: number;
+  promptHelper?: boolean;
+  pixaiConfig?: PixAIConfig;
+  status: PixAIGenerationStatus;
+  mediaUrls?: string[];
+  mediaIds?: string[];
+  localFiles?: string[];
+  errorMessage?: string;
+  durationMs?: number;
 }
 
 // Token usage types

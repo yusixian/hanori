@@ -14,6 +14,7 @@ import {
   MAX_FILE_SIZE,
   getDataDir,
   resolveAndValidate,
+  resolveAndValidateDir,
 } from "../utils/file-validation.js";
 
 /**
@@ -31,44 +32,64 @@ function extractFilePath(reqPath: string, botId: string, segment = "files"): str
 
 export function botFilesRoutes(db: Database, botPool: BotPool) {
   return new Hono()
-    .get("/:botId/files", async (c) => {
-      const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+    .get(
+      "/:botId/files",
+      zValidator("query", z.object({ path: z.string().max(500).optional() })),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      const dataDir = getDataDir(botId);
-      const dfConfig = bot.aiConfig?.dataFilesConfig;
-      const injection = {
-        injectableFiles: dfConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES,
-        maxTotalSize: dfConfig?.maxTotalSize ?? DEFAULT_MAX_INJECTION_SIZE,
-      };
-      try {
-        await fs.mkdir(dataDir, { recursive: true });
-        const entries = await fs.readdir(dataDir, { withFileTypes: true });
-        const files = await Promise.all(
-          entries
-            .filter((entry) => {
-              if (entry.isDirectory()) return false;
-              const ext = path.extname(entry.name).toLowerCase();
-              return ALLOWED_EXTENSIONS.has(ext);
-            })
-            .map(async (entry) => {
-              const filePath = path.join(dataDir, entry.name);
-              const stat = await fs.stat(filePath);
-              return {
-                name: entry.name,
-                path: entry.name,
-                size: stat.size,
-                type: "file" as const,
-              };
-            }),
-        );
-        files.sort((a, b) => a.name.localeCompare(b.name));
-        return c.json({ ok: true as const, files, injection });
-      } catch {
-        return c.json({ ok: true as const, files: [], injection });
-      }
-    })
+        const dataDir = getDataDir(botId);
+        const subPath = c.req.valid("query").path ?? "";
+        const resolvedDir = resolveAndValidateDir(dataDir, subPath);
+        if (!resolvedDir) return c.json({ ok: false as const, error: "Invalid path" }, 403);
+
+        const dfConfig = bot.aiConfig?.dataFilesConfig;
+        const injection = {
+          injectableFiles: dfConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES,
+          maxTotalSize: dfConfig?.maxTotalSize ?? DEFAULT_MAX_INJECTION_SIZE,
+        };
+        try {
+          await fs.mkdir(resolvedDir, { recursive: true });
+          const entries = await fs.readdir(resolvedDir, { withFileTypes: true });
+          const files = await Promise.all(
+            entries
+              .filter((entry) => {
+                if (entry.isDirectory()) return true;
+                const ext = path.extname(entry.name).toLowerCase();
+                return ALLOWED_EXTENSIONS.has(ext);
+              })
+              .map(async (entry) => {
+                const fullPath = path.join(resolvedDir, entry.name);
+                const relativePath = subPath ? `${subPath}/${entry.name}` : entry.name;
+                if (entry.isDirectory()) {
+                  return {
+                    name: entry.name,
+                    path: relativePath,
+                    size: 0,
+                    type: "dir" as const,
+                  };
+                }
+                const stat = await fs.stat(fullPath);
+                return {
+                  name: entry.name,
+                  path: relativePath,
+                  size: stat.size,
+                  type: "file" as const,
+                };
+              }),
+          );
+          files.sort((a, b) => {
+            if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
+            return a.name.localeCompare(b.name);
+          });
+          return c.json({ ok: true as const, files, injection });
+        } catch {
+          return c.json({ ok: true as const, files: [], injection });
+        }
+      },
+    )
     .get("/:botId/files-raw/*", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
@@ -191,6 +212,43 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         return c.json({ ok: false as const, error: "File not found" }, 404);
       }
     })
+    .post(
+      "/:botId/files-delete-batch",
+      zValidator("json", z.object({ files: z.array(z.string().min(1).max(500)).min(1).max(100) })),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+        const { files: filePaths } = c.req.valid("json");
+        const dataDir = getDataDir(botId);
+        const injectableFiles =
+          bot.aiConfig?.dataFilesConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES;
+
+        const deleted: string[] = [];
+        const skipped: string[] = [];
+
+        for (const filePath of filePaths) {
+          if (injectableFiles.includes(filePath)) {
+            skipped.push(filePath);
+            continue;
+          }
+          const resolved = resolveAndValidate(dataDir, filePath);
+          if (!resolved) {
+            skipped.push(filePath);
+            continue;
+          }
+          try {
+            await fs.unlink(resolved);
+            deleted.push(filePath);
+          } catch {
+            skipped.push(filePath);
+          }
+        }
+
+        return c.json({ ok: true as const, deleted, skipped });
+      },
+    )
     .put(
       "/:botId/files-injection",
       zValidator(

@@ -1,4 +1,9 @@
-import type { BotLogEntry, ConversationCallbacks, TokenUsageRecord } from "@cos-tool-bot/shared";
+import type {
+  BotLogEntry,
+  ConversationCallbacks,
+  PixAIGenerationRecord,
+  TokenUsageRecord,
+} from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { stream } from "@grammyjs/stream";
@@ -10,6 +15,8 @@ import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
+import { createImageGenCommand } from "./commands/imagegen.js";
+import { createImgCfgCommand } from "./commands/imgcfg.js";
 import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
@@ -22,7 +29,7 @@ import { createLogMiddleware } from "./middleware/log.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
-  "adminChatIds" | "onLog" | "onTokenUsage" | "token"
+  "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token"
 >;
 
 export interface BotConfig {
@@ -33,6 +40,7 @@ export interface BotConfig {
   onBackup?: () => Promise<BackupResult>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
 }
@@ -62,6 +70,16 @@ export function createBot(config: BotConfig) {
   let aiResetModelForChat: ReturnType<typeof createAiReplyHandler>["resetModelForChat"] | undefined;
   let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
   let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
+  let aiGetImageGenEnabled:
+    | ReturnType<typeof createAiReplyHandler>["getImageGenEnabled"]
+    | undefined;
+  let aiSetImageGenEnabled:
+    | ReturnType<typeof createAiReplyHandler>["setImageGenEnabled"]
+    | undefined;
+  let aiGetPixaiFullConfig:
+    | ReturnType<typeof createAiReplyHandler>["getPixaiFullConfig"]
+    | undefined;
+  let aiUpdatePixaiConfig: ReturnType<typeof createAiReplyHandler>["updatePixaiConfig"] | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -80,6 +98,7 @@ export function createBot(config: BotConfig) {
       adminChatIds,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
+      onGenerationTrack: config.onGenerationTrack,
       token,
     });
     aiHandler = result.handler;
@@ -89,6 +108,10 @@ export function createBot(config: BotConfig) {
     aiResetModelForChat = result.resetModelForChat;
     aiGetReplyMode = result.getReplyMode;
     aiSetReplyMode = result.setReplyMode;
+    aiGetImageGenEnabled = result.getImageGenEnabled;
+    aiSetImageGenEnabled = result.setImageGenEnabled;
+    aiGetPixaiFullConfig = result.getPixaiFullConfig;
+    aiUpdatePixaiConfig = result.updatePixaiConfig;
   }
 
   bot.command("start", startCommand);
@@ -129,6 +152,38 @@ export function createBot(config: BotConfig) {
       createReplyModeCommand({
         getReplyMode: aiGetReplyMode,
         setReplyMode: aiSetReplyMode,
+      }),
+    );
+  }
+
+  // Register /imagegen command (admin only, requires image generation config)
+  if (
+    config.aiReply?.webToolsConfig?.imageGeneration &&
+    aiGetImageGenEnabled &&
+    aiSetImageGenEnabled
+  ) {
+    bot.command(
+      "imagegen",
+      authGuard,
+      createImageGenCommand({
+        getImageGenEnabled: aiGetImageGenEnabled,
+        setImageGenEnabled: aiSetImageGenEnabled,
+      }),
+    );
+  }
+
+  // Register /imgcfg command (admin only, requires pixai provider)
+  if (
+    config.aiReply?.webToolsConfig?.imageGeneration?.provider === "pixai" &&
+    aiGetPixaiFullConfig &&
+    aiUpdatePixaiConfig
+  ) {
+    bot.command(
+      "imgcfg",
+      authGuard,
+      createImgCfgCommand({
+        getFullConfig: aiGetPixaiFullConfig,
+        updateConfig: aiUpdatePixaiConfig,
       }),
     );
   }

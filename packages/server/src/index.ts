@@ -7,6 +7,7 @@ import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
 import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
+import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
@@ -65,6 +66,15 @@ const memoryGC = new MemoryGC({
 });
 memoryGC.start();
 
+// Generation Cleaner
+const generationCleaner = new GenerationCleaner({
+  db,
+  logger,
+  retentionDays: env.GENERATION_RETENTION_DAYS,
+  intervalHours: 24,
+});
+generationCleaner.start();
+
 // Migrate BOT_TOKEN from env to bots table (one-time)
 await migrateEnvBot(db, logger);
 
@@ -117,6 +127,7 @@ const shutdown = async (signal: string) => {
   modelCapabilityService.stop();
   logCleaner.stop();
   memoryGC.stop();
+  generationCleaner.stop();
   await botPool.stopAll();
   await dbClient.end();
   process.exit(0);

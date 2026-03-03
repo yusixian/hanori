@@ -130,6 +130,19 @@ export function GroupOverrideRow({
               />
             </div>
           </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Tools Overrides</p>
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={override.imageGenerationEnabled ?? false}
+                onChange={(e) => onUpdate({ imageGenerationEnabled: e.target.checked })}
+                className="border-input h-4 w-4 rounded"
+              />
+              <span className="text-sm">Enable image generation for all users</span>
+            </div>
+          </div>
         </div>
       )}
     </div>

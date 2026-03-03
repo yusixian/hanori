@@ -307,8 +307,8 @@ export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
     },
   });
 
-  // Image generation tool
-  if (config.imageGeneration) {
+  // Image generation tool (skip for pixai — handled by per-request createPixAITool)
+  if (config.imageGeneration && config.imageGeneration.provider !== "pixai") {
     const imgCfg = config.imageGeneration;
     tools.generate_image = tool({
       description: "使用 AI 生成图片。返回图片 URL。如需发送给用户，可配合 send_photo 工具使用。",

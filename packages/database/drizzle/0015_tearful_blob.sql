@@ -1,0 +1,1 @@
+ALTER TABLE "pixai_generations" ADD COLUMN "pixai_config" json;

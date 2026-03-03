@@ -14,6 +14,8 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  PixAIConfig,
+  PixAIGenerationRecord,
   ReplyMode,
   TimeoutConfig,
   TokenUsageRecord,
@@ -48,6 +50,7 @@ import {
   createMemoryTools,
   createTelegramTools,
   createWebTools,
+  injectPixAITool,
 } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
@@ -89,6 +92,7 @@ export interface AiReplyConfig {
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   modelOverride?: {
@@ -100,6 +104,11 @@ export interface AiReplyConfig {
   dataFiles?: DataFilesConfig;
   privateChatWhitelist?: number[];
   token: string;
+  onGroupOverrideUpdate?: (chatId: number, override: AiGroupOverride) => void | Promise<void>;
+  onPixaiConfigUpdate?: (updates: {
+    model?: string;
+    pixaiConfig?: Partial<PixAIConfig>;
+  }) => void | Promise<void>;
 }
 
 function formatFileSize(bytes: number): string {
@@ -395,6 +404,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   resetModelForChat: (chatId: number) => void;
   getReplyMode: () => ReplyMode;
   setReplyMode: (mode: ReplyMode) => void;
+  getImageGenEnabled: (chatId: number) => boolean;
+  setImageGenEnabled: (chatId: number, enabled: boolean) => void;
+  getPixaiFullConfig: () => { model: string | undefined; pixaiConfig: PixAIConfig };
+  updatePixaiConfig: (updates: {
+    model?: string;
+    pixaiConfig?: Partial<PixAIConfig>;
+  }) => void | Promise<void>;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -433,6 +449,49 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       return { ...base, replyMode: replyModeOverride };
     }
     return base;
+  }
+
+  function canUseImageGeneration(isPrivate: boolean, isAdmin: boolean, chatId: number): boolean {
+    if (isAdmin) return true;
+    if (isPrivate) return false;
+    return getImageGenEnabled(chatId);
+  }
+
+  function getImageGenEnabled(chatId: number): boolean {
+    return config.groupOverrides[String(chatId)]?.imageGenerationEnabled === true;
+  }
+
+  function setImageGenEnabled(chatId: number, enabled: boolean): void {
+    const key = String(chatId);
+    const existing = config.groupOverrides[key];
+    if (existing) {
+      existing.imageGenerationEnabled = enabled;
+    } else {
+      config.groupOverrides[key] = { chatId, whitelisted: false, imageGenerationEnabled: enabled };
+    }
+    config.onGroupOverrideUpdate?.(chatId, config.groupOverrides[key]!);
+  }
+
+  function getPixaiFullConfig(): { model: string | undefined; pixaiConfig: PixAIConfig } {
+    const imgCfg = config.webToolsConfig?.imageGeneration;
+    return {
+      model: imgCfg?.model,
+      pixaiConfig: imgCfg?.pixaiConfig ?? {},
+    };
+  }
+
+  async function updatePixaiConfig(updates: {
+    model?: string;
+    pixaiConfig?: Partial<PixAIConfig>;
+  }): Promise<void> {
+    const imgCfg = config.webToolsConfig?.imageGeneration;
+    if (!imgCfg) return;
+
+    if (updates.model !== undefined) imgCfg.model = updates.model;
+    if (updates.pixaiConfig) {
+      imgCfg.pixaiConfig = { ...imgCfg.pixaiConfig, ...updates.pixaiConfig };
+    }
+    await config.onPixaiConfigUpdate?.(updates);
   }
 
   // Create AI provider (singleton — avoid recreating on every call)
@@ -522,6 +581,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
   function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
     const modelId = chatId != null ? getModelForChat(chatId) : config.model;
+    // Telegram: private chat IDs are positive, group/supergroup IDs are negative
+    const imageGenerationAllowed =
+      chatId != null
+        ? canUseImageGeneration(
+            chatId > 0 || knownPrivateChats.has(chatId),
+            config.adminChatIds.includes(chatId),
+            chatId,
+          )
+        : false;
     return {
       model: provider(modelId),
       modelId,
@@ -558,6 +626,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       onTimerFired,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
+      onGenerationTrack: config.onGenerationTrack,
+      imageGenerationAllowed,
     };
   }
 
@@ -915,6 +985,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...artworkTools,
         ...fileTools,
       };
+
+      // PixAI image generation (per-request, fire-and-forget) + permission control
+      injectPixAITool(allTools, {
+        allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
+        webToolsConfig: config.webToolsConfig,
+        api: ctx.api,
+        chatId,
+        userId: ctx.from?.id,
+        recentBotMessageIds: chatBotMsgIds,
+        timeoutConfig: config.timeoutConfig,
+        onLog: config.onLog,
+        onGenerationTrack: config.onGenerationTrack,
+      });
 
       // Stream mode and segment mode are mutually exclusive:
       // - Stream: multi_message is removed; text is piped via replyWithStream (draft animation)
@@ -1277,5 +1360,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     setReplyMode: (mode: ReplyMode) => {
       replyModeOverride = mode;
     },
+    getImageGenEnabled,
+    setImageGenEnabled,
+    getPixaiFullConfig,
+    updatePixaiConfig,
   };
 }

@@ -10,6 +10,7 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  PixAIGenerationRecord,
   TimeoutConfig,
   TokenUsageRecord,
   WebToolsConfig,
@@ -25,7 +26,7 @@ import {
 import type { LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import { createBehaviorTools, createTelegramTools } from "../tools/index.js";
+import { createBehaviorTools, createTelegramTools, injectPixAITool } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { splitMessage } from "../utils/split-message.js";
@@ -71,6 +72,8 @@ export interface ContinueChatConfig {
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  imageGenerationAllowed?: boolean;
 }
 
 export interface ContinueChatEvent {
@@ -236,6 +239,19 @@ async function doContinueChat(
       const { createBotMemoryTools } = await import("../tools/bot-memory.js");
       Object.assign(allTools, createBotMemoryTools(config.botMemory));
     }
+
+    // PixAI image generation (per-request, fire-and-forget) + permission control
+    injectPixAITool(allTools, {
+      allowed: !!config.imageGenerationAllowed,
+      webToolsConfig: config.webToolsConfig,
+      api,
+      chatId,
+      userId: event.userId,
+      recentBotMessageIds: chatBotMsgIds,
+      timeoutConfig: config.timeoutConfig,
+      onLog: config.onLog,
+      onGenerationTrack: config.onGenerationTrack,
+    });
 
     // Artwork tools
     if (config.artworkToolsConfig?.enabled) {
