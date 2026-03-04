@@ -257,6 +257,13 @@ export { createWebTools } from "./web.js";
 export type { WebToolsOptions } from "./web.js";
 export { createPixAITool, injectPixAITool, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
 export type { PixAIToolsOptions } from "./pixai.js";
+export { directPixAIGenerate, VALID_PROFILES } from "./pixai-direct.js";
+export type {
+  DirectGenerateOptions,
+  DirectGenerateResult,
+  DrawOverrides,
+  InferenceProfile,
+} from "./pixai-direct.js";
 export { createAgentTools, getAvailableAgentNames } from "./agents.js";
 export type { AgentToolsOptions } from "./agents.js";
 export { createBotMemoryTools } from "./bot-memory.js";

@@ -394,6 +394,7 @@ function PixAIConfigFields({
               onChange={(e) => updatePixai({ seed: e.target.value || undefined })}
               placeholder="Random"
             />
+            <p className="text-muted-foreground text-xs">固定种子可复现相同构图，留空则每次随机</p>
           </div>
 
           {/* Priority */}
@@ -410,6 +411,9 @@ function PixAIConfigFields({
               }
               placeholder="1000"
             />
+            <p className="text-muted-foreground text-xs">
+              任务队列优先级 (0-10000)，数值越大越优先。设置 Profile 时会自动调整
+            </p>
           </div>
         </div>
 
@@ -422,6 +426,9 @@ function PixAIConfigFields({
             onChange={(e) => updatePixai({ negativePrompts: e.target.value || undefined })}
             placeholder="Optional (official docs suggest leaving empty)"
           />
+          <p className="text-muted-foreground text-xs">
+            不希望出现在画面中的元素，PixAI 官方建议留空
+          </p>
         </div>
 
         {/* Width / Height / Batch Size */}
@@ -439,6 +446,7 @@ function PixAIConfigFields({
               }
               placeholder="832"
             />
+            <p className="text-muted-foreground text-xs">推荐 512-1280</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Height</label>
@@ -453,6 +461,7 @@ function PixAIConfigFields({
               }
               placeholder="1472"
             />
+            <p className="text-muted-foreground text-xs">常用: 832×1472, 1024×1024</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Batch Size</label>
@@ -467,6 +476,7 @@ function PixAIConfigFields({
               }
               placeholder="1"
             />
+            <p className="text-muted-foreground text-xs">单次生成数量 (1-4)</p>
           </div>
         </div>
       </div>
@@ -492,6 +502,7 @@ function PixAIConfigFields({
               }
               placeholder="20"
             />
+            <p className="text-muted-foreground text-xs">步数越多细节越好，推荐 20-30</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">CFG Scale</label>
@@ -507,7 +518,7 @@ function PixAIConfigFields({
               }
               placeholder="5"
             />
-            <p className="text-muted-foreground text-xs">建议 &lt; 7</p>
+            <p className="text-muted-foreground text-xs">提示词服从度，过高会过饱和。建议 &lt; 7</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Clip Skip</label>
@@ -522,6 +533,7 @@ function PixAIConfigFields({
               }
               placeholder="2"
             />
+            <p className="text-muted-foreground text-xs">跳过 CLIP 层数，动漫风格通常设 2</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Sampling Method</label>
@@ -531,15 +543,23 @@ function PixAIConfigFields({
               onChange={(e) => updatePixai({ samplingMethod: e.target.value || undefined })}
               placeholder="Euler"
             />
+            <p className="text-muted-foreground text-xs">采样算法，如 Euler、DPM++ 2M Karras 等</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Inference Profile</label>
-            <Input
+            <Select
               disabled={disabled}
               value={pixaiConfig.inferenceProfile ?? ""}
               onChange={(e) => updatePixai({ inferenceProfile: e.target.value || undefined })}
-              placeholder="standard"
-            />
+            >
+              <option value="">Default</option>
+              <option value="standard">Standard</option>
+              <option value="pro">Pro</option>
+              <option value="ultra">Ultra</option>
+            </Select>
+            <p className="text-muted-foreground text-xs">
+              生成质量档位。Ultra 优先级更高、出图更快，但消耗更多积分
+            </p>
           </div>
         </div>
       </div>
@@ -562,7 +582,9 @@ function PixAIConfigFields({
             <label htmlFor="pixaiPromptHelper" className="text-sm font-medium">
               Prompt Helper
             </label>
-            <span className="text-muted-foreground text-xs">(需额外扣费)</span>
+            <span className="text-muted-foreground text-xs">
+              (PixAI 自动优化提示词，需额外扣费)
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -576,7 +598,7 @@ function PixAIConfigFields({
             <label htmlFor="pixaiLightning" className="text-sm font-medium">
               Lightning Mode
             </label>
-            <span className="text-muted-foreground text-xs">(快速生成)</span>
+            <span className="text-muted-foreground text-xs">(牺牲部分质量换取更快速度)</span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -590,6 +612,7 @@ function PixAIConfigFields({
             <label htmlFor="pixaiPrivate" className="text-sm font-medium">
               Private Mode
             </label>
+            <span className="text-muted-foreground text-xs">(图片不公开到 PixAI 社区)</span>
           </div>
         </div>
       </div>
@@ -612,7 +635,11 @@ function PixAIConfigFields({
               }
               placeholder="glossy-glass-anime"
             />
+            <p className="text-muted-foreground text-xs">
+              PixAI 预设风格，如 glossy-glass-anime、korean-style
+            </p>
           </div>
+          <p className="text-muted-foreground text-xs">自动附加在提示词首尾的质量标签</p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Quality Tag Prefix</label>

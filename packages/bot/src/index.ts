@@ -12,6 +12,7 @@ import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createClearCommand } from "./commands/clear.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
+import { createDrawCommand } from "./commands/draw.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
@@ -83,6 +84,10 @@ export function createBot(config: BotConfig) {
   let aiGetPixaiRateLimitStats:
     | ReturnType<typeof createAiReplyHandler>["getPixaiRateLimitStats"]
     | undefined;
+  let aiDirectGenerate: ReturnType<typeof createAiReplyHandler>["directGenerate"] | undefined;
+  let aiCanUseImageGeneration:
+    | ReturnType<typeof createAiReplyHandler>["canUseImageGeneration"]
+    | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -116,6 +121,8 @@ export function createBot(config: BotConfig) {
     aiGetPixaiFullConfig = result.getPixaiFullConfig;
     aiUpdatePixaiConfig = result.updatePixaiConfig;
     aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
+    aiDirectGenerate = result.directGenerate;
+    aiCanUseImageGeneration = result.canUseImageGeneration;
   }
 
   bot.command("start", startCommand);
@@ -189,6 +196,22 @@ export function createBot(config: BotConfig) {
         getFullConfig: aiGetPixaiFullConfig,
         updateConfig: aiUpdatePixaiConfig,
         getRateLimitStats: aiGetPixaiRateLimitStats,
+      }),
+    );
+  }
+
+  // Register /draw command (requires pixai provider + directGenerate)
+  if (
+    config.aiReply?.webToolsConfig?.imageGeneration?.provider === "pixai" &&
+    aiDirectGenerate &&
+    aiCanUseImageGeneration
+  ) {
+    bot.command(
+      "draw",
+      createDrawCommand({
+        directGenerate: aiDirectGenerate,
+        canUseImageGeneration: aiCanUseImageGeneration,
+        adminIds: adminChatIds,
       }),
     );
   }

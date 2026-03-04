@@ -86,7 +86,7 @@ function buildPromptHelperParam(enabled?: boolean) {
   return { withStage: true, userWantToEnable: true, enable: true };
 }
 
-interface CreateTaskParams {
+export interface CreateTaskParams {
   prompts: string;
   modelId: string;
   negativePrompts?: string;
@@ -108,7 +108,7 @@ interface CreateTaskParams {
   isPrivate?: boolean;
 }
 
-class PixAIClient {
+export class PixAIClient {
   constructor(
     private apiKey: string,
     private apiMode: ApiMode = "graphql",
@@ -367,7 +367,7 @@ export interface PixAIToolsOptions {
   adminIds?: number[];
 }
 
-function resolvePrompt(prompt: string, pixaiConfig: PixAIConfig): string {
+export function resolvePrompt(prompt: string, pixaiConfig: PixAIConfig): string {
   if (pixaiConfig.systemImagePrompt) {
     return `${pixaiConfig.systemImagePrompt}, ${prompt}`;
   }
@@ -718,7 +718,7 @@ export function injectPixAITool(
 
 // --- Background poll & send ---
 
-async function pollAndSend(
+export async function pollAndSend(
   client: PixAIClient,
   taskId: string,
   timeoutMs: number,

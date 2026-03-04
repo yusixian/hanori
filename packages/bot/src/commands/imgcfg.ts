@@ -3,6 +3,15 @@ import { DEFAULT_PIXAI_RATE_LIMIT } from "@cos-tool-bot/shared";
 import type { CommandMiddleware } from "grammy";
 import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import type { WrapperContext } from "../context.js";
+import { PROFILE_PRIORITY, VALID_PROFILES } from "../tools/pixai-direct.js";
+import type { InferenceProfile } from "../tools/pixai-direct.js";
+import {
+  buildFlagPattern,
+  parseFlagsFromInput,
+  validateBool,
+  validateFloat,
+  validateInt,
+} from "../utils/flag-parser.js";
 
 export interface ImgCfgCommandConfig {
   getFullConfig: () => { model: string | undefined; pixaiConfig: PixAIConfig };
@@ -54,6 +63,7 @@ const FLAG_DEFS: Record<string, FlagDef> = {
   "-private": { key: "private", field: "isPrivate", type: "bool", label: "Private Mode" },
   "-ph": { key: "ph", field: "promptHelper", type: "bool", label: "Prompt Helper" },
   "-lightning": { key: "lightning", field: "lightning", type: "bool", label: "Lightning Mode" },
+  "-profile": { key: "profile", field: "inferenceProfile", type: "string", label: "Profile" },
 };
 
 const RL_FLAG_DEFS: Record<string, RateLimitFlagDef> = {
@@ -105,61 +115,13 @@ const RL_FLAG_DEFS: Record<string, RateLimitFlagDef> = {
   },
 };
 
-// Merge all flag keys for regex
-const ALL_FLAG_KEYS = [...Object.keys(FLAG_DEFS), ...Object.keys(RL_FLAG_DEFS)].sort(
-  (a, b) => b.length - a.length,
-);
-
 // Pre-compiled flag regex (use matchAll to avoid stateful lastIndex issues)
-const FLAG_PATTERN = new RegExp(
-  `(${ALL_FLAG_KEYS.map((f) => f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s`,
-  "g",
-);
+const FLAG_PATTERN = buildFlagPattern([...Object.keys(FLAG_DEFS), ...Object.keys(RL_FLAG_DEFS)]);
 
 // --- Parsers ---
 
 function parseFlags(input: string): Map<string, string> {
-  const result = new Map<string, string>();
-
-  // Find all flag positions
-  const positions: Array<{ flag: string; start: number; valueStart: number }> = [];
-  for (const match of input.matchAll(FLAG_PATTERN)) {
-    positions.push({
-      flag: match[1]!,
-      start: match.index,
-      valueStart: match.index + match[0].length,
-    });
-  }
-
-  for (let i = 0; i < positions.length; i++) {
-    const pos = positions[i]!;
-    const nextStart = positions[i + 1]?.start ?? input.length;
-    const value = input.slice(pos.valueStart, nextStart).trim();
-    result.set(pos.flag, value);
-  }
-
-  return result;
-}
-
-function validateInt(value: string, min: number, max: number, label: string): number | string {
-  const n = Number.parseInt(value, 10);
-  if (Number.isNaN(n)) return `${label}: 需要整数，收到 "${value}"`;
-  if (n < min || n > max) return `${label}: 范围 ${min}-${max}，收到 ${n}`;
-  return n;
-}
-
-function validateFloat(value: string, min: number, max: number, label: string): number | string {
-  const n = Number.parseFloat(value);
-  if (Number.isNaN(n)) return `${label}: 需要数字，收到 "${value}"`;
-  if (n < min || n > max) return `${label}: 范围 ${min}-${max}，收到 ${n}`;
-  return n;
-}
-
-function validateBool(value: string, label: string): boolean | string {
-  const v = value.toLowerCase();
-  if (v === "on" || v === "true" || v === "1") return true;
-  if (v === "off" || v === "false" || v === "0") return false;
-  return `${label}: 需要 on/off，收到 "${value}"`;
+  return parseFlagsFromInput(input, FLAG_PATTERN).flags;
 }
 
 // --- Config display ---
@@ -175,6 +137,8 @@ function formatConfigHtml(
   lines.push("<b>模型/尺寸</b>");
   lines.push(`  Model: <code>${model ?? "(默认)"}</code>`);
   if (cfg.modelStyle) lines.push(`  Style: <code>${cfg.modelStyle.keyId}</code>`);
+  lines.push(`  Profile: ${cfg.inferenceProfile ?? "(未设置)"}`);
+  lines.push(`  Priority: ${cfg.priority ?? 500}`);
   lines.push(`  Size: ${cfg.width ?? 832} × ${cfg.height ?? 1472}`);
   lines.push(`  Batch: ${cfg.batchSize ?? 1}`);
   lines.push("");
@@ -284,6 +248,14 @@ export function createImgCfgCommand(cfg: ImgCfgCommandConfig): CommandMiddleware
         case "string": {
           if (def.field === "modelStyle") {
             pixaiUpdate.modelStyle = { type: "key", keyId: value };
+          } else if (def.field === "inferenceProfile") {
+            if (!VALID_PROFILES.includes(value as InferenceProfile)) {
+              errors.push(`${def.label}: 需要 ${VALID_PROFILES.join("/")}，收到 "${value}"`);
+            } else {
+              pixaiUpdate.inferenceProfile = value;
+              // Auto-set priority based on profile
+              pixaiUpdate.priority = PROFILE_PRIORITY[value as InferenceProfile];
+            }
           } else {
             (pixaiUpdate as Record<string, unknown>)[def.field] = value;
           }

@@ -50,8 +50,10 @@ import {
   createMemoryTools,
   createTelegramTools,
   createWebTools,
+  directPixAIGenerate,
   injectPixAITool,
 } from "../tools/index.js";
+import type { DirectGenerateResult, DrawOverrides } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
@@ -414,6 +416,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
   getPixaiRateLimitStats: () => RateLimitStats;
+  canUseImageGeneration: (isPrivate: boolean, isAdmin: boolean, chatId: number) => boolean;
+  directGenerate: (
+    rawPrompt: string,
+    overrides: DrawOverrides,
+    chatId: number,
+    userId?: number,
+  ) => Promise<DirectGenerateResult>;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -1369,6 +1378,43 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     }
   };
 
+  function buildDirectGenerate() {
+    return (
+      rawPrompt: string,
+      overrides: DrawOverrides,
+      chatId: number,
+      userId?: number,
+    ): Promise<DirectGenerateResult> => {
+      if (!botApi) {
+        return Promise.resolve({ ok: false, error: "Bot 尚未就绪，请稍后再试" });
+      }
+      const imgCfg = config.webToolsConfig?.imageGeneration;
+      if (!imgCfg || imgCfg.provider !== "pixai" || !imgCfg.apiKey) {
+        return Promise.resolve({ ok: false, error: "生图未配置或未启用" });
+      }
+
+      let chatBotMsgIds = recentBotMessageIds.get(chatId);
+      if (!chatBotMsgIds) {
+        chatBotMsgIds = [];
+        recentBotMessageIds.set(chatId, chatBotMsgIds);
+      }
+      while (chatBotMsgIds.length > MAX_RECENT_BOT_MESSAGES) chatBotMsgIds.shift();
+
+      return directPixAIGenerate(rawPrompt, overrides, {
+        getImageGenConfig: () => imgCfg,
+        api: botApi,
+        chatId,
+        userId,
+        recentBotMessageIds: chatBotMsgIds,
+        timeoutConfig: config.timeoutConfig,
+        onLog: config.onLog,
+        onGenerationTrack: config.onGenerationTrack,
+        rateLimiter: pixaiRateLimiter,
+        adminIds: config.adminChatIds,
+      });
+    };
+  }
+
   return {
     handler,
     state,
@@ -1385,5 +1431,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     getPixaiFullConfig,
     updatePixaiConfig,
     getPixaiRateLimitStats: () => pixaiRateLimiter.getStats(),
+    canUseImageGeneration,
+    directGenerate: buildDirectGenerate(),
   };
 }
