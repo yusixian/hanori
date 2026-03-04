@@ -17,8 +17,9 @@ const commands = [
   { command: "model", description: "查看/切换 AI 模型" },
   { command: "replymode", description: "(admin) 切换回复模式 (stream/segment)" },
   { command: "imagegen", description: "(admin) 切换群组生图权限 (on/off)" },
-  { command: "draw", description: "直接生图 /draw <提示词> [-w -h -s ...]" },
-  { command: "imgcfg", description: "(admin) 查看/修改生图参数" },
+  { command: "draw", description: "直接生图，发送 /draw 查看参数说明" },
+  { command: "imgcfg", description: "(admin) 查看/修改生图配置，发送 /imgcfg help 查看参数说明" },
+  { command: "timers", description: "(admin) 查看/管理活跃定时器" },
 ];
 
 export { commands };

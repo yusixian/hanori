@@ -26,6 +26,14 @@ export interface TelegramToolsOptions {
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
+  onTimerCreate?: (params: {
+    timerId: string;
+    chatId: number;
+    seconds: number;
+    reason: string;
+  }) => void;
+  onTimerCancel?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => void;
   onceGuard?: OnceGuardContext;
   dataDir?: string;
   token?: string;
@@ -278,10 +286,10 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
 
     set_timer: tool({
       description:
-        "设置一个定时器。到期后你（AI）会自动收到通知并可继续对话。可用于投票倒计时、游戏节奏控制、定时提醒等。",
+        "设置一个定时器。到期后你（AI）会自动收到通知并可继续对话。可用于投票倒计时、游戏节奏控制、定时提醒等。支持持久化（重启后自动恢复）。",
       inputSchema: zodToAiSchema(
         z.object({
-          seconds: z.number().min(5).max(3600).describe("定时秒数（5-3600）"),
+          seconds: z.number().min(5).max(86400).describe("定时秒数（5-86400，即最长24小时）"),
           reason: z.string().describe("定时器用途说明，到期后会作为上下文提供给你"),
         }),
       ),
@@ -296,16 +304,27 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reason,
             // Placeholder handle, replaced below
             setTimeout(() => {}, 0),
+            true, // persistent: managed by DB
           );
           clearTimeout(pending.handle);
           const handle = setTimeout(() => {
             const timer = options.pendingActions!.removeTimer(pending.timerId);
             if (timer) {
+              options.onTimerFiredPersist?.(timer.timerId);
               options.onTimerFired!(chatId, timer.timerId, timer.reason);
             }
           }, seconds * 1000);
           handle.unref();
           pending.handle = handle;
+
+          // Notify server to persist
+          options.onTimerCreate?.({
+            timerId: pending.timerId,
+            chatId,
+            seconds,
+            reason,
+          });
+
           return {
             success: true,
             timer_id: pending.timerId,
@@ -333,6 +352,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           }
           const removed = options.pendingActions.removeTimer(timer_id);
           if (!removed) return { error: "Timer not found or already expired" };
+          options.onTimerCancel?.(timer_id);
           return { success: true, cancelled_timer_id: timer_id };
         } catch (err) {
           return { error: String(err) };

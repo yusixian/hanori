@@ -47,6 +47,14 @@ export class GenerationCleaner {
     }
   }
 
+  getHandle(): ReturnType<typeof setInterval> | null {
+    return this.timer;
+  }
+
+  getIntervalMs(): number {
+    return Math.max(this.intervalHours, 1) * 60 * 60 * 1000;
+  }
+
   private async cleanup() {
     try {
       const cutoff = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000);

@@ -53,6 +53,9 @@ const LogsListPage = lazy(() =>
   import("@/pages/logs/list").then((m) => ({ default: m.LogsListPage })),
 );
 const UsagePage = lazy(() => import("@/pages/usage").then((m) => ({ default: m.UsagePage })));
+const TimersListPage = lazy(() =>
+  import("@/pages/timers/list").then((m) => ({ default: m.TimersListPage })),
+);
 
 function LoadingFallback() {
   return (
@@ -101,6 +104,7 @@ export function App() {
                 <Route path="/backup" element={<BackupPage />} />
                 <Route path="/api-test" element={<ApiTestPage />} />
                 <Route path="/usage" element={<UsagePage />} />
+                <Route path="/timers" element={<TimersListPage />} />
                 <Route path="/logs" element={<LogsListPage />} />
               </Route>
 

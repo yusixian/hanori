@@ -72,6 +72,14 @@ export interface ContinueChatConfig {
   moodState: Map<number, MoodInfo>;
   stickerPacks?: string[];
   onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
+  onTimerCreate?: (params: {
+    timerId: string;
+    chatId: number;
+    seconds: number;
+    reason: string;
+  }) => void;
+  onTimerCancel?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => void;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
@@ -193,6 +201,9 @@ async function doContinueChat(
       recentBotMessageIds: chatBotMsgIds,
       pendingActions: config.pendingActions,
       onTimerFired: wrappedOnTimerFired,
+      onTimerCreate: config.onTimerCreate,
+      onTimerCancel: config.onTimerCancel,
+      onTimerFiredPersist: config.onTimerFiredPersist,
       onceGuard,
     });
 

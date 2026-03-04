@@ -1,4 +1,4 @@
-import type { AiReplyBotConfig, BotConfig } from "@cos-tool-bot/bot";
+import type { AiReplyBotConfig, BotConfig, TimerCallbacks } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
 import type {
   BotStatus,
@@ -20,6 +20,7 @@ interface BotManagerOptions {
   onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  timerCallbacks?: TimerCallbacks;
 }
 
 export class BotManager {
@@ -35,6 +36,7 @@ export class BotManager {
     this.dbLogger = options.dbLogger;
     this.botConfig = {
       token: options.token,
+      botId: options.botId,
       adminChatIds: options.adminChatIds,
       logger: options.logger,
       onRestart: () => this.restart(),
@@ -42,6 +44,7 @@ export class BotManager {
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
       onTokenUsage: options.onTokenUsage,
       onGenerationTrack: options.onGenerationTrack,
+      timerCallbacks: options.timerCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
     };

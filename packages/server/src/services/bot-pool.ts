@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
+import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
 import { NsfwChecker } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots, pixaiGenerations, tokenUsage } from "@cos-tool-bot/database";
@@ -31,19 +31,24 @@ import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import { EmbeddingService } from "./embedding-service.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import type { TimerRegistry } from "./timer-registry.js";
 
 export class BotPool {
   private managers = new Map<string, BotManager>();
+  private botTimerHandlers = new Map<string, BotTimerHandlers>();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
   private chatModelStore: ChatModelStore;
   private backupService?: BackupService;
+  private timerRegistry: TimerRegistry;
 
   constructor(
     private db: Database,
     private logger: Logger,
+    timerRegistry: TimerRegistry,
   ) {
+    this.timerRegistry = timerRegistry;
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
@@ -467,6 +472,44 @@ export class BotPool {
       }
     };
 
+    const registry = this.timerRegistry;
+    const timerCallbacks = {
+      onTimerCreate: (params: {
+        timerId: string;
+        chatId: number;
+        seconds: number;
+        reason: string;
+      }) => {
+        registry
+          .registerAi({
+            timerId: params.timerId,
+            botId,
+            chatId: params.chatId,
+            name: params.reason,
+            seconds: params.seconds,
+            meta: { reason: params.reason },
+          })
+          .catch((err) => {
+            this.logger.error(err, `Failed to register AI timer in registry`);
+          });
+      },
+      onTimerCancel: (timerId: string) => {
+        registry.cancel(timerId).catch((err) => {
+          this.logger.error(err, `Failed to cancel timer ${timerId} in registry`);
+        });
+      },
+      onTimerFired: (timerId: string) => {
+        registry.markFired(timerId).catch((err) => {
+          this.logger.error(err, `Failed to mark timer ${timerId} fired in registry`);
+        });
+      },
+      onGetTimers: () => registry.listActive(),
+      onCancelTimer: (timerId: string) => this.cancelTimer(timerId),
+      onBotReady: (handlers: import("@cos-tool-bot/bot").BotTimerHandlers) => {
+        this.botTimerHandlers.set(botId, handlers);
+      },
+    };
+
     const manager = new BotManager({
       botId,
       token,
@@ -478,6 +521,7 @@ export class BotPool {
       onBackup,
       onTokenUsage,
       onGenerationTrack,
+      timerCallbacks,
     });
 
     this.managers.set(botId, manager);
@@ -489,6 +533,7 @@ export class BotPool {
     if (!manager) return;
     await manager.stop();
     this.managers.delete(botId);
+    this.botTimerHandlers.delete(botId);
   }
 
   async restartBot(botId: string) {
@@ -502,6 +547,47 @@ export class BotPool {
 
   getAllManagers(): Map<string, BotManager> {
     return this.managers;
+  }
+
+  /** Cancel a timer, clearing both the registry and the bot's PendingActionRegistry. */
+  async cancelTimer(timerId: string): Promise<boolean> {
+    const timer = this.timerRegistry.get(timerId);
+    if (timer?.botId) {
+      this.botTimerHandlers.get(timer.botId)?.cancelPendingTimer(timerId);
+    }
+    return this.timerRegistry.cancel(timerId);
+  }
+
+  /** Fire a recovered timer by triggering the bot's continueChat. */
+  fireRecoveredTimer(
+    timerId: string,
+    botId: string,
+    chatId: number,
+    meta: Record<string, unknown> | null,
+  ): void {
+    const manager = this.managers.get(botId);
+    if (!manager) {
+      this.logger.warn(`Cannot fire recovered timer ${timerId}: bot ${botId} not managed`);
+      return;
+    }
+
+    // Mark as fired in registry
+    this.timerRegistry.markFired(timerId).catch((err) => {
+      this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
+    });
+
+    // Fire via bot's continueChat
+    const handlers = this.botTimerHandlers.get(botId);
+    if (handlers) {
+      const reason = (meta?.reason as string) ?? "Recovered timer";
+      handlers.fireTimer(chatId, timerId, reason);
+      this.logger.info({ timerId, botId, chatId }, "Recovered timer fired via bot continueChat");
+    } else {
+      this.logger.warn(
+        { timerId, botId, chatId },
+        "No fire handler for bot, recovered timer cannot trigger continueChat",
+      );
+    }
   }
 }
 

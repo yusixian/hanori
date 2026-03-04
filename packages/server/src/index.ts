@@ -10,6 +10,7 @@ import { DbLogger } from "./services/db-logger.js";
 import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
+import { TimerRegistry } from "./services/timer-registry.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
 
 export type { AppType } from "./app.js";
@@ -92,8 +93,11 @@ await backupService.init();
 const modelCapabilityService = new ModelCapabilityService(logger);
 await modelCapabilityService.init();
 
+// Timer Registry
+const timerRegistry = new TimerRegistry(db, logger);
+
 // Bot Pool
-const botPool = new BotPool(db, logger);
+const botPool = new BotPool(db, logger, timerRegistry);
 botPool.setBackupService(backupService);
 
 // Hono App
@@ -105,10 +109,36 @@ const app = createApp({
   encryptionKey: env.ENCRYPTION_KEY,
   backupService,
   modelCapabilityService,
+  timerRegistry,
 });
 
 // Start all active bots
 await botPool.startAll();
+
+// Register system timers
+const scheduledServices: [
+  string,
+  { getHandle(): ReturnType<typeof setInterval> | null; getIntervalMs(): number },
+][] = [
+  ["LogCleaner", logCleaner],
+  ["MemoryGC", memoryGC],
+  ["GenerationCleaner", generationCleaner],
+  ["ModelCapabilityService", modelCapabilityService],
+];
+for (const [name, svc] of scheduledServices) {
+  const handle = svc.getHandle();
+  if (handle) {
+    timerRegistry.registerSystem({ name, intervalMs: svc.getIntervalMs(), handle });
+  }
+}
+
+// Recover AI timers from database
+await timerRegistry.recoverAiTimers(
+  (timerId, botId, chatId, meta) => {
+    botPool.fireRecoveredTimer(timerId, botId, chatId, meta);
+  },
+  (botId) => botPool.getManager(botId)?.status === "running",
+);
 
 // Start HTTP server
 serve(
@@ -124,6 +154,7 @@ serve(
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
+  timerRegistry.destroy();
   modelCapabilityService.stop();
   logCleaner.stop();
   memoryGC.stop();

@@ -14,6 +14,7 @@ import {
   FolderOpen,
   ImageIcon,
   HardDrive,
+  Timer,
   LogOut,
   Menu,
   MessageSquare,
@@ -33,6 +34,7 @@ const globalNavItems = [
   { label: "Usage", path: "/usage", icon: BarChart3 },
   { label: "Data", path: "/data", icon: Database },
   { label: "Backup", path: "/backup", icon: HardDrive },
+  { label: "Timers", path: "/timers", icon: Timer },
   { label: "API Test", path: "/api-test", icon: FlaskConical },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];

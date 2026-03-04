@@ -29,9 +29,11 @@ export interface PendingTimer {
   reason: string;
   handle: ReturnType<typeof setTimeout>;
   createdAt: number;
+  persistent?: boolean;
 }
 
 const TTL_MS = 60 * 60 * 1000; // 1 hour
+const PERSISTENT_TTL_MS = 25 * 60 * 60 * 1000; // 25 hours (max timer is 24h + buffer)
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 function shortId(): string {
@@ -131,6 +133,7 @@ export class PendingActionRegistry {
     chatId: number,
     reason: string,
     handle: ReturnType<typeof setTimeout>,
+    persistent?: boolean,
   ): PendingTimer {
     const timerId = shortId();
     const pending: PendingTimer = {
@@ -140,6 +143,7 @@ export class PendingActionRegistry {
       reason,
       handle,
       createdAt: Date.now(),
+      persistent,
     };
     this.timers.set(timerId, pending);
     return pending;
@@ -201,7 +205,8 @@ export class PendingActionRegistry {
       if (now - choice.createdAt > TTL_MS) this.choices.delete(id);
     }
     for (const [id, timer] of this.timers) {
-      if (now - timer.createdAt > TTL_MS) {
+      const ttl = timer.persistent ? PERSISTENT_TTL_MS : TTL_MS;
+      if (now - timer.createdAt > ttl) {
         clearTimeout(timer.handle);
         this.timers.delete(id);
       }

@@ -13,6 +13,7 @@ import type { Api } from "grammy";
 import { z } from "zod";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import type { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
+import { AVAILABLE_STYLES } from "./pixai-styles.js";
 import { sleep } from "../utils/sleep.js";
 import { zodToAiSchema } from "./utils.js";
 
@@ -518,38 +519,10 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
             .string()
             .optional()
             .describe(
-              [
-                "可选风格 key，根据画面需要选择最合适的风格。可选值:",
-                "low-saturation-expressive-eyes(低饱和透明感)",
-                "colored-pencil-grain(缤纷彩铅)",
-                "grey-blocks-lineless(灰色晕染)",
-                "oil-watercolor-blend(水感油彩)",
-                "hard-line-monochrome-accent(极简时尚)",
-                "korean-style(精致韩漫)",
-                "lineart-watercolor-airy(柔光线条)",
-                "minimal-flat-color(极简色块)",
-                "luminous-retro-impasto(明亮厚涂)",
-                "anime-watercolor-impasto(水彩光晕)",
-                "high-contrast-retro-vivid(明亮霓虹)",
-                "flat-anime-pastel(柔和平涂)",
-                "paper-watercolor(亮系水彩)",
-                "classic-japanese(经典动画)",
-                "retro-tv-anime(90复古赛璐璐)",
-                "poster-graffiti(霓彩海报)",
-                "clean-flat-illustration(简约平涂)",
-                "art-crayon(画艺蜡笔)",
-                "painterly-doodle(纹理涂鸦)",
-                "retro-comic-fusion(复古混搭)",
-                "pencil-sketch(铅绘素描)",
-                "chibi(Q版)",
-                "retro-oil-glamour(复古油亮肉感，适合性感/涩图)",
-                "modern-oil-glamour(现代油亮肉感，适合性感/涩图)",
-                "bold-line-soft-color(厚线柔和)",
-                "glossy-glass-anime(琉璃动画)",
-                "moe-pastel(萌系平涂)",
-                "semi-realistic(半写实)",
-                "cool-warm-oil-contrast(撞色厚涂)",
-              ].join(" / "),
+              "可选风格 key，根据画面需要选择最合适的风格。可选值: " +
+                AVAILABLE_STYLES.map(
+                  (s) => `${s.key}(${s.label}${s.hint ? `，${s.hint}` : ""})`,
+                ).join(" / "),
             ),
         }),
       ),

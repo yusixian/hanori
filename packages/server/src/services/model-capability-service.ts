@@ -52,6 +52,14 @@ export class ModelCapabilityService {
     }
   }
 
+  getHandle(): ReturnType<typeof setInterval> | null {
+    return this.refreshTimer;
+  }
+
+  getIntervalMs(): number {
+    return REFRESH_INTERVAL_MS;
+  }
+
   private async refresh(): Promise<void> {
     const res = await fetch(MODELS_DEV_URL, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);

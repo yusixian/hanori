@@ -612,3 +612,22 @@ export interface ImportResult {
   importedBots: Array<{ oldId: string; newId: string; name: string }>;
   counts: Record<string, number>;
 }
+
+// Timer types
+
+export type TimerType = "ai" | "system";
+export type TimerStatus = "active" | "fired" | "cancelled";
+
+export interface TimerRecord {
+  id: string;
+  botId: string | null;
+  type: TimerType;
+  name: string;
+  chatId: number | null;
+  status: TimerStatus;
+  intervalMs: number | null;
+  firesAt: string | null;
+  createdAt: string;
+  firedAt: string | null;
+  meta: Record<string, unknown> | null;
+}

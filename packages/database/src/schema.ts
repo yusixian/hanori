@@ -361,6 +361,24 @@ export const pixaiGenerations = pgTable(
   ],
 );
 
+export const timers = pgTable(
+  "timers",
+  {
+    id: text("id").primaryKey(),
+    botId: uuid("bot_id").references(() => bots.id, { onDelete: "cascade" }),
+    type: text("type").notNull(), // 'ai' | 'system'
+    name: text("name").notNull(),
+    chatId: bigint("chat_id", { mode: "number" }),
+    status: text("status").notNull().default("active"),
+    intervalMs: integer("interval_ms"),
+    firesAt: timestamp("fires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    firedAt: timestamp("fired_at"),
+    meta: json("meta").$type<Record<string, unknown>>(),
+  },
+  (t) => [index("timers_bot_id_idx").on(t.botId), index("timers_status_idx").on(t.status)],
+);
+
 export const tokenUsage = pgTable(
   "token_usage",
   {

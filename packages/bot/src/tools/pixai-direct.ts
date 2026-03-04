@@ -17,6 +17,8 @@ export type InferenceProfile = "standard" | "pro" | "ultra";
 export const VALID_PROFILES: InferenceProfile[] = ["standard", "pro", "ultra"];
 
 /** Profile → default priority mapping */
+export { AVAILABLE_STYLES } from "./pixai-styles.js";
+
 export const PROFILE_PRIORITY: Record<InferenceProfile, number> = {
   standard: 500,
   pro: 500,

@@ -1,6 +1,7 @@
 export * from "./types.js";
 export { parseParams } from "./param-parser.js";
 export { inferCapabilities } from "./model-capabilities.js";
+export { formatDuration } from "./format.js";
 export {
   MAX_FILE_SIZE,
   ALLOWED_EXTENSIONS,

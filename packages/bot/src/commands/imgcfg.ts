@@ -3,7 +3,7 @@ import { DEFAULT_PIXAI_RATE_LIMIT, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-t
 import type { CommandMiddleware } from "grammy";
 import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import type { WrapperContext } from "../context.js";
-import { PROFILE_PRIORITY, VALID_PROFILES } from "../tools/pixai-direct.js";
+import { AVAILABLE_STYLES, PROFILE_PRIORITY, VALID_PROFILES } from "../tools/pixai-direct.js";
 import type { InferenceProfile } from "../tools/pixai-direct.js";
 import {
   buildFlagPattern,
@@ -132,6 +132,50 @@ const RL_FLAG_DEFS: Record<string, RateLimitFlagDef> = {
 // Pre-compiled flag regex (use matchAll to avoid stateful lastIndex issues)
 const FLAG_PATTERN = buildFlagPattern([...Object.keys(FLAG_DEFS), ...Object.keys(RL_FLAG_DEFS)]);
 
+const HELP_TEXT = `用法: /imgcfg [参数]
+
+无参数时显示当前配置。传入参数修改对应配置项。
+
+基本参数:
+  -m <id>              模型 ID
+  -s <key>             模型风格 Key ID
+  -p <text>            系统提示词 (AI 生图时附加)
+  -np <text>           负面提示词
+  -w <1-3072>          图片宽度 (默认 832)
+  -h <1-3072>          图片高度 (默认 1472)
+  -b <1-4>             单次生成数量
+  -seed <text>         固定随机种子
+  -steps <8-50>        采样步数
+  -cfg <1.1-15>        CFG Scale (提示词遵循度)
+  -private <on/off>    私聊生图开关
+  -ph <on/off>         Prompt Helper (AI 优化提示词)
+  -lightning <on/off>  闪电模式 (加速生成)
+  -profile <tier>      质量档位 (standard/pro/ultra)
+
+限流参数:
+  -rl.max <1-20>       最大并发任务数
+  -rl.queue <0-50>     队列深度
+  -rl.user <0-3600>    用户冷却时间 (秒)
+  -rl.chat <0-3600>    群聊冷却时间 (秒)
+  -rl.hourly <1-1000>  每小时限额
+  -rl.admin <on/off>   管理员绕过限流
+
+示例:
+  /imgcfg                           查看当前配置
+  /imgcfg -w 1024 -h 1024 -b 2     修改尺寸和数量
+  /imgcfg -profile ultra            切换为 ultra 质量
+  /imgcfg -rl.user 120 -rl.hourly 20  调整限流`;
+
+function formatStylesList(): string {
+  const lines = ["可用风格列表:", ""];
+  for (const s of AVAILABLE_STYLES) {
+    lines.push(`  ${s.key}  ${s.label}`);
+  }
+  lines.push("");
+  lines.push("使用: /imgcfg -s <key> 或 /draw -s <key>");
+  return lines.join("\n");
+}
+
 // --- Parsers ---
 
 function parseFlags(input: string): Map<string, string> {
@@ -211,6 +255,16 @@ export function createImgCfgCommand(cfg: ImgCfgCommandConfig): CommandMiddleware
       const { model, pixaiConfig } = cfg.getFullConfig();
       const stats = cfg.getRateLimitStats?.();
       await ctx.reply(formatConfigHtml(model, pixaiConfig, stats), { parse_mode: "HTML" });
+      return;
+    }
+
+    // Subcommands: help / styles
+    if (input === "help") {
+      await ctx.reply(HELP_TEXT);
+      return;
+    }
+    if (input === "styles") {
+      await ctx.reply(formatStylesList());
       return;
     }
 

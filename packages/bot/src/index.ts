@@ -22,6 +22,11 @@ import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
+import {
+  createTimersCommand,
+  isTimerCancelCallback,
+  parseTimerCancelId,
+} from "./commands/timers.js";
 import { WrapperContext, type BotContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
@@ -33,8 +38,28 @@ export type AiReplyBotConfig = Omit<
   "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token"
 >;
 
+export interface BotTimerHandlers {
+  fireTimer: (chatId: number, timerId: string, reason: string) => void;
+  cancelPendingTimer: (timerId: string) => void;
+}
+
+export interface TimerCallbacks {
+  onTimerCreate?: (params: {
+    timerId: string;
+    chatId: number;
+    seconds: number;
+    reason: string;
+  }) => void;
+  onTimerCancel?: (timerId: string) => void;
+  onTimerFired?: (timerId: string) => void;
+  onGetTimers?: () => import("@cos-tool-bot/shared").TimerRecord[];
+  onCancelTimer?: (timerId: string) => Promise<boolean>;
+  onBotReady?: (handlers: BotTimerHandlers) => void;
+}
+
 export interface BotConfig {
   token: string;
+  botId: string;
   adminChatIds: number[];
   logger: Logger;
   onRestart?: () => void | Promise<void>;
@@ -42,6 +67,7 @@ export interface BotConfig {
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  timerCallbacks?: TimerCallbacks;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
 }
@@ -107,6 +133,9 @@ export function createBot(config: BotConfig) {
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
       onGenerationTrack: config.onGenerationTrack,
+      onTimerCreate: config.timerCallbacks?.onTimerCreate,
+      onTimerCancel: config.timerCallbacks?.onTimerCancel,
+      onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
       token,
     });
     aiHandler = result.handler;
@@ -123,6 +152,17 @@ export function createBot(config: BotConfig) {
     aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
+
+    // Register bot handlers with server for timer recovery and external cancel
+    if (config.timerCallbacks?.onBotReady) {
+      const pendingActions = result.state.getPendingActions();
+      config.timerCallbacks.onBotReady({
+        fireTimer: result.fireTimerEvent,
+        cancelPendingTimer: (timerId) => {
+          pendingActions.removeTimer(timerId);
+        },
+      });
+    }
   }
 
   bot.command("start", startCommand);
@@ -137,6 +177,18 @@ export function createBot(config: BotConfig) {
     authGuard,
     createClearReceivedCommand(config.aiReply?.dataFiles?.dataDir),
   );
+
+  // Register /timers command (admin only)
+  if (config.timerCallbacks?.onGetTimers && config.timerCallbacks?.onCancelTimer) {
+    bot.command(
+      "timers",
+      authGuard,
+      createTimersCommand({
+        onGetTimers: config.timerCallbacks.onGetTimers,
+        onCancelTimer: config.timerCallbacks.onCancelTimer,
+      }),
+    );
+  }
 
   // Register /model command if models are configured
   if (config.aiReply?.models?.length && aiSetModelForChat && aiGetModelForChat) {
@@ -238,6 +290,30 @@ export function createBot(config: BotConfig) {
     });
 
     bot.on("callback_query:data", async (ctx) => {
+      // Handle timer cancel callbacks
+      const data = ctx.callbackQuery.data;
+      if (isTimerCancelCallback(data) && config.timerCallbacks?.onCancelTimer) {
+        const timerId = parseTimerCancelId(data);
+        if (timerId) {
+          const cancelled = await config.timerCallbacks.onCancelTimer(timerId);
+          await ctx.api.raw.answerCallbackQuery({
+            callback_query_id: ctx.callbackQuery.id,
+            text: cancelled ? `定时器 ${timerId} 已取消` : "定时器未找到或已过期",
+          });
+          if (cancelled && ctx.callbackQuery.message) {
+            try {
+              await ctx.api.editMessageText(
+                ctx.callbackQuery.message.chat.id,
+                ctx.callbackQuery.message.message_id,
+                `${ctx.callbackQuery.message.text ?? ""}\n\n✅ 定时器 ${timerId} 已取消`,
+              );
+            } catch {
+              // ignore edit errors
+            }
+          }
+          return;
+        }
+      }
       await callbackQueryHandler(ctx);
     });
 

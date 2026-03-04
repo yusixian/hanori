@@ -44,22 +44,22 @@ const HELP_TEXT = `用法: /draw <提示词> [参数]
 直接使用提示词生成图片，不经过 AI 处理。
 
 可选参数:
-  -w <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>        宽度 (默认跟随配置)
-  -h <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>        高度 (默认跟随配置)
-  -b <1-4>             生成数量
-  -s <key>             风格 key
+  -w <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>          图片宽度 (默认跟随配置)
+  -h <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>          图片高度 (默认跟随配置)
+  -b <1-4>             单次生成数量
+  -s <key>             风格 Key (发送 /imgcfg styles 查看)
   -np <text>           负面提示词
-  -seed <text>         随机种子
+  -seed <text>         固定随机种子
   -steps <8-50>        采样步数
-  -cfg <1.1-15>        CFG Scale
-  -ph <on/off>         Prompt Helper
-  -lightning <on/off>  闪电模式
+  -cfg <1.1-15>        CFG Scale (提示词遵循度)
+  -ph <on/off>         Prompt Helper (AI 优化提示词)
+  -lightning <on/off>  闪电模式 (加速生成)
   -profile <tier>      质量档位 (standard/pro/ultra)
 
 示例:
   /draw 1girl, white dress, garden
   /draw 1girl -w 1024 -h 1024 -s korean-style
-  /draw 1girl -profile ultra`;
+  /draw 1girl -profile ultra -steps 40`;
 
 // --- Parsers ---
 

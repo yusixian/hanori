@@ -13,10 +13,12 @@ import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
 import { generationRoutes } from "./routes/generations.js";
 import { apiTestRoutes } from "./routes/api-test.js";
+import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
+import type { TimerRegistry } from "./services/timer-registry.js";
 
 interface AppOptions {
   db: Database;
@@ -26,6 +28,7 @@ interface AppOptions {
   encryptionKey: string;
   backupService: BackupService;
   modelCapabilityService: ModelCapabilityService;
+  timerRegistry: TimerRegistry;
 }
 
 export function createApp(options: AppOptions) {
@@ -37,6 +40,7 @@ export function createApp(options: AppOptions) {
     encryptionKey,
     backupService,
     modelCapabilityService,
+    timerRegistry,
   } = options;
 
   const app = new Hono()
@@ -61,6 +65,11 @@ export function createApp(options: AppOptions) {
     .route("/api/backup", backupRoutes(backupService, encryptionKey))
     .use("/api/api-test/*", jwtAuth(jwtSecret))
     .route("/api/api-test", apiTestRoutes())
+    .use("/api/timers/*", jwtAuth(jwtSecret))
+    .route(
+      "/api/timers",
+      timerRoutes(timerRegistry, (timerId) => botPool.cancelTimer(timerId)),
+    )
     .use("/api/usage/*", jwtAuth(jwtSecret))
     .route("/api/usage", usageRoutes(db))
     .get("/api/health", (c) => c.json({ ok: true as const }));

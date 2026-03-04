@@ -116,6 +116,14 @@ export interface AiReplyConfig {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  onTimerCreate?: (params: {
+    timerId: string;
+    chatId: number;
+    seconds: number;
+    reason: string;
+  }) => void;
+  onTimerCancel?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -489,6 +497,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     chatId: number,
     userId?: number,
   ) => Promise<DirectGenerateResult>;
+  fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -713,6 +722,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       moodState,
       stickerPacks: config.stickerPacks,
       onTimerFired,
+      onTimerCreate: config.onTimerCreate,
+      onTimerCancel: config.onTimerCancel,
+      onTimerFiredPersist: config.onTimerFiredPersist,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
       onGenerationTrack: config.onGenerationTrack,
@@ -899,6 +911,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         recentBotMessageIds: chatBotMsgIds,
         pendingActions,
         onTimerFired,
+        onTimerCreate: config.onTimerCreate,
+        onTimerCancel: config.onTimerCancel,
+        onTimerFiredPersist: config.onTimerFiredPersist,
         onceGuard,
         dataDir: config.dataFiles?.dataDir,
         token: config.token,
@@ -1501,5 +1516,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     getPixaiRateLimitStats: () => pixaiRateLimiter.getStats(),
     canUseImageGeneration,
     directGenerate: buildDirectGenerate(),
+    fireTimerEvent: onTimerFired,
   };
 }
