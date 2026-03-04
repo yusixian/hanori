@@ -163,8 +163,8 @@ class PixAIClient {
       prompts: params.prompts,
       modelId: params.modelId,
       negativePrompts: params.negativePrompts || "",
-      width: params.width ?? 768,
-      height: params.height ?? 1280,
+      width: params.width ?? 832,
+      height: params.height ?? 1472,
       batchSize: params.batchSize ?? 1,
       priority: params.priority ?? 1000,
       seed: params.seed ?? "",
@@ -255,8 +255,8 @@ class PixAIClient {
         prompts: params.prompts,
         modelId: params.modelId,
         negativePrompts: params.negativePrompts || "",
-        width: params.width ?? 768,
-        height: params.height ?? 1280,
+        width: params.width ?? 832,
+        height: params.height ?? 1472,
         batchSize: params.batchSize ?? 1,
         samplingSteps: params.samplingSteps ?? 20,
         cfgScale: params.cfgScale ?? 5,
@@ -486,25 +486,61 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         "使用 PixAI 生成高质量 AI 图片。图片会在后台生成完成后自动发送到聊天，无需调用 send_photo。",
       inputSchema: zodToAiSchema(
         z.object({
-          prompt: z.string().max(4096).describe("图片描述/提示词（建议英文）"),
+          prompt: z
+            .string()
+            .max(4096)
+            .describe(
+              "图片描述提示词，支持自然语言描述（英文效果更佳）。必须保留用户明确要求的重要特征（如正字标记、特定文字内容、具体姿势、服装细节等），不要擅自省略或改写这些关键要求。用户处于简体中文环境，涉及文字内容时默认为简体中文。",
+            ),
           negative_prompt: z.string().max(4096).optional().describe("负面提示词"),
-          width: z.number().int().min(512).max(1280).optional().describe("图片宽度 (512-1280)"),
-          height: z.number().int().min(512).max(1280).optional().describe("图片高度 (512-1280)"),
+          width: z.number().int().min(1).max(2048).optional().describe("图片宽度 (1-2048)"),
+          height: z.number().int().min(1).max(2048).optional().describe("图片高度 (1-2048)"),
           batch_size: z.number().int().min(1).max(4).optional().describe("生成数量 (1-4)"),
           seed: z.string().optional().describe("随机种子（留空=随机）"),
           style_key: z
             .string()
             .optional()
             .describe(
-              "可选风格 key，根据画面需要选择最合适的风格。可选值: glossy-glass-anime / high-contrast-retro-vivid / chibi / semi-realistic / paper-watercolor / anime-watercolor-impasto / flat-anime-pastel / classic-japanese / poster-graffiti / moe-pastel / luminous-retro-impasto / lineart-watercolor-airy",
+              [
+                "可选风格 key，根据画面需要选择最合适的风格。可选值:",
+                "low-saturation-expressive-eyes(低饱和透明感)",
+                "colored-pencil-grain(缤纷彩铅)",
+                "grey-blocks-lineless(灰色晕染)",
+                "oil-watercolor-blend(水感油彩)",
+                "hard-line-monochrome-accent(极简时尚)",
+                "korean-style(精致韩漫)",
+                "lineart-watercolor-airy(柔光线条)",
+                "minimal-flat-color(极简色块)",
+                "luminous-retro-impasto(明亮厚涂)",
+                "anime-watercolor-impasto(水彩光晕)",
+                "high-contrast-retro-vivid(明亮霓虹)",
+                "flat-anime-pastel(柔和平涂)",
+                "paper-watercolor(亮系水彩)",
+                "classic-japanese(经典动画)",
+                "retro-tv-anime(90复古赛璐璐)",
+                "poster-graffiti(霓彩海报)",
+                "clean-flat-illustration(简约平涂)",
+                "art-crayon(画艺蜡笔)",
+                "painterly-doodle(纹理涂鸦)",
+                "retro-comic-fusion(复古混搭)",
+                "pencil-sketch(铅绘素描)",
+                "chibi(Q版)",
+                "retro-oil-glamour(复古油亮肉感，适合性感/涩图)",
+                "modern-oil-glamour(现代油亮肉感，适合性感/涩图)",
+                "bold-line-soft-color(厚线柔和)",
+                "glossy-glass-anime(琉璃动画)",
+                "moe-pastel(萌系平涂)",
+                "semi-realistic(半写实)",
+                "cool-warm-oil-contrast(撞色厚涂)",
+              ].join(" / "),
             ),
         }),
       ),
       execute: async ({ prompt, negative_prompt, width, height, batch_size, seed, style_key }) => {
         const startTime = Date.now();
         const resolvedPrompt = resolvePrompt(prompt, pixaiConfig);
-        const resolvedWidth = width ?? pixaiConfig.width ?? 768;
-        const resolvedHeight = height ?? pixaiConfig.height ?? 1280;
+        const resolvedWidth = width ?? pixaiConfig.width ?? 832;
+        const resolvedHeight = height ?? pixaiConfig.height ?? 1472;
         const resolvedBatchSize = batch_size ?? pixaiConfig.batchSize ?? 1;
         const resolvedNegativePrompt = negative_prompt ?? pixaiConfig.negativePrompts;
         const resolvedSamplingSteps = pixaiConfig.samplingSteps;

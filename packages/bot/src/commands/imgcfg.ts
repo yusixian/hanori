@@ -38,8 +38,8 @@ const FLAG_DEFS: Record<string, FlagDef> = {
   "-s": { key: "s", field: "modelStyle", type: "string", label: "Model Style Key ID" },
   "-p": { key: "p", field: "systemImagePrompt", type: "string", label: "System Prompt" },
   "-np": { key: "np", field: "negativePrompts", type: "string", label: "Negative Prompts" },
-  "-w": { key: "w", field: "width", type: "int", min: 512, max: 1280, label: "Width" },
-  "-h": { key: "h", field: "height", type: "int", min: 512, max: 1280, label: "Height" },
+  "-w": { key: "w", field: "width", type: "int", min: 1, max: 2048, label: "Width" },
+  "-h": { key: "h", field: "height", type: "int", min: 1, max: 2048, label: "Height" },
   "-b": { key: "b", field: "batchSize", type: "int", min: 1, max: 4, label: "Batch Size" },
   "-seed": { key: "seed", field: "seed", type: "string", label: "Seed" },
   "-steps": {
@@ -175,7 +175,7 @@ function formatConfigHtml(
   lines.push("<b>模型/尺寸</b>");
   lines.push(`  Model: <code>${model ?? "(默认)"}</code>`);
   if (cfg.modelStyle) lines.push(`  Style: <code>${cfg.modelStyle.keyId}</code>`);
-  lines.push(`  Size: ${cfg.width ?? 768} × ${cfg.height ?? 1280}`);
+  lines.push(`  Size: ${cfg.width ?? 832} × ${cfg.height ?? 1472}`);
   lines.push(`  Batch: ${cfg.batchSize ?? 1}`);
   lines.push("");
 

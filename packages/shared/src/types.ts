@@ -223,8 +223,8 @@ export interface PixAIConfig {
   negativePrompts?: string;
   samplingSteps?: number; // default 20, range 8-50
   cfgScale?: number; // default 5, range 1.1-15
-  width?: number; // default 768, range 512-1280
-  height?: number; // default 1280, range 512-1280
+  width?: number; // default 832, range 1-2048
+  height?: number; // default 1472, range 1-2048
   batchSize?: number; // default 1, range 1-4
   promptHelper?: boolean; // default false (额外扣费)
 

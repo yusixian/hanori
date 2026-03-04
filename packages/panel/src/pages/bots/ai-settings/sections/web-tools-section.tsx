@@ -431,13 +431,13 @@ function PixAIConfigFields({
             <Input
               type="number"
               disabled={disabled}
-              min={512}
-              max={1280}
+              min={1}
+              max={2048}
               value={pixaiConfig.width ?? ""}
               onChange={(e) =>
                 updatePixai({ width: e.target.value ? Number(e.target.value) : undefined })
               }
-              placeholder="768"
+              placeholder="832"
             />
           </div>
           <div className="space-y-1.5">
@@ -445,13 +445,13 @@ function PixAIConfigFields({
             <Input
               type="number"
               disabled={disabled}
-              min={512}
-              max={1280}
+              min={1}
+              max={2048}
               value={pixaiConfig.height ?? ""}
               onChange={(e) =>
                 updatePixai({ height: e.target.value ? Number(e.target.value) : undefined })
               }
-              placeholder="1280"
+              placeholder="1472"
             />
           </div>
           <div className="space-y-1.5">

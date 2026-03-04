@@ -67,8 +67,16 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     if (opts.hasImageGeneration) {
       if (opts.imageGenerationProvider === "pixai") {
         lines.push(
-          "- generate_image: 使用指定 AI 模型生成高质量 AI 图片，图片会在后台生成完成后自动发送到聊天",
+          "- generate_image: 使用指定 AI 模型生成高质量 AI 图片，图片会在后台生成完成后自动发送到聊天。提示词支持自然语言描述，编写时必须保留用户明确指定的重要特征（正字计数、特定文字、具体姿势、服装细节等），不要擅自省略或改写。用户处于简体中文环境，涉及文字内容时默认简体中文。",
         );
+        lines.push(
+          "  **提示词质量要求**: 不要只写简单的主体描述，要主动补充专业细节让画面精彩出众。包括但不限于: 光影效果（逆光、黄金时段光、丁达尔效应、霓虹灯光等）、构图方式（特写、仰视、俯瞰、三分法、对角线构图等）、氛围与主题（季节感、情绪基调、叙事感等）、画面细节（材质质感、环境元素、色彩搭配、景深虚化等）。让每张图都能充分展现模型的表现力。",
+        );
+        if (opts.hasBotMemory) {
+          lines.push(
+            "  **画用户相关图片时**: 当用户要求画「对我的印象」「我的形象」「画我」等涉及用户本人的图片时，先用 recall_memories 搜索关于该用户的记忆（外貌特征、性格印象、过往互动细节等），结合已知的用户信息，将这些印象汇总提炼后再编写提示词生成图片，让画面真正体现你对这个人的了解和印象。",
+          );
+        }
       } else {
         lines.push("- generate_image: AI 生成图片，配合 send_photo 发送");
       }
