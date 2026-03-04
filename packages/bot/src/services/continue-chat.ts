@@ -41,6 +41,7 @@ import {
 import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
+import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { assembleContinueChatContext } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 
@@ -310,7 +311,17 @@ async function doContinueChat(
         // Stream mode: pipe text chunks to Telegram via sendMessageDraft.
         // multi_message is deleted in stream mode so multiMessageUsed stays false.
         try {
-          const { sentMessages } = await streamToChat(api, chatId, result.textStream);
+          const filteredStream = filterThinkingStream(
+            result.textStream,
+            ({ pattern, strippedLength }) => {
+              config.onLog?.({
+                level: "info",
+                message: `Stripped thinking content from continueChat stream (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId },
+              });
+            },
+          );
+          const { sentMessages } = await streamToChat(api, chatId, filteredStream);
           for (const msg of sentMessages) {
             chatBotMsgIds.push(msg.message_id);
           }
@@ -333,7 +344,13 @@ async function doContinueChat(
       perStepAbort.cleanup();
     }
 
-    const text = (await result.text).trim();
+    const text = stripThinkingContent((await result.text).trim(), ({ pattern, strippedLength }) => {
+      config.onLog?.({
+        level: "info",
+        message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+        meta: { chatId },
+      });
+    });
 
     // Send text if multi_message wasn't used (segment mode) or stream failed
     if ((!isStreamMode && !multiMessageUsed && text) || (streamFailed && text)) {

@@ -71,6 +71,7 @@ import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
+import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
 export interface AiReplyConfig {
   apiKey: string;
@@ -1138,13 +1139,31 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       try {
         if (isStreamMode) {
           // ─── Stream mode: pipe text to Telegram via replyWithStream ───
+          const thinkFilter = createThinkingStreamFilter(({ pattern, strippedLength }) => {
+            config.onLog?.({
+              level: "info",
+              message: `Stripped thinking content from stream (pattern: ${pattern}, ${strippedLength} chars)`,
+              meta: { chatId, userId },
+            });
+          });
           async function* managedTextStream() {
             for await (const chunk of result.textStream) {
+              const filtered = thinkFilter.push(chunk);
+              if (filtered) {
+                if (!streamStarted) {
+                  streamStarted = true;
+                  await ctx.deleteWaiting();
+                }
+                yield filtered;
+              }
+            }
+            const flushed = thinkFilter.flush();
+            if (flushed) {
               if (!streamStarted) {
                 streamStarted = true;
                 await ctx.deleteWaiting();
               }
-              yield chunk;
+              yield flushed;
             }
           }
 
@@ -1176,7 +1195,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         perStepAbort.cleanup();
       }
 
-      const text = (await result.text).trim();
+      const rawText = (await result.text).trim();
+      const text = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+        config.onLog?.({
+          level: "info",
+          message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+          meta: { chatId, userId },
+        });
+      });
       const steps = await result.steps;
       const usage = await result.usage;
       const finishReason = await result.finishReason;
