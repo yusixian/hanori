@@ -1,4 +1,9 @@
 services:
+  nsfw-api:
+    image: ghcr.io/arnidan/nsfw-api:latest
+    ports:
+      - "${NSFW_API_PORT:-9601}:3000"
+
   db:
     image: pgvector/pgvector:pg17
     ports:

@@ -1,5 +1,6 @@
 import type {
   BotLogEntry,
+  NsfwScores,
   PixAIConfig,
   PixAIGenerationRecord,
   TimeoutConfig,
@@ -10,6 +11,7 @@ import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
+import type { NsfwChecker } from "../services/nsfw-checker.js";
 import type { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
 import { sleep } from "../utils/sleep.js";
 import { zodToAiSchema } from "./utils.js";
@@ -365,6 +367,7 @@ export interface PixAIToolsOptions {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   rateLimiter?: PixAIRateLimiter;
   adminIds?: number[];
+  nsfwChecker?: NsfwChecker;
 }
 
 export function resolvePrompt(prompt: string, pixaiConfig: PixAIConfig): string {
@@ -386,6 +389,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
     onGenerationTrack,
     rateLimiter,
     adminIds,
+    nsfwChecker,
   } = options;
   const pixaiConfig = config.pixaiConfig ?? {};
   const apiMode: ApiMode = pixaiConfig.apiMode ?? "graphql";
@@ -450,6 +454,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         onGenerationTrack,
         startTime: ctx.startTime,
         onDone: rateLimiter ? () => rateLimiter.releaseTask(task.id) : undefined,
+        nsfwChecker,
       }).catch((err) => {
         const errMsg = err instanceof Error ? err.message : String(err);
         onLog?.({
@@ -687,6 +692,7 @@ export function injectPixAITool(
     onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
     rateLimiter?: PixAIRateLimiter;
     adminIds?: number[];
+    nsfwChecker?: NsfwChecker;
   },
 ): void {
   const { allowed, webToolsConfig } = options;
@@ -709,6 +715,7 @@ export function injectPixAITool(
         onGenerationTrack: options.onGenerationTrack,
         rateLimiter: options.rateLimiter,
         adminIds: options.adminIds,
+        nsfwChecker: options.nsfwChecker,
       }),
     );
   } else {
@@ -732,20 +739,41 @@ export async function pollAndSend(
     onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
     startTime: number;
     onDone?: () => void;
+    nsfwChecker?: NsfwChecker;
   },
 ): Promise<void> {
   try {
     const { urls, mediaIds } = await client.pollUntilComplete(taskId, timeoutMs);
     const caption = ctx.prompt.length > 200 ? `${ctx.prompt.slice(0, 200)}...` : ctx.prompt;
 
+    // NSFW detection: check images before sending
+    let hasSpoiler = false;
+    let nsfwScores: NsfwScores[] | undefined;
+    if (ctx.nsfwChecker && urls.length > 0) {
+      const nsfwResult = await ctx.nsfwChecker.checkImageUrls(urls);
+      hasSpoiler = nsfwResult.isNsfw;
+      nsfwScores = nsfwResult.scores;
+      if (hasSpoiler) {
+        ctx.onLog?.({
+          level: "info",
+          message: `NSFW detected for task ${taskId}, applying spoiler`,
+          meta: { chatId: ctx.chatId, taskId },
+        });
+      }
+    }
+
     if (urls.length === 1) {
-      const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, { caption });
+      const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, {
+        caption,
+        has_spoiler: hasSpoiler,
+      });
       ctx.recentBotMessageIds.push(sent.message_id);
     } else {
       // Multiple images: use sendMediaGroup
       const media = urls.map((url, i) => ({
         type: "photo" as const,
         media: url,
+        has_spoiler: hasSpoiler,
         ...(i === 0 ? { caption } : {}),
       }));
       const sent = await ctx.api.sendMediaGroup(ctx.chatId, media);
@@ -760,6 +788,7 @@ export async function pollAndSend(
       status: "completed",
       mediaUrls: urls,
       mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
+      nsfwScores,
       durationMs: Date.now() - ctx.startTime,
     });
 

@@ -12,6 +12,7 @@ services:
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
       - BACKUP_DIR=/data/backups
+      - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
     volumes:
       - backups:/data/backups
       - botdata:/app/data
@@ -39,6 +40,31 @@ services:
         max-size: "10m"
         max-file: "3"
     stop_grace_period: 15s
+
+  nsfw-api:
+    image: ghcr.io/arnidan/nsfw-api:latest
+    ports:
+      - "${NSFW_API_PORT:-9601}:3000"
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
 
   db:
     image: pgvector/pgvector:pg17

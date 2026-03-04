@@ -7,6 +7,7 @@ import type {
 } from "@cos-tool-bot/shared";
 import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
+import type { NsfwChecker } from "../services/nsfw-checker.js";
 import type { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
 import { PixAIClient, pollAndSend, resolvePrompt, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
 import type { CreateTaskParams } from "./pixai.js";
@@ -47,6 +48,7 @@ export interface DirectGenerateOptions {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   rateLimiter?: PixAIRateLimiter;
   adminIds?: number[];
+  nsfwChecker?: NsfwChecker;
 }
 
 export type DirectGenerateResult =
@@ -160,6 +162,7 @@ export async function directPixAIGenerate(
         onGenerationTrack: opts.onGenerationTrack,
         startTime,
         onDone: opts.rateLimiter ? () => opts.rateLimiter!.releaseTask(task.id) : undefined,
+        nsfwChecker: opts.nsfwChecker,
       }).catch((err) => {
         const errMsg = err instanceof Error ? err.message : String(err);
         opts.onLog?.({

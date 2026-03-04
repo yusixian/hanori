@@ -248,6 +248,9 @@ export interface PixAIConfig {
 
   // 高级
   isPrivate?: boolean;
+
+  // NSFW 检测
+  nsfwThreshold?: number; // NSFW 综合分数阈值，默认 0.5
 }
 
 export interface WebToolsConfig {
@@ -530,6 +533,18 @@ export interface BackupRecord {
   createdAt: string;
 }
 
+// NSFW detection types
+
+export const DEFAULT_NSFW_THRESHOLD = 0.5;
+
+export interface NsfwScores {
+  porn: number;
+  sexy: number;
+  hentai: number;
+  neutral: number;
+  drawing: number;
+}
+
 // PixAI generation tracking types
 
 export type PixAIGenerationStatus = "pending" | "completed" | "failed";
@@ -552,6 +567,7 @@ export interface PixAIGenerationRecord {
   mediaUrls?: string[];
   mediaIds?: string[];
   localFiles?: string[];
+  nsfwScores?: NsfwScores[];
   errorMessage?: string;
   durationMs?: number;
 }

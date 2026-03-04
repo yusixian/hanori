@@ -71,6 +71,7 @@ import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
+import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
 export interface AiReplyConfig {
@@ -108,6 +109,7 @@ export interface AiReplyConfig {
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
   privateChatWhitelist?: number[];
+  nsfwChecker?: NsfwChecker;
   token: string;
   onGroupOverrideUpdate?: (chatId: number, override: AiGroupOverride) => void | Promise<void>;
   onPixaiConfigUpdate?: (updates: {
@@ -1065,6 +1067,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onGenerationTrack: config.onGenerationTrack,
         rateLimiter: pixaiRateLimiter,
         adminIds: config.adminChatIds,
+        nsfwChecker: config.nsfwChecker,
       });
 
       // Stream mode and segment mode are mutually exclusive:
@@ -1475,6 +1478,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onGenerationTrack: config.onGenerationTrack,
         rateLimiter: pixaiRateLimiter,
         adminIds: config.adminChatIds,
+        nsfwChecker: config.nsfwChecker,
       });
     };
   }

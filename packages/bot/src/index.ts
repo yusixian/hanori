@@ -277,3 +277,5 @@ export {
   type PromptPreviewResult,
 } from "./services/context-assembler.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
+export { NsfwChecker } from "./services/nsfw-checker.js";
+export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";

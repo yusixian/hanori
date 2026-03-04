@@ -4,14 +4,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Pagination } from "@/components/ui/pagination";
 import { authFetch, client } from "@/lib/client";
 import { formatDuration } from "@/lib/format";
+import { DEFAULT_NSFW_THRESHOLD } from "@cos-tool-bot/shared";
+import type { NsfwScores } from "@cos-tool-bot/shared";
 import type { InferResponseType } from "hono/client";
+import { cn } from "@/lib/utils";
 import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
   ExternalLink,
+  EyeOff,
   Loader2,
+  ShieldAlert,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -27,6 +32,8 @@ type GenerationItem = GenerationsResponse["data"][number];
 interface LightboxState {
   images: string[];
   index: number;
+  nsfw?: boolean;
+  generationId?: number;
 }
 
 const statusColors: Record<string, string> = {
@@ -40,11 +47,15 @@ function ImageLightbox({
   index,
   onClose,
   onNavigate,
+  nsfw,
+  onReveal,
 }: {
   images: string[];
   index: number;
   onClose: () => void;
   onNavigate: (index: number) => void;
+  nsfw?: boolean;
+  onReveal?: () => void;
 }) {
   const openedBlobUrls = useRef<string[]>([]);
 
@@ -109,16 +120,33 @@ function ImageLightbox({
           </button>
         )}
 
-        <AuthImage
-          src={currentImage}
-          alt="Full size"
-          className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
-          fallback={
-            <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-zinc-800">
-              <Loader2 className="h-8 w-8 animate-spin text-white" />
-            </div>
-          }
-        />
+        <div className="relative overflow-hidden rounded-lg">
+          <AuthImage
+            src={currentImage}
+            alt="Full size"
+            className={cn(
+              "max-h-[85vh] max-w-[90vw] object-contain transition-[filter] duration-300",
+              nsfw && "scale-105 blur-3xl",
+            )}
+            fallback={
+              <div className="flex h-64 w-64 items-center justify-center rounded-lg bg-zinc-800">
+                <Loader2 className="h-8 w-8 animate-spin text-white" />
+              </div>
+            }
+          />
+          {nsfw && (
+            <button
+              type="button"
+              className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-3 bg-black/20 transition-colors hover:bg-black/30"
+              onClick={onReveal}
+            >
+              <EyeOff className="h-10 w-10 text-white drop-shadow" />
+              <span className="text-sm font-medium text-white drop-shadow">
+                NSFW — Click to reveal
+              </span>
+            </button>
+          )}
+        </div>
 
         {/* Right arrow */}
         {images.length > 1 && index < images.length - 1 && (
@@ -160,6 +188,40 @@ function getStyleKeyId(pixaiConfig: unknown): string | undefined {
   return (ms as { keyId?: string }).keyId;
 }
 
+function hasNsfwFlag(scores: NsfwScores[]): boolean {
+  return scores.some((s) => s.porn + s.hentai + s.sexy >= DEFAULT_NSFW_THRESHOLD);
+}
+
+function NsfwScoresDetails({ scores }: { scores: NsfwScores[] }) {
+  return (
+    <div className="mt-1 space-y-1">
+      {scores.map((s, i) => (
+        <div key={i} className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
+          {scores.length > 1 && <span className="text-muted-foreground font-medium">#{i + 1}</span>}
+          <span>
+            porn:{" "}
+            <strong className={s.porn >= 0.3 ? "text-red-500" : ""}>{s.porn.toFixed(2)}</strong>
+          </span>
+          <span>
+            sexy:{" "}
+            <strong className={s.sexy >= 0.3 ? "text-orange-500" : ""}>{s.sexy.toFixed(2)}</strong>
+          </span>
+          <span>
+            hentai:{" "}
+            <strong className={s.hentai >= 0.3 ? "text-red-500" : ""}>{s.hentai.toFixed(2)}</strong>
+          </span>
+          <span>
+            neutral: <strong>{s.neutral.toFixed(2)}</strong>
+          </span>
+          <span>
+            drawing: <strong>{s.drawing.toFixed(2)}</strong>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PixaiConfigDetails({ config }: { config: Record<string, unknown> }) {
   return (
     <details className="group/cfg mt-1 border-t pt-1">
@@ -182,6 +244,7 @@ export function BotGenerationsPage() {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("");
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
   const pageSize = 20;
 
   const loadGenerations = useCallback(async () => {
@@ -219,11 +282,18 @@ export function BotGenerationsPage() {
   const getImageUrl = (botId: string, localFile: string) =>
     `/api/bots/${botId}/files-raw/${localFile}`;
 
+  const isNsfwGeneration = (g: GenerationItem) =>
+    g.nsfwScores != null && Array.isArray(g.nsfwScores) && hasNsfwFlag(g.nsfwScores);
+
+  const revealGeneration = (id: number) => setRevealedIds((prev) => new Set(prev).add(id));
+
   const openLightbox = (g: GenerationItem, imageIndex: number) => {
     if (!g.localFiles) return;
     setLightbox({
       images: g.localFiles.map((f) => getImageUrl(g.botId, f)),
       index: imageIndex,
+      nsfw: isNsfwGeneration(g) && !revealedIds.has(g.id),
+      generationId: g.id,
     });
   };
 
@@ -277,34 +347,58 @@ export function BotGenerationsPage() {
             <div key={g.id} className="mb-4 break-inside-avoid">
               <Card className="overflow-hidden">
                 {/* Images */}
-                {g.status === "completed" && g.localFiles && g.localFiles.length > 0 && (
-                  <div className="space-y-0.5">
-                    {g.localFiles.map((file, i) => (
-                      <button
-                        key={file}
-                        type="button"
-                        className="block w-full cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
-                        onClick={() => openLightbox(g, i)}
-                      >
-                        <AuthImage
-                          src={getImageUrl(g.botId, file)}
-                          alt="Generated"
-                          className="w-full object-cover"
-                          fallback={
-                            <div
-                              className="bg-muted flex w-full items-center justify-center"
-                              style={{
-                                aspectRatio: `${g.width}/${g.height}`,
-                              }}
+                {g.status === "completed" &&
+                  g.localFiles &&
+                  g.localFiles.length > 0 &&
+                  (() => {
+                    const nsfw = isNsfwGeneration(g);
+                    const revealed = revealedIds.has(g.id);
+                    const blurred = nsfw && !revealed;
+                    return (
+                      <div className="space-y-0.5">
+                        {g.localFiles.map((file, i) => (
+                          <div key={file} className="relative overflow-hidden">
+                            <button
+                              type="button"
+                              className="block w-full cursor-pointer overflow-hidden transition-opacity hover:opacity-90"
+                              onClick={() => !blurred && openLightbox(g, i)}
                             >
-                              <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
-                            </div>
-                          }
-                        />
-                      </button>
-                    ))}
-                  </div>
-                )}
+                              <AuthImage
+                                src={getImageUrl(g.botId, file)}
+                                alt="Generated"
+                                className={cn(
+                                  "w-full object-cover transition-[filter] duration-300",
+                                  blurred && "scale-105 blur-2xl",
+                                )}
+                                fallback={
+                                  <div
+                                    className="bg-muted flex w-full items-center justify-center"
+                                    style={{
+                                      aspectRatio: `${g.width}/${g.height}`,
+                                    }}
+                                  >
+                                    <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
+                                  </div>
+                                }
+                              />
+                            </button>
+                            {blurred && (
+                              <button
+                                type="button"
+                                className="absolute inset-0 flex cursor-pointer flex-col items-center justify-center gap-2 bg-black/20 transition-colors hover:bg-black/30"
+                                onClick={() => revealGeneration(g.id)}
+                              >
+                                <EyeOff className="h-6 w-6 text-white drop-shadow" />
+                                <span className="text-xs font-medium text-white drop-shadow">
+                                  NSFW — Click to reveal
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
 
                 {/* Pending status */}
                 {g.status === "pending" && (
@@ -330,11 +424,20 @@ export function BotGenerationsPage() {
                     >
                       {g.status}
                     </Badge>
-                    {getStyleKeyId(g.pixaiConfig) && (
-                      <Badge variant="muted" className="text-[10px]">
-                        {getStyleKeyId(g.pixaiConfig)}
+                    {g.nsfwScores && Array.isArray(g.nsfwScores) && hasNsfwFlag(g.nsfwScores) && (
+                      <Badge variant="destructive" className="gap-0.5 text-[10px]">
+                        <ShieldAlert className="h-3 w-3" />
+                        NSFW
                       </Badge>
                     )}
+                    {(() => {
+                      const keyId = getStyleKeyId(g.pixaiConfig);
+                      return keyId ? (
+                        <Badge variant="muted" className="text-[10px]">
+                          {keyId}
+                        </Badge>
+                      ) : null;
+                    })()}
                     <span className="text-muted-foreground text-xs">
                       {g.width}x{g.height}
                     </span>
@@ -413,6 +516,14 @@ export function BotGenerationsPage() {
                           {new Date(g.completedAt).toLocaleString()}
                         </div>
                       )}
+                      {g.nsfwScores && Array.isArray(g.nsfwScores) && g.nsfwScores.length > 0 && (
+                        <div className="border-t pt-1">
+                          <span className="text-[10px] font-semibold tracking-wider uppercase">
+                            NSFW Scores
+                          </span>
+                          <NsfwScoresDetails scores={g.nsfwScores} />
+                        </div>
+                      )}
                       {g.pixaiConfig &&
                         typeof g.pixaiConfig === "object" &&
                         !Array.isArray(g.pixaiConfig) && (
@@ -436,6 +547,11 @@ export function BotGenerationsPage() {
           index={lightbox.index}
           onClose={() => setLightbox(null)}
           onNavigate={(i) => setLightbox((prev) => (prev ? { ...prev, index: i } : null))}
+          nsfw={lightbox.nsfw}
+          onReveal={() => {
+            if (lightbox.generationId) revealGeneration(lightbox.generationId);
+            setLightbox((prev) => (prev ? { ...prev, nsfw: false } : null));
+          }}
         />
       )}
     </div>

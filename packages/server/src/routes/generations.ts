@@ -56,6 +56,7 @@ export function generationRoutes(db: Database) {
         cfgScale: row.cfgScale,
         promptHelper: row.promptHelper,
         pixaiConfig: row.pixaiConfig,
+        nsfwScores: row.nsfwScores,
         status: row.status,
         mediaUrls: row.mediaUrls,
         localFiles: row.localFiles ? row.localFiles.map((f) => `generations/${f}`) : null,

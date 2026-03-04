@@ -107,6 +107,7 @@ interface AiConfigJson {
         samplingMethod?: string;
         qualityTag?: { prefix: string; suffix: string };
         isPrivate?: boolean;
+        nsfwThreshold?: number;
       };
     };
   };
@@ -344,6 +345,10 @@ export const pixaiGenerations = pgTable(
     cfgScale: real("cfg_scale"),
     promptHelper: boolean("prompt_helper"),
     pixaiConfig: json("pixai_config"),
+    nsfwScores:
+      json("nsfw_scores").$type<
+        { porn: number; sexy: number; hentai: number; neutral: number; drawing: number }[]
+      >(),
     errorMessage: text("error_message"),
     durationMs: integer("duration_ms"),
     createdAt: timestamp("created_at").defaultNow().notNull(),

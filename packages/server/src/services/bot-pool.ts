@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiReplyBotConfig } from "@cos-tool-bot/bot";
+import { NsfwChecker } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots, pixaiGenerations, tokenUsage } from "@cos-tool-bot/database";
 import type {
@@ -298,6 +299,18 @@ export class BotPool {
           maxTotalSize: dataFilesConfig?.maxTotalSize,
         });
 
+        let nsfwChecker: NsfwChecker | undefined;
+        if (env.NSFW_API_URL) {
+          const threshold = aiConfig.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold;
+          nsfwChecker = new NsfwChecker({
+            apiUrl: env.NSFW_API_URL,
+            threshold,
+            logger: (level, message, meta) => {
+              this.logger[level]({ ...meta }, `[NsfwChecker] ${message}`);
+            },
+          });
+        }
+
         aiReply = {
           apiKey,
           baseURL: aiConfig.baseURL,
@@ -335,6 +348,7 @@ export class BotPool {
           },
           dataFiles,
           privateChatWhitelist: aiConfig.privateChatWhitelist,
+          nsfwChecker,
           onGroupOverrideUpdate: async (chatId, override) => {
             try {
               await this.db.transaction(async (tx) => {
@@ -439,6 +453,7 @@ export class BotPool {
               mediaUrls: record.mediaUrls,
               mediaIds: record.mediaIds,
               localFiles,
+              nsfwScores: record.nsfwScores,
               errorMessage: record.errorMessage,
               durationMs: record.durationMs,
               completedAt: new Date(),
