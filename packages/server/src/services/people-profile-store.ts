@@ -1,6 +1,32 @@
 import type { Database } from "@cos-tool-bot/database";
 import { peopleProfiles } from "@cos-tool-bot/database";
+import type { PeopleProfile } from "@cos-tool-bot/shared";
 import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
+
+/** Map a Drizzle profile row to the shared PeopleProfile DTO. */
+export function mapProfileToDto(p: {
+  telegramId: number;
+  username: string | null;
+  displayName: string | null;
+  notes: string | null;
+  traits: string[] | null;
+  interests: string[] | null;
+  relationship: string | null;
+  firstSeen: Date;
+  lastSeen: Date;
+}): PeopleProfile {
+  return {
+    telegramId: p.telegramId,
+    username: p.username,
+    displayName: p.displayName,
+    notes: p.notes,
+    traits: p.traits ?? [],
+    interests: p.interests ?? [],
+    relationship: p.relationship,
+    firstSeen: p.firstSeen.toISOString(),
+    lastSeen: p.lastSeen.toISOString(),
+  };
+}
 
 export class PeopleProfileStore {
   constructor(private db: Database) {}
@@ -131,18 +157,7 @@ export class PeopleProfileStore {
         .where(eq(peopleProfiles.botId, botId)),
     ]);
     return {
-      data: profiles.map((p) => ({
-        id: p.id,
-        telegramId: p.telegramId,
-        username: p.username,
-        displayName: p.displayName,
-        notes: p.notes,
-        traits: p.traits,
-        interests: p.interests,
-        relationship: p.relationship,
-        firstSeen: p.firstSeen.toISOString(),
-        lastSeen: p.lastSeen.toISOString(),
-      })),
+      data: profiles.map((p) => ({ id: p.id, ...mapProfileToDto(p) })),
       total: Number(totalResult?.total ?? 0),
     };
   }

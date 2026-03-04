@@ -364,6 +364,7 @@ export interface BotMemoryCallbacks {
   }): Promise<BotMemory[]>;
   deleteMemory(memoryId: number): Promise<boolean>;
   getMemoriesForPrompt(telegramId?: number, limit?: number): Promise<BotMemory[]>;
+  searchProfiles?(query: string, telegramId?: number): Promise<PeopleProfile[]>;
 }
 
 export interface AiConfigStored {

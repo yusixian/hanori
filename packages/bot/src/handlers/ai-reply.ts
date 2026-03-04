@@ -35,7 +35,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api, Middleware } from "grammy";
-import type { Message } from "grammy/types";
+import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
 import { assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
@@ -120,6 +120,55 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
+}
+
+const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
+
+async function downloadImagesForVision(
+  api: Api,
+  token: string,
+  files: ReceivedFile[],
+  timeoutMs: number,
+): Promise<Array<{ buffer: Buffer; mimeType: string }>> {
+  const imageFiles = files.filter((f) => f.type === "photo" || f.mime_type?.startsWith("image/"));
+  if (imageFiles.length === 0) return [];
+  const settled = await Promise.allSettled(
+    imageFiles.map(async (f) => {
+      const tgFile = await api.getFile(f.file_id);
+      if (!tgFile.file_path) return null;
+      const url = `https://api.telegram.org/file/bot${token}/${tgFile.file_path}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) return null;
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > MAX_VISION_IMAGE_BYTES) return null;
+      return { buffer: buf, mimeType: f.mime_type ?? "image/jpeg" };
+    }),
+  );
+  const results: Array<{ buffer: Buffer; mimeType: string }> = [];
+  for (const r of settled) {
+    if (r.status === "fulfilled" && r.value != null) results.push(r.value);
+    else if (r.status === "rejected") console.debug("[vision] image download failed:", r.reason);
+  }
+  return results;
+}
+
+function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
+  const files: ReceivedFile[] = [];
+  if (!msg) return files;
+  if (msg.photo) {
+    const largest = msg.photo[msg.photo.length - 1]!;
+    files.push({ type: "photo", file_id: largest.file_id, file_size: largest.file_size });
+  }
+  if (msg.document) {
+    files.push({
+      type: "document",
+      file_id: msg.document.file_id,
+      file_name: msg.document.file_name ?? undefined,
+      file_size: msg.document.file_size,
+      mime_type: msg.document.mime_type ?? undefined,
+    });
+  }
+  return files;
 }
 
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
@@ -354,11 +403,25 @@ function checkTrigger(
   return false;
 }
 
-function getUserDisplayName(ctx: WrapperContext): string {
-  const from = ctx.from;
+function getDisplayName(from: User | undefined): string {
   if (!from) return "Unknown";
   if (from.first_name && from.last_name) return `${from.first_name} ${from.last_name}`;
   return from.first_name || from.username || "Unknown";
+}
+
+function describeFiles(files: ReceivedFile[], prefix = "", separator = "\n"): string {
+  let result = "";
+  for (const f of files) {
+    const sizeStr = f.file_size ? ` ${formatFileSize(f.file_size)}` : "";
+    if (f.type === "photo") {
+      result += `[${prefix}图片${sizeStr}]${separator}`;
+    } else {
+      const nameStr = f.file_name ? ` "${f.file_name}"` : "";
+      const typeStr = f.mime_type ? ` (${f.mime_type})` : "";
+      result += `[${prefix}文件${nameStr}${typeStr}${sizeStr}]${separator}`;
+    }
+  }
+  return result;
 }
 
 function formatGroupContextMessages(messages: BufferedMessage[]): string {
@@ -744,7 +807,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     if (isPrivate) knownPrivateChats.add(chatId);
 
     const isAdmin = config.adminChatIds.includes(userId);
-    const userName = getUserDisplayName(ctx);
+    const userName = getDisplayName(ctx.from);
 
     // Push to ring buffer for group chats (before trigger check)
     if (!isPrivate) {
@@ -816,28 +879,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
 
       // Extract received files metadata
-      const receivedFiles: ReceivedFile[] = [];
-      if (msg.photo) {
-        const largest = msg.photo[msg.photo.length - 1]!;
-        receivedFiles.push({
-          type: "photo",
-          file_id: largest.file_id,
-          file_size: largest.file_size,
-        });
-      }
-      if (msg.document) {
-        receivedFiles.push({
-          type: "document",
-          file_id: msg.document.file_id,
-          file_name: msg.document.file_name ?? undefined,
-          file_size: msg.document.file_size,
-          mime_type: msg.document.mime_type ?? undefined,
-        });
-      }
+      const receivedFiles = extractFilesFromMessage(msg);
       if (receivedFiles.length) {
         recentReceivedFiles.set(chatId, receivedFiles);
       }
       const messageText = msg.text ?? msg.caption ?? "";
+
+      // Extract reply-to message metadata
+      const replyMsg = ctx.reply_to_message;
+      const replyFiles = extractFilesFromMessage(replyMsg);
+      const replyText = replyMsg?.text ?? replyMsg?.caption ?? "";
 
       // Create per-request telegram tools
       const telegramTools = createTelegramTools({
@@ -946,51 +997,38 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // --- Download images for vision ---
       const hasVision = inferCapabilities(currentModel).includes("vision");
-      const imageBuffers: Array<{ buffer: Buffer; mimeType: string }> = [];
-
-      if (hasVision && receivedFiles.length) {
-        for (const f of receivedFiles) {
-          const isImage = f.type === "photo" || f.mime_type?.startsWith("image/");
-          if (!isImage) continue;
-          try {
-            const tgFile = await ctx.api.getFile(f.file_id);
-            if (!tgFile.file_path) continue;
-            const url = `https://api.telegram.org/file/bot${config.token}/${tgFile.file_path}`;
-            const res = await fetch(url, {
-              signal: AbortSignal.timeout(
-                config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs,
-              ),
-            });
-            if (!res.ok) continue;
-            const buf = Buffer.from(await res.arrayBuffer());
-            if (buf.length <= 5 * 1024 * 1024) {
-              imageBuffers.push({ buffer: buf, mimeType: f.mime_type ?? "image/jpeg" });
-            }
-          } catch {
-            // Download failed, fall back to text description
-          }
-        }
-      }
+      const imageDownloadTimeout =
+        config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
+      const [imageBuffers, replyImageBuffers] = await Promise.all([
+        hasVision && receivedFiles.length
+          ? downloadImagesForVision(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
+          : [],
+        hasVision && replyFiles.length
+          ? downloadImagesForVision(ctx.api, config.token, replyFiles, imageDownloadTimeout)
+          : [],
+      ]);
 
       // --- Build text description (always needed for history and non-vision) ---
-      let attachmentDesc = "";
-      for (const f of receivedFiles) {
-        const sizeStr = f.file_size ? ` ${formatFileSize(f.file_size)}` : "";
-        if (f.type === "photo") {
-          attachmentDesc += `[收到图片附件${sizeStr}]\n`;
-        } else {
-          const nameStr = f.file_name ? ` "${f.file_name}"` : "";
-          const typeStr = f.mime_type ? ` (${f.mime_type})` : "";
-          attachmentDesc += `[收到文件附件${nameStr}${typeStr}${sizeStr}]\n`;
+      const attachmentDesc = describeFiles(receivedFiles, "收到", "\n");
+
+      // --- Build reply-to context description ---
+      let replyContextDesc = "";
+      if (replyMsg) {
+        const replyFileDesc = describeFiles(replyFiles, "", " ");
+        const replyContent = `${replyFileDesc}${replyText}`.trim();
+        if (replyContent) {
+          replyContextDesc = `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${replyContent}]\n`;
         }
       }
-      const rawContent = `${attachmentDesc}${messageText}`.trim();
+
+      const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
       const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
 
       // --- Assemble final user message (multimodal or text-only) ---
+      const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
       const aiMessages = messages as ModelMessage[];
-      if (imageBuffers.length > 0) {
-        const parts: UserModelMessage["content"] = imageBuffers.map((img) => ({
+      if (allImageBuffers.length > 0) {
+        const parts: UserModelMessage["content"] = allImageBuffers.map((img) => ({
           type: "image" as const,
           image: img.buffer,
           mimeType: img.mimeType,

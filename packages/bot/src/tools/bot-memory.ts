@@ -1,4 +1,4 @@
-import type { BotMemoryCallbacks } from "@cos-tool-bot/shared";
+import type { BotMemoryCallbacks, PeopleProfile } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -39,7 +39,7 @@ export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<stri
     }),
     recall_memories: tool({
       description:
-        "回忆/搜索已保存的记忆。可以按关键词、分类、用户过滤。用于回忆之前保存的事实、规则或偏好。",
+        "回忆/搜索已保存的记忆。可以按关键词、分类、用户过滤。用于回忆之前保存的事实、规则或偏好。同时自动搜索匹配的用户档案。",
       inputSchema: zodToAiSchema(
         z.object({
           query: z.string().optional().describe("搜索关键词"),
@@ -63,7 +63,24 @@ export function createBotMemoryTools(callbacks: BotMemoryCallbacks): Record<stri
             scope,
             limit,
           });
-          return { count: memories.length, memories };
+
+          let matchedProfiles: PeopleProfile[] = [];
+          if (callbacks.searchProfiles && query) {
+            try {
+              matchedProfiles = await callbacks.searchProfiles(query, telegram_id);
+            } catch {
+              /* profile 搜索失败不影响主流程 */
+            }
+          }
+
+          return {
+            count: memories.length,
+            memories,
+            ...(matchedProfiles.length > 0 && {
+              matchedProfiles,
+              profileCount: matchedProfiles.length,
+            }),
+          };
         } catch (err) {
           return { error: String(err) };
         }

@@ -29,7 +29,7 @@ import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import { EmbeddingService } from "./embedding-service.js";
-import { PeopleProfileStore } from "./people-profile-store.js";
+import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
 
 export class BotPool {
   private managers = new Map<string, BotManager>();
@@ -211,47 +211,10 @@ export class BotPool {
           const cs = this.conversationStore;
           memory = {
             getProfile: (telegramId) =>
-              ps.getProfile(botId, telegramId).then((p) =>
-                p
-                  ? {
-                      telegramId: p.telegramId,
-                      username: p.username,
-                      displayName: p.displayName,
-                      notes: p.notes,
-                      traits: p.traits ?? [],
-                      interests: p.interests ?? [],
-                      relationship: p.relationship,
-                      firstSeen: p.firstSeen.toISOString(),
-                      lastSeen: p.lastSeen.toISOString(),
-                    }
-                  : null,
-              ),
-            upsertProfile: (data) =>
-              ps.upsertProfile(botId, data).then((p) => ({
-                telegramId: p.telegramId,
-                username: p.username,
-                displayName: p.displayName,
-                notes: p.notes,
-                traits: p.traits ?? [],
-                interests: p.interests ?? [],
-                relationship: p.relationship,
-                firstSeen: p.firstSeen.toISOString(),
-                lastSeen: p.lastSeen.toISOString(),
-              })),
+              ps.getProfile(botId, telegramId).then((p) => (p ? mapProfileToDto(p) : null)),
+            upsertProfile: (data) => ps.upsertProfile(botId, data).then(mapProfileToDto),
             searchProfiles: (query) =>
-              ps.searchProfiles(botId, query).then((profiles) =>
-                profiles.map((p) => ({
-                  telegramId: p.telegramId,
-                  username: p.username,
-                  displayName: p.displayName,
-                  notes: p.notes,
-                  traits: p.traits ?? [],
-                  interests: p.interests ?? [],
-                  relationship: p.relationship,
-                  firstSeen: p.firstSeen.toISOString(),
-                  lastSeen: p.lastSeen.toISOString(),
-                })),
-              ),
+              ps.searchProfiles(botId, query).then((profiles) => profiles.map(mapProfileToDto)),
             searchHistory: async (params) => {
               let queryEmbedding: number[] | undefined;
               if (embeddingService && params.query) {
@@ -309,6 +272,18 @@ export class BotPool {
             deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
             getMemoriesForPrompt: (telegramId, limit) =>
               ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
+            searchProfiles: async (query, telegramId) => {
+              const pStore = this.profileStore;
+              const [exactProfile, searched] = await Promise.all([
+                telegramId != null ? pStore.getProfile(botId, telegramId) : null,
+                pStore.searchProfiles(botId, query),
+              ]);
+              const results = searched.map(mapProfileToDto);
+              if (exactProfile && !results.some((r) => r.telegramId === exactProfile.telegramId)) {
+                results.unshift(mapProfileToDto(exactProfile));
+              }
+              return results;
+            },
           };
         }
 

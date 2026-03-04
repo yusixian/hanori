@@ -112,7 +112,7 @@ const BOT_MEMORY_SYSTEM_PROMPT = `
 
 可用工具:
 - save_memory: 保存一条记忆（通用或关联特定用户）
-- recall_memories: 搜索已保存的记忆（支持按关键词、分类、用户过滤）
+- recall_memories: 搜索已保存的记忆（支持按关键词、分类、用户过滤），同时自动搜索匹配的用户档案
 - delete_memory: 删除不再准确或不再需要的记忆
 
 使用指南:
@@ -122,6 +122,7 @@ const BOT_MEMORY_SYSTEM_PROMPT = `
 - 用户专属记忆（指定 telegram_id）仅在与该用户对话时可见
 - 使用 category 来组织记忆（如 fact、preference、rule、event）
 - 学到重要信息时及时保存，不必犹豫
+- recall_memories 除了返回记忆条目，还会自动附带匹配的用户档案（matchedProfiles），包含用户特征、兴趣、备注等信息
 `.trim();
 
 /* ------------------------------------------------------------------ */

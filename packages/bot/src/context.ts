@@ -19,7 +19,7 @@ export class WrapperContext extends Context {
   waiting_message?: Message;
   command: CommandEntity;
   isReply: boolean;
-  reply_to_message?: Message.CommonMessage;
+  reply_to_message?: Message;
 
   constructor(update: Update, api: Api, me: UserFromGetMe) {
     super(update, api, me);

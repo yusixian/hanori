@@ -9,6 +9,7 @@ import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
+import { mapProfileToDto } from "../services/people-profile-store.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 
@@ -652,18 +653,7 @@ export function botsRoutes(
           const profiles = await store.searchProfiles(botId, search);
           return c.json({
             ok: true as const,
-            data: profiles.map((p) => ({
-              id: p.id,
-              telegramId: p.telegramId,
-              username: p.username,
-              displayName: p.displayName,
-              notes: p.notes,
-              traits: p.traits,
-              interests: p.interests,
-              relationship: p.relationship,
-              firstSeen: p.firstSeen.toISOString(),
-              lastSeen: p.lastSeen.toISOString(),
-            })),
+            data: profiles.map((p) => ({ id: p.id, ...mapProfileToDto(p) })),
             total: profiles.length,
           });
         }
