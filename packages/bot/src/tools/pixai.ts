@@ -6,7 +6,7 @@ import type {
   TimeoutConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -498,8 +498,20 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
               "图片描述提示词，支持自然语言描述（英文效果更佳）。必须保留用户明确要求的重要特征（如正字标记、特定文字内容、具体姿势、服装细节等），不要擅自省略或改写这些关键要求。用户处于简体中文环境，涉及文字内容时默认为简体中文。",
             ),
           negative_prompt: z.string().max(4096).optional().describe("负面提示词"),
-          width: z.number().int().min(1).max(2048).optional().describe("图片宽度 (1-2048)"),
-          height: z.number().int().min(1).max(2048).optional().describe("图片高度 (1-2048)"),
+          width: z
+            .number()
+            .int()
+            .min(IMAGE_MIN_SIZE)
+            .max(IMAGE_MAX_SIZE)
+            .optional()
+            .describe(`图片宽度 (${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE})`),
+          height: z
+            .number()
+            .int()
+            .min(IMAGE_MIN_SIZE)
+            .max(IMAGE_MAX_SIZE)
+            .optional()
+            .describe(`图片高度 (${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE})`),
           batch_size: z.number().int().min(1).max(4).optional().describe("生成数量 (1-4)"),
           seed: z.string().optional().describe("随机种子（留空=随机）"),
           style_key: z

@@ -5,6 +5,7 @@ import type {
   DrawOverrides,
   InferenceProfile,
 } from "../tools/pixai-direct.js";
+import { IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import { VALID_PROFILES } from "../tools/pixai-direct.js";
 import {
   buildFlagPattern,
@@ -23,8 +24,8 @@ type DrawFlagDef =
   | { field: keyof DrawOverrides; type: "bool"; label: string };
 
 const DRAW_FLAG_DEFS: Record<string, DrawFlagDef> = {
-  "-w": { field: "width", type: "int", min: 512, max: 1280, label: "Width" },
-  "-h": { field: "height", type: "int", min: 512, max: 1280, label: "Height" },
+  "-w": { field: "width", type: "int", min: IMAGE_MIN_SIZE, max: IMAGE_MAX_SIZE, label: "Width" },
+  "-h": { field: "height", type: "int", min: IMAGE_MIN_SIZE, max: IMAGE_MAX_SIZE, label: "Height" },
   "-b": { field: "batchSize", type: "int", min: 1, max: 4, label: "Batch Size" },
   "-s": { field: "styleKey", type: "string", label: "Style Key" },
   "-np": { field: "negativePrompt", type: "string", label: "Negative Prompt" },
@@ -43,8 +44,8 @@ const HELP_TEXT = `用法: /draw <提示词> [参数]
 直接使用提示词生成图片，不经过 AI 处理。
 
 可选参数:
-  -w <512-1280>        宽度 (默认跟随配置)
-  -h <512-1280>        高度 (默认跟随配置)
+  -w <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>        宽度 (默认跟随配置)
+  -h <${IMAGE_MIN_SIZE}-${IMAGE_MAX_SIZE}>        高度 (默认跟随配置)
   -b <1-4>             生成数量
   -s <key>             风格 key
   -np <text>           负面提示词

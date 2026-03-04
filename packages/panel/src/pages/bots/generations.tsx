@@ -17,6 +17,7 @@ import {
   EyeOff,
   Loader2,
   ShieldAlert,
+  Trash2,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -297,6 +298,22 @@ export function BotGenerationsPage() {
     });
   };
 
+  const handleDelete = async (generationId: number) => {
+    if (!botId || !window.confirm("确定要删除此生成记录及其文件吗？")) return;
+    try {
+      const res = await client.api.bots[":botId"].generations[":generationId"].$delete({
+        param: { botId, generationId: String(generationId) },
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setGenerations((prev) => prev.filter((g) => g.id !== generationId));
+        setTotal((prev) => prev - 1);
+      }
+    } catch (err) {
+      console.error("Failed to delete generation:", err);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -450,6 +467,14 @@ export function BotGenerationsPage() {
                     <span className="text-muted-foreground ml-auto shrink-0 text-xs">
                       {new Date(g.createdAt).toLocaleString()}
                     </span>
+                    <button
+                      type="button"
+                      className="text-muted-foreground hover:text-destructive shrink-0 p-0.5 transition-colors"
+                      onClick={() => handleDelete(g.id)}
+                      title="Delete generation"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
                   </div>
 
                   {/* Error message */}

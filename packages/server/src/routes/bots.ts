@@ -1,6 +1,7 @@
 import { assemblePromptPreview } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
+import { IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
@@ -189,8 +190,8 @@ const aiConfigSchema = z
                 negativePrompts: z.string().max(4096).optional(),
                 samplingSteps: z.number().int().min(8).max(50).optional(),
                 cfgScale: z.number().min(1.1).max(15).optional(),
-                width: z.number().int().min(512).max(1280).optional(),
-                height: z.number().int().min(512).max(1280).optional(),
+                width: z.number().int().min(IMAGE_MIN_SIZE).max(IMAGE_MAX_SIZE).optional(),
+                height: z.number().int().min(IMAGE_MIN_SIZE).max(IMAGE_MAX_SIZE).optional(),
                 batchSize: z.number().int().min(1).max(4).optional(),
                 promptHelper: z.boolean().optional(),
                 systemImagePrompt: z.string().max(4096).optional(),
@@ -633,6 +634,17 @@ export function botsRoutes(
       const chatId = Number(c.req.param("chatId"));
       const store = botPool.getConversationStore();
       await store.clearHistory(botId, chatId);
+      return c.json({ ok: true as const });
+    })
+    .delete("/:botId/conversations/:chatId/messages/:messageId", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      const messageId = Number(c.req.param("messageId"));
+      if (Number.isNaN(chatId) || Number.isNaN(messageId))
+        return c.json({ ok: false as const, error: "Invalid chatId or messageId" }, 400);
+      const store = botPool.getConversationStore();
+      const deleted = await store.deleteMessage(botId, chatId, messageId);
+      if (!deleted) return c.json({ ok: false as const, error: "Message not found" }, 404);
       return c.json({ ok: true as const });
     })
     .get(

@@ -1,3 +1,7 @@
+// Image generation size constraints (single source of truth)
+export const IMAGE_MIN_SIZE = 1;
+export const IMAGE_MAX_SIZE = 3072;
+
 // AI Reply types
 
 export type ModelCapability =
@@ -223,8 +227,8 @@ export interface PixAIConfig {
   negativePrompts?: string;
   samplingSteps?: number; // default 20, range 8-50
   cfgScale?: number; // default 5, range 1.1-15
-  width?: number; // default 832, range 1-2048
-  height?: number; // default 1472, range 1-2048
+  width?: number; // default 832, range IMAGE_MIN_SIZE-IMAGE_MAX_SIZE
+  height?: number; // default 1472, range IMAGE_MIN_SIZE-IMAGE_MAX_SIZE
   batchSize?: number; // default 1, range 1-4
   promptHelper?: boolean; // default false (额外扣费)
 

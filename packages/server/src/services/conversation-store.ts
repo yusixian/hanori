@@ -156,6 +156,20 @@ export class ConversationStore {
       );
   }
 
+  async deleteMessage(botId: string, chatId: number, messageId: number): Promise<boolean> {
+    const result = await this.db
+      .delete(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.id, messageId),
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+        ),
+      )
+      .returning({ id: conversationMessages.id });
+    return result.length > 0;
+  }
+
   async clearHistory(botId: string, chatId: number) {
     await Promise.all([
       this.db

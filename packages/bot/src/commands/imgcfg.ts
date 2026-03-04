@@ -1,5 +1,5 @@
 import type { PixAIConfig, PixAIRateLimitConfig } from "@cos-tool-bot/shared";
-import { DEFAULT_PIXAI_RATE_LIMIT } from "@cos-tool-bot/shared";
+import { DEFAULT_PIXAI_RATE_LIMIT, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import type { CommandMiddleware } from "grammy";
 import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import type { WrapperContext } from "../context.js";
@@ -47,8 +47,22 @@ const FLAG_DEFS: Record<string, FlagDef> = {
   "-s": { key: "s", field: "modelStyle", type: "string", label: "Model Style Key ID" },
   "-p": { key: "p", field: "systemImagePrompt", type: "string", label: "System Prompt" },
   "-np": { key: "np", field: "negativePrompts", type: "string", label: "Negative Prompts" },
-  "-w": { key: "w", field: "width", type: "int", min: 1, max: 2048, label: "Width" },
-  "-h": { key: "h", field: "height", type: "int", min: 1, max: 2048, label: "Height" },
+  "-w": {
+    key: "w",
+    field: "width",
+    type: "int",
+    min: IMAGE_MIN_SIZE,
+    max: IMAGE_MAX_SIZE,
+    label: "Width",
+  },
+  "-h": {
+    key: "h",
+    field: "height",
+    type: "int",
+    min: IMAGE_MIN_SIZE,
+    max: IMAGE_MAX_SIZE,
+    label: "Height",
+  },
   "-b": { key: "b", field: "batchSize", type: "int", min: 1, max: 4, label: "Batch Size" },
   "-seed": { key: "seed", field: "seed", type: "string", label: "Seed" },
   "-steps": {

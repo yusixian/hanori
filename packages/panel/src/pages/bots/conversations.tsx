@@ -251,14 +251,25 @@ function UserNamesList({ names }: { names: string[] | null }) {
   );
 }
 
-function MessageBubble({ msg }: { msg: ConversationMessage }) {
+function MessageBubble({
+  msg,
+  onDelete,
+}: {
+  msg: ConversationMessage;
+  onDelete?: (messageId: number) => void;
+}) {
   const isToolCall = msg.role === "tool_call" && msg.meta;
   const isAssistantWithMeta = msg.role === "assistant" && msg.meta;
   const needsCollapse =
     msg.role === "system" || msg.role === "tool_result" || msg.role === "context";
 
   return (
-    <div className={cn("rounded-md p-3", roleStyles[msg.role] ?? "bg-zinc-100 dark:bg-zinc-800")}>
+    <div
+      className={cn(
+        "group/msg rounded-md p-3",
+        roleStyles[msg.role] ?? "bg-zinc-100 dark:bg-zinc-800",
+      )}
+    >
       <div className="mb-1 flex items-center justify-between">
         <span className="text-xs font-medium">
           <span className="text-muted-foreground mr-1 font-mono opacity-50">#{msg.id}</span>
@@ -273,7 +284,19 @@ function MessageBubble({ msg }: { msg: ConversationMessage }) {
             <span className="ml-1 font-mono">{msg.meta.toolName as string}</span>
           )}
         </span>
-        <span className="text-xs opacity-60">{new Date(msg.createdAt).toLocaleString()}</span>
+        <div className="flex items-center gap-1.5">
+          {onDelete && (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-destructive opacity-0 transition-opacity group-hover/msg:opacity-100"
+              onClick={() => onDelete(msg.id)}
+              title="Delete message"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <span className="text-xs opacity-60">{new Date(msg.createdAt).toLocaleString()}</span>
+        </div>
       </div>
 
       {isToolCall ? (
@@ -438,6 +461,30 @@ export function BotConversationsPage() {
       }
     } catch (err) {
       console.error("Failed to clear chat:", err);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: number) => {
+    if (!botId || selectedChat === null) return;
+    if (!window.confirm(`确定要删除消息 #${messageId} 吗？`)) return;
+    try {
+      const res = await client.api.bots[":botId"].conversations[":chatId"].messages[
+        ":messageId"
+      ].$delete({
+        param: { botId, chatId: String(selectedChat), messageId: String(messageId) },
+      });
+      const json = await res.json();
+      if (json.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== messageId));
+        setMsgTotal((prev) => prev - 1);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.chatId === selectedChat ? { ...c, messageCount: c.messageCount - 1 } : c,
+          ),
+        );
+      }
+    } catch (err) {
+      console.error("Failed to delete message:", err);
     }
   };
 
@@ -614,7 +661,7 @@ export function BotConversationsPage() {
                         (showSystem || msg.role !== "system"),
                     )
                     .map((msg) => (
-                      <MessageBubble key={msg.id} msg={msg} />
+                      <MessageBubble key={msg.id} msg={msg} onDelete={handleDeleteMessage} />
                     ))}
                 </div>
 
