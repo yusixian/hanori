@@ -63,7 +63,7 @@ Commands live in `packages/bot/src/commands/`. Admin commands use `createAuthGua
 - `lark-webhook-client.ts` — Webhook 客户端，支持签名校验（HmacSHA256）、发送文本/卡片消息
 - `lark-bot-manager.ts` — 生命周期管理（start/stop/restart），集成 DbLogger 和可选的邮件监控
 - `imap-email-monitor.ts` — IMAP 邮件监控，将邮件转发到 Lark 群
-- `email-parsers.ts` — 邮件内容解析
+- `email-parsers.ts` — 邮件内容解析，支持 GitHub PR（approved/changes_requested/commented/merged/opened/review_requested/pushed）、CI Run、Issue 三类邮件，自动生成对应 Lark 卡片
 
 Webhook 频率限制：100 次/分钟，5 次/秒，请求体 ≤ 20KB。安全配置支持签名校验、IP 白名单、自定义关键词三种方式。
 

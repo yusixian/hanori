@@ -6,6 +6,8 @@ export type PrAction =
   | "commented"
   | "merged"
   | "opened"
+  | "review_requested"
+  | "pushed"
   | "unknown";
 
 export interface PrReviewInfo {
@@ -36,6 +38,8 @@ function inferGitHubAction(body: string): PrAction {
   if (lower.includes("requested changes")) return "changes_requested";
   if (lower.includes("merged this pull request") || lower.includes("was merged")) return "merged";
   if (lower.includes("opened this pull request")) return "opened";
+  if (lower.includes("requested review")) return "review_requested";
+  if (lower.includes("pushed")) return "pushed";
   if (
     lower.includes("commented") ||
     lower.includes("left a comment") ||
@@ -155,6 +159,8 @@ const ACTION_COLORS: Record<PrAction, string> = {
   commented: "blue",
   merged: "purple",
   opened: "turquoise",
+  review_requested: "orange",
+  pushed: "blue",
   unknown: "grey",
 };
 
@@ -164,6 +170,8 @@ const ACTION_LABELS: Record<PrAction, string> = {
   commented: "Commented",
   merged: "Merged",
   opened: "Opened",
+  review_requested: "Review Requested",
+  pushed: "Pushed",
   unknown: "Activity",
 };
 
