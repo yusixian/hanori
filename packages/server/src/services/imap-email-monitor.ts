@@ -24,6 +24,7 @@ export class ImapEmailMonitor {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private processing = false;
+  private initialized = false; // true after first snapshot of existing UIDs
   private failedUids = new Map<number, number>(); // uid -> retry count
   private sentUids = new Set<number>(); // UIDs already forwarded to Lark
 
@@ -90,6 +91,7 @@ export class ImapEmailMonitor {
     await this.closeClient();
     this.failedUids.clear();
     this.sentUids.clear();
+    this.initialized = false;
     this.logger.info("IMAP monitor stopped");
   }
 
@@ -175,8 +177,28 @@ export class ImapEmailMonitor {
     }
   }
 
+  private async snapshotExistingUids(): Promise<void> {
+    if (!this.client || this.initialized) return;
+    this.initialized = true;
+
+    let count = 0;
+    for await (const msg of this.client.fetch({ seen: false }, { uid: true })) {
+      if (msg.uid) this.sentUids.add(msg.uid);
+      if (++count > MAX_FAILED_UIDS) break;
+    }
+    if (count > 0) {
+      this.logger.info({ count }, "Skipped existing unseen emails on first connect");
+    }
+  }
+
   private async processUnseen(): Promise<void> {
     if (!this.client) return;
+
+    // On first run, snapshot existing UIDs so we only forward new emails
+    if (!this.initialized) {
+      await this.snapshotExistingUids();
+      return;
+    }
 
     // Prune failedUids: remove exhausted entries, or clear all if over absolute cap
     if (this.failedUids.size > MAX_FAILED_UIDS) {
