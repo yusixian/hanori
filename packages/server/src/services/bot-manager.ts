@@ -3,6 +3,7 @@ import { createBot } from "@cos-tool-bot/bot";
 import type {
   BotStatus,
   ConversationCallbacks,
+  IBotManager,
   PixAIGenerationRecord,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
@@ -23,7 +24,7 @@ interface BotManagerOptions {
   timerCallbacks?: TimerCallbacks;
 }
 
-export class BotManager {
+export class BotManager implements IBotManager {
   readonly botId: string;
   private bot: ReturnType<typeof createBot> | null = null;
   private botConfig: BotConfig;

@@ -442,13 +442,52 @@ export type CommandEntity = {
   original_msg: string;
 };
 
+export type BotPlatform = "telegram" | "lark-webhook";
+
+export interface LarkWebhookConfig {
+  webhookUrl: string;
+  encryptedSignSecret?: string;
+}
+
+export interface EmailForwardFilter {
+  senderPattern?: string;
+  subjectPattern?: string;
+}
+
+export interface EmailForwardConfig {
+  imapHost: string;
+  imapPort: number;
+  imapTls: boolean;
+  email: string;
+  encryptedPassword: string;
+  pollIntervalSec: number;
+  filters: EmailForwardFilter[];
+}
+
 export type BotStatus = "running" | "stopped" | "restarting";
 
+export interface IBotManager {
+  readonly botId: string;
+  readonly status: BotStatus;
+  readonly uptime: number | null;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface EmailForwardConfigPublic {
+  imapHost: string;
+  imapPort: number;
+  email: string;
+  pollIntervalSec: number;
+  filters: EmailForwardFilter[];
+}
 
 export interface BotRecord {
   id: string;
   name: string;
+  platform: BotPlatform;
   tokenMasked: string;
   adminChatIds: number[];
   isActive: boolean;
@@ -456,6 +495,8 @@ export interface BotRecord {
   aiHasApiKey: boolean;
   createdAt: string;
   updatedAt: string | null;
+  larkWebhookConfig?: { webhookUrl: string; hasSignSecret: boolean };
+  emailForwardConfig?: EmailForwardConfigPublic;
 }
 
 export interface BotWithStatus extends BotRecord {

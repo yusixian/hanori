@@ -2,44 +2,99 @@ import { assemblePromptPreview } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import { IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
-import type { AiConfigPublic, AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
+import type {
+  AiConfigPublic,
+  AiConfigStored,
+  BotPlatform,
+  BotWithStatus,
+} from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
+import { LarkBotManager } from "../services/lark-bot-manager.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 
-const createBotSchema = z.object({
-  name: z.string().min(1).max(100),
-  token: z.string().min(1),
-  adminChatIds: z.array(z.number()).default([]),
-  isActive: z.boolean().default(true),
+const emailForwardFilterSchema = z.object({
+  senderPattern: z.string().optional(),
+  subjectPattern: z.string().optional(),
 });
+
+const emailForwardConfigSchema = z.object({
+  imapHost: z.string().min(1),
+  imapPort: z.number().int().min(1).max(65535),
+  imapTls: z.boolean().default(true),
+  email: z.string().min(1),
+  password: z.string().default(""),
+  pollIntervalSec: z.number().int().min(10).max(3600).default(60),
+  filters: z.array(emailForwardFilterSchema).default([]),
+});
+
+const createBotSchema = z
+  .object({
+    name: z.string().min(1).max(100),
+    platform: z.enum(["telegram", "lark-webhook"]).default("telegram"),
+    token: z.string().optional().default(""),
+    adminChatIds: z.array(z.number()).default([]),
+    isActive: z.boolean().default(true),
+    // Lark-specific fields
+    webhookUrl: z.string().optional(),
+    signSecret: z.string().optional(),
+    emailForwardConfig: emailForwardConfigSchema.optional(),
+  })
+  .refine(
+    (data) => {
+      if (data.platform === "telegram") return data.token.length > 0;
+      if (data.platform === "lark-webhook") return !!data.webhookUrl;
+      return true;
+    },
+    { message: "Telegram requires a token; Lark Webhook requires a webhook URL" },
+  )
+  .refine(
+    (data) => {
+      if (data.emailForwardConfig) return data.emailForwardConfig.password.length > 0;
+      return true;
+    },
+    { message: "Email password is required when creating email forward config" },
+  );
 
 const updateBotSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   token: z.string().min(1).optional(),
   adminChatIds: z.array(z.number()).optional(),
   isActive: z.boolean().optional(),
+  // Lark-specific fields
+  webhookUrl: z.string().optional(),
+  signSecret: z.string().optional(),
+  emailForwardConfig: emailForwardConfigSchema.optional(),
+  clearEmailForwardConfig: z.boolean().optional(),
 });
 
 function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWithStatus {
   const manager = botPool.getManager(bot.id);
+  const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
   let tokenMasked: string;
-  try {
-    const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
-    tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
-  } catch {
-    tokenMasked = "(密钥不匹配)";
+  if (platform === "lark-webhook") {
+    tokenMasked = "(Lark Webhook)";
+  } else {
+    try {
+      const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+      tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
+    } catch {
+      tokenMasked = "(密钥不匹配)";
+    }
   }
+  const larkCfg = bot.larkWebhookConfig;
+  const emailCfg = bot.emailForwardConfig;
   return {
     id: bot.id,
     name: bot.name,
+    platform,
     tokenMasked,
     adminChatIds: bot.adminChatIds,
     isActive: bot.isActive,
@@ -49,6 +104,18 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     updatedAt: bot.updatedAt?.toISOString() ?? null,
     status: manager?.status ?? "stopped",
     uptime: manager?.uptime ?? null,
+    larkWebhookConfig: larkCfg
+      ? { webhookUrl: larkCfg.webhookUrl, hasSignSecret: !!larkCfg.encryptedSignSecret }
+      : undefined,
+    emailForwardConfig: emailCfg
+      ? {
+          imapHost: emailCfg.imapHost,
+          imapPort: emailCfg.imapPort,
+          email: emailCfg.email,
+          pollIntervalSec: emailCfg.pollIntervalSec,
+          filters: emailCfg.filters,
+        }
+      : undefined,
   };
 }
 
@@ -353,14 +420,55 @@ export function botsRoutes(
     })
     .post("/", zValidator("json", createBotSchema), async (c) => {
       const body = c.req.valid("json");
-      const encryptedToken = encrypt(body.token, env.ENCRYPTION_KEY);
+      const platform = body.platform ?? "telegram";
+
+      let encryptedToken: string;
+      let larkWebhookConfig: { webhookUrl: string; encryptedSignSecret?: string } | undefined;
+      let emailForwardConfig:
+        | {
+            imapHost: string;
+            imapPort: number;
+            imapTls: boolean;
+            email: string;
+            encryptedPassword: string;
+            pollIntervalSec: number;
+            filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
+          }
+        | undefined;
+
+      if (platform === "lark-webhook") {
+        encryptedToken = encrypt("__LARK_WEBHOOK__", env.ENCRYPTION_KEY);
+        larkWebhookConfig = {
+          webhookUrl: body.webhookUrl!,
+          encryptedSignSecret: body.signSecret
+            ? encrypt(body.signSecret, env.ENCRYPTION_KEY)
+            : undefined,
+        };
+        if (body.emailForwardConfig) {
+          emailForwardConfig = {
+            imapHost: body.emailForwardConfig.imapHost,
+            imapPort: body.emailForwardConfig.imapPort,
+            imapTls: body.emailForwardConfig.imapTls,
+            email: body.emailForwardConfig.email,
+            encryptedPassword: encrypt(body.emailForwardConfig.password, env.ENCRYPTION_KEY),
+            pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
+            filters: body.emailForwardConfig.filters,
+          };
+        }
+      } else {
+        encryptedToken = encrypt(body.token, env.ENCRYPTION_KEY);
+      }
+
       const rows = await db
         .insert(bots)
         .values({
           name: body.name,
+          platform,
           encryptedToken,
           adminChatIds: body.adminChatIds,
           isActive: body.isActive,
+          larkWebhookConfig: larkWebhookConfig ?? null,
+          emailForwardConfig: emailForwardConfig ?? null,
         })
         .returning();
       const created = rows[0]!;
@@ -387,6 +495,36 @@ export function botsRoutes(
       if (body.adminChatIds !== undefined) updates.adminChatIds = body.adminChatIds;
       if (body.isActive !== undefined) updates.isActive = body.isActive;
 
+      // Lark-specific updates
+      if (body.webhookUrl !== undefined || body.signSecret !== undefined) {
+        const encryptedSignSecret = body.signSecret
+          ? encrypt(body.signSecret, env.ENCRYPTION_KEY)
+          : (existing.larkWebhookConfig?.encryptedSignSecret ?? undefined);
+        updates.larkWebhookConfig = {
+          webhookUrl: body.webhookUrl ?? existing.larkWebhookConfig?.webhookUrl ?? "",
+          encryptedSignSecret,
+        };
+      }
+      if (body.emailForwardConfig) {
+        const existingEmail = existing.emailForwardConfig;
+        // If password is empty, keep the existing encrypted password
+        const encryptedPassword =
+          body.emailForwardConfig.password.length > 0
+            ? encrypt(body.emailForwardConfig.password, env.ENCRYPTION_KEY)
+            : (existingEmail?.encryptedPassword ?? "");
+        updates.emailForwardConfig = {
+          imapHost: body.emailForwardConfig.imapHost,
+          imapPort: body.emailForwardConfig.imapPort,
+          imapTls: body.emailForwardConfig.imapTls,
+          email: body.emailForwardConfig.email,
+          encryptedPassword,
+          pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
+          filters: body.emailForwardConfig.filters,
+        };
+      } else if (body.clearEmailForwardConfig) {
+        updates.emailForwardConfig = null;
+      }
+
       const rows = await db.update(bots).set(updates).where(eq(bots.id, botId)).returning();
       const updated = rows[0]!;
 
@@ -404,8 +542,14 @@ export function botsRoutes(
           // continue
         }
       } else {
-        // Restart running bot if token or adminChatIds changed
-        const needsRestart = body.token !== undefined || body.adminChatIds !== undefined;
+        // Restart running bot if config changed
+        const needsRestart =
+          body.token !== undefined ||
+          body.adminChatIds !== undefined ||
+          body.webhookUrl !== undefined ||
+          body.signSecret !== undefined ||
+          body.emailForwardConfig !== undefined ||
+          body.clearEmailForwardConfig;
         if (manager && needsRestart) {
           try {
             await botPool.restartBot(botId);
@@ -863,5 +1007,33 @@ export function botsRoutes(
       const deleted = await store.deleteMemory(botId, memoryId);
       if (!deleted) return c.json({ ok: false as const, error: "Memory not found" }, 404);
       return c.json({ ok: true as const });
-    });
+    })
+    .post(
+      "/:botId/lark/test",
+      zValidator(
+        "json",
+        z.object({
+          message: z.string().min(1).max(500).default("Test message from cos-tool-bot panel"),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const { message } = c.req.valid("json");
+        const manager = botPool.getManager(botId);
+        if (!manager || !(manager instanceof LarkBotManager)) {
+          return c.json(
+            { ok: false as const, error: "Bot is not a running Lark webhook bot" },
+            400,
+          );
+        }
+        if (manager.status !== "running") {
+          return c.json({ ok: false as const, error: "Bot is not running" }, 400);
+        }
+        const result = await manager.getLarkClient().sendText(message);
+        if (!result.ok) {
+          return c.json({ ok: false as const, error: result.error ?? "Failed to send" }, 502);
+        }
+        return c.json({ ok: true as const });
+      },
+    );
 }

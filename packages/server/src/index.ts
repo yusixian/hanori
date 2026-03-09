@@ -112,6 +112,17 @@ const app = createApp({
   timerRegistry,
 });
 
+// Start HTTP server (before bots so the panel is immediately reachable)
+serve(
+  {
+    fetch: app.fetch,
+    port: env.PORT,
+  },
+  (info) => {
+    dbLogger.info(`Server running on http://localhost:${info.port}`).catch(() => {});
+  },
+);
+
 // Start all active bots
 await botPool.startAll();
 
@@ -138,17 +149,6 @@ await timerRegistry.recoverAiTimers(
     botPool.fireRecoveredTimer(timerId, botId, chatId, meta);
   },
   (botId) => botPool.getManager(botId)?.status === "running",
-);
-
-// Start HTTP server
-serve(
-  {
-    fetch: app.fetch,
-    port: env.PORT,
-  },
-  (info) => {
-    dbLogger.info(`Server running on http://localhost:${info.port}`).catch(() => {});
-  },
 );
 
 // Graceful shutdown

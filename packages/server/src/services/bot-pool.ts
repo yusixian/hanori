@@ -6,7 +6,9 @@ import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots, pixaiGenerations, tokenUsage } from "@cos-tool-bot/database";
 import type {
   BotMemoryCallbacks,
+  BotPlatform,
   ConversationCallbacks,
+  IBotManager,
   MemoryCallbacks,
   PixAIGenerationRecord,
   TokenUsageRecord,
@@ -30,11 +32,14 @@ import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import { EmbeddingService } from "./embedding-service.js";
+import { ImapEmailMonitor } from "./imap-email-monitor.js";
+import { LarkBotManager } from "./lark-bot-manager.js";
+import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
 import type { TimerRegistry } from "./timer-registry.js";
 
 export class BotPool {
-  private managers = new Map<string, BotManager>();
+  private managers = new Map<string, IBotManager>();
   private botTimerHandlers = new Map<string, BotTimerHandlers>();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
@@ -112,6 +117,13 @@ export class BotPool {
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
     if (!bot) throw new Error(`Bot ${botId} not found`);
 
+    const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
+    if (platform === "lark-webhook") {
+      await this.startLarkWebhookBot(botId, bot);
+      return;
+    }
+
+    // Telegram bot flow
     const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
     if (!token) {
       throw new Error(
@@ -528,6 +540,54 @@ export class BotPool {
     await manager.start();
   }
 
+  private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {
+    const dbLogger = new DbLogger(this.db, this.logger, botId);
+
+    const larkConfig = bot.larkWebhookConfig;
+    if (!larkConfig?.webhookUrl) {
+      throw new Error("Lark webhook URL is not configured");
+    }
+
+    const signSecret = larkConfig.encryptedSignSecret
+      ? tryDecrypt(larkConfig.encryptedSignSecret, env.ENCRYPTION_KEY)
+      : undefined;
+    const larkClient = new LarkWebhookClient(larkConfig.webhookUrl, signSecret ?? undefined);
+
+    // Build email monitor if configured
+    let emailMonitor: ImapEmailMonitor | undefined;
+    const emailConfig = bot.emailForwardConfig;
+
+    if (emailConfig) {
+      const password = tryDecrypt(emailConfig.encryptedPassword, env.ENCRYPTION_KEY);
+      if (password) {
+        emailMonitor = new ImapEmailMonitor(
+          {
+            host: emailConfig.imapHost,
+            port: emailConfig.imapPort,
+            secure: emailConfig.imapTls,
+            auth: { user: emailConfig.email, pass: password },
+            pollIntervalSec: emailConfig.pollIntervalSec,
+            filters: emailConfig.filters,
+          },
+          larkClient,
+          this.logger,
+        );
+      } else {
+        dbLogger.warn("Cannot decrypt email password, email forwarding disabled").catch(() => {});
+      }
+    }
+
+    const manager = new LarkBotManager({
+      botId,
+      dbLogger,
+      larkClient,
+      emailMonitor,
+    });
+
+    this.managers.set(botId, manager);
+    await manager.start();
+  }
+
   async stopBot(botId: string) {
     const manager = this.managers.get(botId);
     if (!manager) return;
@@ -541,11 +601,11 @@ export class BotPool {
     await this.startBot(botId);
   }
 
-  getManager(botId: string): BotManager | undefined {
+  getManager(botId: string): IBotManager | undefined {
     return this.managers.get(botId);
   }
 
-  getAllManagers(): Map<string, BotManager> {
+  getAllManagers(): Map<string, IBotManager> {
     return this.managers;
   }
 
