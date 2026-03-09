@@ -1,3 +1,4 @@
+import type { EmailForwardConfig, LarkWebhookConfig } from "@cos-tool-bot/shared";
 import {
   bigint,
   boolean,
@@ -182,9 +183,12 @@ export const settings = pgTable("settings", {
 export const bots = pgTable("bots", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
+  platform: text("platform").notNull().default("telegram"),
   encryptedToken: text("encrypted_token").notNull(),
   adminChatIds: json("admin_chat_ids").$type<number[]>().notNull().default([]),
   aiConfig: json("ai_config").$type<AiConfigJson>(),
+  larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
+  emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")

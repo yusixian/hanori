@@ -72,7 +72,14 @@ export function BotListPage() {
             >
               <CardContent className="space-y-3 p-4 sm:p-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="truncate font-medium">{bot.name}</h3>
+                  <div className="flex items-center gap-2 truncate">
+                    <h3 className="truncate font-medium">{bot.name}</h3>
+                    {bot.platform === "lark-webhook" && (
+                      <Badge variant="muted" className="shrink-0 text-[10px]">
+                        Lark
+                      </Badge>
+                    )}
+                  </div>
                   <Badge variant={statusBadge[bot.status].variant}>
                     {statusBadge[bot.status].label}
                   </Badge>

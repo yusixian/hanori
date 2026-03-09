@@ -17,9 +17,13 @@ export function BotCreatePage() {
             resource: "bots",
             values: {
               name: data.name,
-              token: data.token,
+              platform: data.platform,
+              token: data.token ?? "",
               adminChatIds: data.adminChatIds,
               isActive: data.isActive,
+              webhookUrl: data.webhookUrl,
+              signSecret: data.signSecret,
+              emailForwardConfig: data.emailForwardConfig,
             },
           });
           navigate("/");

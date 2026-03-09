@@ -33,9 +33,13 @@ export function BotEditPage() {
         isEdit
         initialData={{
           name: bot.name,
+          platform: bot.platform,
           tokenMasked: bot.tokenMasked,
           adminChatIds: bot.adminChatIds,
           isActive: bot.isActive,
+          webhookUrl: bot.larkWebhookConfig?.webhookUrl,
+          signSecret: undefined,
+          emailForwardConfig: bot.emailForwardConfig,
         }}
         submitLabel="Save Changes"
         onSubmit={async (formData) => {
@@ -48,6 +52,11 @@ export function BotEditPage() {
               adminChatIds: formData.adminChatIds,
               isActive: formData.isActive,
               ...(formData.token ? { token: formData.token } : {}),
+              ...(formData.webhookUrl !== undefined ? { webhookUrl: formData.webhookUrl } : {}),
+              ...(formData.signSecret !== undefined ? { signSecret: formData.signSecret } : {}),
+              ...(formData.emailForwardConfig
+                ? { emailForwardConfig: formData.emailForwardConfig }
+                : {}),
             },
           });
           navigate(`/bots/${botId}`);

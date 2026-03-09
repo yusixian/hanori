@@ -56,6 +56,9 @@ const UsagePage = lazy(() => import("@/pages/usage").then((m) => ({ default: m.U
 const TimersListPage = lazy(() =>
   import("@/pages/timers/list").then((m) => ({ default: m.TimersListPage })),
 );
+const LarkSetupGuidePage = lazy(() =>
+  import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
+);
 
 function LoadingFallback() {
   return (
@@ -106,6 +109,7 @@ export function App() {
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/timers" element={<TimersListPage />} />
                 <Route path="/logs" element={<LogsListPage />} />
+                <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />
               </Route>
 
               <Route

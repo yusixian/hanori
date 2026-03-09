@@ -56,6 +56,17 @@ The server's `createApp()` in `packages/server/src/app.ts` uses **chained** `.ro
 
 Commands live in `packages/bot/src/commands/`. Admin commands use `createAuthGuard(adminIds)` from `packages/bot/src/guards/auth.ts`. The restart command uses a callback pattern: `config.onRestart?.()`, handled by BotManager in the server package.
 
+### Lark Webhook Bot
+
+项目支持 Lark/飞书自定义机器人（Webhook 推送模式）。核心实现在 `packages/server/src/services/` 下：
+
+- `lark-webhook-client.ts` — Webhook 客户端，支持签名校验（HmacSHA256）、发送文本/卡片消息
+- `lark-bot-manager.ts` — 生命周期管理（start/stop/restart），集成 DbLogger 和可选的邮件监控
+- `imap-email-monitor.ts` — IMAP 邮件监控，将邮件转发到 Lark 群
+- `email-parsers.ts` — 邮件内容解析
+
+Webhook 频率限制：100 次/分钟，5 次/秒，请求体 ≤ 20KB。安全配置支持签名校验、IP 白名单、自定义关键词三种方式。
+
 ### Logging & SSE
 
 `DbLogger` writes to both pino stdout and the `botLogs` database table. The panel receives real-time logs via SSE at `GET /api/logs/stream` using fetch + ReadableStream (not EventSource).

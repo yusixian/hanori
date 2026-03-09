@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cos-tool-bot/shared": "workspace:*",
     "drizzle-orm": "^0.39.3",
     "postgres": "^3.4.5"
   },
