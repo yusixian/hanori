@@ -79,7 +79,7 @@ export function EmbeddingSection({
           <Input type="number" disabled value={config.dimensions} readOnly />
           <p className="text-muted-foreground text-xs">
             System-level setting controlled by the <code>EMBEDDING_DIMENSIONS</code> environment
-            variable (default 1536). Changing requires redeployment and migration regeneration.
+            variable (default 3072). Changing requires redeployment and migration regeneration.
           </p>
         </div>
       </CardContent>
