@@ -1,3 +1,4 @@
+import type { EmailEventType } from "@cos-tool-bot/shared";
 import type { LarkCardMessage } from "./lark-webhook-client.js";
 
 export type PrAction =
@@ -175,7 +176,11 @@ const ACTION_LABELS: Record<PrAction, string> = {
   unknown: "Activity",
 };
 
-export function buildPrReviewCard(info: PrReviewInfo): LarkCardMessage {
+export function buildPrReviewCard(
+  info: PrReviewInfo,
+  mentionMap?: Record<string, string>,
+  recipientUsers?: string[],
+): LarkCardMessage {
   const elements: LarkCardMessage["elements"] = [];
 
   elements.push({
@@ -202,6 +207,25 @@ export function buildPrReviewCard(info: PrReviewInfo): LarkCardMessage {
         content: `> ${info.comment.split("\n").join("\n> ")}`,
       },
     });
+  }
+
+  const mentionActions: Set<PrAction> = new Set([
+    "approved",
+    "changes_requested",
+    "commented",
+    "review_requested",
+  ]);
+  if (mentionActions.has(info.action) && mentionMap && recipientUsers) {
+    const atTags = recipientUsers
+      .map((u) => mentionMap[u])
+      .filter(Boolean)
+      .map((id) => `<at id=${id}></at>`);
+    if (atTags.length > 0) {
+      elements.push({
+        tag: "div",
+        text: { tag: "lark_md", content: atTags.join(" ") },
+      });
+    }
   }
 
   if (info.url) {
@@ -467,6 +491,26 @@ export function buildIssueCard(info: IssueInfo): LarkCardMessage {
   };
 }
 
+// --- Classification ---
+
+export function classifyEmail(
+  from: string,
+  subject: string,
+  textBody: string,
+  htmlBody: string,
+): EmailEventType {
+  const ci = parseCiRunEmail(from, subject, textBody, htmlBody);
+  if (ci) return `ci:${ci.status}`;
+
+  const pr = parsePrReviewEmail(from, subject, textBody, htmlBody);
+  if (pr) return `pr:${pr.action}`;
+
+  const issue = parseIssueEmail(from, subject, textBody, htmlBody);
+  if (issue) return `issue:${issue.action}`;
+
+  return "generic";
+}
+
 // --- Unified entry point ---
 
 export function buildEmailCard(
@@ -474,12 +518,14 @@ export function buildEmailCard(
   subject: string,
   textBody: string,
   htmlBody: string,
+  mentionMap?: Record<string, string>,
+  recipientUsers?: string[],
 ): LarkCardMessage {
   const ci = parseCiRunEmail(from, subject, textBody, htmlBody);
   if (ci) return buildCiRunCard(ci);
 
   const pr = parsePrReviewEmail(from, subject, textBody, htmlBody);
-  if (pr) return buildPrReviewCard(pr);
+  if (pr) return buildPrReviewCard(pr, mentionMap, recipientUsers);
 
   const issue = parseIssueEmail(from, subject, textBody, htmlBody);
   if (issue) return buildIssueCard(issue);

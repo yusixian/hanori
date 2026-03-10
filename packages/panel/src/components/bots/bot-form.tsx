@@ -1,9 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { BotPlatform } from "@cos-tool-bot/shared";
+import { ALL_EMAIL_EVENT_TYPES, DEFAULT_LARK_MENTION_MAP } from "@cos-tool-bot/shared";
+import type { BotPlatform, EmailEventType } from "@cos-tool-bot/shared";
 import type { FormEvent } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router";
 
 interface EmailForwardFormData {
@@ -14,6 +15,8 @@ interface EmailForwardFormData {
   password: string;
   pollIntervalSec: number;
   filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
+  larkMentionMap?: Record<string, string>;
+  disabledEventTypes?: string[];
 }
 
 export interface BotFormData {
@@ -42,11 +45,102 @@ interface BotFormProps {
       email: string;
       pollIntervalSec: number;
       filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
+      larkMentionMap?: Record<string, string>;
+      disabledEventTypes?: EmailEventType[];
     };
   };
   onSubmit: (data: BotFormData) => Promise<void>;
   submitLabel: string;
   isEdit?: boolean;
+}
+
+const EVENT_TYPE_GROUPS: Array<{ label: string; events: EmailEventType[] }> = [
+  {
+    label: "PR Events",
+    events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("pr:")),
+  },
+  {
+    label: "CI Events",
+    events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("ci:")),
+  },
+  {
+    label: "Issue Events",
+    events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("issue:")),
+  },
+  { label: "Other", events: ["generic"] },
+];
+
+function formatEventLabel(event: string): string {
+  const action = event.includes(":") ? event.split(":")[1]! : event;
+  return action
+    .split("_")
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function EventTypeFilter({
+  disabledEvents,
+  setDisabledEvents,
+}: {
+  disabledEvents: Set<string>;
+  setDisabledEvents: (s: Set<string>) => void;
+}) {
+  const toggle = (event: string) => {
+    const next = new Set(disabledEvents);
+    if (next.has(event)) next.delete(event);
+    else next.add(event);
+    setDisabledEvents(next);
+  };
+
+  const toggleGroup = (events: string[], allDisabled: boolean) => {
+    const next = new Set(disabledEvents);
+    for (const e of events) {
+      if (allDisabled) next.delete(e);
+      else next.add(e);
+    }
+    setDisabledEvents(next);
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border p-2">
+      <label className="text-xs font-medium">Notification Types</label>
+      {EVENT_TYPE_GROUPS.map((group) => {
+        const allDisabled = group.events.every((e) => disabledEvents.has(e));
+        return (
+          <div key={group.label} className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={!allDisabled}
+                onChange={() => toggleGroup(group.events, allDisabled)}
+                className="border-input h-3.5 w-3.5 rounded"
+                ref={(el) => {
+                  if (el) {
+                    const disabledCount = group.events.filter((e) => disabledEvents.has(e)).length;
+                    el.indeterminate = disabledCount > 0 && disabledCount < group.events.length;
+                  }
+                }}
+              />
+              <span className="text-xs font-medium">{group.label}</span>
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5">
+              {group.events.map((event) => (
+                <label key={event} className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={!disabledEvents.has(event)}
+                    onChange={() => toggle(event)}
+                    className="border-input h-3 w-3 rounded"
+                  />
+                  {formatEventLabel(event)}
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormProps) {
@@ -73,6 +167,45 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
     initEmail?.filters[0]?.senderPattern ?? "notifications@github.com",
   );
   const [subjectFilter, setSubjectFilter] = useState(initEmail?.filters[0]?.subjectPattern ?? "");
+  const [disabledEvents, setDisabledEvents] = useState<Set<string>>(
+    () => new Set(initEmail?.disabledEventTypes ?? []),
+  );
+  const [mentionMap, setMentionMap] = useState<Array<[string, string]>>(() => {
+    const map = initEmail?.larkMentionMap ?? DEFAULT_LARK_MENTION_MAP;
+    return Object.entries(map);
+  });
+  const csvInputRef = useRef<HTMLInputElement>(null);
+
+  const exportMentionCsv = () => {
+    const lines = ["github_username,lark_open_id"];
+    for (const [gh, lark] of mentionMap) {
+      if (gh.trim() || lark.trim()) lines.push(`${gh.trim()},${lark.trim()}`);
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "lark-mention-map.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importMentionCsv = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      const entries: Array<[string, string]> = [];
+      for (const line of text.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed === "github_username,lark_open_id") continue;
+        const commaIdx = trimmed.indexOf(",");
+        if (commaIdx === -1) continue;
+        entries.push([trimmed.slice(0, commaIdx), trimmed.slice(commaIdx + 1)]);
+      }
+      if (entries.length > 0) setMentionMap(entries);
+    };
+    reader.readAsText(file);
+  };
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -104,6 +237,10 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
               subjectPattern: subjectFilter || undefined,
             });
           }
+          const larkMentionMapObj: Record<string, string> = {};
+          for (const [k, v] of mentionMap) {
+            if (k.trim() && v.trim()) larkMentionMapObj[k.trim()] = v.trim();
+          }
           data.emailForwardConfig = {
             imapHost,
             imapPort: Number(imapPort) || 993,
@@ -112,6 +249,9 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
             password: emailPassword,
             pollIntervalSec: Number(pollInterval) || 60,
             filters,
+            larkMentionMap:
+              Object.keys(larkMentionMapObj).length > 0 ? larkMentionMapObj : undefined,
+            disabledEventTypes: disabledEvents.size > 0 ? [...disabledEvents] : undefined,
           };
         }
       }
@@ -331,6 +471,96 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                           onChange={(e) => setSubjectFilter(e.target.value)}
                           placeholder="pull request"
                         />
+                      </div>
+                    </div>
+
+                    <EventTypeFilter
+                      disabledEvents={disabledEvents}
+                      setDisabledEvents={setDisabledEvents}
+                    />
+
+                    <div className="space-y-2 rounded-md border p-2">
+                      <label className="text-xs font-medium">
+                        Lark @Mention (GitHub Username → Lark Open ID)
+                      </label>
+                      <div className="space-y-1">
+                        <div className="max-h-48 space-y-1 overflow-y-auto">
+                          {mentionMap.map(([ghLogin, larkId], idx) => (
+                            <div key={idx} className="flex items-center gap-1">
+                              <Input
+                                className="h-7 text-xs"
+                                value={ghLogin}
+                                onChange={(e) => {
+                                  const next = [...mentionMap];
+                                  next[idx] = [e.target.value, larkId];
+                                  setMentionMap(next);
+                                }}
+                                placeholder="GitHub login"
+                              />
+                              <Input
+                                className="h-7 text-xs"
+                                value={larkId}
+                                onChange={(e) => {
+                                  const next = [...mentionMap];
+                                  next[idx] = [ghLogin, e.target.value];
+                                  setMentionMap(next);
+                                }}
+                                placeholder="ou_xxx"
+                              />
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 shrink-0 p-0"
+                                onClick={() =>
+                                  setMentionMap(mentionMap.filter((_, i) => i !== idx))
+                                }
+                              >
+                                &times;
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => setMentionMap([...mentionMap, ["", ""]])}
+                          >
+                            + Add Mapping
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={exportMentionCsv}
+                          >
+                            Export CSV
+                          </Button>
+                          <input
+                            ref={csvInputRef}
+                            type="file"
+                            accept=".csv"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) importMentionCsv(file);
+                              e.target.value = "";
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => csvInputRef.current?.click()}
+                          >
+                            Import CSV
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </div>

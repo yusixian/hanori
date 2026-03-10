@@ -568,9 +568,11 @@ export class BotPool {
             auth: { user: emailConfig.email, pass: password },
             pollIntervalSec: emailConfig.pollIntervalSec,
             filters: emailConfig.filters,
+            disabledEventTypes: emailConfig.disabledEventTypes,
           },
           larkClient,
           this.logger,
+          emailConfig.larkMentionMap,
         );
       } else {
         dbLogger.warn("Cannot decrypt email password, email forwarding disabled").catch(() => {});

@@ -3,7 +3,7 @@ import type { ParsedMail } from "mailparser";
 import { simpleParser } from "mailparser";
 import type { Logger } from "pino";
 import type { EmailForwardFilter } from "@cos-tool-bot/shared";
-import { buildEmailCard } from "./email-parsers.js";
+import { buildEmailCard, classifyEmail } from "./email-parsers.js";
 import type { LarkWebhookClient } from "./lark-webhook-client.js";
 
 export interface ImapEmailMonitorConfig {
@@ -13,6 +13,7 @@ export interface ImapEmailMonitorConfig {
   auth: { user: string; pass: string };
   pollIntervalSec: number;
   filters: EmailForwardFilter[];
+  disabledEventTypes?: string[];
 }
 
 const MAX_BATCH_SIZE = 50;
@@ -32,6 +33,7 @@ export class ImapEmailMonitor {
     private config: ImapEmailMonitorConfig,
     private larkClient: LarkWebhookClient,
     private logger: Logger,
+    private mentionMap?: Record<string, string>,
   ) {}
 
   private createClient(): ImapFlow {
@@ -232,7 +234,27 @@ export class ImapEmailMonitor {
         // Apply filters
         if (!this.matchesFilters(from, subject)) continue;
 
-        const card = buildEmailCard(from, subject, textBody, htmlBody);
+        // Event type filtering
+        if (this.config.disabledEventTypes?.length) {
+          const eventType = classifyEmail(from, subject, textBody, htmlBody);
+          if (this.config.disabledEventTypes.includes(eventType)) {
+            this.logger.debug({ from, subject, eventType }, "Skipping disabled event type");
+            if (msg.uid) this.sentUids.add(msg.uid);
+            continue;
+          }
+        }
+
+        // Extract GitHub usernames from To/Cc (e.g. "user@users.noreply.github.com")
+        const recipientUsers = extractGitHubRecipients(parsed);
+
+        const card = buildEmailCard(
+          from,
+          subject,
+          textBody,
+          htmlBody,
+          this.mentionMap,
+          recipientUsers,
+        );
         const result = await this.larkClient.sendCard(card);
         if (!result.ok) {
           this.logger.warn({ error: result.error }, "Failed to send email card to Lark");
@@ -272,4 +294,23 @@ export class ImapEmailMonitor {
       return true;
     });
   }
+}
+
+const GITHUB_NOREPLY_RE = /^(?:\d+\+)?([a-zA-Z0-9_-]+)@users\.noreply\.github\.com$/;
+
+function extractGitHubRecipients(parsed: ParsedMail): string[] {
+  const users = new Set<string>();
+  const addrs = [
+    ...(parsed.to ? (Array.isArray(parsed.to) ? parsed.to : [parsed.to]) : []),
+    ...(parsed.cc ? (Array.isArray(parsed.cc) ? parsed.cc : [parsed.cc]) : []),
+  ];
+  for (const group of addrs) {
+    if (group.value) {
+      for (const addr of group.value) {
+        const match = addr.address && GITHUB_NOREPLY_RE.exec(addr.address);
+        if (match) users.add(match[1]!);
+      }
+    }
+  }
+  return [...users];
 }

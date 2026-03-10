@@ -7,6 +7,7 @@ import type {
   AiConfigStored,
   BotPlatform,
   BotWithStatus,
+  EmailEventType,
 } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
@@ -33,6 +34,8 @@ const emailForwardConfigSchema = z.object({
   password: z.string().default(""),
   pollIntervalSec: z.number().int().min(10).max(3600).default(60),
   filters: z.array(emailForwardFilterSchema).default([]),
+  larkMentionMap: z.record(z.string(), z.string()).optional(),
+  disabledEventTypes: z.array(z.string()).optional(),
 });
 
 const createBotSchema = z
@@ -114,6 +117,8 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
           email: emailCfg.email,
           pollIntervalSec: emailCfg.pollIntervalSec,
           filters: emailCfg.filters,
+          larkMentionMap: emailCfg.larkMentionMap,
+          disabledEventTypes: emailCfg.disabledEventTypes,
         }
       : undefined,
   };
@@ -433,6 +438,8 @@ export function botsRoutes(
             encryptedPassword: string;
             pollIntervalSec: number;
             filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
+            larkMentionMap?: Record<string, string>;
+            disabledEventTypes?: EmailEventType[];
           }
         | undefined;
 
@@ -453,6 +460,10 @@ export function botsRoutes(
             encryptedPassword: encrypt(body.emailForwardConfig.password, env.ENCRYPTION_KEY),
             pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
             filters: body.emailForwardConfig.filters,
+            larkMentionMap: body.emailForwardConfig.larkMentionMap,
+            disabledEventTypes: body.emailForwardConfig.disabledEventTypes as
+              | EmailEventType[]
+              | undefined,
           };
         }
       } else {
@@ -520,6 +531,10 @@ export function botsRoutes(
           encryptedPassword,
           pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
           filters: body.emailForwardConfig.filters,
+          larkMentionMap: body.emailForwardConfig.larkMentionMap,
+          disabledEventTypes: body.emailForwardConfig.disabledEventTypes as
+            | EmailEventType[]
+            | undefined,
         };
       } else if (body.clearEmailForwardConfig) {
         updates.emailForwardConfig = null;
