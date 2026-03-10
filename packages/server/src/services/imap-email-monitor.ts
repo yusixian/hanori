@@ -3,7 +3,7 @@ import type { ParsedMail } from "mailparser";
 import { simpleParser } from "mailparser";
 import type { Logger } from "pino";
 import type { EmailForwardFilter } from "@cos-tool-bot/shared";
-import { buildEmailCard, classifyEmail } from "./email-parsers.js";
+import { buildEmailCard } from "./email-parsers.js";
 import type { LarkWebhookClient } from "./lark-webhook-client.js";
 
 export interface ImapEmailMonitorConfig {
@@ -234,20 +234,11 @@ export class ImapEmailMonitor {
         // Apply filters
         if (!this.matchesFilters(from, subject)) continue;
 
-        // Event type filtering
-        if (this.config.disabledEventTypes?.length) {
-          const eventType = classifyEmail(from, subject, textBody, htmlBody);
-          if (this.config.disabledEventTypes.includes(eventType)) {
-            this.logger.debug({ from, subject, eventType }, "Skipping disabled event type");
-            if (msg.uid) this.sentUids.add(msg.uid);
-            continue;
-          }
-        }
-
         // Extract GitHub usernames from To/Cc (e.g. "user@users.noreply.github.com")
         const recipientUsers = extractGitHubRecipients(parsed);
 
-        const card = buildEmailCard(
+        // Parse once: get both event type and card
+        const { eventType, card } = buildEmailCard(
           from,
           subject,
           textBody,
@@ -255,6 +246,16 @@ export class ImapEmailMonitor {
           this.mentionMap,
           recipientUsers,
         );
+
+        // Event type filtering
+        if (this.config.disabledEventTypes?.length) {
+          if (this.config.disabledEventTypes.includes(eventType)) {
+            this.logger.debug({ from, subject, eventType }, "Skipping disabled event type");
+            if (msg.uid) this.sentUids.add(msg.uid);
+            continue;
+          }
+        }
+
         const result = await this.larkClient.sendCard(card);
         if (!result.ok) {
           this.logger.warn({ error: result.error }, "Failed to send email card to Lark");

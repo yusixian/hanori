@@ -491,27 +491,7 @@ export function buildIssueCard(info: IssueInfo): LarkCardMessage {
   };
 }
 
-// --- Classification ---
-
-export function classifyEmail(
-  from: string,
-  subject: string,
-  textBody: string,
-  htmlBody: string,
-): EmailEventType {
-  const ci = parseCiRunEmail(from, subject, textBody, htmlBody);
-  if (ci) return `ci:${ci.status}`;
-
-  const pr = parsePrReviewEmail(from, subject, textBody, htmlBody);
-  if (pr) return `pr:${pr.action}`;
-
-  const issue = parseIssueEmail(from, subject, textBody, htmlBody);
-  if (issue) return `issue:${issue.action}`;
-
-  return "generic";
-}
-
-// --- Unified entry point ---
+// --- Unified entry point (parses once, returns both event type and card) ---
 
 export function buildEmailCard(
   from: string,
@@ -520,15 +500,19 @@ export function buildEmailCard(
   htmlBody: string,
   mentionMap?: Record<string, string>,
   recipientUsers?: string[],
-): LarkCardMessage {
+): { eventType: EmailEventType; card: LarkCardMessage } {
   const ci = parseCiRunEmail(from, subject, textBody, htmlBody);
-  if (ci) return buildCiRunCard(ci);
+  if (ci) return { eventType: `ci:${ci.status}`, card: buildCiRunCard(ci) };
 
   const pr = parsePrReviewEmail(from, subject, textBody, htmlBody);
-  if (pr) return buildPrReviewCard(pr, mentionMap, recipientUsers);
+  if (pr)
+    return {
+      eventType: `pr:${pr.action}`,
+      card: buildPrReviewCard(pr, mentionMap, recipientUsers),
+    };
 
   const issue = parseIssueEmail(from, subject, textBody, htmlBody);
-  if (issue) return buildIssueCard(issue);
+  if (issue) return { eventType: `issue:${issue.action}`, card: buildIssueCard(issue) };
 
-  return buildGenericEmailCard(from, subject, textBody);
+  return { eventType: "generic", card: buildGenericEmailCard(from, subject, textBody) };
 }
