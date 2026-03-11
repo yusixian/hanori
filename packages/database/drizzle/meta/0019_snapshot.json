@@ -1,5 +1,5 @@
 {
-  "id": "44633db9-c5d7-4f79-8da9-db3d5f920729",
+  "id": "84dc6123-d223-4a02-b789-50dded05dba5",
   "prevId": "6cb3d4a5-4788-44e8-a584-0e623003ce62",
   "version": "7",
   "dialect": "postgresql",
@@ -188,7 +188,7 @@
         },
         "embedding": {
           "name": "embedding",
-          "type": "vector(3072)",
+          "type": "halfvec(3072)",
           "primaryKey": false,
           "notNull": false
         },
@@ -277,7 +277,7 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last",
-              "opclass": "vector_cosine_ops"
+              "opclass": "halfvec_cosine_ops"
             }
           ],
           "isUnique": false,
@@ -526,7 +526,7 @@
         },
         "embedding": {
           "name": "embedding",
-          "type": "vector(3072)",
+          "type": "halfvec(3072)",
           "primaryKey": false,
           "notNull": false
         },
@@ -583,7 +583,7 @@
               "isExpression": false,
               "asc": true,
               "nulls": "last",
-              "opclass": "vector_cosine_ops"
+              "opclass": "halfvec_cosine_ops"
             }
           ],
           "isUnique": false,

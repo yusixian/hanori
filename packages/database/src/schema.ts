@@ -12,7 +12,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
-  vector,
+  halfvec,
 } from "drizzle-orm/pg-core";
 
 /** Vector embedding dimensions — must match DDL column definition.
@@ -222,13 +222,13 @@ export const conversationMessages = pgTable(
     userId: bigint("user_id", { mode: "number" }),
     userName: text("user_name"),
     meta: json("meta").$type<Record<string, unknown>>(),
-    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    embedding: halfvec("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
     index("conv_msg_bot_chat_idx").on(t.botId, t.chatId),
     index("conv_msg_created_idx").on(t.createdAt),
-    index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
   ],
 );
 
@@ -293,7 +293,7 @@ export const botMemories = pgTable(
     telegramId: bigint("telegram_id", { mode: "number" }),
     content: text("content").notNull(),
     category: text("category"),
-    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    embedding: halfvec("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     factValidAt: timestamp("fact_valid_at"),
     supersededById: integer("superseded_by_id"),
     isActive: boolean("is_active").notNull().default(true),
@@ -305,7 +305,7 @@ export const botMemories = pgTable(
   (t) => [
     index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId),
     index("bot_memories_bot_category_idx").on(t.botId, t.category),
-    index("bot_memories_embedding_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    index("bot_memories_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
   ],
 );
 
