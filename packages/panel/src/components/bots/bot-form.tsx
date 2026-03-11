@@ -38,7 +38,7 @@ interface BotFormProps {
     adminChatIds: number[];
     isActive: boolean;
     webhookUrl?: string;
-    signSecret?: string;
+    hasSignSecret?: boolean;
     emailForwardConfig?: {
       imapHost: string;
       imapPort: number;
@@ -47,6 +47,7 @@ interface BotFormProps {
       filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
       larkMentionMap?: Record<string, string>;
       disabledEventTypes?: EmailEventType[];
+      hasPassword?: boolean;
     };
   };
   onSubmit: (data: BotFormData) => Promise<void>;
@@ -153,7 +154,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
   // Lark fields
   const [webhookUrl, setWebhookUrl] = useState(initialData?.webhookUrl ?? "");
-  const [signSecret, setSignSecret] = useState(initialData?.signSecret ?? "");
+  const [signSecret, setSignSecret] = useState("");
 
   // Email forward fields
   const initEmail = initialData?.emailForwardConfig;
@@ -381,8 +382,17 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                   id="sign-secret"
                   value={signSecret}
                   onChange={(e) => setSignSecret(e.target.value)}
-                  placeholder="Leave empty if not configured"
+                  placeholder={
+                    isEdit && initialData?.hasSignSecret
+                      ? "Leave empty to keep current"
+                      : "Leave empty if not configured"
+                  }
                 />
+                {isEdit && initialData?.hasSignSecret && (
+                  <p className="text-muted-foreground text-xs">
+                    Leave empty to keep current secret
+                  </p>
+                )}
               </div>
 
               <div className="space-y-3 rounded-md border p-3">
@@ -437,11 +447,13 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                         value={emailPassword}
                         onChange={(e) => setEmailPassword(e.target.value)}
                         placeholder={
-                          isEdit ? "Leave empty to keep current" : "IMAP authorization code"
+                          isEdit && initEmail?.hasPassword
+                            ? "Leave empty to keep current"
+                            : "IMAP authorization code"
                         }
-                        required={!isEdit}
+                        required={!isEdit || !initEmail?.hasPassword}
                       />
-                      {isEdit && (
+                      {isEdit && initEmail?.hasPassword && (
                         <p className="text-muted-foreground text-xs">
                           Leave empty to keep current password
                         </p>

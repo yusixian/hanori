@@ -119,6 +119,7 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
           filters: emailCfg.filters,
           larkMentionMap: emailCfg.larkMentionMap,
           disabledEventTypes: emailCfg.disabledEventTypes,
+          hasPassword: !!emailCfg.encryptedPassword,
         }
       : undefined,
   };

@@ -508,6 +508,7 @@ export interface EmailForwardConfigPublic {
   filters: EmailForwardFilter[];
   larkMentionMap?: Record<string, string>;
   disabledEventTypes?: EmailEventType[];
+  hasPassword: boolean;
 }
 
 export const DEFAULT_LARK_MENTION_MAP: Record<string, string> = {

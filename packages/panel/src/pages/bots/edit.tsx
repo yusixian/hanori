@@ -38,7 +38,7 @@ export function BotEditPage() {
           adminChatIds: bot.adminChatIds,
           isActive: bot.isActive,
           webhookUrl: bot.larkWebhookConfig?.webhookUrl,
-          signSecret: undefined,
+          hasSignSecret: bot.larkWebhookConfig?.hasSignSecret,
           emailForwardConfig: bot.emailForwardConfig,
         }}
         submitLabel="Save Changes"
