@@ -19,10 +19,12 @@ export interface ImapEmailMonitorConfig {
 const MAX_BATCH_SIZE = 50;
 const MAX_FAIL_RETRIES = 5;
 const MAX_FAILED_UIDS = 5000;
+const SENT_UIDS_KEEP = 3000;
 
 export class ImapEmailMonitor {
   private client: ImapFlow | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private existsHandler: (() => void) | null = null;
   private running = false;
   private processing = false;
   private initialized = false; // true after first snapshot of existing UIDs
@@ -43,7 +45,17 @@ export class ImapEmailMonitor {
       secure: this.config.secure,
       auth: this.config.auth,
       logger: false,
+      connectionTimeout: 30_000,
+      // Auto-restart IDLE every 25min to prevent silent server disconnect (~29min timeout)
+      maxIdleTime: 25 * 60 * 1000,
     });
+  }
+
+  private removeExistsHandler(): void {
+    if (this.existsHandler) {
+      this.client?.removeListener("exists", this.existsHandler);
+      this.existsHandler = null;
+    }
   }
 
   private async closeClient(): Promise<void> {
@@ -90,6 +102,7 @@ export class ImapEmailMonitor {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    this.removeExistsHandler();
     await this.closeClient();
     this.failedUids.clear();
     this.sentUids.clear();
@@ -102,25 +115,27 @@ export class ImapEmailMonitor {
 
     const lock = await this.client.getMailboxLock("INBOX");
     try {
-      // Process existing unseen first
       await this.processUnseen();
     } finally {
       lock.release();
     }
 
-    const onExists = () => {
+    this.existsHandler = () => {
       this.processNewMessages().catch((err) => {
         this.logger.error(err, "Error processing new IMAP messages");
       });
     };
-    this.client.on("exists", onExists);
+    this.client.on("exists", this.existsHandler);
 
-    // Keep IDLE alive
     this.client.idle().catch((err) => {
       if (this.running) {
         this.logger.error(err, "IMAP IDLE failed, switching to polling");
-        this.client?.removeListener("exists", onExists);
-        this.startPolling();
+        this.removeExistsHandler();
+        this.closeClient()
+          .catch(() => {})
+          .then(() => {
+            if (this.running) this.startPolling();
+          });
       }
     });
   }
@@ -210,9 +225,10 @@ export class ImapEmailMonitor {
         if (count >= MAX_FAIL_RETRIES) this.failedUids.delete(uid);
       }
     }
-    // Cap sentUids to avoid unbounded growth
+    // FIFO eviction: keep recent UIDs instead of clearing all to avoid re-sending
     if (this.sentUids.size > MAX_FAILED_UIDS) {
-      this.sentUids.clear();
+      const arr = [...this.sentUids];
+      this.sentUids = new Set(arr.slice(-SENT_UIDS_KEEP));
     }
 
     let visited = 0;
