@@ -36,6 +36,7 @@ import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 
 export class BotPool {
@@ -46,6 +47,7 @@ export class BotPool {
   private botMemoryStore: BotMemoryStore;
   private chatModelStore: ChatModelStore;
   private backupService?: BackupService;
+  private rssFeedService?: RssFeedService;
   private timerRegistry: TimerRegistry;
 
   constructor(
@@ -62,6 +64,13 @@ export class BotPool {
 
   setBackupService(service: BackupService) {
     this.backupService = service;
+  }
+
+  setRssFeedService(service: RssFeedService) {
+    this.rssFeedService = service;
+    service.setDigestTrigger((botId, chatId, eventDescription) => {
+      this.fireRssDigest(botId, chatId, eventDescription);
+    });
   }
 
   getConversationStore(): ConversationStore {
@@ -408,6 +417,7 @@ export class BotPool {
               this.logger.error(err, "Failed to persist pixai config update");
             }
           },
+          rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
         };
       }
     }
@@ -618,6 +628,46 @@ export class BotPool {
       this.botTimerHandlers.get(timer.botId)?.cancelPendingTimer(timerId);
     }
     return this.timerRegistry.cancel(timerId);
+  }
+
+  private buildRssCallbacks(botId: string) {
+    const rss = this.rssFeedService!;
+    return {
+      onListCollections: () => rss.listCollections(botId),
+      onGetNewItems: async (collectionId: number, limit?: number) => {
+        const [collection, { items, totalCount }] = await Promise.all([
+          rss.getCollection(collectionId),
+          rss.getUndigestedItems(collectionId, limit),
+        ]);
+        if (!collection) throw new Error("Collection not found");
+        return { collection, items, totalCount };
+      },
+      onMarkDigested: (collectionId: number) => rss.markDigested(collectionId),
+      onAddFeed: (collectionId: number, feedUrl: string) => rss.addFeed(collectionId, feedUrl),
+      onRemoveFeed: async (feedId: number) => {
+        const ok = await rss.removeFeed(feedId);
+        if (!ok) throw new Error(`Feed ${feedId} not found`);
+      },
+      onCreateCollection: (params: {
+        name: string;
+        chatId: number;
+        description?: string;
+        digestHour?: number;
+        digestMinute?: number;
+      }) => rss.createCollection({ botId, ...params }),
+    };
+  }
+
+  /** Fire RSS digest via bot's continueChat. */
+  private fireRssDigest(botId: string, chatId: number, eventDescription: string) {
+    const handlers = this.botTimerHandlers.get(botId);
+    if (handlers) {
+      // Reuse fireTimer path — it calls continueChat with the event description
+      handlers.fireTimer(chatId, `rss_digest_${Date.now()}`, eventDescription);
+      this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
+    } else {
+      this.logger.warn({ botId, chatId }, "No handler for bot, RSS digest cannot trigger");
+    }
   }
 
   /** Fire a recovered timer by triggering the bot's continueChat. */

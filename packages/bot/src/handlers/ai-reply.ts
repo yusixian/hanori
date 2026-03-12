@@ -48,12 +48,13 @@ import {
   createBehaviorTools,
   createBotMemoryTools,
   createMemoryTools,
+  createRssTools,
   createTelegramTools,
   createWebTools,
   directPixAIGenerate,
   injectPixAITool,
 } from "../tools/index.js";
-import type { DirectGenerateResult, DrawOverrides } from "../tools/index.js";
+import type { DirectGenerateResult, DrawOverrides, RssToolsOptions } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
@@ -124,6 +125,8 @@ export interface AiReplyConfig {
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;
+  rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
+  initialApi?: Api;
 }
 
 function formatFileSize(bytes: number): string {
@@ -657,8 +660,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   const lastSystemContent = new Map<number, string>();
   const SYSTEM_CONTENT_CAP = 500;
 
-  // Captured bot API reference (set on first request)
-  let botApi: Api | undefined;
+  // Bot API reference: initialized eagerly if provided, otherwise captured on first request
+  let botApi: Api | undefined = config.initialApi;
 
   // Timer fired callback - triggers continueChat
   const onTimerFired = (timerChatId: number, timerId: string, reason: string) => {
@@ -731,6 +734,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       imageGenerationAllowed,
       rateLimiter: pixaiRateLimiter,
       adminIds: config.adminChatIds,
+      rssCallbacks: config.rssCallbacks,
     };
   }
 
@@ -1068,6 +1072,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...artworkTools,
         ...fileTools,
       };
+
+      // RSS tools (per-request: depends on chatId)
+      if (config.rssCallbacks) {
+        const rssTools = createRssTools({
+          ...config.rssCallbacks,
+          chatId,
+          adminChatIds: config.adminChatIds,
+        });
+        Object.assign(allTools, rssTools);
+      }
 
       // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
       injectPixAITool(allTools, {

@@ -56,6 +56,7 @@ const UsagePage = lazy(() => import("@/pages/usage").then((m) => ({ default: m.U
 const TimersListPage = lazy(() =>
   import("@/pages/timers/list").then((m) => ({ default: m.TimersListPage })),
 );
+const BotRssPage = lazy(() => import("@/pages/bots/rss").then((m) => ({ default: m.BotRssPage })));
 const LarkSetupGuidePage = lazy(() =>
   import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
 );
@@ -101,6 +102,7 @@ export function App() {
                 <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
                 <Route path="/bots/:botId/generations" element={<BotGenerationsPage />} />
                 <Route path="/bots/:botId/files" element={<BotFilesPage />} />
+                <Route path="/bots/:botId/rss" element={<BotRssPage />} />
                 <Route path="/bots/:botId/export" element={<BotExportPage />} />
                 <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
                 <Route path="/data" element={<DataPage />} />

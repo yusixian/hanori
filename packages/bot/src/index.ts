@@ -137,6 +137,7 @@ export function createBot(config: BotConfig) {
       onTimerCancel: config.timerCallbacks?.onTimerCancel,
       onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
       token,
+      initialApi: bot.api,
     });
     aiHandler = result.handler;
     aiState = result.state;

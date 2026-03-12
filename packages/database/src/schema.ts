@@ -383,6 +383,65 @@ export const timers = pgTable(
   (t) => [index("timers_bot_id_idx").on(t.botId), index("timers_status_idx").on(t.status)],
 );
 
+export const rssCollections = pgTable(
+  "rss_collections",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    digestPrompt: text("digest_prompt"),
+    isActive: boolean("is_active").notNull().default(true),
+    digestHour: integer("digest_hour").notNull().default(9),
+    digestMinute: integer("digest_minute").notNull().default(0),
+    lastDigestAt: timestamp("last_digest_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("rss_collections_bot_chat_idx").on(t.botId, t.chatId)],
+);
+
+export const rssFeeds = pgTable(
+  "rss_feeds",
+  {
+    id: serial("id").primaryKey(),
+    collectionId: integer("collection_id")
+      .references(() => rssCollections.id, { onDelete: "cascade" })
+      .notNull(),
+    feedUrl: text("feed_url").notNull(),
+    title: text("title").notNull(),
+    lastFetchAt: timestamp("last_fetch_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("rss_feeds_collection_url_uniq").on(t.collectionId, t.feedUrl)],
+);
+
+export const rssItems = pgTable(
+  "rss_items",
+  {
+    id: serial("id").primaryKey(),
+    feedId: integer("feed_id")
+      .references(() => rssFeeds.id, { onDelete: "cascade" })
+      .notNull(),
+    guid: text("guid").notNull(),
+    title: text("title").notNull(),
+    link: text("link").notNull(),
+    summary: text("summary"),
+    publishedAt: timestamp("published_at"),
+    fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+    digestedAt: timestamp("digested_at"),
+  },
+  (t) => [
+    uniqueIndex("rss_items_feed_guid_uniq").on(t.feedId, t.guid),
+    index("rss_items_feed_digested_idx").on(t.feedId, t.digestedAt),
+  ],
+);
+
 export const tokenUsage = pgTable(
   "token_usage",
   {

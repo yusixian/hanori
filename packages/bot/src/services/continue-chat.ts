@@ -27,8 +27,13 @@ import {
 import type { LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import { createBehaviorTools, createTelegramTools, injectPixAITool } from "../tools/index.js";
-import type { MoodInfo } from "../tools/index.js";
+import {
+  createBehaviorTools,
+  createRssTools,
+  createTelegramTools,
+  injectPixAITool,
+} from "../tools/index.js";
+import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
@@ -86,6 +91,7 @@ export interface ContinueChatConfig {
   imageGenerationAllowed?: boolean;
   rateLimiter?: PixAIRateLimiter;
   adminIds?: number[];
+  rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
 }
 
 export interface ContinueChatEvent {
@@ -284,6 +290,16 @@ async function doContinueChat(
           timeoutConfig: config.timeoutConfig,
         }),
       );
+    }
+
+    // RSS tools
+    if (config.rssCallbacks) {
+      const rssTools = createRssTools({
+        ...config.rssCallbacks,
+        chatId: event.chatId,
+        adminChatIds: config.adminIds ?? [],
+      });
+      Object.assign(allTools, rssTools);
     }
 
     // Remove multi_message tool in stream mode

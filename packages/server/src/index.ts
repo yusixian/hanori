@@ -10,6 +10,7 @@ import { DbLogger } from "./services/db-logger.js";
 import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
+import { RssFeedService } from "./services/rss-feed-service.js";
 import { TimerRegistry } from "./services/timer-registry.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
 
@@ -96,9 +97,13 @@ await modelCapabilityService.init();
 // Timer Registry
 const timerRegistry = new TimerRegistry(db, logger);
 
+// RSS Feed Service
+const rssFeedService = new RssFeedService(db, logger);
+
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
 botPool.setBackupService(backupService);
+botPool.setRssFeedService(rssFeedService);
 
 // Hono App
 const app = createApp({
@@ -110,6 +115,7 @@ const app = createApp({
   backupService,
   modelCapabilityService,
   timerRegistry,
+  rssFeedService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -125,6 +131,9 @@ serve(
 
 // Start all active bots
 await botPool.startAll();
+
+// Start RSS feed service (after bots so digest triggers have handlers)
+rssFeedService.start();
 
 // Register system timers
 const scheduledServices: [
@@ -154,6 +163,7 @@ await timerRegistry.recoverAiTimers(
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
+  rssFeedService.stop();
   timerRegistry.destroy();
   modelCapabilityService.stop();
   logCleaner.stop();

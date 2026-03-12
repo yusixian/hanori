@@ -141,6 +141,13 @@
       "when": 1773205683792,
       "tag": "0019_far_sugar_man",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1773329252675,
+      "tag": "0020_chemical_living_lightning",
+      "breakpoints": true
     }
   ]
 }

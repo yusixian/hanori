@@ -13,11 +13,13 @@ import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
 import { generationRoutes } from "./routes/generations.js";
 import { apiTestRoutes } from "./routes/api-test.js";
+import { rssRoutes } from "./routes/rss.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
+import type { RssFeedService } from "./services/rss-feed-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
 
 interface AppOptions {
@@ -29,6 +31,7 @@ interface AppOptions {
   backupService: BackupService;
   modelCapabilityService: ModelCapabilityService;
   timerRegistry: TimerRegistry;
+  rssFeedService: RssFeedService;
 }
 
 export function createApp(options: AppOptions) {
@@ -41,6 +44,7 @@ export function createApp(options: AppOptions) {
     backupService,
     modelCapabilityService,
     timerRegistry,
+    rssFeedService,
   } = options;
 
   const app = new Hono()
@@ -59,6 +63,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db))
+    .route("/api/bots", rssRoutes(rssFeedService))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
     .use("/api/backup/*", jwtAuth(jwtSecret))
