@@ -144,6 +144,16 @@ export function rssRoutes(rssFeedService: RssFeedService) {
       return c.json({ ok: true as const, newItems });
     })
     .post(
+      "/:botId/rss/collections/:id/mark-digest",
+      zValidator("param", idParamSchema),
+      async (c) => {
+        const { botId, id } = c.req.valid("param");
+        if (!(await requireCollection(botId, id))) return c.json(notFound, 404);
+        await rssFeedService.markDigested(id);
+        return c.json({ ok: true as const });
+      },
+    )
+    .post(
       "/:botId/rss/collections/:id/unmark-digest",
       zValidator("param", idParamSchema),
       async (c) => {

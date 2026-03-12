@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { client } from "@/lib/client";
 import type { RssItemRecord } from "@cos-tool-bot/shared";
-import { BookOpen, ExternalLink, Loader2, MailOpen } from "lucide-react";
+import { BookMarked, BookOpen, ExternalLink, Loader2, MailOpen } from "lucide-react";
 
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString();
@@ -26,6 +26,15 @@ export function ItemList({
   onRefresh: () => Promise<void>;
 }) {
   const hasDigested = items.some((i) => i.digestedAt);
+  const hasUndigested = items.some((i) => !i.digestedAt);
+
+  const markAll = () =>
+    onAction(`mark-all-${collectionId}`, async () => {
+      await client.api.bots[":botId"].rss.collections[":id"]["mark-digest"].$post({
+        param: { botId, id: String(collectionId) },
+      });
+      await onRefresh();
+    });
 
   const unmarkAll = () =>
     onAction(`unmark-all-${collectionId}`, async () => {
@@ -48,22 +57,40 @@ export function ItemList({
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Recent Items ({total} total)</h3>
-        {hasDigested && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy !== null}
-            onClick={unmarkAll}
-            title="Mark all as unread"
-          >
-            {busy === `unmark-all-${collectionId}` ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <BookOpen className="h-3 w-3" />
-            )}
-            Mark All Unread
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {hasUndigested && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={markAll}
+              title="Mark all as read"
+            >
+              {busy === `mark-all-${collectionId}` ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <BookMarked className="h-3 w-3" />
+              )}
+              Mark All Read
+            </Button>
+          )}
+          {hasDigested && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy !== null}
+              onClick={unmarkAll}
+              title="Mark all as unread"
+            >
+              {busy === `unmark-all-${collectionId}` ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <BookOpen className="h-3 w-3" />
+              )}
+              Mark All Unread
+            </Button>
+          )}
+        </div>
       </div>
       <div className="divide-y rounded border">
         {items.map((item) => (
