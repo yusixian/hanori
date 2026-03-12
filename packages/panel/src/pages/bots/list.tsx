@@ -67,8 +67,16 @@ export function BotListPage() {
           {bots.map((bot) => (
             <Card
               key={bot.id}
-              className="hover:border-primary/50 cursor-pointer transition-colors"
+              role="button"
+              tabIndex={0}
+              className="hover:border-primary/50 focus-visible:ring-ring cursor-pointer transition-colors focus-visible:ring-2 focus-visible:outline-none"
               onClick={() => navigate(`/bots/${bot.id}`)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  navigate(`/bots/${bot.id}`);
+                }
+              }}
             >
               <CardContent className="space-y-3 p-4 sm:p-6">
                 <div className="flex items-center justify-between">

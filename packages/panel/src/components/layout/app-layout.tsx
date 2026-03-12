@@ -88,7 +88,12 @@ export function AppLayout() {
     <div className="flex h-dvh flex-col md:flex-row">
       {/* Mobile top bar */}
       <header className="bg-card z-30 flex items-center gap-2 border-b px-3 py-2 md:hidden">
-        <Button variant="ghost" size="sm" onClick={() => setSidebarOpen(true)}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setSidebarOpen(true)}
+          aria-label="打开菜单"
+        >
           <Menu className="h-5 w-5" />
         </Button>
         <Bot className="text-primary h-5 w-5" />
@@ -120,6 +125,7 @@ export function AppLayout() {
               className="mx-auto hidden md:flex"
               onClick={() => setCollapsed(false)}
               title="Expand sidebar"
+              aria-label="展开侧栏"
             >
               <PanelLeftOpen className="h-4 w-4" />
             </Button>
@@ -135,6 +141,7 @@ export function AppLayout() {
                 className="hidden shrink-0 md:flex"
                 onClick={() => setCollapsed(true)}
                 title="Collapse sidebar"
+                aria-label="收起侧栏"
               >
                 <PanelLeftClose className="h-4 w-4" />
               </Button>
@@ -146,6 +153,7 @@ export function AppLayout() {
             size="sm"
             className="md:hidden"
             onClick={() => setSidebarOpen(false)}
+            aria-label="关闭菜单"
           >
             <X className="h-4 w-4" />
           </Button>
@@ -218,6 +226,7 @@ export function AppLayout() {
             className={cn("w-full", collapsed ? "md:justify-center" : "justify-start")}
             onClick={() => logout()}
             title="Logout"
+            aria-label="退出登录"
           >
             <LogOut className="h-4 w-4 shrink-0" />
             <span className={cn(collapsed && "md:hidden")}>Logout</span>

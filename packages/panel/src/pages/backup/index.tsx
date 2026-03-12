@@ -77,15 +77,15 @@ function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
           {creating ? "Creating backup..." : "Create Backup"}
         </Button>
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950">
+          <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+            <p className="text-sm text-red-400">{error}</p>
           </div>
         )}
         {success && (
-          <div className="flex items-start gap-2 rounded-md border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950">
+          <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-green-700 dark:text-green-400">{success}</p>
+            <p className="text-sm text-green-400">{success}</p>
           </div>
         )}
       </CardContent>
@@ -715,9 +715,7 @@ function StorageConfigSection() {
           <div
             className={cn(
               "flex items-start gap-2 rounded-md border p-3",
-              testResult.ok
-                ? "border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950"
-                : "border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950",
+              testResult.ok ? "border-green-900 bg-green-950" : "border-red-900 bg-red-950",
             )}
           >
             {testResult.ok ? (
@@ -725,28 +723,21 @@ function StorageConfigSection() {
             ) : (
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
             )}
-            <p
-              className={cn(
-                "text-sm",
-                testResult.ok
-                  ? "text-green-700 dark:text-green-400"
-                  : "text-red-700 dark:text-red-400",
-              )}
-            >
+            <p className={cn("text-sm", testResult.ok ? "text-green-400" : "text-red-400")}>
               {testResult.ok ? "Connection successful" : `Connection failed: ${testResult.error}`}
             </p>
           </div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950">
+          <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+            <p className="text-sm text-red-400">{error}</p>
           </div>
         )}
         {success && (
-          <div className="flex items-start gap-2 rounded-md border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950">
+          <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-green-700 dark:text-green-400">{success}</p>
+            <p className="text-sm text-green-400">{success}</p>
           </div>
         )}
       </CardContent>

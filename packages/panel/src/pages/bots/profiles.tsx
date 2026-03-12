@@ -534,14 +534,14 @@ export function BotProfilesPage() {
                         className="w-full text-left"
                         onClick={() => toggleNotes(p.id)}
                       >
-                        <p
+                        <span
                           className={cn(
-                            "text-sm whitespace-pre-wrap",
+                            "block text-sm whitespace-pre-wrap",
                             !expandedNotes.has(p.id) && "line-clamp-3",
                           )}
                         >
                           {p.notes}
-                        </p>
+                        </span>
                       </button>
                     )}
                     <div className="flex items-center justify-between pt-1">

@@ -155,7 +155,7 @@ export function BotFilesPage() {
   // Initial load only
   useEffect(() => {
     loadFiles();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on mount / botId change
+    // only on mount / botId change
   }, [botId]);
 
   // Clear selection when navigating directories and load new path directly

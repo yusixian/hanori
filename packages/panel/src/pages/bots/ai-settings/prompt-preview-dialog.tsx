@@ -53,7 +53,7 @@ function highlightDynamic(text: string): React.ReactNode[] {
     parts.push(
       <span
         key={key++}
-        className="rounded border border-dashed border-amber-400/60 bg-amber-500/10 px-1 text-amber-700 dark:border-amber-500/40 dark:text-amber-300"
+        className="rounded border border-dashed border-amber-500/40 bg-amber-500/10 px-1 text-amber-300"
       >
         {matchedPattern}
       </span>,
@@ -151,32 +151,28 @@ export function PromptPreviewDialog({
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
       {/* Dialog */}
-      <div className="relative mx-4 flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg bg-white shadow-xl dark:bg-zinc-900">
+      <div className="bg-card relative mx-4 flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg shadow-xl">
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4 dark:border-zinc-700">
+        <div className="flex items-center justify-between border-b px-5 py-4">
           <div className="flex items-center gap-3">
             <Eye className="h-5 w-5 text-purple-500" />
             <h2 className="text-lg font-semibold">Prompt Preview</h2>
           </div>
-          <button
-            type="button"
-            className="rounded p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-            onClick={onClose}
-          >
+          <button type="button" className="hover:bg-accent rounded p-1" onClick={onClose}>
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Controls */}
-        <div className="flex items-center gap-3 border-b px-5 py-3 dark:border-zinc-700">
+        <div className="flex items-center gap-3 border-b px-5 py-3">
           <span className="text-sm font-medium">Chat type:</span>
-          <div className="flex gap-1 rounded-md bg-zinc-100 p-0.5 dark:bg-zinc-800">
+          <div className="bg-muted flex gap-1 rounded-md p-0.5">
             <button
               type="button"
               className={cn(
                 "rounded-md px-3 py-1 text-sm transition-colors",
                 isPrivate
-                  ? "bg-white font-medium shadow-sm dark:bg-zinc-700"
+                  ? "bg-card font-medium shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setIsPrivate(true)}
@@ -188,7 +184,7 @@ export function PromptPreviewDialog({
               className={cn(
                 "rounded-md px-3 py-1 text-sm transition-colors",
                 !isPrivate
-                  ? "bg-white font-medium shadow-sm dark:bg-zinc-700"
+                  ? "bg-card font-medium shadow-sm"
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setIsPrivate(false)}
@@ -217,7 +213,7 @@ export function PromptPreviewDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between border-t px-5 py-3 dark:border-zinc-700">
+        <div className="flex items-center justify-between border-t px-5 py-3">
           <div className="text-muted-foreground flex gap-4 text-xs">
             <span>{fullPrompt.length.toLocaleString()} chars</span>
             <span>~{estimatedTokens.toLocaleString()} tokens (est.)</span>
