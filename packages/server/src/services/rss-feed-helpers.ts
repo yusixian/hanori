@@ -12,6 +12,7 @@ export function mapCollectionRecord(row: typeof rssCollections.$inferSelect): Rs
     isActive: row.isActive,
     digestHour: row.digestHour,
     digestMinute: row.digestMinute,
+    maxDigestItems: row.maxDigestItems,
     lastDigestAt: row.lastDigestAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt?.toISOString() ?? null,
@@ -24,6 +25,7 @@ export function mapFeedRecord(row: typeof rssFeeds.$inferSelect): RssFeedRecord 
     collectionId: row.collectionId,
     feedUrl: row.feedUrl,
     title: row.title,
+    maxDigestItems: row.maxDigestItems,
     lastFetchAt: row.lastFetchAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
   };
@@ -51,6 +53,13 @@ interface DigestItem {
   feedTitle: string;
 }
 
+export interface TruncatedFeedInfo {
+  feedTitle: string;
+  total: number;
+  kept: number;
+  feedUrl: string;
+}
+
 const DEFAULT_DIGEST_PROMPT = `请按以下要求生成摘要：
 1. 对每条内容逐一展开，提炼核心要点（用列表形式），保留关键数据、人名、产品名
 2. 每条摘要必须附上原文链接，格式：标题 + 链接 + 要点列表
@@ -62,8 +71,9 @@ const DEFAULT_DIGEST_PROMPT = `请按以下要求生成摘要：
 export function buildDigestEventDescription(
   collection: typeof rssCollections.$inferSelect,
   items: DigestItem[],
+  maxDisplay: number = 30,
+  truncatedFeeds: TruncatedFeedInfo[] = [],
 ): string {
-  const maxDisplay = 30;
   const displayed = items.slice(0, maxDisplay);
   const lines = displayed.map((item, i) => {
     const timeStr = item.publishedAt ? formatRelativeTime(item.publishedAt) : "unknown";
@@ -77,6 +87,14 @@ export function buildDigestEventDescription(
   desc += `\n以下是最新 ${Math.min(items.length, maxDisplay)} 条：\n${lines.join("\n")}`;
   if (items.length > maxDisplay) {
     desc += `\n\n（还有 ${items.length - maxDisplay} 条，可通过 check_rss 工具获取更多）`;
+  }
+
+  if (truncatedFeeds.length > 0) {
+    desc += "\n\n📢 以下源今天超高产，只截取了部分：";
+    for (const tf of truncatedFeeds) {
+      desc += `\n· 「${tf.feedTitle}」发了 ${tf.total} 条，只取了 ${tf.kept} 条 → 查看全部：${tf.feedUrl}`;
+    }
+    desc += "\n主人感兴趣的话可以点链接自己去逛逛～";
   }
 
   const slug = slugify(collection.name);

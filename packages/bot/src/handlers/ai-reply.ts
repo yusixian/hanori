@@ -332,9 +332,9 @@ function wrapToolsWithStatus(
       ...t,
       execute: async (...args: Parameters<typeof originalExecute>) => {
         if (ctx.waiting_message) {
-          ctx.resolveWait(status).catch(() => {});
+          await ctx.resolveWait(status).catch(() => {});
         } else {
-          ctx.wait(status).catch(() => {});
+          await ctx.wait(status).catch(() => {});
         }
         return originalExecute(...args);
       },

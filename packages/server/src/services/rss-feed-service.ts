@@ -10,6 +10,7 @@ import {
   mapFeedRecord,
   mapItemRecord,
   pooledMap,
+  type TruncatedFeedInfo,
 } from "./rss-feed-helpers.js";
 
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
@@ -207,21 +208,70 @@ export class RssFeedService {
       .where(eq(rssCollections.id, collectionId));
     if (!collection) return false;
 
-    const items = await this.db
+    const rawItems = await this.db
       .select({
         id: rssItems.id,
         title: rssItems.title,
         link: rssItems.link,
         summary: rssItems.summary,
         publishedAt: rssItems.publishedAt,
+        feedId: rssFeeds.id,
         feedTitle: rssFeeds.title,
+        feedUrl: rssFeeds.feedUrl,
+        feedMaxDigestItems: rssFeeds.maxDigestItems,
       })
       .from(rssItems)
       .innerJoin(rssFeeds, eq(rssItems.feedId, rssFeeds.id))
       .where(and(eq(rssFeeds.collectionId, collectionId), isNull(rssItems.digestedAt)))
       .orderBy(desc(rssItems.publishedAt));
 
-    if (items.length === 0) return false;
+    if (rawItems.length === 0) return false;
+
+    // Per-feed truncation: group by feedId, apply per-feed maxDigestItems
+    const feedGroups = new Map<
+      number,
+      { items: typeof rawItems; maxItems: number | null; title: string; url: string }
+    >();
+    for (const item of rawItems) {
+      let group = feedGroups.get(item.feedId);
+      if (!group) {
+        group = {
+          items: [],
+          maxItems: item.feedMaxDigestItems,
+          title: item.feedTitle,
+          url: item.feedUrl,
+        };
+        feedGroups.set(item.feedId, group);
+      }
+      group.items.push(item);
+    }
+
+    const truncatedFeeds: TruncatedFeedInfo[] = [];
+    let items: typeof rawItems = [];
+    for (const group of feedGroups.values()) {
+      const limit = group.maxItems;
+      if (limit != null && group.items.length > limit) {
+        truncatedFeeds.push({
+          feedTitle: group.title,
+          total: group.items.length,
+          kept: limit,
+          feedUrl: group.url,
+        });
+        items.push(...group.items.slice(0, limit));
+      } else {
+        items.push(...group.items);
+      }
+    }
+
+    // Re-sort merged items by publishedAt descending
+    items.sort((a, b) => {
+      const ta = a.publishedAt?.getTime() ?? 0;
+      const tb = b.publishedAt?.getTime() ?? 0;
+      return tb - ta;
+    });
+
+    // Apply collection-level total cap
+    const maxDisplay = collection.maxDigestItems ?? 30;
 
     // Only update lastDigestAt to prevent duplicate triggers from concurrent checkDigests.
     // Items are NOT marked as digested here — the AI bot calls mark_rss_read after completing
@@ -231,7 +281,12 @@ export class RssFeedService {
       .set({ lastDigestAt: new Date() })
       .where(eq(rssCollections.id, collectionId));
 
-    const eventDescription = buildDigestEventDescription(collection, items);
+    const eventDescription = buildDigestEventDescription(
+      collection,
+      items,
+      maxDisplay,
+      truncatedFeeds,
+    );
     this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
     return true;
   }
@@ -256,6 +311,7 @@ export class RssFeedService {
     digestPrompt?: string;
     digestHour?: number;
     digestMinute?: number;
+    maxDigestItems?: number | null;
   }): Promise<RssCollectionRecord> {
     const [row] = await this.db
       .insert(rssCollections)
@@ -267,6 +323,7 @@ export class RssFeedService {
         digestPrompt: params.digestPrompt ?? null,
         digestHour: params.digestHour ?? 9,
         digestMinute: params.digestMinute ?? 0,
+        maxDigestItems: params.maxDigestItems ?? null,
       })
       .returning();
     return mapCollectionRecord(row!);
@@ -282,6 +339,7 @@ export class RssFeedService {
       digestHour: number;
       digestMinute: number;
       chatId: number;
+      maxDigestItems: number | null;
     }>,
   ): Promise<RssCollectionRecord | null> {
     const [row] = await this.db
@@ -308,7 +366,12 @@ export class RssFeedService {
     return rows.map(mapFeedRecord);
   }
 
-  async addFeed(collectionId: number, feedUrl: string, title?: string): Promise<RssFeedRecord> {
+  async addFeed(
+    collectionId: number,
+    feedUrl: string,
+    title?: string,
+    maxDigestItems?: number | null,
+  ): Promise<RssFeedRecord> {
     let feedTitle = title ?? feedUrl;
     if (!title) {
       try {
@@ -325,15 +388,31 @@ export class RssFeedService {
         collectionId,
         feedUrl,
         title: feedTitle,
+        maxDigestItems: maxDigestItems ?? null,
       })
       .returning();
     return mapFeedRecord(row!);
   }
 
-  async removeFeed(feedId: number): Promise<boolean> {
+  async updateFeed(
+    collectionId: number,
+    feedId: number,
+    updates: Partial<{ title: string; maxDigestItems: number | null }>,
+  ): Promise<RssFeedRecord | null> {
+    const [row] = await this.db
+      .update(rssFeeds)
+      .set(updates)
+      .where(and(eq(rssFeeds.id, feedId), eq(rssFeeds.collectionId, collectionId)))
+      .returning();
+    return row ? mapFeedRecord(row) : null;
+  }
+
+  async removeFeed(feedId: number, collectionId?: number): Promise<boolean> {
+    const conditions = [eq(rssFeeds.id, feedId)];
+    if (collectionId != null) conditions.push(eq(rssFeeds.collectionId, collectionId));
     const deleted = await this.db
       .delete(rssFeeds)
-      .where(eq(rssFeeds.id, feedId))
+      .where(and(...conditions))
       .returning({ id: rssFeeds.id });
     return deleted.length > 0;
   }

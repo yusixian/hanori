@@ -298,6 +298,7 @@ async function doContinueChat(
         ...config.rssCallbacks,
         chatId: event.chatId,
         adminChatIds: config.adminIds ?? [],
+        forceAdmin: event.userId == null,
       });
       Object.assign(allTools, rssTools);
     }

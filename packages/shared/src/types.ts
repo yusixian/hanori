@@ -696,6 +696,7 @@ export interface RssCollectionRecord {
   isActive: boolean;
   digestHour: number;
   digestMinute: number;
+  maxDigestItems: number | null;
   lastDigestAt: string | null;
   createdAt: string;
   updatedAt: string | null;
@@ -706,6 +707,7 @@ export interface RssFeedRecord {
   collectionId: number;
   feedUrl: string;
   title: string;
+  maxDigestItems: number | null;
   lastFetchAt: string | null;
   createdAt: string;
 }

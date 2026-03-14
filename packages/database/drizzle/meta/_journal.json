@@ -148,6 +148,13 @@
       "when": 1773329252675,
       "tag": "0020_chemical_living_lightning",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1773340306189,
+      "tag": "0021_closed_quentin_quire",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ const createCollectionSchema = z.object({
   digestPrompt: z.string().optional(),
   digestHour: z.number().int().min(0).max(23).optional(),
   digestMinute: z.number().int().min(0).max(59).optional(),
+  maxDigestItems: z.number().int().min(1).nullable().optional(),
 });
 
 const updateCollectionSchema = z.object({
@@ -20,11 +21,18 @@ const updateCollectionSchema = z.object({
   digestHour: z.number().int().min(0).max(23).optional(),
   digestMinute: z.number().int().min(0).max(59).optional(),
   chatId: z.number().optional(),
+  maxDigestItems: z.number().int().min(1).nullable().optional(),
 });
 
 const addFeedSchema = z.object({
   feedUrl: z.string().url(),
   title: z.string().optional(),
+  maxDigestItems: z.number().int().min(1).nullable().optional(),
+});
+
+const updateFeedSchema = z.object({
+  title: z.string().min(1).optional(),
+  maxDigestItems: z.number().int().min(1).nullable().optional(),
 });
 
 const idParamSchema = z.object({
@@ -94,7 +102,25 @@ export function rssRoutes(rssFeedService: RssFeedService) {
         const { botId, id } = c.req.valid("param");
         if (!(await requireCollection(botId, id))) return c.json(notFound, 404);
         const body = c.req.valid("json");
-        const data = await rssFeedService.addFeed(id, body.feedUrl, body.title);
+        const data = await rssFeedService.addFeed(
+          id,
+          body.feedUrl,
+          body.title,
+          body.maxDigestItems,
+        );
+        return c.json({ ok: true as const, data });
+      },
+    )
+    .patch(
+      "/:botId/rss/collections/:id/feeds/:feedId",
+      zValidator("param", feedIdParamSchema),
+      zValidator("json", updateFeedSchema),
+      async (c) => {
+        const { botId, id, feedId } = c.req.valid("param");
+        if (!(await requireCollection(botId, id))) return c.json(notFound, 404);
+        const body = c.req.valid("json");
+        const data = await rssFeedService.updateFeed(id, feedId, body);
+        if (!data) return c.json(notFound, 404);
         return c.json({ ok: true as const, data });
       },
     )
@@ -104,7 +130,7 @@ export function rssRoutes(rssFeedService: RssFeedService) {
       async (c) => {
         const { botId, id, feedId } = c.req.valid("param");
         if (!(await requireCollection(botId, id))) return c.json(notFound, 404);
-        const ok = await rssFeedService.removeFeed(feedId);
+        const ok = await rssFeedService.removeFeed(feedId, id);
         if (!ok) return c.json(notFound, 404);
         return c.json({ ok: true as const });
       },

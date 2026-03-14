@@ -27,8 +27,9 @@ data.db
 # Docker volumes
 pgdata/
 
-# Claude Code skills
+# Claude Code
 .claude/skills/
+.claude/plans/
 
 # Backups (local dev)
 backups/

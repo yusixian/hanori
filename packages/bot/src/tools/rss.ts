@@ -7,6 +7,7 @@ import { zodToAiSchema } from "./utils.js";
 export interface RssToolsOptions {
   chatId: number;
   adminChatIds: number[];
+  forceAdmin?: boolean;
   onListCollections: () => Promise<RssCollectionRecord[]>;
   onGetNewItems: (
     collectionId: number,
@@ -26,7 +27,7 @@ export interface RssToolsOptions {
 
 export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
   const { chatId, adminChatIds } = options;
-  const isAdmin = adminChatIds.includes(chatId);
+  const isAdmin = options.forceAdmin || adminChatIds.includes(chatId);
 
   const tools: Record<string, Tool> = {
     check_rss: tool({

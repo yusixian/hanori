@@ -397,6 +397,7 @@ export const rssCollections = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     digestHour: integer("digest_hour").notNull().default(9),
     digestMinute: integer("digest_minute").notNull().default(0),
+    maxDigestItems: integer("max_digest_items"),
     lastDigestAt: timestamp("last_digest_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
@@ -415,6 +416,7 @@ export const rssFeeds = pgTable(
       .notNull(),
     feedUrl: text("feed_url").notNull(),
     title: text("title").notNull(),
+    maxDigestItems: integer("max_digest_items"),
     lastFetchAt: timestamp("last_fetch_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
