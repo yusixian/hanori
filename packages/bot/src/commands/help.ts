@@ -20,6 +20,7 @@ const commands = [
   { command: "draw", description: "直接生图，发送 /draw 查看参数说明" },
   { command: "imgcfg", description: "(admin) 查看/修改生图配置，发送 /imgcfg help 查看参数说明" },
   { command: "timers", description: "(admin) 查看/管理活跃定时器" },
+  { command: "mcp", description: "(admin) 查看/管理 MCP 服务器" },
 ];
 
 export { commands };

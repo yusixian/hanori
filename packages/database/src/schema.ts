@@ -170,6 +170,7 @@ interface AiConfigJson {
     imageDownloadMs?: number;
     pixaiTaskMs?: number;
   };
+  mcpServerIds?: number[];
 }
 
 export const settings = pgTable("settings", {
@@ -190,6 +191,22 @@ export const bots = pgTable("bots", {
   larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
   emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
   isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+export const mcpServers = pgTable("mcp_servers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  transport: text("transport").notNull().default("sse"),
+  url: text("url").notNull(),
+  encryptedHeaders: text("encrypted_headers"),
+  presetId: text("preset_id"),
+  isActive: boolean("is_active").notNull().default(true),
+  toolNamePrefix: text("tool_name_prefix"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

@@ -3,7 +3,13 @@ import path from "node:path";
 import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
 import { NsfwChecker } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { EMBEDDING_DIMENSIONS, bots, pixaiGenerations, tokenUsage } from "@cos-tool-bot/database";
+import {
+  EMBEDDING_DIMENSIONS,
+  bots,
+  mcpServers,
+  pixaiGenerations,
+  tokenUsage,
+} from "@cos-tool-bot/database";
 import type {
   BotMemoryCallbacks,
   BotPlatform,
@@ -36,6 +42,7 @@ import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import type { McpClientManager } from "./mcp-client-manager.js";
 import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 
@@ -48,6 +55,7 @@ export class BotPool {
   private chatModelStore: ChatModelStore;
   private backupService?: BackupService;
   private rssFeedService?: RssFeedService;
+  private mcpClientManager?: McpClientManager;
   private timerRegistry: TimerRegistry;
 
   constructor(
@@ -64,6 +72,10 @@ export class BotPool {
 
   setBackupService(service: BackupService) {
     this.backupService = service;
+  }
+
+  setMcpClientManager(manager: McpClientManager) {
+    this.mcpClientManager = manager;
   }
 
   setRssFeedService(service: RssFeedService) {
@@ -418,6 +430,7 @@ export class BotPool {
             }
           },
           rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
+          mcpTools: this.buildMcpToolsConfig(aiConfig.mcpServerIds),
         };
       }
     }
@@ -532,6 +545,60 @@ export class BotPool {
       },
     };
 
+    const mcpCallbacks = this.mcpClientManager
+      ? {
+          listServers: async () => {
+            const allServers = await this.db
+              .select()
+              .from(mcpServers)
+              .where(eq(mcpServers.isActive, true));
+            const [currentBot] = await this.db.select().from(bots).where(eq(bots.id, botId));
+            const enabledIds = new Set(currentBot?.aiConfig?.mcpServerIds ?? []);
+            const statuses = this.mcpClientManager!.getStatus();
+            const statusMap = new Map(statuses.map((s) => [s.serverId, s]));
+            return allServers.map((s) => ({
+              id: s.id,
+              name: s.name,
+              connected: statusMap.get(s.id)?.connected ?? false,
+              toolCount: statusMap.get(s.id)?.toolCount ?? 0,
+              enabled: enabledIds.has(s.id),
+              error: statusMap.get(s.id)?.error ?? null,
+            }));
+          },
+          addServer: async (serverId: number) => {
+            const [server] = await this.db
+              .select()
+              .from(mcpServers)
+              .where(eq(mcpServers.id, serverId));
+            if (!server) return { ok: false as const, error: "服务器不存在" };
+            const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+            if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
+            const ids = new Set(current.aiConfig.mcpServerIds ?? []);
+            if (ids.has(serverId)) return { ok: false as const, error: "已启用" };
+            ids.add(serverId);
+            await this.db
+              .update(bots)
+              .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
+              .where(eq(bots.id, botId));
+            setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
+            return { ok: true as const };
+          },
+          removeServer: async (serverId: number) => {
+            const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+            if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
+            const ids = new Set(current.aiConfig.mcpServerIds ?? []);
+            if (!ids.has(serverId)) return { ok: false as const, error: "未启用" };
+            ids.delete(serverId);
+            await this.db
+              .update(bots)
+              .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
+              .where(eq(bots.id, botId));
+            setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
+            return { ok: true as const };
+          },
+        }
+      : undefined;
+
     const manager = new BotManager({
       botId,
       token,
@@ -544,6 +611,7 @@ export class BotPool {
       onTokenUsage,
       onGenerationTrack,
       timerCallbacks,
+      mcpCallbacks,
     });
 
     this.managers.set(botId, manager);
@@ -655,6 +723,17 @@ export class BotPool {
         digestHour?: number;
         digestMinute?: number;
       }) => rss.createCollection({ botId, ...params }),
+    };
+  }
+
+  private buildMcpToolsConfig(mcpServerIds?: number[]) {
+    if (!this.mcpClientManager || !mcpServerIds?.length) return undefined;
+
+    const mgr = this.mcpClientManager;
+    return {
+      getTools: () => mgr.getToolsForServers(mcpServerIds),
+      callTool: (serverId: number, toolName: string, args: unknown) =>
+        mgr.callTool(serverId, toolName, args),
     };
   }
 

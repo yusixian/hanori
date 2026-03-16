@@ -274,6 +274,8 @@ export {
 export type { ArtworkToolsOptions } from "./artwork/index.js";
 export { createRssTools } from "./rss.js";
 export type { RssToolsOptions } from "./rss.js";
+export { createMcpTools } from "./mcp.js";
+export type { McpToolsOptions } from "./mcp.js";
 export { PendingActionRegistry } from "../services/pending-actions.js";
 export { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
 export type { RateLimitStats, RateLimitResult } from "../services/pixai-rate-limiter.js";

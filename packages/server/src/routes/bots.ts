@@ -176,6 +176,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     dataFilesConfig: config.dataFilesConfig,
     privateChatWhitelist: config.privateChatWhitelist,
     timeoutConfig: config.timeoutConfig,
+    mcpServerIds: config.mcpServerIds,
   };
 }
 
@@ -372,6 +373,7 @@ const aiConfigSchema = z
       .optional(),
     modelCommandAccess: z.enum(["admin", "all"]).optional(),
     privateChatWhitelist: z.array(z.number().int()).optional(),
+    mcpServerIds: z.array(z.number().int()).optional(),
   })
   .refine(
     (data) => {
@@ -733,6 +735,7 @@ export function botsRoutes(
         embeddingConfig,
         dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
         privateChatWhitelist: body.privateChatWhitelist,
+        mcpServerIds: body.mcpServerIds,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

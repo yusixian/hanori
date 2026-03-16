@@ -10,6 +10,7 @@ import { DbLogger } from "./services/db-logger.js";
 import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
+import { McpClientManager } from "./services/mcp-client-manager.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
 import { TimerRegistry } from "./services/timer-registry.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
@@ -100,10 +101,14 @@ const timerRegistry = new TimerRegistry(db, logger);
 // RSS Feed Service
 const rssFeedService = new RssFeedService(db, logger);
 
+// MCP Client Manager
+const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
+
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
 botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
+botPool.setMcpClientManager(mcpClientManager);
 
 // Hono App
 const app = createApp({
@@ -116,6 +121,7 @@ const app = createApp({
   modelCapabilityService,
   timerRegistry,
   rssFeedService,
+  mcpClientManager,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -128,6 +134,9 @@ serve(
     dbLogger.info(`Server running on http://localhost:${info.port}`).catch(() => {});
   },
 );
+
+// Connect MCP servers before bots so tools are available at bot startup
+await mcpClientManager.connectAll();
 
 // Start all active bots
 await botPool.startAll();
@@ -163,6 +172,7 @@ await timerRegistry.recoverAiTimers(
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
+  await mcpClientManager.destroyAll();
   rssFeedService.stop();
   timerRegistry.destroy();
   modelCapabilityService.stop();

@@ -1,4 +1,9 @@
-import type { AiReplyBotConfig, BotConfig, TimerCallbacks } from "@cos-tool-bot/bot";
+import type {
+  AiReplyBotConfig,
+  BotConfig,
+  McpCommandConfig,
+  TimerCallbacks,
+} from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
 import type {
   BotStatus,
@@ -22,6 +27,7 @@ interface BotManagerOptions {
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
+  mcpCallbacks?: McpCommandConfig;
 }
 
 export class BotManager implements IBotManager {
@@ -46,6 +52,7 @@ export class BotManager implements IBotManager {
       onTokenUsage: options.onTokenUsage,
       onGenerationTrack: options.onGenerationTrack,
       timerCallbacks: options.timerCallbacks,
+      mcpCallbacks: options.mcpCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
     };

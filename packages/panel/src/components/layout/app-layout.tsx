@@ -21,6 +21,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  Plug,
   Rss,
   ScrollText,
   Users,
@@ -36,6 +37,7 @@ const globalNavItems = [
   { label: "Data", path: "/data", icon: Database },
   { label: "Backup", path: "/backup", icon: HardDrive },
   { label: "Timers", path: "/timers", icon: Timer },
+  { label: "MCP", path: "/mcp-servers", icon: Plug },
   { label: "API Test", path: "/api-test", icon: FlaskConical },
   { label: "Logs", path: "/logs", icon: ScrollText },
 ];

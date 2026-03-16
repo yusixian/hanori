@@ -57,6 +57,9 @@ const TimersListPage = lazy(() =>
   import("@/pages/timers/list").then((m) => ({ default: m.TimersListPage })),
 );
 const BotRssPage = lazy(() => import("@/pages/bots/rss").then((m) => ({ default: m.BotRssPage })));
+const McpServersPage = lazy(() =>
+  import("@/pages/mcp-servers").then((m) => ({ default: m.McpServersPage })),
+);
 const LarkSetupGuidePage = lazy(() =>
   import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
 );
@@ -111,6 +114,7 @@ export function App() {
                 <Route path="/usage" element={<UsagePage />} />
                 <Route path="/timers" element={<TimersListPage />} />
                 <Route path="/logs" element={<LogsListPage />} />
+                <Route path="/mcp-servers" element={<McpServersPage />} />
                 <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />
               </Route>
 

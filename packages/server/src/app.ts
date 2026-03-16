@@ -13,11 +13,13 @@ import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
 import { generationRoutes } from "./routes/generations.js";
 import { apiTestRoutes } from "./routes/api-test.js";
+import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { rssRoutes } from "./routes/rss.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
+import type { McpClientManager } from "./services/mcp-client-manager.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
 import type { RssFeedService } from "./services/rss-feed-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
@@ -32,6 +34,7 @@ interface AppOptions {
   modelCapabilityService: ModelCapabilityService;
   timerRegistry: TimerRegistry;
   rssFeedService: RssFeedService;
+  mcpClientManager: McpClientManager;
 }
 
 export function createApp(options: AppOptions) {
@@ -45,6 +48,7 @@ export function createApp(options: AppOptions) {
     modelCapabilityService,
     timerRegistry,
     rssFeedService,
+    mcpClientManager,
   } = options;
 
   const app = new Hono()
@@ -77,6 +81,8 @@ export function createApp(options: AppOptions) {
     )
     .use("/api/usage/*", jwtAuth(jwtSecret))
     .route("/api/usage", usageRoutes(db))
+    .use("/api/mcp-servers/*", jwtAuth(jwtSecret))
+    .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
     .get("/api/health", (c) => c.json({ ok: true as const }));
 
   // Serve panel static files in production (not chained - doesn't affect API types)

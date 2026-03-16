@@ -17,6 +17,7 @@ import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
 import { createImageGenCommand } from "./commands/imagegen.js";
+import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
 import { createImgCfgCommand } from "./commands/imgcfg.js";
 import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRestartCommand } from "./commands/restart.js";
@@ -68,6 +69,7 @@ export interface BotConfig {
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
+  mcpCallbacks?: McpCommandConfig;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
 }
@@ -172,6 +174,9 @@ export function createBot(config: BotConfig) {
   bot.command("status", authGuard, createStatusCommand(statusConfig, aiState));
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
   bot.command("backup", authGuard, createBackupCommand(config.onBackup));
+  if (config.mcpCallbacks) {
+    bot.command("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
+  }
   bot.command("clear", createClearCommand(config.conversation, adminChatIds));
   bot.command(
     "clearreceived",
@@ -353,6 +358,7 @@ export {
   type PromptPreviewInput,
   type PromptPreviewResult,
 } from "./services/context-assembler.js";
+export type { McpCommandConfig } from "./commands/mcp.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";

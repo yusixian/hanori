@@ -25,6 +25,7 @@
     "@cos-tool-bot/shared": "workspace:*",
     "@hono/node-server": "^1.14.1",
     "@hono/zod-validator": "^0.7.6",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "ai": "^6.0.0",
     "archiver": "^7.0.1",
     "drizzle-orm": "^0.39.3",

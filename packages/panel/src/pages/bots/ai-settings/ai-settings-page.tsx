@@ -40,6 +40,7 @@ import { ModelsSection } from "./sections/models-section";
 import { PrivateChatWhitelistSection } from "./sections/private-whitelist-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
+import { McpServersSection } from "./sections/mcp-servers-section";
 import { WebToolsSection } from "./sections/web-tools-section";
 import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
 import type { StatusMessage } from "./types";
@@ -114,6 +115,7 @@ export function BotAiSettingsPage() {
               }
             : undefined,
           privateChatWhitelist: config.privateChatWhitelist,
+          mcpServerIds: config.mcpServerIds,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -400,6 +402,11 @@ export function BotAiSettingsPage() {
       <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
 
       <ArtworkToolsSection config={artworkCfg} onUpdate={updateArtworkTools} />
+
+      <McpServersSection
+        selectedIds={config.mcpServerIds ?? []}
+        onUpdate={(ids) => setConfig((prev) => ({ ...prev, mcpServerIds: ids }))}
+      />
 
       <StickerPacksSection
         stickerPacksText={stickerPacksText}

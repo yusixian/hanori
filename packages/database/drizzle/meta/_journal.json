@@ -155,6 +155,13 @@
       "when": 1773340306189,
       "tag": "0021_closed_quentin_quire",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1773567730917,
+      "tag": "0022_wandering_sumo",
+      "breakpoints": true
     }
   ]
 }

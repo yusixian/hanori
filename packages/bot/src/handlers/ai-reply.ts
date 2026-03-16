@@ -48,6 +48,8 @@ import {
   createBehaviorTools,
   createBotMemoryTools,
   createMemoryTools,
+  createMcpTools,
+  type McpToolsOptions,
   createRssTools,
   createTelegramTools,
   createWebTools,
@@ -126,6 +128,7 @@ export interface AiReplyConfig {
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;
   rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
+  mcpTools?: McpToolsOptions;
   initialApi?: Api;
 }
 
@@ -1081,6 +1084,24 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           adminChatIds: config.adminChatIds,
         });
         Object.assign(allTools, rssTools);
+      }
+
+      // MCP tools (external MCP server tools, resolved dynamically per request)
+      if (config.mcpTools) {
+        const mcpTools = createMcpTools(config.mcpTools);
+        const mcpToolKeys = Object.keys(mcpTools);
+        if (mcpToolKeys.length > 0) {
+          Object.assign(allTools, mcpTools);
+          config.onLog?.({
+            level: "info",
+            message: `MCP tools injected: ${mcpToolKeys.join(", ")}`,
+          });
+        } else {
+          config.onLog?.({
+            level: "warn",
+            message: "MCP config present but no tools available (servers may be disconnected)",
+          });
+        }
       }
 
       // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
