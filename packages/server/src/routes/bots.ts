@@ -922,6 +922,37 @@ export function botsRoutes(
         return c.json({ ok: true as const, ...result });
       },
     )
+    .get(
+      "/:botId/conversations/:chatId/summaries",
+      zValidator(
+        "query",
+        z.object({
+          page: z.coerce.number().int().positive().optional().default(1),
+          limit: z.coerce.number().int().positive().max(100).optional().default(20),
+        }),
+      ),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const chatId = Number(c.req.param("chatId"));
+        if (Number.isNaN(chatId))
+          return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+        const { page, limit } = c.req.valid("query");
+        const store = botPool.getConversationStore();
+        const result = await store.getConversationSummaries(botId, chatId, page, limit);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .delete("/:botId/conversations/:chatId/summaries/:id", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      const id = Number(c.req.param("id"));
+      if (Number.isNaN(chatId) || Number.isNaN(id))
+        return c.json({ ok: false as const, error: "Invalid chatId or id" }, 400);
+      const store = botPool.getConversationStore();
+      const deleted = await store.deleteConversationSummary(botId, chatId, id);
+      if (!deleted) return c.json({ ok: false as const, error: "Summary not found" }, 404);
+      return c.json({ ok: true as const });
+    })
     .delete("/:botId/conversations", async (c) => {
       const botId = c.req.param("botId");
       const store = botPool.getConversationStore();

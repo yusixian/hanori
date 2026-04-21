@@ -303,6 +303,52 @@ export class ConversationStore {
     };
   }
 
+  async getConversationSummaries(botId: string, chatId: number, page: number, limit: number) {
+    const offset = (page - 1) * limit;
+    const [rows, [totalResult]] = await Promise.all([
+      this.db
+        .select()
+        .from(conversationSummaries)
+        .where(
+          and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)),
+        )
+        .orderBy(desc(conversationSummaries.id))
+        .limit(limit)
+        .offset(offset),
+      this.db
+        .select({ total: count() })
+        .from(conversationSummaries)
+        .where(
+          and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)),
+        ),
+    ]);
+
+    return {
+      data: rows.map((r) => ({
+        id: r.id,
+        content: r.content,
+        summarizedUpToId: r.summarizedUpToId,
+        messageCount: r.messageCount,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      total: Number(totalResult?.total ?? 0),
+    };
+  }
+
+  async deleteConversationSummary(botId: string, chatId: number, id: number): Promise<boolean> {
+    const result = await this.db
+      .delete(conversationSummaries)
+      .where(
+        and(
+          eq(conversationSummaries.id, id),
+          eq(conversationSummaries.botId, botId),
+          eq(conversationSummaries.chatId, chatId),
+        ),
+      )
+      .returning({ id: conversationSummaries.id });
+    return result.length > 0;
+  }
+
   async getConversationMessages(botId: string, chatId: number, page: number, limit: number) {
     const offset = (page - 1) * limit;
 
