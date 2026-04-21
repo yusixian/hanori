@@ -71,6 +71,7 @@ export class ChatSummaryService {
     userId: number;
     mode: SummaryMode;
     bypassCooldown?: boolean;
+    skipSend?: boolean;
   }): Promise<TriggerManualResult> {
     if (!this.isBotRunning(opts.botId)) {
       return { ok: false, reason: "disabled" };
@@ -127,13 +128,15 @@ export class ChatSummaryService {
       };
     }
 
-    try {
-      await this.send(opts.botId, opts.chatId, result.contentHtml!);
-    } catch (err) {
-      this.logger.warn(
-        { err, botId: opts.botId, chatId: opts.chatId },
-        "Failed to send manual summary",
-      );
+    if (!opts.skipSend) {
+      try {
+        await this.send(opts.botId, opts.chatId, result.contentHtml!);
+      } catch (err) {
+        this.logger.warn(
+          { err, botId: opts.botId, chatId: opts.chatId },
+          "Failed to send manual summary",
+        );
+      }
     }
     return { ok: true, summaryId: result.summaryId, contentHtml: result.contentHtml };
   }

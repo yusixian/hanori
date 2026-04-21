@@ -20,6 +20,8 @@ export interface SummaryCallbacks {
     chatId: number;
     userId: number;
     mode: SummaryMode;
+    bypassCooldown?: boolean;
+    skipSend?: boolean;
   }): Promise<{
     ok: boolean;
     reason?: SummaryReason;
@@ -116,6 +118,8 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
         chatId,
         userId,
         mode: parsed.value,
+        bypassCooldown: deps.adminChatIds.includes(userId),
+        skipSend: true,
       });
     } catch (err) {
       await ctx.api
