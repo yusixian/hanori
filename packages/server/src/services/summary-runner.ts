@@ -22,6 +22,25 @@ import {
 
 export type RunError = "too_few_messages" | "llm_failed" | "disabled" | "no_provider";
 
+export type ProviderResolutionFailure =
+  | "no_providers_configured"
+  | "override_not_found"
+  | "no_api_key"
+  | "decrypt_failed";
+
+interface ResolvedProvider {
+  id: string;
+  label: string;
+  apiKey: string;
+  baseURL: string;
+  providerFormat: "openai" | "gemini";
+  defaultModel: string;
+}
+
+export type ResolveProviderResult =
+  | { ok: true; provider: ResolvedProvider }
+  | { ok: false; reason: ProviderResolutionFailure; providerId?: string };
+
 export interface RunOptions {
   botId: string;
   chatId: number;
@@ -57,14 +76,63 @@ export class SummaryRunner {
   async run(opts: RunOptions): Promise<RunResult> {
     const cfg = await this.getAiConfig(opts.botId);
     if (!cfg || cfg.summaryConfig?.enabled === false) {
+      this.logger.info(
+        {
+          botId: opts.botId,
+          chatId: opts.chatId,
+          reason: !cfg ? "ai_config_missing" : "summary_disabled",
+        },
+        "Summary run rejected: disabled",
+      );
       return { ok: false, error: "disabled", messageCount: 0 };
     }
 
     const { windowStart, windowEnd, limit } = this.resolveWindow(opts, cfg);
     const roleFilter = cfg.summaryConfig?.roleFilter ?? [...DEFAULT_ROLE_FILTER];
 
-    const provider = this.resolveProvider(cfg, opts.configOverrides?.providerId ?? null);
+    const providerResolution = this.resolveProvider(cfg, opts.configOverrides?.providerId ?? null);
+    const provider = providerResolution.ok ? providerResolution.provider : null;
     const modelId = this.pickModelId(opts, cfg, provider?.defaultModel ?? "");
+
+    this.logger.info(
+      {
+        botId: opts.botId,
+        chatId: opts.chatId,
+        trigger: opts.trigger,
+        mode: opts.mode,
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        limit,
+        roleFilter,
+        overrideProviderId: opts.configOverrides?.providerId ?? null,
+        overrideModelId: opts.configOverrides?.modelId ?? null,
+        resolvedProviderId: provider?.id ?? null,
+        resolvedProviderLabel: provider?.label ?? null,
+        resolvedModelId: modelId || null,
+        providerResolution: providerResolution.ok
+          ? { ok: true }
+          : {
+              ok: false,
+              reason: providerResolution.reason,
+              providerId: providerResolution.providerId ?? null,
+            },
+      },
+      "Summary run starting",
+    );
+
+    if (!providerResolution.ok) {
+      this.logger.warn(
+        {
+          botId: opts.botId,
+          chatId: opts.chatId,
+          reason: providerResolution.reason,
+          providerId: providerResolution.providerId ?? null,
+          knownProviderIds: cfg.providers?.map((p) => p.id) ?? [],
+          activeProviderId: cfg.activeProviderId ?? null,
+        },
+        "Summary provider resolution failed",
+      );
+    }
 
     const msgs = await this.fetchMessages(
       opts.botId,
@@ -95,6 +163,7 @@ export class SummaryRunner {
     }
 
     if (!provider) {
+      const reasonDetail = providerResolution.ok ? "unknown" : providerResolution.reason;
       const sumRow = await this.writeHistory({
         opts,
         windowStart,
@@ -102,7 +171,7 @@ export class SummaryRunner {
         messageCount: msgs.length,
         modelId: "unknown",
         content: "",
-        errorMessage: "no_provider",
+        errorMessage: `no_provider:${reasonDetail}`,
         durationMs: 0,
       });
       return { ok: false, error: "no_provider", messageCount: msgs.length, summaryId: sumRow.id };
@@ -219,27 +288,36 @@ export class SummaryRunner {
   private resolveProvider(
     cfg: AiConfigStored,
     overrideProviderId: string | null,
-  ): {
-    apiKey: string;
-    baseURL: string;
-    providerFormat: "openai" | "gemini";
-    defaultModel: string;
-  } | null {
+  ): ResolveProviderResult {
+    if (!cfg.providers || cfg.providers.length === 0) {
+      return { ok: false, reason: "no_providers_configured" };
+    }
     const picked = overrideProviderId
-      ? cfg.providers?.find((p) => p.id === overrideProviderId)
+      ? cfg.providers.find((p) => p.id === overrideProviderId)
       : undefined;
     // Fail closed on stale override id so the user notices instead of silently using main provider.
-    if (overrideProviderId && !picked) return null;
+    if (overrideProviderId && !picked) {
+      return { ok: false, reason: "override_not_found", providerId: overrideProviderId };
+    }
     const active =
-      picked ?? cfg.providers?.find((p) => p.id === cfg.activeProviderId) ?? cfg.providers?.[0];
-    if (!active?.encryptedApiKey) return null;
+      picked ?? cfg.providers.find((p) => p.id === cfg.activeProviderId) ?? cfg.providers[0]!;
+    if (!active.encryptedApiKey) {
+      return { ok: false, reason: "no_api_key", providerId: active.id };
+    }
     const apiKey = tryDecrypt(active.encryptedApiKey, this.encryptionKey);
-    if (!apiKey) return null;
+    if (!apiKey) {
+      return { ok: false, reason: "decrypt_failed", providerId: active.id };
+    }
     return {
-      apiKey,
-      baseURL: active.baseURL,
-      providerFormat: active.providerFormat,
-      defaultModel: active.defaultModel,
+      ok: true,
+      provider: {
+        id: active.id,
+        label: active.label,
+        apiKey,
+        baseURL: active.baseURL,
+        providerFormat: active.providerFormat,
+        defaultModel: active.defaultModel,
+      },
     };
   }
 
