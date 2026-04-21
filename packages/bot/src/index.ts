@@ -121,6 +121,7 @@ export function createBot(config: BotConfig) {
     | ReturnType<typeof createAiReplyHandler>["resetProviderForChat"]
     | undefined;
   let aiGetProvidersList: ReturnType<typeof createAiReplyHandler>["getProvidersList"] | undefined;
+  let aiGetModelsForChat: ReturnType<typeof createAiReplyHandler>["getModelsForChat"] | undefined;
   let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
   let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
   let aiGetImageGenEnabled:
@@ -175,6 +176,7 @@ export function createBot(config: BotConfig) {
     aiGetProviderForChat = result.getProviderForChat;
     aiResetProviderForChat = result.resetProviderForChat;
     aiGetProvidersList = result.getProvidersList;
+    aiGetModelsForChat = result.getModelsForChat;
     aiGetReplyMode = result.getReplyMode;
     aiSetReplyMode = result.setReplyMode;
     aiGetImageGenEnabled = result.getImageGenEnabled;
@@ -239,6 +241,7 @@ export function createBot(config: BotConfig) {
       resetModelForChat: aiResetModelForChat,
       models: config.aiReply.models,
       defaultModel: config.aiReply.model,
+      getModelsForChat: aiGetModelsForChat,
     });
     if (modelAccess === "admin") {
       bot.command("model", authGuard, modelCmd);

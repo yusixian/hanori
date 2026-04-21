@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { AiConfigStored, AiProviderEntry } from "@cos-tool-bot/shared";
 
 /** Wrap legacy flat AI config fields into providers[0] on first access.
- *  Idempotent: if providers[] non-empty, returns input unchanged.
- *  Does NOT strip legacy top-level fields (preserved for rollback compat). */
+ *  If providers[] already non-empty, only fixes up activeProviderId if missing/stale.
+ *  Does NOT strip legacy top-level fields (preserved for rollback compat).
+ *  NOTE: when wrapping legacy config, the synthesized provider id is a fresh UUID on every call
+ *  — callers must NOT persist or compare these ids across invocations. */
 export function migrateAiConfig(stored: AiConfigStored): AiConfigStored {
   if (stored.providers && stored.providers.length > 0) {
     if (

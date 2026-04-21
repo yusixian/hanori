@@ -1,6 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { chatProviderOverrides } from "@cos-tool-bot/database";
-import { and, eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 
 export class ChatProviderStore {
   constructor(private db: Database) {}
@@ -39,18 +39,17 @@ export class ChatProviderStore {
 
   /** Remove all overrides for a bot whose providerId is not in the allowed list. */
   async purgeInvalid(botId: string, validProviderIds: string[]): Promise<void> {
-    const rows = await this.db
-      .select({
-        chatId: chatProviderOverrides.chatId,
-        providerId: chatProviderOverrides.providerId,
-      })
-      .from(chatProviderOverrides)
-      .where(eq(chatProviderOverrides.botId, botId));
-    const valid = new Set(validProviderIds);
-    for (const r of rows) {
-      if (!valid.has(r.providerId)) {
-        await this.removeOverride(botId, r.chatId);
-      }
+    if (validProviderIds.length === 0) {
+      await this.db.delete(chatProviderOverrides).where(eq(chatProviderOverrides.botId, botId));
+      return;
     }
+    await this.db
+      .delete(chatProviderOverrides)
+      .where(
+        and(
+          eq(chatProviderOverrides.botId, botId),
+          notInArray(chatProviderOverrides.providerId, validProviderIds),
+        ),
+      );
   }
 }

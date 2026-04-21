@@ -810,10 +810,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
   function buildProviderOptions(
     entry?: ModelEntry,
+    providerFormat?: "openai" | "gemini",
   ): Record<string, Record<string, JSONValue>> | undefined {
     if (!entry?.thinking) return undefined;
     const enabled = entry.thinking === "enabled";
-    if (config.providerFormat === "gemini") {
+    if ((providerFormat ?? config.providerFormat) === "gemini") {
       return {
         google: {
           thinkingConfig: {
@@ -830,7 +831,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
   function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
     const modelId = chatId != null ? getModelForChat(chatId) : config.model;
-    const modelEntry = getModelEntry(modelId);
+    const providerRuntime =
+      chatId != null
+        ? getProviderRuntimeForChat(chatId)
+        : (providerRegistry.get(fallbackProviderId) ?? providerRegistry.values().next().value!);
+    const models = providerRuntime.models ?? config.models;
+    const modelEntry = models?.find((m) => m.id === modelId);
     const providerFactory =
       chatId != null ? getProviderClientForChat(chatId) : getProviderClient(fallbackProviderId);
     // Telegram: private chat IDs are positive, group/supergroup IDs are negative
@@ -847,7 +853,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       modelId,
       temperature: modelEntry?.temperature,
       maxTokens: modelEntry?.maxTokens,
-      providerOptions: buildProviderOptions(modelEntry),
+      providerOptions: buildProviderOptions(modelEntry, providerRuntime.providerFormat),
       isAiDisabled: () => aiDisabled,
       registerAbortController: (c) => activeAbortControllers.add(c),
       unregisterAbortController: (c) => activeAbortControllers.delete(c),
