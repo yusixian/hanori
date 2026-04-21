@@ -78,6 +78,9 @@ export function BotAiSettingsPage() {
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
+        if (json.data.summaryConfig) {
+          setSummaryConfig(json.data.summaryConfig);
+        }
       }
     } catch {
       setMessage({ type: "error", text: "Failed to load AI config" });
@@ -128,6 +131,7 @@ export function BotAiSettingsPage() {
             : undefined,
           privateChatWhitelist: config.privateChatWhitelist,
           mcpServerIds: config.mcpServerIds,
+          summaryConfig,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
