@@ -1606,7 +1606,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           content: rawContent || messageText,
           userId,
           userName,
-          meta: { tgMessageId: ctx.message?.message_id },
+          meta: { tgMessageId: msg.message_id },
         });
 
         // Save all tool calls and results from steps
