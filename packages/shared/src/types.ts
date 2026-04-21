@@ -637,6 +637,7 @@ export interface IBotManager {
   readonly uptime: number | null;
   start(): Promise<void>;
   stop(): Promise<void>;
+  sendHtml(chatId: number, html: string): Promise<void>;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

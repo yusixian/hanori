@@ -77,4 +77,8 @@ export class LarkBotManager implements IBotManager {
 
     await this.dbLogger.info("Lark webhook bot stopped");
   }
+
+  async sendHtml(_chatId: number, _html: string): Promise<void> {
+    throw new Error("sendHtml not supported on Lark webhook bot");
+  }
 }

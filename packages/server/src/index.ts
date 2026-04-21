@@ -1,10 +1,13 @@
 import { createDb, runMigrations } from "@cos-tool-bot/database";
+import { bots } from "@cos-tool-bot/database";
 import { serve } from "@hono/node-server";
+import { eq } from "drizzle-orm";
 import pino from "pino";
 import { createApp } from "./app.js";
 import { env } from "./env.js";
 import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
+import { ChatSummaryService } from "./services/chat-summary-service.js";
 import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
 import { GenerationCleaner } from "./services/generation-cleaner.js";
@@ -12,7 +15,10 @@ import { LogCleaner } from "./services/log-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
+import { SummaryConfigService } from "./services/summary-config-service.js";
+import { SummaryRunner } from "./services/summary-runner.js";
 import { TimerRegistry } from "./services/timer-registry.js";
+import { migrateAiConfig } from "./utils/ai-config-migrate.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
 
 export type { AppType } from "./app.js";
@@ -110,6 +116,41 @@ botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
 botPool.setMcpClientManager(mcpClientManager);
 
+// Summary Services
+const summaryConfigService = new SummaryConfigService(db);
+
+const summaryRunner = new SummaryRunner(db, logger, env.ENCRYPTION_KEY, async (botId) => {
+  const [row] = await db
+    .select({ aiConfig: bots.aiConfig, isActive: bots.isActive })
+    .from(bots)
+    .where(eq(bots.id, botId));
+  if (!row?.isActive) return null;
+  const cfg = row.aiConfig;
+  if (!cfg) return null;
+  return migrateAiConfig(cfg);
+});
+
+const summaryService = new ChatSummaryService(
+  db,
+  logger,
+  summaryRunner,
+  (botId, chatId, html) => botPool.sendHtml(botId, chatId, html),
+  (botId) => botPool.getManager(botId)?.status === "running",
+  async (botId) => {
+    const [row] = await db.select({ aiConfig: bots.aiConfig }).from(bots).where(eq(bots.id, botId));
+    const sc = row?.aiConfig?.summaryConfig;
+    if (!sc) return null;
+    return {
+      enabled: sc.enabled,
+      globalScheduleHour: sc.globalScheduleHour,
+      globalScheduleMinute: sc.globalScheduleMinute,
+    };
+  },
+);
+
+botPool.setSummaryService(summaryService);
+botPool.setSummaryConfigService(summaryConfigService);
+
 // Hono App
 const app = createApp({
   db,
@@ -122,6 +163,8 @@ const app = createApp({
   timerRegistry,
   rssFeedService,
   mcpClientManager,
+  summaryService,
+  summaryConfigService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -143,6 +186,9 @@ await botPool.startAll();
 
 // Start RSS feed service (after bots so digest triggers have handlers)
 rssFeedService.start();
+
+// Start summary service (after bots so sendHtml has running managers)
+summaryService.start();
 
 // Register system timers
 const scheduledServices: [
@@ -174,6 +220,7 @@ const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
   await mcpClientManager.destroyAll();
   rssFeedService.stop();
+  summaryService.stop();
   timerRegistry.destroy();
   modelCapabilityService.stop();
   logCleaner.stop();

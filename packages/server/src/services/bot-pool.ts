@@ -48,6 +48,8 @@ import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
 import type { McpClientManager } from "./mcp-client-manager.js";
 import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
+import type { ChatSummaryService } from "./chat-summary-service.js";
+import type { SummaryConfigService } from "./summary-config-service.js";
 
 export class BotPool {
   private managers = new Map<string, IBotManager>();
@@ -61,6 +63,8 @@ export class BotPool {
   private rssFeedService?: RssFeedService;
   private mcpClientManager?: McpClientManager;
   private timerRegistry: TimerRegistry;
+  private summaryService?: ChatSummaryService;
+  private summaryConfigService?: SummaryConfigService;
 
   constructor(
     private db: Database,
@@ -88,6 +92,31 @@ export class BotPool {
     service.setDigestTrigger((botId, chatId, eventDescription) =>
       this.fireRssDigest(botId, chatId, eventDescription),
     );
+  }
+
+  setSummaryService(svc: ChatSummaryService) {
+    this.summaryService = svc;
+  }
+
+  setSummaryConfigService(svc: SummaryConfigService) {
+    this.summaryConfigService = svc;
+  }
+
+  getSummaryService() {
+    return this.summaryService;
+  }
+
+  getSummaryConfigService() {
+    return this.summaryConfigService;
+  }
+
+  async sendHtml(botId: string, chatId: number, html: string): Promise<void> {
+    const manager = this.managers.get(botId);
+    if (!manager) {
+      this.logger.warn({ botId, chatId }, "sendHtml: no manager for bot");
+      return;
+    }
+    await manager.sendHtml(chatId, html);
   }
 
   getConversationStore(): ConversationStore {

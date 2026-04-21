@@ -129,4 +129,11 @@ export class BotManager implements IBotManager {
     await this.stop();
     await this.start();
   }
+
+  async sendHtml(chatId: number, html: string): Promise<void> {
+    if (!this.bot) {
+      throw new Error(`Bot ${this.botId} is not running`);
+    }
+    await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+  }
 }
