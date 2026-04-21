@@ -17,6 +17,7 @@ import { createDrawCommand } from "./commands/draw.js";
 import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
+import { createProviderCommand } from "./commands/provider.js";
 import { createImageGenCommand } from "./commands/imagegen.js";
 import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
 import { createImgCfgCommand } from "./commands/imgcfg.js";
@@ -110,6 +111,17 @@ export function createBot(config: BotConfig) {
   let aiSetModelForChat: ReturnType<typeof createAiReplyHandler>["setModelForChat"] | undefined;
   let aiGetModelForChat: ReturnType<typeof createAiReplyHandler>["getModelForChat"] | undefined;
   let aiResetModelForChat: ReturnType<typeof createAiReplyHandler>["resetModelForChat"] | undefined;
+  let aiSetProviderForChat:
+    | ReturnType<typeof createAiReplyHandler>["setProviderForChat"]
+    | undefined;
+  let aiGetProviderForChat:
+    | ReturnType<typeof createAiReplyHandler>["getProviderForChat"]
+    | undefined;
+  let aiResetProviderForChat:
+    | ReturnType<typeof createAiReplyHandler>["resetProviderForChat"]
+    | undefined;
+  let aiGetProvidersList: ReturnType<typeof createAiReplyHandler>["getProvidersList"] | undefined;
+  let aiGetModelsForChat: ReturnType<typeof createAiReplyHandler>["getModelsForChat"] | undefined;
   let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
   let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
   let aiGetImageGenEnabled:
@@ -160,6 +172,11 @@ export function createBot(config: BotConfig) {
     aiSetModelForChat = result.setModelForChat;
     aiGetModelForChat = result.getModelForChat;
     aiResetModelForChat = result.resetModelForChat;
+    aiSetProviderForChat = result.setProviderForChat;
+    aiGetProviderForChat = result.getProviderForChat;
+    aiResetProviderForChat = result.resetProviderForChat;
+    aiGetProvidersList = result.getProvidersList;
+    aiGetModelsForChat = result.getModelsForChat;
     aiGetReplyMode = result.getReplyMode;
     aiSetReplyMode = result.setReplyMode;
     aiGetImageGenEnabled = result.getImageGenEnabled;
@@ -224,11 +241,41 @@ export function createBot(config: BotConfig) {
       resetModelForChat: aiResetModelForChat,
       models: config.aiReply.models,
       defaultModel: config.aiReply.model,
+      getModelsForChat: aiGetModelsForChat,
     });
     if (modelAccess === "admin") {
       bot.command("model", authGuard, modelCmd);
     } else {
       bot.command("model", modelCmd);
+    }
+  }
+
+  // Register /provider command if providers are configured (shares modelCommandAccess gate)
+  const providersList: Array<{ id: string; label: string; defaultModel: string }> =
+    aiGetProvidersList?.() ?? [];
+  if (
+    providersList.length > 1 &&
+    aiSetProviderForChat &&
+    aiGetProviderForChat &&
+    aiResetProviderForChat
+  ) {
+    const providerAccess = config.aiReply?.modelCommandAccess ?? "admin";
+    const defaultProviderId =
+      config.aiReply?.activeProviderId &&
+      providersList.some((p) => p.id === config.aiReply!.activeProviderId)
+        ? config.aiReply.activeProviderId
+        : providersList[0]!.id;
+    const providerCmd = createProviderCommand({
+      getProviderForChat: aiGetProviderForChat,
+      setProviderForChat: aiSetProviderForChat,
+      resetProviderForChat: aiResetProviderForChat,
+      providers: providersList,
+      defaultProviderId,
+    });
+    if (providerAccess === "admin") {
+      bot.command("provider", authGuard, providerCmd);
+    } else {
+      bot.command("provider", providerCmd);
     }
   }
 

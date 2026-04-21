@@ -16,6 +16,7 @@ import type {
   ConversationCallbacks,
   IBotManager,
   MemoryCallbacks,
+  ModelEntry,
   PixAIGenerationRecord,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
@@ -30,10 +31,12 @@ import type { Logger } from "pino";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
 import { tryDecrypt } from "../utils/crypto.js";
+import { migrateAiConfig } from "../utils/ai-config-migrate.js";
 import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
 import { ChatModelStore } from "./chat-model-store.js";
+import { ChatProviderStore } from "./chat-provider-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
@@ -53,6 +56,7 @@ export class BotPool {
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
   private chatModelStore: ChatModelStore;
+  private chatProviderStore: ChatProviderStore;
   private backupService?: BackupService;
   private rssFeedService?: RssFeedService;
   private mcpClientManager?: McpClientManager;
@@ -68,6 +72,7 @@ export class BotPool {
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
     this.chatModelStore = new ChatModelStore(db);
+    this.chatProviderStore = new ChatProviderStore(db);
   }
 
   setBackupService(service: BackupService) {
@@ -156,283 +161,346 @@ export class BotPool {
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
     let conversation: ConversationCallbacks | undefined;
-    const aiConfig = bot.aiConfig;
-    if (aiConfig?.enabled && aiConfig.encryptedApiKey) {
-      const apiKey = tryDecrypt(aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
-      if (!apiKey) {
+    const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+    // Decrypt all providers up front — kept in-memory for bot lifetime.
+    // Track skip reasons separately so operators can distinguish "no key configured"
+    // from "encryption key mismatch" when diagnosing.
+    const providersRuntime: Array<{
+      id: string;
+      label: string;
+      apiKey: string;
+      baseURL: string;
+      providerFormat: "openai" | "gemini";
+      defaultModel: string;
+      models?: ModelEntry[];
+    }> = [];
+    const skippedNoKey: string[] = [];
+    const skippedDecryptFail: string[] = [];
+    for (const p of aiConfig?.providers ?? []) {
+      if (!p.encryptedApiKey) {
+        skippedNoKey.push(p.label);
+        continue;
+      }
+      const decrypted = tryDecrypt(p.encryptedApiKey, env.ENCRYPTION_KEY);
+      if (!decrypted) {
+        skippedDecryptFail.push(p.label);
+        continue;
+      }
+      providersRuntime.push({
+        id: p.id,
+        label: p.label,
+        apiKey: decrypted,
+        baseURL: p.baseURL,
+        providerFormat: p.providerFormat,
+        defaultModel: p.defaultModel,
+        models: p.models,
+      });
+    }
+    const activeProvider =
+      (aiConfig?.activeProviderId &&
+        providersRuntime.find((p) => p.id === aiConfig.activeProviderId)) ||
+      providersRuntime[0];
+    if (aiConfig?.enabled && activeProvider) {
+      const apiKey = activeProvider.apiKey;
+      if (skippedNoKey.length > 0) {
+        dbLogger.warn(`AI providers skipped (no API key configured): ${skippedNoKey.join(", ")}`);
+      }
+      if (skippedDecryptFail.length > 0) {
         dbLogger.warn(
-          "Encryption key mismatch: cannot decrypt AI API key. AI features disabled. Please update the API key in settings.",
+          `AI providers skipped (encryption key mismatch, cannot decrypt): ${skippedDecryptFail.join(", ")}`,
         );
-      } else {
-        const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
-        const store = this.conversationStore;
+      }
+      const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+      const store = this.conversationStore;
 
-        // Create embedding service early so closures can reference it
-        let embeddingService: EmbeddingService | undefined;
-        const embeddingCfg = aiConfig.embeddingConfig;
-        if (embeddingCfg?.enabled && embeddingCfg.encryptedApiKey) {
-          const embeddingApiKey = tryDecrypt(embeddingCfg.encryptedApiKey, env.ENCRYPTION_KEY);
-          if (embeddingApiKey) {
-            embeddingService = new EmbeddingService(
-              {
-                apiKey: embeddingApiKey,
-                baseURL: embeddingCfg.baseURL,
-                model: embeddingCfg.model,
-                dimensions: EMBEDDING_DIMENSIONS,
-              },
-              this.logger,
-            );
-          } else {
-            dbLogger.warn(
-              "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
-            );
-          }
+      // Create embedding service early so closures can reference it
+      let embeddingService: EmbeddingService | undefined;
+      const embeddingCfg = aiConfig.embeddingConfig;
+      if (embeddingCfg?.enabled && embeddingCfg.encryptedApiKey) {
+        const embeddingApiKey = tryDecrypt(embeddingCfg.encryptedApiKey, env.ENCRYPTION_KEY);
+        if (embeddingApiKey) {
+          embeddingService = new EmbeddingService(
+            {
+              apiKey: embeddingApiKey,
+              baseURL: embeddingCfg.baseURL,
+              model: embeddingCfg.model,
+              dimensions: EMBEDDING_DIMENSIONS,
+            },
+            this.logger,
+          );
+        } else {
+          dbLogger.warn(
+            "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
+          );
         }
+      }
 
-        conversation = {
-          getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
-          addMessage: (p) => store.addMessage({ botId, ...p }),
-          addMessages: async (msgs) => {
-            const ids = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
-            // Fire-and-forget: async generate embeddings (non-blocking)
-            if (embeddingService && ids.length > 0) {
-              const toEmbed = msgs
-                .map((m, i) => ({ msg: m, id: ids[i]! }))
-                .filter(
-                  ({ msg }) =>
-                    msg.content.length > 0 && (msg.role === "user" || msg.role === "assistant"),
-                );
-              if (toEmbed.length > 0) {
-                embeddingService
-                  .generateEmbeddings(toEmbed.map((e) => e.msg.content))
-                  .then((embeddings) => {
-                    for (let i = 0; i < embeddings.length; i++) {
-                      const emb = embeddings[i];
-                      if (emb) {
-                        store.updateEmbedding(toEmbed[i]!.id, emb).catch((err) => {
-                          this.logger.warn(err, "Failed to persist message embedding");
-                        });
-                      }
-                    }
-                  })
-                  .catch((err) => {
-                    this.logger.warn(err, "Batch message embedding generation failed");
-                  });
-              }
-            }
-          },
-          triggerCompression: (chatId) => {
-            compressConversation({
-              botId,
-              chatId,
-              store,
-              conversationConfig: conversationCfg,
-              apiKey,
-              baseURL: aiConfig.baseURL,
-              model: aiConfig.model,
-              providerFormat: aiConfig.providerFormat,
-              logger: this.logger,
-            }).catch((err) => {
-              this.logger.error(
-                err,
-                `Conversation compression failed for bot=${botId} chat=${chatId}`,
+      conversation = {
+        getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
+        addMessage: (p) => store.addMessage({ botId, ...p }),
+        addMessages: async (msgs) => {
+          const ids = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
+          // Fire-and-forget: async generate embeddings (non-blocking)
+          if (embeddingService && ids.length > 0) {
+            const toEmbed = msgs
+              .map((m, i) => ({ msg: m, id: ids[i]! }))
+              .filter(
+                ({ msg }) =>
+                  msg.content.length > 0 && (msg.role === "user" || msg.role === "assistant"),
               );
-            });
-          },
-          clearHistory: (chatId) => store.clearHistory(botId, chatId),
-        };
-
-        // Build memory callbacks if memory is enabled
-        const memoryCfg = aiConfig.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-        let memory: MemoryCallbacks | undefined;
-        if (memoryCfg.enabled) {
-          const ps = this.profileStore;
-          const cs = this.conversationStore;
-          memory = {
-            getProfile: (telegramId) =>
-              ps.getProfile(botId, telegramId).then((p) => (p ? mapProfileToDto(p) : null)),
-            upsertProfile: (data) => ps.upsertProfile(botId, data).then(mapProfileToDto),
-            searchProfiles: (query) =>
-              ps.searchProfiles(botId, query).then((profiles) => profiles.map(mapProfileToDto)),
-            searchHistory: async (params) => {
-              let queryEmbedding: number[] | undefined;
-              if (embeddingService && params.query) {
-                const emb = await embeddingService.generateEmbedding(params.query);
-                if (emb) queryEmbedding = emb;
-              }
-              return cs.searchMessages(botId, { ...params, queryEmbedding });
-            },
-            touchProfile: (telegramId, displayName, username) =>
-              ps.touchProfile(botId, telegramId, displayName, username),
-          };
-        }
-
-        // Build bot memory callbacks (independent of people profile memory)
-        const botMemoryCfg = aiConfig.botMemoryConfig;
-        let botMemory: BotMemoryCallbacks | undefined;
-        if (botMemoryCfg?.enabled) {
-          const ms = this.botMemoryStore;
-          const es = embeddingService;
-
-          // Dedup threshold constants
-          const DEDUP_EXACT = 0.05; // cosine distance < 0.05 → duplicate (similarity > 0.95)
-          const DEDUP_SIMILAR = 0.15; // cosine distance < 0.15 → similar (similarity > 0.85)
-
-          botMemory = {
-            saveMemory: async (params) => {
-              // Sync embedding generation for bot memories (for dedup)
-              let embedding: number[] | undefined;
-              if (es) {
-                const emb = await es.generateEmbedding(params.content);
-                if (emb) {
-                  embedding = emb;
-                  // Dedup check (scoped by telegramId)
-                  const similar = await ms.findSimilar(botId, emb, DEDUP_SIMILAR, {
-                    telegramId: params.telegramId,
-                  });
-                  const exact = similar.find((s) => s.distance < DEDUP_EXACT);
-                  if (exact) {
-                    // Near-duplicate: just touch updatedAt
-                    await ms.touchMemory(exact.id);
-                    return exact;
+            if (toEmbed.length > 0) {
+              embeddingService
+                .generateEmbeddings(toEmbed.map((e) => e.msg.content))
+                .then((embeddings) => {
+                  for (let i = 0; i < embeddings.length; i++) {
+                    const emb = embeddings[i];
+                    if (emb) {
+                      store.updateEmbedding(toEmbed[i]!.id, emb).catch((err) => {
+                        this.logger.warn(err, "Failed to persist message embedding");
+                      });
+                    }
                   }
-                }
-              }
-              return ms.saveMemory(botId, { ...params, embedding });
-            },
-            recallMemories: async (params) => {
-              let queryEmbedding: number[] | undefined;
-              if (es && params.query) {
-                const emb = await es.generateEmbedding(params.query);
-                if (emb) queryEmbedding = emb;
-              }
-              return ms.recallMemories(botId, { ...params, queryEmbedding });
-            },
-            deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
-            getMemoriesForPrompt: (telegramId, limit) =>
-              ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
-            searchProfiles: async (query, telegramId) => {
-              const pStore = this.profileStore;
-              const [exactProfile, searched] = await Promise.all([
-                telegramId != null ? pStore.getProfile(botId, telegramId) : null,
-                pStore.searchProfiles(botId, query),
-              ]);
-              const results = searched.map(mapProfileToDto);
-              if (exactProfile && !results.some((r) => r.telegramId === exactProfile.telegramId)) {
-                results.unshift(mapProfileToDto(exactProfile));
-              }
-              return results;
-            },
-          };
-        }
-
-        // Load persisted per-chat model overrides
-        const chatModelMap = await this.chatModelStore.loadOverrides(botId);
-        const chatModelStoreRef = this.chatModelStore;
-
-        // Build data files config for prompt injection and file tools
-        const dataFilesConfig = aiConfig.dataFilesConfig;
-        const dataFiles = await createDataFilesLoader(botId, {
-          injectableFiles: dataFilesConfig?.injectableFiles,
-          maxTotalSize: dataFilesConfig?.maxTotalSize,
-        });
-
-        let nsfwChecker: NsfwChecker | undefined;
-        if (env.NSFW_API_URL) {
-          const threshold = aiConfig.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold;
-          nsfwChecker = new NsfwChecker({
-            apiUrl: env.NSFW_API_URL,
-            threshold,
-            logger: (level, message, meta) => {
-              this.logger[level]({ ...meta }, `[NsfwChecker] ${message}`);
-            },
+                })
+                .catch((err) => {
+                  this.logger.warn(err, "Batch message embedding generation failed");
+                });
+            }
+          }
+        },
+        triggerCompression: (chatId) => {
+          compressConversation({
+            botId,
+            chatId,
+            store,
+            conversationConfig: conversationCfg,
+            apiKey: activeProvider.apiKey,
+            baseURL: activeProvider.baseURL,
+            model: activeProvider.defaultModel,
+            providerFormat: activeProvider.providerFormat,
+            logger: this.logger,
+          }).catch((err) => {
+            this.logger.error(
+              err,
+              `Conversation compression failed for bot=${botId} chat=${chatId}`,
+            );
           });
-        }
+        },
+        clearHistory: (chatId) => store.clearHistory(botId, chatId),
+      };
 
-        aiReply = {
-          apiKey,
-          baseURL: aiConfig.baseURL,
-          model: aiConfig.model,
-          providerFormat: aiConfig.providerFormat,
-          systemPrompt: aiConfig.systemPrompt,
-          behavioralPrompt: aiConfig.behavioralPrompt,
-          groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
-          triggerConfig: aiConfig.triggerConfig,
-          groupOverrides: aiConfig.groupOverrides,
-          conversationConfig: conversationCfg,
-          conversation,
-          memoryConfig: memoryCfg,
-          memory,
-          stickerPacks: aiConfig.stickerPacks,
-          webToolsConfig: aiConfig.webToolsConfig,
-          agentToolsConfig: aiConfig.agentToolsConfig,
-          artworkToolsConfig: aiConfig.artworkToolsConfig,
-          botMemoryConfig: botMemoryCfg,
-          botMemory,
-          messageConfig: aiConfig.messageConfig,
-          timeoutConfig: aiConfig.timeoutConfig,
-          models: aiConfig.models,
-          modelCommandAccess: aiConfig.modelCommandAccess,
-          modelOverride: {
-            getModelForChat: (chatId) => chatModelMap.get(chatId),
-            setModelForChat: (chatId, modelId) => {
-              chatModelMap.set(chatId, modelId);
-              chatModelStoreRef.setOverride(botId, chatId, modelId).catch(() => {});
-            },
-            resetModelForChat: (chatId) => {
-              chatModelMap.delete(chatId);
-              chatModelStoreRef.removeOverride(botId, chatId).catch(() => {});
-            },
-          },
-          dataFiles,
-          privateChatWhitelist: aiConfig.privateChatWhitelist,
-          nsfwChecker,
-          onGroupOverrideUpdate: async (chatId, override) => {
-            try {
-              await this.db.transaction(async (tx) => {
-                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-                if (!current?.aiConfig) return;
-                await tx
-                  .update(bots)
-                  .set({
-                    aiConfig: {
-                      ...current.aiConfig,
-                      groupOverrides: {
-                        ...current.aiConfig.groupOverrides,
-                        [String(chatId)]: override,
-                      },
-                    },
-                  })
-                  .where(eq(bots.id, botId));
-              });
-            } catch (err) {
-              this.logger.error(err, "Failed to persist group override update");
+      // Build memory callbacks if memory is enabled
+      const memoryCfg = aiConfig.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
+      let memory: MemoryCallbacks | undefined;
+      if (memoryCfg.enabled) {
+        const ps = this.profileStore;
+        const cs = this.conversationStore;
+        memory = {
+          getProfile: (telegramId) =>
+            ps.getProfile(botId, telegramId).then((p) => (p ? mapProfileToDto(p) : null)),
+          upsertProfile: (data) => ps.upsertProfile(botId, data).then(mapProfileToDto),
+          searchProfiles: (query) =>
+            ps.searchProfiles(botId, query).then((profiles) => profiles.map(mapProfileToDto)),
+          searchHistory: async (params) => {
+            let queryEmbedding: number[] | undefined;
+            if (embeddingService && params.query) {
+              const emb = await embeddingService.generateEmbedding(params.query);
+              if (emb) queryEmbedding = emb;
             }
+            return cs.searchMessages(botId, { ...params, queryEmbedding });
           },
-          onPixaiConfigUpdate: async (updates) => {
-            try {
-              await this.db.transaction(async (tx) => {
-                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-                if (!current?.aiConfig) return;
-                const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
-                if (!imgGen) return;
-                if (updates.model !== undefined) imgGen.model = updates.model;
-                if (updates.pixaiConfig) {
-                  imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
-                }
-                await tx
-                  .update(bots)
-                  .set({ aiConfig: { ...current.aiConfig } })
-                  .where(eq(bots.id, botId));
-              });
-            } catch (err) {
-              this.logger.error(err, "Failed to persist pixai config update");
-            }
-          },
-          rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
-          mcpTools: this.buildMcpToolsConfig(aiConfig.mcpServerIds),
+          touchProfile: (telegramId, displayName, username) =>
+            ps.touchProfile(botId, telegramId, displayName, username),
         };
       }
+
+      // Build bot memory callbacks (independent of people profile memory)
+      const botMemoryCfg = aiConfig.botMemoryConfig;
+      let botMemory: BotMemoryCallbacks | undefined;
+      if (botMemoryCfg?.enabled) {
+        const ms = this.botMemoryStore;
+        const es = embeddingService;
+
+        // Dedup threshold constants
+        const DEDUP_EXACT = 0.05; // cosine distance < 0.05 → duplicate (similarity > 0.95)
+        const DEDUP_SIMILAR = 0.15; // cosine distance < 0.15 → similar (similarity > 0.85)
+
+        botMemory = {
+          saveMemory: async (params) => {
+            // Sync embedding generation for bot memories (for dedup)
+            let embedding: number[] | undefined;
+            if (es) {
+              const emb = await es.generateEmbedding(params.content);
+              if (emb) {
+                embedding = emb;
+                // Dedup check (scoped by telegramId)
+                const similar = await ms.findSimilar(botId, emb, DEDUP_SIMILAR, {
+                  telegramId: params.telegramId,
+                });
+                const exact = similar.find((s) => s.distance < DEDUP_EXACT);
+                if (exact) {
+                  // Near-duplicate: just touch updatedAt
+                  await ms.touchMemory(exact.id);
+                  return exact;
+                }
+              }
+            }
+            return ms.saveMemory(botId, { ...params, embedding });
+          },
+          recallMemories: async (params) => {
+            let queryEmbedding: number[] | undefined;
+            if (es && params.query) {
+              const emb = await es.generateEmbedding(params.query);
+              if (emb) queryEmbedding = emb;
+            }
+            return ms.recallMemories(botId, { ...params, queryEmbedding });
+          },
+          deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
+          getMemoriesForPrompt: (telegramId, limit) =>
+            ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
+          searchProfiles: async (query, telegramId) => {
+            const pStore = this.profileStore;
+            const [exactProfile, searched] = await Promise.all([
+              telegramId != null ? pStore.getProfile(botId, telegramId) : null,
+              pStore.searchProfiles(botId, query),
+            ]);
+            const results = searched.map(mapProfileToDto);
+            if (exactProfile && !results.some((r) => r.telegramId === exactProfile.telegramId)) {
+              results.unshift(mapProfileToDto(exactProfile));
+            }
+            return results;
+          },
+        };
+      }
+
+      // Load persisted per-chat model + provider overrides
+      const chatModelMap = await this.chatModelStore.loadOverrides(botId);
+      const chatModelStoreRef = this.chatModelStore;
+      const chatProviderMap = await this.chatProviderStore.loadOverrides(botId);
+      const chatProviderStoreRef = this.chatProviderStore;
+      // Purge stale overrides whose provider was deleted since last load
+      await chatProviderStoreRef.purgeInvalid(
+        botId,
+        providersRuntime.map((p) => p.id),
+      );
+      for (const [chatId, pid] of chatProviderMap) {
+        if (!providersRuntime.some((p) => p.id === pid)) chatProviderMap.delete(chatId);
+      }
+
+      // Build data files config for prompt injection and file tools
+      const dataFilesConfig = aiConfig.dataFilesConfig;
+      const dataFiles = await createDataFilesLoader(botId, {
+        injectableFiles: dataFilesConfig?.injectableFiles,
+        maxTotalSize: dataFilesConfig?.maxTotalSize,
+      });
+
+      let nsfwChecker: NsfwChecker | undefined;
+      if (env.NSFW_API_URL) {
+        const threshold = aiConfig.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold;
+        nsfwChecker = new NsfwChecker({
+          apiUrl: env.NSFW_API_URL,
+          threshold,
+          logger: (level, message, meta) => {
+            this.logger[level]({ ...meta }, `[NsfwChecker] ${message}`);
+          },
+        });
+      }
+
+      aiReply = {
+        apiKey,
+        baseURL: activeProvider.baseURL,
+        model: activeProvider.defaultModel,
+        providerFormat: activeProvider.providerFormat,
+        providers: providersRuntime,
+        activeProviderId: activeProvider.id,
+        providerOverride: {
+          getProviderForChat: (chatId) => chatProviderMap.get(chatId),
+          setProviderForChat: (chatId, providerId) => {
+            chatProviderMap.set(chatId, providerId);
+            chatProviderStoreRef.setOverride(botId, chatId, providerId).catch(() => {});
+          },
+          resetProviderForChat: (chatId) => {
+            chatProviderMap.delete(chatId);
+            chatProviderStoreRef.removeOverride(botId, chatId).catch(() => {});
+          },
+        },
+        systemPrompt: aiConfig.systemPrompt,
+        behavioralPrompt: aiConfig.behavioralPrompt,
+        groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
+        triggerConfig: aiConfig.triggerConfig,
+        groupOverrides: aiConfig.groupOverrides,
+        conversationConfig: conversationCfg,
+        conversation,
+        memoryConfig: memoryCfg,
+        memory,
+        stickerPacks: aiConfig.stickerPacks,
+        webToolsConfig: aiConfig.webToolsConfig,
+        agentToolsConfig: aiConfig.agentToolsConfig,
+        artworkToolsConfig: aiConfig.artworkToolsConfig,
+        botMemoryConfig: botMemoryCfg,
+        botMemory,
+        messageConfig: aiConfig.messageConfig,
+        timeoutConfig: aiConfig.timeoutConfig,
+        models: activeProvider.models ?? aiConfig.models,
+        modelCommandAccess: aiConfig.modelCommandAccess,
+        modelOverride: {
+          getModelForChat: (chatId) => chatModelMap.get(chatId),
+          setModelForChat: (chatId, modelId) => {
+            chatModelMap.set(chatId, modelId);
+            chatModelStoreRef.setOverride(botId, chatId, modelId).catch(() => {});
+          },
+          resetModelForChat: (chatId) => {
+            chatModelMap.delete(chatId);
+            chatModelStoreRef.removeOverride(botId, chatId).catch(() => {});
+          },
+        },
+        dataFiles,
+        privateChatWhitelist: aiConfig.privateChatWhitelist,
+        nsfwChecker,
+        onGroupOverrideUpdate: async (chatId, override) => {
+          try {
+            await this.db.transaction(async (tx) => {
+              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return;
+              await tx
+                .update(bots)
+                .set({
+                  aiConfig: {
+                    ...current.aiConfig,
+                    groupOverrides: {
+                      ...current.aiConfig.groupOverrides,
+                      [String(chatId)]: override,
+                    },
+                  },
+                })
+                .where(eq(bots.id, botId));
+            });
+          } catch (err) {
+            this.logger.error(err, "Failed to persist group override update");
+          }
+        },
+        onPixaiConfigUpdate: async (updates) => {
+          try {
+            await this.db.transaction(async (tx) => {
+              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return;
+              const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
+              if (!imgGen) return;
+              if (updates.model !== undefined) imgGen.model = updates.model;
+              if (updates.pixaiConfig) {
+                imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
+              }
+              await tx
+                .update(bots)
+                .set({ aiConfig: { ...current.aiConfig } })
+                .where(eq(bots.id, botId));
+            });
+          } catch (err) {
+            this.logger.error(err, "Failed to persist pixai config update");
+          }
+        },
+        rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
+        mcpTools: this.buildMcpToolsConfig(aiConfig.mcpServerIds),
+      };
     }
 
     const backupSvc = this.backupService;

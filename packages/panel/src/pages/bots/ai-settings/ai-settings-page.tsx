@@ -38,6 +38,7 @@ import { MessageSplittingSection } from "./sections/message-splitting-section";
 import { TimeoutSection } from "./sections/timeout-section";
 import { ModelsSection } from "./sections/models-section";
 import { PrivateChatWhitelistSection } from "./sections/private-whitelist-section";
+import { ProvidersSection } from "./sections/providers-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { McpServersSection } from "./sections/mcp-servers-section";
@@ -49,6 +50,9 @@ export function BotAiSettingsPage() {
   const { botId } = useParams<{ botId: string }>();
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
   const [apiKey, setApiKey] = useState("");
+  // Draft per-provider api keys: keyed by provider id (or temp "__new_..." id until saved).
+  // Cleared on save. Preserve-when-empty: empty string ⇒ keep existing encrypted key.
+  const [providerApiKeys, setProviderApiKeys] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<StatusMessage | null>(null);
@@ -120,6 +124,17 @@ export function BotAiSettingsPage() {
             .split(",")
             .map((s) => s.trim())
             .filter(Boolean),
+          providers: config.providers?.map((p) => ({
+            // Keep temp "__new_*" ids so backend can remap activeProviderId through them.
+            id: p.id,
+            label: p.label,
+            baseURL: p.baseURL,
+            providerFormat: p.providerFormat,
+            defaultModel: p.defaultModel,
+            apiKey: providerApiKeys[p.id] || undefined,
+            models: p.models,
+          })),
+          activeProviderId: config.activeProviderId,
         },
       });
       if (!res.ok) {
@@ -145,6 +160,7 @@ export function BotAiSettingsPage() {
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
         setApiKey("");
         setEmbeddingApiKey("");
+        setProviderApiKeys({});
         setMessage({ type: "success", text: "AI config saved" });
       } else {
         setMessage({
@@ -355,6 +371,25 @@ export function BotAiSettingsPage() {
           {message.text}
         </div>
       )}
+
+      <ProvidersSection
+        providers={config.providers ?? []}
+        activeProviderId={config.activeProviderId}
+        draftApiKeys={providerApiKeys}
+        onProvidersChange={(providers) => setConfig((prev) => ({ ...prev, providers }))}
+        onActiveProviderChange={(activeProviderId) =>
+          setConfig((prev) => ({ ...prev, activeProviderId }))
+        }
+        onDraftApiKeyChange={(id, key) =>
+          setProviderApiKeys((prev) => {
+            if (!key) {
+              const { [id]: _, ...rest } = prev;
+              return rest;
+            }
+            return { ...prev, [id]: key };
+          })
+        }
+      />
 
       <GlobalSettingsSection
         config={config}

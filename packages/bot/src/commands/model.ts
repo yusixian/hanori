@@ -8,6 +8,8 @@ export interface ModelCommandConfig {
   resetModelForChat?: (chatId: number) => void;
   models: ModelEntry[];
   defaultModel: string;
+  /** If provided, overrides `models` with a per-chat list (e.g. when provider changes per-chat). */
+  getModelsForChat?: (chatId: number) => ModelEntry[];
 }
 
 export function createModelCommand(config: ModelCommandConfig): CommandMiddleware<WrapperContext> {
@@ -17,15 +19,16 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
 
     const args = ctx.match?.toString().trim() ?? "";
     const currentModel = config.getModelForChat(chatId);
+    const chatModels = config.getModelsForChat ? config.getModelsForChat(chatId) : config.models;
 
     // No args: show current model + list
     if (!args) {
       const lines = [`当前模型: \`${currentModel}\``];
-      if (config.models.length > 0) {
+      if (chatModels.length > 0) {
         lines.push("");
         lines.push("可用模型:");
-        for (let i = 0; i < config.models.length; i++) {
-          const m = config.models[i]!;
+        for (let i = 0; i < chatModels.length; i++) {
+          const m = chatModels[i]!;
           const active = m.id === currentModel ? " ✅" : "";
           const label = m.label ? ` (${m.label})` : "";
           const thinkTag = m.thinking === "enabled" ? " 🧠" : "";
@@ -52,15 +55,15 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
 
     // Try number index
     const idx = Number.parseInt(args, 10);
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= config.models.length) {
-      const selected = config.models[idx - 1]!;
+    if (!Number.isNaN(idx) && idx >= 1 && idx <= chatModels.length) {
+      const selected = chatModels[idx - 1]!;
       config.setModelForChat(chatId, selected.id);
       await ctx.reply(`已切换到模型: \`${selected.id}\``, { parse_mode: "Markdown" });
       return;
     }
 
     // Try name match
-    const match = config.models.find(
+    const match = chatModels.find(
       (m) => m.id === args || m.id.toLowerCase() === args.toLowerCase(),
     );
     if (match) {
