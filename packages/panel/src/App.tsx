@@ -57,6 +57,9 @@ const TimersListPage = lazy(() =>
   import("@/pages/timers/list").then((m) => ({ default: m.TimersListPage })),
 );
 const BotRssPage = lazy(() => import("@/pages/bots/rss").then((m) => ({ default: m.BotRssPage })));
+const BotSummaryPage = lazy(() =>
+  import("@/pages/bots/summary").then((m) => ({ default: m.BotSummaryPage })),
+);
 const McpServersPage = lazy(() =>
   import("@/pages/mcp-servers").then((m) => ({ default: m.McpServersPage })),
 );
@@ -106,6 +109,7 @@ export function App() {
                 <Route path="/bots/:botId/generations" element={<BotGenerationsPage />} />
                 <Route path="/bots/:botId/files" element={<BotFilesPage />} />
                 <Route path="/bots/:botId/rss" element={<BotRssPage />} />
+                <Route path="/bots/:botId/summary" element={<BotSummaryPage />} />
                 <Route path="/bots/:botId/export" element={<BotExportPage />} />
                 <Route path="/bots/:botId/logs" element={<BotLogsPage />} />
                 <Route path="/data" element={<DataPage />} />

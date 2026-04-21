@@ -25,6 +25,7 @@ import {
   Rss,
   ScrollText,
   Users,
+  FileText,
   X,
 } from "lucide-react";
 import { useEffect } from "react";
@@ -81,6 +82,7 @@ export function AppLayout() {
         { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
         { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
         { label: "RSS", path: `/bots/${botId}/rss`, icon: Rss },
+        { label: "群聊总结", path: `/bots/${botId}/summary`, icon: FileText },
         { label: "Generations", path: `/bots/${botId}/generations`, icon: ImageIcon },
         { label: "Files", path: `/bots/${botId}/files`, icon: FolderOpen },
         { label: "Export", path: `/bots/${botId}/export`, icon: Download },
