@@ -125,8 +125,8 @@ export function BotAiSettingsPage() {
             .map((s) => s.trim())
             .filter(Boolean),
           providers: config.providers?.map((p) => ({
-            // Drop client-only temp ids so backend assigns a real uuid.
-            id: p.id.startsWith("__new_") ? undefined : p.id,
+            // Keep temp "__new_*" ids so backend can remap activeProviderId through them.
+            id: p.id,
             label: p.label,
             baseURL: p.baseURL,
             providerFormat: p.providerFormat,

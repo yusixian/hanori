@@ -752,17 +752,24 @@ export function botsRoutes(
       }
 
       // Build new providers list with preserve-when-empty apiKey per entry.
+      // Client sends temp ids like "__new_xxx" for unsaved providers; map them to real
+      // UUIDs here and remap activeProviderId through the same mapping so the client's
+      // selection survives the id rewrite.
       let providers: AiProviderEntry[] | undefined;
       let activeProviderId: string | undefined = body.activeProviderId;
       if (body.providers !== undefined) {
+        const idMap = new Map<string, string>();
         providers = body.providers.map((p) => {
-          const existing = p.id ? existingProvidersById.get(p.id) : undefined;
+          const isTemp = !p.id || p.id.startsWith("__new_");
+          const finalId = isTemp ? randomUUID() : p.id!;
+          if (p.id) idMap.set(p.id, finalId);
+          const existing = isTemp ? undefined : existingProvidersById.get(finalId);
           const encryptedApiKey =
             p.apiKey !== undefined && p.apiKey !== ""
               ? encrypt(p.apiKey, env.ENCRYPTION_KEY)
               : (existing?.encryptedApiKey ?? null);
           return {
-            id: p.id ?? randomUUID(),
+            id: finalId,
             label: p.label,
             encryptedApiKey,
             baseURL: p.baseURL,
@@ -771,6 +778,9 @@ export function botsRoutes(
             models: p.models,
           };
         });
+        if (activeProviderId && idMap.has(activeProviderId)) {
+          activeProviderId = idMap.get(activeProviderId);
+        }
         if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
           activeProviderId = providers[0]?.id;
         }

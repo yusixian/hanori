@@ -16,6 +16,7 @@ import type {
   ConversationCallbacks,
   IBotManager,
   MemoryCallbacks,
+  ModelEntry,
   PixAIGenerationRecord,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
@@ -162,32 +163,51 @@ export class BotPool {
     let conversation: ConversationCallbacks | undefined;
     const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
     // Decrypt all providers up front — kept in-memory for bot lifetime.
-    const providersRuntime = (aiConfig?.providers ?? [])
-      .map((p) => {
-        const decrypted = p.encryptedApiKey
-          ? tryDecrypt(p.encryptedApiKey, env.ENCRYPTION_KEY)
-          : null;
-        if (!decrypted) return null;
-        return {
-          id: p.id,
-          label: p.label,
-          apiKey: decrypted,
-          baseURL: p.baseURL,
-          providerFormat: p.providerFormat,
-          defaultModel: p.defaultModel,
-          models: p.models,
-        };
-      })
-      .filter((x): x is NonNullable<typeof x> => x != null);
+    // Track skip reasons separately so operators can distinguish "no key configured"
+    // from "encryption key mismatch" when diagnosing.
+    const providersRuntime: Array<{
+      id: string;
+      label: string;
+      apiKey: string;
+      baseURL: string;
+      providerFormat: "openai" | "gemini";
+      defaultModel: string;
+      models?: ModelEntry[];
+    }> = [];
+    const skippedNoKey: string[] = [];
+    const skippedDecryptFail: string[] = [];
+    for (const p of aiConfig?.providers ?? []) {
+      if (!p.encryptedApiKey) {
+        skippedNoKey.push(p.label);
+        continue;
+      }
+      const decrypted = tryDecrypt(p.encryptedApiKey, env.ENCRYPTION_KEY);
+      if (!decrypted) {
+        skippedDecryptFail.push(p.label);
+        continue;
+      }
+      providersRuntime.push({
+        id: p.id,
+        label: p.label,
+        apiKey: decrypted,
+        baseURL: p.baseURL,
+        providerFormat: p.providerFormat,
+        defaultModel: p.defaultModel,
+        models: p.models,
+      });
+    }
     const activeProvider =
       (aiConfig?.activeProviderId &&
         providersRuntime.find((p) => p.id === aiConfig.activeProviderId)) ||
       providersRuntime[0];
     if (aiConfig?.enabled && activeProvider) {
       const apiKey = activeProvider.apiKey;
-      if (providersRuntime.length < (aiConfig.providers?.length ?? 0)) {
+      if (skippedNoKey.length > 0) {
+        dbLogger.warn(`AI providers skipped (no API key configured): ${skippedNoKey.join(", ")}`);
+      }
+      if (skippedDecryptFail.length > 0) {
         dbLogger.warn(
-          "Encryption key mismatch: some AI providers could not be decrypted and were skipped.",
+          `AI providers skipped (encryption key mismatch, cannot decrypt): ${skippedDecryptFail.join(", ")}`,
         );
       }
       const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
