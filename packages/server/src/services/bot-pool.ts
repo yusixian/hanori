@@ -435,6 +435,7 @@ export class BotPool {
       }
 
       aiReply = {
+        botId,
         apiKey,
         baseURL: activeProvider.baseURL,
         model: activeProvider.defaultModel,
@@ -468,6 +469,7 @@ export class BotPool {
         botMemoryConfig: botMemoryCfg,
         botMemory,
         messageConfig: aiConfig.messageConfig,
+        imageOcrConfig: aiConfig.imageOcrConfig,
         timeoutConfig: aiConfig.timeoutConfig,
         models: activeProvider.models ?? aiConfig.models,
         modelCommandAccess: aiConfig.modelCommandAccess,

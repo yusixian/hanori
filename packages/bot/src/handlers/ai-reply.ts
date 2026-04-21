@@ -10,6 +10,7 @@ import type {
   ConversationCallbacks,
   ConversationConfig,
   ConversationRole,
+  ImageOcrConfig,
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
@@ -75,6 +76,7 @@ import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
+import { describeImages } from "../services/image-ocr.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
 export interface AiProviderRuntime {
@@ -88,6 +90,7 @@ export interface AiProviderRuntime {
 }
 
 export interface AiReplyConfig {
+  botId: string;
   /** @deprecated active provider's apiKey — superseded by providers[] when present */
   apiKey: string;
   /** @deprecated active provider's baseURL */
@@ -119,6 +122,7 @@ export interface AiReplyConfig {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  imageOcrConfig?: ImageOcrConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
@@ -166,11 +170,13 @@ async function downloadImagesForVision(
   token: string,
   files: ReceivedFile[],
   timeoutMs: number,
-): Promise<Array<{ buffer: Buffer; mimeType: string }>> {
-  const imageFiles = files.filter((f) => f.type === "photo" || f.mime_type?.startsWith("image/"));
-  if (imageFiles.length === 0) return [];
+): Promise<Array<{ buffer: Buffer; mimeType: string; sourceIndex: number }>> {
+  const indexed = files
+    .map((f, idx) => ({ f, idx }))
+    .filter(({ f }) => f.type === "photo" || f.mime_type?.startsWith("image/"));
+  if (indexed.length === 0) return [];
   const settled = await Promise.allSettled(
-    imageFiles.map(async (f) => {
+    indexed.map(async ({ f, idx }) => {
       const tgFile = await api.getFile(f.file_id);
       if (!tgFile.file_path) return null;
       const url = `https://api.telegram.org/file/bot${token}/${tgFile.file_path}`;
@@ -178,10 +184,10 @@ async function downloadImagesForVision(
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > MAX_VISION_IMAGE_BYTES) return null;
-      return { buffer: buf, mimeType: f.mime_type ?? "image/jpeg" };
+      return { buffer: buf, mimeType: f.mime_type ?? "image/jpeg", sourceIndex: idx };
     }),
   );
-  const results: Array<{ buffer: Buffer; mimeType: string }> = [];
+  const results: Array<{ buffer: Buffer; mimeType: string; sourceIndex: number }> = [];
   for (const r of settled) {
     if (r.status === "fulfilled" && r.value != null) results.push(r.value);
     else if (r.status === "rejected") console.debug("[vision] image download failed:", r.reason);
@@ -446,12 +452,26 @@ function getDisplayName(from: User | undefined): string {
   return from.first_name || from.username || "Unknown";
 }
 
-function describeFiles(files: ReceivedFile[], prefix = "", separator = "\n"): string {
+function describeFiles(
+  files: ReceivedFile[],
+  prefix = "",
+  separator = "\n",
+  descriptionsByIndex?: Map<number, string>,
+): string {
   let result = "";
-  for (const f of files) {
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i]!;
     const sizeStr = f.file_size ? ` ${formatFileSize(f.file_size)}` : "";
-    if (f.type === "photo") {
-      result += `[${prefix}图片${sizeStr}]${separator}`;
+    if (f.type === "photo" || f.mime_type?.startsWith("image/")) {
+      const desc = descriptionsByIndex?.get(i);
+      const descStr = desc ? ` | 描述: ${desc}` : "";
+      if (f.type === "photo") {
+        result += `[${prefix}图片${sizeStr}${descStr}]${separator}`;
+      } else {
+        const nameStr = f.file_name ? ` "${f.file_name}"` : "";
+        const typeStr = f.mime_type ? ` (${f.mime_type})` : "";
+        result += `[${prefix}文件${nameStr}${typeStr}${sizeStr}${descStr}]${separator}`;
+      }
     } else {
       const nameStr = f.file_name ? ` "${f.file_name}"` : "";
       const typeStr = f.mime_type ? ` (${f.mime_type})` : "";
@@ -1186,21 +1206,86 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         messageConfig: getEffectiveMessageConfig(),
       });
 
-      // --- Download images for vision ---
+      // --- Download images for vision / OCR ---
       const hasVision = inferCapabilities(currentModel).includes("vision");
+      const ocrEnabled = !!config.imageOcrConfig?.enabled;
+      const needImages = hasVision || ocrEnabled;
       const imageDownloadTimeout =
         config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
       const [imageBuffers, replyImageBuffers] = await Promise.all([
-        hasVision && receivedFiles.length
+        needImages && receivedFiles.length
           ? downloadImagesForVision(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
           : [],
-        hasVision && replyFiles.length
+        needImages && replyFiles.length
           ? downloadImagesForVision(ctx.api, config.token, replyFiles, imageDownloadTimeout)
           : [],
       ]);
 
+      // --- Run OCR on downloaded images (only for current-message files, not replies) ---
+      const ocrDescriptions = new Map<number, string>();
+      if (ocrEnabled && config.imageOcrConfig && imageBuffers.length > 0) {
+        try {
+          const ocrResults = await describeImages({
+            botId: config.botId,
+            chatId,
+            userId,
+            images: imageBuffers.map((b) => ({ buffer: b.buffer, mimeType: b.mimeType })),
+            config: config.imageOcrConfig,
+            providers: config.providers,
+            activeProviderId: config.activeProviderId,
+            logger: {
+              debug: (o, m) => {
+                config.onLog?.({
+                  level: "debug",
+                  message: `[image-ocr] ${m ?? ""}`,
+                  meta: o as Record<string, unknown>,
+                });
+              },
+              info: (o, m) => {
+                config.onLog?.({
+                  level: "info",
+                  message: `[image-ocr] ${m ?? ""}`,
+                  meta: o as Record<string, unknown>,
+                });
+              },
+              warn: (o, m) => {
+                config.onLog?.({
+                  level: "warn",
+                  message: `[image-ocr] ${m ?? ""}`,
+                  meta: o as Record<string, unknown>,
+                });
+              },
+            },
+            onTokenUsage: config.onTokenUsage,
+          });
+          const skipCounts: Record<string, number> = {};
+          let ok = 0;
+          for (let i = 0; i < ocrResults.length; i++) {
+            const res = ocrResults[i]!;
+            const sourceIndex = imageBuffers[i]?.sourceIndex;
+            if (res.description && sourceIndex != null) {
+              ocrDescriptions.set(sourceIndex, res.description);
+              ok++;
+            } else if (res.skipReason) {
+              skipCounts[res.skipReason] = (skipCounts[res.skipReason] ?? 0) + 1;
+            }
+          }
+          config.onLog?.({
+            level: "info",
+            message: `[image-ocr] processed ${imageBuffers.length} image(s): ${ok} ok, skips=${JSON.stringify(skipCounts)}`,
+            meta: { chatId, ok, skipCounts },
+          });
+        } catch (err) {
+          config.onLog?.({
+            level: "warn",
+            message: `[image-ocr] describeImages threw: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId },
+          });
+        }
+      }
+
       // --- Build text description (always needed for history and non-vision) ---
-      const attachmentDesc = describeFiles(receivedFiles, "收到", "\n");
+      const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
 
       // --- Build reply-to context description ---
       let replyContextDesc = "";
@@ -1416,24 +1501,45 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               meta: { chatId, userId },
             });
           });
+          // Accumulate filtered text locally so catch can fall back without waiting
+          // for `await result.text` to drain fullStream (which can take seconds).
+          let accumulatedFiltered = "";
+          // Buffer leading whitespace so the first yield always carries a visible char.
+          // @grammyjs/stream's sendMessageDraft fails with "text must be non-empty" if
+          // cumulative draft text trims to empty (Telegram validates with trim).
+          let leadingBuffer = "";
+          let hasVisibleContent = false;
           async function* managedTextStream() {
-            for await (const chunk of result.textStream) {
-              const filtered = thinkFilter.push(chunk);
-              if (filtered) {
-                if (!streamStarted) {
-                  streamStarted = true;
-                  await ctx.deleteWaiting();
-                }
-                yield filtered;
-              }
-            }
-            const flushed = thinkFilter.flush();
-            if (flushed) {
+            const emit = async (out: string) => {
               if (!streamStarted) {
                 streamStarted = true;
                 await ctx.deleteWaiting();
               }
-              yield flushed;
+              accumulatedFiltered += out;
+            };
+            for await (const chunk of result.textStream) {
+              const filtered = thinkFilter.push(chunk);
+              if (!filtered) continue;
+              if (!hasVisibleContent) {
+                leadingBuffer += filtered;
+                if (/\S/.test(leadingBuffer)) {
+                  hasVisibleContent = true;
+                  await emit(leadingBuffer);
+                  yield leadingBuffer;
+                  leadingBuffer = "";
+                }
+                continue;
+              }
+              await emit(filtered);
+              yield filtered;
+            }
+            const flushed = thinkFilter.flush();
+            if (flushed) leadingBuffer += flushed;
+            if (leadingBuffer && /\S/.test(leadingBuffer)) {
+              hasVisibleContent = true;
+              await emit(leadingBuffer);
+              yield leadingBuffer;
+              leadingBuffer = "";
             }
           }
 
@@ -1441,13 +1547,38 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           try {
             sentMessages = await ctx.replyWithStream(managedTextStream());
           } catch (streamErr) {
-            // Reset streamStarted so the fallback safeReply path runs
-            streamStarted = false;
             config.onLog?.({
               level: "warn",
               message: `replyWithStream failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
               meta: { chatId, userId },
             });
+            // Immediate fallback using locally accumulated text so the user isn't left
+            // hanging while `await result.text` below drains fullStream (can be seconds).
+            // Downstream fallback at the streamStarted check is a no-op once we send here.
+            await ctx.deleteWaiting().catch(() => {});
+            const fallbackText = accumulatedFiltered.trim();
+            if (fallbackText) {
+              const replyMsgId = await safeReply(ctx, fallbackText);
+              if (replyMsgId) {
+                chatBotMsgIds.push(replyMsgId);
+                streamStarted = true;
+                config.onLog?.({
+                  level: "info",
+                  message: `replyWithStream fallback sent ${fallbackText.length} chars`,
+                  meta: { chatId, userId, replyMsgId },
+                });
+              } else {
+                streamStarted = false;
+                config.onLog?.({
+                  level: "error",
+                  message: "replyWithStream fallback: safeReply returned undefined",
+                  meta: { chatId, userId, textLength: fallbackText.length },
+                });
+              }
+            } else {
+              // Nothing accumulated yet — let downstream path (using await result.text) handle it.
+              streamStarted = false;
+            }
           }
 
           await formatSentMessagesHtml(ctx.api, sentMessages);

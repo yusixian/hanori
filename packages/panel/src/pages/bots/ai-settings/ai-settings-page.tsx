@@ -8,6 +8,7 @@ import type {
   ArtworkToolsConfig,
   BotMemoryConfig,
   ConversationConfig,
+  ImageOcrConfig,
   MemoryConfig,
   MessageConfig,
   SummaryConfigStored,
@@ -44,6 +45,7 @@ import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { McpServersSection } from "./sections/mcp-servers-section";
 import { SummaryConfigSection } from "./sections/summary-config-section";
+import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
 import { WebToolsSection } from "./sections/web-tools-section";
 import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
 import type { StatusMessage } from "./types";
@@ -68,6 +70,9 @@ export function BotAiSettingsPage() {
     defaultMaxMessages: 2000,
     defaultCooldownSeconds: 300,
   });
+  const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>({
+    enabled: false,
+  });
 
   const loadConfig = useCallback(async () => {
     if (!botId) return;
@@ -80,6 +85,9 @@ export function BotAiSettingsPage() {
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
         if (json.data.summaryConfig) {
           setSummaryConfig(json.data.summaryConfig);
+        }
+        if (json.data.imageOcrConfig) {
+          setImageOcrConfig(json.data.imageOcrConfig);
         }
       }
     } catch {
@@ -132,6 +140,7 @@ export function BotAiSettingsPage() {
           privateChatWhitelist: config.privateChatWhitelist,
           mcpServerIds: config.mcpServerIds,
           summaryConfig,
+          imageOcrConfig,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -477,6 +486,13 @@ export function BotAiSettingsPage() {
         botId={botId!}
         config={summaryConfig}
         onUpdate={(updates) => setSummaryConfig((prev) => ({ ...prev, ...updates }))}
+      />
+
+      <ImageOcrConfigSection
+        config={imageOcrConfig}
+        providers={config.providers}
+        activeProviderId={config.activeProviderId}
+        onUpdate={(updates) => setImageOcrConfig((prev) => ({ ...prev, ...updates }))}
       />
     </div>
   );

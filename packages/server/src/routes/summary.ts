@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Database } from "@cos-tool-bot/database";
-import { chatSummaries } from "@cos-tool-bot/database";
+import { bots, chatSummaries } from "@cos-tool-bot/database";
 import type { SummaryMode } from "@cos-tool-bot/shared";
 import type { ChatSummaryService } from "../services/chat-summary-service.js";
 import type { SummaryConfigService } from "../services/summary-config-service.js";
@@ -75,15 +75,21 @@ export function summaryRoutes(
   }
 
   return new Hono()
-    .get("/:botId/summary/defaults", (c) => {
+    .get("/:botId/summary/defaults", zValidator("param", botIdParamSchema), async (c) => {
+      const { botId } = c.req.valid("param");
+      const [row] = await db
+        .select({ aiConfig: bots.aiConfig })
+        .from(bots)
+        .where(eq(bots.id, botId));
+      const sc = row?.aiConfig?.summaryConfig;
       return c.json({
         ok: true as const,
         data: {
-          systemPrompt: DEFAULT_SUMMARY_SYSTEM_PROMPT,
-          windowHours: DEFAULT_WINDOW_HOURS,
-          maxMessages: DEFAULT_MAX_MESSAGES,
-          cooldownSeconds: DEFAULT_COOLDOWN_SECONDS,
-          timezone: DEFAULT_TIMEZONE,
+          systemPrompt: sc?.systemPrompt ?? DEFAULT_SUMMARY_SYSTEM_PROMPT,
+          windowHours: sc?.defaultWindowHours ?? DEFAULT_WINDOW_HOURS,
+          maxMessages: sc?.defaultMaxMessages ?? DEFAULT_MAX_MESSAGES,
+          cooldownSeconds: sc?.defaultCooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS,
+          timezone: sc?.timezone ?? DEFAULT_TIMEZONE,
         },
       });
     })

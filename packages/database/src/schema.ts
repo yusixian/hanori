@@ -205,6 +205,16 @@ interface AiConfigJson {
     roleFilter?: Array<"user" | "context" | "assistant">;
     timezone?: string;
   };
+  imageOcrConfig?: {
+    enabled: boolean;
+    providerId?: string;
+    modelId?: string;
+    systemPrompt?: string;
+    maxImagesPerMessage?: number;
+    cooldownSeconds?: number;
+    maxDescriptionLength?: number;
+    timeoutMs?: number;
+  };
 }
 
 export const settings = pgTable("settings", {

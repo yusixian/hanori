@@ -198,6 +198,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     timeoutConfig: migrated.timeoutConfig,
     mcpServerIds: migrated.mcpServerIds,
     summaryConfig: migrated.summaryConfig,
+    imageOcrConfig: migrated.imageOcrConfig,
   };
 }
 
@@ -409,6 +410,18 @@ const aiConfigSchema = z
         systemPrompt: z.string().optional(),
         roleFilter: z.array(z.enum(["user", "context", "assistant"])).optional(),
         timezone: z.string().optional(),
+      })
+      .optional(),
+    imageOcrConfig: z
+      .object({
+        enabled: z.boolean(),
+        providerId: z.string().optional(),
+        modelId: z.string().optional(),
+        systemPrompt: z.string().optional(),
+        maxImagesPerMessage: z.number().int().min(0).optional(),
+        cooldownSeconds: z.number().int().min(0).optional(),
+        maxDescriptionLength: z.number().int().min(10).optional(),
+        timeoutMs: z.number().int().min(1000).optional(),
       })
       .optional(),
     providers: z
@@ -857,6 +870,7 @@ export function botsRoutes(
         privateChatWhitelist: body.privateChatWhitelist,
         mcpServerIds: body.mcpServerIds,
         summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
+        imageOcrConfig: body.imageOcrConfig ?? bot.aiConfig?.imageOcrConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

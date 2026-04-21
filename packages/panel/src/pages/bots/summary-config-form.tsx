@@ -9,6 +9,7 @@ import type {
 } from "@cos-tool-bot/shared";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router";
 
 interface DefaultsData {
   systemPrompt: string;
@@ -321,6 +322,13 @@ export function SummaryConfigForm({
           onChange={(e) => setCustomPrompt(e.target.value)}
           rows={4}
         />
+        <p className="text-muted-foreground text-xs">
+          全局默认 prompt 可在{" "}
+          <Link to={`/bots/${botId}/ai`} className="underline hover:opacity-80">
+            AI 设置 → 群聊总结
+          </Link>{" "}
+          修改。
+        </p>
       </div>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
