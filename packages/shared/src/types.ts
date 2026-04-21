@@ -575,6 +575,7 @@ export interface AiConfigPublic {
   privateChatWhitelist?: number[];
   timeoutConfig?: TimeoutConfig;
   mcpServerIds?: number[];
+  summaryConfig?: SummaryConfigStored;
 }
 
 export type CommandEntity = {
