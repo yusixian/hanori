@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { assemblePromptPreview } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
@@ -5,6 +6,7 @@ import { IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
   AiConfigStored,
+  AiProviderEntry,
   BotPlatform,
   BotWithStatus,
   EmailEventType,
@@ -18,8 +20,6 @@ import type { BotPool } from "../services/bot-pool.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
-import { randomUUID } from "node:crypto";
-import type { AiProviderEntry } from "@cos-tool-bot/shared";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";

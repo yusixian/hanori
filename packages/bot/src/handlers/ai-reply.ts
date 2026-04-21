@@ -1351,7 +1351,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       // In segment mode, multiMessageUsed tracks whether AI used the multi_message tool.
       // In stream mode, multi_message is deleted so this stays false.
       let multiMessageUsed = false;
-      const modelEntry = getModelEntry(currentModel);
+      const currentProviderModels = currentProviderRuntime.models ?? config.models;
+      const modelEntry = currentProviderModels?.find((m) => m.id === currentModel);
       const result = streamText({
         model: currentProviderFactory(currentModel),
         messages,
@@ -1361,7 +1362,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         abortSignal: perStepAbort.signal,
         temperature: modelEntry?.temperature,
         maxOutputTokens: modelEntry?.maxTokens,
-        providerOptions: buildProviderOptions(modelEntry),
+        providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           perStepAbort.reset();
