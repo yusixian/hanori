@@ -18,6 +18,8 @@ export interface ModelEntry {
   capabilities?: ModelCapability[];
   temperature?: number;
   maxTokens?: number;
+  thinking?: "enabled" | "disabled";
+  thinkingBudget?: number;
 }
 
 // Memory system types

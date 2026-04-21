@@ -47,6 +47,9 @@ importers:
       '@grammyjs/auto-retry':
         specifier: ^2.0.2
         version: 2.0.2(grammy@1.41.0)
+      '@grammyjs/runner':
+        specifier: ^2.0.3
+        version: 2.0.3(grammy@1.41.0)
       '@grammyjs/stream':
         specifier: ^1.0.0
         version: 1.0.0(grammy@1.41.0)
@@ -129,7 +132,7 @@ importers:
         version: 2.18.0(@babel/core@7.29.0)(@babel/template@7.28.6)(@types/react@19.2.14)(react@19.2.4)
       lucide-react:
         specifier: latest
-        version: 0.577.0(react@19.2.4)
+        version: 1.8.0(react@19.2.4)
       react:
         specifier: ^19
         version: 19.2.4
@@ -200,6 +203,9 @@ importers:
       '@cos-tool-bot/shared':
         specifier: workspace:*
         version: link:../shared
+      '@grammyjs/runner':
+        specifier: ^2.0.3
+        version: 2.0.3(grammy@1.41.0)
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.9(hono@4.12.1)
@@ -1176,6 +1182,12 @@ packages:
     engines: {node: '>=12.20.0 || >=14.13.1'}
     peerDependencies:
       grammy: ^1.10.0
+
+  '@grammyjs/runner@2.0.3':
+    resolution: {integrity: sha512-nckmTs1dPWfVQteK9cxqxzE+0m1VRvluLWB8UgFzsjg62w3qthPJt0TYtJBEdG7OedvfQq4vnFAyE6iaMkR42A==}
+    engines: {node: '>=12.20.0 || >=14.13.1'}
+    peerDependencies:
+      grammy: ^1.13.1
 
   '@grammyjs/stream@1.0.0':
     resolution: {integrity: sha512-2VClaPdVhrl65vluYwhaKZitUac6Avfp6FUoFmaJVxxgTo8yDSYXncbbdISS9SRA3/edn2iI3Od+c/4gctQBRQ==}
@@ -3392,8 +3404,8 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
-  lucide-react@0.577.0:
-    resolution: {integrity: sha512-4LjoFv2eEPwYDPg/CUdBJQSDfPyzXCRrVW1X7jrx/trgxnxkHFjnVZINbzvzxjN70dxychOfg+FTYwBiS3pQ5A==}
+  lucide-react@1.8.0:
+    resolution: {integrity: sha512-WuvlsjngSk7TnTBJ1hsCy3ql9V9VOdcPkd3PKcSmM34vJD8KG6molxz7m7zbYFgICwsanQWmJ13JlYs4Zp7Arw==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
@@ -5369,6 +5381,11 @@ snapshots:
       grammy: 1.41.0
     transitivePeerDependencies:
       - supports-color
+
+  '@grammyjs/runner@2.0.3(grammy@1.41.0)':
+    dependencies:
+      abort-controller: 3.0.0
+      grammy: 1.41.0
 
   '@grammyjs/stream@1.0.0(grammy@1.41.0)':
     dependencies:
@@ -7429,7 +7446,7 @@ snapshots:
     dependencies:
       yallist: 3.1.1
 
-  lucide-react@0.577.0(react@19.2.4):
+  lucide-react@1.8.0(react@19.2.4):
     dependencies:
       react: 19.2.4
 

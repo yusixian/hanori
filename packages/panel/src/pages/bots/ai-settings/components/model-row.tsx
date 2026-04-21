@@ -94,6 +94,40 @@ export function ModelRow({
               />
             </div>
           </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <label className="text-xs">Thinking</label>
+              <select
+                value={entry.thinking ?? ""}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onUpdate({
+                    thinking: val === "enabled" || val === "disabled" ? val : undefined,
+                  });
+                }}
+                className="border-input bg-background h-7 w-full rounded border px-2 text-xs"
+              >
+                <option value="">Default</option>
+                <option value="enabled">Enabled</option>
+                <option value="disabled">Disabled</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs">Thinking Budget</label>
+              <Input
+                type="number"
+                value={entry.thinkingBudget ?? ""}
+                onChange={(e) =>
+                  onUpdate({
+                    thinkingBudget: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+                placeholder="default"
+                className="h-7 text-xs"
+                disabled={!entry.thinking}
+              />
+            </div>
+          </div>
           <div className="space-y-1">
             <label className="text-xs">Capabilities</label>
             <div className="flex flex-wrap gap-1">

@@ -32,7 +32,7 @@ import {
 } from "@cos-tool-bot/shared";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
+import type { JSONValue, LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { Message, User } from "grammy/types";
@@ -504,8 +504,33 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     userId?: number,
   ) => Promise<DirectGenerateResult>;
   fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
+  isAiEnabled: () => boolean;
+  setAiEnabled: (enabled: boolean) => number;
 } {
   const cooldownMap = new Map<number, number>();
+
+  // Bot-wide AI kill switch (in-memory). /stop flips aiDisabled=true and aborts
+  // all in-flight streamText calls via the registered controllers.
+  let aiDisabled = false;
+  const activeAbortControllers = new Set<AbortController>();
+
+  function isAiEnabled(): boolean {
+    return !aiDisabled;
+  }
+
+  function setAiEnabled(enabled: boolean): number {
+    if (enabled) {
+      aiDisabled = false;
+      return 0;
+    }
+    aiDisabled = true;
+    const toAbort = [...activeAbortControllers];
+    activeAbortControllers.clear();
+    for (const c of toAbort) {
+      c.abort(new Error("AI disabled by /stop"));
+    }
+    return toAbort.length;
+  }
 
   // Per-chat model override (in-memory fallback)
   const chatModelMap = new Map<number, string>();
@@ -683,8 +708,33 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     });
   };
 
+  function getModelEntry(modelId: string): ModelEntry | undefined {
+    return config.models?.find((m) => m.id === modelId);
+  }
+
+  function buildProviderOptions(
+    entry?: ModelEntry,
+  ): Record<string, Record<string, JSONValue>> | undefined {
+    if (!entry?.thinking) return undefined;
+    const enabled = entry.thinking === "enabled";
+    if (config.providerFormat === "gemini") {
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingBudget: enabled ? (entry.thinkingBudget ?? -1) : 0,
+            includeThoughts: enabled,
+          },
+        },
+      };
+    }
+    const thinking: Record<string, JSONValue> = { type: entry.thinking };
+    if (entry.thinkingBudget != null) thinking.budget_tokens = entry.thinkingBudget;
+    return { custom: { thinking } };
+  }
+
   function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
     const modelId = chatId != null ? getModelForChat(chatId) : config.model;
+    const modelEntry = getModelEntry(modelId);
     // Telegram: private chat IDs are positive, group/supergroup IDs are negative
     const imageGenerationAllowed =
       chatId != null
@@ -697,6 +747,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     return {
       model: provider(modelId),
       modelId,
+      temperature: modelEntry?.temperature,
+      maxTokens: modelEntry?.maxTokens,
+      providerOptions: buildProviderOptions(modelEntry),
+      isAiDisabled: () => aiDisabled,
+      registerAbortController: (c) => activeAbortControllers.add(c),
+      unregisterAbortController: (c) => activeAbortControllers.delete(c),
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
       conversationConfig: config.conversationConfig,
@@ -816,6 +872,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       return next();
     }
 
+    // Global kill switch — /stop flips this on; AI replies suppressed until /resume
+    if (aiDisabled) return next();
+
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
 
@@ -869,6 +928,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     const useConversation =
       config.conversation && (isPrivate ? conversationCfg.enabled : groupConversationEnabled);
 
+    // Hoisted so the outer finally can unregister even on early errors.
+    let manualAbort: AbortController | null = null;
     try {
       await ctx.replyWithChatAction("typing");
 
@@ -1168,15 +1229,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       let stepCounter = 0;
       const requestCache = createRequestCache();
       const wrappedTools = wrapToolsWithStatus(wrapToolsWithCache(allTools, requestCache), ctx);
+      manualAbort = new AbortController();
+      activeAbortControllers.add(manualAbort);
       const perStepAbort = createPerStepAbort(
         config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
-        AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+        AbortSignal.any([
+          AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+          manualAbort.signal,
+        ]),
       );
 
       // ─── streamText (ai v6 API) ───
       // In segment mode, multiMessageUsed tracks whether AI used the multi_message tool.
       // In stream mode, multi_message is deleted so this stays false.
       let multiMessageUsed = false;
+      const modelEntry = getModelEntry(currentModel);
       const result = streamText({
         model: provider(currentModel),
         messages,
@@ -1184,6 +1251,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         stopWhen: stepCountIs(maxSteps),
         toolChoice,
         abortSignal: perStepAbort.signal,
+        temperature: modelEntry?.temperature,
+        maxOutputTokens: modelEntry?.maxTokens,
+        providerOptions: buildProviderOptions(modelEntry),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           perStepAbort.reset();
@@ -1286,6 +1356,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         perStepAbort.cleanup();
       }
 
+      // If /stop fired while streamText was running, drop all pending sends + saves.
+      if (aiDisabled || manualAbort?.signal.aborted) {
+        config.onLog?.({
+          level: "info",
+          message: "AI disabled mid-reply, dropping pending sends",
+          meta: { chatId, userId },
+        });
+        await ctx.deleteWaiting().catch(() => {});
+        return;
+      }
+
       const rawText = (await result.text).trim();
       const text = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
         config.onLog?.({
@@ -1314,9 +1395,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           const threshold = msgCfg.autoSplitThreshold ?? 0;
           const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
           for (const [i, chunk] of chunks.entries()) {
+            if (aiDisabled || manualAbort?.signal.aborted) break;
             if (i > 0) {
-              await ctx.api.sendChatAction(chatId, "typing");
+              await ctx.api.sendChatAction(chatId, "typing").catch(() => {});
               await sleep(msgCfg.splitDelayMs ?? 800);
+              if (aiDisabled || manualAbort?.signal.aborted) break;
             }
             const replyMsgId = await safeReply(ctx, chunk);
             if (replyMsgId) chatBotMsgIds.push(replyMsgId);
@@ -1492,6 +1575,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       } catch {
         await ctx.directlyReply(errorReply).catch(() => {});
       }
+    } finally {
+      if (manualAbort) activeAbortControllers.delete(manualAbort);
     }
   };
 
@@ -1552,5 +1637,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     canUseImageGeneration,
     directGenerate: buildDirectGenerate(),
     fireTimerEvent: onTimerFired,
+    isAiEnabled,
+    setAiEnabled,
   };
 }

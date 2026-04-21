@@ -368,6 +368,8 @@ const aiConfigSchema = z
             .optional(),
           temperature: z.number().min(0).max(2).optional(),
           maxTokens: z.number().positive().optional(),
+          thinking: z.enum(["enabled", "disabled"]).optional(),
+          thinkingBudget: z.number().int().optional(),
         }),
       )
       .optional(),

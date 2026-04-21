@@ -6,6 +6,7 @@ import type {
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
+import { sequentialize } from "@grammyjs/runner";
 import { stream } from "@grammyjs/stream";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
@@ -21,8 +22,10 @@ import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
 import { createImgCfgCommand } from "./commands/imgcfg.js";
 import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRestartCommand } from "./commands/restart.js";
+import { createResumeCommand } from "./commands/resume.js";
 import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
+import { createStopCommand } from "./commands/stop.js";
 import {
   createTimersCommand,
   isTimerCancelCallback,
@@ -88,6 +91,16 @@ export function createBot(config: BotConfig) {
 
   const authGuard = createAuthGuard(adminChatIds);
 
+  // Serialize updates per chat so streamText calls for the same chat don't race,
+  // but allow different chats to run concurrently. Kill-switch commands (/stop,
+  // /resume) bypass the constraint so they can fire even when the chat's queue is
+  // blocked by a stuck AI reply.
+  bot.use(
+    sequentialize((ctx) => {
+      if (ctx.hasCommand(["stop", "resume"])) return undefined;
+      return ctx.chat?.id.toString();
+    }),
+  );
   bot.use(stream());
   bot.use(createLogMiddleware(config.onLog));
 
@@ -116,6 +129,7 @@ export function createBot(config: BotConfig) {
   let aiCanUseImageGeneration:
     | ReturnType<typeof createAiReplyHandler>["canUseImageGeneration"]
     | undefined;
+  let aiSetAiEnabled: ReturnType<typeof createAiReplyHandler>["setAiEnabled"] | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -155,6 +169,7 @@ export function createBot(config: BotConfig) {
     aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
+    aiSetAiEnabled = result.setAiEnabled;
 
     // Register bot handlers with server for timer recovery and external cancel
     if (config.timerCallbacks?.onBotReady) {
@@ -174,6 +189,10 @@ export function createBot(config: BotConfig) {
   bot.command("status", authGuard, createStatusCommand(statusConfig, aiState));
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
   bot.command("backup", authGuard, createBackupCommand(config.onBackup));
+  if (aiSetAiEnabled) {
+    bot.command("stop", authGuard, createStopCommand(aiSetAiEnabled));
+    bot.command("resume", authGuard, createResumeCommand(aiSetAiEnabled));
+  }
   if (config.mcpCallbacks) {
     bot.command("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
   }

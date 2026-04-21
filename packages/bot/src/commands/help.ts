@@ -13,6 +13,8 @@ const commands = [
   { command: "clear", description: "(admin) 清除当前对话历史" },
   { command: "restart", description: "(admin) 重启服务" },
   { command: "backup", description: "(admin) 创建数据库备份" },
+  { command: "stop", description: "(admin) 紧急停用 AI 回复并中断正在进行的调用" },
+  { command: "resume", description: "(admin) 恢复 AI 回复" },
   { command: "clearreceived", description: "(admin) 清理收到的文件缓存" },
   { command: "model", description: "查看/切换 AI 模型" },
   { command: "replymode", description: "(admin) 切换回复模式 (stream/segment)" },

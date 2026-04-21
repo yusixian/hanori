@@ -24,7 +24,7 @@ import {
   DEFAULT_TIMEOUT_CONFIG,
   isStreamReplyMode,
 } from "@cos-tool-bot/shared";
-import type { LanguageModel, Tool } from "ai";
+import type { JSONValue, LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
 import {
@@ -56,6 +56,12 @@ const chatLocks = new Map<number, Promise<void>>();
 export interface ContinueChatConfig {
   model: LanguageModel;
   modelId: string;
+  temperature?: number;
+  maxTokens?: number;
+  providerOptions?: Record<string, Record<string, JSONValue>>;
+  isAiDisabled?: () => boolean;
+  registerAbortController?: (c: AbortController) => void;
+  unregisterAbortController?: (c: AbortController) => void;
   systemPrompt: string;
   behavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
@@ -136,12 +142,23 @@ async function doContinueChat(
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
 
+  // Global AI kill switch check — skip entirely if /stop is active
+  if (config.isAiDisabled?.()) {
+    config.onLog?.({
+      level: "info",
+      message: "continueChat skipped — AI disabled",
+      meta: { chatId },
+    });
+    return;
+  }
+
   config.onLog?.({
     level: "info",
     message: `continueChat triggered: ${eventDescription}`,
     meta: { chatId, userId: event.userId },
   });
 
+  let manualAbort: AbortController | null = null;
   try {
     // Build messages using ContextAssembler
     const messages = await assembleContinueChatContext({
@@ -311,9 +328,14 @@ async function doContinueChat(
 
     const startTime = Date.now();
     const requestCache = createRequestCache();
+    manualAbort = new AbortController();
+    config.registerAbortController?.(manualAbort);
     const perStepAbort = createPerStepAbort(
       config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
-      AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+      AbortSignal.any([
+        AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+        manualAbort.signal,
+      ]),
     );
 
     // ─── streamText (ai v6 API) ───
@@ -325,6 +347,9 @@ async function doContinueChat(
       stopWhen: stepCountIs(5),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,
+      temperature: config.temperature,
+      maxOutputTokens: config.maxTokens,
+      providerOptions: config.providerOptions,
       onStepFinish: ({ toolCalls }) => {
         perStepAbort.reset();
         if (!isStreamMode && toolCalls?.some((tc) => tc.toolName === "multi_message")) {
@@ -372,6 +397,16 @@ async function doContinueChat(
       perStepAbort.cleanup();
     }
 
+    // If /stop fired while streamText was running, drop all pending sends + saves.
+    if (config.isAiDisabled?.() || manualAbort.signal.aborted) {
+      config.onLog?.({
+        level: "info",
+        message: "continueChat aborted mid-reply, dropping pending sends",
+        meta: { chatId },
+      });
+      return;
+    }
+
     const text = stripThinkingContent((await result.text).trim(), ({ pattern, strippedLength }) => {
       config.onLog?.({
         level: "info",
@@ -386,9 +421,11 @@ async function doContinueChat(
       const threshold = msgCfg.autoSplitThreshold ?? 0;
       const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
       for (const [i, chunk] of chunks.entries()) {
+        if (config.isAiDisabled?.() || manualAbort.signal.aborted) break;
         if (i > 0) {
-          await api.sendChatAction(chatId, "typing");
+          await api.sendChatAction(chatId, "typing").catch(() => {});
           await sleep(msgCfg.splitDelayMs ?? 800);
+          if (config.isAiDisabled?.() || manualAbort.signal.aborted) break;
         }
         try {
           const html = markdownToTelegramHtml(chunk);
@@ -480,5 +517,7 @@ async function doContinueChat(
       message: `continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
       meta: { chatId },
     });
+  } finally {
+    if (manualAbort) config.unregisterAbortController?.(manualAbort);
   }
 }

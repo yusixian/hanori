@@ -5,6 +5,7 @@ import type {
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
+import { run, type RunnerHandle } from "@grammyjs/runner";
 import type {
   BotStatus,
   ConversationCallbacks,
@@ -33,6 +34,7 @@ interface BotManagerOptions {
 export class BotManager implements IBotManager {
   readonly botId: string;
   private bot: ReturnType<typeof createBot> | null = null;
+  private runnerHandle: RunnerHandle | null = null;
   private botConfig: BotConfig;
   private dbLogger: DbLogger;
   private _status: BotStatus = "stopped";
@@ -77,20 +79,32 @@ export class BotManager implements IBotManager {
     this._status = "running";
     this.startedAt = Date.now();
 
-    this.bot
-      .start({
-        onStart: () => {
-          this.dbLogger.info("Bot started").catch(() => {});
-        },
-      })
-      .catch((err) => {
+    // Use @grammyjs/runner for concurrent update processing. Default bot.start()
+    // is sequential, which means a stuck AI reply would block /stop and every
+    // other command for up to aiReplyMs (5 min).
+    try {
+      const handle = run(this.bot);
+      this.runnerHandle = handle;
+      await this.dbLogger.info("Bot started");
+
+      handle.task()?.catch((err) => {
         this._status = "stopped";
         this.startedAt = null;
         this.bot = null;
+        this.runnerHandle = null;
         this.dbLogger
           .error(`Bot crashed: ${err instanceof Error ? err.message : String(err)}`)
           .catch(() => {});
       });
+    } catch (err) {
+      this._status = "stopped";
+      this.startedAt = null;
+      this.bot = null;
+      this.runnerHandle = null;
+      await this.dbLogger.error(
+        `Bot failed to start: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   async stop() {
@@ -101,7 +115,10 @@ export class BotManager implements IBotManager {
 
     this._status = "stopped";
     this.startedAt = null;
-    await this.bot.stop();
+    if (this.runnerHandle) {
+      await this.runnerHandle.stop();
+      this.runnerHandle = null;
+    }
     this.bot = null;
     await this.dbLogger.info("Bot stopped");
   }

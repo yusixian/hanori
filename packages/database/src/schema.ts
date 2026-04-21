@@ -146,6 +146,8 @@ interface AiConfigJson {
     >;
     temperature?: number;
     maxTokens?: number;
+    thinking?: "enabled" | "disabled";
+    thinkingBudget?: number;
   }>;
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: {

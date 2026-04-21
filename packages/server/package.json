@@ -23,6 +23,7 @@
     "@cos-tool-bot/bot": "workspace:*",
     "@cos-tool-bot/database": "workspace:*",
     "@cos-tool-bot/shared": "workspace:*",
+    "@grammyjs/runner": "^2.0.3",
     "@hono/node-server": "^1.14.1",
     "@hono/zod-validator": "^0.7.6",
     "@modelcontextprotocol/sdk": "^1.27.1",

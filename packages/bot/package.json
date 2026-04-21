@@ -19,6 +19,7 @@
     "@ai-sdk/openai-compatible": "^2.0.0",
     "@cos-tool-bot/shared": "workspace:*",
     "@grammyjs/auto-retry": "^2.0.2",
+    "@grammyjs/runner": "^2.0.3",
     "@grammyjs/stream": "^1.0.0",
     "ai": "^6.0.0",
     "gpt-tokenizer": "^3.4.0",

@@ -28,7 +28,8 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
           const m = config.models[i]!;
           const active = m.id === currentModel ? " ✅" : "";
           const label = m.label ? ` (${m.label})` : "";
-          lines.push(`${i + 1}. \`${m.id}\`${label}${active}`);
+          const thinkTag = m.thinking === "enabled" ? " 🧠" : "";
+          lines.push(`${i + 1}. \`${m.id}\`${label}${thinkTag}${active}`);
         }
         lines.push("");
         lines.push("用法: /model <编号或名称> 切换模型");
