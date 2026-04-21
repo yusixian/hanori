@@ -80,9 +80,9 @@ export class BotPool {
 
   setRssFeedService(service: RssFeedService) {
     this.rssFeedService = service;
-    service.setDigestTrigger((botId, chatId, eventDescription) => {
-      this.fireRssDigest(botId, chatId, eventDescription);
-    });
+    service.setDigestTrigger((botId, chatId, eventDescription) =>
+      this.fireRssDigest(botId, chatId, eventDescription),
+    );
   }
 
   getConversationStore(): ConversationStore {
@@ -737,16 +737,17 @@ export class BotPool {
     };
   }
 
-  /** Fire RSS digest via bot's continueChat. */
-  private fireRssDigest(botId: string, chatId: number, eventDescription: string) {
+  /** Fire RSS digest via bot's continueChat. Returns true if handler existed and was invoked. */
+  private fireRssDigest(botId: string, chatId: number, eventDescription: string): boolean {
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       // Reuse fireTimer path — it calls continueChat with the event description
       handlers.fireTimer(chatId, `rss_digest_${Date.now()}`, eventDescription);
       this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
-    } else {
-      this.logger.warn({ botId, chatId }, "No handler for bot, RSS digest cannot trigger");
+      return true;
     }
+    this.logger.warn({ botId, chatId }, "No handler for bot, RSS digest cannot trigger");
+    return false;
   }
 
   /** Fire a recovered timer by triggering the bot's continueChat. */

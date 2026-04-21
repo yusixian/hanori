@@ -20,7 +20,7 @@ const MAX_CONCURRENT_FETCHES = 5;
 const MAX_SUMMARY_LENGTH = 500;
 const CLEANUP_DAYS = 30;
 
-export type RssDigestTrigger = (botId: string, chatId: number, eventDescription: string) => void;
+export type RssDigestTrigger = (botId: string, chatId: number, eventDescription: string) => boolean;
 
 export class RssFeedService {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -273,9 +273,7 @@ export class RssFeedService {
     // Apply collection-level total cap
     const maxDisplay = collection.maxDigestItems ?? 30;
 
-    // Only update lastDigestAt to prevent duplicate triggers from concurrent checkDigests.
-    // Items are NOT marked as digested here — the AI bot calls mark_rss_read after completing
-    // the summary, ensuring no data is lost if the downstream processing fails.
+    // Update lastDigestAt first to prevent duplicate triggers from concurrent checkDigests.
     await this.db
       .update(rssCollections)
       .set({ lastDigestAt: new Date() })
@@ -287,8 +285,15 @@ export class RssFeedService {
       maxDisplay,
       truncatedFeeds,
     );
-    this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
-    return true;
+    const fired = this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
+
+    // Auto-mark all fetched items as digested once digest dispatched to bot handler.
+    // Previously relied on AI calling mark_rss_read tool, but AI sometimes skipped it,
+    // leaving items stuck as unread in the panel even though summary had been sent.
+    if (fired) {
+      await this.markItemsDigested(rawItems.map((i) => i.id));
+    }
+    return fired;
   }
 
   // ── CRUD ──
@@ -506,5 +511,13 @@ export class RssFeedService {
   async unmarkItemsDigested(itemIds: number[]) {
     if (itemIds.length === 0) return;
     await this.db.update(rssItems).set({ digestedAt: null }).where(inArray(rssItems.id, itemIds));
+  }
+
+  async markItemsDigested(itemIds: number[]) {
+    if (itemIds.length === 0) return;
+    await this.db
+      .update(rssItems)
+      .set({ digestedAt: new Date() })
+      .where(and(inArray(rssItems.id, itemIds), isNull(rssItems.digestedAt)));
   }
 }
