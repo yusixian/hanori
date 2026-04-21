@@ -10,6 +10,7 @@ import type {
   ConversationConfig,
   MemoryConfig,
   MessageConfig,
+  SummaryConfigStored,
   TimeoutConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
@@ -42,6 +43,7 @@ import { ProvidersSection } from "./sections/providers-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { McpServersSection } from "./sections/mcp-servers-section";
+import { SummaryConfigSection } from "./sections/summary-config-section";
 import { WebToolsSection } from "./sections/web-tools-section";
 import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
 import type { StatusMessage } from "./types";
@@ -60,6 +62,12 @@ export function BotAiSettingsPage() {
   const [stickerPacksText, setStickerPacksText] = useState("");
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>({
+    enabled: false,
+    defaultWindowHours: 24,
+    defaultMaxMessages: 2000,
+    defaultCooldownSeconds: 300,
+  });
 
   const loadConfig = useCallback(async () => {
     if (!botId) return;
@@ -70,6 +78,9 @@ export function BotAiSettingsPage() {
         setConfig(json.data);
         setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
         setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
+        if (json.data.summaryConfig) {
+          setSummaryConfig(json.data.summaryConfig);
+        }
       }
     } catch {
       setMessage({ type: "error", text: "Failed to load AI config" });
@@ -120,6 +131,7 @@ export function BotAiSettingsPage() {
             : undefined,
           privateChatWhitelist: config.privateChatWhitelist,
           mcpServerIds: config.mcpServerIds,
+          summaryConfig,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -459,6 +471,12 @@ export function BotAiSettingsPage() {
         onAdd={addGroupOverride}
         onUpdate={updateOverride}
         onRemove={removeOverride}
+      />
+
+      <SummaryConfigSection
+        botId={botId!}
+        config={summaryConfig}
+        onUpdate={(updates) => setSummaryConfig((prev) => ({ ...prev, ...updates }))}
       />
     </div>
   );

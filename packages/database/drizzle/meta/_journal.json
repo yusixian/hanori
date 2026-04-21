@@ -169,6 +169,13 @@
       "when": 1776751436996,
       "tag": "0023_rare_robbie_robertson",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1776778506236,
+      "tag": "0024_even_johnny_storm",
+      "breakpoints": true
     }
   ]
 }

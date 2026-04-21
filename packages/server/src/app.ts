@@ -15,13 +15,16 @@ import { generationRoutes } from "./routes/generations.js";
 import { apiTestRoutes } from "./routes/api-test.js";
 import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { rssRoutes } from "./routes/rss.js";
+import { summaryRoutes } from "./routes/summary.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
+import type { ChatSummaryService } from "./services/chat-summary-service.js";
 import type { McpClientManager } from "./services/mcp-client-manager.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
 import type { RssFeedService } from "./services/rss-feed-service.js";
+import type { SummaryConfigService } from "./services/summary-config-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
 
 interface AppOptions {
@@ -35,6 +38,8 @@ interface AppOptions {
   timerRegistry: TimerRegistry;
   rssFeedService: RssFeedService;
   mcpClientManager: McpClientManager;
+  summaryService: ChatSummaryService;
+  summaryConfigService: SummaryConfigService;
 }
 
 export function createApp(options: AppOptions) {
@@ -49,6 +54,8 @@ export function createApp(options: AppOptions) {
     timerRegistry,
     rssFeedService,
     mcpClientManager,
+    summaryService,
+    summaryConfigService,
   } = options;
 
   const app = new Hono()
@@ -68,6 +75,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db))
     .route("/api/bots", rssRoutes(rssFeedService))
+    .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .use("/api/logs/*", jwtAuth(jwtSecret))
     .route("/api/logs", logRoutes(db))
     .use("/api/backup/*", jwtAuth(jwtSecret))

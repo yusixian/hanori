@@ -23,6 +23,7 @@ const commands = [
   { command: "imgcfg", description: "(admin) 查看/修改生图配置，发送 /imgcfg help 查看参数说明" },
   { command: "timers", description: "(admin) 查看/管理活跃定时器" },
   { command: "mcp", description: "(admin) 查看/管理 MCP 服务器" },
+  { command: "summary", description: "群聊总结（/summary help 查看用法）" },
 ];
 
 export { commands };

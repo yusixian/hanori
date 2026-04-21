@@ -193,6 +193,18 @@ interface AiConfigJson {
     pixaiTaskMs?: number;
   };
   mcpServerIds?: number[];
+  summaryConfig?: {
+    enabled: boolean;
+    defaultWindowHours: number;
+    defaultMaxMessages: number;
+    defaultCooldownSeconds: number;
+    globalScheduleHour?: number;
+    globalScheduleMinute?: number;
+    modelId?: string;
+    systemPrompt?: string;
+    roleFilter?: Array<"user" | "context" | "assistant">;
+    timezone?: string;
+  };
 }
 
 export const settings = pgTable("settings", {
@@ -520,5 +532,59 @@ export const tokenUsage = pgTable(
     index("token_usage_bot_id_idx").on(t.botId),
     index("token_usage_created_at_idx").on(t.createdAt),
     index("token_usage_bot_created_idx").on(t.botId, t.createdAt),
+  ],
+);
+
+export const summaryConfigs = pgTable(
+  "summary_configs",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    scheduleHour: integer("schedule_hour"),
+    scheduleMinute: integer("schedule_minute"),
+    windowHours: integer("window_hours").notNull().default(24),
+    customPrompt: text("custom_prompt"),
+    modelId: text("model_id"),
+    maxMessages: integer("max_messages"),
+    cooldownSeconds: integer("cooldown_seconds"),
+    accessMode: text("access_mode").notNull().default("all"),
+    lastScheduledAt: timestamp("last_scheduled_at"),
+    lastManualAt: timestamp("last_manual_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("summary_configs_bot_chat_uniq").on(t.botId, t.chatId)],
+);
+
+export const chatSummaries = pgTable(
+  "chat_summaries",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    trigger: text("trigger").notNull(),
+    triggeredBy: bigint("triggered_by", { mode: "number" }),
+    windowStart: timestamp("window_start").notNull(),
+    windowEnd: timestamp("window_end").notNull(),
+    messageCount: integer("message_count").notNull(),
+    modelId: text("model_id").notNull(),
+    content: text("content").notNull(),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    durationMs: integer("duration_ms"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("chat_summaries_bot_chat_idx").on(t.botId, t.chatId),
+    index("chat_summaries_created_idx").on(t.createdAt),
   ],
 );

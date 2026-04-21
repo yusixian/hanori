@@ -12,6 +12,7 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createClearCommand } from "./commands/clear.js";
+import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { createDrawCommand } from "./commands/draw.js";
 import { commands, helpCommand } from "./commands/help.js";
@@ -76,6 +77,7 @@ export interface BotConfig {
   mcpCallbacks?: McpCommandConfig;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
+  summary?: SummaryCallbacks;
 }
 
 export function createBot(config: BotConfig) {
@@ -340,6 +342,10 @@ export function createBot(config: BotConfig) {
     );
   }
 
+  if (config.summary) {
+    bot.command("summary", createSummaryCommand(config.summary));
+  }
+
   if (aiHandler && aiState) {
     // Register event handlers for interactive tools (polls, choices)
     const pendingActions = aiState.getPendingActions();
@@ -425,6 +431,7 @@ export {
   type PromptPreviewResult,
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
+export type { SummaryCallbacks } from "./commands/summary.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";

@@ -2,6 +2,7 @@ import type {
   AiReplyBotConfig,
   BotConfig,
   McpCommandConfig,
+  SummaryCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
@@ -29,6 +30,7 @@ interface BotManagerOptions {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
   mcpCallbacks?: McpCommandConfig;
+  summary?: SummaryCallbacks;
 }
 
 export class BotManager implements IBotManager {
@@ -57,6 +59,7 @@ export class BotManager implements IBotManager {
       mcpCallbacks: options.mcpCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
+      summary: options.summary,
     };
   }
 
@@ -128,5 +131,12 @@ export class BotManager implements IBotManager {
     await this.dbLogger.info("Bot restarting...");
     await this.stop();
     await this.start();
+  }
+
+  async sendHtml(chatId: number, html: string): Promise<void> {
+    if (!this.bot) {
+      throw new Error(`Bot ${this.botId} is not running`);
+    }
+    await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
   }
 }

@@ -197,6 +197,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     privateChatWhitelist: migrated.privateChatWhitelist,
     timeoutConfig: migrated.timeoutConfig,
     mcpServerIds: migrated.mcpServerIds,
+    summaryConfig: migrated.summaryConfig,
   };
 }
 
@@ -396,6 +397,20 @@ const aiConfigSchema = z
     modelCommandAccess: z.enum(["admin", "all"]).optional(),
     privateChatWhitelist: z.array(z.number().int()).optional(),
     mcpServerIds: z.array(z.number().int()).optional(),
+    summaryConfig: z
+      .object({
+        enabled: z.boolean(),
+        defaultWindowHours: z.number().int().min(1).max(72),
+        defaultMaxMessages: z.number().int().min(10).max(2000),
+        defaultCooldownSeconds: z.number().int().min(0).max(86400),
+        globalScheduleHour: z.number().int().min(0).max(23).optional(),
+        globalScheduleMinute: z.number().int().min(0).max(59).optional(),
+        modelId: z.string().optional(),
+        systemPrompt: z.string().optional(),
+        roleFilter: z.array(z.enum(["user", "context", "assistant"])).optional(),
+        timezone: z.string().optional(),
+      })
+      .optional(),
     providers: z
       .array(
         z.object({
@@ -841,6 +856,7 @@ export function botsRoutes(
         dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
         privateChatWhitelist: body.privateChatWhitelist,
         mcpServerIds: body.mcpServerIds,
+        summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
       };
 
       await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));

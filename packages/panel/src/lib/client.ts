@@ -14,4 +14,4 @@ export const authFetch: typeof fetch = async (input, init) => {
   return response;
 };
 
-export const client = hc<AppType>("/", { fetch: authFetch });
+export const client: ReturnType<typeof hc<AppType>> = hc<AppType>("/", { fetch: authFetch });
