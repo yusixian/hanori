@@ -1,9 +1,9 @@
 import type { Database } from "@cos-tool-bot/database";
 import { summaryConfigs } from "@cos-tool-bot/database";
 import type { SummaryMode } from "@cos-tool-bot/shared";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
 import type { Logger } from "pino";
-import { DEFAULT_COOLDOWN_SECONDS } from "./summary-prompts.js";
+import { DEFAULT_COOLDOWN_SECONDS, DEFAULT_TIMEZONE } from "./summary-prompts.js";
 import type { SummaryRunner } from "./summary-runner.js";
 
 const CHECK_INTERVAL_MS = 60_000;
@@ -16,6 +16,7 @@ export interface BotSummaryCfg {
   enabled: boolean;
   globalScheduleHour?: number;
   globalScheduleMinute?: number;
+  timezone?: string;
 }
 
 export type BotSummaryCfgAccessor = (botId: string) => Promise<BotSummaryCfg | null>;
@@ -148,8 +149,6 @@ export class ChatSummaryService {
 
   private async processScheduledConfigs(): Promise<void> {
     const now = new Date();
-    const hour = now.getUTCHours();
-    const minute = now.getUTCMinutes();
     const twentyThreeHoursAgo = new Date(now.getTime() - 23 * 3600_000);
 
     const candidates = await this.db
@@ -158,8 +157,8 @@ export class ChatSummaryService {
       .where(
         and(
           eq(summaryConfigs.isActive, true),
-          eq(summaryConfigs.scheduleHour, hour),
-          eq(summaryConfigs.scheduleMinute, minute),
+          isNotNull(summaryConfigs.scheduleHour),
+          isNotNull(summaryConfigs.scheduleMinute),
           or(
             isNull(summaryConfigs.lastScheduledAt),
             lt(summaryConfigs.lastScheduledAt, twentyThreeHoursAgo),
@@ -167,8 +166,27 @@ export class ChatSummaryService {
         ),
       );
 
+    // Resolve per-bot enabled flag + timezone once per tick to avoid N extra reads per row.
+    const botCfgCache = new Map<string, BotSummaryCfg | null>();
+    const getBotCfg = async (botId: string) => {
+      if (botCfgCache.has(botId)) return botCfgCache.get(botId)!;
+      const cfg = await this.getBotSummaryCfg(botId);
+      botCfgCache.set(botId, cfg);
+      return cfg;
+    };
+
     for (const cfg of candidates) {
       if (!this.isBotRunning(cfg.botId)) continue;
+
+      const botCfg = await getBotCfg(cfg.botId);
+      // Respect the bot-level summaryConfig.enabled kill-switch in the scheduled path too.
+      if (!botCfg?.enabled) continue;
+
+      // scheduleHour/Minute are stored in the bot's configured timezone (default Asia/Shanghai),
+      // not UTC, so users see/set wall-clock time consistent with other in-product timestamps.
+      const tz = botCfg.timezone ?? DEFAULT_TIMEZONE;
+      const { hour, minute } = hourMinuteInTz(now, tz);
+      if (hour !== cfg.scheduleHour || minute !== cfg.scheduleMinute) continue;
 
       // Optimistic lock: only proceed if the row is still stale.
       const updated = await this.db
@@ -220,8 +238,20 @@ export class ChatSummaryService {
   private async processGlobalFallbacks(): Promise<void> {
     // v1: Not implemented. per-chat configs only (see processScheduledConfigs).
     // v2: iterate bots with aiConfig.summaryConfig.globalScheduleHour/Minute matching
-    //     current UTC H:M, select chats with >=5 messages in 24h that lack a
-    //     summary_configs row and haven't been scheduled-summarized in 23h, and
-    //     trigger runner with default settings.
+    //     the bot-local H:M (via hourMinuteInTz), select chats with >=5 messages in 24h
+    //     that lack a summary_configs row and haven't been scheduled-summarized in 23h,
+    //     and trigger runner with default settings.
   }
+}
+
+function hourMinuteInTz(now: Date, tz: string): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value);
+  const minute = Number(parts.find((p) => p.type === "minute")?.value);
+  return { hour, minute };
 }

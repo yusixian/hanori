@@ -144,6 +144,7 @@ const summaryService = new ChatSummaryService(
       enabled: sc.enabled,
       globalScheduleHour: sc.globalScheduleHour,
       globalScheduleMinute: sc.globalScheduleMinute,
+      timezone: sc.timezone,
     };
   },
 );

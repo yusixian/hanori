@@ -151,6 +151,9 @@ export function SummaryConfigForm({
             value={scheduleHour}
             onChange={(e) => setScheduleHour(e.target.value)}
           />
+          <p className="text-muted-foreground text-xs">
+            按 AI 设置中的时区判定（默认 Asia/Shanghai）
+          </p>
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">定时分钟 (0-59)</label>
