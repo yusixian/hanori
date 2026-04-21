@@ -16,15 +16,15 @@
 
 已存在，无需重建：
 
-| 组件 | 路径 | 用途 |
-|------|------|------|
-| `conversationMessages` 表 | `packages/database/src/schema.ts` | 已存全量群消息（role + content + userName + meta + embedding） |
-| `ConversationStore.getHistory` | `packages/server/src/services/conversation-store.ts` | 取历史消息的接口，直接复用/扩展 |
-| `aiConfig` 存储结构 | `packages/database/src/schema.ts` bots 表 `ai_config` JSON | 挂 `summaryConfig` 子字段 |
-| `chat-model-store` | `packages/server/src/services/chat-model-store.ts` | 按 botId/chatId 取 OpenAI 兼容 client |
-| RSS 定时范式 | `packages/server/src/services/rss-feed-service.ts` | per-row + 每分钟 cron + 回调触发 模板 |
-| `markdown → telegram HTML` | `packages/bot/src/utils/format.ts` 的 `escapeHtml` + `telegramRenderer`（Marked） | 总结输出渲染 |
-| `token_usage` 表 | `packages/database/src/schema.ts` | 记账 |
+| 组件                           | 路径                                                                              | 用途                                                           |
+| ------------------------------ | --------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `conversationMessages` 表      | `packages/database/src/schema.ts`                                                 | 已存全量群消息（role + content + userName + meta + embedding） |
+| `ConversationStore.getHistory` | `packages/server/src/services/conversation-store.ts`                              | 取历史消息的接口，直接复用/扩展                                |
+| `aiConfig` 存储结构            | `packages/database/src/schema.ts` bots 表 `ai_config` JSON                        | 挂 `summaryConfig` 子字段                                      |
+| `chat-model-store`             | `packages/server/src/services/chat-model-store.ts`                                | 按 botId/chatId 取 OpenAI 兼容 client                          |
+| RSS 定时范式                   | `packages/server/src/services/rss-feed-service.ts`                                | per-row + 每分钟 cron + 回调触发 模板                          |
+| `markdown → telegram HTML`     | `packages/bot/src/utils/format.ts` 的 `escapeHtml` + `telegramRenderer`（Marked） | 总结输出渲染                                                   |
+| `token_usage` 表               | `packages/database/src/schema.ts`                                                 | 记账                                                           |
 
 ## 架构
 
@@ -73,7 +73,7 @@ export const summaryConfigs = pgTable(
     isActive: boolean("is_active").notNull().default(true),
 
     // 定时（UTC）
-    scheduleHour: integer("schedule_hour"),       // null = 仅手动
+    scheduleHour: integer("schedule_hour"), // null = 仅手动
     scheduleMinute: integer("schedule_minute"),
     windowHours: integer("window_hours").notNull().default(24),
 
@@ -84,7 +84,7 @@ export const summaryConfigs = pgTable(
     cooldownSeconds: integer("cooldown_seconds"),
 
     // 权限
-    accessMode: text("access_mode").notNull().default("all"),  // 'all' | 'admin'
+    accessMode: text("access_mode").notNull().default("all"), // 'all' | 'admin'
 
     lastScheduledAt: timestamp("last_scheduled_at"),
     lastManualAt: timestamp("last_manual_at"),
@@ -108,17 +108,17 @@ export const chatSummaries = pgTable(
       .references(() => bots.id, { onDelete: "cascade" })
       .notNull(),
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
-    trigger: text("trigger").notNull(),                  // 'scheduled' | 'manual'
-    triggeredBy: bigint("triggered_by", { mode: "number" }),  // userId; scheduled = null
+    trigger: text("trigger").notNull(), // 'scheduled' | 'manual'
+    triggeredBy: bigint("triggered_by", { mode: "number" }), // userId; scheduled = null
     windowStart: timestamp("window_start").notNull(),
     windowEnd: timestamp("window_end").notNull(),
     messageCount: integer("message_count").notNull(),
     modelId: text("model_id").notNull(),
-    content: text("content").notNull(),                   // LLM 原始 markdown 输出
+    content: text("content").notNull(), // LLM 原始 markdown 输出
     promptTokens: integer("prompt_tokens"),
     completionTokens: integer("completion_tokens"),
     durationMs: integer("duration_ms"),
-    errorMessage: text("error_message"),                  // 失败时 content 为空
+    errorMessage: text("error_message"), // 失败时 content 为空
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
@@ -160,13 +160,13 @@ summaryConfig?: {
 
 ### 参数语法
 
-| 输入 | Mode |
-|------|------|
-| `/summary` | `{kind:"default"}` → 24h（按 config） |
-| `/summary 200` | `{kind:"recent", count:200}` |
-| `/summary 6h` | `{kind:"hours", hours:6}` |
-| `/summary today` | `{kind:"date", day:"today"}` |
-| `/summary yesterday` | `{kind:"date", day:"yesterday"}` |
+| 输入                 | Mode                                  |
+| -------------------- | ------------------------------------- |
+| `/summary`           | `{kind:"default"}` → 24h（按 config） |
+| `/summary 200`       | `{kind:"recent", count:200}`          |
+| `/summary 6h`        | `{kind:"hours", hours:6}`             |
+| `/summary today`     | `{kind:"date", day:"today"}`          |
+| `/summary yesterday` | `{kind:"date", day:"yesterday"}`      |
 
 上限：count ≤ 2000（或 config 的 `maxMessages`），hours ≤ 72。非法 → 回使用说明。
 
@@ -181,6 +181,7 @@ summaryConfig?: {
 ### 权限
 
 `config.accessMode`：
+
 - `"all"`（默认）：任何群成员可触发。
 - `"admin"`：仅 `bot.adminChatIds` 里的 userId。
 
@@ -202,6 +203,7 @@ summaryConfig?: {
 ### 全局 fallback
 
 若 `aiConfig.summaryConfig.globalScheduleHour/Minute` 配置，且到点：
+
 - 扫该 bot 下 `conversationMessages` 在过去 24h 有 ≥5 条 user/context 消息的 chatId；
 - 排除已有 `summary_configs` 行的 chat；
 - 对每个 chatId 用默认窗口/默认 prompt 触发。
@@ -255,15 +257,21 @@ interface RunResult {
 
 ```ts
 function formatMessages(msgs: ConvMessageRow[], chatId: number): string {
-  return msgs.map(m => {
-    const link = messageLink(chatId, m.meta?.tgMessageId as number | undefined);
-    const body = dispatchContent(m.content, m.meta);
-    return `====================\n${m.userName ?? "未知"}:\n${body}${link ? "\n" + link : ""}`;
-  }).join("\n");
+  return msgs
+    .map((m) => {
+      const link = messageLink(chatId, m.meta?.tgMessageId as number | undefined);
+      const body = dispatchContent(m.content, m.meta);
+      return `====================\n${m.userName ?? "未知"}:\n${body}${link ? "\n" + link : ""}`;
+    })
+    .join("\n");
 }
 
 function dispatchContent(content: string, meta: unknown): string {
-  const m = meta as { photoFileId?: string; documentFileName?: string; replyToMessageId?: number } | null;
+  const m = meta as {
+    photoFileId?: string;
+    documentFileName?: string;
+    replyToMessageId?: number;
+  } | null;
   if (m?.photoFileId) return "[图片]" + (content ? ` ${content}` : "");
   if (m?.documentFileName) return `[文件:${m.documentFileName}]`;
   if (m?.replyToMessageId) return `（回复消息 id ${m.replyToMessageId}）${content}`;
@@ -343,17 +351,17 @@ function wrapSummaryHtml(llmMarkdown: string): string {
 
 端点：
 
-| Method | Path | 功能 |
-|--------|------|------|
-| GET | `/api/summary/configs?botId=` | 列表 |
-| GET | `/api/summary/configs/:id` | 详情 |
-| POST | `/api/summary/configs` | 创建 |
-| PATCH | `/api/summary/configs/:id` | 更新 |
-| DELETE | `/api/summary/configs/:id` | 删除 |
-| POST | `/api/summary/configs/:id/trigger` | 立即手动触发（忽略冷却） |
-| GET | `/api/summary/history?botId=&chatId=&page=&limit=` | 历史分页 |
-| GET | `/api/summary/history/:id` | 单条详情（带 content） |
-| DELETE | `/api/summary/history/:id` | 删历史 |
+| Method | Path                                               | 功能                     |
+| ------ | -------------------------------------------------- | ------------------------ |
+| GET    | `/api/summary/configs?botId=`                      | 列表                     |
+| GET    | `/api/summary/configs/:id`                         | 详情                     |
+| POST   | `/api/summary/configs`                             | 创建                     |
+| PATCH  | `/api/summary/configs/:id`                         | 更新                     |
+| DELETE | `/api/summary/configs/:id`                         | 删除                     |
+| POST   | `/api/summary/configs/:id/trigger`                 | 立即手动触发（忽略冷却） |
+| GET    | `/api/summary/history?botId=&chatId=&page=&limit=` | 历史分页                 |
+| GET    | `/api/summary/history/:id`                         | 单条详情（带 content）   |
+| DELETE | `/api/summary/history/:id`                         | 删历史                   |
 
 Zod schema 入参校验，风格对齐现有 rss routes。
 
@@ -377,19 +385,19 @@ Refine resources 注册进 `packages/panel/src/main.tsx`。
 
 ## 错误矩阵
 
-| 情况 | 行为 |
-|------|------|
-| `aiConfig.summaryConfig.enabled=false` | `/summary` 回「群主未启用群聊总结」；cron 跳过 |
-| `saveGroupContext="none"` 且目标群 | 命令层前置校验 → 提示「请先开启群聊上下文采集」 |
-| 窗口内 <5 条消息 | 不调 LLM；回「消息太少，无需总结」；写 history（errorMessage="too_few_messages"） |
-| 冷却未到 | 回「⏱ 还需 Xs，稍后再试」 |
-| `accessMode="admin"` 且非 admin | 回「仅管理员可用」 |
-| LLM 调用失败 | 捕获 → 写 history 带 errorMessage → 回「总结失败：{短 reason}」 |
-| 模型超 token 限制 | 按 char 估算，截断最早消息至 ~80% ctx |
-| HTML 渲染失败 | 回退 plain text 发送 |
-| `meta.tgMessageId` 缺失 | 不带链接正常总结；启动时 warn 一次 |
-| 多实例/双触发 | 乐观锁 UPDATE RETURNING |
-| bot 停止中 | `botPool.isRunning(botId)` 前置过滤 |
+| 情况                                   | 行为                                                                              |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| `aiConfig.summaryConfig.enabled=false` | `/summary` 回「群主未启用群聊总结」；cron 跳过                                    |
+| `saveGroupContext="none"` 且目标群     | 命令层前置校验 → 提示「请先开启群聊上下文采集」                                   |
+| 窗口内 <5 条消息                       | 不调 LLM；回「消息太少，无需总结」；写 history（errorMessage="too_few_messages"） |
+| 冷却未到                               | 回「⏱ 还需 Xs，稍后再试」                                                         |
+| `accessMode="admin"` 且非 admin        | 回「仅管理员可用」                                                                |
+| LLM 调用失败                           | 捕获 → 写 history 带 errorMessage → 回「总结失败：{短 reason}」                   |
+| 模型超 token 限制                      | 按 char 估算，截断最早消息至 ~80% ctx                                             |
+| HTML 渲染失败                          | 回退 plain text 发送                                                              |
+| `meta.tgMessageId` 缺失                | 不带链接正常总结；启动时 warn 一次                                                |
+| 多实例/双触发                          | 乐观锁 UPDATE RETURNING                                                           |
+| bot 停止中                             | `botPool.isRunning(botId)` 前置过滤                                               |
 
 ## 边界决策（首版 YAGNI）
 

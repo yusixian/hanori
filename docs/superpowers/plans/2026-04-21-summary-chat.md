@@ -57,6 +57,7 @@
 ## Task 1: Precheck + tgMessageId meta on user-role saves
 
 **Files:**
+
 - Modify: `packages/bot/src/handlers/ai-reply.ts:1411-1417` (user role save)
 - Read-only: `packages/bot/src/services/continue-chat.ts:443-459` (assistant save — confirm no change needed)
 - Read-only: `packages/server/src/services/bot-pool.ts:194-198` (addMessage/addMessages wiring)
@@ -101,6 +102,7 @@ git commit -m "feat(conversation): store tgMessageId in user-role meta for summa
 ## Task 2: Shared types
 
 **Files:**
+
 - Modify: `packages/shared/src/types.ts`
 - Modify: `packages/shared/src/index.ts` (if re-export list is explicit)
 
@@ -200,6 +202,7 @@ git commit -m "feat(shared): add Summary* types and AiConfigStored.summaryConfig
 ## Task 3: DB schema — two new tables + AiConfigJson extension
 
 **Files:**
+
 - Modify: `packages/database/src/schema.ts`
 
 - [ ] **Step 1: Extend AiConfigJson**
@@ -304,6 +307,7 @@ git commit -m "feat(db): add summary_configs and chat_summaries tables"
 ## Task 4: Drizzle migration — generate + verify
 
 **Files:**
+
 - Create (auto): `packages/database/drizzle/0023_<name>.sql`
 - Update: `packages/database/drizzle/meta/_journal.json`, `packages/database/drizzle/meta/0023_snapshot.json`
 
@@ -315,6 +319,7 @@ Expected: new file `packages/database/drizzle/0023_*.sql` + updated `meta/_journ
 - [ ] **Step 2: Inspect migration SQL**
 
 Open the new `0023_*.sql`. Verify it contains:
+
 - `CREATE TABLE "summary_configs"` with all columns + cascade FK
 - `CREATE UNIQUE INDEX "summary_configs_bot_chat_uniq"`
 - `CREATE TABLE "chat_summaries"` with cascade FK
@@ -344,6 +349,7 @@ git commit -m "feat(db): migration for summary_configs and chat_summaries"
 ## Task 5: Export renderMarkdownToTelegramHtml from format.ts
 
 **Files:**
+
 - Modify: `packages/bot/src/utils/format.ts`
 
 - [ ] **Step 1: Identify current exports**
@@ -390,6 +396,7 @@ git commit -m "feat(bot): export renderMarkdownToTelegramHtml for summary runner
 ## Task 6: Summary prompts + helpers module
 
 **Files:**
+
 - Create: `packages/server/src/services/summary-prompts.ts`
 
 - [ ] **Step 1: Create module**
@@ -470,6 +477,7 @@ export { escapeHtml };
 ```
 
 Note the `@cos-tool-bot/bot/utils/format` import path: verify `packages/bot/package.json` exports this subpath. If package `exports` map does NOT expose `./utils/format`, either:
+
 - Add subpath export in `packages/bot/package.json` `exports`, OR
 - Move `renderMarkdownToTelegramHtml` + `escapeHtml` into `packages/shared/src/format.ts` (preferred — pure functions, belongs in shared), import from shared here.
 
@@ -497,6 +505,7 @@ git commit -m "feat(server): add summary prompt constants and message formatters
 ## Task 7: SummaryRunner
 
 **Files:**
+
 - Create: `packages/server/src/services/summary-runner.ts`
 
 - [ ] **Step 1: Write module**
@@ -580,7 +589,14 @@ export class SummaryRunner {
     const { windowStart, windowEnd, limit } = this.resolveWindow(opts, cfg);
     const roleFilter = cfg.summaryConfig?.roleFilter ?? [...DEFAULT_ROLE_FILTER];
 
-    const msgs = await this.fetchMessages(opts.botId, opts.chatId, windowStart, windowEnd, limit, roleFilter);
+    const msgs = await this.fetchMessages(
+      opts.botId,
+      opts.chatId,
+      windowStart,
+      windowEnd,
+      limit,
+      roleFilter,
+    );
 
     if (msgs.length < MIN_MESSAGES_FOR_SUMMARY) {
       const sumRow = await this.writeHistory({
@@ -593,7 +609,12 @@ export class SummaryRunner {
         errorMessage: "too_few_messages",
         durationMs: 0,
       });
-      return { ok: false, error: "too_few_messages", messageCount: msgs.length, summaryId: sumRow.id };
+      return {
+        ok: false,
+        error: "too_few_messages",
+        messageCount: msgs.length,
+        summaryId: sumRow.id,
+      };
     }
 
     const formatted = formatMessages(
@@ -635,7 +656,13 @@ export class SummaryRunner {
           promptTokens: usage?.prompt_tokens,
           completionTokens: usage?.completion_tokens,
         });
-        return { ok: false, error: "llm_failed", errorDetail: "empty_response", messageCount: msgs.length, summaryId: sumRow.id };
+        return {
+          ok: false,
+          error: "llm_failed",
+          errorDetail: "empty_response",
+          messageCount: msgs.length,
+          summaryId: sumRow.id,
+        };
       }
 
       const contentHtml = wrapSummaryHtml(raw);
@@ -673,7 +700,13 @@ export class SummaryRunner {
         errorMessage: detail.slice(0, 500),
         durationMs,
       });
-      return { ok: false, error: "llm_failed", errorDetail: detail, messageCount: msgs.length, summaryId: sumRow.id };
+      return {
+        ok: false,
+        error: "llm_failed",
+        errorDetail: detail,
+        messageCount: msgs.length,
+        summaryId: sumRow.id,
+      };
     }
   }
 
@@ -686,7 +719,9 @@ export class SummaryRunner {
     cfg: AiCfg,
   ): { windowStart: Date; windowEnd: Date; limit: number } {
     const limit = Math.min(
-      opts.configOverrides?.maxMessages ?? cfg.summaryConfig?.defaultMaxMessages ?? DEFAULT_MAX_MESSAGES,
+      opts.configOverrides?.maxMessages ??
+        cfg.summaryConfig?.defaultMaxMessages ??
+        DEFAULT_MAX_MESSAGES,
       MAX_COUNT,
     );
     const now = new Date();
@@ -695,7 +730,11 @@ export class SummaryRunner {
 
     switch (opts.mode.kind) {
       case "default":
-        return { windowStart: new Date(now.getTime() - defaultHours * 3600_000), windowEnd: now, limit };
+        return {
+          windowStart: new Date(now.getTime() - defaultHours * 3600_000),
+          windowEnd: now,
+          limit,
+        };
       case "hours": {
         const h = Math.min(opts.mode.hours, MAX_HOURS);
         return { windowStart: new Date(now.getTime() - h * 3600_000), windowEnd: now, limit };
@@ -780,7 +819,9 @@ export class SummaryRunner {
   private async writeTokenUsage(
     opts: RunOptions,
     modelId: string,
-    usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined,
+    usage:
+      | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+      | undefined,
     durationMs: number,
   ) {
     if (!usage) return;
@@ -872,6 +913,7 @@ git commit -m "feat(server): add SummaryRunner for fetching, formatting, and LLM
 ## Task 8: SummaryConfigService (CRUD)
 
 **Files:**
+
 - Create: `packages/server/src/services/summary-config-service.ts`
 
 - [ ] **Step 1: Write module**
@@ -1005,6 +1047,7 @@ git commit -m "feat(server): add SummaryConfigService CRUD"
 ## Task 9: ChatSummaryService (cron + triggerManual + fallback)
 
 **Files:**
+
 - Create: `packages/server/src/services/chat-summary-service.ts`
 
 - [ ] **Step 1: Write module**
@@ -1024,11 +1067,7 @@ import type { SummaryRunner } from "./summary-runner.js";
 
 const CHECK_INTERVAL_MS = 60_000;
 
-export type SendSummaryFn = (
-  botId: string,
-  chatId: number,
-  html: string,
-) => Promise<void>;
+export type SendSummaryFn = (botId: string, chatId: number, html: string) => Promise<void>;
 
 export type IsBotRunningFn = (botId: string) => boolean;
 
@@ -1042,7 +1081,12 @@ interface BotCfgAccessor {
   (botId: string): Promise<GlobalSummaryCfg | null>;
 }
 
-export type ManualReason = "cooldown" | "disabled" | "no_access" | "too_few_messages" | "llm_failed";
+export type ManualReason =
+  | "cooldown"
+  | "disabled"
+  | "no_access"
+  | "too_few_messages"
+  | "llm_failed";
 
 export class ChatSummaryService {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -1208,7 +1252,10 @@ export class ChatSummaryService {
         try {
           await this.send(cfg.botId, cfg.chatId, result.contentHtml);
         } catch (err) {
-          this.logger.warn({ err, botId: cfg.botId, chatId: cfg.chatId }, "Failed to send scheduled summary");
+          this.logger.warn(
+            { err, botId: cfg.botId, chatId: cfg.chatId },
+            "Failed to send scheduled summary",
+          );
         }
       } else {
         this.logger.info(
@@ -1255,6 +1302,7 @@ git commit -m "feat(server): add ChatSummaryService cron + triggerManual with op
 ## Task 9b: Global fallback scheduler (optional — only if spec calls for it)
 
 **Files:**
+
 - Modify: `packages/server/src/services/chat-summary-service.ts`
 
 Skip this task if the current bot only uses per-chat configs (the 95% path). If you need the global-fallback feature from spec section "Global fallback":
@@ -1354,9 +1402,10 @@ git commit -m "feat(server): implement global fallback scheduler for summaries"
 
 ---
 
-## Task 10: Server routes /api/summary/*
+## Task 10: Server routes /api/summary/\*
 
 **Files:**
+
 - Create: `packages/server/src/routes/summary.ts`
 
 - [ ] **Step 1: Write module**
@@ -1509,10 +1558,7 @@ export function createSummaryRoutes(deps: {
       zValidator("param", z.object({ id: z.coerce.number().int() })),
       async (c) => {
         const { id } = c.req.valid("param");
-        const [row] = await deps.db
-          .select()
-          .from(chatSummaries)
-          .where(eq(chatSummaries.id, id));
+        const [row] = await deps.db.select().from(chatSummaries).where(eq(chatSummaries.id, id));
         if (!row) return c.json({ error: "not_found" }, 404);
         return c.json({
           data: {
@@ -1579,6 +1625,7 @@ git commit -m "feat(server): add /api/summary routes (configs CRUD + trigger + h
 ## Task 11: Bootstrap — wire routes + service into app + index
 
 **Files:**
+
 - Modify: `packages/server/src/app.ts`
 - Modify: `packages/server/src/index.ts`
 
@@ -1604,23 +1651,21 @@ import { SummaryConfigService } from "./services/summary-config-service.js";
 import { ChatSummaryService } from "./services/chat-summary-service.js";
 
 // after db + logger + chatModelStore + botPool are ready:
-const summaryRunner = new SummaryRunner(
-  db,
-  logger,
-  chatModelStore,
-  async (botId) => {
-    const [row] = await db.select({ aiConfig: bots.aiConfig, isActive: bots.isActive }).from(bots).where(eq(bots.id, botId));
-    if (!row?.isActive) return null;
-    const cfg = row.aiConfig;
-    if (!cfg) return null;
-    return {
-      enabled: cfg.enabled,
-      model: cfg.model,
-      summaryConfig: cfg.summaryConfig,
-      conversationConfig: cfg.conversationConfig,
-    };
-  },
-);
+const summaryRunner = new SummaryRunner(db, logger, chatModelStore, async (botId) => {
+  const [row] = await db
+    .select({ aiConfig: bots.aiConfig, isActive: bots.isActive })
+    .from(bots)
+    .where(eq(bots.id, botId));
+  if (!row?.isActive) return null;
+  const cfg = row.aiConfig;
+  if (!cfg) return null;
+  return {
+    enabled: cfg.enabled,
+    model: cfg.model,
+    summaryConfig: cfg.summaryConfig,
+    conversationConfig: cfg.conversationConfig,
+  };
+});
 
 const configService = new SummaryConfigService(db);
 
@@ -1680,6 +1725,7 @@ git commit -m "feat(server): wire SummaryRunner + ChatSummaryService + routes in
 ## Task 12: Inject summaryService into BotPool / BotConfig / createBot
 
 **Files:**
+
 - Modify: `packages/server/src/services/bot-pool.ts`
 - Modify: `packages/server/src/services/bot-manager.ts` (if it wraps bot-pool)
 - Modify: `packages/bot/src/index.ts`
@@ -1743,6 +1789,7 @@ git commit -m "feat(bot,server): inject summaryService into bot lifecycle"
 ## Task 13: Bot /summary command + arg parser
 
 **Files:**
+
 - Create: `packages/bot/src/commands/summary.ts`
 - Modify: `packages/bot/src/index.ts` (register command)
 
@@ -1755,8 +1802,14 @@ import type { SummaryMode } from "@cos-tool-bot/shared";
 const MAX_COUNT = 2000;
 const MAX_HOURS = 72;
 
-interface ParseOk { ok: true; value: SummaryMode }
-interface ParseErr { ok: false; usage: string }
+interface ParseOk {
+  ok: true;
+  value: SummaryMode;
+}
+interface ParseErr {
+  ok: false;
+  usage: string;
+}
 export type ParseResult = ParseOk | ParseErr;
 
 const USAGE = `/summary 使用说明：
@@ -1891,7 +1944,9 @@ The access-mode check runs in the command, not in the service, to avoid coupling
 
 ```ts
 interface Deps {
-  summaryService: { /* as above */ };
+  summaryService: {
+    /* as above */
+  };
   botId: string;
   adminUserIds: number[];
   /** returns accessMode for a given chat, or null if no config row */
@@ -1950,6 +2005,7 @@ git commit -m "feat(bot): add /summary command with arg parser and status-messag
 ## Task 14: Update help.ts
 
 **Files:**
+
 - Modify: `packages/bot/src/commands/help.ts`
 
 - [ ] **Step 1: Add summary line**
@@ -1975,6 +2031,7 @@ git commit -m "feat(bot): mention /summary in help text"
 ## Task 15: Panel — summary list page
 
 **Files:**
+
 - Create: `packages/panel/src/pages/summary/list.tsx`
 - Modify: `packages/panel/src/main.tsx` (register Refine resource)
 
@@ -1990,7 +2047,9 @@ import { client } from "../../lib/client";
 import type { SummaryConfigRecord } from "@cos-tool-bot/shared";
 import { Button } from "../../components/button"; // or whatever button component exists
 
-interface Props { botId: string }
+interface Props {
+  botId: string;
+}
 
 export function SummaryConfigList({ botId }: Props) {
   const { data, isLoading, refetch } = useList<SummaryConfigRecord>({
@@ -2054,7 +2113,9 @@ export function SummaryConfigList({ botId }: Props) {
               <td className="space-x-2">
                 <Button onClick={() => edit("summary-configs", r.id)}>编辑</Button>
                 <Button onClick={() => onTrigger(r.id)}>立即触发</Button>
-                <Button variant="danger" onClick={() => onDelete(r.id)}>删除</Button>
+                <Button variant="danger" onClick={() => onDelete(r.id)}>
+                  删除
+                </Button>
               </td>
             </tr>
           ))}
@@ -2099,6 +2160,7 @@ git commit -m "feat(panel): add summary config list page and Refine resource"
 ## Task 16: Panel — summary form page (create/edit)
 
 **Files:**
+
 - Create: `packages/panel/src/pages/summary/form.tsx`
 
 - [ ] **Step 1: Write form**
@@ -2142,7 +2204,11 @@ export function SummaryConfigForm({ botId, mode, id }: Props) {
     <form onSubmit={handleSubmit((values) => onFinish({ ...values, botId }))} className="space-y-3">
       <label className="block">
         <span className="block text-sm">Chat ID</span>
-        <input {...register("chatId", { valueAsNumber: true, required: true })} type="number" className="w-full border rounded p-2" />
+        <input
+          {...register("chatId", { valueAsNumber: true, required: true })}
+          type="number"
+          className="w-full border rounded p-2"
+        />
         {chats?.data && (
           <select
             className="mt-1 w-full border rounded p-2"
@@ -2167,27 +2233,57 @@ export function SummaryConfigForm({ botId, mode, id }: Props) {
       <div className="grid grid-cols-2 gap-2">
         <label className="block">
           <span className="block text-sm">定时 Hour (UTC, 留空=仅手动)</span>
-          <input {...register("scheduleHour", { valueAsNumber: true })} type="number" min={0} max={23} className="w-full border rounded p-2" />
+          <input
+            {...register("scheduleHour", { valueAsNumber: true })}
+            type="number"
+            min={0}
+            max={23}
+            className="w-full border rounded p-2"
+          />
         </label>
         <label className="block">
           <span className="block text-sm">定时 Minute</span>
-          <input {...register("scheduleMinute", { valueAsNumber: true })} type="number" min={0} max={59} className="w-full border rounded p-2" />
+          <input
+            {...register("scheduleMinute", { valueAsNumber: true })}
+            type="number"
+            min={0}
+            max={59}
+            className="w-full border rounded p-2"
+          />
         </label>
       </div>
 
       <label className="block">
         <span className="block text-sm">窗口小时</span>
-        <input {...register("windowHours", { valueAsNumber: true })} type="number" min={1} max={72} defaultValue={24} className="w-full border rounded p-2" />
+        <input
+          {...register("windowHours", { valueAsNumber: true })}
+          type="number"
+          min={1}
+          max={72}
+          defaultValue={24}
+          className="w-full border rounded p-2"
+        />
       </label>
 
       <label className="block">
         <span className="block text-sm">最多消息数（留空=默认 2000）</span>
-        <input {...register("maxMessages", { valueAsNumber: true })} type="number" min={10} max={2000} className="w-full border rounded p-2" />
+        <input
+          {...register("maxMessages", { valueAsNumber: true })}
+          type="number"
+          min={10}
+          max={2000}
+          className="w-full border rounded p-2"
+        />
       </label>
 
       <label className="block">
         <span className="block text-sm">冷却秒（留空=默认 300）</span>
-        <input {...register("cooldownSeconds", { valueAsNumber: true })} type="number" min={0} className="w-full border rounded p-2" />
+        <input
+          {...register("cooldownSeconds", { valueAsNumber: true })}
+          type="number"
+          min={0}
+          className="w-full border rounded p-2"
+        />
       </label>
 
       <label className="block">
@@ -2212,7 +2308,11 @@ export function SummaryConfigForm({ botId, mode, id }: Props) {
         </details>
       </label>
 
-      <button type="submit" disabled={formLoading} className="px-4 py-2 bg-blue-600 text-white rounded">
+      <button
+        type="submit"
+        disabled={formLoading}
+        className="px-4 py-2 bg-blue-600 text-white rounded"
+      >
         保存
       </button>
     </form>
@@ -2235,6 +2335,7 @@ git commit -m "feat(panel): add summary config create/edit form"
 ## Task 17: Panel — summary history page
 
 **Files:**
+
 - Create: `packages/panel/src/pages/summary/history.tsx`
 
 - [ ] **Step 1: Write page**
@@ -2244,7 +2345,9 @@ import { useState } from "react";
 import { client } from "../../lib/client";
 import type { ChatSummaryRecord } from "@cos-tool-bot/shared";
 
-interface Props { botId: string }
+interface Props {
+  botId: string;
+}
 
 export function SummaryHistory({ botId }: Props) {
   const [page, setPage] = useState(1);
@@ -2307,16 +2410,24 @@ export function SummaryHistory({ botId }: Props) {
               <td>{r.messageCount}</td>
               <td>{r.errorMessage ? `❌ ${r.errorMessage}` : "✅"}</td>
               <td>
-                <button onClick={() => setSelected(r)} className="text-blue-600 underline">查看</button>
+                <button onClick={() => setSelected(r)} className="text-blue-600 underline">
+                  查看
+                </button>
               </td>
             </tr>
           ))}
         </tbody>
       </table>
       <div className="flex gap-2 items-center">
-        <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上页</button>
-        <span>第 {page} 页 / 共 {Math.ceil(total / 20)} 页</span>
-        <button disabled={page * 20 >= total} onClick={() => setPage((p) => p + 1)}>下页</button>
+        <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          上页
+        </button>
+        <span>
+          第 {page} 页 / 共 {Math.ceil(total / 20)} 页
+        </span>
+        <button disabled={page * 20 >= total} onClick={() => setPage((p) => p + 1)}>
+          下页
+        </button>
       </div>
       {selected && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center">
@@ -2360,6 +2471,7 @@ git commit -m "feat(panel): add summary history page with pagination and preview
 ## Task 18: Panel — bot detail "总结" tab + aiConfig summaryConfig group
 
 **Files:**
+
 - Modify: `packages/panel/src/pages/bots/show.tsx` (exact filename — check the actual bot detail page)
 - Modify: AI config form component (path identified by inspection)
 
@@ -2386,6 +2498,7 @@ Import the two components. Use the actual Tabs primitive (Radix/headless/etc.) t
 - [ ] **Step 3: Add summaryConfig group to AI config form**
 
 Find the AI config form component (likely `packages/panel/src/pages/bots/ai-config-form.tsx` or similar). In its field list, add a collapsible section "群聊总结设置" with:
+
 - `enabled` checkbox
 - `defaultWindowHours` (number, default 24)
 - `defaultMaxMessages` (number, default 2000)
@@ -2426,12 +2539,14 @@ Open the panel URL. Log in.
 - [ ] **Step 2: Enable summaryConfig on test bot**
 
 In bot detail → AI 配置：
+
 - Tick `summaryConfig.enabled`
 - Save
 
 - [ ] **Step 3: Create per-chat config**
 
 Panel → 总结 tab → 新增：
+
 - chatId: your test group id
 - scheduleHour/Minute: 2 minutes from now (UTC!)
 - windowHours: 1
@@ -2442,10 +2557,12 @@ Panel → 总结 tab → 新增：
 
 In Telegram test group, send a few messages then `/summary 5`.
 Expected:
+
 - Bot replies "📝 正在总结…"
 - After a few seconds, replies with expandable blockquote HTML summary linking messages.
 
 Test all arg forms:
+
 - `/summary` → 24h default
 - `/summary 10` → 10 messages
 - `/summary 2h` → 2 hours
