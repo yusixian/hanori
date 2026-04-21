@@ -228,6 +228,8 @@ export class SummaryRunner {
     const picked = overrideProviderId
       ? cfg.providers?.find((p) => p.id === overrideProviderId)
       : undefined;
+    // Fail closed on stale override id so the user notices instead of silently using main provider.
+    if (overrideProviderId && !picked) return null;
     const active =
       picked ?? cfg.providers?.find((p) => p.id === cfg.activeProviderId) ?? cfg.providers?.[0];
     if (!active?.encryptedApiKey) return null;

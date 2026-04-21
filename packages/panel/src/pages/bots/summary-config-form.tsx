@@ -57,19 +57,30 @@ export function SummaryConfigForm({
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<AiProviderEntryPublic[]>([]);
   const [activeProviderId, setActiveProviderId] = useState<string | undefined>(undefined);
+  const [providersError, setProvidersError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
+        if (!res.ok) {
+          if (!cancelled) setProvidersError(`加载 Provider 列表失败 (${res.status})`);
+          return;
+        }
         const json = await res.json();
-        if (!cancelled && json.ok) {
+        if (cancelled) return;
+        if (json.ok) {
           setProviders(json.data.providers ?? []);
           setActiveProviderId(json.data.activeProviderId);
+          setProvidersError(null);
+        } else {
+          setProvidersError("加载 Provider 列表失败");
         }
-      } catch {
-        /* ignore */
+      } catch (err) {
+        if (!cancelled) {
+          setProvidersError(err instanceof Error ? err.message : "加载 Provider 列表失败");
+        }
       }
     })();
     return () => {
@@ -260,6 +271,7 @@ export function SummaryConfigForm({
               </option>
             ))}
           </select>
+          {providersError && <p className="text-xs text-red-500">{providersError}</p>}
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">模型 ID</label>
