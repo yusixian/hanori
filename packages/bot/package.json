@@ -8,10 +8,15 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./utils/format": {
+      "types": "./src/utils/format.ts",
+      "development": "./src/utils/format.ts",
+      "default": "./dist/utils/format.js"
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts",
+    "build": "tsdown src/index.ts src/utils/format.ts --format esm --dts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
