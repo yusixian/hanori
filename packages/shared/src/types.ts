@@ -452,6 +452,7 @@ export interface SummaryConfigRecord {
   scheduleMinute: number | null;
   windowHours: number;
   customPrompt: string | null;
+  providerId: string | null;
   modelId: string | null;
   maxMessages: number | null;
   cooldownSeconds: number | null;

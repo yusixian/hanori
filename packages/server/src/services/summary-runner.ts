@@ -30,6 +30,7 @@ export interface RunOptions {
   triggeredBy?: number;
   configOverrides?: {
     customPrompt?: string | null;
+    providerId?: string | null;
     modelId?: string | null;
     maxMessages?: number | null;
   };
@@ -62,6 +63,9 @@ export class SummaryRunner {
     const { windowStart, windowEnd, limit } = this.resolveWindow(opts, cfg);
     const roleFilter = cfg.summaryConfig?.roleFilter ?? [...DEFAULT_ROLE_FILTER];
 
+    const provider = this.resolveProvider(cfg, opts.configOverrides?.providerId ?? null);
+    const modelId = this.pickModelId(opts, cfg, provider?.defaultModel ?? "");
+
     const msgs = await this.fetchMessages(
       opts.botId,
       opts.chatId,
@@ -77,7 +81,7 @@ export class SummaryRunner {
         windowStart,
         windowEnd,
         messageCount: msgs.length,
-        modelId: this.pickModelId(opts, cfg),
+        modelId: modelId || "unknown",
         content: "",
         errorMessage: "too_few_messages",
         durationMs: 0,
@@ -90,7 +94,6 @@ export class SummaryRunner {
       };
     }
 
-    const provider = this.resolveProvider(cfg);
     if (!provider) {
       const sumRow = await this.writeHistory({
         opts,
@@ -104,8 +107,6 @@ export class SummaryRunner {
       });
       return { ok: false, error: "no_provider", messageCount: msgs.length, summaryId: sumRow.id };
     }
-
-    const modelId = this.pickModelId(opts, cfg);
     const systemPrompt =
       opts.configOverrides?.customPrompt ??
       cfg.summaryConfig?.systemPrompt ??
@@ -205,23 +206,39 @@ export class SummaryRunner {
     }
   }
 
-  private pickModelId(opts: RunOptions, cfg: AiConfigStored): string {
+  private pickModelId(opts: RunOptions, cfg: AiConfigStored, providerDefaultModel: string): string {
     const override = opts.configOverrides?.modelId;
     if (override) return override;
+    // Per-chat providerId override: prefer that provider's defaultModel so model/provider stay paired.
+    if (opts.configOverrides?.providerId) return providerDefaultModel;
     const summaryModel = cfg.summaryConfig?.modelId;
     if (summaryModel) return summaryModel;
-    const activeProvider = cfg.providers?.find((p) => p.id === cfg.activeProviderId);
-    return activeProvider?.defaultModel ?? cfg.model;
+    return providerDefaultModel || cfg.model;
   }
 
   private resolveProvider(
     cfg: AiConfigStored,
-  ): { apiKey: string; baseURL: string; providerFormat: "openai" | "gemini" } | null {
-    const active = cfg.providers?.find((p) => p.id === cfg.activeProviderId) ?? cfg.providers?.[0];
+    overrideProviderId: string | null,
+  ): {
+    apiKey: string;
+    baseURL: string;
+    providerFormat: "openai" | "gemini";
+    defaultModel: string;
+  } | null {
+    const picked = overrideProviderId
+      ? cfg.providers?.find((p) => p.id === overrideProviderId)
+      : undefined;
+    const active =
+      picked ?? cfg.providers?.find((p) => p.id === cfg.activeProviderId) ?? cfg.providers?.[0];
     if (!active?.encryptedApiKey) return null;
     const apiKey = tryDecrypt(active.encryptedApiKey, this.encryptionKey);
     if (!apiKey) return null;
-    return { apiKey, baseURL: active.baseURL, providerFormat: active.providerFormat };
+    return {
+      apiKey,
+      baseURL: active.baseURL,
+      providerFormat: active.providerFormat,
+      defaultModel: active.defaultModel,
+    };
   }
 
   private resolveWindow(

@@ -114,6 +114,7 @@ export class ChatSummaryService {
       configOverrides: row
         ? {
             customPrompt: row.customPrompt,
+            providerId: row.providerId,
             modelId: row.modelId,
             maxMessages: row.maxMessages,
           }
@@ -215,6 +216,7 @@ export class ChatSummaryService {
         trigger: "scheduled",
         configOverrides: {
           customPrompt: cfg.customPrompt,
+          providerId: cfg.providerId,
           modelId: cfg.modelId,
           maxMessages: cfg.maxMessages,
         },

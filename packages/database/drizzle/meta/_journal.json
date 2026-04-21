@@ -176,6 +176,13 @@
       "when": 1776778506236,
       "tag": "0024_even_johnny_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1776784458009,
+      "tag": "0025_giant_wallflower",
+      "breakpoints": true
     }
   ]
 }

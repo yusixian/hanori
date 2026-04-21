@@ -548,6 +548,7 @@ export const summaryConfigs = pgTable(
     scheduleMinute: integer("schedule_minute"),
     windowHours: integer("window_hours").notNull().default(24),
     customPrompt: text("custom_prompt"),
+    providerId: text("provider_id"),
     modelId: text("model_id"),
     maxMessages: integer("max_messages"),
     cooldownSeconds: integer("cooldown_seconds"),

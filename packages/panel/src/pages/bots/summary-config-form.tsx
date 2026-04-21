@@ -2,9 +2,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { client } from "@/lib/client";
-import type { SummaryAccessMode, SummaryConfigRecord } from "@cos-tool-bot/shared";
+import type {
+  AiProviderEntryPublic,
+  SummaryAccessMode,
+  SummaryConfigRecord,
+} from "@cos-tool-bot/shared";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface DefaultsData {
   systemPrompt: string;
@@ -43,6 +47,7 @@ export function SummaryConfigForm({
     config?.cooldownSeconds != null ? String(config.cooldownSeconds) : "",
   );
   const [accessMode, setAccessMode] = useState<SummaryAccessMode>(config?.accessMode ?? "all");
+  const [providerId, setProviderId] = useState(config?.providerId ?? "");
   const [modelId, setModelId] = useState(config?.modelId ?? "");
   const [customPrompt, setCustomPrompt] = useState(config?.customPrompt ?? "");
   const [showDefaults, setShowDefaults] = useState(false);
@@ -50,6 +55,27 @@ export function SummaryConfigForm({
   const [loadingDefaults, setLoadingDefaults] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<AiProviderEntryPublic[]>([]);
+  const [activeProviderId, setActiveProviderId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
+        const json = await res.json();
+        if (!cancelled && json.ok) {
+          setProviders(json.data.providers ?? []);
+          setActiveProviderId(json.data.activeProviderId);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [botId]);
 
   const toggleDefaults = async () => {
     if (showDefaults) {
@@ -88,6 +114,7 @@ export function SummaryConfigForm({
         maxMessages: maxMessages !== "" ? Number(maxMessages) : null,
         cooldownSeconds: cooldownSeconds !== "" ? Number(cooldownSeconds) : null,
         accessMode,
+        providerId: providerId || null,
         modelId: modelId || null,
         customPrompt: customPrompt || null,
       };
@@ -214,13 +241,38 @@ export function SummaryConfigForm({
         </div>
       </div>
 
-      <div className="space-y-1">
-        <label className="text-sm font-medium">模型 ID</label>
-        <Input
-          placeholder="留空 = 主模型"
-          value={modelId}
-          onChange={(e) => setModelId(e.target.value)}
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Provider</label>
+          <select
+            className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
+            value={providerId}
+            onChange={(e) => setProviderId(e.target.value)}
+          >
+            <option value="">
+              {activeProviderId
+                ? `默认（当前主 Provider：${providers.find((p) => p.id === activeProviderId)?.label ?? activeProviderId}）`
+                : "默认（主 Provider）"}
+            </option>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label} ({p.providerFormat})
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">模型 ID</label>
+          <Input
+            placeholder={
+              providerId
+                ? `留空 = ${providers.find((p) => p.id === providerId)?.defaultModel ?? "所选 Provider 默认模型"}`
+                : "留空 = 主模型"
+            }
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="space-y-2">

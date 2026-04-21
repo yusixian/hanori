@@ -24,6 +24,7 @@ const createConfigSchema = z.object({
   scheduleMinute: z.number().int().min(0).max(59).nullable().optional(),
   windowHours: z.number().int().min(1).max(72).optional(),
   customPrompt: z.string().nullable().optional(),
+  providerId: z.string().nullable().optional(),
   modelId: z.string().nullable().optional(),
   maxMessages: z.number().int().min(10).max(2000).nullable().optional(),
   cooldownSeconds: z.number().int().min(0).max(86400).nullable().optional(),
