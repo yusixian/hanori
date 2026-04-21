@@ -696,6 +696,20 @@ export class BotPool {
         }
       : undefined;
 
+    const summaryCallbacks =
+      this.summaryService && this.summaryConfigService
+        ? {
+            botId,
+            adminChatIds: bot.adminChatIds ?? [],
+            triggerManual: (opts: Parameters<typeof this.summaryService.triggerManual>[0]) =>
+              this.summaryService!.triggerManual(opts),
+            getAccessMode: async (chatId: number) => {
+              const cfg = await this.summaryConfigService!.getByChat(botId, chatId);
+              return cfg?.accessMode ?? null;
+            },
+          }
+        : undefined;
+
     const manager = new BotManager({
       botId,
       token,
@@ -709,6 +723,7 @@ export class BotPool {
       onGenerationTrack,
       timerCallbacks,
       mcpCallbacks,
+      summary: summaryCallbacks,
     });
 
     this.managers.set(botId, manager);

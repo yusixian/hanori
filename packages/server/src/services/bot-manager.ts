@@ -2,6 +2,7 @@ import type {
   AiReplyBotConfig,
   BotConfig,
   McpCommandConfig,
+  SummaryCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
 import { createBot } from "@cos-tool-bot/bot";
@@ -29,6 +30,7 @@ interface BotManagerOptions {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
   mcpCallbacks?: McpCommandConfig;
+  summary?: SummaryCallbacks;
 }
 
 export class BotManager implements IBotManager {
@@ -57,6 +59,7 @@ export class BotManager implements IBotManager {
       mcpCallbacks: options.mcpCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
+      summary: options.summary,
     };
   }
 
