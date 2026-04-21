@@ -1,6 +1,6 @@
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Refine, Authenticated } from "@refinedev/core";
-import routerProvider, { NavigateToResource } from "@refinedev/react-router";
+import routerProvider, { NavigateToResource, CatchAllNavigate } from "@refinedev/react-router";
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Outlet } from "react-router";
 import { authProvider } from "@/providers/auth-provider";
@@ -90,7 +90,7 @@ export function App() {
             <Routes>
               <Route
                 element={
-                  <Authenticated key="auth" fallback={<Outlet />}>
+                  <Authenticated key="auth" fallback={<CatchAllNavigate to="/login" />}>
                     <AppLayout />
                   </Authenticated>
                 }
