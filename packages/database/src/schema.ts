@@ -22,12 +22,32 @@ export const EMBEDDING_DIMENSIONS = Number(process.env["EMBEDDING_DIMENSIONS"]) 
 
 /** Mirrors AiConfigStored from @cos-tool-bot/shared — kept inline to avoid circular dependency.
  *  SYNC: update this type when changing AiConfigStored in packages/shared/src/types.ts */
+interface AiProviderEntryJson {
+  id: string;
+  label: string;
+  encryptedApiKey: string | null;
+  baseURL: string;
+  providerFormat: "openai" | "gemini";
+  defaultModel: string;
+  models?: Array<{
+    id: string;
+    label?: string;
+    capabilities?: Array<
+      "vision" | "tool_calling" | "web_search" | "reasoning" | "long_context" | "code"
+    >;
+    temperature?: number;
+    maxTokens?: number;
+  }>;
+}
+
 interface AiConfigJson {
   enabled: boolean;
   encryptedApiKey: string | null;
   baseURL: string;
   model: string;
   providerFormat?: "openai" | "gemini";
+  providers?: AiProviderEntryJson[];
+  activeProviderId?: string;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -342,6 +362,22 @@ export const chatModelOverrides = pgTable(
       .$onUpdate(() => new Date()),
   },
   (t) => [uniqueIndex("chat_model_bot_chat_uniq").on(t.botId, t.chatId)],
+);
+
+export const chatProviderOverrides = pgTable(
+  "chat_provider_overrides",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    providerId: text("provider_id").notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("chat_provider_bot_chat_uniq").on(t.botId, t.chatId)],
 );
 
 export const pixaiGenerations = pgTable(

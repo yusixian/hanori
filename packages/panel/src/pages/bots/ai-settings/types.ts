@@ -47,6 +47,7 @@ export const DEFAULT_CONFIG: AiConfigPublic = {
   groupBehavioralPrompt: "",
   triggerConfig: DEFAULT_TRIGGER,
   groupOverrides: {},
+  providers: [],
 };
 
 export interface StatusMessage {

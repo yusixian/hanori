@@ -18,8 +18,11 @@ import type { BotPool } from "../services/bot-pool.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
+import { randomUUID } from "node:crypto";
+import type { AiProviderEntry } from "@cos-tool-bot/shared";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
+import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
 
 const emailForwardFilterSchema = z.object({
   senderPattern: z.string().optional(),
@@ -102,7 +105,9 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     adminChatIds: bot.adminChatIds,
     isActive: bot.isActive,
     aiEnabled: bot.aiConfig?.enabled ?? false,
-    aiHasApiKey: !!bot.aiConfig?.encryptedApiKey,
+    aiHasApiKey: !!(
+      bot.aiConfig && getActiveProvider(migrateAiConfig(bot.aiConfig))?.encryptedApiKey
+    ),
     createdAt: bot.createdAt.toISOString(),
     updatedAt: bot.updatedAt?.toISOString() ?? null,
     status: manager?.status ?? "stopped",
@@ -141,42 +146,57 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
         randomReplyCooldown: 60,
       },
       groupOverrides: {},
+      providers: [],
     };
   }
+  const migrated = migrateAiConfig(config);
+  // migrateAiConfig guarantees providers[] non-empty, so active is always set.
+  const active = getActiveProvider(migrated)!;
+  const providers = migrated.providers!.map((p) => ({
+    id: p.id,
+    label: p.label,
+    hasApiKey: !!p.encryptedApiKey,
+    baseURL: p.baseURL,
+    providerFormat: p.providerFormat,
+    defaultModel: p.defaultModel,
+    models: p.models,
+  }));
   return {
-    enabled: config.enabled,
-    hasApiKey: !!config.encryptedApiKey,
-    baseURL: config.baseURL,
-    model: config.model,
-    providerFormat: config.providerFormat,
-    systemPrompt: config.systemPrompt,
-    behavioralPrompt: config.behavioralPrompt,
-    groupBehavioralPrompt: config.groupBehavioralPrompt,
-    triggerConfig: config.triggerConfig,
-    groupOverrides: config.groupOverrides,
-    conversationConfig: config.conversationConfig,
-    memoryConfig: config.memoryConfig,
-    stickerPacks: config.stickerPacks,
-    webToolsConfig: config.webToolsConfig,
-    agentToolsConfig: config.agentToolsConfig,
-    artworkToolsConfig: config.artworkToolsConfig,
-    botMemoryConfig: config.botMemoryConfig,
-    messageConfig: config.messageConfig,
-    models: config.models,
-    modelCommandAccess: config.modelCommandAccess,
-    embeddingConfig: config.embeddingConfig
+    enabled: migrated.enabled,
+    hasApiKey: !!active.encryptedApiKey,
+    baseURL: active.baseURL,
+    model: active.defaultModel,
+    providerFormat: active.providerFormat,
+    providers,
+    activeProviderId: migrated.activeProviderId,
+    systemPrompt: migrated.systemPrompt,
+    behavioralPrompt: migrated.behavioralPrompt,
+    groupBehavioralPrompt: migrated.groupBehavioralPrompt,
+    triggerConfig: migrated.triggerConfig,
+    groupOverrides: migrated.groupOverrides,
+    conversationConfig: migrated.conversationConfig,
+    memoryConfig: migrated.memoryConfig,
+    stickerPacks: migrated.stickerPacks,
+    webToolsConfig: migrated.webToolsConfig,
+    agentToolsConfig: migrated.agentToolsConfig,
+    artworkToolsConfig: migrated.artworkToolsConfig,
+    botMemoryConfig: migrated.botMemoryConfig,
+    messageConfig: migrated.messageConfig,
+    models: active.models ?? migrated.models,
+    modelCommandAccess: migrated.modelCommandAccess,
+    embeddingConfig: migrated.embeddingConfig
       ? {
-          enabled: config.embeddingConfig.enabled,
-          hasApiKey: !!config.embeddingConfig.encryptedApiKey,
-          baseURL: config.embeddingConfig.baseURL,
-          model: config.embeddingConfig.model,
+          enabled: migrated.embeddingConfig.enabled,
+          hasApiKey: !!migrated.embeddingConfig.encryptedApiKey,
+          baseURL: migrated.embeddingConfig.baseURL,
+          model: migrated.embeddingConfig.model,
           dimensions: EMBEDDING_DIMENSIONS,
         }
       : undefined,
-    dataFilesConfig: config.dataFilesConfig,
-    privateChatWhitelist: config.privateChatWhitelist,
-    timeoutConfig: config.timeoutConfig,
-    mcpServerIds: config.mcpServerIds,
+    dataFilesConfig: migrated.dataFilesConfig,
+    privateChatWhitelist: migrated.privateChatWhitelist,
+    timeoutConfig: migrated.timeoutConfig,
+    mcpServerIds: migrated.mcpServerIds,
   };
 }
 
@@ -376,17 +396,53 @@ const aiConfigSchema = z
     modelCommandAccess: z.enum(["admin", "all"]).optional(),
     privateChatWhitelist: z.array(z.number().int()).optional(),
     mcpServerIds: z.array(z.number().int()).optional(),
+    providers: z
+      .array(
+        z.object({
+          id: z.string().optional(),
+          label: z.string().min(1).max(100),
+          apiKey: z.string().optional(),
+          baseURL: z.string().min(1),
+          providerFormat: z.enum(["openai", "gemini"]),
+          defaultModel: z.string(),
+          models: z
+            .array(
+              z.object({
+                id: z.string(),
+                label: z.string().optional(),
+                capabilities: z
+                  .array(
+                    z.enum([
+                      "vision",
+                      "tool_calling",
+                      "web_search",
+                      "reasoning",
+                      "long_context",
+                      "code",
+                    ]),
+                  )
+                  .optional(),
+                temperature: z.number().min(0).max(2).optional(),
+                maxTokens: z.number().positive().optional(),
+              }),
+            )
+            .optional(),
+        }),
+      )
+      .optional(),
+    activeProviderId: z.string().optional(),
   })
   .refine(
     (data) => {
       if (!data.enabled) return true;
+      if (data.providers && data.providers.length > 0) return true;
       if (data.baseURL.length === 0) return false;
       // model can be empty if models array is non-empty (first model used as default)
       if (data.model.length === 0 && (!data.models || data.models.length === 0)) return false;
       return true;
     },
     {
-      message: "baseURL is required when AI is enabled; model or models must be configured",
+      message: "providers or baseURL+model must be configured when AI is enabled",
     },
   );
 
@@ -687,6 +743,41 @@ export function botsRoutes(
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
+      // Migrate existing stored config first so we can reliably look up per-provider
+      // encrypted keys by id when the client sends back the same provider without a new apiKey.
+      const existingMigrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+      const existingProvidersById = new Map<string, AiProviderEntry>();
+      for (const p of existingMigrated?.providers ?? []) {
+        existingProvidersById.set(p.id, p);
+      }
+
+      // Build new providers list with preserve-when-empty apiKey per entry.
+      let providers: AiProviderEntry[] | undefined;
+      let activeProviderId: string | undefined = body.activeProviderId;
+      if (body.providers !== undefined) {
+        providers = body.providers.map((p) => {
+          const existing = p.id ? existingProvidersById.get(p.id) : undefined;
+          const encryptedApiKey =
+            p.apiKey !== undefined && p.apiKey !== ""
+              ? encrypt(p.apiKey, env.ENCRYPTION_KEY)
+              : (existing?.encryptedApiKey ?? null);
+          return {
+            id: p.id ?? randomUUID(),
+            label: p.label,
+            encryptedApiKey,
+            baseURL: p.baseURL,
+            providerFormat: p.providerFormat,
+            defaultModel: p.defaultModel,
+            models: p.models,
+          };
+        });
+        if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
+          activeProviderId = providers[0]?.id;
+        }
+      }
+
+      // Legacy top-level apiKey handling (kept for backward-compat clients that don't yet
+      // send providers[]). Preserve-when-empty.
       let encryptedApiKey = bot.aiConfig?.encryptedApiKey ?? null;
       if (body.apiKey !== undefined && body.apiKey !== "") {
         encryptedApiKey = encrypt(body.apiKey, env.ENCRYPTION_KEY);
@@ -718,6 +809,8 @@ export function botsRoutes(
         baseURL: body.baseURL,
         model: effectiveModel,
         providerFormat: body.providerFormat,
+        providers: providers ?? existingMigrated?.providers,
+        activeProviderId: activeProviderId ?? existingMigrated?.activeProviderId,
         systemPrompt: body.systemPrompt,
         behavioralPrompt: body.behavioralPrompt,
         groupBehavioralPrompt: body.groupBehavioralPrompt,
@@ -896,15 +989,18 @@ export function botsRoutes(
       let apiKey = body.apiKey;
       let baseURL = body.baseURL;
 
-      // Fall back to stored values
+      // Fall back to stored values (active provider first, then legacy top-level)
       if (!apiKey || !baseURL) {
         const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
         if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-        if (!baseURL) baseURL = bot.aiConfig?.baseURL;
-        if (!apiKey && bot.aiConfig?.encryptedApiKey) {
+        const migrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+        const active = migrated ? getActiveProvider(migrated) : null;
+        if (!baseURL) baseURL = active?.baseURL ?? migrated?.baseURL;
+        const encryptedKey = active?.encryptedApiKey ?? migrated?.encryptedApiKey ?? null;
+        if (!apiKey && encryptedKey) {
           try {
-            apiKey = decrypt(bot.aiConfig.encryptedApiKey, env.ENCRYPTION_KEY);
+            apiKey = decrypt(encryptedKey, env.ENCRYPTION_KEY);
           } catch {
             return c.json(
               {

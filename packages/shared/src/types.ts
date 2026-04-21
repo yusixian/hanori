@@ -376,12 +376,38 @@ export interface BotMemoryCallbacks {
   searchProfiles?(query: string, telegramId?: number): Promise<PeopleProfile[]>;
 }
 
-export interface AiConfigStored {
-  enabled: boolean;
+export interface AiProviderEntry {
+  id: string;
+  label: string;
   encryptedApiKey: string | null;
   baseURL: string;
+  providerFormat: "openai" | "gemini";
+  defaultModel: string;
+  models?: ModelEntry[];
+}
+
+export interface AiProviderEntryPublic {
+  id: string;
+  label: string;
+  hasApiKey: boolean;
+  baseURL: string;
+  providerFormat: "openai" | "gemini";
+  defaultModel: string;
+  models?: ModelEntry[];
+}
+
+export interface AiConfigStored {
+  enabled: boolean;
+  /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */
+  encryptedApiKey: string | null;
+  /** @deprecated migrated into providers[0].baseURL */
+  baseURL: string;
+  /** @deprecated migrated into providers[0].defaultModel */
   model: string;
+  /** @deprecated migrated into providers[0].providerFormat */
   providerFormat?: "openai" | "gemini";
+  providers?: AiProviderEntry[];
+  activeProviderId?: string;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -395,6 +421,7 @@ export interface AiConfigStored {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  /** @deprecated migrated into providers[0].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfig;
@@ -455,10 +482,16 @@ export interface EmbeddingConfigPublic {
 
 export interface AiConfigPublic {
   enabled: boolean;
+  /** @deprecated reflects providers[activeProviderId].hasApiKey for backward compat */
   hasApiKey: boolean;
+  /** @deprecated reflects providers[activeProviderId].baseURL */
   baseURL: string;
+  /** @deprecated reflects providers[activeProviderId].defaultModel */
   model: string;
+  /** @deprecated reflects providers[activeProviderId].providerFormat */
   providerFormat?: "openai" | "gemini";
+  providers: AiProviderEntryPublic[];
+  activeProviderId?: string;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -472,6 +505,7 @@ export interface AiConfigPublic {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  /** @deprecated reflects providers[activeProviderId].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfigPublic;

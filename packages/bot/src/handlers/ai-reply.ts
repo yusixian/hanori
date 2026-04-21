@@ -77,11 +77,32 @@ import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
-export interface AiReplyConfig {
+export interface AiProviderRuntime {
+  id: string;
+  label: string;
   apiKey: string;
   baseURL: string;
+  providerFormat: "openai" | "gemini";
+  defaultModel: string;
+  models?: ModelEntry[];
+}
+
+export interface AiReplyConfig {
+  /** @deprecated active provider's apiKey — superseded by providers[] when present */
+  apiKey: string;
+  /** @deprecated active provider's baseURL */
+  baseURL: string;
+  /** @deprecated active provider's defaultModel */
   model: string;
+  /** @deprecated active provider's providerFormat */
   providerFormat?: "openai" | "gemini";
+  providers?: AiProviderRuntime[];
+  activeProviderId?: string;
+  providerOverride?: {
+    getProviderForChat: (chatId: number) => string | undefined;
+    setProviderForChat: (chatId: number, providerId: string) => void;
+    resetProviderForChat: (chatId: number) => void;
+  };
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -486,6 +507,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   setModelForChat: (chatId: number, modelId: string) => void;
   getModelForChat: (chatId: number) => string;
   resetModelForChat: (chatId: number) => void;
+  setProviderForChat: (chatId: number, providerId: string) => void;
+  getProviderForChat: (chatId: number) => string;
+  resetProviderForChat: (chatId: number) => void;
+  getProvidersList: () => Array<{ id: string; label: string; defaultModel: string }>;
+  getModelsForChat: (chatId: number) => ModelEntry[];
   getReplyMode: () => ReplyMode;
   setReplyMode: (mode: ReplyMode) => void;
   getImageGenEnabled: (chatId: number) => boolean;
@@ -536,10 +562,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   const chatModelMap = new Map<number, string>();
 
   function getModelForChat(chatId: number): string {
+    // Per-chat model override wins; otherwise fall back to the active provider's default model.
+    const providerDefault = getProviderRuntimeForChat(chatId).defaultModel || config.model;
     if (config.modelOverride) {
-      return config.modelOverride.getModelForChat(chatId) ?? config.model;
+      return config.modelOverride.getModelForChat(chatId) ?? providerDefault;
     }
-    return chatModelMap.get(chatId) ?? config.model;
+    return chatModelMap.get(chatId) ?? providerDefault;
   }
 
   function setModelForChat(chatId: number, modelId: string) {
@@ -623,18 +651,86 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     await config.onPixaiConfigUpdate?.(updates);
   }
 
-  // Create AI provider (singleton — avoid recreating on every call)
-  const provider: (modelId: string) => LanguageModel =
-    config.providerFormat === "gemini"
-      ? createGoogleGenerativeAI({
-          baseURL: config.baseURL,
-          apiKey: config.apiKey,
-        })
-      : createOpenAICompatible({
-          name: "custom",
-          baseURL: config.baseURL,
-          apiKey: config.apiKey,
-        });
+  // Provider registry: prefer config.providers; fall back to legacy top-level fields.
+  // Synthesizes a single "__legacy__" entry when providers[] not supplied so all downstream
+  // code paths can uniformly look up by id.
+  const providerRegistry = new Map<string, AiProviderRuntime>();
+  if (config.providers && config.providers.length > 0) {
+    for (const p of config.providers) providerRegistry.set(p.id, p);
+  } else {
+    providerRegistry.set("__legacy__", {
+      id: "__legacy__",
+      label: "Default",
+      apiKey: config.apiKey,
+      baseURL: config.baseURL,
+      providerFormat: config.providerFormat ?? "openai",
+      defaultModel: config.model,
+      models: config.models,
+    });
+  }
+  const fallbackProviderId =
+    config.activeProviderId && providerRegistry.has(config.activeProviderId)
+      ? config.activeProviderId
+      : providerRegistry.keys().next().value!;
+
+  // Lazy-build LanguageModel factory per provider id (cached).
+  const providerClientCache = new Map<string, (modelId: string) => LanguageModel>();
+  function getProviderClient(providerId: string): (modelId: string) => LanguageModel {
+    const cached = providerClientCache.get(providerId);
+    if (cached) return cached;
+    const entry = providerRegistry.get(providerId) ?? providerRegistry.get(fallbackProviderId)!;
+    const factory: (modelId: string) => LanguageModel =
+      entry.providerFormat === "gemini"
+        ? createGoogleGenerativeAI({ baseURL: entry.baseURL, apiKey: entry.apiKey })
+        : createOpenAICompatible({ name: "custom", baseURL: entry.baseURL, apiKey: entry.apiKey });
+    providerClientCache.set(providerId, factory);
+    return factory;
+  }
+
+  // In-memory per-chat provider override (used when persistent callback not supplied).
+  const chatProviderMap = new Map<number, string>();
+
+  function getProviderIdForChat(chatId: number): string {
+    const override =
+      config.providerOverride?.getProviderForChat(chatId) ?? chatProviderMap.get(chatId);
+    if (override && providerRegistry.has(override)) return override;
+    return fallbackProviderId;
+  }
+
+  function getProviderRuntimeForChat(chatId: number): AiProviderRuntime {
+    const id = getProviderIdForChat(chatId);
+    return providerRegistry.get(id) ?? providerRegistry.get(fallbackProviderId)!;
+  }
+
+  function setProviderForChat(chatId: number, providerId: string) {
+    if (!providerRegistry.has(providerId)) return;
+    if (config.providerOverride) {
+      config.providerOverride.setProviderForChat(chatId, providerId);
+    } else {
+      chatProviderMap.set(chatId, providerId);
+    }
+  }
+
+  function resetProviderForChat(chatId: number) {
+    if (config.providerOverride) {
+      config.providerOverride.resetProviderForChat(chatId);
+    } else {
+      chatProviderMap.delete(chatId);
+    }
+  }
+
+  function getProvidersList(): Array<{ id: string; label: string; defaultModel: string }> {
+    return Array.from(providerRegistry.values()).map((p) => ({
+      id: p.id,
+      label: p.label,
+      defaultModel: p.defaultModel,
+    }));
+  }
+
+  /** Per-chat provider client factory (what the old singleton `provider` used to be). */
+  function getProviderClientForChat(chatId: number): (modelId: string) => LanguageModel {
+    return getProviderClient(getProviderIdForChat(chatId));
+  }
 
   // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -735,6 +831,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
     const modelId = chatId != null ? getModelForChat(chatId) : config.model;
     const modelEntry = getModelEntry(modelId);
+    const providerFactory =
+      chatId != null ? getProviderClientForChat(chatId) : getProviderClient(fallbackProviderId);
     // Telegram: private chat IDs are positive, group/supergroup IDs are negative
     const imageGenerationAllowed =
       chatId != null
@@ -745,7 +843,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           )
         : false;
     return {
-      model: provider(modelId),
+      model: providerFactory(modelId),
       modelId,
       temperature: modelEntry?.temperature,
       maxTokens: modelEntry?.maxTokens,
@@ -770,7 +868,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       agentToolsFactory: config.agentToolsConfig?.enabled
         ? () =>
             createAgentTools({
-              provider: (m) => provider(m),
+              provider: (m) => providerFactory(m),
               model: modelId,
               agentConfig: config.agentToolsConfig!,
               webToolsConfig: config.webToolsConfig,
@@ -999,14 +1097,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onceGuard,
       });
 
-      // Resolve model for this chat
+      // Resolve model + provider for this chat
       const currentModel = getModelForChat(chatId);
+      const currentProviderRuntime = getProviderRuntimeForChat(chatId);
+      const currentProviderFactory = getProviderClientForChat(chatId);
 
       // Create agent tools if enabled
       let agentTools: Record<string, Tool> = {};
       if (config.agentToolsConfig?.enabled) {
         agentTools = createAgentTools({
-          provider: (m) => provider(m),
+          provider: (m) => currentProviderFactory(m),
           model: currentModel,
           agentConfig: config.agentToolsConfig,
           webToolsConfig: config.webToolsConfig,
@@ -1210,8 +1310,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         message: "AI request",
         meta: {
           model: currentModel,
-          baseURL: config.baseURL,
-          providerFormat: config.providerFormat ?? "openai",
+          providerId: currentProviderRuntime.id,
+          providerLabel: currentProviderRuntime.label,
+          baseURL: currentProviderRuntime.baseURL,
+          providerFormat: currentProviderRuntime.providerFormat,
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
           staticPrefixHash,
@@ -1245,7 +1347,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       let multiMessageUsed = false;
       const modelEntry = getModelEntry(currentModel);
       const result = streamText({
-        model: provider(currentModel),
+        model: currentProviderFactory(currentModel),
         messages,
         tools: wrappedTools,
         stopWhen: stepCountIs(maxSteps),
@@ -1624,6 +1726,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     setModelForChat,
     getModelForChat,
     resetModelForChat,
+    setProviderForChat,
+    getProviderForChat: getProviderIdForChat,
+    resetProviderForChat,
+    getProvidersList,
+    getModelsForChat: (chatId: number): ModelEntry[] => {
+      const entry = getProviderRuntimeForChat(chatId);
+      return entry.models ?? config.models ?? [];
+    },
     getReplyMode: (): ReplyMode =>
       replyModeOverride ?? config.messageConfig?.replyMode ?? DEFAULT_MESSAGE_CONFIG.replyMode!,
     setReplyMode: (mode: ReplyMode) => {

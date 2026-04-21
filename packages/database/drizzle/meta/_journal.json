@@ -162,6 +162,13 @@
       "when": 1773567730917,
       "tag": "0022_wandering_sumo",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1776751436996,
+      "tag": "0023_rare_robbie_robertson",
+      "breakpoints": true
     }
   ]
 }
