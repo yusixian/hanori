@@ -46,6 +46,7 @@ import {
 import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
+import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { assembleContinueChatContext } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
@@ -364,12 +365,22 @@ async function doContinueChat(
         // Stream mode: pipe text chunks to Telegram via sendMessageDraft.
         // multi_message is deleted in stream mode so multiMessageUsed stays false.
         try {
-          const filteredStream = filterThinkingStream(
+          const thinkFiltered = filterThinkingStream(
             result.textStream,
             ({ pattern, strippedLength }) => {
               config.onLog?.({
                 level: "info",
                 message: `Stripped thinking content from continueChat stream (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId },
+              });
+            },
+          );
+          const filteredStream = filterMetaPrefixStream(
+            thinkFiltered,
+            ({ pattern, strippedLength }) => {
+              config.onLog?.({
+                level: "warn",
+                message: `Stripped meta prefix from continueChat stream (pattern: ${pattern}, ${strippedLength} chars)`,
                 meta: { chatId },
               });
             },
@@ -407,10 +418,20 @@ async function doContinueChat(
       return;
     }
 
-    const text = stripThinkingContent((await result.text).trim(), ({ pattern, strippedLength }) => {
+    const afterThink = stripThinkingContent(
+      (await result.text).trim(),
+      ({ pattern, strippedLength }) => {
+        config.onLog?.({
+          level: "info",
+          message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+          meta: { chatId },
+        });
+      },
+    );
+    const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
       config.onLog?.({
-        level: "info",
-        message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+        level: "warn",
+        message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
         meta: { chatId },
       });
     });

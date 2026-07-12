@@ -77,6 +77,7 @@ import { formatSentMessagesHtml } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { describeImages } from "../services/image-ocr.js";
+import { createMetaPrefixStreamFilter, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
 export interface AiProviderRuntime {
@@ -1501,6 +1502,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               meta: { chatId, userId },
             });
           });
+          const metaFilter = createMetaPrefixStreamFilter(({ pattern, strippedLength }) => {
+            config.onLog?.({
+              level: "warn",
+              message: `Stripped meta prefix from stream (pattern: ${pattern}, ${strippedLength} chars)`,
+              meta: { chatId, userId },
+            });
+          });
           // Accumulate filtered text locally so catch can fall back without waiting
           // for `await result.text` to drain fullStream (which can take seconds).
           let accumulatedFiltered = "";
@@ -1518,7 +1526,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               accumulatedFiltered += out;
             };
             for await (const chunk of result.textStream) {
-              const filtered = thinkFilter.push(chunk);
+              const afterThink = thinkFilter.push(chunk);
+              if (!afterThink) continue;
+              const filtered = metaFilter.push(afterThink);
               if (!filtered) continue;
               if (!hasVisibleContent) {
                 leadingBuffer += filtered;
@@ -1533,7 +1543,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               await emit(filtered);
               yield filtered;
             }
-            const flushed = thinkFilter.flush();
+            const thinkFlushed = thinkFilter.flush();
+            const afterThinkFlush = thinkFlushed ? metaFilter.push(thinkFlushed) : "";
+            const metaFlushed = metaFilter.flush();
+            const flushed = afterThinkFlush + metaFlushed;
             if (flushed) leadingBuffer += flushed;
             if (leadingBuffer && /\S/.test(leadingBuffer)) {
               hasVisibleContent = true;
@@ -1608,10 +1621,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
 
       const rawText = (await result.text).trim();
-      const text = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+      const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
         config.onLog?.({
           level: "info",
           message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+          meta: { chatId, userId },
+        });
+      });
+      const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
+        config.onLog?.({
+          level: "warn",
+          message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
           meta: { chatId, userId },
         });
       });
@@ -1767,11 +1787,40 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           }
         }
 
-        // Save assistant reply with usage meta (even if empty text)
+        // Save assistant reply with usage meta (even if empty text).
+        // When multi_message handled the reply, the final `text` was discarded (never sent),
+        // so persist what actually went out — aggregated multi_message payloads — to keep
+        // conversation history consistent with what the user saw.
+        let assistantContent = text || "";
+        if (sentViaMultiMessage) {
+          const parts: string[] = [];
+          for (const step of steps) {
+            for (const tc of step.toolCalls) {
+              if (tc.toolName !== "multi_message") continue;
+              const input = tc.input as { messages?: Array<{ text?: string }> } | undefined;
+              if (input?.messages) {
+                for (const m of input.messages) {
+                  if (!m.text) continue;
+                  const clean = stripMetaPrefix(stripThinkingContent(m.text));
+                  if (clean) parts.push(clean);
+                }
+              }
+            }
+          }
+          if (parts.length) assistantContent = parts.join("\n");
+          else assistantContent = "";
+          if (text) {
+            config.onLog?.({
+              level: "warn",
+              message: `multi_message used but model emitted ${text.length} trailing chars; dropped (not sent, not saved)`,
+              meta: { chatId, userId, droppedPreview: truncate(text, 200) },
+            });
+          }
+        }
         toSave.push({
           chatId,
           role: "assistant",
-          content: text || "",
+          content: assistantContent,
           meta: {
             model: currentModel,
             trigger: triggerResult,

@@ -73,7 +73,7 @@ export function BotLogsPage() {
           </Button>
           <div className="flex items-center gap-2">
             <Radio
-              className={cn("h-4 w-4", connected ? "text-emerald-400" : "text-muted-foreground")}
+              className={cn("h-4 w-4", connected ? "text-emerald-600" : "text-muted-foreground")}
             />
             <span className="text-muted-foreground text-xs">
               {connected ? "Live" : "Disconnected"}

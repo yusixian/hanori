@@ -70,11 +70,17 @@ export function BotDashboardPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">{bot.name}</h1>
-        {isLark && <Badge variant="muted">Lark</Badge>}
-        <Badge variant={statusBadge[bot.status].variant}>{statusBadge[bot.status].label}</Badge>
+    <div className="space-y-7">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-primary mb-1 text-sm font-medium">Bot overview</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{bot.name}</h1>
+            {isLark && <Badge variant="muted">Lark</Badge>}
+            <Badge variant={statusBadge[bot.status].variant}>{statusBadge[bot.status].label}</Badge>
+          </div>
+          <p className="text-muted-foreground mt-1 text-sm">查看运行状态并管理机器人生命周期。</p>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -83,20 +89,20 @@ export function BotDashboardPage() {
             <CardTitle className="text-base">Bot Info</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
               <span className="text-muted-foreground text-sm">Token:</span>
               <span className="font-mono text-sm">{bot.tokenMasked}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
               <span className="text-muted-foreground text-sm">Uptime:</span>
-              <span className="font-mono text-sm">{formatUptime(bot.uptime)}</span>
+              <span className="font-mono text-sm tabular-nums">{formatUptime(bot.uptime)}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-4 border-b pb-3">
               <span className="text-muted-foreground text-sm">Auto-start:</span>
               <span className="text-sm">{bot.isActive ? "Yes" : "No"}</span>
             </div>
             {!isLark && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-4 border-b pb-3">
                 <span className="text-muted-foreground text-sm">AI Reply:</span>
                 <Badge variant={bot.aiEnabled ? "default" : "muted"}>
                   {bot.aiEnabled ? "Enabled" : "Disabled"}
@@ -104,13 +110,13 @@ export function BotDashboardPage() {
               </div>
             )}
             {isLark && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-4 border-b pb-3">
                 <span className="text-muted-foreground text-sm">Platform:</span>
                 <span className="text-sm">Lark Webhook</span>
               </div>
             )}
             {bot.adminChatIds.length > 0 && (
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground text-sm">Admins:</span>
                 <span className="font-mono text-sm">{bot.adminChatIds.join(", ")}</span>
               </div>
@@ -169,6 +175,9 @@ export function BotDashboardPage() {
               )}
             </div>
             <div className="border-t pt-4">
+              <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
+                Danger zone
+              </p>
               <Button variant="destructive" size="sm" onClick={handleDelete}>
                 <Trash2 className="h-4 w-4" />
                 Delete Bot

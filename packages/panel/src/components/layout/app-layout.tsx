@@ -93,7 +93,7 @@ export function AppLayout() {
   return (
     <div className="flex h-dvh flex-col md:flex-row">
       {/* Mobile top bar */}
-      <header className="bg-card z-30 flex items-center gap-2 border-b px-3 py-2 md:hidden">
+      <header className="z-30 flex h-14 items-center gap-3 border-b bg-white/90 px-3 backdrop-blur-xl md:hidden">
         <Button
           variant="ghost"
           size="sm"
@@ -102,14 +102,16 @@ export function AppLayout() {
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <Bot className="text-primary h-5 w-5" />
-        <span className="text-sm font-semibold">cos-tool-bot</span>
+        <div className="bg-primary flex size-8 items-center justify-center rounded-lg text-white shadow-sm">
+          <Bot className="h-4 w-4" />
+        </div>
+        <span className="text-sm font-semibold tracking-tight">cos-tool-bot</span>
       </header>
 
       {/* Overlay backdrop */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/25 backdrop-blur-[2px] md:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
@@ -117,13 +119,13 @@ export function AppLayout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "bg-card fixed inset-y-0 left-0 z-50 flex w-64 flex-col overflow-hidden border-r transition-all duration-200 ease-in-out md:static md:z-auto md:translate-x-0",
+          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r bg-white/95 shadow-xl backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:shadow-none",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
-          collapsed ? "md:w-14" : "md:w-56",
+          collapsed ? "md:w-[72px]" : "md:w-60",
         )}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-4 py-4">
+        <div className="flex h-[72px] items-center justify-between border-b px-4">
           {collapsed ? (
             <Button
               variant="ghost"
@@ -137,9 +139,16 @@ export function AppLayout() {
             </Button>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <Bot className="text-primary h-6 w-6 shrink-0" />
-                <span className="text-sm font-semibold whitespace-nowrap">cos-tool-bot</span>
+              <div className="flex items-center gap-3">
+                <div className="bg-primary flex size-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm">
+                  <Bot className="h-[18px] w-[18px]" />
+                </div>
+                <div className="min-w-0">
+                  <span className="block text-sm font-semibold tracking-tight whitespace-nowrap">
+                    cos-tool-bot
+                  </span>
+                  <span className="text-muted-foreground block text-[11px]">Control center</span>
+                </div>
               </div>
               <Button
                 variant="ghost"
@@ -165,21 +174,21 @@ export function AppLayout() {
           </Button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto p-2">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
           {isBotContext ? (
             <>
               <Link
                 to="/"
                 title="Back to Bots"
                 className={cn(
-                  "text-muted-foreground hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground",
                   collapsed && "md:justify-center",
                 )}
               >
                 <ArrowLeft className="h-4 w-4 shrink-0" />
                 <span className={cn(collapsed && "md:hidden")}>Back to Bots</span>
               </Link>
-              <div className="mx-3 my-1 border-t" />
+              <div className="mx-3 my-2 border-t" />
               {botNavItems.map((item) => {
                 const active =
                   item.path === `/bots/${botId}`
@@ -191,10 +200,10 @@ export function AppLayout() {
                     to={item.path}
                     title={item.label}
                     className={cn(
-                      "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      "flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-[background-color,color,box-shadow]",
                       active
-                        ? "bg-accent text-accent-foreground"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+                        ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.06)]"
+                        : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
                       collapsed && "md:justify-center",
                     )}
                   >
@@ -211,10 +220,10 @@ export function AppLayout() {
                 to={item.path}
                 title={item.label}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-[background-color,color,box-shadow]",
                   isNavActive(item.path, location.pathname)
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
+                    ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.06)]"
+                    : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
                   collapsed && "md:justify-center",
                 )}
               >
@@ -225,7 +234,7 @@ export function AppLayout() {
           )}
         </nav>
 
-        <div className="border-t p-2">
+        <div className="border-t p-3">
           <Button
             variant="ghost"
             size="sm"
@@ -241,8 +250,10 @@ export function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="min-w-0 flex-1 overflow-auto p-3 sm:p-4 md:p-6">
-        <Outlet />
+      <main className="min-w-0 flex-1 overflow-auto">
+        <div className="mx-auto w-full max-w-[1440px] p-4 sm:p-6 lg:p-8">
+          <Outlet />
+        </div>
       </main>
     </div>
   );

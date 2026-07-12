@@ -5,6 +5,8 @@ import type { Api } from "grammy";
 import { z } from "zod";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sleep } from "../utils/sleep.js";
+import { stripMetaPrefix } from "../utils/strip-meta-prefix.js";
+import { stripThinkingContent } from "../utils/strip-thinking.js";
 import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
 
@@ -46,16 +48,35 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
       ),
       execute: async ({ messages }) => {
         try {
+          let sentCount = 0;
           for (const msg of messages) {
+            const clean = stripMetaPrefix(
+              stripThinkingContent(msg.text, ({ pattern, strippedLength }) => {
+                onLog?.({
+                  level: "info",
+                  message: `Stripped thinking content from multi_message (pattern: ${pattern}, ${strippedLength} chars)`,
+                  meta: { chatId },
+                });
+              }),
+              ({ pattern, strippedLength }) => {
+                onLog?.({
+                  level: "warn",
+                  message: `Stripped meta prefix from multi_message (pattern: ${pattern}, ${strippedLength} chars)`,
+                  meta: { chatId },
+                });
+              },
+            );
+            if (!clean) continue;
             if (msg.delay_ms) {
               await api.sendChatAction(chatId, "typing");
               await sleep(Math.min(msg.delay_ms, 5000));
             }
-            const html = markdownToTelegramHtml(msg.text);
+            const html = markdownToTelegramHtml(clean);
             const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
             recentBotMessageIds.push(sent.message_id);
+            sentCount++;
           }
-          return { sent: messages.length };
+          return { sent: sentCount };
         } catch (err) {
           return { error: String(err) };
         }

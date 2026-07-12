@@ -61,7 +61,7 @@ export function Popover({
             style={floatingStyles}
             {...getFloatingProps()}
             className={cn(
-              "bg-popover text-popover-foreground z-50 rounded-lg border shadow-md outline-none",
+              "z-50 rounded-xl bg-popover text-popover-foreground shadow-[0_0_0_1px_rgb(15_23_42/0.06),0_12px_32px_rgb(15_23_42/0.12)] outline-none",
               className,
             )}
           >

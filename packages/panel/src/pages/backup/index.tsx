@@ -79,13 +79,13 @@ function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
         {error && (
           <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-400">{error}</p>
+            <p className="text-sm text-red-600">{error}</p>
           </div>
         )}
         {success && (
           <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-green-400">{success}</p>
+            <p className="text-sm text-emerald-600">{success}</p>
           </div>
         )}
       </CardContent>
@@ -723,7 +723,7 @@ function StorageConfigSection() {
             ) : (
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
             )}
-            <p className={cn("text-sm", testResult.ok ? "text-green-400" : "text-red-400")}>
+            <p className={cn("text-sm", testResult.ok ? "text-emerald-600" : "text-red-600")}>
               {testResult.ok ? "Connection successful" : `Connection failed: ${testResult.error}`}
             </p>
           </div>
@@ -731,13 +731,13 @@ function StorageConfigSection() {
         {error && (
           <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-400">{error}</p>
+            <p className="text-sm text-red-600">{error}</p>
           </div>
         )}
         {success && (
           <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-green-400">{success}</p>
+            <p className="text-sm text-emerald-600">{success}</p>
           </div>
         )}
       </CardContent>

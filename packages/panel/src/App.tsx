@@ -69,8 +69,11 @@ const LarkSetupGuidePage = lazy(() =>
 
 function LoadingFallback() {
   return (
-    <div className="flex items-center justify-center py-12">
-      <div className="text-muted-foreground text-sm">Loading...</div>
+    <div className="flex items-center justify-center py-20" role="status" aria-live="polite">
+      <div className="text-muted-foreground flex items-center gap-3 text-sm">
+        <span className="border-t-primary size-4 animate-spin rounded-full border-2 border-slate-200" />
+        Loading…
+      </div>
     </div>
   );
 }
