@@ -1,17 +1,19 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { authClient } from "@/lib/auth-client";
 import { useLogin } from "@refinedev/core";
-import { Bot, LockKeyhole } from "lucide-react";
+import { Bot, LockKeyhole, Mail } from "lucide-react";
 import { useState, type FormEvent } from "react";
 
 export function LoginPage() {
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { mutate: login, isLoading } = useLogin();
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    login({ password });
+    login({ email, password });
   };
 
   return (
@@ -28,7 +30,22 @@ export function LoginPage() {
         <CardContent className="px-7 pb-8">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <label className="space-y-2">
-              <span className="text-sm font-medium">访问密码</span>
+              <span className="text-sm font-medium">邮箱</span>
+              <div className="relative">
+                <Mail className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
+                <Input
+                  className="pl-10"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="email"
+                  autoFocus
+                />
+              </div>
+            </label>
+            <label className="space-y-2">
+              <span className="text-sm font-medium">密码</span>
               <div className="relative">
                 <LockKeyhole className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
                 <Input
@@ -38,12 +55,28 @@ export function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
-                  autoFocus
                 />
               </div>
             </label>
-            <Button type="submit" disabled={isLoading || !password}>
+            <Button type="submit" disabled={isLoading || !email || !password}>
               {isLoading ? "正在登录…" : "登录"}
+            </Button>
+            <div className="text-muted-foreground flex items-center gap-3 text-xs">
+              <div className="bg-border h-px flex-1" />
+              <span>或</span>
+              <div className="bg-border h-px flex-1" />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                authClient.signIn.social({
+                  provider: "google",
+                  callbackURL: `${window.location.origin}/`,
+                })
+              }
+            >
+              使用 Google 登录
             </Button>
           </form>
         </CardContent>

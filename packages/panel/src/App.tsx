@@ -66,6 +66,15 @@ const McpServersPage = lazy(() =>
 const LarkSetupGuidePage = lazy(() =>
   import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
 );
+const SettingsPage = lazy(() =>
+  import("@/pages/settings").then((m) => ({ default: m.SettingsPage })),
+);
+const AcceptInvitationPage = lazy(() =>
+  import("@/pages/accept-invitation").then((m) => ({ default: m.AcceptInvitationPage })),
+);
+const ResetPasswordPage = lazy(() =>
+  import("@/pages/reset-password").then((m) => ({ default: m.ResetPasswordPage })),
+);
 
 function LoadingFallback() {
   return (
@@ -123,6 +132,7 @@ export function App() {
                 <Route path="/logs" element={<LogsListPage />} />
                 <Route path="/mcp-servers" element={<McpServersPage />} />
                 <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />
+                <Route path="/settings" element={<SettingsPage />} />
               </Route>
 
               <Route
@@ -134,6 +144,8 @@ export function App() {
               >
                 <Route path="/login" element={<LoginPage />} />
               </Route>
+              <Route path="/accept-invitation" element={<AcceptInvitationPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
             </Routes>
           </Suspense>
         </Refine>

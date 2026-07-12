@@ -4,8 +4,9 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger as honoLogger } from "hono/logger";
-import { jwtAuth } from "./middleware/auth.js";
-import { authRoutes } from "./routes/auth.js";
+import { requireAppAccess } from "./middleware/better-auth.js";
+import { resolveAllowedOrigins, type AppAuth } from "./auth.js";
+import { authzRoutes } from "./routes/authz.js";
 import { backupRoutes } from "./routes/backup.js";
 import { botsRoutes } from "./routes/bots.js";
 import { logRoutes } from "./routes/logs.js";
@@ -29,9 +30,9 @@ import type { TimerRegistry } from "./services/timer-registry.js";
 
 interface AppOptions {
   db: Database;
+  auth: AppAuth;
+  baseURL: string;
   botPool: BotPool;
-  panelPassword: string;
-  jwtSecret: string;
   encryptionKey: string;
   backupService: BackupService;
   modelCapabilityService: ModelCapabilityService;
@@ -45,9 +46,9 @@ interface AppOptions {
 export function createApp(options: AppOptions) {
   const {
     db,
+    auth,
+    baseURL,
     botPool,
-    panelPassword,
-    jwtSecret,
     encryptionKey,
     backupService,
     modelCapabilityService,
@@ -60,7 +61,13 @@ export function createApp(options: AppOptions) {
 
   const app = new Hono()
     .use("*", honoLogger())
-    .use("/api/*", cors())
+    .use(
+      "/api/*",
+      cors({
+        origin: resolveAllowedOrigins(baseURL),
+        credentials: true,
+      }),
+    )
     .onError((err, c) => {
       if (err instanceof HTTPException) {
         return c.json({ ok: false as const, error: err.message }, err.status);
@@ -68,28 +75,36 @@ export function createApp(options: AppOptions) {
       console.error("Unhandled error:", err);
       return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
     })
-    .route("/api/auth", authRoutes(panelPassword, jwtSecret))
-    .use("/api/bots/*", jwtAuth(jwtSecret))
+    .on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
+    .route("/api/authz", authzRoutes(auth, db, baseURL))
+    .use("/api/bots", requireAppAccess(auth, db))
+    .use("/api/bots/*", requireAppAccess(auth, db))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
-    .use("/api/logs/*", jwtAuth(jwtSecret))
+    .use("/api/logs", requireAppAccess(auth, db))
+    .use("/api/logs/*", requireAppAccess(auth, db))
     .route("/api/logs", logRoutes(db))
-    .use("/api/backup/*", jwtAuth(jwtSecret))
+    .use("/api/backup", requireAppAccess(auth, db))
+    .use("/api/backup/*", requireAppAccess(auth, db))
     .route("/api/backup", backupRoutes(backupService, encryptionKey))
-    .use("/api/api-test/*", jwtAuth(jwtSecret))
+    .use("/api/api-test", requireAppAccess(auth, db))
+    .use("/api/api-test/*", requireAppAccess(auth, db))
     .route("/api/api-test", apiTestRoutes())
-    .use("/api/timers/*", jwtAuth(jwtSecret))
+    .use("/api/timers", requireAppAccess(auth, db))
+    .use("/api/timers/*", requireAppAccess(auth, db))
     .route(
       "/api/timers",
       timerRoutes(timerRegistry, (timerId) => botPool.cancelTimer(timerId)),
     )
-    .use("/api/usage/*", jwtAuth(jwtSecret))
+    .use("/api/usage", requireAppAccess(auth, db))
+    .use("/api/usage/*", requireAppAccess(auth, db))
     .route("/api/usage", usageRoutes(db))
-    .use("/api/mcp-servers/*", jwtAuth(jwtSecret))
+    .use("/api/mcp-servers", requireAppAccess(auth, db))
+    .use("/api/mcp-servers/*", requireAppAccess(auth, db))
     .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
     .get("/api/health", (c) => c.json({ ok: true as const }));
 

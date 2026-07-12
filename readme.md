@@ -24,16 +24,24 @@ pnpm build            # 构建所有包
 pnpm lint             # oxlint 代码检查
 ```
 
+首次初始化、认证迁移、Google OAuth 和 Docker 环境变量配置，请阅读 [配置与初始化指南](docs/SETUP.md)。
+
 ## 环境变量
 
 ```bash
 DATABASE_URL=          # PostgreSQL 连接字符串
-JWT_SECRET=            # JWT 签名密钥
-PANEL_PASSWORD=        # 管理面板登录密码
+BETTER_AUTH_SECRET=    # Better Auth secret，至少 32 位
+BETTER_AUTH_URL=       # 面板公开 URL，例如 https://bot.example.com
+AUTH_OWNER_EMAIL=      # 首次启动时创建 owner 的邮箱
+PANEL_PASSWORD=        # 仅用于首次迁移时创建 owner，完成后可删除
+GOOGLE_CLIENT_ID=      # (可选) Google OAuth Client ID
+GOOGLE_CLIENT_SECRET=  # (可选) Google OAuth Client Secret
 ENCRYPTION_KEY=        # Bot Token 加密密钥
 BOT_TOKEN=             # (可选) Telegram Bot Token，仅首次迁移用
 ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 ```
+
+生产环境必须设置 `BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` 和 `AUTH_OWNER_EMAIL`；`PANEL_PASSWORD` 只用于首次创建 owner，首次启动成功后即可删除。
 
 ## 部署
 

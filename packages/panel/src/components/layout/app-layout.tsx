@@ -24,6 +24,7 @@ import {
   Plug,
   Rss,
   ScrollText,
+  Settings,
   Users,
   FileText,
   X,
@@ -92,8 +93,14 @@ export function AppLayout() {
 
   return (
     <div className="flex h-dvh flex-col md:flex-row">
+      <a
+        href="#main-content"
+        className="sr-only z-[60] rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
+      >
+        Skip to content
+      </a>
       {/* Mobile top bar */}
-      <header className="z-30 flex h-14 items-center gap-3 border-b bg-white/90 px-3 backdrop-blur-xl md:hidden">
+      <header className="z-30 flex min-h-14 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-3 pt-[max(0.25rem,env(safe-area-inset-top))] pb-1 backdrop-blur-xl md:hidden">
         <Button
           variant="ghost"
           size="sm"
@@ -102,7 +109,7 @@ export function AppLayout() {
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <div className="bg-primary flex size-8 items-center justify-center rounded-lg text-white shadow-sm">
+        <div className="bg-primary flex size-8 items-center justify-center rounded-xl text-white shadow-[0_6px_14px_rgb(37_99_235/0.24)]">
           <Bot className="h-4 w-4" />
         </div>
         <span className="text-sm font-semibold tracking-tight">cos-tool-bot</span>
@@ -119,13 +126,13 @@ export function AppLayout() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col overflow-hidden border-r bg-white/95 shadow-xl backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:shadow-none",
+          "fixed inset-y-0 left-0 z-50 flex w-[min(82vw,19rem)] flex-col overflow-hidden border-r border-slate-200/80 bg-white/92 shadow-[14px_0_40px_rgb(15_23_42/0.1)] backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:w-[248px] md:shadow-[8px_0_28px_rgb(15_23_42/0.025)]",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
-          collapsed ? "md:w-[72px]" : "md:w-60",
+          collapsed ? "md:w-[76px]" : "md:w-[248px]",
         )}
       >
         {/* Header */}
-        <div className="flex h-[72px] items-center justify-between border-b px-4">
+        <div className="flex h-[80px] items-center justify-between border-b border-slate-200/80 px-4">
           {collapsed ? (
             <Button
               variant="ghost"
@@ -174,9 +181,12 @@ export function AppLayout() {
           </Button>
         </div>
 
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-5">
           {isBotContext ? (
             <>
+              <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.16em] text-slate-400 uppercase">
+                Bot workspace
+              </p>
               <Link
                 to="/"
                 title="Back to Bots"
@@ -207,34 +217,62 @@ export function AppLayout() {
                       collapsed && "md:justify-center",
                     )}
                   >
-                    <item.icon className="h-4 w-4 shrink-0" />
+                    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                      <item.icon className="h-4 w-4" />
+                    </span>
                     <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
                   </Link>
                 );
               })}
             </>
           ) : (
-            globalNavItems.map((item) => (
-              <Link
-                key={item.path}
-                to={item.path}
-                title={item.label}
-                className={cn(
-                  "flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-[background-color,color,box-shadow]",
-                  isNavActive(item.path, location.pathname)
-                    ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.06)]"
-                    : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
-                  collapsed && "md:justify-center",
-                )}
-              >
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
-              </Link>
-            ))
+            <>
+              <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.16em] text-slate-400 uppercase">
+                Workspace
+              </p>
+              {globalNavItems.map((item) => (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  title={item.label}
+                  className={cn(
+                    "group flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-[background-color,color,box-shadow]",
+                    isNavActive(item.path, location.pathname)
+                      ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.08)]"
+                      : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
+                    collapsed && "md:justify-center",
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "flex size-8 shrink-0 items-center justify-center rounded-lg transition-[background-color,color]",
+                      isNavActive(item.path, location.pathname)
+                        ? "bg-white text-primary shadow-sm"
+                        : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-700",
+                    )}
+                  >
+                    <item.icon className="h-4 w-4" />
+                  </span>
+                  <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
+                </Link>
+              ))}
+            </>
           )}
         </nav>
 
-        <div className="border-t p-3">
+        <div className="border-t border-slate-200/80 bg-slate-50/60 p-3">
+          <Link
+            to="/settings"
+            title="Settings"
+            className={cn(
+              "mb-1 flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground",
+              collapsed && "md:justify-center",
+              isNavActive("/settings", location.pathname) && "bg-accent text-accent-foreground",
+            )}
+          >
+            <Settings className="h-4 w-4 shrink-0" />
+            <span className={cn(collapsed && "md:hidden")}>Settings</span>
+          </Link>
           <Button
             variant="ghost"
             size="sm"
@@ -250,8 +288,8 @@ export function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="min-w-0 flex-1 overflow-auto">
-        <div className="mx-auto w-full max-w-[1440px] p-4 sm:p-6 lg:p-8">
+      <main id="main-content" className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <div className="mx-auto w-full max-w-[1480px] p-4 sm:p-6 lg:p-10">
           <Outlet />
         </div>
       </main>

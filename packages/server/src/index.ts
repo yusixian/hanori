@@ -4,6 +4,7 @@ import { serve } from "@hono/node-server";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { createApp } from "./app.js";
+import { createAuth, ensureAuthBootstrap } from "./auth.js";
 import { env } from "./env.js";
 import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
@@ -52,6 +53,17 @@ await runMigrations(env.DATABASE_URL);
 logger.info("Database migrated");
 const { db, client: dbClient } = createDb(env.DATABASE_URL);
 logger.info("Database connected");
+
+// Better Auth owns all browser sessions and the initial workspace owner.
+const auth = createAuth(db, {
+  baseURL: env.BETTER_AUTH_URL,
+  secret: env.BETTER_AUTH_SECRET,
+  ownerEmail: env.AUTH_OWNER_EMAIL,
+  googleClientId: env.GOOGLE_CLIENT_ID,
+  googleClientSecret: env.GOOGLE_CLIENT_SECRET,
+});
+await ensureAuthBootstrap(auth, env.AUTH_OWNER_EMAIL, env.PANEL_PASSWORD);
+logger.info("Authentication initialized");
 
 // Database Logger (system-level, no botId)
 const dbLogger = new DbLogger(db, logger);
@@ -155,9 +167,9 @@ botPool.setSummaryConfigService(summaryConfigService);
 // Hono App
 const app = createApp({
   db,
+  auth,
+  baseURL: env.BETTER_AUTH_URL,
   botPool,
-  panelPassword: env.PANEL_PASSWORD,
-  jwtSecret: env.JWT_SECRET,
   encryptionKey: env.ENCRYPTION_KEY,
   backupService,
   modelCapabilityService,
