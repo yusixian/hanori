@@ -24,18 +24,19 @@ export function ImageOcrConfigSection({
 }) {
   const [showDefault, setShowDefault] = useState(false);
   const activeLabel =
-    providers.find((p) => p.id === activeProviderId)?.label ?? activeProviderId ?? "主 Provider";
+    providers.find((p) => p.id === activeProviderId)?.label ??
+    activeProviderId ??
+    "Active provider";
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">图片 OCR / 描述</CardTitle>
+        <CardTitle className="text-base">Image OCR and descriptions</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-muted-foreground text-xs">
-          启用后，bot 收到图片时会调用 AI 生成一句简短描述，并写入上下文（形如
-          <code className="bg-muted mx-1 rounded px-1 py-0.5">[收到图片 123KB | 描述: …]</code>
-          ），供后续总结/回复参考。
+          When enabled, the bot uses AI to describe incoming images and adds the result to the
+          conversation context for later summaries and replies.
         </p>
 
         <div className="flex items-center gap-2">
@@ -47,7 +48,7 @@ export function ImageOcrConfigSection({
             className="border-input h-4 w-4 rounded"
           />
           <label htmlFor="ocrEnabled" className="text-sm font-medium">
-            启用图片描述
+            Enable image descriptions
           </label>
         </div>
 
@@ -59,7 +60,7 @@ export function ImageOcrConfigSection({
               value={config.providerId ?? ""}
               onChange={(e) => onUpdate({ providerId: e.target.value || undefined })}
             >
-              <option value="">默认（{activeLabel}）</option>
+              <option value="">Default ({activeLabel})</option>
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.label} ({p.providerFormat})
@@ -68,9 +69,9 @@ export function ImageOcrConfigSection({
             </select>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">模型 ID</label>
+            <label className="text-sm font-medium">Model ID</label>
             <Input
-              placeholder="留空 = 所选 Provider 默认模型"
+              placeholder="Leave empty to use the provider default"
               value={config.modelId ?? ""}
               onChange={(e) => onUpdate({ modelId: e.target.value || undefined })}
             />
@@ -79,11 +80,11 @@ export function ImageOcrConfigSection({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">单条消息最多识别图片数</label>
+            <label className="text-sm font-medium">Images per message</label>
             <Input
               type="number"
               min={0}
-              placeholder={`默认 ${DEFAULT_MAX_IMAGES_PER_MESSAGE}`}
+              placeholder={`Default: ${DEFAULT_MAX_IMAGES_PER_MESSAGE}`}
               value={config.maxImagesPerMessage ?? ""}
               onChange={(e) =>
                 onUpdate({
@@ -91,14 +92,16 @@ export function ImageOcrConfigSection({
                 })
               }
             />
-            <p className="text-muted-foreground text-xs">超过此数的图片跳过 OCR，仍保留占位。</p>
+            <p className="text-muted-foreground text-xs">
+              Additional images keep a placeholder but skip OCR.
+            </p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">冷却时间 (秒)</label>
+            <label className="text-sm font-medium">Cooldown (seconds)</label>
             <Input
               type="number"
               min={0}
-              placeholder={`默认 ${DEFAULT_OCR_COOLDOWN_SECONDS}`}
+              placeholder={`Default: ${DEFAULT_OCR_COOLDOWN_SECONDS}`}
               value={config.cooldownSeconds ?? ""}
               onChange={(e) =>
                 onUpdate({
@@ -107,18 +110,18 @@ export function ImageOcrConfigSection({
               }
             />
             <p className="text-muted-foreground text-xs">
-              同一群聊上次 OCR 之后的冷却窗口。设为 0 表示不限速。
+              Time between OCR requests in the same group. Use 0 for no rate limit.
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">描述最大长度 (字符)</label>
+            <label className="text-sm font-medium">Maximum description length</label>
             <Input
               type="number"
               min={10}
-              placeholder={`默认 ${DEFAULT_OCR_MAX_DESCRIPTION_LENGTH}`}
+              placeholder={`Default: ${DEFAULT_OCR_MAX_DESCRIPTION_LENGTH}`}
               value={config.maxDescriptionLength ?? ""}
               onChange={(e) =>
                 onUpdate({
@@ -128,11 +131,11 @@ export function ImageOcrConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">调用超时 (毫秒)</label>
+            <label className="text-sm font-medium">Request timeout (milliseconds)</label>
             <Input
               type="number"
               min={1000}
-              placeholder={`默认 ${DEFAULT_OCR_TIMEOUT_MS}`}
+              placeholder={`Default: ${DEFAULT_OCR_TIMEOUT_MS}`}
               value={config.timeoutMs ?? ""}
               onChange={(e) =>
                 onUpdate({
@@ -145,7 +148,7 @@ export function ImageOcrConfigSection({
 
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium">系统 Prompt (可选)</label>
+            <label className="text-sm font-medium">System prompt (optional)</label>
             <button
               type="button"
               onClick={() => setShowDefault((v) => !v)}
@@ -156,7 +159,7 @@ export function ImageOcrConfigSection({
               ) : (
                 <ChevronRight className="h-3 w-3" />
               )}
-              查看默认
+              View default
             </button>
           </div>
           {showDefault && (
@@ -171,7 +174,7 @@ export function ImageOcrConfigSection({
             onChange={(e) => onUpdate({ systemPrompt: e.target.value || undefined })}
             rows={3}
           />
-          <p className="text-muted-foreground text-xs">留空 = 使用默认。</p>
+          <p className="text-muted-foreground text-xs">Leave empty to use the default.</p>
         </div>
       </CardContent>
     </Card>

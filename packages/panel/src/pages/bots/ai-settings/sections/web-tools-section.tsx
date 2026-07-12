@@ -71,7 +71,7 @@ export function WebToolsSection({
                 placeholder="Brave Search API key"
               />
               <p className="text-muted-foreground text-xs">
-                前往{" "}
+                Visit{" "}
                 <a
                   href="https://brave.com/search/api/"
                   target="_blank"
@@ -80,7 +80,7 @@ export function WebToolsSection({
                 >
                   brave.com/search/api
                 </a>{" "}
-                注册获取 API Key（免费额度 2000 次/月）
+                to create an API key (2,000 free requests per month).
               </p>
             </div>
           )}
@@ -100,11 +100,11 @@ export function WebToolsSection({
                 placeholder="Tavily API key"
               />
               <p className="text-muted-foreground text-xs">
-                前往{" "}
+                Visit{" "}
                 <a href="https://tavily.com" target="_blank" rel="noreferrer" className="underline">
                   tavily.com
                 </a>{" "}
-                注册获取 API Key（免费额度 1000 次/月）
+                to create an API key (1,000 free requests per month).
               </p>
             </div>
           )}
@@ -123,7 +123,7 @@ export function WebToolsSection({
                 placeholder="https://searxng.example.com"
               />
               <p className="text-muted-foreground text-xs">
-                需自行部署 SearXNG 实例，参见{" "}
+                A self-hosted SearXNG instance is required. See{" "}
                 <a
                   href="https://docs.searxng.org"
                   target="_blank"
@@ -166,7 +166,7 @@ export function WebToolsSection({
                 />
               </div>
               <p className="text-muted-foreground text-xs">
-                自定义搜索 API，需实现兼容的 POST /search 接口
+                The custom API must implement a compatible POST /search endpoint.
               </p>
             </>
           )}
@@ -222,7 +222,7 @@ export function WebToolsSection({
             />
             {config.imageGeneration?.provider === "pixai" && (
               <p className="text-muted-foreground text-xs">
-                前往{" "}
+                Visit{" "}
                 <a
                   href="https://platform.pixai.art"
                   target="_blank"
@@ -231,7 +231,7 @@ export function WebToolsSection({
                 >
                   platform.pixai.art
                 </a>{" "}
-                获取 API Key 和模型 ID
+                to get an API key and model ID.
               </p>
             )}
           </div>
@@ -344,7 +344,7 @@ function PixAIConfigFields({
           placeholder="1935090615918113018 (Tsubaki v1.1)"
         />
         <p className="text-muted-foreground text-xs">
-          推荐: Tsubaki v1.1 (1935090615918113018), Haruka v2 (1861558740588989558), Hoshino
+          Recommended: Tsubaki v1.1 (1935090615918113018), Haruka v2 (1861558740588989558), Hoshino
           (1811528826405408057)
         </p>
       </div>
@@ -361,7 +361,7 @@ function PixAIConfigFields({
           rows={2}
         />
         <p className="text-muted-foreground text-xs">
-          附加在每次 AI 调用生图时 prompt 前面的系统提示词
+          Prepended to every image-generation prompt created by the AI.
         </p>
       </div>
 
@@ -394,7 +394,9 @@ function PixAIConfigFields({
               onChange={(e) => updatePixai({ seed: e.target.value || undefined })}
               placeholder="Random"
             />
-            <p className="text-muted-foreground text-xs">固定种子可复现相同构图，留空则每次随机</p>
+            <p className="text-muted-foreground text-xs">
+              Use a fixed seed for repeatable compositions, or leave empty for random results.
+            </p>
           </div>
 
           {/* Priority */}
@@ -412,7 +414,8 @@ function PixAIConfigFields({
               placeholder="1000"
             />
             <p className="text-muted-foreground text-xs">
-              任务队列优先级 (0-10000)，数值越大越优先。设置 Profile 时会自动调整
+              Queue priority (0–10,000). Higher values run first; profiles may adjust this
+              automatically.
             </p>
           </div>
         </div>
@@ -427,7 +430,7 @@ function PixAIConfigFields({
             placeholder="Optional (official docs suggest leaving empty)"
           />
           <p className="text-muted-foreground text-xs">
-            不希望出现在画面中的元素，PixAI 官方建议留空
+            Elements to exclude from the image. PixAI recommends leaving this empty.
           </p>
         </div>
 
@@ -446,7 +449,7 @@ function PixAIConfigFields({
               }
               placeholder="832"
             />
-            <p className="text-muted-foreground text-xs">推荐 512-1280</p>
+            <p className="text-muted-foreground text-xs">Recommended: 512–1280</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Height</label>
@@ -461,7 +464,7 @@ function PixAIConfigFields({
               }
               placeholder="1472"
             />
-            <p className="text-muted-foreground text-xs">常用: 832×1472, 1024×1024</p>
+            <p className="text-muted-foreground text-xs">Common: 832×1472, 1024×1024</p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Batch Size</label>
@@ -476,7 +479,7 @@ function PixAIConfigFields({
               }
               placeholder="1"
             />
-            <p className="text-muted-foreground text-xs">单次生成数量 (1-4)</p>
+            <p className="text-muted-foreground text-xs">Images per generation (1–4)</p>
           </div>
         </div>
       </div>
@@ -502,7 +505,9 @@ function PixAIConfigFields({
               }
               placeholder="20"
             />
-            <p className="text-muted-foreground text-xs">步数越多细节越好，推荐 20-30</p>
+            <p className="text-muted-foreground text-xs">
+              More steps can add detail. Recommended: 20–30.
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">CFG Scale</label>
@@ -518,7 +523,9 @@ function PixAIConfigFields({
               }
               placeholder="5"
             />
-            <p className="text-muted-foreground text-xs">提示词服从度，过高会过饱和。建议 &lt; 7</p>
+            <p className="text-muted-foreground text-xs">
+              Prompt adherence. High values may oversaturate; keep below 7.
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Clip Skip</label>
@@ -533,7 +540,9 @@ function PixAIConfigFields({
               }
               placeholder="2"
             />
-            <p className="text-muted-foreground text-xs">跳过 CLIP 层数，动漫风格通常设 2</p>
+            <p className="text-muted-foreground text-xs">
+              CLIP layers to skip. Anime styles commonly use 2.
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Sampling Method</label>
@@ -543,7 +552,9 @@ function PixAIConfigFields({
               onChange={(e) => updatePixai({ samplingMethod: e.target.value || undefined })}
               placeholder="Euler"
             />
-            <p className="text-muted-foreground text-xs">采样算法，如 Euler、DPM++ 2M Karras 等</p>
+            <p className="text-muted-foreground text-xs">
+              Sampling algorithm, such as Euler or DPM++ 2M Karras.
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Inference Profile</label>
@@ -558,7 +569,7 @@ function PixAIConfigFields({
               <option value="ultra">Ultra</option>
             </Select>
             <p className="text-muted-foreground text-xs">
-              生成质量档位。Ultra 优先级更高、出图更快，但消耗更多积分
+              Generation quality tier. Ultra is faster and higher priority but uses more credits.
             </p>
           </div>
         </div>
@@ -583,7 +594,7 @@ function PixAIConfigFields({
               Prompt Helper
             </label>
             <span className="text-muted-foreground text-xs">
-              (PixAI 自动优化提示词，需额外扣费)
+              (PixAI optimizes prompts for an additional fee)
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -598,7 +609,7 @@ function PixAIConfigFields({
             <label htmlFor="pixaiLightning" className="text-sm font-medium">
               Lightning Mode
             </label>
-            <span className="text-muted-foreground text-xs">(牺牲部分质量换取更快速度)</span>
+            <span className="text-muted-foreground text-xs">(trades some quality for speed)</span>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -612,7 +623,9 @@ function PixAIConfigFields({
             <label htmlFor="pixaiPrivate" className="text-sm font-medium">
               Private Mode
             </label>
-            <span className="text-muted-foreground text-xs">(图片不公开到 PixAI 社区)</span>
+            <span className="text-muted-foreground text-xs">
+              (keeps images private from the PixAI community)
+            </span>
           </div>
         </div>
       </div>
@@ -636,10 +649,12 @@ function PixAIConfigFields({
               placeholder="glossy-glass-anime"
             />
             <p className="text-muted-foreground text-xs">
-              PixAI 预设风格，如 glossy-glass-anime、korean-style
+              PixAI preset style, such as glossy-glass-anime or korean-style.
             </p>
           </div>
-          <p className="text-muted-foreground text-xs">自动附加在提示词首尾的质量标签</p>
+          <p className="text-muted-foreground text-xs">
+            Quality tags automatically added around the prompt.
+          </p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Quality Tag Prefix</label>

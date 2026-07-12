@@ -418,11 +418,11 @@ export interface PromptPreviewResult {
   estimatedTokens: number;
 }
 
-const PLACEHOLDER_ENV_INFO = "[环境信息: 运行时动态注入 — 用户名、聊天类型等]";
-const PLACEHOLDER_PROFILE = "[当前对话用户档案: 运行时动态注入]";
-const PLACEHOLDER_MOOD = "[当前情绪: 运行时动态注入]";
-const PLACEHOLDER_BOT_MEMORY = "[长期记忆: 运行时动态注入]";
-const PLACEHOLDER_HISTORY = "[对话历史: 运行时动态注入]";
+const PLACEHOLDER_ENV_INFO = "[Environment: injected at runtime — username, chat type, and more]";
+const PLACEHOLDER_PROFILE = "[Current user profile: injected at runtime]";
+const PLACEHOLDER_MOOD = "[Current mood: injected at runtime]";
+const PLACEHOLDER_BOT_MEMORY = "[Long-term memory: injected at runtime]";
+const PLACEHOLDER_HISTORY = "[Conversation history: injected at runtime]";
 
 /**
  * Assemble a **preview** of the system prompt for the management panel.
@@ -498,7 +498,7 @@ export async function assemblePromptPreview(
   }
 
   // ── Section 2: Dynamic runtime context ────────────────────────────
-  content += `\n\n--- 以下为动态内容（每次请求不同） ---`;
+  content += `\n\n--- Dynamic content below (changes for every request) ---`;
   content += `\n\n${PLACEHOLDER_ENV_INFO}`;
   content += `\n\n${PLACEHOLDER_MOOD}`;
 

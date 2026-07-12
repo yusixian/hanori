@@ -25,15 +25,15 @@ export function SummaryConfigSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">群聊总结</CardTitle>
+        <CardTitle className="text-base">Chat summaries</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-muted-foreground text-xs">
-          全局默认配置。每个群聊的具体参数（chatId、定时、窗口等）在{" "}
+          These are the global defaults. Manage group-specific schedules and windows on the{" "}
           <Link to={`/bots/${botId}/summary`} className="underline hover:opacity-80">
-            群聊总结页面
+            Chat Summaries page
           </Link>{" "}
-          管理。
+          .
         </p>
 
         <div className="flex items-center gap-2">
@@ -45,13 +45,13 @@ export function SummaryConfigSection({
             className="border-input h-4 w-4 rounded"
           />
           <label htmlFor="summaryEnabled" className="text-sm font-medium">
-            启用群聊总结功能
+            Enable chat summaries
           </label>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">默认窗口 (小时)</label>
+            <label className="text-sm font-medium">Default window (hours)</label>
             <Input
               type="number"
               min={1}
@@ -61,7 +61,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">默认最大消息数</label>
+            <label className="text-sm font-medium">Maximum messages</label>
             <Input
               type="number"
               min={10}
@@ -71,7 +71,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">默认冷却 (秒)</label>
+            <label className="text-sm font-medium">Default cooldown (seconds)</label>
             <Input
               type="number"
               min={0}
@@ -81,7 +81,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">时区</label>
+            <label className="text-sm font-medium">Timezone</label>
             <Input
               placeholder="Asia/Shanghai"
               value={config.timezone ?? ""}
@@ -92,12 +92,12 @@ export function SummaryConfigSection({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">全局定时小时 (0-23)</label>
+            <label className="text-sm font-medium">Global schedule hour (0–23)</label>
             <Input
               type="number"
               min={0}
               max={23}
-              placeholder="留空 = 不设全局定时"
+              placeholder="Leave empty for no global schedule"
               value={config.globalScheduleHour != null ? String(config.globalScheduleHour) : ""}
               onChange={(e) =>
                 onUpdate({
@@ -107,12 +107,12 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">全局定时分钟 (0-59)</label>
+            <label className="text-sm font-medium">Global schedule minute (0–59)</label>
             <Input
               type="number"
               min={0}
               max={59}
-              placeholder="留空 = 不设全局定时"
+              placeholder="Leave empty for no global schedule"
               value={config.globalScheduleMinute != null ? String(config.globalScheduleMinute) : ""}
               onChange={(e) =>
                 onUpdate({
@@ -124,16 +124,16 @@ export function SummaryConfigSection({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">模型 ID (可选)</label>
+          <label className="text-sm font-medium">Model ID (optional)</label>
           <Input
-            placeholder="留空 = 使用主模型"
+            placeholder="Leave empty to use the main model"
             value={config.modelId ?? ""}
             onChange={(e) => onUpdate({ modelId: e.target.value || undefined })}
           />
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">消息角色过滤</label>
+          <label className="text-sm font-medium">Message role filter</label>
           <div className="flex gap-4">
             {roleOptions.map((role) => (
               <label key={role} className="flex items-center gap-1.5 text-sm">
@@ -150,10 +150,10 @@ export function SummaryConfigSection({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">系统 Prompt (可选)</label>
+          <label className="text-sm font-medium">System prompt (optional)</label>
           <textarea
             className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            placeholder="留空 = 使用内置默认 prompt"
+            placeholder="Leave empty to use the built-in prompt"
             value={config.systemPrompt ?? ""}
             onChange={(e) => onUpdate({ systemPrompt: e.target.value || undefined })}
             rows={4}

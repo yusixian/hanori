@@ -47,10 +47,6 @@ export function BotListPage() {
     <div className="space-y-8">
       <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
-          <p className="text-primary mb-3 flex items-center gap-2 text-xs font-bold tracking-[0.16em] uppercase">
-            <span className="size-1.5 rounded-full bg-blue-500 shadow-[0_0_0_4px_rgb(59_130_246/0.12)]" />
-            Workspace / Bots
-          </p>
           <h1 className="text-4xl font-semibold tracking-[-0.04em] text-slate-950 sm:text-5xl">
             Bots
           </h1>
@@ -59,20 +55,16 @@ export function BotListPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-4 rounded-2xl bg-white/70 px-4 py-2.5 shadow-sm ring-1 ring-slate-950/[0.035]">
+          <div className="flex items-center gap-4 border-r pr-4">
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] text-slate-400 uppercase">
-                Fleet
-              </p>
+              <p className="text-xs text-slate-500">Bots</p>
               <p className="mt-0.5 text-lg font-semibold text-slate-900 tabular-nums">
                 {bots.length}
               </p>
             </div>
             <div className="h-8 w-px bg-slate-200" />
             <div>
-              <p className="text-[10px] font-bold tracking-[0.14em] text-slate-400 uppercase">
-                Running
-              </p>
+              <p className="text-xs text-slate-500">Running</p>
               <p className="mt-0.5 flex items-center gap-1.5 text-lg font-semibold text-emerald-600 tabular-nums">
                 <Activity className="size-4" />
                 {runningCount}
@@ -93,18 +85,13 @@ export function BotListPage() {
           aria-label="Loading bots…"
         >
           {[0, 1, 2].map((item) => (
-            <div
-              key={item}
-              className="h-64 animate-pulse rounded-[24px] bg-white/70 shadow-[var(--shadow-surface)]"
-            />
+            <div key={item} className="h-64 animate-pulse rounded-xl border bg-white" />
           ))}
         </div>
       ) : bots.length === 0 ? (
         <Card className="overflow-hidden">
           <CardContent className="flex flex-col items-center gap-4 px-6 py-20 text-center sm:py-24">
-            <div className="text-primary flex size-16 items-center justify-center rounded-[20px] bg-blue-50 shadow-[inset_0_0_0_1px_rgb(37_99_235/0.08)]">
-              <Bot className="size-7" />
-            </div>
+            <Bot className="text-primary size-9" />
             <div>
               <p className="text-lg font-semibold text-slate-900">还没有机器人</p>
               <p className="text-muted-foreground mt-2 text-sm">
@@ -131,24 +118,21 @@ export function BotListPage() {
                 选择一个机器人查看详情或管理运行状态。
               </p>
             </div>
-            <span className="hidden rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500 sm:inline-flex">
-              Auto-refresh · 5s
-            </span>
+            <span className="hidden text-xs text-slate-500 sm:inline-flex">Auto-refresh · 5s</span>
           </div>
           <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             {bots.map((bot) => (
               <Card
                 key={bot.id}
-                className="group relative overflow-hidden transition-[box-shadow,ring-color] duration-200 ease-out hover:shadow-[var(--shadow-surface-hover)] hover:ring-blue-500/20"
+                className="group relative overflow-hidden transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-[var(--shadow-surface-hover)]"
               >
-                <div className="absolute inset-y-0 left-0 w-1 bg-blue-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
                 <Link
                   to={`/bots/${bot.id}`}
                   className="block p-5 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset sm:p-6"
                 >
                   <div className="flex min-h-[76px] items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-[inset_0_0_0_1px_rgb(37_99_235/0.1)] transition-colors duration-200 group-hover:bg-blue-100">
+                      <div className="flex size-8 shrink-0 items-center justify-center text-slate-500">
                         <Bot className="size-5" />
                       </div>
                       <div className="min-w-0 pt-0.5">
@@ -175,7 +159,7 @@ export function BotListPage() {
                       {statusBadge[bot.status].label}
                     </Badge>
                   </div>
-                  <div className="mt-5 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2.5 ring-1 ring-slate-950/[0.025] ring-inset">
+                  <div className="mt-5 flex items-center gap-2 border-t pt-3">
                     <KeyRound className="size-3.5 shrink-0 text-slate-400" />
                     <span className="text-muted-foreground min-w-0 truncate font-mono text-xs">
                       {bot.tokenMasked}
@@ -183,7 +167,7 @@ export function BotListPage() {
                     <ArrowUpRight className="ml-auto size-3.5 shrink-0 text-slate-300 transition-colors duration-150 group-hover:text-blue-500" />
                   </div>
                 </Link>
-                <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
+                <div className="flex items-center justify-between gap-3 border-t px-5 py-4 sm:px-6">
                   <span className="flex min-w-0 items-center gap-2 text-xs font-medium text-slate-500 tabular-nums">
                     <span
                       className={`size-2 rounded-full ${bot.status === "running" ? "bg-emerald-500" : "bg-slate-300"}`}
