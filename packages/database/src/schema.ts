@@ -265,9 +265,51 @@ export const botLogs = pgTable(
     level: text("level").notNull(), // 'debug' | 'info' | 'warn' | 'error'
     message: text("message").notNull(),
     meta: json("meta"),
+    botRunId: uuid("bot_run_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("bot_logs_bot_id_idx").on(t.botId)],
+);
+
+export const botRuns = pgTable(
+  "bot_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    source: text("source").notNull(),
+    channel: text("channel").notNull(),
+    mode: text("mode").notNull().default("dry-run"),
+    status: text("status").notNull().default("running"),
+    failureReason: text("failure_reason"),
+    input: json("input").$type<Record<string, unknown>>().notNull(),
+    configSnapshot: json("config_snapshot").$type<Record<string, unknown>>(),
+    durationMs: integer("duration_ms"),
+    pinned: boolean("pinned").notNull().default(false),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (t) => [index("bot_runs_bot_created_idx").on(t.botId, t.createdAt)],
+);
+
+export const botRunEvents = pgTable(
+  "bot_run_events",
+  {
+    id: serial("id").primaryKey(),
+    runId: uuid("run_id")
+      .references(() => botRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    sequence: integer("sequence").notNull(),
+    kind: text("kind").notNull(),
+    level: text("level").notNull().default("info"),
+    data: json("data").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("bot_run_events_run_sequence_idx").on(t.runId, t.sequence),
+    index("bot_run_events_run_idx").on(t.runId),
+  ],
 );
 
 export const conversationMessages = pgTable(

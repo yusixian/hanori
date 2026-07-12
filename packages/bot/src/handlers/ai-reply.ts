@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
   AiGroupOverride,
@@ -1494,6 +1495,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // Track whether streaming actually sent any messages (stream mode only)
       let streamStarted = false;
+      // Preserve the first stream failure. AI SDK's later `result.text` access can replace
+      // it with the generic "No output generated" error, hiding the actionable provider cause.
+      let capturedStreamError: unknown;
       // Track whether multi_message tool was used (segment mode only)
       let sentViaMultiMessage = false;
 
@@ -1565,10 +1569,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           try {
             sentMessages = await ctx.replyWithStream(managedTextStream());
           } catch (streamErr) {
+            capturedStreamError = streamErr;
             config.onLog?.({
               level: "warn",
               message: `replyWithStream failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
-              meta: { chatId, userId },
+              meta: {
+                chatId,
+                userId,
+                errorName: streamErr instanceof Error ? streamErr.name : undefined,
+                errorCause:
+                  streamErr instanceof Error && streamErr.cause
+                    ? String(streamErr.cause)
+                    : undefined,
+              },
             });
             // Immediate fallback using locally accumulated text so the user isn't left
             // hanging while `await result.text` below drains fullStream (can be seconds).
@@ -1625,6 +1638,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         return;
       }
 
+      throwCapturedStreamError(capturedStreamError, streamStarted);
       const rawText = (await result.text).trim();
       const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
         config.onLog?.({

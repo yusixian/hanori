@@ -13,6 +13,7 @@ import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
 import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
+import { BotRunCleaner } from "./services/bot-run-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
@@ -77,6 +78,11 @@ const logCleaner = new LogCleaner({
   intervalHours: env.LOG_CLEANUP_INTERVAL_HOURS,
 });
 logCleaner.start();
+
+// Structured debugger records: successful runs expire after 7 days, failures after 30.
+// Pinned records are excluded by the cleaner.
+const botRunCleaner = new BotRunCleaner(db, logger);
+botRunCleaner.start();
 
 // Memory GC
 const memoryGC = new MemoryGC({

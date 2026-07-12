@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger as honoLogger } from "hono/logger";
-import { requireAppAccess } from "./middleware/better-auth.js";
+import { ownerOnly, requireAppAccess, requireRoles } from "./middleware/better-auth.js";
 import { resolveAllowedOrigins, type AppAuth } from "./auth.js";
 import { authzRoutes } from "./routes/authz.js";
 import { backupRoutes } from "./routes/backup.js";
@@ -19,6 +19,7 @@ import { rssRoutes } from "./routes/rss.js";
 import { summaryRoutes } from "./routes/summary.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
+import { botRunRoutes } from "./routes/bot-runs.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ChatSummaryService } from "./services/chat-summary-service.js";
@@ -26,6 +27,7 @@ import type { McpClientManager } from "./services/mcp-client-manager.js";
 import type { ModelCapabilityService } from "./services/model-capability-service.js";
 import type { RssFeedService } from "./services/rss-feed-service.js";
 import type { SummaryConfigService } from "./services/summary-config-service.js";
+import { BotRunService } from "./services/bot-run-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
 
 interface AppOptions {
@@ -79,12 +81,15 @@ export function createApp(options: AppOptions) {
     .route("/api/authz", authzRoutes(auth, db, baseURL))
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
+    .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/runs/*", requireRoles(ownerOnly))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
+    .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))
     .use("/api/logs", requireAppAccess(auth, db))
     .use("/api/logs/*", requireAppAccess(auth, db))
     .route("/api/logs", logRoutes(db))
