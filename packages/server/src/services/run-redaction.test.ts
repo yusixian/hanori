@@ -23,6 +23,26 @@ describe("redactDiagnostic", () => {
     expect(JSON.stringify(redactDiagnostic(error))).not.toContain("abc.def");
   });
 
+  it("preserves provider error diagnostics while redacting sensitive fields", () => {
+    const error = Object.assign(new Error("upstream rejected the request"), {
+      statusCode: 403,
+      url: "https://example.test/v1/chat/completions?token=test-secret",
+      responseBody: JSON.stringify({ error: "test-secret is not authorized" }),
+      data: { authorization: "Bearer visible", reason: "forbidden" },
+      isRetryable: false,
+    });
+
+    expect(redactDiagnostic(error, ["test-secret"])).toMatchObject({
+      name: "Error",
+      message: "upstream rejected the request",
+      statusCode: 403,
+      url: "https://example.test/v1/chat/completions?token=[REDACTED]",
+      responseBody: JSON.stringify({ error: "[REDACTED] is not authorized" }),
+      data: { authorization: "[REDACTED]", reason: "forbidden" },
+      isRetryable: false,
+    });
+  });
+
   it("marks oversized strings as truncated", () => {
     expect(redactDiagnostic("x".repeat(70_000))).toMatch(/\[truncated\]$/);
   });

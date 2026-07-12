@@ -14,11 +14,21 @@ export function redactDiagnostic(value: unknown, secrets: string[] = []): unknow
     if (key && SENSITIVE_KEY.test(key)) return "[REDACTED]";
     if (typeof input === "string") return scrubString(input);
     if (input instanceof Error) {
+      if (seen.has(input)) return "[Circular]";
+      seen.add(input);
+      const diagnosticFields = Object.fromEntries(
+        Object.entries(input).flatMap(([name, item]) =>
+          name === "name" || name === "message" || name === "stack" || name === "cause"
+            ? []
+            : [[name, visit(item, name)]],
+        ),
+      );
       return {
         name: input.name,
         message: scrubString(input.message),
         stack: input.stack ? scrubString(input.stack) : undefined,
         cause: visit(input.cause),
+        ...diagnosticFields,
       };
     }
     if (!input || typeof input !== "object") return input;

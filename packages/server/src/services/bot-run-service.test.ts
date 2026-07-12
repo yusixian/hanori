@@ -237,7 +237,7 @@ describe("BotRunService", () => {
       providers: Array<Record<string, unknown>>;
     };
     config.providers[0]!["providerFormat"] = "gemini";
-    (state.bots[0]?.["aiConfig"] as Record<string, unknown>)["behavioralPrompt"] = "Be concise";
+    (state.bots[0]!["aiConfig"] as Record<string, unknown>)["behavioralPrompt"] = "Be concise";
     const service = new BotRunService(db, encryptionKey, (() =>
       fakeResult([{ type: "text-delta", text: "ok" }], "ok")) as never);
     await service.start(String(state.bots[0]?.["id"]), { text: "hello" });

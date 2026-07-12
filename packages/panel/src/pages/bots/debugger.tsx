@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
-import { Bug, Copy, Pin, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
+import { downloadDebugRun } from "./debugger-export";
 
 interface BotRunEvent {
   id: number;
@@ -277,16 +278,31 @@ export function BotDebuggerPage() {
         </div>
 
         <Card className="min-w-0 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden">
-          <CardHeader className="flex-row items-center justify-between gap-3 xl:shrink-0">
-            <div>
+          <CardHeader className="gap-4 space-y-0 xl:shrink-0">
+            <div className="min-w-0">
               <CardTitle className="text-base">Run Detail</CardTitle>
               {selected && (
-                <p className="text-muted-foreground mt-1 font-mono text-xs">{selected.id}</p>
+                <p
+                  className="text-muted-foreground mt-1 truncate font-mono text-xs tabular-nums"
+                  title={selected.id}
+                >
+                  {selected.id}
+                </p>
               )}
             </div>
             {selected && (
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2 border-t pt-4" aria-label="Run actions">
                 <Button
+                  className="transition-transform active:scale-[0.96]"
+                  size="sm"
+                  variant="outline"
+                  title="Export this run as an AI-friendly Markdown file"
+                  onClick={() => downloadDebugRun(selected)}
+                >
+                  <Download className="size-4" /> Export
+                </Button>
+                <Button
+                  className="transition-transform active:scale-[0.96]"
                   size="sm"
                   variant="outline"
                   onClick={() => void mutateRun("pin", { pinned: !selected.pinned })}
@@ -294,12 +310,23 @@ export function BotDebuggerPage() {
                   <Pin className="size-4" /> {selected.pinned ? "Unpin" : "Pin"}
                 </Button>
                 {selected.status === "running" && (
-                  <Button size="sm" variant="destructive" onClick={() => void mutateRun("cancel")}>
+                  <Button
+                    className="transition-transform active:scale-[0.96]"
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => void mutateRun("cancel")}
+                  >
                     <Square className="size-4" /> Cancel
                   </Button>
                 )}
-                <Button size="sm" variant="outline" onClick={() => void start(selected.id)}>
-                  <RotateCcw className="size-4" /> Replay current config
+                <Button
+                  className="transition-transform active:scale-[0.96]"
+                  size="sm"
+                  variant="outline"
+                  title="Replay with the bot's current configuration"
+                  onClick={() => void start(selected.id)}
+                >
+                  <RotateCcw className="size-4" /> Replay
                 </Button>
               </div>
             )}
