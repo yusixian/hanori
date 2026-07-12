@@ -96,7 +96,6 @@ export function BotDebuggerPage() {
       void loadRuns();
       source.close();
     });
-    source.onerror = () => source.close();
     return () => source.close();
   }, [botId, selected?.id, selected?.status, loadRun, loadRuns]);
 

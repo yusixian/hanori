@@ -54,12 +54,13 @@ export type FailureReason =
   | "tool_failed"
   | "channel_api_failed"
   | "timed_out"
-  | "cancelled";
+  | "cancelled"
+  | "interrupted";
 
 export function classifyProviderError(error: unknown, streamStarted: boolean): FailureReason {
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : String(error);
+  if (name === "TimeoutError" || /timeout|timed out/i.test(message)) return "timed_out";
   if (name === "AbortError" || /aborted|cancelled/i.test(message)) return "cancelled";
-  if (/timeout|timed out/i.test(message)) return "timed_out";
   return streamStarted ? "provider_stream_failed" : "provider_request_failed";
 }

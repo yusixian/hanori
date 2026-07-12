@@ -82,8 +82,8 @@ export function botRunRoutes(service: BotRunService) {
           aborted = true;
         });
         while (!aborted) {
-          const run = await service.get(botId, runId);
-          if (!run) return;
+          const status = await service.getStatus(botId, runId);
+          if (!status) return;
           const events = await service.eventsAfter(runId, sequence);
           for (const event of events) {
             await stream.writeSSE({
@@ -93,12 +93,15 @@ export function botRunRoutes(service: BotRunService) {
             });
             sequence = event.sequence;
           }
-          if (run.status !== "running" && events.length === 0) {
-            await stream.writeSSE({ event: "bot-run-complete", data: JSON.stringify(run) });
-            return;
+          if (status !== "running" && events.length === 0) {
+            break;
           }
           await stream.sleep(300);
         }
+        if (aborted) return;
+        const run = await service.get(botId, runId);
+        if (!run) return;
+        await stream.writeSSE({ event: "bot-run-complete", data: JSON.stringify(run) });
       }),
     );
 }

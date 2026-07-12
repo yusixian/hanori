@@ -1,10 +1,15 @@
-import { botRuns, bots } from "@cos-tool-bot/database";
+import { botRunEvents, botRuns, bots } from "@cos-tool-bot/database";
 import type { Database } from "@cos-tool-bot/database";
-import { describe, expect, it } from "vitest";
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { encrypt } from "../utils/crypto.js";
 import { BotRunService } from "./bot-run-service.js";
 
 const encryptionKey = "test-key";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 function fakeDb() {
   const state = {
@@ -39,6 +44,7 @@ function fakeDb() {
     ] as Array<Record<string, unknown>>,
     runs: [] as Array<Record<string, unknown>>,
     events: [] as Array<Record<string, unknown>>,
+    selectedTables: [] as unknown[],
   };
 
   class Query implements PromiseLike<unknown[]> {
@@ -66,12 +72,14 @@ function fakeDb() {
 
   const db = {
     select: () => ({
-      from: (table: unknown) =>
-        new Query(() => {
+      from: (table: unknown) => {
+        state.selectedTables.push(table);
+        return new Query(() => {
           if (table === bots) return state.bots;
           if (table === botRuns) return state.runs;
           return state.events;
-        }),
+        });
+      },
     }),
     insert: (table: unknown) => ({
       values: (value: Record<string, unknown>) => {
@@ -90,8 +98,12 @@ function fakeDb() {
       set: (values: Record<string, unknown>) => ({
         where: () => {
           const rows = table === botRuns ? state.runs : state.events;
-          Object.assign(rows.at(-1) ?? {}, values);
-          return { returning: async () => (rows.at(-1) ? [rows.at(-1)] : []) };
+          const targets =
+            table === botRuns && values["failureReason"] === "interrupted"
+              ? rows.filter((row) => row["status"] === "running")
+              : rows.slice(-1);
+          for (const row of targets) Object.assign(row, values);
+          return { returning: async () => targets };
         },
       }),
     }),
@@ -107,6 +119,22 @@ function fakeResult(parts: Array<Record<string, unknown>>, text: string) {
     text: Promise.resolve(text),
     finishReason: Promise.resolve("stop"),
     usage: Promise.resolve({ inputTokens: 2, outputTokens: 1, totalTokens: 3 }),
+  };
+}
+
+function abortEventResult(signal: AbortSignal) {
+  return {
+    fullStream: (async function* () {
+      if (!signal.aborted) {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+      yield { type: "abort" };
+    })(),
+    text: Promise.resolve(""),
+    finishReason: Promise.resolve("stop"),
+    usage: Promise.resolve({ inputTokens: 2, outputTokens: 0, totalTokens: 2 }),
   };
 }
 
@@ -128,7 +156,13 @@ describe("BotRunService", () => {
     },
     {
       name: "stream error event",
-      result: fakeResult([{ type: "error", error: new Error("broken stream") }], ""),
+      result: fakeResult(
+        [
+          { type: "text-delta", text: "partial" },
+          { type: "error", error: new Error("broken stream") },
+        ],
+        "",
+      ),
       status: "failed",
       reason: "provider_stream_failed",
     },
@@ -156,6 +190,327 @@ describe("BotRunService", () => {
     await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
     await waitForCompletion(state);
     expect(state.runs[0]?.["failureReason"]).toBe("provider_request_failed");
+  });
+
+  it("does not count a lifecycle start event as provider output", async () => {
+    const { db, state } = fakeDb();
+    const service = new BotRunService(db, encryptionKey, (() =>
+      fakeResult(
+        [{ type: "start" }, { type: "error", error: new Error("401 invalid API key") }],
+        "",
+      )) as never);
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+    expect(state.runs[0]?.["failureReason"]).toBe("provider_request_failed");
+  });
+
+  it("classifies a result rejection after start as a provider request failure", async () => {
+    const { db, state } = fakeDb();
+    const service = new BotRunService(db, encryptionKey, (() => ({
+      fullStream: (async function* () {
+        yield { type: "start" };
+      })(),
+      get text() {
+        return Promise.reject(new Error("provider rejected authentication"));
+      },
+      finishReason: Promise.resolve("error"),
+      usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+    })) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(state.runs[0]?.["failureReason"]).toBe("provider_request_failed");
+  });
+
+  it("preserves a streamed failure reason when the result promise also rejects", async () => {
+    const { db, state } = fakeDb();
+    const service = new BotRunService(db, encryptionKey, (() => ({
+      fullStream: (async function* () {
+        yield { type: "start" };
+        yield {
+          type: "error",
+          error: new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+        };
+      })(),
+      get text() {
+        return Promise.reject(new Error("No output generated"));
+      },
+      finishReason: Promise.resolve("error"),
+      usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+    })) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "timed_out" });
+  });
+
+  it.each([
+    {
+      providerFormat: "openai",
+      thinking: "enabled",
+      thinkingBudget: 128,
+      providerOptions: {
+        custom: { thinking: { type: "enabled", budget_tokens: 128 } },
+      },
+    },
+    {
+      providerFormat: "gemini",
+      thinking: "enabled",
+      thinkingBudget: 128,
+      providerOptions: {
+        google: {
+          thinkingConfig: { thinkingBudget: 128, includeThoughts: true },
+        },
+      },
+    },
+    {
+      providerFormat: "openai",
+      thinking: "disabled",
+      thinkingBudget: undefined,
+      providerOptions: {
+        custom: { thinking: { type: "disabled" } },
+      },
+    },
+    {
+      providerFormat: "gemini",
+      thinking: "disabled",
+      thinkingBudget: undefined,
+      providerOptions: {
+        google: {
+          thinkingConfig: { thinkingBudget: 0, includeThoughts: false },
+        },
+      },
+    },
+  ] as const)(
+    "applies $providerFormat model request controls with thinking $thinking",
+    async ({ providerFormat, thinking, thinkingBudget, providerOptions }) => {
+      const { db, state } = fakeDb();
+      const aiConfig = state.bots[0]?.["aiConfig"] as {
+        providers: Array<Record<string, unknown>>;
+      };
+      aiConfig.providers[0]!["providerFormat"] = providerFormat;
+      aiConfig.providers[0]!["models"] = [
+        {
+          id: "fake-model",
+          temperature: 0.35,
+          maxTokens: 2048,
+          thinking,
+          thinkingBudget,
+        },
+      ];
+      const stream = vi.fn((_options: unknown) =>
+        fakeResult([{ type: "text-delta", text: "ok" }], "ok"),
+      );
+      const service = new BotRunService(db, encryptionKey, stream as never);
+
+      await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+      await waitForCompletion(state);
+
+      expect(stream).toHaveBeenCalledWith(
+        expect.objectContaining({
+          temperature: 0.35,
+          maxOutputTokens: 2048,
+          providerOptions,
+        }),
+      );
+      if (providerFormat === "openai") {
+        const request = stream.mock.calls[0]?.[0] as { model: { provider: string } };
+        expect(request.model.provider).toBe("custom.chat");
+      }
+    },
+  );
+
+  it.each([
+    { name: "configured", timeoutMs: 25 },
+    { name: "default", timeoutMs: DEFAULT_TIMEOUT_CONFIG.aiReplyMs },
+  ])("uses the $name AI reply timeout", async ({ name, timeoutMs }) => {
+    const { db, state } = fakeDb();
+    const aiConfig = state.bots[0]?.["aiConfig"] as Record<string, unknown>;
+    if (name === "configured") aiConfig["timeoutConfig"] = { aiReplyMs: timeoutMs };
+    const timeoutSignal = AbortSignal.abort(new DOMException("timeout probe", "TimeoutError"));
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeoutSignal);
+    const service = new BotRunService(db, encryptionKey, (() => fakeResult([], "ok")) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(timeout).toHaveBeenCalledWith(timeoutMs);
+    timeout.mockRestore();
+  });
+
+  it("finishes the run when an invalid timeout cannot create an abort signal", async () => {
+    const { db, state } = fakeDb();
+    const aiConfig = state.bots[0]?.["aiConfig"] as Record<string, unknown>;
+    aiConfig["timeoutConfig"] = { aiReplyMs: 4_294_967_296 };
+    const stream = vi.fn((_options: unknown) => fakeResult([], "ok"));
+    const service = new BotRunService(db, encryptionKey, stream as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(stream).not.toHaveBeenCalled();
+    expect(state.runs[0]).toMatchObject({
+      status: "failed",
+      failureReason: "provider_request_failed",
+    });
+  });
+
+  it("classifies an AI reply timeout as timed out", async () => {
+    const { db, state } = fakeDb();
+    const aiConfig = state.bots[0]?.["aiConfig"] as Record<string, unknown>;
+    aiConfig["timeoutConfig"] = { aiReplyMs: 5 };
+    const service = new BotRunService(db, encryptionKey, ((options: {
+      abortSignal: AbortSignal;
+    }) => ({
+      fullStream: (async function* () {
+        await new Promise<never>((_resolve, reject) => {
+          options.abortSignal.addEventListener("abort", () => reject(options.abortSignal.reason), {
+            once: true,
+          });
+        });
+        yield { type: "finish" };
+      })(),
+      text: Promise.resolve(""),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ inputTokens: 2, outputTokens: 0, totalTokens: 2 }),
+    })) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "timed_out" });
+  });
+
+  it("keeps operator cancellation distinct from timeouts", async () => {
+    const { db, state } = fakeDb();
+    const service = new BotRunService(db, encryptionKey, ((options: {
+      abortSignal: AbortSignal;
+    }) => ({
+      fullStream: (async function* () {
+        await new Promise<never>((_resolve, reject) => {
+          options.abortSignal.addEventListener("abort", () => reject(options.abortSignal.reason), {
+            once: true,
+          });
+        });
+        yield { type: "finish" };
+      })(),
+      text: Promise.resolve(""),
+      finishReason: Promise.resolve("stop"),
+      usage: Promise.resolve({ inputTokens: 2, outputTokens: 0, totalTokens: 2 }),
+    })) as never);
+
+    const run = await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    expect(await service.cancel(String(state.bots[0]?.["id"]), run.id)).toBe(true);
+    await waitForCompletion(state);
+
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "cancelled" });
+  });
+
+  it("records a streamed abort event as operator cancellation", async () => {
+    const { db, state } = fakeDb();
+    let markStreamReady: (() => void) | undefined;
+    const streamReady = new Promise<void>((resolve) => {
+      markStreamReady = resolve;
+    });
+    const service = new BotRunService(db, encryptionKey, ((options: {
+      abortSignal: AbortSignal;
+    }) => {
+      markStreamReady?.();
+      return abortEventResult(options.abortSignal);
+    }) as never);
+
+    const run = await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await streamReady;
+    expect(await service.cancel(String(state.bots[0]?.["id"]), run.id)).toBe(true);
+    await waitForCompletion(state);
+
+    expect(state.events.map((event) => event["kind"])).toContain("ai-abort");
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "cancelled" });
+  });
+
+  it("records a streamed abort event caused by the reply timeout", async () => {
+    const { db, state } = fakeDb();
+    const aiConfig = state.bots[0]?.["aiConfig"] as Record<string, unknown>;
+    aiConfig["timeoutConfig"] = { aiReplyMs: 5 };
+    const service = new BotRunService(db, encryptionKey, ((options: { abortSignal: AbortSignal }) =>
+      abortEventResult(options.abortSignal)) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
+    await waitForCompletion(state);
+
+    expect(state.events.map((event) => event["kind"])).toContain("ai-abort");
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "timed_out" });
+  });
+
+  it("cancels a running record even when no in-memory controller remains", async () => {
+    const { db, state } = fakeDb();
+    const botId = String(state.bots[0]?.["id"]);
+    const service = new BotRunService(db, encryptionKey);
+    await service.list(botId);
+    const run = {
+      id: crypto.randomUUID(),
+      botId,
+      status: "running",
+      failureReason: null,
+      createdAt: new Date(),
+    };
+    state.runs.push(run);
+
+    await expect(service.cancel(botId, run.id)).resolves.toBe(true);
+
+    expect(run).toMatchObject({ status: "failed", failureReason: "cancelled" });
+    expect(run["completedAt" as keyof typeof run]).toBeInstanceOf(Date);
+  });
+
+  it("reconciles running records left behind by an interrupted service", async () => {
+    const { db, state } = fakeDb();
+    state.runs.push({
+      id: crypto.randomUUID(),
+      botId: state.bots[0]?.["id"],
+      status: "running",
+      failureReason: null,
+      createdAt: new Date(),
+    });
+
+    const service = new BotRunService(db, encryptionKey);
+    await service.list(String(state.bots[0]?.["id"]));
+
+    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "interrupted" });
+    expect(state.runs[0]?.["completedAt"]).toBeInstanceOf(Date);
+  });
+
+  it("returns status without loading events", async () => {
+    const { db, state } = fakeDb();
+    state.runs.push({
+      id: crypto.randomUUID(),
+      botId: state.bots[0]?.["id"],
+      status: "succeeded",
+      failureReason: null,
+      createdAt: new Date(),
+    });
+    const service = new BotRunService(db, encryptionKey);
+    state.selectedTables.length = 0;
+
+    await expect(
+      service.getStatus(String(state.bots[0]?.["id"]), String(state.runs[0]?.["id"])),
+    ).resolves.toBe("succeeded");
+    expect(state.selectedTables).toEqual([botRuns]);
+    expect(state.selectedTables).not.toContain(botRunEvents);
+  });
+
+  it("records replay provenance when replaying a channel event", async () => {
+    const { db, state } = fakeDb();
+    const service = new BotRunService(db, encryptionKey, (() =>
+      fakeResult([{ type: "text-delta", text: "ok" }], "ok")) as never);
+
+    await service.start(String(state.bots[0]?.["id"]), {
+      channelEvent: { message: { text: "replayed channel text" } },
+      replayOf: crypto.randomUUID(),
+    });
+
+    expect(state.runs[0]?.["source"]).toBe("replay");
   });
 
   it("extracts text from Telegram and Lark native events", async () => {
@@ -245,7 +600,7 @@ describe("BotRunService", () => {
     expect(state.runs[0]?.["status"]).toBe("succeeded");
   });
 
-  it("records undecryptable credentials and cancels orphaned running records", async () => {
+  it("records undecryptable credentials", async () => {
     const { db, state } = fakeDb();
     const config = state.bots[0]?.["aiConfig"] as {
       providers: Array<Record<string, unknown>>;
@@ -255,12 +610,5 @@ describe("BotRunService", () => {
     await service.start(String(state.bots[0]?.["id"]), { text: "hello" });
     await waitForCompletion(state);
     expect(state.runs[0]?.["failureReason"]).toBe("provider_request_failed");
-
-    state.runs[0]!["status"] = "running";
-    const restartedService = new BotRunService(db, encryptionKey);
-    expect(
-      await restartedService.cancel(String(state.bots[0]?.["id"]), String(state.runs[0]?.["id"])),
-    ).toBe(true);
-    expect(state.runs[0]).toMatchObject({ status: "failed", failureReason: "cancelled" });
   });
 });

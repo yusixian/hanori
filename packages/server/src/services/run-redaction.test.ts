@@ -64,6 +64,11 @@ describe("classifyProviderError", () => {
     [new Error("connect failed"), false, "provider_request_failed"],
     [new Error("stream reset"), true, "provider_stream_failed"],
     [new Error("request timed out"), true, "timed_out"],
+    [
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+      true,
+      "timed_out",
+    ],
     [new DOMException("aborted", "AbortError"), true, "cancelled"],
     [new Error("cancelled by operator"), false, "cancelled"],
     ["plain failure", false, "provider_request_failed"],
