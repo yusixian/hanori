@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { InlineDisclosure } from "@/components/ui/inline-disclosure";
 import { Select } from "@/components/ui/select";
 import type { PixAIConfig, WebToolsConfig } from "@cos-tool-bot/shared";
+import { useTranslation } from "react-i18next";
 
 export function WebToolsSection({
   config,
@@ -14,10 +15,12 @@ export function WebToolsSection({
   config: WebToolsConfig;
   onUpdate: (updates: Partial<WebToolsConfig>) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Web Tools</CardTitle>
+        <CardTitle className="text-base">{t("webTools.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="flex items-center gap-2">
@@ -27,17 +30,17 @@ export function WebToolsSection({
             onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="webToolsEnabled" className="text-sm font-medium">
-            Enable Web Tools
+            {t("webTools.enable")}
           </label>
         </div>
 
         {/* Search */}
         <div className="space-y-4 border-t pt-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Web Search
+            {t("webTools.search.title")}
           </p>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Provider</label>
+            <label className="text-sm font-medium">{t("common.provider")}</label>
             <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
@@ -50,19 +53,19 @@ export function WebToolsSection({
                   },
                 })
               }
-              ariaLabel="Search provider"
+              ariaLabel={t("webTools.search.providerAria")}
               options={[
-                { value: "brave", label: "Brave Search (Recommended)" },
+                { value: "brave", label: t("webTools.search.braveRecommended") },
                 { value: "tavily", label: "Tavily" },
                 { value: "searxng", label: "SearXNG" },
-                { value: "custom", label: "Custom" },
+                { value: "custom", label: t("common.custom") },
               ]}
             />
           </div>
 
           {(config.search?.provider ?? "brave") === "brave" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">API Key</label>
+              <label className="text-sm font-medium">{t("common.apiKey")}</label>
               <Input
                 type="password"
                 disabled={!config.enabled}
@@ -72,10 +75,10 @@ export function WebToolsSection({
                     search: { ...config.search, provider: "brave", apiKey: e.target.value },
                   })
                 }
-                placeholder="Brave Search API key"
+                placeholder={t("webTools.search.braveKeyPlaceholder")}
               />
               <p className="text-muted-foreground text-xs">
-                Visit{" "}
+                {t("webTools.search.visit")}{" "}
                 <a
                   href="https://brave.com/search/api/"
                   target="_blank"
@@ -84,14 +87,14 @@ export function WebToolsSection({
                 >
                   brave.com/search/api
                 </a>{" "}
-                to create an API key (2,000 free requests per month).
+                {t("webTools.search.braveKeyHelp")}
               </p>
             </div>
           )}
 
           {config.search?.provider === "tavily" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">API Key</label>
+              <label className="text-sm font-medium">{t("common.apiKey")}</label>
               <Input
                 type="password"
                 disabled={!config.enabled}
@@ -101,21 +104,21 @@ export function WebToolsSection({
                     search: { ...config.search, provider: "tavily", apiKey: e.target.value },
                   })
                 }
-                placeholder="Tavily API key"
+                placeholder={t("webTools.search.tavilyKeyPlaceholder")}
               />
               <p className="text-muted-foreground text-xs">
-                Visit{" "}
+                {t("webTools.search.visit")}{" "}
                 <a href="https://tavily.com" target="_blank" rel="noreferrer" className="underline">
                   tavily.com
                 </a>{" "}
-                to create an API key (1,000 free requests per month).
+                {t("webTools.search.tavilyKeyHelp")}
               </p>
             </div>
           )}
 
           {config.search?.provider === "searxng" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Base URL</label>
+              <label className="text-sm font-medium">{t("common.baseUrl")}</label>
               <Input
                 disabled={!config.enabled}
                 value={config.search?.baseURL ?? ""}
@@ -127,7 +130,7 @@ export function WebToolsSection({
                 placeholder="https://searxng.example.com"
               />
               <p className="text-muted-foreground text-xs">
-                A self-hosted SearXNG instance is required. See{" "}
+                {t("webTools.search.searxngHelp")}{" "}
                 <a
                   href="https://docs.searxng.org"
                   target="_blank"
@@ -143,7 +146,7 @@ export function WebToolsSection({
           {config.search?.provider === "custom" && (
             <>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Base URL</label>
+                <label className="text-sm font-medium">{t("common.baseUrl")}</label>
                 <Input
                   disabled={!config.enabled}
                   value={config.search?.baseURL ?? ""}
@@ -156,7 +159,7 @@ export function WebToolsSection({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">API Key</label>
+                <label className="text-sm font-medium">{t("common.apiKey")}</label>
                 <Input
                   type="password"
                   disabled={!config.enabled}
@@ -166,12 +169,10 @@ export function WebToolsSection({
                       search: { ...config.search, provider: "custom", apiKey: e.target.value },
                     })
                   }
-                  placeholder="Custom search API key"
+                  placeholder={t("webTools.search.customKeyPlaceholder")}
                 />
               </div>
-              <p className="text-muted-foreground text-xs">
-                The custom API must implement a compatible POST /search endpoint.
-              </p>
+              <p className="text-muted-foreground text-xs">{t("webTools.search.customHelp")}</p>
             </>
           )}
         </div>
@@ -179,10 +180,10 @@ export function WebToolsSection({
         {/* Image Generation */}
         <div className="space-y-4 border-t pt-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Image Generation
+            {t("webTools.image.title")}
           </p>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Provider</label>
+            <label className="text-sm font-medium">{t("common.provider")}</label>
             <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
@@ -195,10 +196,10 @@ export function WebToolsSection({
                   },
                 })
               }
-              ariaLabel="Image generation provider"
+              ariaLabel={t("webTools.image.providerAria")}
               options={[
                 { value: "openai", label: "OpenAI" },
-                { value: "custom", label: "Custom" },
+                { value: "custom", label: t("common.custom") },
                 { value: "pixai", label: "PixAI" },
               ]}
             />
@@ -206,7 +207,7 @@ export function WebToolsSection({
 
           {/* Common: API Key */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">API Key</label>
+            <label className="text-sm font-medium">{t("common.apiKey")}</label>
             <Input
               type="password"
               disabled={!config.enabled}
@@ -222,13 +223,13 @@ export function WebToolsSection({
               }
               placeholder={
                 config.imageGeneration?.provider === "pixai"
-                  ? "PixAI API key"
-                  : "Image generation API key"
+                  ? t("webTools.image.pixaiKeyPlaceholder")
+                  : t("webTools.image.keyPlaceholder")
               }
             />
             {config.imageGeneration?.provider === "pixai" && (
               <p className="text-muted-foreground text-xs">
-                Visit{" "}
+                {t("webTools.search.visit")}{" "}
                 <a
                   href="https://platform.pixai.art"
                   target="_blank"
@@ -237,7 +238,7 @@ export function WebToolsSection({
                 >
                   platform.pixai.art
                 </a>{" "}
-                to get an API key and model ID.
+                {t("webTools.image.pixaiKeyHelp")}
               </p>
             )}
           </div>
@@ -246,7 +247,7 @@ export function WebToolsSection({
           {config.imageGeneration?.provider !== "pixai" && (
             <>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Base URL</label>
+                <label className="text-sm font-medium">{t("common.baseUrl")}</label>
                 <Input
                   disabled={!config.enabled}
                   value={config.imageGeneration?.baseURL ?? ""}
@@ -264,7 +265,7 @@ export function WebToolsSection({
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Model</label>
+                  <label className="text-sm font-medium">{t("common.model")}</label>
                   <Input
                     disabled={!config.enabled}
                     value={config.imageGeneration?.model ?? ""}
@@ -281,7 +282,7 @@ export function WebToolsSection({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Size</label>
+                  <label className="text-sm font-medium">{t("webTools.image.size")}</label>
                   <Input
                     disabled={!config.enabled}
                     value={config.imageGeneration?.size ?? ""}
@@ -335,6 +336,7 @@ function PixAIConfigFields({
   pixaiConfig: PixAIConfig;
   onUpdate: (updates: { model?: string; pixaiConfig?: PixAIConfig }) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
   const updatePixai = (updates: Partial<PixAIConfig>) =>
     onUpdate({ pixaiConfig: { ...pixaiConfig, ...updates } });
 
@@ -342,22 +344,19 @@ function PixAIConfigFields({
     <>
       {/* Model ID */}
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Model ID</label>
+        <label className="text-sm font-medium">{t("common.modelId")}</label>
         <Input
           disabled={disabled}
           value={model}
           onChange={(e) => onUpdate({ model: e.target.value })}
           placeholder="1935090615918113018 (Tsubaki v1.1)"
         />
-        <p className="text-muted-foreground text-xs">
-          Recommended: Tsubaki v1.1 (1935090615918113018), Haruka v2 (1861558740588989558), Hoshino
-          (1811528826405408057)
-        </p>
+        <p className="text-muted-foreground text-xs">{t("pixai.modelRecommendations")}</p>
       </div>
 
       {/* System Image Prompt */}
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">System Image Prompt</label>
+        <label className="text-sm font-medium">{t("pixai.systemImagePrompt")}</label>
         <Textarea
           disabled={disabled}
           className="border-input flex min-h-[60px] w-full rounded-md border bg-transparent px-3 py-2 text-sm disabled:opacity-50"
@@ -366,48 +365,44 @@ function PixAIConfigFields({
           placeholder="masterpiece, best quality, "
           rows={2}
         />
-        <p className="text-muted-foreground text-xs">
-          Prepended to every image-generation prompt created by the AI.
-        </p>
+        <p className="text-muted-foreground text-xs">{t("pixai.systemImagePromptDescription")}</p>
       </div>
 
       {/* Basic Settings */}
       <div className="space-y-4">
         <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Basic Settings
+          {t("pixai.basicSettings")}
         </p>
 
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {/* API Mode */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">API Mode</label>
+            <label className="text-sm font-medium">{t("pixai.apiMode")}</label>
             <Select
               disabled={disabled}
               value={pixaiConfig.apiMode ?? "graphql"}
               onChange={(e) => updatePixai({ apiMode: e.target.value as "graphql" | "rest" })}
             >
-              <option value="graphql">GraphQL (Recommended)</option>
+              <option value="graphql">{t("pixai.graphqlRecommended")}</option>
               <option value="rest">REST</option>
             </Select>
           </div>
 
           {/* Seed */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Seed</label>
+            <label className="text-sm font-medium">{t("pixai.seed")}</label>
             <Input
               disabled={disabled}
               value={pixaiConfig.seed ?? ""}
               onChange={(e) => updatePixai({ seed: e.target.value || undefined })}
-              placeholder="Random"
+              placeholder={t("common.random")}
             />
-            <p className="text-muted-foreground text-xs">
-              Use a fixed seed for repeatable compositions, or leave empty for random results.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.seedDescription")}</p>
           </div>
 
           {/* Priority */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Priority</label>
+            <label className="text-sm font-medium">{t("pixai.priority")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -419,31 +414,26 @@ function PixAIConfigFields({
               }
               placeholder="1000"
             />
-            <p className="text-muted-foreground text-xs">
-              Queue priority (0–10,000). Higher values run first; profiles may adjust this
-              automatically.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.priorityDescription")}</p>
           </div>
         </div>
 
         {/* Negative Prompts */}
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Negative Prompts</label>
+          <label className="text-sm font-medium">{t("pixai.negativePrompts")}</label>
           <Input
             disabled={disabled}
             value={pixaiConfig.negativePrompts ?? ""}
             onChange={(e) => updatePixai({ negativePrompts: e.target.value || undefined })}
-            placeholder="Optional (official docs suggest leaving empty)"
+            placeholder={t("pixai.negativePromptsPlaceholder")}
           />
-          <p className="text-muted-foreground text-xs">
-            Elements to exclude from the image. PixAI recommends leaving this empty.
-          </p>
+          <p className="text-muted-foreground text-xs">{t("pixai.negativePromptsDescription")}</p>
         </div>
 
         {/* Width / Height / Batch Size */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Width</label>
+            <label className="text-sm font-medium">{t("pixai.width")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -455,10 +445,10 @@ function PixAIConfigFields({
               }
               placeholder="832"
             />
-            <p className="text-muted-foreground text-xs">Recommended: 512–1280</p>
+            <p className="text-muted-foreground text-xs">{t("pixai.widthHelp")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Height</label>
+            <label className="text-sm font-medium">{t("pixai.height")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -470,10 +460,10 @@ function PixAIConfigFields({
               }
               placeholder="1472"
             />
-            <p className="text-muted-foreground text-xs">Common: 832×1472, 1024×1024</p>
+            <p className="text-muted-foreground text-xs">{t("pixai.heightHelp")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Batch Size</label>
+            <label className="text-sm font-medium">{t("pixai.batchSize")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -485,7 +475,7 @@ function PixAIConfigFields({
               }
               placeholder="1"
             />
-            <p className="text-muted-foreground text-xs">Images per generation (1–4)</p>
+            <p className="text-muted-foreground text-xs">{t("pixai.batchSizeHelp")}</p>
           </div>
         </div>
       </div>
@@ -493,11 +483,11 @@ function PixAIConfigFields({
       {/* Generation Settings */}
       <div className="space-y-4">
         <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Generation Settings
+          {t("pixai.generationSettings")}
         </p>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Sampling Steps</label>
+            <label className="text-sm font-medium">{t("pixai.samplingSteps")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -511,12 +501,10 @@ function PixAIConfigFields({
               }
               placeholder="20"
             />
-            <p className="text-muted-foreground text-xs">
-              More steps can add detail. Recommended: 20–30.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.samplingStepsDescription")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">CFG Scale</label>
+            <label className="text-sm font-medium">{t("pixai.cfgScale")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -529,12 +517,10 @@ function PixAIConfigFields({
               }
               placeholder="5"
             />
-            <p className="text-muted-foreground text-xs">
-              Prompt adherence. High values may oversaturate; keep below 7.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.cfgScaleDescription")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Clip Skip</label>
+            <label className="text-sm font-medium">{t("pixai.clipSkip")}</label>
             <Input
               type="number"
               disabled={disabled}
@@ -546,36 +532,32 @@ function PixAIConfigFields({
               }
               placeholder="2"
             />
-            <p className="text-muted-foreground text-xs">
-              CLIP layers to skip. Anime styles commonly use 2.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.clipSkipDescription")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Sampling Method</label>
+            <label className="text-sm font-medium">{t("pixai.samplingMethod")}</label>
             <Input
               disabled={disabled}
               value={pixaiConfig.samplingMethod ?? ""}
               onChange={(e) => updatePixai({ samplingMethod: e.target.value || undefined })}
               placeholder="Euler"
             />
-            <p className="text-muted-foreground text-xs">
-              Sampling algorithm, such as Euler or DPM++ 2M Karras.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.samplingMethodDescription")}</p>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Inference Profile</label>
+            <label className="text-sm font-medium">{t("pixai.inferenceProfile")}</label>
             <Select
               disabled={disabled}
               value={pixaiConfig.inferenceProfile ?? ""}
               onChange={(e) => updatePixai({ inferenceProfile: e.target.value || undefined })}
             >
-              <option value="">Default</option>
-              <option value="standard">Standard</option>
+              <option value="">{t("common.default")}</option>
+              <option value="standard">{t("pixai.standard")}</option>
               <option value="pro">Pro</option>
               <option value="ultra">Ultra</option>
             </Select>
             <p className="text-muted-foreground text-xs">
-              Generation quality tier. Ultra is faster and higher priority but uses more credits.
+              {t("pixai.inferenceProfileDescription")}
             </p>
           </div>
         </div>
@@ -584,7 +566,7 @@ function PixAIConfigFields({
       {/* Toggles */}
       <div className="space-y-3">
         <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-          Switches
+          {t("pixai.switches")}
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <div className="flex items-center gap-2">
@@ -597,10 +579,10 @@ function PixAIConfigFields({
               }
             />
             <label htmlFor="pixaiPromptHelper" className="text-sm font-medium">
-              Prompt Helper
+              {t("pixai.promptHelper")}
             </label>
             <span className="text-muted-foreground text-xs">
-              (PixAI optimizes prompts for an additional fee)
+              {t("pixai.promptHelperDescription")}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -611,9 +593,9 @@ function PixAIConfigFields({
               onCheckedChange={(lightning) => updatePixai({ lightning: lightning || undefined })}
             />
             <label htmlFor="pixaiLightning" className="text-sm font-medium">
-              Lightning Mode
+              {t("pixai.lightningMode")}
             </label>
-            <span className="text-muted-foreground text-xs">(trades some quality for speed)</span>
+            <span className="text-muted-foreground text-xs">{t("pixai.lightningDescription")}</span>
           </div>
           <div className="flex items-center gap-2">
             <Switch
@@ -623,20 +605,18 @@ function PixAIConfigFields({
               onCheckedChange={(isPrivate) => updatePixai({ isPrivate: isPrivate || undefined })}
             />
             <label htmlFor="pixaiPrivate" className="text-sm font-medium">
-              Private Mode
+              {t("pixai.privateMode")}
             </label>
-            <span className="text-muted-foreground text-xs">
-              (keeps images private from the PixAI community)
-            </span>
+            <span className="text-muted-foreground text-xs">{t("pixai.privateDescription")}</span>
           </div>
         </div>
       </div>
 
       {/* Advanced (collapsible) */}
-      <InlineDisclosure title="Advanced Settings">
+      <InlineDisclosure title={t("pixai.advancedSettings")}>
         <div className="mt-4 space-y-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Model Style Key ID</label>
+            <label className="text-sm font-medium">{t("pixai.modelStyleKey")}</label>
             <Input
               disabled={disabled}
               value={pixaiConfig.modelStyle?.keyId ?? ""}
@@ -647,16 +627,12 @@ function PixAIConfigFields({
               }
               placeholder="glossy-glass-anime"
             />
-            <p className="text-muted-foreground text-xs">
-              PixAI preset style, such as glossy-glass-anime or korean-style.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("pixai.modelStyleDescription")}</p>
           </div>
-          <p className="text-muted-foreground text-xs">
-            Quality tags automatically added around the prompt.
-          </p>
+          <p className="text-muted-foreground text-xs">{t("pixai.qualityTagsDescription")}</p>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Quality Tag Prefix</label>
+              <label className="text-sm font-medium">{t("pixai.qualityTagPrefix")}</label>
               <Input
                 disabled={disabled}
                 value={pixaiConfig.qualityTag?.prefix ?? ""}
@@ -672,7 +648,7 @@ function PixAIConfigFields({
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Quality Tag Suffix</label>
+              <label className="text-sm font-medium">{t("pixai.qualityTagSuffix")}</label>
               <Input
                 disabled={disabled}
                 value={pixaiConfig.qualityTag?.suffix ?? ""}

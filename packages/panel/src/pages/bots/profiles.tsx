@@ -7,7 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
 interface ProfileItem {
@@ -69,6 +70,7 @@ function emptyToNull(s: string): string | null {
 }
 
 export function BotProfilesPage() {
+  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -84,6 +86,16 @@ export function BotProfilesPage() {
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
   const [showCreate, setShowCreate] = useState(false);
   const limit = 20;
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const dateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }),
+    [locale],
+  );
+  const dateTimeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    [locale],
+  );
 
   const loadProfiles = useCallback(async () => {
     if (!botId) return;
@@ -119,7 +131,7 @@ export function BotProfilesPage() {
   };
 
   const handleDelete = async (profileId: number) => {
-    if (!botId || !window.confirm("Delete this profile?")) return;
+    if (!botId || !window.confirm(t("profiles.deleteConfirm"))) return;
     try {
       await client.api.bots[":botId"].profiles[":profileId"].$delete({
         param: { botId, profileId: String(profileId) },
@@ -210,8 +222,10 @@ export function BotProfilesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">People Profiles</h1>
-        <span className="text-muted-foreground text-sm">{total} total</span>
+        <h1 className="text-2xl font-bold">{t("profiles.title")}</h1>
+        <span className="text-muted-foreground text-sm">
+          {t("common.total", { value: numberFormatter.format(total) })}
+        </span>
         <Button
           variant="outline"
           size="sm"
@@ -219,20 +233,20 @@ export function BotProfilesPage() {
           onClick={() => setShowCreate(!showCreate)}
         >
           <Plus className="h-4 w-4" />
-          Add Profile
+          {t("profiles.add")}
         </Button>
       </div>
 
       {showCreate && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">New Profile</CardTitle>
+            <CardTitle className="text-sm">{t("profiles.new")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="create-telegram-id" className="text-muted-foreground text-xs">
-                  Telegram ID *
+                  {t("profiles.telegramId")} *
                 </label>
                 <Input
                   id="create-telegram-id"
@@ -243,7 +257,7 @@ export function BotProfilesPage() {
               </div>
               <div>
                 <label htmlFor="create-display-name" className="text-muted-foreground text-xs">
-                  Display Name
+                  {t("profiles.displayName")}
                 </label>
                 <Input
                   id="create-display-name"
@@ -253,7 +267,7 @@ export function BotProfilesPage() {
               </div>
               <div>
                 <label htmlFor="create-username" className="text-muted-foreground text-xs">
-                  Username
+                  {t("profiles.username")}
                 </label>
                 <Input
                   id="create-username"
@@ -263,7 +277,7 @@ export function BotProfilesPage() {
               </div>
               <div>
                 <label htmlFor="create-relationship" className="text-muted-foreground text-xs">
-                  Relationship
+                  {t("profiles.relationship")}
                 </label>
                 <Input
                   id="create-relationship"
@@ -274,7 +288,7 @@ export function BotProfilesPage() {
             </div>
             <div>
               <label htmlFor="create-notes" className="text-muted-foreground text-xs">
-                Notes
+                {t("profiles.notes")}
               </label>
               <Textarea
                 id="create-notes"
@@ -287,24 +301,24 @@ export function BotProfilesPage() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="create-traits" className="text-muted-foreground text-xs">
-                  Traits (comma separated)
+                  {t("profiles.traits")}
                 </label>
                 <Input
                   id="create-traits"
                   value={createForm.traits}
                   onChange={(e) => setCreateForm({ ...createForm, traits: e.target.value })}
-                  placeholder="friendly, creative"
+                  placeholder={t("profiles.traitsPlaceholder")}
                 />
               </div>
               <div>
                 <label htmlFor="create-interests" className="text-muted-foreground text-xs">
-                  Interests (comma separated)
+                  {t("profiles.interests")}
                 </label>
                 <Input
                   id="create-interests"
                   value={createForm.interests}
                   onChange={(e) => setCreateForm({ ...createForm, interests: e.target.value })}
-                  placeholder="music, coding"
+                  placeholder={t("profiles.interestsPlaceholder")}
                 />
               </div>
             </div>
@@ -319,7 +333,7 @@ export function BotProfilesPage() {
                 ) : (
                   <Check className="h-4 w-4" />
                 )}
-                Create
+                {t("common.create")}
               </Button>
               <Button
                 variant="ghost"
@@ -330,7 +344,7 @@ export function BotProfilesPage() {
                 }}
               >
                 <X className="h-4 w-4" />
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </CardContent>
@@ -341,13 +355,13 @@ export function BotProfilesPage() {
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Search by name, username, notes..."
+          placeholder={t("profiles.searchPlaceholder")}
           className="max-w-sm"
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
         <Button variant="outline" size="sm" onClick={handleSearch}>
           <Search className="h-4 w-4" />
-          Search
+          {t("common.search")}
         </Button>
         {search && (
           <Button
@@ -359,15 +373,15 @@ export function BotProfilesPage() {
               setPage(1);
             }}
           >
-            Clear
+            {t("common.clear")}
           </Button>
         )}
       </div>
 
       {loading ? (
-        <p className="text-muted-foreground text-sm">Loading...</p>
+        <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
       ) : profiles.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No profiles found.</p>
+        <p className="text-muted-foreground text-sm">{t("profiles.empty")}</p>
       ) : (
         <div className="space-y-3">
           {profiles.map((p) => (
@@ -376,17 +390,17 @@ export function BotProfilesPage() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
                     <CardTitle className="truncate text-sm">
-                      {p.displayName || "Unknown"}{" "}
+                      {p.displayName || t("common.unknown")}{" "}
                       {p.username && (
                         <span className="text-muted-foreground font-normal">@{p.username}</span>
                       )}
                     </CardTitle>
                     <span className="text-muted-foreground shrink-0 font-mono text-xs">
-                      ID: {p.telegramId}
+                      {t("profiles.profileId", { id: p.telegramId })}
                     </span>
                   </div>
                   <span className="text-muted-foreground shrink-0 text-xs">
-                    Last seen: {new Date(p.lastSeen).toLocaleDateString()}
+                    {t("profiles.lastSeen", { date: dateFormatter.format(new Date(p.lastSeen)) })}
                   </span>
                 </div>
               </CardHeader>
@@ -399,7 +413,7 @@ export function BotProfilesPage() {
                           htmlFor={`edit-display-name-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Display Name
+                          {t("profiles.displayName")}
                         </label>
                         <Input
                           id={`edit-display-name-${p.id}`}
@@ -417,7 +431,7 @@ export function BotProfilesPage() {
                           htmlFor={`edit-username-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Username
+                          {t("profiles.username")}
                         </label>
                         <Input
                           id={`edit-username-${p.id}`}
@@ -430,7 +444,7 @@ export function BotProfilesPage() {
                           htmlFor={`edit-relationship-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Relationship
+                          {t("profiles.relationship")}
                         </label>
                         <Input
                           id={`edit-relationship-${p.id}`}
@@ -449,7 +463,7 @@ export function BotProfilesPage() {
                         htmlFor={`edit-notes-${p.id}`}
                         className="text-muted-foreground text-xs"
                       >
-                        Notes
+                        {t("profiles.notes")}
                       </label>
                       <Textarea
                         id={`edit-notes-${p.id}`}
@@ -465,7 +479,7 @@ export function BotProfilesPage() {
                           htmlFor={`edit-traits-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Traits (comma separated)
+                          {t("profiles.traits")}
                         </label>
                         <Input
                           id={`edit-traits-${p.id}`}
@@ -478,7 +492,7 @@ export function BotProfilesPage() {
                           htmlFor={`edit-interests-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Interests (comma separated)
+                          {t("profiles.interests")}
                         </label>
                         <Input
                           id={`edit-interests-${p.id}`}
@@ -499,11 +513,11 @@ export function BotProfilesPage() {
                         ) : (
                           <Check className="h-4 w-4" />
                         )}
-                        Save
+                        {t("common.save")}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={cancelEdit}>
                         <X className="h-4 w-4" />
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
                     </div>
                   </div>
@@ -547,13 +561,27 @@ export function BotProfilesPage() {
                     )}
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-muted-foreground text-xs">
-                        First seen: {new Date(p.firstSeen).toLocaleString()}
+                        {t("profiles.firstSeen", {
+                          date: dateTimeFormatter.format(new Date(p.firstSeen)),
+                        })}
                       </span>
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => startEdit(p)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startEdit(p)}
+                          title={t("profiles.editTitle")}
+                          aria-label={t("profiles.editTitle")}
+                        >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(p.id)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(p.id)}
+                          title={t("profiles.deleteTitle")}
+                          aria-label={t("profiles.deleteTitle")}
+                        >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       </div>

@@ -6,7 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { Loader2, Play, Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { JsonView, darkStyles } from "react-json-view-lite";
 import "react-json-view-lite/dist/index.css";
 
@@ -21,9 +22,9 @@ interface HistoryEntry {
 }
 
 const PRESETS = [
-  { label: "List Models", method: "GET" as const, endpoint: "/models" },
+  { labelKey: "apiTest.presets.listModels", method: "GET" as const, endpoint: "/models" },
   {
-    label: "Chat Completions",
+    labelKey: "apiTest.presets.chatCompletions",
     method: "POST" as const,
     endpoint: "/chat/completions",
     body: JSON.stringify(
@@ -37,7 +38,7 @@ const PRESETS = [
     ),
   },
   {
-    label: "Embeddings",
+    labelKey: "apiTest.presets.embeddings",
     method: "POST" as const,
     endpoint: "/embeddings",
     body: JSON.stringify(
@@ -52,6 +53,7 @@ const PRESETS = [
 ];
 
 export function ApiTestPage() {
+  const { t, i18n } = useTranslation("admin");
   const nextIdRef = useRef(0);
   const [baseURL, setBaseURL] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -61,6 +63,10 @@ export function ApiTestPage() {
   const [loading, setLoading] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<HistoryEntry | null>(null);
+  const timeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(i18n.resolvedLanguage, { timeStyle: "medium" }),
+    [i18n.resolvedLanguage],
+  );
 
   const handleSend = async (
     overrideMethod?: "GET" | "POST",
@@ -98,7 +104,7 @@ export function ApiTestPage() {
         entry.status = json.status;
         entry.data = json.data;
       } else {
-        entry.error = "error" in json ? String(json.error) : "Unknown error";
+        entry.error = "error" in json ? String(json.error) : t("apiTest.unknownError");
       }
     } catch (err) {
       entry.error = err instanceof Error ? err.message : String(err);
@@ -111,17 +117,17 @@ export function ApiTestPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">API Test</h1>
+      <h1 className="text-2xl font-bold">{t("apiTest.title")}</h1>
 
       {/* Connection Config */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Connection</CardTitle>
+          <CardTitle className="text-base">{t("apiTest.connection")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-1.5">
             <label htmlFor="api-base-url" className="text-sm font-medium">
-              Base URL
+              {t("apiTest.baseUrl")}
             </label>
             <Input
               id="api-base-url"
@@ -147,7 +153,7 @@ export function ApiTestPage() {
           </div>
           <div className="space-y-1.5">
             <label htmlFor="api-key" className="text-sm font-medium">
-              API Key
+              {t("apiTest.apiKey")}
             </label>
             <Input
               id="api-key"
@@ -163,13 +169,13 @@ export function ApiTestPage() {
       {/* Request */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Request</CardTitle>
+          <CardTitle className="text-base">{t("apiTest.request")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap gap-2">
             {PRESETS.map((p) => (
               <Button
-                key={p.label}
+                key={p.labelKey}
                 variant="outline"
                 size="sm"
                 disabled={loading || !baseURL || !apiKey}
@@ -180,7 +186,7 @@ export function ApiTestPage() {
                   handleSend(p.method, p.endpoint, p.body);
                 }}
               >
-                {p.label}
+                {t(p.labelKey)}
               </Button>
             ))}
           </div>
@@ -206,14 +212,14 @@ export function ApiTestPage() {
               ) : (
                 <Play className="h-4 w-4" />
               )}
-              Send
+              {t("apiTest.send")}
             </Button>
           </div>
 
           {method === "POST" && (
             <div className="space-y-1.5">
               <label htmlFor="api-request-body" className="text-sm font-medium">
-                Request Body (JSON)
+                {t("apiTest.requestBody")}
               </label>
               <Textarea
                 id="api-request-body"
@@ -232,7 +238,7 @@ export function ApiTestPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
-              Response
+              {t("apiTest.response")}
               {selectedEntry.status != null && (
                 <span
                   className={`ml-2 text-sm font-normal ${selectedEntry.status < 300 ? "text-green-600" : "text-red-600"}`}
@@ -261,10 +267,10 @@ export function ApiTestPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">History</CardTitle>
+              <CardTitle className="text-base">{t("apiTest.history")}</CardTitle>
               <Button variant="ghost" size="sm" onClick={() => setHistory([])}>
                 <Trash2 className="h-4 w-4" />
-                Clear
+                {t("apiTest.clearHistory")}
               </Button>
             </div>
           </CardHeader>
@@ -306,7 +312,7 @@ export function ApiTestPage() {
                     {entry.error ? "ERR" : entry.status}
                   </span>
                   <span className="text-muted-foreground text-xs">
-                    {entry.timestamp.toLocaleTimeString()}
+                    {timeFormatter.format(entry.timestamp)}
                   </span>
                 </button>
               ))}

@@ -12,11 +12,11 @@ export const roleIconStyles: Record<string, string> = {
   tool_result: "bg-cyan-50 text-cyan-600",
 };
 
-export const roleLabels: Record<string, string> = {
-  user: "User",
-  assistant: "AI",
-  context: "Context",
-  system: "System",
-  tool_call: "Tool Call",
-  tool_result: "Tool Result",
+export const roleLabelKeys: Record<string, string> = {
+  user: "conversations.roles.user",
+  assistant: "conversations.roles.assistant",
+  context: "conversations.roles.context",
+  system: "conversations.roles.system",
+  tool_call: "conversations.roles.toolCall",
+  tool_result: "conversations.roles.toolResult",
 };

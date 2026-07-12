@@ -3,10 +3,7 @@ import { Button } from "@/components/ui/button";
 import { client } from "@/lib/client";
 import type { RssItemRecord } from "@cos-tool-bot/shared";
 import { BookMarked, BookOpen, ExternalLink, Loader2, MailOpen } from "lucide-react";
-
-function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString();
-}
+import { useTranslation } from "react-i18next";
 
 export function ItemList({
   botId,
@@ -25,6 +22,7 @@ export function ItemList({
   onAction: (key: string, fn: () => Promise<void>) => Promise<void>;
   onRefresh: () => Promise<void>;
 }) {
+  const { t, i18n } = useTranslation("bots");
   const hasDigested = items.some((i) => i.digestedAt);
   const hasUndigested = items.some((i) => !i.digestedAt);
 
@@ -56,7 +54,7 @@ export function ItemList({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Recent Items ({total} total)</h3>
+        <h3 className="text-sm font-medium">{t("rss.recentItems", { count: total })}</h3>
         <div className="flex gap-2">
           {hasUndigested && (
             <Button
@@ -64,14 +62,14 @@ export function ItemList({
               variant="outline"
               disabled={busy !== null}
               onClick={markAll}
-              title="Mark all as read"
+              title={t("rss.markAllRead")}
             >
               {busy === `mark-all-${collectionId}` ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <BookMarked className="h-3 w-3" />
               )}
-              Mark All Read
+              {t("rss.markAllRead")}
             </Button>
           )}
           {hasDigested && (
@@ -80,14 +78,14 @@ export function ItemList({
               variant="outline"
               disabled={busy !== null}
               onClick={unmarkAll}
-              title="Mark all as unread"
+              title={t("rss.markAllUnread")}
             >
               {busy === `unmark-all-${collectionId}` ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <BookOpen className="h-3 w-3" />
               )}
-              Mark All Unread
+              {t("rss.markAllUnread")}
             </Button>
           )}
         </div>
@@ -117,16 +115,18 @@ export function ItemList({
                   className="h-auto px-1.5 py-0.5"
                   disabled={busy !== null}
                   onClick={() => unmarkItem(item.id)}
-                  title="Mark as unread"
+                  title={t("rss.markUnread")}
                 >
                   <MailOpen className="h-3 w-3" />
                   <Badge variant="muted" className="text-[10px]">
-                    digested
+                    {t("rss.digested")}
                   </Badge>
                 </Button>
               )}
               <span className="text-muted-foreground text-xs whitespace-nowrap">
-                {item.publishedAt ? fmtDate(item.publishedAt) : ""}
+                {item.publishedAt
+                  ? new Date(item.publishedAt).toLocaleDateString(i18n.resolvedLanguage)
+                  : ""}
               </span>
             </div>
           </div>

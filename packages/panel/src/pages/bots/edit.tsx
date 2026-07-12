@@ -2,8 +2,10 @@ import { BotForm } from "@/components/bots/bot-form";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useOne, useUpdate } from "@refinedev/core";
 import { useNavigate, useParams } from "react-router";
+import { useTranslation } from "react-i18next";
 
 export function BotEditPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
   const navigate = useNavigate();
 
@@ -18,16 +20,16 @@ export function BotEditPage() {
   const bot = data?.data;
 
   if (isLoading) {
-    return <p className="text-muted-foreground text-sm">Loading...</p>;
+    return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
   }
 
   if (!bot) {
-    return <p className="text-muted-foreground text-sm">Bot not found</p>;
+    return <p className="text-muted-foreground text-sm">{t("dashboard.notFound")}</p>;
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Edit Bot</h1>
+      <h1 className="text-2xl font-bold">{t("edit.title")}</h1>
 
       <BotForm
         isEdit
@@ -41,7 +43,7 @@ export function BotEditPage() {
           hasSignSecret: bot.larkWebhookConfig?.hasSignSecret,
           emailForwardConfig: bot.emailForwardConfig,
         }}
-        submitLabel="Save Changes"
+        submitLabel={t("edit.submit")}
         onSubmit={async (formData) => {
           if (!botId) return;
           await update({

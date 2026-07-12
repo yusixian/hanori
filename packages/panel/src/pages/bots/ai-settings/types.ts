@@ -12,13 +12,13 @@ export interface ModelOption {
   capabilities: ModelCapability[];
 }
 
-export const CAPABILITY_BADGES: Record<ModelCapability, { emoji: string; label: string }> = {
-  vision: { emoji: "👁", label: "Vision" },
-  tool_calling: { emoji: "🔧", label: "Tools" },
-  web_search: { emoji: "🌐", label: "Search" },
-  reasoning: { emoji: "🧠", label: "Reasoning" },
-  long_context: { emoji: "📏", label: "Long" },
-  code: { emoji: "💻", label: "Code" },
+export const CAPABILITY_BADGES: Record<ModelCapability, { emoji: string; labelKey: string }> = {
+  vision: { emoji: "👁", labelKey: "capabilities.vision" },
+  tool_calling: { emoji: "🔧", labelKey: "capabilities.toolCalling" },
+  web_search: { emoji: "🌐", labelKey: "capabilities.webSearch" },
+  reasoning: { emoji: "🧠", labelKey: "capabilities.reasoning" },
+  long_context: { emoji: "📏", labelKey: "capabilities.longContext" },
+  code: { emoji: "💻", labelKey: "capabilities.code" },
 };
 
 export const DEFAULT_TRIGGER: AiTriggerConfig = {

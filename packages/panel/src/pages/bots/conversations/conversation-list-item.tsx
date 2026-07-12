@@ -1,14 +1,16 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { BookOpen, MessageSquare, Trash2, Users } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { ChatTypeBadge, getConversationTitle } from "./conversation-detail-header";
-import { roleLabels } from "./constants";
+import { roleLabelKeys } from "./constants";
 import type { ConversationItem } from "./types";
 
 function MessagePreview({ lastMessage }: { lastMessage: ConversationItem["lastMessage"] }) {
+  const { t } = useTranslation("bots");
   if (!lastMessage) return null;
 
-  const prefix = roleLabels[lastMessage.role] ?? lastMessage.role;
+  const prefix = t(roleLabelKeys[lastMessage.role] ?? lastMessage.role);
   const name = lastMessage.userName ? ` (${lastMessage.userName})` : "";
 
   return (
@@ -33,7 +35,8 @@ export function ConversationListItem({
   onSelect: () => void;
   onClear: () => void;
 }) {
-  const title = getConversationTitle(conv);
+  const { t, i18n } = useTranslation("bots");
+  const title = getConversationTitle(conv, t);
 
   return (
     <li data-hover-actions className="group relative min-w-0">
@@ -66,14 +69,14 @@ export function ConversationListItem({
           </span>
           <span aria-hidden="true">·</span>
           <time className="shrink-0" dateTime={new Date(conv.lastActive).toISOString()}>
-            {new Date(conv.lastActive).toLocaleString()}
+            {new Date(conv.lastActive).toLocaleString(i18n.resolvedLanguage)}
           </time>
         </div>
 
         <MessagePreview lastMessage={conv.lastMessage} />
 
         <div className="text-muted-foreground mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs tabular-nums">
-          <span>{conv.messageCount} messages</span>
+          <span>{t("conversations.messageCount", { count: conv.messageCount })}</span>
           <span className="inline-flex items-center gap-1">
             <Users className="size-3" aria-hidden="true" />
             {conv.distinctUserCount}
@@ -92,8 +95,8 @@ export function ConversationListItem({
         size="icon"
         className="hover-action text-muted-foreground hover:text-destructive absolute top-1.5 right-1.5 size-10 shrink-0 transition-[background-color,color,opacity,scale] active:scale-[0.96]"
         onClick={onClear}
-        aria-label={`Delete conversation ${conv.chatId}`}
-        title="Delete conversation"
+        aria-label={t("conversations.deleteConversationLabel", { chatId: conv.chatId })}
+        title={t("conversations.deleteConversation")}
       >
         <Trash2 className="size-3.5" aria-hidden="true" />
       </Button>

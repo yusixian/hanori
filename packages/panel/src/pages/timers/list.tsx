@@ -7,15 +7,17 @@ import { formatDuration } from "@cos-tool-bot/shared";
 import type { TimerRecord } from "@cos-tool-bot/shared";
 import { Bot, RefreshCw, Settings2, Timer, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
-function formatRemaining(firesAt: string | null): string {
+function formatRemaining(firesAt: string | null, firingSoonLabel: string): string {
   if (!firesAt) return "—";
   const remaining = new Date(firesAt).getTime() - Date.now();
-  if (remaining <= 0) return "即将触发";
+  if (remaining <= 0) return firingSoonLabel;
   return formatDuration(remaining);
 }
 
 export function TimersListPage() {
+  const { t } = useTranslation("admin");
   const [timers, setTimers] = useState<TimerRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [typeFilter, setTypeFilter] = useState<string>("");
@@ -43,7 +45,7 @@ export function TimersListPage() {
   }, [fetchTimers]);
 
   const cancelTimer = async (timerId: string) => {
-    if (!window.confirm(`确认取消定时器 ${timerId}？`)) return;
+    if (!window.confirm(t("timers.cancelConfirm", { id: timerId }))) return;
     try {
       await client.api.timers[":timerId"].$delete({ param: { timerId } });
       await fetchTimers();
@@ -57,21 +59,21 @@ export function TimersListPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Timer className="text-primary h-6 w-6" />
-          <h1 className="text-2xl font-bold">Timers</h1>
-          <Badge variant="muted">{timers.length} active</Badge>
+          <h1 className="text-2xl font-bold">{t("timers.title")}</h1>
+          <Badge variant="muted">{t("timers.active", { count: timers.length })}</Badge>
         </div>
         <Button variant="outline" size="sm" onClick={fetchTimers}>
           <RefreshCw className="mr-1 h-3.5 w-3.5" />
-          Refresh
+          {t("timers.refresh")}
         </Button>
       </div>
 
       {/* Filters */}
       <div className="flex items-center gap-3">
         <Select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-          <option value="">All Types</option>
-          <option value="ai">AI Timers</option>
-          <option value="system">System Timers</option>
+          <option value="">{t("timers.allTypes")}</option>
+          <option value="ai">{t("timers.aiTimers")}</option>
+          <option value="system">{t("timers.systemTimers")}</option>
         </Select>
       </div>
 
@@ -79,17 +81,17 @@ export function TimersListPage() {
       <Card className="overflow-hidden">
         <CardContent className="p-0">
           {loading ? (
-            <p className="text-muted-foreground p-6 text-sm">Loading...</p>
+            <p className="text-muted-foreground p-6 text-sm">{t("timers.loading")}</p>
           ) : timers.length === 0 ? (
-            <p className="text-muted-foreground p-6 text-sm">No active timers</p>
+            <p className="text-muted-foreground p-6 text-sm">{t("timers.empty")}</p>
           ) : (
             <div>
               <div className="text-muted-foreground hidden grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] gap-4 bg-slate-50/80 px-5 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase md:grid">
-                <span>Type</span>
-                <span>Timer</span>
-                <span>Schedule</span>
-                <span>Next run</span>
-                <span className="sr-only">Action</span>
+                <span>{t("timers.type")}</span>
+                <span>{t("timers.timer")}</span>
+                <span>{t("timers.schedule")}</span>
+                <span>{t("timers.nextRun")}</span>
+                <span className="sr-only">{t("timers.action")}</span>
               </div>
               {timers.map((timer) => (
                 <div
@@ -105,7 +107,7 @@ export function TimersListPage() {
                     ) : (
                       <Settings2 className="size-3" />
                     )}
-                    {timer.type === "ai" ? "AI" : "System"}
+                    {timer.type === "ai" ? t("timers.ai") : t("timers.system")}
                   </Badge>
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-900">{timer.name}</p>
@@ -114,20 +116,26 @@ export function TimersListPage() {
                     </p>
                   </div>
                   <div className="text-sm text-slate-700 tabular-nums">
-                    <span className="text-muted-foreground mr-2 md:hidden">Schedule</span>
-                    {timer.intervalMs ? `Every ${formatDuration(timer.intervalMs)}` : "One-time"}
+                    <span className="text-muted-foreground mr-2 md:hidden">
+                      {t("timers.schedule")}
+                    </span>
+                    {timer.intervalMs
+                      ? t("timers.every", { duration: formatDuration(timer.intervalMs) })
+                      : t("timers.oneTime")}
                   </div>
                   <div className="text-sm text-slate-700 tabular-nums">
-                    <span className="text-muted-foreground mr-2 md:hidden">Next run</span>
-                    {timer.firesAt ? formatRemaining(timer.firesAt) : "—"}
+                    <span className="text-muted-foreground mr-2 md:hidden">
+                      {t("timers.nextRun")}
+                    </span>
+                    {timer.firesAt ? formatRemaining(timer.firesAt, t("timers.firingSoon")) : "—"}
                   </div>
                   {timer.type === "ai" && (
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={() => cancelTimer(timer.id)}
-                      title="Cancel timer"
-                      aria-label={`Cancel ${timer.name}`}
+                      title={t("timers.cancel")}
+                      aria-label={t("timers.cancelNamed", { name: timer.name })}
                       className="justify-self-end text-red-500 hover:bg-red-50 hover:text-red-700"
                     >
                       <Trash2 className="h-4 w-4" />

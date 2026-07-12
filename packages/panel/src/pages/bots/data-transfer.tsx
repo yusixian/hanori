@@ -8,10 +8,12 @@ import { Download, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import superjson from "superjson";
+import { useTranslation } from "react-i18next";
 
 type ExportFormat = "json" | "gzip";
 
 export function BotExportPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
 
   const [stats, setStats] = useState<Record<string, number> | null>(null);
@@ -53,7 +55,7 @@ export function BotExportPage() {
       const res = await authFetch(`/api/bots/${botId}/export${query}`);
       if (!res.ok) {
         const text = await res.text();
-        alert(`Export failed: ${text}`);
+        alert(t("export.failedWithError", { error: text }));
         return;
       }
       const blob = await res.blob();
@@ -65,7 +67,7 @@ export function BotExportPage() {
       triggerDownload(blob, filename);
     } catch (err) {
       console.error("Export failed:", err);
-      alert("Export failed");
+      alert(t("export.failed"));
     } finally {
       setExporting(false);
     }
@@ -75,26 +77,23 @@ export function BotExportPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Export Data</h1>
+      <h1 className="text-2xl font-bold">{t("export.title")}</h1>
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Download className="h-5 w-5" />
-            Export Bot Data
+            {t("export.cardTitle")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-muted-foreground text-sm">
-            Export this bot's configuration and associated data. Choose JSON for readability or Gzip
-            for smaller file size. Sensitive data (Bot Token, API Keys) will be excluded.
-          </p>
+          <p className="text-muted-foreground text-sm">{t("export.description")}</p>
 
           {loadingStats ? (
-            <p className="text-muted-foreground text-sm">Loading stats...</p>
+            <p className="text-muted-foreground text-sm">{t("export.loadingStats")}</p>
           ) : stats ? (
             <div className="space-y-2">
-              <p className="text-sm font-medium">Data to export:</p>
+              <p className="text-sm font-medium">{t("export.dataToExport")}</p>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(stats).map(([table, count]) => (
                   <Badge key={table} variant={count > 0 ? "default" : "muted"}>
@@ -102,10 +101,12 @@ export function BotExportPage() {
                   </Badge>
                 ))}
               </div>
-              <p className="text-muted-foreground text-xs">{totalExportRows} total rows</p>
+              <p className="text-muted-foreground text-xs">
+                {t("export.totalRows", { count: totalExportRows })}
+              </p>
             </div>
           ) : (
-            <p className="text-muted-foreground text-sm">Failed to load export stats.</p>
+            <p className="text-muted-foreground text-sm">{t("export.statsFailed")}</p>
           )}
 
           <div className="flex items-center gap-3">
@@ -115,7 +116,7 @@ export function BotExportPage() {
               ) : (
                 <Download className="h-4 w-4" />
               )}
-              Export
+              {t("export.button")}
             </Button>
             <Select
               value={exportFormat}

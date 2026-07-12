@@ -1,4 +1,5 @@
 import { collapseAllNested, darkStyles, JsonView } from "react-json-view-lite";
+import { getResolvedLocale } from "@/i18n";
 import "react-json-view-lite/dist/index.css";
 
 export type LogMeta = Record<string, unknown> | null | undefined;
@@ -51,7 +52,11 @@ export const levelBadge: Record<string, "default" | "success" | "warning" | "des
   error: "destructive",
 };
 
-export function formatTime(iso: string): string {
+export function formatTime(iso: string, locale: string | undefined = getResolvedLocale()): string {
   const d = new Date(iso);
-  return d.toLocaleString("zh-CN", { hour12: false });
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+    hour12: false,
+  }).format(d);
 }

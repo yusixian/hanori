@@ -5,8 +5,10 @@ import { authClient } from "@/lib/auth-client";
 import { useLogin } from "@refinedev/core";
 import { Bot, LockKeyhole, Mail } from "lucide-react";
 import { useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 export function LoginPage() {
+  const { t } = useTranslation("auth");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const { mutate: login, isLoading } = useLogin();
@@ -24,19 +26,19 @@ export function LoginPage() {
           <div className="bg-primary mb-3 flex size-12 items-center justify-center rounded-2xl text-white shadow-lg shadow-blue-600/20">
             <Bot className="h-6 w-6" />
           </div>
-          <CardTitle className="text-xl">Welcome back</CardTitle>
-          <CardDescription>登录 cos-tool-bot 管理面板</CardDescription>
+          <CardTitle className="text-xl">{t("login.title")}</CardTitle>
+          <CardDescription>{t("login.description")}</CardDescription>
         </CardHeader>
         <CardContent className="px-7 pb-8">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
             <label className="space-y-2">
-              <span className="text-sm font-medium">邮箱</span>
+              <span className="text-sm font-medium">{t("login.emailLabel")}</span>
               <div className="relative">
                 <Mail className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
                 <Input
                   className="pl-10"
                   type="email"
-                  placeholder="you@example.com"
+                  placeholder={t("login.emailPlaceholder")}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
@@ -45,13 +47,13 @@ export function LoginPage() {
               </div>
             </label>
             <label className="space-y-2">
-              <span className="text-sm font-medium">密码</span>
+              <span className="text-sm font-medium">{t("login.passwordLabel")}</span>
               <div className="relative">
                 <LockKeyhole className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
                 <Input
                   className="pl-10"
                   type="password"
-                  placeholder="请输入密码"
+                  placeholder={t("login.passwordPlaceholder")}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="current-password"
@@ -59,11 +61,11 @@ export function LoginPage() {
               </div>
             </label>
             <Button type="submit" disabled={isLoading || !email || !password}>
-              {isLoading ? "正在登录…" : "登录"}
+              {isLoading ? t("login.submitting") : t("login.submit")}
             </Button>
             <div className="text-muted-foreground flex items-center gap-3 text-xs">
               <div className="bg-border h-px flex-1" />
-              <span>或</span>
+              <span>{t("login.separator")}</span>
               <div className="bg-border h-px flex-1" />
             </div>
             <Button
@@ -76,7 +78,7 @@ export function LoginPage() {
                 })
               }
             >
-              使用 Google 登录
+              {t("login.google")}
             </Button>
           </form>
         </CardContent>

@@ -1,6 +1,7 @@
 import { Pagination } from "@/components/ui/pagination";
 import { ArrowDown, ArrowUp, FilterX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useTranslation } from "react-i18next";
 import { MessageBubble } from "./message-bubble";
 import type { ConversationMessage } from "./types";
 
@@ -13,6 +14,7 @@ function ScrollButtons({
   canScrollUp: boolean;
   canScrollDown: boolean;
 }) {
+  const { t } = useTranslation("bots");
   if (!canScrollUp && !canScrollDown) return null;
 
   const scrollTo = (top: number) => {
@@ -27,8 +29,8 @@ function ScrollButtons({
         disabled={!canScrollUp}
         className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
         onClick={() => scrollTo(0)}
-        aria-label="Scroll to first message"
-        title="Scroll to top"
+        aria-label={t("conversations.scrollFirst")}
+        title={t("conversations.scrollTop")}
       >
         <ArrowUp className="size-4" aria-hidden="true" />
       </button>
@@ -37,8 +39,8 @@ function ScrollButtons({
         disabled={!canScrollDown}
         className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
         onClick={() => scrollTo(containerRef.current?.scrollHeight ?? 0)}
-        aria-label="Scroll to last message"
-        title="Scroll to bottom"
+        aria-label={t("conversations.scrollLast")}
+        title={t("conversations.scrollBottom")}
       >
         <ArrowDown className="size-4" aria-hidden="true" />
       </button>
@@ -69,6 +71,7 @@ export function MessagesPane({
   totalPages: number;
   onPageChange: (p: number) => void;
 }) {
+  const { t } = useTranslation("bots");
   const listRef = useRef<HTMLOListElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const [scrollEdges, setScrollEdges] = useState({ up: false, down: false });
@@ -130,16 +133,18 @@ export function MessagesPane({
               <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
                 <FilterX className="size-5" aria-hidden="true" />
               </span>
-              <p className="text-foreground mt-3 text-sm font-semibold">No visible messages</p>
+              <p className="text-foreground mt-3 text-sm font-semibold">
+                {t("conversations.noVisibleMessages")}
+              </p>
               <p className="mt-1 max-w-xs text-xs leading-5">
-                This page only contains roles hidden by the current filters.
+                {t("conversations.filteredMessagesDescription")}
               </p>
             </div>
           ) : (
             <ol
               ref={listRef}
               className="divide-y divide-slate-100 overflow-hidden rounded-xl bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_rgb(15_23_42/0.04)]"
-              aria-label="Conversation messages"
+              aria-label={t("conversations.messageListLabel")}
             >
               {visibleMessages.map((message) => (
                 <li

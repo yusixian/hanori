@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Switch } from "@/components/ui/switch";
 import type { ConversationConfig } from "@cos-tool-bot/shared";
+import { useTranslation } from "react-i18next";
 
 export function ConversationSection({
   config,
@@ -11,16 +12,18 @@ export function ConversationSection({
   config: ConversationConfig;
   onUpdate: (updates: Partial<ConversationConfig>) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Conversation History</CardTitle>
+        <CardTitle className="text-base">{t("conversation.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
         {/* Basic Settings */}
         <div className="space-y-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Basic Settings
+            {t("conversation.basicSettings")}
           </p>
           <div className="flex items-center gap-2">
             <Switch
@@ -29,12 +32,12 @@ export function ConversationSection({
               onCheckedChange={(enabled) => onUpdate({ enabled })}
             />
             <label htmlFor="convEnabled" className="text-sm font-medium">
-              Enable Conversation History
+              {t("conversation.enable")}
             </label>
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">History Format</label>
+            <label className="text-sm font-medium">{t("conversation.historyFormat")}</label>
             <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
@@ -44,21 +47,20 @@ export function ConversationSection({
                   historyFormat: value as ConversationConfig["historyFormat"],
                 })
               }
-              ariaLabel="History format"
+              ariaLabel={t("conversation.historyFormat")}
               options={[
-                { value: "prompt", label: "Prompt (Recommended)" },
-                { value: "messages", label: "Messages" },
+                { value: "prompt", label: t("conversation.promptRecommended") },
+                { value: "messages", label: t("conversation.messages") },
               ]}
             />
             <p className="text-muted-foreground text-xs">
-              Prompt: pack history into system prompt, best compatibility. Messages: standard
-              multi-turn format, only for models with native multi-turn support.
+              {t("conversation.historyFormatDescription")}
             </p>
           </div>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Max Context Messages</label>
+              <label className="text-sm font-medium">{t("conversation.maxContext")}</label>
               <Input
                 type="number"
                 min={1}
@@ -67,10 +69,12 @@ export function ConversationSection({
                 value={config.maxContextMessages}
                 onChange={(e) => onUpdate({ maxContextMessages: Number(e.target.value) })}
               />
-              <p className="text-muted-foreground text-xs">Messages sent to LLM (1-100)</p>
+              <p className="text-muted-foreground text-xs">
+                {t("conversation.maxContextDescription")}
+              </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Retention Days</label>
+              <label className="text-sm font-medium">{t("conversation.retentionDays")}</label>
               <Input
                 type="number"
                 min={0}
@@ -79,7 +83,9 @@ export function ConversationSection({
                 value={config.retentionDays}
                 onChange={(e) => onUpdate({ retentionDays: Number(e.target.value) })}
               />
-              <p className="text-muted-foreground text-xs">0 = keep forever</p>
+              <p className="text-muted-foreground text-xs">
+                {t("conversation.retentionDescription")}
+              </p>
             </div>
           </div>
         </div>
@@ -87,10 +93,10 @@ export function ConversationSection({
         {/* Group Chat Settings */}
         <div className="space-y-4 border-t pt-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Group Chat Settings
+            {t("conversation.groupSettings")}
           </p>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Group Buffer Size</label>
+            <label className="text-sm font-medium">{t("conversation.groupBufferSize")}</label>
             <Input
               type="number"
               min={10}
@@ -100,12 +106,12 @@ export function ConversationSection({
               onChange={(e) => onUpdate({ groupBufferSize: Number(e.target.value) })}
             />
             <p className="text-muted-foreground text-xs">
-              In-memory ring buffer capacity for group messages
+              {t("conversation.groupBufferDescription")}
             </p>
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Include Group Context</label>
+              <label className="text-sm font-medium">{t("conversation.includeGroupContext")}</label>
               <SelectMenu
                 className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
                 disabled={!config.enabled}
@@ -115,19 +121,19 @@ export function ConversationSection({
                     groupContextMode: value as ConversationConfig["groupContextMode"],
                   })
                 }
-                ariaLabel="Include group context"
+                ariaLabel={t("conversation.includeGroupContext")}
                 options={[
-                  { value: "all", label: "All Triggers" },
-                  { value: "random_only", label: "Random Reply Only" },
-                  { value: "none", label: "Never" },
+                  { value: "all", label: t("conversation.allTriggers") },
+                  { value: "random_only", label: t("conversation.randomOnly") },
+                  { value: "none", label: t("common.never") },
                 ]}
               />
               <p className="text-muted-foreground text-xs">
-                When to include recent group messages in LLM context
+                {t("conversation.includeGroupContextDescription")}
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Save Group Context</label>
+              <label className="text-sm font-medium">{t("conversation.saveGroupContext")}</label>
               <SelectMenu
                 className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
                 disabled={!config.enabled}
@@ -137,15 +143,15 @@ export function ConversationSection({
                     saveGroupContext: value as ConversationConfig["saveGroupContext"],
                   })
                 }
-                ariaLabel="Save group context"
+                ariaLabel={t("conversation.saveGroupContext")}
                 options={[
-                  { value: "random_only", label: "Random Reply Only" },
-                  { value: "all", label: "All Triggers" },
-                  { value: "none", label: "Never" },
+                  { value: "random_only", label: t("conversation.randomOnly") },
+                  { value: "all", label: t("conversation.allTriggers") },
+                  { value: "none", label: t("common.never") },
                 ]}
               />
               <p className="text-muted-foreground text-xs">
-                When to persist group context to database
+                {t("conversation.saveGroupContextDescription")}
               </p>
             </div>
           </div>
@@ -154,7 +160,7 @@ export function ConversationSection({
         {/* Compression Settings */}
         <div className="space-y-4 border-t pt-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">
-            Compression Settings
+            {t("conversation.compressionSettings")}
           </p>
           <div className="flex items-center gap-2">
             <Switch
@@ -164,14 +170,14 @@ export function ConversationSection({
               onCheckedChange={(autoSummarize) => onUpdate({ autoSummarize })}
             />
             <label htmlFor="autoSummarize" className="text-sm font-medium">
-              Auto-summarize with LLM
+              {t("conversation.autoSummarize")}
             </label>
             <span className="text-muted-foreground text-xs">
-              (off = sliding window, old messages discarded)
+              {t("conversation.autoSummarizeOff")}
             </span>
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Summarize Threshold</label>
+            <label className="text-sm font-medium">{t("conversation.summarizeThreshold")}</label>
             <Input
               type="number"
               min={10}
@@ -181,7 +187,7 @@ export function ConversationSection({
               onChange={(e) => onUpdate({ summarizeThreshold: Number(e.target.value) })}
             />
             <p className="text-muted-foreground text-xs">
-              Trigger compression when message count exceeds this
+              {t("conversation.summarizeThresholdDescription")}
             </p>
           </div>
         </div>

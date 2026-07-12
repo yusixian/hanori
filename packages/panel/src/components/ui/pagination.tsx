@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface PaginationProps {
   page: number;
@@ -10,6 +11,7 @@ interface PaginationProps {
 }
 
 export function Pagination({ page, totalPages, onPageChange, className }: PaginationProps) {
+  const { t } = useTranslation("common");
   const [editValue, setEditValue] = useState<string | null>(null);
 
   if (totalPages <= 1) return null;
@@ -30,7 +32,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
         size="sm"
         disabled={page <= 1}
         onClick={() => onPageChange(page - 1)}
-        aria-label="上一页"
+        aria-label={t("pagination.previous")}
       >
         <ChevronLeft className="h-4 w-4" />
       </Button>
@@ -54,7 +56,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
           type="button"
           className="text-muted-foreground hover:text-foreground min-h-10 cursor-pointer rounded-lg px-2 text-sm tabular-nums transition-colors hover:bg-slate-100"
           onClick={() => setEditValue("")}
-          title="点击跳转页码"
+          title={t("pagination.jumpToPage")}
         >
           {page} / {totalPages}
         </button>
@@ -64,7 +66,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
         size="sm"
         disabled={page >= totalPages}
         onClick={() => onPageChange(page + 1)}
-        aria-label="下一页"
+        aria-label={t("pagination.next")}
       >
         <ChevronRight className="h-4 w-4" />
       </Button>

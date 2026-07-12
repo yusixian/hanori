@@ -31,19 +31,21 @@ import {
   X,
 } from "lucide-react";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Link, Outlet, useLocation } from "react-router";
 import { Button } from "../ui/button";
+import { LanguageSwitcher } from "@/components/language-switcher";
 
 const globalNavItems = [
-  { label: "Bots", path: "/", icon: Bot },
-  { label: "Usage", path: "/usage", icon: BarChart3 },
-  { label: "Data", path: "/data", icon: Database },
-  { label: "Backup", path: "/backup", icon: HardDrive },
-  { label: "Timers", path: "/timers", icon: Timer },
-  { label: "MCP", path: "/mcp-servers", icon: Plug },
-  { label: "API Test", path: "/api-test", icon: FlaskConical },
-  { label: "Logs", path: "/logs", icon: ScrollText },
-];
+  { labelKey: "navigation.bots", path: "/", icon: Bot },
+  { labelKey: "navigation.usage", path: "/usage", icon: BarChart3 },
+  { labelKey: "navigation.data", path: "/data", icon: Database },
+  { labelKey: "navigation.backup", path: "/backup", icon: HardDrive },
+  { labelKey: "navigation.timers", path: "/timers", icon: Timer },
+  { labelKey: "navigation.mcp", path: "/mcp-servers", icon: Plug },
+  { labelKey: "navigation.apiTest", path: "/api-test", icon: FlaskConical },
+  { labelKey: "navigation.logs", path: "/logs", icon: ScrollText },
+] as const;
 
 function isNavActive(itemPath: string, pathname: string) {
   if (itemPath === "/") return pathname === "/" || pathname.startsWith("/bots");
@@ -51,6 +53,7 @@ function isNavActive(itemPath: string, pathname: string) {
 }
 
 export function AppLayout() {
+  const { t } = useTranslation("common");
   const location = useLocation();
   const { mutate: logout } = useLogout();
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
@@ -77,19 +80,27 @@ export function AppLayout() {
 
   const botNavItems = botId
     ? [
-        { label: "Overview", path: `/bots/${botId}`, icon: Bot },
-        { label: "Edit", path: `/bots/${botId}/edit`, icon: Pencil },
-        { label: "AI Settings", path: `/bots/${botId}/ai`, icon: Brain },
-        { label: "Debugger", path: `/bots/${botId}/debugger`, icon: Bug },
-        { label: "Conversations", path: `/bots/${botId}/conversations`, icon: MessageSquare },
-        { label: "Profiles", path: `/bots/${botId}/profiles`, icon: Users },
-        { label: "Memories", path: `/bots/${botId}/memories`, icon: BookOpen },
-        { label: "RSS", path: `/bots/${botId}/rss`, icon: Rss },
-        { label: "群聊总结", path: `/bots/${botId}/summary`, icon: FileText },
-        { label: "Generations", path: `/bots/${botId}/generations`, icon: ImageIcon },
-        { label: "Files", path: `/bots/${botId}/files`, icon: FolderOpen },
-        { label: "Export", path: `/bots/${botId}/export`, icon: Download },
-        { label: "Logs", path: `/bots/${botId}/logs`, icon: ScrollText },
+        { label: t("navigation.overview"), path: `/bots/${botId}`, icon: Bot },
+        { label: t("navigation.edit"), path: `/bots/${botId}/edit`, icon: Pencil },
+        { label: t("navigation.aiSettings"), path: `/bots/${botId}/ai`, icon: Brain },
+        { label: t("navigation.debugger"), path: `/bots/${botId}/debugger`, icon: Bug },
+        {
+          label: t("navigation.conversations"),
+          path: `/bots/${botId}/conversations`,
+          icon: MessageSquare,
+        },
+        { label: t("navigation.profiles"), path: `/bots/${botId}/profiles`, icon: Users },
+        { label: t("navigation.memories"), path: `/bots/${botId}/memories`, icon: BookOpen },
+        { label: t("navigation.rss"), path: `/bots/${botId}/rss`, icon: Rss },
+        { label: t("navigation.chatSummary"), path: `/bots/${botId}/summary`, icon: FileText },
+        {
+          label: t("navigation.generations"),
+          path: `/bots/${botId}/generations`,
+          icon: ImageIcon,
+        },
+        { label: t("navigation.files"), path: `/bots/${botId}/files`, icon: FolderOpen },
+        { label: t("navigation.export"), path: `/bots/${botId}/export`, icon: Download },
+        { label: t("navigation.logs"), path: `/bots/${botId}/logs`, icon: ScrollText },
       ]
     : [];
 
@@ -99,7 +110,7 @@ export function AppLayout() {
         href="#main-content"
         className="sr-only z-[60] rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
       >
-        Skip to content
+        {t("navigation.skipToContent")}
       </a>
       {/* Mobile top bar */}
       <header className="z-30 flex min-h-14 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-3 pt-[max(0.25rem,env(safe-area-inset-top))] pb-1 backdrop-blur-xl md:hidden">
@@ -107,14 +118,14 @@ export function AppLayout() {
           variant="ghost"
           size="sm"
           onClick={() => setSidebarOpen(true)}
-          aria-label="打开菜单"
+          aria-label={t("navigation.openMenu")}
         >
           <Menu className="h-5 w-5" />
         </Button>
         <div className="bg-primary flex size-8 items-center justify-center rounded-xl text-white shadow-[0_6px_14px_rgb(37_99_235/0.24)]">
           <Bot className="h-4 w-4" />
         </div>
-        <span className="text-sm font-semibold tracking-tight">cos-tool-bot</span>
+        <span className="text-sm font-semibold tracking-tight">{t("app.name")}</span>
       </header>
 
       {/* Overlay backdrop */}
@@ -141,8 +152,8 @@ export function AppLayout() {
               size="sm"
               className="mx-auto hidden md:flex"
               onClick={() => setCollapsed(false)}
-              title="Expand sidebar"
-              aria-label="展开侧栏"
+              title={t("navigation.expandSidebar")}
+              aria-label={t("navigation.expandSidebar")}
             >
               <PanelLeftOpen className="h-4 w-4" />
             </Button>
@@ -154,9 +165,11 @@ export function AppLayout() {
                 </div>
                 <div className="min-w-0">
                   <span className="block text-sm font-semibold tracking-tight whitespace-nowrap">
-                    cos-tool-bot
+                    {t("app.name")}
                   </span>
-                  <span className="text-muted-foreground block text-[11px]">Control center</span>
+                  <span className="text-muted-foreground block text-[11px]">
+                    {t("app.subtitle")}
+                  </span>
                 </div>
               </div>
               <Button
@@ -164,8 +177,8 @@ export function AppLayout() {
                 size="sm"
                 className="hidden shrink-0 md:flex"
                 onClick={() => setCollapsed(true)}
-                title="Collapse sidebar"
-                aria-label="收起侧栏"
+                title={t("navigation.collapseSidebar")}
+                aria-label={t("navigation.collapseSidebar")}
               >
                 <PanelLeftClose className="h-4 w-4" />
               </Button>
@@ -177,7 +190,7 @@ export function AppLayout() {
             size="sm"
             className="md:hidden"
             onClick={() => setSidebarOpen(false)}
-            aria-label="关闭菜单"
+            aria-label={t("navigation.closeMenu")}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -187,18 +200,18 @@ export function AppLayout() {
           {isBotContext ? (
             <>
               <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.16em] text-slate-400 uppercase">
-                Bot workspace
+                {t("navigation.botWorkspace")}
               </p>
               <Link
                 to="/"
-                title="Back to Bots"
+                title={t("navigation.backToBots")}
                 className={cn(
                   "flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground",
                   collapsed && "md:justify-center",
                 )}
               >
                 <ArrowLeft className="h-4 w-4 shrink-0" />
-                <span className={cn(collapsed && "md:hidden")}>Back to Bots</span>
+                <span className={cn(collapsed && "md:hidden")}>{t("navigation.backToBots")}</span>
               </Link>
               <div className="mx-3 my-2 border-t" />
               {botNavItems.map((item) => {
@@ -230,42 +243,49 @@ export function AppLayout() {
           ) : (
             <>
               <p className="mb-2 px-3 text-[10px] font-bold tracking-[0.16em] text-slate-400 uppercase">
-                Workspace
+                {t("navigation.workspace")}
               </p>
-              {globalNavItems.map((item) => (
-                <Link
-                  key={item.path}
-                  to={item.path}
-                  title={item.label}
-                  className={cn(
-                    "group flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-[background-color,color,box-shadow]",
-                    isNavActive(item.path, location.pathname)
-                      ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.08)]"
-                      : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
-                    collapsed && "md:justify-center",
-                  )}
-                >
-                  <span
+              {globalNavItems.map((item) => {
+                const label = t(item.labelKey);
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    title={label}
                     className={cn(
-                      "flex size-8 shrink-0 items-center justify-center rounded-lg transition-[background-color,color]",
+                      "group flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-[background-color,color,box-shadow]",
                       isNavActive(item.path, location.pathname)
-                        ? "bg-white text-primary shadow-sm"
-                        : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-700",
+                        ? "bg-accent text-accent-foreground shadow-[inset_0_0_0_1px_rgb(37_99_235/0.08)]"
+                        : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
+                      collapsed && "md:justify-center",
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
-                  </span>
-                  <span className={cn(collapsed && "md:hidden")}>{item.label}</span>
-                </Link>
-              ))}
+                    <span
+                      className={cn(
+                        "flex size-8 shrink-0 items-center justify-center rounded-lg transition-[background-color,color]",
+                        isNavActive(item.path, location.pathname)
+                          ? "bg-white text-primary shadow-sm"
+                          : "bg-slate-100 text-slate-500 group-hover:bg-white group-hover:text-slate-700",
+                      )}
+                    >
+                      <item.icon className="h-4 w-4" />
+                    </span>
+                    <span className={cn(collapsed && "md:hidden")}>{label}</span>
+                  </Link>
+                );
+              })}
             </>
           )}
         </nav>
 
         <div className="border-t border-slate-200/80 bg-slate-50/60 p-3">
+          <LanguageSwitcher
+            className={cn("mb-2 block", collapsed && "md:hidden")}
+            selectClassName="w-full"
+          />
           <Link
             to="/settings"
-            title="Settings"
+            title={t("navigation.settings")}
             className={cn(
               "mb-1 flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground",
               collapsed && "md:justify-center",
@@ -273,18 +293,18 @@ export function AppLayout() {
             )}
           >
             <Settings className="h-4 w-4 shrink-0" />
-            <span className={cn(collapsed && "md:hidden")}>Settings</span>
+            <span className={cn(collapsed && "md:hidden")}>{t("navigation.settings")}</span>
           </Link>
           <Button
             variant="ghost"
             size="sm"
             className={cn("w-full", collapsed ? "md:justify-center" : "justify-start")}
             onClick={() => logout()}
-            title="Logout"
-            aria-label="退出登录"
+            title={t("navigation.logout")}
+            aria-label={t("navigation.logout")}
           >
             <LogOut className="h-4 w-4 shrink-0" />
-            <span className={cn(collapsed && "md:hidden")}>Logout</span>
+            <span className={cn(collapsed && "md:hidden")}>{t("navigation.logout")}</span>
           </Button>
         </div>
       </aside>

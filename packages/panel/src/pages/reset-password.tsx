@@ -2,9 +2,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router";
 
 export function ResetPasswordPage() {
+  const { t } = useTranslation("auth");
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get("token") || "";
@@ -17,7 +19,7 @@ export function ResetPasswordPage() {
     event.preventDefault();
     setError("");
     if (password !== confirm) {
-      setError("两次输入的密码不一致");
+      setError(t("errors.passwordMismatch"));
       return;
     }
     const response = await fetch("/api/authz/reset-password", {
@@ -28,13 +30,13 @@ export function ResetPasswordPage() {
     if (!response.ok) {
       try {
         const body = (await response.json()) as { error?: string; message?: string };
-        setError(body.error || body.message || "重置密码失败");
+        setError(body.error || body.message || t("errors.resetPasswordFailed"));
       } catch {
-        setError("重置密码失败");
+        setError(t("errors.resetPasswordFailed"));
       }
       return;
     }
-    setMessage("密码已重置，请重新登录");
+    setMessage(t("resetPassword.success"));
     setTimeout(() => navigate("/login", { replace: true }), 1200);
   };
 
@@ -42,8 +44,8 @@ export function ResetPasswordPage() {
     <div className="flex min-h-screen items-center justify-center p-5">
       <Card className="w-full max-w-[420px]">
         <CardHeader>
-          <CardTitle>重置密码</CardTitle>
-          <CardDescription>设置新密码后，原有登录会话将失效。</CardDescription>
+          <CardTitle>{t("resetPassword.title")}</CardTitle>
+          <CardDescription>{t("resetPassword.description")}</CardDescription>
         </CardHeader>
         <CardContent>
           {error && (
@@ -57,7 +59,7 @@ export function ResetPasswordPage() {
           <form onSubmit={submit} className="grid gap-4">
             <Input
               type="password"
-              placeholder="新密码（至少 8 位）"
+              placeholder={t("resetPassword.newPasswordPlaceholder")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               minLength={8}
@@ -65,14 +67,14 @@ export function ResetPasswordPage() {
             />
             <Input
               type="password"
-              placeholder="确认新密码"
+              placeholder={t("resetPassword.confirmPasswordPlaceholder")}
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
               minLength={8}
               required
             />
             <Button type="submit" disabled={!token || !!message}>
-              重置密码
+              {t("resetPassword.submit")}
             </Button>
           </form>
         </CardContent>

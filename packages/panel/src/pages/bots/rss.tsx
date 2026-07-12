@@ -21,12 +21,14 @@ import { useParams } from "react-router";
 import { CollectionForm } from "./rss-collection-form";
 import { FeedList } from "./rss-feed-list";
 import { ItemList } from "./rss-item-list";
+import { useTranslation } from "react-i18next";
 
 interface CollectionWithFeeds extends RssCollectionRecord {
   feeds?: RssFeedRecord[];
 }
 
 export function BotRssPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
   const [collections, setCollections] = useState<CollectionWithFeeds[]>([]);
   const [loading, setLoading] = useState(true);
@@ -104,7 +106,7 @@ export function BotRssPage() {
     try {
       await fn();
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Operation failed");
+      showToast("error", err instanceof Error ? err.message : t("rss.operationFailed"));
     } finally {
       setBusy(null);
     }
@@ -146,7 +148,7 @@ export function BotRssPage() {
       });
       const json = await res.json();
       if (json.ok) {
-        showToast("success", `Fetched ${json.newItems} new items`);
+        showToast("success", t("rss.fetchedItems", { count: json.newItems }));
         if (expandedId === id) await refreshCollection(id);
       }
     });
@@ -162,20 +164,20 @@ export function BotRssPage() {
       const triggered = json.ok && json.triggered;
       showToast(
         triggered ? "success" : "error",
-        triggered ? "AI digest triggered" : "No new items to digest",
+        triggered ? t("rss.digestTriggered") : t("rss.noItemsToDigest"),
       );
     });
   };
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading...</p>;
+  if (loading) return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">RSS Collections</h1>
+        <h1 className="text-2xl font-bold">{t("rss.title")}</h1>
         <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
           <Plus className="h-4 w-4" />
-          New Collection
+          {t("rss.newCollection")}
         </Button>
       </div>
 
@@ -201,13 +203,13 @@ export function BotRssPage() {
             className="ml-2 h-auto p-0 underline"
             onClick={() => setToast(null)}
           >
-            Dismiss
+            {t("rss.dismiss")}
           </Button>
         </p>
       )}
 
       {collections.length === 0 && !showCreate && (
-        <p className="text-muted-foreground text-sm">No RSS collections yet.</p>
+        <p className="text-muted-foreground text-sm">{t("rss.empty")}</p>
       )}
 
       {collections.map((col) => (
@@ -222,7 +224,7 @@ export function BotRssPage() {
                 )}
                 <CardTitle className="text-base">{col.name}</CardTitle>
                 <Badge variant={col.isActive ? "default" : "muted"}>
-                  {col.isActive ? "Active" : "Paused"}
+                  {col.isActive ? t("rss.active") : t("rss.paused")}
                 </Badge>
                 <span className="text-muted-foreground flex items-center gap-1 text-xs">
                   <Clock className="h-3 w-3" />
@@ -236,7 +238,7 @@ export function BotRssPage() {
                   variant="ghost"
                   disabled={busy !== null}
                   onClick={() => toggleActive(col)}
-                  title={col.isActive ? "Pause" : "Resume"}
+                  title={col.isActive ? t("rss.pause") : t("rss.resume")}
                 >
                   {col.isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
                 </Button>
@@ -245,7 +247,7 @@ export function BotRssPage() {
                   variant="ghost"
                   disabled={busy !== null}
                   onClick={() => pollCollection(col.id)}
-                  title="Fetch now"
+                  title={t("rss.fetchNow")}
                 >
                   {busy === `poll-${col.id}` ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -258,7 +260,7 @@ export function BotRssPage() {
                   variant="ghost"
                   disabled={busy !== null}
                   onClick={() => triggerDigest(col.id)}
-                  title="Trigger AI digest"
+                  title={t("rss.triggerDigest")}
                 >
                   {busy === `digest-${col.id}` ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -271,7 +273,7 @@ export function BotRssPage() {
                   variant={confirmDelete === col.id ? "destructive" : "ghost"}
                   disabled={busy !== null}
                   onClick={() => deleteCollection(col.id)}
-                  title={confirmDelete === col.id ? "Click again to confirm" : "Delete"}
+                  title={confirmDelete === col.id ? t("rss.clickAgain") : t("common:common.delete")}
                 >
                   <Trash2 className={`h-4 w-4 ${confirmDelete === col.id ? "" : "text-red-500"}`} />
                 </Button>
@@ -285,14 +287,14 @@ export function BotRssPage() {
           {expandedId === col.id && (
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-sm font-medium">Settings</h3>
+                <h3 className="text-sm font-medium">{t("rss.settings")}</h3>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => setEditingId(editingId === col.id ? null : col.id)}
                 >
                   <Pencil className="h-3 w-3" />
-                  {editingId === col.id ? "Cancel" : "Edit"}
+                  {editingId === col.id ? t("common:common.cancel") : t("common:common.edit")}
                 </Button>
               </div>
 

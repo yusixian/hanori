@@ -7,7 +7,8 @@ import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
 interface MemoryItem {
@@ -39,6 +40,7 @@ const emptyCreateForm: CreateForm = {
 };
 
 export function BotMemoriesPage() {
+  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -56,6 +58,12 @@ export function BotMemoriesPage() {
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
   const [showCreate, setShowCreate] = useState(false);
   const limit = 20;
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const dateTimeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    [locale],
+  );
 
   const loadCategories = useCallback(async () => {
     if (!botId) return;
@@ -114,7 +122,7 @@ export function BotMemoriesPage() {
   };
 
   const handleDelete = async (memoryId: number) => {
-    if (!botId || !window.confirm("Delete this memory?")) return;
+    if (!botId || !window.confirm(t("memories.deleteConfirm"))) return;
     try {
       await client.api.bots[":botId"].memories[":memoryId"].$delete({
         param: { botId, memoryId: String(memoryId) },
@@ -192,8 +200,10 @@ export function BotMemoriesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">Bot Memories</h1>
-        <span className="text-muted-foreground text-sm">{total} total</span>
+        <h1 className="text-2xl font-bold">{t("memories.title")}</h1>
+        <span className="text-muted-foreground text-sm">
+          {t("common.total", { value: numberFormatter.format(total) })}
+        </span>
         <Button
           variant="outline"
           size="sm"
@@ -201,19 +211,19 @@ export function BotMemoriesPage() {
           onClick={() => setShowCreate(!showCreate)}
         >
           <Plus className="h-4 w-4" />
-          Add Memory
+          {t("memories.add")}
         </Button>
       </div>
 
       {showCreate && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm">New Memory</CardTitle>
+            <CardTitle className="text-sm">{t("memories.new")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
               <label htmlFor="create-mem-content" className="text-muted-foreground text-xs">
-                Content *
+                {t("memories.content")} *
               </label>
               <Textarea
                 id="create-mem-content"
@@ -221,30 +231,30 @@ export function BotMemoriesPage() {
                 rows={3}
                 value={createForm.content}
                 onChange={(e) => setCreateForm({ ...createForm, content: e.target.value })}
-                placeholder="Memory content..."
+                placeholder={t("memories.contentPlaceholder")}
               />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="create-mem-category" className="text-muted-foreground text-xs">
-                  Category
+                  {t("memories.category")}
                 </label>
                 <Input
                   id="create-mem-category"
                   value={createForm.category}
                   onChange={(e) => setCreateForm({ ...createForm, category: e.target.value })}
-                  placeholder="fact, preference, rule, event"
+                  placeholder={t("memories.categoryPlaceholder")}
                 />
               </div>
               <div>
                 <label htmlFor="create-mem-telegram-id" className="text-muted-foreground text-xs">
-                  Telegram ID (optional)
+                  {t("memories.telegramIdOptional")}
                 </label>
                 <Input
                   id="create-mem-telegram-id"
                   value={createForm.telegramId}
                   onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
-                  placeholder="Leave empty for general memory"
+                  placeholder={t("memories.generalMemoryPlaceholder")}
                 />
               </div>
             </div>
@@ -259,7 +269,7 @@ export function BotMemoriesPage() {
                 ) : (
                   <Check className="h-4 w-4" />
                 )}
-                Create
+                {t("common.create")}
               </Button>
               <Button
                 variant="ghost"
@@ -270,7 +280,7 @@ export function BotMemoriesPage() {
                 }}
               >
                 <X className="h-4 w-4" />
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </CardContent>
@@ -282,13 +292,13 @@ export function BotMemoriesPage() {
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="Search memories..."
+          placeholder={t("memories.searchPlaceholder")}
           className="max-w-xs"
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
         <Button variant="outline" size="sm" onClick={handleSearch}>
           <Search className="h-4 w-4" />
-          Search
+          {t("common.search")}
         </Button>
 
         <Select
@@ -299,7 +309,7 @@ export function BotMemoriesPage() {
             setPage(1);
           }}
         >
-          <option value="">All Categories</option>
+          <option value="">{t("memories.allCategories")}</option>
           {categories.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -315,8 +325,8 @@ export function BotMemoriesPage() {
             setPage(1);
           }}
         >
-          <option value="">All Memories</option>
-          <option value="general">General Only</option>
+          <option value="">{t("memories.allMemories")}</option>
+          <option value="general">{t("memories.generalOnly")}</option>
         </Select>
 
         {(search || filterCategory || filterTelegramId) && (
@@ -331,15 +341,15 @@ export function BotMemoriesPage() {
               setPage(1);
             }}
           >
-            Clear Filters
+            {t("common.clearFilters")}
           </Button>
         )}
       </div>
 
       {loading ? (
-        <p className="text-muted-foreground text-sm">Loading...</p>
+        <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
       ) : memories.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No memories found.</p>
+        <p className="text-muted-foreground text-sm">{t("memories.empty")}</p>
       ) : (
         <div className="space-y-3">
           {memories.map((m) => (
@@ -349,13 +359,13 @@ export function BotMemoriesPage() {
                   <div className="flex items-center gap-2">
                     {m.category && <Badge variant="default">{m.category}</Badge>}
                     {m.telegramId != null ? (
-                      <Badge variant="warning">User: {m.telegramId}</Badge>
+                      <Badge variant="warning">{t("memories.user", { id: m.telegramId })}</Badge>
                     ) : (
-                      <Badge variant="muted">General</Badge>
+                      <Badge variant="muted">{t("memories.general")}</Badge>
                     )}
                   </div>
                   <span className="text-muted-foreground shrink-0 text-xs">
-                    {new Date(m.updatedAt).toLocaleString()}
+                    {dateTimeFormatter.format(new Date(m.updatedAt))}
                   </span>
                 </div>
               </CardHeader>
@@ -367,7 +377,7 @@ export function BotMemoriesPage() {
                         htmlFor={`edit-mem-content-${m.id}`}
                         className="text-muted-foreground text-xs"
                       >
-                        Content
+                        {t("memories.content")}
                       </label>
                       <Textarea
                         id={`edit-mem-content-${m.id}`}
@@ -383,7 +393,7 @@ export function BotMemoriesPage() {
                           htmlFor={`edit-mem-category-${m.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Category
+                          {t("memories.category")}
                         </label>
                         <Input
                           id={`edit-mem-category-${m.id}`}
@@ -396,13 +406,13 @@ export function BotMemoriesPage() {
                           htmlFor={`edit-mem-telegram-id-${m.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          Telegram ID
+                          {t("memories.telegramId")}
                         </label>
                         <Input
                           id={`edit-mem-telegram-id-${m.id}`}
                           value={editForm.telegramId}
                           onChange={(e) => setEditForm({ ...editForm, telegramId: e.target.value })}
-                          placeholder="Empty = general"
+                          placeholder={t("memories.emptyMeansGeneral")}
                         />
                       </div>
                     </div>
@@ -413,11 +423,11 @@ export function BotMemoriesPage() {
                         ) : (
                           <Check className="h-4 w-4" />
                         )}
-                        Save
+                        {t("common.save")}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={cancelEdit}>
                         <X className="h-4 w-4" />
-                        Cancel
+                        {t("common.cancel")}
                       </Button>
                     </div>
                   </div>
@@ -426,13 +436,27 @@ export function BotMemoriesPage() {
                     <p className="text-sm whitespace-pre-wrap">{m.content}</p>
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-muted-foreground text-xs">
-                        Created: {new Date(m.createdAt).toLocaleString()}
+                        {t("memories.createdAt", {
+                          date: dateTimeFormatter.format(new Date(m.createdAt)),
+                        })}
                       </span>
                       <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="sm" onClick={() => startEdit(m)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => startEdit(m)}
+                          title={t("memories.editTitle")}
+                          aria-label={t("memories.editTitle")}
+                        >
                           <Pencil className="h-4 w-4" />
                         </Button>
-                        <Button variant="ghost" size="sm" onClick={() => handleDelete(m.id)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(m.id)}
+                          title={t("memories.deleteTitle")}
+                          aria-label={t("memories.deleteTitle")}
+                        >
                           <Trash2 className="h-4 w-4 text-red-500" />
                         </Button>
                       </div>

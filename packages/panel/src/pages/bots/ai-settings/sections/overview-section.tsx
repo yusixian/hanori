@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import type { AiConfigPublic } from "@cos-tool-bot/shared";
 import { AlertTriangle, Bot, Boxes, Brain, ChevronRight, Wrench } from "lucide-react";
 import type { AiSettingsSectionId } from "../components/ai-settings-navigation";
+import { useTranslation } from "react-i18next";
 
 export function OverviewSection({
   config,
@@ -14,6 +15,7 @@ export function OverviewSection({
   onEnabledChange: (enabled: boolean) => void;
   onNavigate: (section: AiSettingsSectionId) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
   const activeProvider =
     config.providers.find((provider) => provider.id === config.activeProviderId) ??
     config.providers[0];
@@ -36,9 +38,9 @@ export function OverviewSection({
         <div className="flex items-start gap-3 rounded-lg border bg-white p-4 text-slate-900">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div className="text-sm">
-            <p className="font-semibold">A provider is required</p>
+            <p className="font-semibold">{t("overview.providerRequired")}</p>
             <p className="mt-0.5 text-xs leading-5 text-slate-600">
-              Add a provider before enabling AI replies for this bot.
+              {t("overview.providerRequiredDescription")}
             </p>
           </div>
         </div>
@@ -51,17 +53,15 @@ export function OverviewSection({
               <Bot className="size-5" />
             </span>
             <div>
-              <h2 className="text-base font-semibold text-slate-950">AI replies</h2>
+              <h2 className="text-base font-semibold text-slate-950">{t("overview.aiReplies")}</h2>
               <p className="mt-1 text-sm text-slate-500">
-                {config.enabled
-                  ? "The bot can respond using the active provider."
-                  : "AI replies are currently disabled."}
+                {config.enabled ? t("overview.aiRepliesEnabled") : t("overview.aiRepliesDisabled")}
               </p>
             </div>
           </div>
           <label className="flex min-h-10 cursor-pointer items-center gap-3 text-sm font-medium">
             <Switch checked={config.enabled} onCheckedChange={onEnabledChange} />
-            Enable AI replies
+            {t("overview.enableAiReplies")}
           </label>
         </div>
       </Card>
@@ -69,25 +69,25 @@ export function OverviewSection({
       <div className="divide-y rounded-xl border bg-white">
         <OverviewCard
           icon={Boxes}
-          label="Provider"
-          value={activeProvider?.label ?? "Not configured"}
-          detail={activeProvider?.defaultModel ?? "Add a provider and model"}
+          label={t("common.provider")}
+          value={activeProvider?.label ?? t("common.notConfigured")}
+          detail={activeProvider?.defaultModel ?? t("overview.addProviderAndModel")}
           healthy={Boolean(activeProvider)}
           onClick={() => onNavigate("providers")}
         />
         <OverviewCard
           icon={Brain}
-          label="Memory"
-          value={`${memoryEnabled} enabled`}
-          detail="Memory, embeddings, and summaries"
+          label={t("overview.memory")}
+          value={t("overview.enabledCount", { count: memoryEnabled })}
+          detail={t("overview.memoryDetail")}
           healthy={memoryEnabled > 0}
           onClick={() => onNavigate("memory")}
         />
         <OverviewCard
           icon={Wrench}
-          label="Tools"
-          value={`${toolsEnabled} enabled`}
-          detail="Web, agent, artwork, MCP, and OCR"
+          label={t("overview.tools")}
+          value={t("overview.enabledCount", { count: toolsEnabled })}
+          detail={t("overview.toolsDetail")}
           healthy={toolsEnabled > 0}
           onClick={() => onNavigate("tools")}
         />

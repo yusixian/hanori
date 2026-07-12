@@ -14,6 +14,7 @@ import type {
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { Trans, useTranslation } from "react-i18next";
 
 interface DefaultsData {
   systemPrompt: string;
@@ -34,6 +35,7 @@ export function SummaryConfigForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation("bots");
   const isEdit = !!config;
 
   const [chatId, setChatId] = useState(config ? String(config.chatId) : "");
@@ -70,7 +72,8 @@ export function SummaryConfigForm({
       try {
         const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
         if (!res.ok) {
-          if (!cancelled) setProvidersError(`加载 Provider 列表失败 (${res.status})`);
+          if (!cancelled)
+            setProvidersError(t("summary.form.providersFailedStatus", { status: res.status }));
           return;
         }
         const json = await res.json();
@@ -80,18 +83,18 @@ export function SummaryConfigForm({
           setActiveProviderId(json.data.activeProviderId);
           setProvidersError(null);
         } else {
-          setProvidersError("加载 Provider 列表失败");
+          setProvidersError(t("summary.form.providersFailed"));
         }
       } catch (err) {
         if (!cancelled) {
-          setProvidersError(err instanceof Error ? err.message : "加载 Provider 列表失败");
+          setProvidersError(err instanceof Error ? err.message : t("summary.form.providersFailed"));
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [botId]);
+  }, [botId, t]);
 
   const toggleDefaults = async () => {
     if (showDefaults) {
@@ -144,12 +147,16 @@ export function SummaryConfigForm({
             json: payload,
           });
       if (!res.ok) {
-        setError(`Failed to ${isEdit ? "update" : "create"} config (${res.status})`);
+        setError(
+          isEdit
+            ? t("summary.form.updateFailed", { status: res.status })
+            : t("summary.form.createFailed", { status: res.status }),
+        );
         return;
       }
       onSaved();
     } catch {
-      setError("Network error, please try again");
+      setError(t("summary.form.networkError"));
     } finally {
       setSubmitting(false);
     }
@@ -159,10 +166,10 @@ export function SummaryConfigForm({
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Chat ID *</label>
+          <label className="text-sm font-medium">{t("summary.form.chatId")}</label>
           <Input
             type="number"
-            placeholder="目标群聊 ID"
+            placeholder={t("summary.form.chatIdPlaceholder")}
             value={chatId}
             onChange={(e) => setChatId(e.target.value)}
             required
@@ -172,39 +179,37 @@ export function SummaryConfigForm({
         <div className="flex items-center gap-2 pt-5">
           <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
           <label htmlFor="isActive" className="text-sm font-medium">
-            启用
+            {t("common:common.enabled")}
           </label>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
-          <label className="text-sm font-medium">定时小时 (0-23)</label>
+          <label className="text-sm font-medium">{t("summary.form.scheduleHour")}</label>
           <Input
             type="number"
             min={0}
             max={23}
-            placeholder="留空 = 不定时"
+            placeholder={t("summary.form.noSchedule")}
             value={scheduleHour}
             onChange={(e) => setScheduleHour(e.target.value)}
           />
-          <p className="text-muted-foreground text-xs">
-            按 AI 设置中的时区判定（默认 Asia/Shanghai）
-          </p>
+          <p className="text-muted-foreground text-xs">{t("summary.form.timezoneHint")}</p>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">定时分钟 (0-59)</label>
+          <label className="text-sm font-medium">{t("summary.form.scheduleMinute")}</label>
           <Input
             type="number"
             min={0}
             max={59}
-            placeholder="留空 = 不定时"
+            placeholder={t("summary.form.noSchedule")}
             value={scheduleMinute}
             onChange={(e) => setScheduleMinute(e.target.value)}
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">窗口 (小时, 1-72)</label>
+          <label className="text-sm font-medium">{t("summary.form.windowHours")}</label>
           <Input
             type="number"
             min={1}
@@ -217,43 +222,43 @@ export function SummaryConfigForm({
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
-          <label className="text-sm font-medium">最大消息数</label>
+          <label className="text-sm font-medium">{t("summary.form.maxMessages")}</label>
           <Input
             type="number"
             min={10}
             max={2000}
-            placeholder="默认 2000"
+            placeholder={t("summary.form.defaultMaxMessages")}
             value={maxMessages}
             onChange={(e) => setMaxMessages(e.target.value)}
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">冷却时间 (秒)</label>
+          <label className="text-sm font-medium">{t("summary.form.cooldown")}</label>
           <Input
             type="number"
             min={0}
             max={86400}
-            placeholder="默认 300"
+            placeholder={t("summary.form.defaultCooldown")}
             value={cooldownSeconds}
             onChange={(e) => setCooldownSeconds(e.target.value)}
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">权限</label>
+          <label className="text-sm font-medium">{t("summary.form.access")}</label>
           <Select
             className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
             value={accessMode}
             onChange={(e) => setAccessMode(e.target.value as SummaryAccessMode)}
           >
-            <option value="all">全员</option>
-            <option value="admin">仅管理员</option>
+            <option value="all">{t("summary.form.everyone")}</option>
+            <option value="admin">{t("summary.form.adminOnly")}</option>
           </Select>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
-          <label className="text-sm font-medium">Provider</label>
+          <label className="text-sm font-medium">{t("summary.form.provider")}</label>
           <Select
             className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
             value={providerId}
@@ -261,8 +266,11 @@ export function SummaryConfigForm({
           >
             <option value="">
               {activeProviderId
-                ? `默认（当前主 Provider：${providers.find((p) => p.id === activeProviderId)?.label ?? activeProviderId}）`
-                : "默认（主 Provider）"}
+                ? t("summary.form.currentProvider", {
+                    provider:
+                      providers.find((p) => p.id === activeProviderId)?.label ?? activeProviderId,
+                  })
+                : t("summary.form.defaultProvider")}
             </option>
             {providers.map((p) => (
               <option key={p.id} value={p.id}>
@@ -273,12 +281,16 @@ export function SummaryConfigForm({
           {providersError && <p className="text-xs text-red-500">{providersError}</p>}
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">模型 ID</label>
+          <label className="text-sm font-medium">{t("summary.form.modelId")}</label>
           <Input
             placeholder={
               providerId
-                ? `留空 = ${providers.find((p) => p.id === providerId)?.defaultModel ?? "所选 Provider 默认模型"}`
-                : "留空 = 主模型"
+                ? t("summary.form.modelPlaceholder", {
+                    model:
+                      providers.find((p) => p.id === providerId)?.defaultModel ??
+                      t("summary.form.selectedProviderDefault"),
+                  })
+                : t("summary.form.mainModelPlaceholder")
             }
             value={modelId}
             onChange={(e) => setModelId(e.target.value)}
@@ -288,7 +300,7 @@ export function SummaryConfigForm({
 
       <div className="space-y-2">
         <div className="flex items-center gap-2">
-          <label className="text-sm font-medium">自定义 Prompt</label>
+          <label className="text-sm font-medium">{t("summary.form.customPrompt")}</label>
           <button
             type="button"
             onClick={toggleDefaults}
@@ -299,7 +311,7 @@ export function SummaryConfigForm({
             ) : (
               <ChevronRight className="h-3 w-3" />
             )}
-            查看默认
+            {t("summary.form.viewDefault")}
           </button>
         </div>
         {showDefaults && (
@@ -313,17 +325,19 @@ export function SummaryConfigForm({
         )}
         <Textarea
           className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-          placeholder="留空 = 使用全局默认 prompt"
+          placeholder={t("summary.form.promptPlaceholder")}
           value={customPrompt}
           onChange={(e) => setCustomPrompt(e.target.value)}
           rows={4}
         />
         <p className="text-muted-foreground text-xs">
-          全局默认 prompt 可在{" "}
-          <Link to={`/bots/${botId}/ai`} className="underline hover:opacity-80">
-            AI 设置 → 群聊总结
-          </Link>{" "}
-          修改。
+          <Trans
+            t={t}
+            i18nKey="summary.form.globalPromptDescription"
+            components={{
+              settings: <Link to={`/bots/${botId}/ai`} className="underline hover:opacity-80" />,
+            }}
+          />
         </p>
       </div>
 
@@ -332,10 +346,10 @@ export function SummaryConfigForm({
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          {isEdit ? "保存" : "创建"}
+          {isEdit ? t("common:common.save") : t("common:common.create")}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>
-          取消
+          {t("common:common.cancel")}
         </Button>
       </div>
     </form>

@@ -1,6 +1,7 @@
 import type { AiConfigPublic } from "@cos-tool-bot/shared";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { useTranslation } from "react-i18next";
 
 export function GlobalSettingsSection({
   config,
@@ -9,38 +10,40 @@ export function GlobalSettingsSection({
   config: AiConfigPublic;
   onConfigChange: (updates: Partial<AiConfigPublic>) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <div className="space-y-4 p-1">
       <div className="space-y-1.5">
-        <Label>Behavioral Prompt</Label>
+        <Label>{t("globalSettings.behavioralPrompt")}</Label>
         <Textarea
           value={config.behavioralPrompt ?? ""}
           onChange={(e) => onConfigChange({ behavioralPrompt: e.target.value })}
-          placeholder="General behavioral instructions (persona, tone, rules...). Injected before system prompt for both private and group chats."
+          placeholder={t("globalSettings.behavioralPromptPlaceholder")}
         />
         <p className="text-muted-foreground text-xs">
-          Injected before the system prompt in all chats (private + group).
+          {t("globalSettings.behavioralPromptDescription")}
         </p>
       </div>
 
       <div className="space-y-1.5">
-        <Label>Group Behavioral Prompt</Label>
+        <Label>{t("globalSettings.groupBehavioralPrompt")}</Label>
         <Textarea
           value={config.groupBehavioralPrompt ?? ""}
           onChange={(e) => onConfigChange({ groupBehavioralPrompt: e.target.value })}
-          placeholder="Group-only behavioral instructions (group etiquette, multi-user rules...). Only injected in group chats."
+          placeholder={t("globalSettings.groupBehavioralPromptPlaceholder")}
         />
         <p className="text-muted-foreground text-xs">
-          Only injected in group chats, after the general behavioral prompt.
+          {t("globalSettings.groupBehavioralPromptDescription")}
         </p>
       </div>
 
       <div className="space-y-1.5">
-        <Label>System Prompt</Label>
+        <Label>{t("globalSettings.systemPrompt")}</Label>
         <Textarea
           value={config.systemPrompt}
           onChange={(e) => onConfigChange({ systemPrompt: e.target.value })}
-          placeholder="You are a helpful assistant..."
+          placeholder={t("globalSettings.systemPromptPlaceholder")}
         />
       </div>
     </div>

@@ -5,6 +5,7 @@ import { SelectMenu } from "@/components/ui/select-menu";
 import type { AiProviderEntryPublic } from "@cos-tool-bot/shared";
 import { Check, ChevronDown, KeyRound, Plus, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export interface ProviderFormDraft {
   id?: string;
@@ -35,6 +36,7 @@ export function ProvidersSection({
   const [adding, setAdding] = useState(false);
   const [newDraft, setNewDraft] = useState<ProviderFormDraft>(emptyDraft());
   const [expandedId, setExpandedId] = useState<string | null>(activeProviderId ?? null);
+  const { t } = useTranslation("aiSettings");
 
   const updateProvider = (id: string, updates: Partial<AiProviderEntryPublic>) => {
     onProvidersChange(providers.map((p) => (p.id === id ? { ...p, ...updates } : p)));
@@ -43,7 +45,7 @@ export function ProvidersSection({
   const removeProvider = (id: string) => {
     if (id === activeProviderId) return;
     const provider = providers.find((entry) => entry.id === id);
-    if (!window.confirm(`Delete provider “${provider?.label ?? id}”?`)) return;
+    if (!window.confirm(t("providers.deleteConfirm", { provider: provider?.label ?? id }))) return;
     onProvidersChange(providers.filter((p) => p.id !== id));
     onDraftApiKeyChange(id, "");
   };
@@ -73,17 +75,17 @@ export function ProvidersSection({
     <Card>
       <CardHeader className="border-b border-slate-100 px-5 py-4 sm:px-5 sm:py-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">AI Providers</CardTitle>
+          <CardTitle className="text-base">{t("providers.title")}</CardTitle>
           <Button variant="outline" size="sm" onClick={() => setAdding((v) => !v)}>
             <Plus className="h-4 w-4" />
-            {adding ? "Cancel" : "Add Provider"}
+            {adding ? t("common.cancel") : t("providers.addProvider")}
           </Button>
         </div>
       </CardHeader>
       <CardContent className="p-0 sm:p-0">
         {providers.length === 0 && !adding && (
           <p className="text-muted-foreground px-5 py-8 text-center text-sm">
-            No providers yet. Legacy top-level fields below will be auto-migrated on first save.
+            {t("providers.empty")}
           </p>
         )}
 
@@ -105,13 +107,15 @@ export function ProvidersSection({
                     <span className="truncate text-sm font-semibold text-slate-900">{p.label}</span>
                     {p.id === activeProviderId && (
                       <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-600/10 ring-inset">
-                        <Check className="size-3" /> Default
+                        <Check className="size-3" /> {t("common.default")}
                       </span>
                     )}
                   </span>
                   <span className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
                     <span>
-                      {p.providerFormat === "openai" ? "OpenAI Compatible" : "Gemini Native"}
+                      {p.providerFormat === "openai"
+                        ? t("providers.openAiCompatible")
+                        : t("providers.geminiNative")}
                     </span>
                     <span aria-hidden="true">·</span>
                     <span className="truncate font-mono">{p.defaultModel}</span>
@@ -128,7 +132,9 @@ export function ProvidersSection({
               <div className="border-t border-slate-100 bg-slate-50/50 px-5 py-4">
                 <div className="grid gap-3 lg:grid-cols-2">
                   <div className="space-y-1">
-                    <label className="text-muted-foreground text-xs font-medium">Name</label>
+                    <label className="text-muted-foreground text-xs font-medium">
+                      {t("common.name")}
+                    </label>
                     <Input
                       value={p.label}
                       onChange={(e) => updateProvider(p.id, { label: e.target.value })}
@@ -137,7 +143,7 @@ export function ProvidersSection({
                   </div>
                   <div className="space-y-1">
                     <label className="text-muted-foreground text-xs font-medium">
-                      Provider Format
+                      {t("providers.format")}
                     </label>
                     <SelectMenu
                       className="border-input flex h-9 w-full rounded-md border bg-white px-2 text-sm"
@@ -147,15 +153,17 @@ export function ProvidersSection({
                           providerFormat: value as "openai" | "gemini",
                         })
                       }
-                      ariaLabel="Provider format"
+                      ariaLabel={t("providers.format")}
                       options={[
-                        { value: "openai", label: "OpenAI Compatible" },
-                        { value: "gemini", label: "Gemini Native" },
+                        { value: "openai", label: t("providers.openAiCompatible") },
+                        { value: "gemini", label: t("providers.geminiNative") },
                       ]}
                     />
                   </div>
                   <div className="space-y-1">
-                    <label className="text-muted-foreground text-xs font-medium">Base URL</label>
+                    <label className="text-muted-foreground text-xs font-medium">
+                      {t("common.baseUrl")}
+                    </label>
                     <Input
                       value={p.baseURL}
                       onChange={(e) => updateProvider(p.id, { baseURL: e.target.value })}
@@ -165,7 +173,7 @@ export function ProvidersSection({
                   </div>
                   <div className="space-y-1">
                     <label className="text-muted-foreground text-xs font-medium">
-                      Default Model
+                      {t("providers.defaultModel")}
                     </label>
                     <Input
                       value={p.defaultModel}
@@ -176,21 +184,19 @@ export function ProvidersSection({
                   </div>
                   <div className="space-y-1 lg:col-span-2">
                     <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
-                      <KeyRound className="size-3" /> API Key
+                      <KeyRound className="size-3" /> {t("common.apiKey")}
                     </label>
                     <Input
                       type="password"
                       value={draftApiKeys[p.id] ?? ""}
                       onChange={(e) => onDraftApiKeyChange(p.id, e.target.value)}
-                      placeholder={p.hasApiKey ? "(leave empty to keep)" : "sk-..."}
+                      placeholder={p.hasApiKey ? t("providers.keepKeyPlaceholder") : "sk-..."}
                       className="h-9 text-sm"
                     />
                   </div>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
-                  <p className="text-muted-foreground text-xs">
-                    Chat-level /provider overrides this default.
-                  </p>
+                  <p className="text-muted-foreground text-xs">{t("providers.chatOverrideHelp")}</p>
                   <div className="flex items-center gap-2">
                     {p.id !== activeProviderId && (
                       <Button
@@ -198,7 +204,7 @@ export function ProvidersSection({
                         size="sm"
                         onClick={() => onActiveProviderChange(p.id)}
                       >
-                        <Check className="size-4" /> Set as default
+                        <Check className="size-4" /> {t("providers.setDefault")}
                       </Button>
                     )}
                     <Button
@@ -208,10 +214,10 @@ export function ProvidersSection({
                       disabled={p.id === activeProviderId}
                       title={
                         p.id === activeProviderId
-                          ? "Default provider cannot be deleted"
-                          : "Delete provider"
+                          ? t("providers.defaultCannotDelete")
+                          : t("providers.delete")
                       }
-                      aria-label={`Delete ${p.label}`}
+                      aria-label={t("providers.deleteAria", { provider: p.label })}
                       className="text-red-500 hover:bg-red-50 hover:text-red-700"
                     >
                       <Trash2 className="size-4" />
@@ -226,10 +232,10 @@ export function ProvidersSection({
         {/* New provider form */}
         {adding && (
           <div className="space-y-3 border-b border-dashed border-blue-200 bg-blue-50/30 p-5">
-            <p className="text-sm font-medium">New Provider</p>
+            <p className="text-sm font-medium">{t("providers.newProvider")}</p>
             <div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Label</label>
+                <label className="text-muted-foreground text-xs">{t("common.label")}</label>
                 <Input
                   value={newDraft.label}
                   onChange={(e) => setNewDraft({ ...newDraft, label: e.target.value })}
@@ -238,7 +244,7 @@ export function ProvidersSection({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Provider Format</label>
+                <label className="text-muted-foreground text-xs">{t("providers.format")}</label>
                 <SelectMenu
                   className="border-input flex h-8 w-full rounded-md border bg-transparent px-2 text-sm"
                   value={newDraft.providerFormat}
@@ -248,15 +254,15 @@ export function ProvidersSection({
                       providerFormat: value as "openai" | "gemini",
                     })
                   }
-                  ariaLabel="Provider format"
+                  ariaLabel={t("providers.format")}
                   options={[
-                    { value: "openai", label: "OpenAI Compatible" },
-                    { value: "gemini", label: "Gemini Native" },
+                    { value: "openai", label: t("providers.openAiCompatible") },
+                    { value: "gemini", label: t("providers.geminiNative") },
                   ]}
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Base URL</label>
+                <label className="text-muted-foreground text-xs">{t("common.baseUrl")}</label>
                 <Input
                   value={newDraft.baseURL}
                   onChange={(e) => setNewDraft({ ...newDraft, baseURL: e.target.value })}
@@ -265,7 +271,9 @@ export function ProvidersSection({
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-muted-foreground text-xs">Default Model</label>
+                <label className="text-muted-foreground text-xs">
+                  {t("providers.defaultModel")}
+                </label>
                 <Input
                   value={newDraft.defaultModel}
                   onChange={(e) => setNewDraft({ ...newDraft, defaultModel: e.target.value })}
@@ -274,7 +282,7 @@ export function ProvidersSection({
                 />
               </div>
               <div className="space-y-1 lg:col-span-2">
-                <label className="text-muted-foreground text-xs">API Key</label>
+                <label className="text-muted-foreground text-xs">{t("common.apiKey")}</label>
                 <Input
                   type="password"
                   value={newDraft.apiKey}
@@ -286,7 +294,7 @@ export function ProvidersSection({
             </div>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={() => setAdding(false)}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button
                 size="sm"
@@ -297,7 +305,7 @@ export function ProvidersSection({
                   !newDraft.defaultModel.trim()
                 }
               >
-                Add
+                {t("common.add")}
               </Button>
             </div>
           </div>

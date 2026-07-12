@@ -4,6 +4,7 @@ import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Inbox, Loader2, MessageSquareText, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { PENDING_DELETE_MS } from "./constants";
 import { ConversationDetailHeader } from "./conversation-detail-header";
@@ -27,6 +28,7 @@ function PaneLoading({ label }: { label: string }) {
 }
 
 export function BotConversationsPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -306,7 +308,7 @@ export function BotConversationsPage() {
     setConfirmDeleteBusy(false);
 
     if (!deleted) {
-      setConfirmDeleteError("Delete failed. Check your connection and try again.");
+      setConfirmDeleteError(t("conversations.deleteFailed"));
       return;
     }
 
@@ -453,10 +455,10 @@ export function BotConversationsPage() {
         <div className="shrink-0">
           <div className="min-w-0">
             <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-[1.7rem]">
-              Conversations
+              {t("conversations.title")}
             </h1>
             <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
-              Inspect message history and compressed summaries.
+              {t("conversations.description")}
             </p>
           </div>
         </div>
@@ -467,7 +469,7 @@ export function BotConversationsPage() {
               "min-h-0 min-w-0 flex-col bg-white xl:border-r xl:border-slate-200/80",
               selectedConv === null ? "flex" : "hidden xl:flex",
             )}
-            aria-label="Conversation list"
+            aria-label={t("conversations.listLabel")}
           >
             <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200/80 px-4">
               <div>
@@ -476,9 +478,11 @@ export function BotConversationsPage() {
                   tabIndex={-1}
                   className="text-sm font-semibold focus:outline-none"
                 >
-                  All conversations
+                  {t("conversations.all")}
                 </h2>
-                <p className="text-muted-foreground mt-0.5 text-xs">Most recent activity first</p>
+                <p className="text-muted-foreground mt-0.5 text-xs">
+                  {t("conversations.recentFirst")}
+                </p>
               </div>
               <div className="flex items-center gap-1">
                 <span className="text-muted-foreground rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold tabular-nums">
@@ -490,8 +494,8 @@ export function BotConversationsPage() {
                     size="icon"
                     className="text-muted-foreground hover:text-destructive size-10 transition-[background-color,color,scale] active:scale-[0.96]"
                     onClick={() => openDeleteDialog({ kind: "all" })}
-                    aria-label="Clear all conversations"
-                    title="Clear all conversations"
+                    aria-label={t("conversations.clearAll")}
+                    title={t("conversations.clearAll")}
                   >
                     <Trash2 className="size-4" aria-hidden="true" />
                   </Button>
@@ -501,15 +505,17 @@ export function BotConversationsPage() {
 
             <div className="min-h-0 flex-1 overflow-hidden p-2" aria-busy={loading}>
               {loading ? (
-                <PaneLoading label="Loading conversations…" />
+                <PaneLoading label={t("conversations.loadingConversations")} />
               ) : conversations.length === 0 ? (
                 <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
                   <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
                     <Inbox className="size-5" aria-hidden="true" />
                   </span>
-                  <p className="text-foreground mt-3 text-sm font-semibold">No conversations yet</p>
+                  <p className="text-foreground mt-3 text-sm font-semibold">
+                    {t("conversations.empty")}
+                  </p>
                   <p className="mt-1 max-w-52 text-xs leading-5">
-                    New chat history will appear here after the bot receives messages.
+                    {t("conversations.emptyDescription")}
                   </p>
                 </div>
               ) : (
@@ -544,7 +550,7 @@ export function BotConversationsPage() {
               "min-h-0 min-w-0 flex-col bg-slate-50/70",
               selectedConv !== null ? "flex" : "hidden xl:flex",
             )}
-            aria-label="Conversation details"
+            aria-label={t("conversations.detailsLabel")}
           >
             {selectedConv ? (
               <>
@@ -554,7 +560,7 @@ export function BotConversationsPage() {
                     type="button"
                     onClick={handleBackToConversations}
                     className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
-                    aria-label="Back to conversations"
+                    aria-label={t("conversations.backToList")}
                   >
                     <ArrowLeft className="size-5" aria-hidden="true" />
                   </button>
@@ -581,16 +587,16 @@ export function BotConversationsPage() {
                     aria-busy={msgLoading}
                   >
                     {msgLoading ? (
-                      <PaneLoading label="Loading messages…" />
+                      <PaneLoading label={t("conversations.loadingMessages")} />
                     ) : messages.length === 0 ? (
                       <div className="text-muted-foreground flex min-h-56 flex-1 flex-col items-center justify-center px-6 text-center">
                         <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
                           <MessageSquareText className="size-5" aria-hidden="true" />
                         </span>
-                        <p className="text-foreground mt-3 text-sm font-semibold">No messages</p>
-                        <p className="mt-1 text-xs">
-                          This conversation does not have message history.
+                        <p className="text-foreground mt-3 text-sm font-semibold">
+                          {t("conversations.noMessages")}
                         </p>
+                        <p className="mt-1 text-xs">{t("conversations.noMessagesDescription")}</p>
                       </div>
                     ) : (
                       <MessagesPane
@@ -616,10 +622,10 @@ export function BotConversationsPage() {
                     aria-busy={sumLoading}
                   >
                     {sumLoading ? (
-                      <PaneLoading label="Loading summaries…" />
+                      <PaneLoading label={t("conversations.loadingSummaries")} />
                     ) : summaries.length === 0 ? (
                       <div className="text-muted-foreground flex min-h-56 flex-1 items-center justify-center text-sm">
-                        No summaries
+                        {t("conversations.noSummaries")}
                       </div>
                     ) : (
                       <>
@@ -657,10 +663,10 @@ export function BotConversationsPage() {
                   <MessageSquareText className="size-5" aria-hidden="true" />
                 </span>
                 <h2 className="text-foreground mt-4 text-sm font-semibold">
-                  Choose a conversation
+                  {t("conversations.select")}
                 </h2>
                 <p className="mt-1 max-w-xs text-xs leading-5">
-                  Select a conversation from the list to inspect its messages and summaries.
+                  {t("conversations.selectDescription")}
                 </p>
               </div>
             )}
@@ -688,16 +694,16 @@ export function BotConversationsPage() {
               <div>
                 <h2 id="delete-title" className="text-lg font-semibold tracking-tight">
                   {confirmDelete.kind === "all"
-                    ? "Clear all conversations?"
-                    : "Delete this conversation?"}
+                    ? t("conversations.clearAllTitle")
+                    : t("conversations.deleteTitle")}
                 </h2>
                 <p
                   id="delete-description"
                   className="text-muted-foreground mt-1.5 text-sm leading-6 text-pretty"
                 >
                   {confirmDelete.kind === "all"
-                    ? "Every conversation and its messages will be permanently deleted."
-                    : `Chat ${confirmDelete.chatId} and all of its messages will be permanently deleted.`}
+                    ? t("conversations.clearAllDescription")
+                    : t("conversations.deleteDescription", { chatId: confirmDelete.chatId })}
                 </p>
                 {confirmDeleteError ? (
                   <p className="mt-2 text-sm text-red-600" role="alert">
@@ -713,7 +719,7 @@ export function BotConversationsPage() {
                 disabled={confirmDeleteBusy}
                 onClick={closeDeleteDialog}
               >
-                Cancel
+                {t("conversations.cancel")}
               </Button>
               <Button
                 variant="destructive"
@@ -724,10 +730,10 @@ export function BotConversationsPage() {
                 {confirmDeleteBusy ? (
                   <>
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                    Deleting…
+                    {t("conversations.deleting")}
                   </>
                 ) : (
-                  "Delete"
+                  t("conversations.delete")
                 )}
               </Button>
             </div>

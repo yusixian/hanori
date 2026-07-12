@@ -4,7 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
 import { AlertCircle, Download, Loader2, Upload } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import superjson from "superjson";
 
 // ── Export types ──
@@ -45,6 +46,7 @@ async function decompressGzip(buffer: ArrayBuffer): Promise<string> {
 // ── Export Section ──
 
 function ExportSection() {
+  const { t } = useTranslation("admin");
   const [bots, setBots] = useState<BotOption[]>([]);
   const [loadingBots, setLoadingBots] = useState(true);
   const [selectedBotId, setSelectedBotId] = useState<string>("");
@@ -113,7 +115,7 @@ function ExportSection() {
       const res = await authFetch(`/api/bots/${selectedBotId}/export${query}`);
       if (!res.ok) {
         const text = await res.text();
-        alert(`Export failed: ${text}`);
+        alert(t("data.export.failedWithReason", { error: text }));
         return;
       }
       const blob = await res.blob();
@@ -125,7 +127,7 @@ function ExportSection() {
       triggerDownload(blob, filename);
     } catch (err) {
       console.error("Export failed:", err);
-      alert("Export failed");
+      alert(t("data.export.failed"));
     } finally {
       setExporting(false);
     }
@@ -138,24 +140,23 @@ function ExportSection() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Download className="h-5 w-5" />
-          Export Bot Data
+          {t("data.export.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-muted-foreground text-sm">
-          Export a bot's configuration and associated data. Choose JSON for readability or Gzip for
-          smaller file size. Sensitive data (Bot Token, API Keys) will be excluded.
-        </p>
+        <p className="text-muted-foreground text-sm">{t("data.export.description")}</p>
 
         <div>
-          <label className="text-sm font-medium">Select Bot</label>
+          <label className="text-sm font-medium">{t("data.export.selectBot")}</label>
           <select
             value={selectedBotId}
             onChange={(e) => handleBotSelect(e.target.value)}
             disabled={loadingBots}
             className="border-input bg-background text-foreground mt-1 block w-full rounded-md border px-3 py-2 text-sm"
           >
-            <option value="">{loadingBots ? "Loading bots..." : "— Select a bot —"}</option>
+            <option value="">
+              {loadingBots ? t("data.export.loadingBots") : t("data.export.selectBotPlaceholder")}
+            </option>
             {bots.map((bot) => (
               <option key={bot.id} value={bot.id}>
                 {bot.name}
@@ -167,10 +168,10 @@ function ExportSection() {
         {selectedBotId && (
           <>
             {loadingStats ? (
-              <p className="text-muted-foreground text-sm">Loading stats...</p>
+              <p className="text-muted-foreground text-sm">{t("data.export.loadingStats")}</p>
             ) : stats ? (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Data to export:</p>
+                <p className="text-sm font-medium">{t("data.export.dataToExport")}</p>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(stats).map(([table, count]) => (
                     <Badge key={table} variant={count > 0 ? "default" : "muted"}>
@@ -178,10 +179,12 @@ function ExportSection() {
                     </Badge>
                   ))}
                 </div>
-                <p className="text-muted-foreground text-xs">{totalExportRows} total rows</p>
+                <p className="text-muted-foreground text-xs">
+                  {t("data.export.totalRows", { count: totalExportRows })}
+                </p>
               </div>
             ) : (
-              <p className="text-muted-foreground text-sm">Failed to load export stats.</p>
+              <p className="text-muted-foreground text-sm">{t("data.export.statsFailed")}</p>
             )}
 
             <div className="flex items-center gap-3">
@@ -191,7 +194,7 @@ function ExportSection() {
                 ) : (
                   <Download className="h-4 w-4" />
                 )}
-                Export
+                {t("data.export.action")}
               </Button>
               <select
                 value={exportFormat}
@@ -212,12 +215,21 @@ function ExportSection() {
 // ── Import Section ──
 
 function ImportSection() {
+  const { t, i18n } = useTranslation("admin");
   const [manifestPreview, setManifestPreview] = useState<ManifestPreview | null>(null);
   const [importPayload, setImportPayload] = useState<unknown>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResultData | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      }),
+    [i18n.resolvedLanguage],
+  );
 
   const handleFileSelect = (file: File) => {
     setImportResult(null);
@@ -251,20 +263,20 @@ function ImportSection() {
           try {
             data = superjson.parse<Record<string, unknown>>(text);
           } catch {
-            setImportError("Invalid file: could not parse as JSON");
+            setImportError(t("data.import.invalidJson"));
             return;
           }
         }
 
         if (!data.manifest || (data.manifest as Record<string, unknown>).version !== 1) {
-          setImportError("Invalid export file: unsupported format or version");
+          setImportError(t("data.import.unsupported"));
           return;
         }
         setManifestPreview(data.manifest as unknown as ManifestPreview);
         setImportPayload(data);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        setImportError(`Invalid file: ${msg}`);
+        setImportError(t("data.import.invalidFile", { error: msg }));
       }
     };
     reader.readAsArrayBuffer(file);
@@ -281,14 +293,14 @@ function ImportSection() {
       if (!res.ok) {
         const text = await res.text().catch(() => res.statusText);
         if (!text) {
-          setImportError(`Import failed: server returned ${res.status} with no details`);
+          setImportError(t("data.import.failedNoDetails", { status: res.status }));
           return;
         }
         try {
           const parsed = superjson.parse<{ ok: false; error: string }>(text);
           setImportError(parsed.error);
         } catch {
-          setImportError(`Import failed: ${text}`);
+          setImportError(t("data.import.failedWithReason", { error: text }));
         }
         return;
       }
@@ -298,10 +310,10 @@ function ImportSection() {
       }
     } catch (err) {
       if (err instanceof TypeError && /fetch|network/i.test(err.message)) {
-        setImportError("Import failed: unable to connect to server");
+        setImportError(t("data.import.networkFailed"));
       } else {
         const msg = err instanceof Error ? err.message : String(err);
-        setImportError(`Import failed: ${msg}`);
+        setImportError(t("data.import.failedWithReason", { error: msg }));
       }
     } finally {
       setImporting(false);
@@ -321,14 +333,11 @@ function ImportSection() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Upload className="h-5 w-5" />
-          Import Bot Data
+          {t("data.import.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-muted-foreground text-sm">
-          Import a previously exported file (.json or .json.gz). A new Bot will be created with the
-          imported data. You'll need to configure the Bot Token after import.
-        </p>
+        <p className="text-muted-foreground text-sm">{t("data.import.description")}</p>
 
         <div>
           <input
@@ -352,18 +361,19 @@ function ImportSection() {
 
         {manifestPreview && !importResult && (
           <div className="space-y-3 rounded-md border p-4">
-            <p className="text-sm font-medium">File Preview</p>
+            <p className="text-sm font-medium">{t("data.import.preview")}</p>
             <div className="text-sm">
               <p>
-                <span className="text-muted-foreground">Source Bot:</span>{" "}
-                {manifestPreview.botName ?? "Unknown"}
+                <span className="text-muted-foreground">{t("data.import.sourceBot")}</span>{" "}
+                {manifestPreview.botName ?? t("data.import.unknown")}
               </p>
               <p>
-                <span className="text-muted-foreground">Exported:</span>{" "}
-                {new Date(manifestPreview.exportedAt).toLocaleString()}
+                <span className="text-muted-foreground">{t("data.import.exported")}</span>{" "}
+                {dateTimeFormatter.format(new Date(manifestPreview.exportedAt))}
               </p>
               <p>
-                <span className="text-muted-foreground">Scope:</span> {manifestPreview.scope}
+                <span className="text-muted-foreground">{t("data.import.scope")}</span>{" "}
+                {manifestPreview.scope}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -376,8 +386,7 @@ function ImportSection() {
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
               <p className="text-sm text-amber-700 dark:text-amber-400">
-                Bot Token and API Keys are not included in the export. You'll need to configure them
-                after import.
+                {t("data.import.secretsWarning")}
               </p>
             </div>
             <div className="flex gap-2">
@@ -387,10 +396,10 @@ function ImportSection() {
                 ) : (
                   <Upload className="h-4 w-4" />
                 )}
-                Import as New Bot
+                {t("data.import.importAsNew")}
               </Button>
               <Button variant="outline" onClick={clearImport}>
-                Cancel
+                {t("data.import.cancel")}
               </Button>
             </div>
           </div>
@@ -399,15 +408,13 @@ function ImportSection() {
         {importResult && (
           <div className="space-y-3 rounded-md border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950">
             <p className="text-sm font-medium text-green-700 dark:text-green-400">
-              Import successful!
+              {t("data.import.success")}
             </p>
             {importResult.importedBots.map((bot) => (
               <div key={bot.newId} className="text-sm">
-                <p>
-                  Bot "<strong>{bot.name}</strong>" created.
-                </p>
+                <p>{t("data.import.botCreated", { name: bot.name })}</p>
                 <a href={`/bots/${bot.newId}/edit`} className="text-primary text-sm underline">
-                  Configure Bot Token →
+                  {t("data.import.configureToken")}
                 </a>
               </div>
             ))}
@@ -421,7 +428,7 @@ function ImportSection() {
               </div>
             )}
             <Button variant="outline" size="sm" onClick={clearImport}>
-              Import Another
+              {t("data.import.importAnother")}
             </Button>
           </div>
         )}
@@ -433,9 +440,10 @@ function ImportSection() {
 // ── Data Page ──
 
 export function DataPage() {
+  const { t } = useTranslation("admin");
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Data</h1>
+      <h1 className="text-2xl font-bold">{t("data.title")}</h1>
       <ExportSection />
       <ImportSection />
     </div>

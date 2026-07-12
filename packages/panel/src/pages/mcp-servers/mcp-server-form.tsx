@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import type { McpServerPreset } from "@cos-tool-bot/shared";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export interface FormState {
   mode: "create" | "edit";
@@ -40,10 +41,11 @@ export function PresetPicker({
   presets: McpServerPreset[];
   onSelect: (preset: McpServerPreset) => void;
 }) {
+  const { t } = useTranslation("admin");
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Quick Start from Preset</CardTitle>
+        <CardTitle className="text-base">{t("mcp.preset.title")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -77,25 +79,26 @@ export function McpServerForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation("admin");
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base">
-          {form.mode === "create" ? "Add MCP Server" : "Edit MCP Server"}
+          {form.mode === "create" ? t("mcp.form.addTitle") : t("mcp.form.editTitle")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Name</label>
+            <label className="text-sm font-medium">{t("mcp.form.name")}</label>
             <Input
               value={form.name}
               onChange={(e) => onFormChange({ ...form, name: e.target.value })}
-              placeholder="My MCP Server"
+              placeholder={t("mcp.form.namePlaceholder")}
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Transport</label>
+            <label className="text-sm font-medium">{t("mcp.form.transport")}</label>
             <Select
               className="w-full"
               value={form.transport}
@@ -109,7 +112,7 @@ export function McpServerForm({
           </div>
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">URL</label>
+          <label className="text-sm font-medium">{t("mcp.form.url")}</label>
           <Input
             value={form.url}
             onChange={(e) => onFormChange({ ...form, url: e.target.value })}
@@ -117,15 +120,15 @@ export function McpServerForm({
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Description</label>
+          <label className="text-sm font-medium">{t("mcp.form.description")}</label>
           <Input
             value={form.description}
             onChange={(e) => onFormChange({ ...form, description: e.target.value })}
-            placeholder="Optional description"
+            placeholder={t("mcp.form.descriptionPlaceholder")}
           />
         </div>
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Headers (JSON)</label>
+          <label className="text-sm font-medium">{t("mcp.form.headers")}</label>
           <Textarea
             className="border-input min-h-[80px] w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm"
             value={form.headers}
@@ -135,11 +138,11 @@ export function McpServerForm({
         </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Tool Name Prefix</label>
+            <label className="text-sm font-medium">{t("mcp.form.toolNamePrefix")}</label>
             <Input
               value={form.toolNamePrefix}
               onChange={(e) => onFormChange({ ...form, toolNamePrefix: e.target.value })}
-              placeholder="mcp (default)"
+              placeholder={t("mcp.form.prefixPlaceholder")}
             />
           </div>
           <div className="flex items-end pb-1">
@@ -148,17 +151,17 @@ export function McpServerForm({
                 checked={form.isActive}
                 onCheckedChange={(isActive) => onFormChange({ ...form, isActive })}
               />
-              <span className="text-sm font-medium">Active</span>
+              <span className="text-sm font-medium">{t("mcp.form.active")}</span>
             </label>
           </div>
         </div>
         <div className="flex gap-2">
           <Button onClick={onSave} disabled={saving || !form.name || !form.url}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {form.mode === "create" ? "Add" : "Save"}
+            {form.mode === "create" ? t("mcp.form.add") : t("mcp.form.save")}
           </Button>
           <Button variant="outline" onClick={onCancel}>
-            Cancel
+            {t("mcp.form.cancel")}
           </Button>
         </div>
       </CardContent>

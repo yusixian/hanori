@@ -4,7 +4,8 @@ import { Select } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { formatTokens } from "@/lib/format";
 import { client } from "@/lib/client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AreaChart,
   Area,
@@ -84,6 +85,7 @@ function StatCard({ title, value, sub }: { title: string; value: string; sub?: s
 // ── Page ──
 
 export function UsagePage() {
+  const { t, i18n } = useTranslation("admin");
   const [range, setRange] = useState<Range>(7);
   const [botId, setBotId] = useState<string>("");
   const [bots, setBots] = useState<BotOption[]>([]);
@@ -162,13 +164,37 @@ export function UsagePage() {
       .finally(() => setHeatmapLoading(false));
   }, [botId]);
 
-  const granLabel = range <= 7 ? "hourly" : "daily";
+  const locale = i18n.resolvedLanguage;
+  const shortDateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { month: "numeric", day: "numeric" }),
+    [locale],
+  );
+  const shortDateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      }),
+    [locale],
+  );
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      }),
+    [locale],
+  );
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const granLabel = range <= 7 ? t("usage.hourly") : t("usage.daily");
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">Token Usage</h1>
+        <h1 className="text-2xl font-bold">{t("usage.title")}</h1>
         <div className="flex items-center gap-2">
           <div className="flex rounded-md border">
             {([7, 30, 90] as Range[]).map((d) => (
@@ -184,12 +210,12 @@ export function UsagePage() {
                   d === 90 && "rounded-r-md",
                 )}
               >
-                {d}d
+                {t("usage.days", { count: d })}
               </button>
             ))}
           </div>
           <Select value={botId} onChange={(e) => setBotId(e.target.value)} className="w-40">
-            <option value="">All Bots</option>
+            <option value="">{t("usage.allBots")}</option>
             {bots.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -201,16 +227,25 @@ export function UsagePage() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard title="Total Tokens" value={formatTokens(summary?.totalTokens ?? 0)} />
-        <StatCard title="Prompt Tokens" value={formatTokens(summary?.promptTokens ?? 0)} />
-        <StatCard title="Completion Tokens" value={formatTokens(summary?.completionTokens ?? 0)} />
-        <StatCard title="Requests" value={String(summary?.requestCount ?? 0)} />
+        <StatCard title={t("usage.totalTokens")} value={formatTokens(summary?.totalTokens ?? 0)} />
+        <StatCard
+          title={t("usage.promptTokens")}
+          value={formatTokens(summary?.promptTokens ?? 0)}
+        />
+        <StatCard
+          title={t("usage.completionTokens")}
+          value={formatTokens(summary?.completionTokens ?? 0)}
+        />
+        <StatCard
+          title={t("usage.requests")}
+          value={numberFormatter.format(summary?.requestCount ?? 0)}
+        />
       </div>
 
       {/* Daily Activity Heatmap */}
       <Card>
         <CardHeader>
-          <CardTitle>Daily Activity</CardTitle>
+          <CardTitle>{t("usage.dailyActivity")}</CardTitle>
         </CardHeader>
         <CardContent>
           <TokenHeatmap data={heatmapData} loading={heatmapLoading} />
@@ -220,16 +255,16 @@ export function UsagePage() {
       {/* Trend Chart */}
       <Card>
         <CardHeader>
-          <CardTitle>Usage Trend ({granLabel})</CardTitle>
+          <CardTitle>{t("usage.trend", { granularity: granLabel })}</CardTitle>
         </CardHeader>
         <CardContent>
           {loading && trend.length === 0 ? (
             <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
-              Loading...
+              {t("usage.loading")}
             </div>
           ) : trend.length === 0 ? (
             <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
-              No data
+              {t("usage.noData")}
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={300}>
@@ -238,24 +273,24 @@ export function UsagePage() {
                 <XAxis
                   dataKey="date"
                   tickFormatter={(v: string) => {
-                    const d = new Date(v);
+                    const date = new Date(v);
                     return range <= 7
-                      ? `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:00`
-                      : `${d.getMonth() + 1}/${d.getDate()}`;
+                      ? shortDateTimeFormatter.format(date)
+                      : shortDateFormatter.format(date);
                   }}
                   className="text-xs"
                 />
                 <YAxis tickFormatter={formatTokens} className="text-xs" />
                 <Tooltip
                   formatter={(value) => formatTokens(Number(value))}
-                  labelFormatter={(label) => new Date(String(label)).toLocaleString()}
+                  labelFormatter={(label) => dateTimeFormatter.format(new Date(String(label)))}
                 />
                 <Legend />
                 <Area
                   type="monotone"
                   dataKey="promptTokens"
                   stackId="1"
-                  name="Prompt"
+                  name={t("usage.prompt")}
                   stroke="#3b82f6"
                   fill="#3b82f6"
                   fillOpacity={0.6}
@@ -264,7 +299,7 @@ export function UsagePage() {
                   type="monotone"
                   dataKey="completionTokens"
                   stackId="1"
-                  name="Completion"
+                  name={t("usage.completion")}
                   stroke="#f97316"
                   fill="#f97316"
                   fillOpacity={0.6}
@@ -280,12 +315,12 @@ export function UsagePage() {
         {/* By Model */}
         <Card>
           <CardHeader>
-            <CardTitle>By Model</CardTitle>
+            <CardTitle>{t("usage.byModel")}</CardTitle>
           </CardHeader>
           <CardContent>
             {byModel.length === 0 ? (
               <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
-                No data
+                {t("usage.noData")}
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={Math.max(byModel.length * 40, 120)}>
@@ -301,8 +336,13 @@ export function UsagePage() {
                   />
                   <Tooltip formatter={(value) => formatTokens(Number(value))} />
                   <Legend />
-                  <Bar dataKey="promptTokens" name="Prompt" fill="#3b82f6" stackId="a" />
-                  <Bar dataKey="completionTokens" name="Completion" fill="#f97316" stackId="a" />
+                  <Bar dataKey="promptTokens" name={t("usage.prompt")} fill="#3b82f6" stackId="a" />
+                  <Bar
+                    dataKey="completionTokens"
+                    name={t("usage.completion")}
+                    fill="#f97316"
+                    stackId="a"
+                  />
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -312,12 +352,12 @@ export function UsagePage() {
         {/* By Bot */}
         <Card>
           <CardHeader>
-            <CardTitle>By Bot</CardTitle>
+            <CardTitle>{t("usage.byBot")}</CardTitle>
           </CardHeader>
           <CardContent>
             {byBot.length === 0 ? (
               <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
-                No data
+                {t("usage.noData")}
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={Math.max(byBot.length * 40, 120)}>
@@ -333,8 +373,13 @@ export function UsagePage() {
                   />
                   <Tooltip formatter={(value) => formatTokens(Number(value))} />
                   <Legend />
-                  <Bar dataKey="promptTokens" name="Prompt" fill="#3b82f6" stackId="a" />
-                  <Bar dataKey="completionTokens" name="Completion" fill="#f97316" stackId="a" />
+                  <Bar dataKey="promptTokens" name={t("usage.prompt")} fill="#3b82f6" stackId="a" />
+                  <Bar
+                    dataKey="completionTokens"
+                    name={t("usage.completion")}
+                    fill="#f97316"
+                    stackId="a"
+                  />
                 </BarChart>
               </ResponsiveContainer>
             )}

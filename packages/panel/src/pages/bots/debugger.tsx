@@ -5,6 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
 import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { downloadDebugRun } from "./debugger-export";
 
@@ -39,17 +40,23 @@ function statusVariant(status: string) {
 }
 
 export function BotDebuggerPage() {
+  const { t } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
   const [runs, setRuns] = useState<BotRun[]>([]);
   const [selected, setSelected] = useState<BotRun | null>(null);
   const [mode, setMode] = useState<"message" | "raw">("message");
   const [channel, setChannel] = useState<"telegram" | "lark-webhook">("telegram");
   const [message, setMessage] = useState("");
-  const [rawEvent, setRawEvent] = useState(
+  const [rawEvent, setRawEvent] = useState(() =>
     JSON.stringify(
       {
         update_id: 1,
-        message: { message_id: 1, date: 0, chat: { id: 1, type: "private" }, text: "你好" },
+        message: {
+          message_id: 1,
+          date: 0,
+          chat: { id: 1, type: "private" },
+          text: t("debugger.sampleMessage"),
+        },
       },
       null,
       2,
@@ -57,22 +64,56 @@ export function BotDebuggerPage() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const statusLabels = useMemo<Record<string, string>>(
+    () => ({
+      running: t("debugger.statuses.running"),
+      succeeded: t("debugger.statuses.succeeded"),
+      failed: t("debugger.statuses.failed"),
+      cancelled: t("debugger.statuses.cancelled"),
+    }),
+    [t],
+  );
+  const modeLabels = useMemo<Record<string, string>>(
+    () => ({
+      message: t("debugger.modes.message"),
+      raw: t("debugger.modes.raw"),
+      "dry-run": t("debugger.modes.dryRun"),
+    }),
+    [t],
+  );
+  const channelLabels = useMemo<Record<string, string>>(
+    () => ({
+      telegram: t("debugger.telegram"),
+      "lark-webhook": t("debugger.lark"),
+    }),
+    [t],
+  );
 
   const loadRuns = useCallback(async () => {
     if (!botId) return;
-    const response = await authFetch(`/api/bots/${botId}/runs`);
-    const json = (await response.json()) as { ok: boolean; data?: BotRun[]; error?: string };
-    if (json.ok && json.data) setRuns(json.data);
-  }, [botId]);
+    try {
+      const response = await authFetch(`/api/bots/${botId}/runs`);
+      const json = (await response.json()) as { ok: boolean; data?: BotRun[]; error?: string };
+      if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadRuns"));
+      setRuns(json.data);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("debugger.errors.loadRuns"));
+    }
+  }, [botId, t]);
 
   const loadRun = useCallback(
     async (runId: string) => {
       if (!botId) return;
-      const response = await authFetch(`/api/bots/${botId}/runs/${runId}`);
-      const json = (await response.json()) as { ok: boolean; data?: BotRun; error?: string };
-      if (json.ok && json.data) setSelected(json.data);
+      try {
+        const response = await authFetch(`/api/bots/${botId}/runs/${runId}`);
+        const json = (await response.json()) as { ok: boolean; data?: BotRun; error?: string };
+        if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadRun"));
+        setSelected(json.data);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : t("debugger.errors.loadRun"));
+      }
     },
-    [botId],
+    [botId, t],
   );
 
   useEffect(() => {
@@ -110,13 +151,17 @@ export function BotDebuggerPage() {
           method: "POST",
         });
         const json = (await response.json()) as { ok: boolean; data?: BotRun; error?: string };
-        if (!json.ok || !json.data) throw new Error(json.error ?? "Replay failed");
+        if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.replay"));
         setSelected(json.data);
         await loadRuns();
         return;
       }
       if (mode === "raw") {
-        body = { channelEvent: JSON.parse(rawEvent) as unknown, channel };
+        try {
+          body = { channelEvent: JSON.parse(rawEvent) as unknown, channel };
+        } catch {
+          throw new Error(t("debugger.errors.invalidJson"));
+        }
       } else {
         body = { text: message, channel };
       }
@@ -126,11 +171,11 @@ export function BotDebuggerPage() {
         body: JSON.stringify(body),
       });
       const json = (await response.json()) as { ok: boolean; data?: BotRun; error?: string };
-      if (!json.ok || !json.data) throw new Error(json.error ?? "Run failed to start");
+      if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.start"));
       setSelected(json.data);
       await loadRuns();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error ? cause.message : t("debugger.errors.unknown"));
     } finally {
       setBusy(false);
     }
@@ -143,35 +188,42 @@ export function BotDebuggerPage() {
 
   const mutateRun = async (action: "cancel" | "pin", body?: Record<string, unknown>) => {
     if (!botId || !selected) return;
-    await authFetch(`/api/bots/${botId}/runs/${selected.id}/${action}`, {
-      method: "POST",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    await loadRun(selected.id);
-    await loadRuns();
+    setError(null);
+    try {
+      const response = await authFetch(`/api/bots/${botId}/runs/${selected.id}/${action}`, {
+        method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!response.ok) {
+        const json = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(json?.error ?? t("debugger.errors.mutate"));
+      }
+      await loadRun(selected.id);
+      await loadRuns();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("debugger.errors.mutate"));
+    }
   };
 
   return (
     <div className="space-y-6 xl:flex xl:h-[calc(100dvh-5rem)] xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3 xl:shrink-0 xl:pb-6">
         <div>
-          <p className="text-primary mb-1 text-sm font-medium">Bot operations</p>
+          <p className="text-primary mb-1 text-sm font-medium">{t("debugger.eyebrow")}</p>
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:text-3xl">
-            <Bug className="size-7" /> AI Debugger
+            <Bug className="size-7" /> {t("debugger.title")}
           </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Dry-run 当前 Bot 配置，检查模型流事件、错误链与可重放运行记录。
-          </p>
+          <p className="text-muted-foreground mt-1 text-sm">{t("debugger.description")}</p>
         </div>
-        <Badge variant="muted">Owner only · no external side effects</Badge>
+        <Badge variant="muted">{t("debugger.ownerOnly")}</Badge>
       </div>
 
       <div className="grid gap-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(20rem,0.8fr)_minmax(28rem,1.2fr)]">
         <div className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">New Run</CardTitle>
+              <CardTitle className="text-base">{t("debugger.newRun")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex gap-2">
@@ -180,44 +232,46 @@ export function BotDebuggerPage() {
                   variant={mode === "message" ? "default" : "outline"}
                   onClick={() => setMode("message")}
                 >
-                  Message
+                  {t("debugger.messageMode")}
                 </Button>
                 <Button
                   size="sm"
                   variant={mode === "raw" ? "default" : "outline"}
                   onClick={() => setMode("raw")}
                 >
-                  Raw Channel Event
+                  {t("debugger.rawMode")}
                 </Button>
               </div>
               <div className="flex items-center gap-2">
-                <span className="text-muted-foreground text-xs font-medium uppercase">Channel</span>
+                <span className="text-muted-foreground text-xs font-medium uppercase">
+                  {t("debugger.channel")}
+                </span>
                 <Button
                   size="sm"
                   variant={channel === "telegram" ? "default" : "outline"}
                   onClick={() => setChannel("telegram")}
                 >
-                  Telegram
+                  {t("debugger.telegram")}
                 </Button>
                 <Button
                   size="sm"
                   variant={channel === "lark-webhook" ? "default" : "outline"}
                   onClick={() => setChannel("lark-webhook")}
                 >
-                  Lark
+                  {t("debugger.lark")}
                 </Button>
               </div>
               {mode === "message" ? (
                 <Textarea
-                  aria-label="Debug message"
+                  aria-label={t("debugger.messageAria")}
                   rows={6}
                   value={message}
                   onChange={(event) => setMessage(event.target.value)}
-                  placeholder="输入一条模拟用户消息…"
+                  placeholder={t("debugger.messagePlaceholder")}
                 />
               ) : (
                 <Textarea
-                  aria-label="Raw channel event"
+                  aria-label={t("debugger.rawEventAria")}
                   className="font-mono text-xs"
                   rows={14}
                   value={rawEvent}
@@ -233,18 +287,19 @@ export function BotDebuggerPage() {
                 disabled={busy || (mode === "message" && !message.trim())}
                 onClick={() => void start()}
               >
-                <Play className="size-4" /> {busy ? "Starting…" : "Run dry-run"}
+                <Play className="size-4" />
+                {busy ? t("debugger.starting") : t("debugger.runDryRun")}
               </Button>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader className="flex-row items-center justify-between">
-              <CardTitle className="text-base">Runs</CardTitle>
+              <CardTitle className="text-base">{t("debugger.runs")}</CardTitle>
               <Button
                 size="sm"
                 variant="ghost"
-                aria-label="Refresh runs"
+                aria-label={t("debugger.refreshRuns")}
                 onClick={() => void loadRuns()}
               >
                 <RefreshCw className="size-4" />
@@ -252,7 +307,7 @@ export function BotDebuggerPage() {
             </CardHeader>
             <CardContent className="space-y-2">
               {runs.length === 0 && (
-                <p className="text-muted-foreground text-sm">No Bot Runs yet.</p>
+                <p className="text-muted-foreground text-sm">{t("debugger.noRuns")}</p>
               )}
               {runs.map((run) => (
                 <button
@@ -262,7 +317,9 @@ export function BotDebuggerPage() {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono text-xs">{run.id.slice(0, 8)}</span>
-                    <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+                    <Badge variant={statusVariant(run.status)}>
+                      {statusLabels[run.status] ?? run.status}
+                    </Badge>
                   </div>
                   <p className="text-muted-foreground mt-1 truncate text-xs">
                     {String(run.input["text"] ?? run.source)}
@@ -279,7 +336,7 @@ export function BotDebuggerPage() {
         <Card className="min-w-0 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden">
           <CardHeader className="gap-4 space-y-0 xl:shrink-0">
             <div className="min-w-0">
-              <CardTitle className="text-base">Run Detail</CardTitle>
+              <CardTitle className="text-base">{t("debugger.runDetail")}</CardTitle>
               {selected && (
                 <p
                   className="text-muted-foreground mt-1 truncate font-mono text-xs tabular-nums"
@@ -290,15 +347,18 @@ export function BotDebuggerPage() {
               )}
             </div>
             {selected && (
-              <div className="flex flex-wrap gap-2 border-t pt-4" aria-label="Run actions">
+              <div
+                className="flex flex-wrap gap-2 border-t pt-4"
+                aria-label={t("debugger.runActions")}
+              >
                 <Button
                   className="transition-transform active:scale-[0.96]"
                   size="sm"
                   variant="outline"
-                  title="Export this run as an AI-friendly Markdown file"
-                  onClick={() => downloadDebugRun(selected)}
+                  title={t("debugger.exportTitle")}
+                  onClick={() => downloadDebugRun(selected, t)}
                 >
-                  <Download className="size-4" /> Export
+                  <Download className="size-4" /> {t("debugger.export")}
                 </Button>
                 <Button
                   className="transition-transform active:scale-[0.96]"
@@ -306,7 +366,8 @@ export function BotDebuggerPage() {
                   variant="outline"
                   onClick={() => void mutateRun("pin", { pinned: !selected.pinned })}
                 >
-                  <Pin className="size-4" /> {selected.pinned ? "Unpin" : "Pin"}
+                  <Pin className="size-4" />
+                  {selected.pinned ? t("debugger.unpin") : t("debugger.pin")}
                 </Button>
                 {selected.status === "running" && (
                   <Button
@@ -315,17 +376,17 @@ export function BotDebuggerPage() {
                     variant="destructive"
                     onClick={() => void mutateRun("cancel")}
                   >
-                    <Square className="size-4" /> Cancel
+                    <Square className="size-4" /> {t("debugger.cancel")}
                   </Button>
                 )}
                 <Button
                   className="transition-transform active:scale-[0.96]"
                   size="sm"
                   variant="outline"
-                  title="Replay with the bot's current configuration"
+                  title={t("debugger.replayTitle")}
                   onClick={() => void start(selected.id)}
                 >
-                  <RotateCcw className="size-4" /> Replay
+                  <RotateCcw className="size-4" /> {t("debugger.replay")}
                 </Button>
               </div>
             )}
@@ -333,21 +394,25 @@ export function BotDebuggerPage() {
           <CardContent className="xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
             {!selected ? (
               <p className="text-muted-foreground py-12 text-center text-sm">
-                Select or start a run.
+                {t("debugger.selectRun")}
               </p>
             ) : (
               <div className="space-y-5">
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant={statusVariant(selected.status)}>{selected.status}</Badge>
-                  <Badge variant="muted">{selected.channel}</Badge>
-                  <Badge variant="muted">{selected.mode}</Badge>
+                  <Badge variant={statusVariant(selected.status)}>
+                    {statusLabels[selected.status] ?? selected.status}
+                  </Badge>
+                  <Badge variant="muted">
+                    {channelLabels[selected.channel] ?? selected.channel}
+                  </Badge>
+                  <Badge variant="muted">{modeLabels[selected.mode] ?? selected.mode}</Badge>
                   {selected.failureReason && (
                     <Badge variant="destructive">{selected.failureReason}</Badge>
                   )}
                 </div>
                 <details className="rounded-lg border p-3">
                   <summary className="cursor-pointer text-sm font-medium">
-                    Input & config snapshot
+                    {t("debugger.inputSnapshot")}
                   </summary>
                   <pre className="mt-3 max-h-80 overflow-auto text-xs whitespace-pre-wrap">
                     {JSON.stringify(
@@ -369,7 +434,7 @@ export function BotDebuggerPage() {
                             {event.sequence}. {event.kind}
                           </span>
                           <button
-                            aria-label="Copy event"
+                            aria-label={t("debugger.copyEvent")}
                             onClick={() =>
                               void navigator.clipboard.writeText(
                                 JSON.stringify(event.data, null, 2),

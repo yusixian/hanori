@@ -14,8 +14,10 @@ import { useInvalidate, useList } from "@refinedev/core";
 import { Radio, Search, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
+import { useTranslation } from "react-i18next";
 
 export function BotLogsPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
   const [page, setPage] = useState(1);
   const [level, setLevel] = useState("");
@@ -51,7 +53,7 @@ export function BotLogsPage() {
   const invalidate = useInvalidate();
 
   const clearLogs = async () => {
-    if (!window.confirm("确认清空该 Bot 的所有日志？")) return;
+    if (!window.confirm(t("logs.confirmClear"))) return;
     await client.api.logs.$delete({ query: { botId: botId! } });
     clearLiveLogs();
     setPage(1);
@@ -65,18 +67,18 @@ export function BotLogsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold">Logs</h1>
+        <h1 className="text-2xl font-bold">{t("logs.title")}</h1>
         <div className="flex items-center gap-3">
           <Button variant="destructive" size="sm" onClick={clearLogs}>
             <Trash2 className="mr-1 h-3.5 w-3.5" />
-            Clear Logs
+            {t("logs.clear")}
           </Button>
           <div className="flex items-center gap-2">
             <Radio
               className={cn("h-4 w-4", connected ? "text-emerald-600" : "text-muted-foreground")}
             />
             <span className="text-muted-foreground text-xs">
-              {connected ? "Live" : "Disconnected"}
+              {connected ? t("logs.live") : t("logs.disconnected")}
             </span>
           </div>
         </div>
@@ -86,7 +88,9 @@ export function BotLogsPage() {
       {liveLogs.length > 0 && (
         <Card>
           <CardHeader className="py-3">
-            <CardTitle className="text-muted-foreground text-sm font-medium">Real-time</CardTitle>
+            <CardTitle className="text-muted-foreground text-sm font-medium">
+              {t("logs.realTime")}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-1 pt-0">
             {liveLogs.slice(0, 5).map((log) => (
@@ -116,7 +120,7 @@ export function BotLogsPage() {
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
           <Input
             className="w-56 pl-8"
-            placeholder="搜索日志..."
+            placeholder={t("logs.searchPlaceholder")}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
@@ -128,7 +132,7 @@ export function BotLogsPage() {
             setPage(1);
           }}
         >
-          <option value="">All Levels</option>
+          <option value="">{t("logs.allLevels")}</option>
           <option value="debug">Debug</option>
           <option value="info">Info</option>
           <option value="warn">Warn</option>
@@ -140,9 +144,9 @@ export function BotLogsPage() {
       <Card>
         <CardContent className="p-0">
           {isLoading ? (
-            <p className="text-muted-foreground p-6 text-sm">Loading...</p>
+            <p className="text-muted-foreground p-6 text-sm">{t("common:common.loading")}</p>
           ) : logs.length === 0 ? (
-            <p className="text-muted-foreground p-6 text-sm">No logs found</p>
+            <p className="text-muted-foreground p-6 text-sm">{t("logs.empty")}</p>
           ) : (
             <div className="divide-y">
               {logs.map((log) => (

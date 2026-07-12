@@ -22,6 +22,7 @@
     "test": "vitest run --config vitest.config.ts",
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:browser": "pnpm --filter @cos-tool-bot/panel test:browser",
+    "i18n:check": "tsx packages/panel/scripts/check-i18n.ts",
     "prepare": "simple-git-hooks"
   },
   "devDependencies": {
