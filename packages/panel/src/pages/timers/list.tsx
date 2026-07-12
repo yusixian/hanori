@@ -5,7 +5,7 @@ import { Select } from "@/components/ui/select";
 import { client } from "@/lib/client";
 import { formatDuration } from "@cos-tool-bot/shared";
 import type { TimerRecord } from "@cos-tool-bot/shared";
-import { RefreshCw, Timer, Trash2 } from "lucide-react";
+import { Bot, RefreshCw, Settings2, Timer, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 function formatRemaining(firesAt: string | null): string {
@@ -76,38 +76,61 @@ export function TimersListPage() {
       </div>
 
       {/* Timer list */}
-      <Card>
+      <Card className="overflow-hidden">
         <CardContent className="p-0">
           {loading ? (
             <p className="text-muted-foreground p-6 text-sm">Loading...</p>
           ) : timers.length === 0 ? (
             <p className="text-muted-foreground p-6 text-sm">No active timers</p>
           ) : (
-            <div className="divide-y">
+            <div>
+              <div className="text-muted-foreground hidden grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] gap-4 bg-slate-50/80 px-5 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase md:grid">
+                <span>Type</span>
+                <span>Timer</span>
+                <span>Schedule</span>
+                <span>Next run</span>
+                <span className="sr-only">Action</span>
+              </div>
               {timers.map((timer) => (
-                <div key={timer.id} className="flex items-center gap-3 px-4 py-3">
-                  <Badge variant={timer.type === "ai" ? "default" : "muted"}>
-                    {timer.type === "ai" ? "🤖 AI" : "🔧 System"}
+                <div
+                  key={timer.id}
+                  className="grid gap-3 border-t border-slate-100 px-5 py-4 first:border-t-0 md:grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] md:items-center md:gap-4"
+                >
+                  <Badge
+                    variant={timer.type === "ai" ? "default" : "muted"}
+                    className="w-fit gap-1.5"
+                  >
+                    {timer.type === "ai" ? (
+                      <Bot className="size-3" />
+                    ) : (
+                      <Settings2 className="size-3" />
+                    )}
+                    {timer.type === "ai" ? "AI" : "System"}
                   </Badge>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{timer.name}</p>
-                    <div className="text-muted-foreground flex flex-wrap gap-3 text-xs">
-                      <span>ID: {timer.id}</span>
-                      {timer.chatId && <span>Chat: {timer.chatId}</span>}
-                      {timer.intervalMs && (
-                        <span>Interval: {formatDuration(timer.intervalMs)}</span>
-                      )}
-                      {timer.firesAt && <span>Fires in: {formatRemaining(timer.firesAt)}</span>}
-                    </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{timer.name}</p>
+                    <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
+                      {timer.id}
+                    </p>
+                  </div>
+                  <div className="text-sm text-slate-700 tabular-nums">
+                    <span className="text-muted-foreground mr-2 md:hidden">Schedule</span>
+                    {timer.intervalMs ? `Every ${formatDuration(timer.intervalMs)}` : "One-time"}
+                  </div>
+                  <div className="text-sm text-slate-700 tabular-nums">
+                    <span className="text-muted-foreground mr-2 md:hidden">Next run</span>
+                    {timer.firesAt ? formatRemaining(timer.firesAt) : "—"}
                   </div>
                   {timer.type === "ai" && (
                     <Button
                       variant="ghost"
-                      size="sm"
+                      size="icon"
                       onClick={() => cancelTimer(timer.id)}
                       title="Cancel timer"
+                      aria-label={`Cancel ${timer.name}`}
+                      className="justify-self-end text-red-500 hover:bg-red-50 hover:text-red-700"
                     >
-                      <Trash2 className="h-4 w-4 text-red-500" />
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   )}
                 </div>

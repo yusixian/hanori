@@ -56,14 +56,16 @@ export function ConversationListItem({
   return (
     <div
       className={cn(
-        "cursor-pointer rounded-md border p-3 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800",
-        selected && "border-blue-500 bg-blue-50 dark:bg-blue-900/20",
+        "group relative cursor-pointer overflow-hidden rounded-xl p-3 ring-1 ring-border/70 transition-[background-color,box-shadow] hover:bg-muted/50 hover:ring-border",
+        selected && "bg-blue-50/70 ring-2 ring-blue-500/70 dark:bg-blue-950/30",
       )}
       onClick={onSelect}
     >
-      <div className="mb-1.5 flex items-center gap-2">
+      <div className="mb-1.5 flex min-w-0 items-center gap-2">
         <MessageSquare className="text-muted-foreground h-4 w-4 shrink-0" />
-        <span className="font-mono text-sm font-medium">{conv.chatId}</span>
+        <span className="min-w-0 truncate font-mono text-sm font-medium tabular-nums">
+          {conv.chatId}
+        </span>
         <ChatTypeBadge type={conv.chatType} />
         {conv.hasSummaries && (
           <Badge variant="muted">
@@ -72,13 +74,10 @@ export function ConversationListItem({
           </Badge>
         )}
         <span className="flex-1" />
-        <span className="text-muted-foreground shrink-0 text-xs">
-          {new Date(conv.lastActive).toLocaleString()}
-        </span>
         <Button
           variant="ghost"
           size="sm"
-          className="h-6 w-6 shrink-0 p-0"
+          className="text-muted-foreground -mr-2 size-10 shrink-0 p-0 opacity-100 hover:text-red-600 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
           onClick={(e) => {
             e.stopPropagation();
             onClear();
@@ -86,6 +85,10 @@ export function ConversationListItem({
         >
           <Trash2 className="h-3.5 w-3.5 text-red-500" />
         </Button>
+      </div>
+
+      <div className="text-muted-foreground mb-1.5 truncate text-xs tabular-nums">
+        {new Date(conv.lastActive).toLocaleString()}
       </div>
 
       <UserNamesList names={conv.userNames} />
@@ -101,7 +104,9 @@ export function ConversationListItem({
           <span>{conv.messageCount} msgs</span>
           <span>{conv.distinctUserCount} users</span>
         </div>
-        <RoleDistributionBar roleCounts={conv.roleCounts} total={conv.messageCount} />
+        <div className="hidden sm:block">
+          <RoleDistributionBar roleCounts={conv.roleCounts} total={conv.messageCount} />
+        </div>
       </div>
     </div>
   );

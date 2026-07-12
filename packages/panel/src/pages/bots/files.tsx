@@ -1,12 +1,15 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Popover } from "@/components/ui/popover";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
 import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
 import Editor from "@monaco-editor/react";
 import {
   Archive,
+  ArrowLeft,
   Check,
   ChevronRight,
   Download,
@@ -16,8 +19,10 @@ import {
   FolderOpen,
   Image as ImageIcon,
   Loader2,
+  MoreHorizontal,
   PackagePlus,
   Save,
+  Search,
   Shield,
   Square,
   SquareCheckBig,
@@ -112,6 +117,12 @@ export function BotFilesPage() {
   const [editingMaxSize, setEditingMaxSize] = useState(false);
   const [maxSizeInput, setMaxSizeInput] = useState("");
   const [savingInjection, setSavingInjection] = useState(false);
+  const [search, setSearch] = useState("");
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
+  const [autoSave, setAutoSave] = useState(
+    () => localStorage.getItem("files:auto-save") === "true",
+  );
 
   const isDirty = content !== originalContent;
 
@@ -218,6 +229,7 @@ export function BotFilesPage() {
         // binary: no content to load, just select the file
         setFileCategory(category);
         setSelectedFile(filePath);
+        setMobileEditorOpen(true);
       } catch (err) {
         console.error("Failed to load file:", err);
       } finally {
@@ -247,6 +259,25 @@ export function BotFilesPage() {
       setSaving(false);
     }
   }, [botId, selectedFile, content, loadFiles]);
+
+  useEffect(() => {
+    localStorage.setItem("files:auto-save", String(autoSave));
+  }, [autoSave]);
+
+  useEffect(() => {
+    if (!autoSave || !isDirty || fileCategory !== "text" || !selectedFile) return;
+    const timer = window.setTimeout(() => void saveFile(), 800);
+    return () => window.clearTimeout(timer);
+  }, [autoSave, content, fileCategory, isDirty, saveFile, selectedFile]);
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty]);
 
   const downloadFile = useCallback(
     async (filePath: string) => {
@@ -485,11 +516,17 @@ export function BotFilesPage() {
 
   // Breadcrumb segments
   const pathSegments = currentPath ? currentPath.split("/") : [];
+  const visibleFiles = files.filter((file) =>
+    file.name.toLowerCase().includes(search.toLowerCase()),
+  );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">Files</h1>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Files</h1>
+          <p className="text-muted-foreground mt-0.5 text-sm">Manage this bot's workspace files.</p>
+        </div>
         <div className="flex items-center gap-2">
           {selectedFiles.size > 0 && (
             <Button variant="destructive" size="sm" onClick={deleteBatch} disabled={deleting}>
@@ -501,46 +538,50 @@ export function BotFilesPage() {
               Delete Selected ({selectedFiles.size})
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => downloadZip(currentPath)}
-            disabled={downloadingZip !== null}
-          >
-            {downloadingZip !== null ? (
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-            ) : (
-              <Archive className="mr-1 h-4 w-4" />
-            )}
-            Download ZIP
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowNewFile(true)}
-            disabled={showNewFile}
-          >
+          <Button size="sm" onClick={() => setShowNewFile(true)} disabled={showNewFile}>
             <FilePlus className="mr-1 h-4 w-4" />
             New File
           </Button>
-          <Button variant="outline" size="sm" onClick={initTemplates} disabled={initializing}>
-            {initializing ? (
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-            ) : (
-              <PackagePlus className="mr-1 h-4 w-4" />
-            )}
-            Init Templates
-          </Button>
+          <Popover
+            placement="bottom-end"
+            trigger={
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-10 w-10"
+                aria-label="More file actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            }
+          >
+            <div className="w-60 p-1.5">
+              <button
+                className="hover:bg-accent focus-visible:bg-accent flex h-10 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm whitespace-nowrap transition-colors outline-none"
+                onClick={() => downloadZip(currentPath)}
+              >
+                <Archive className="h-4 w-4 shrink-0" />
+                Download current folder
+              </button>
+              <button
+                className="hover:bg-accent focus-visible:bg-accent flex h-10 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50"
+                onClick={initTemplates}
+                disabled={initializing}
+              >
+                <PackagePlus className="h-4 w-4 shrink-0" />
+                Restore templates
+              </button>
+            </div>
+          </Popover>
         </div>
       </div>
 
       {/* Injection summary bar */}
-      <Card className="border-blue-500/20 bg-blue-500/5">
-        <CardContent className="flex items-center gap-3 px-4 py-2.5">
+      <div className="flex items-center gap-3 border-y px-1 py-2">
+        <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-blue-500" />
-          <span className="text-sm">
-            System Prompt: {injectedFiles.length} file{injectedFiles.length !== 1 ? "s" : ""}{" "}
-            &middot; {formatBytes(injectedSize)} /{" "}
+          <span className="text-muted-foreground text-sm">
+            Prompt files: {injectedFiles.length} &middot; {formatBytes(injectedSize)} /{" "}
             {editingMaxSize ? (
               <span className="inline-flex items-center gap-1">
                 <Input
@@ -592,21 +633,26 @@ export function BotFilesPage() {
           {injectedSize > injection.maxTotalSize && (
             <span className="text-xs text-red-500">(exceeded limit)</span>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
-      <div className="flex gap-4" style={{ height: "calc(100dvh - 220px)" }}>
+      <div
+        className="flex overflow-hidden rounded-xl border bg-white"
+        style={{ height: "calc(100dvh - 210px)" }}
+      >
         {/* File list sidebar */}
-        <Card className="w-64 shrink-0 overflow-hidden">
+        <div
+          className={`${mobileEditorOpen ? "hidden md:flex" : "flex"} w-full shrink-0 flex-col overflow-hidden border-r md:w-80`}
+        >
           <CardHeader className="py-3">
             <CardTitle className="flex items-center gap-1 text-sm">
-              <FolderOpen className="h-4 w-4 shrink-0" />
+              <FolderOpen className="h-4 w-4 shrink-0 text-blue-500" />
               <button
                 type="button"
                 className="hover:text-foreground cursor-pointer hover:underline"
                 onClick={() => navigateTo("")}
               >
-                /data/{botId}
+                Workspace
               </button>
               {pathSegments.map((seg, i) => (
                 <span
@@ -625,6 +671,17 @@ export function BotFilesPage() {
               ))}
             </CardTitle>
           </CardHeader>
+          <div className="px-3 pb-2">
+            <div className="relative">
+              <Search className="text-muted-foreground absolute top-2 left-2.5 h-3.5 w-3.5" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search files"
+                className="h-8 pl-8 text-xs"
+              />
+            </div>
+          </div>
           <CardContent className="flex flex-col gap-1 overflow-y-auto px-2 pb-2">
             {/* Select all / batch controls */}
             {selectableFiles.length > 0 && (
@@ -632,15 +689,26 @@ export function BotFilesPage() {
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs transition-colors"
-                  onClick={toggleSelectAll}
+                  onClick={() => (selectionMode ? toggleSelectAll() : setSelectionMode(true))}
                 >
                   {allSelected ? (
                     <SquareCheckBig className="h-3.5 w-3.5" />
                   ) : (
                     <Square className="h-3.5 w-3.5" />
                   )}
-                  Select all
+                  {selectionMode ? "Select all" : "Select files"}
                 </button>
+                {selectionMode && (
+                  <button
+                    className="text-muted-foreground ml-auto text-xs"
+                    onClick={() => {
+                      setSelectionMode(false);
+                      setSelectedFiles(new Set());
+                    }}
+                  >
+                    Done
+                  </button>
+                )}
               </div>
             )}
 
@@ -697,7 +765,7 @@ export function BotFilesPage() {
                   : 'No files yet. Click "Init Templates" to create default files.'}
               </div>
             ) : (
-              files.map((file) => {
+              visibleFiles.map((file) => {
                 if (file.type === "dir") {
                   return (
                     <div
@@ -767,7 +835,7 @@ export function BotFilesPage() {
                         >
                           {isInjectable && <Check className="h-2.5 w-2.5" />}
                         </button>
-                      ) : !isInjectable ? (
+                      ) : selectionMode && !isInjectable ? (
                         <button
                           type="button"
                           className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
@@ -788,6 +856,7 @@ export function BotFilesPage() {
                         <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
                       )}
                       <span className="truncate">{file.name}</span>
+                      {isInjectable && <Badge className="px-1.5 py-0 text-[9px]">Prompt</Badge>}
                     </div>
                     {!isInjectable && !isSelected && (
                       <Button
@@ -807,14 +876,24 @@ export function BotFilesPage() {
               })
             )}
           </CardContent>
-        </Card>
+        </div>
 
         {/* Editor / Preview area */}
-        <Card className="min-w-0 flex-1 overflow-hidden">
+        <div
+          className={`${mobileEditorOpen ? "flex" : "hidden md:flex"} min-w-0 flex-1 overflow-hidden`}
+        >
           {selectedFile ? (
-            <div className="flex h-full flex-col">
+            <div className="flex h-full min-w-0 flex-1 flex-col">
               <div className="flex items-center justify-between border-b px-4 py-2">
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 md:hidden"
+                    onClick={() => setMobileEditorOpen(false)}
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
                   {fileCategory === "image" ? (
                     <ImageIcon className="h-4 w-4 opacity-60" />
                   ) : (
@@ -822,10 +901,21 @@ export function BotFilesPage() {
                   )}
                   <span className="text-sm font-medium">{selectedFile}</span>
                   {fileCategory === "text" && isDirty && (
-                    <span className="text-muted-foreground text-xs">(unsaved)</span>
+                    <span className="text-xs text-amber-600">Unsaved</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {fileCategory === "text" && (
+                    <label className="text-muted-foreground mr-1 flex cursor-pointer items-center gap-2 text-xs whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={autoSave}
+                        onChange={(e) => setAutoSave(e.target.checked)}
+                        className="accent-blue-600"
+                      />
+                      Auto-save
+                    </label>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
@@ -864,6 +954,7 @@ export function BotFilesPage() {
                     onChange={(value) => setContent(value ?? "")}
                     theme="vs-dark"
                     options={{
+                      automaticLayout: true,
                       minimap: { enabled: false },
                       wordWrap: "on",
                       lineNumbers: "on",
@@ -908,7 +999,7 @@ export function BotFilesPage() {
               <p className="text-sm">Select a file to edit</p>
             </div>
           )}
-        </Card>
+        </div>
       </div>
     </div>
   );

@@ -3,7 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination } from "@/components/ui/pagination";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { BookOpen, Loader2, MessageSquare, Terminal, Trash2, Wrench } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  Loader2,
+  MessageSquare,
+  Terminal,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { PANE_MAX_HEIGHT, PENDING_DELETE_MS } from "./constants";
@@ -34,6 +42,10 @@ export function BotConversationsPage() {
   const [sumPendingDelete, setSumPendingDelete] = useState<number | null>(null);
   const [sumDeleteBusy, setSumDeleteBusy] = useState<number | null>(null);
   const [msgPendingDelete, setMsgPendingDelete] = useState<number | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{
+    kind: "all" | "chat";
+    chatId?: number;
+  } | null>(null);
 
   const msgContainerRef = useRef<HTMLDivElement>(null);
   const msgReqToken = useRef(0);
@@ -144,7 +156,7 @@ export function BotConversationsPage() {
   }, [selectedChat]);
 
   const handleClearAll = async () => {
-    if (!botId || !window.confirm("确定要清空该 Bot 的所有对话历史吗？")) return;
+    if (!botId) return;
     try {
       await client.api.bots[":botId"].conversations.$delete({ param: { botId } });
       setConversations([]);
@@ -157,7 +169,7 @@ export function BotConversationsPage() {
   };
 
   const handleClearChat = async (chatId: number) => {
-    if (!botId || !window.confirm(`确定要清空 Chat ${chatId} 的对话历史吗？`)) return;
+    if (!botId) return;
     try {
       await client.api.bots[":botId"].conversations[":chatId"].$delete({
         param: { botId, chatId: String(chatId) },
@@ -281,23 +293,38 @@ export function BotConversationsPage() {
   }, [selectedConv, hasSummaries, openSummaries]);
 
   return (
-    <div className="space-y-6">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-[calc(100vh-7rem)]">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Conversations</h1>
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-balance">Conversations</h1>
+          <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
+            Inspect message history and compressed summaries.
+          </p>
+        </div>
         {conversations.length > 0 && (
-          <Button variant="destructive" size="sm" onClick={handleClearAll}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive active:scale-[0.96]"
+            onClick={() => setConfirmDelete({ kind: "all" })}
+          >
             <Trash2 className="h-4 w-4" />
-            Clear All
+            <span className="hidden sm:inline">Clear all</span>
           </Button>
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(320px,2fr)_3fr]">
-        <Card className="flex flex-col">
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(320px,360px)_minmax(0,1fr)]">
+        <Card
+          className={cn(
+            "min-h-0 flex-col overflow-hidden rounded-2xl",
+            selectedChat === null ? "flex" : "hidden lg:flex",
+          )}
+        >
           <CardHeader>
             <CardTitle className="text-base">Conversations {total > 0 && `(${total})`}</CardTitle>
           </CardHeader>
-          <CardContent className="flex-1 overflow-hidden">
+          <CardContent className="min-h-0 flex-1 overflow-hidden">
             {loading ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin" />
@@ -305,8 +332,8 @@ export function BotConversationsPage() {
             ) : conversations.length === 0 ? (
               <p className="text-muted-foreground py-8 text-center text-sm">No conversations yet</p>
             ) : (
-              <div className="flex flex-col">
-                <div className="max-h-[calc(100vh-280px)] space-y-2 overflow-y-auto pr-1">
+              <div className="flex h-full min-h-0 flex-col">
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
                   {conversations.map((conv) => (
                     <ConversationListItem
                       key={conv.chatId}
@@ -316,7 +343,7 @@ export function BotConversationsPage() {
                         setSelectedChat(conv.chatId);
                         setMsgPage(1);
                       }}
-                      onClear={() => handleClearChat(conv.chatId)}
+                      onClear={() => setConfirmDelete({ kind: "chat", chatId: conv.chatId })}
                     />
                   ))}
                 </div>
@@ -332,18 +359,35 @@ export function BotConversationsPage() {
           </CardContent>
         </Card>
 
-        <Card className="flex flex-col">
-          <CardHeader>
-            <CardTitle className="text-base">{detailHeader ?? "Select a conversation"}</CardTitle>
+        <Card
+          className={cn(
+            "min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl",
+            selectedChat !== null ? "flex" : "hidden lg:flex",
+          )}
+        >
+          <CardHeader className="flex-row items-center gap-2">
+            {selectedChat !== null && (
+              <button
+                type="button"
+                onClick={() => setSelectedChat(null)}
+                className="text-muted-foreground hover:bg-muted -ml-2 flex size-10 shrink-0 items-center justify-center rounded-lg active:scale-[0.96] lg:hidden"
+                aria-label="Back to conversations"
+              >
+                <ArrowLeft className="size-5" />
+              </button>
+            )}
+            <CardTitle className="min-w-0 flex-1 text-base">
+              {detailHeader ?? "Select a conversation"}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="relative flex-1 overflow-hidden">
+          <CardContent className="relative min-h-0 flex-1 overflow-hidden">
             {selectedChat === null ? (
               <p className="text-muted-foreground py-8 text-center text-sm">
                 Click a conversation to view messages
               </p>
             ) : (
               <>
-                <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -460,6 +504,46 @@ export function BotConversationsPage() {
           </CardContent>
         </Card>
       </div>
+      {confirmDelete && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onMouseDown={(event) => event.target === event.currentTarget && setConfirmDelete(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-title"
+            className="bg-background w-full max-w-sm rounded-2xl p-5 shadow-2xl ring-1 ring-black/10 dark:ring-white/10"
+          >
+            <h2 id="delete-title" className="text-lg font-semibold">
+              {confirmDelete.kind === "all"
+                ? "Clear all conversations?"
+                : "Delete this conversation?"}
+            </h2>
+            <p className="text-muted-foreground mt-2 text-sm text-pretty">
+              {confirmDelete.kind === "all"
+                ? "Every conversation and its messages will be permanently deleted."
+                : `Chat ${confirmDelete.chatId} and all of its messages will be permanently deleted.`}
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  const target = confirmDelete;
+                  setConfirmDelete(null);
+                  if (target.kind === "all") await handleClearAll();
+                  else if (target.chatId !== undefined) await handleClearChat(target.chatId);
+                }}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

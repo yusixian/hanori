@@ -1,16 +1,16 @@
 export const COLLAPSE_LINE_THRESHOLD = 4;
 
-export const PANE_MAX_HEIGHT = "max-h-[calc(100vh-340px)]";
+export const PANE_MAX_HEIGHT = "h-[calc(100dvh-15rem)] min-h-72 lg:h-[calc(100vh-20rem)]";
 
 export const PENDING_DELETE_MS = 3000;
 
 export const roleStyles: Record<string, string> = {
-  user: "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  assistant: "bg-green-500/10 text-green-700 dark:text-green-300",
-  context: "bg-zinc-500/10 text-zinc-600 dark:text-zinc-400",
-  system: "bg-purple-500/10 text-purple-700 dark:text-purple-300",
-  tool_call: "bg-orange-500/10 text-orange-700 dark:text-orange-300",
-  tool_result: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+  user: "border-l-blue-500 bg-blue-500/[0.06]",
+  assistant: "border-l-emerald-500 bg-emerald-500/[0.06]",
+  context: "border-l-zinc-400 bg-zinc-500/[0.06]",
+  system: "border-l-purple-500 bg-purple-500/[0.06]",
+  tool_call: "border-l-orange-500 bg-orange-500/[0.06]",
+  tool_result: "border-l-cyan-500 bg-cyan-500/[0.06]",
 };
 
 export const roleLabels: Record<string, string> = {

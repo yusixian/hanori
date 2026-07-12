@@ -139,20 +139,20 @@ export function BotListPage() {
             {bots.map((bot) => (
               <Card
                 key={bot.id}
-                className="group relative overflow-hidden transition-[transform,box-shadow] duration-200 ease-out hover:-translate-y-1 hover:shadow-[var(--shadow-surface-hover)]"
+                className="group relative overflow-hidden transition-[box-shadow,ring-color] duration-200 ease-out hover:shadow-[var(--shadow-surface-hover)] hover:ring-blue-500/20"
               >
-                <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 opacity-80" />
+                <div className="absolute inset-y-0 left-0 w-1 bg-blue-500 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
                 <Link
                   to={`/bots/${bot.id}`}
                   className="block p-5 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset sm:p-6"
                 >
                   <div className="flex min-h-[76px] items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-100 text-blue-600 shadow-[inset_0_0_0_1px_rgb(37_99_235/0.08)] transition-[transform,box-shadow] duration-200 group-hover:scale-105 group-hover:shadow-md">
+                      <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 shadow-[inset_0_0_0_1px_rgb(37_99_235/0.1)] transition-colors duration-200 group-hover:bg-blue-100">
                         <Bot className="size-5" />
                       </div>
                       <div className="min-w-0 pt-0.5">
-                        <h3 className="line-clamp-2 text-[17px] leading-6 font-semibold tracking-tight text-slate-900">
+                        <h3 className="line-clamp-2 text-[17px] leading-6 font-semibold tracking-tight text-slate-900 transition-colors duration-200 group-hover:text-blue-700">
                           {bot.name}
                         </h3>
                         {bot.platform === "lark-webhook" && (
@@ -180,7 +180,7 @@ export function BotListPage() {
                     <span className="text-muted-foreground min-w-0 truncate font-mono text-xs">
                       {bot.tokenMasked}
                     </span>
-                    <ArrowUpRight className="ml-auto size-3.5 shrink-0 text-slate-300 transition-[color,transform] duration-150 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-blue-500" />
+                    <ArrowUpRight className="ml-auto size-3.5 shrink-0 text-slate-300 transition-colors duration-150 group-hover:text-blue-500" />
                   </div>
                 </Link>
                 <div className="flex items-center justify-between gap-3 border-t border-slate-100 bg-slate-50/60 px-5 py-4 sm:px-6">
