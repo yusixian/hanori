@@ -1,5 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select } from "@/components/ui/select";
 import type { PixAIConfig, WebToolsConfig } from "@cos-tool-bot/shared";
 
@@ -17,12 +20,10 @@ export function WebToolsSection({
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="webToolsEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="webToolsEnabled" className="text-sm font-medium">
             Enable Web Tools
@@ -36,24 +37,26 @@ export function WebToolsSection({
           </p>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Provider</label>
-            <select
+            <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
               value={config.search?.provider ?? "brave"}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 onUpdate({
                   search: {
                     ...config.search,
-                    provider: e.target.value as NonNullable<WebToolsConfig["search"]>["provider"],
+                    provider: value as NonNullable<WebToolsConfig["search"]>["provider"],
                   },
                 })
               }
-            >
-              <option value="brave">Brave Search (Recommended)</option>
-              <option value="tavily">Tavily</option>
-              <option value="searxng">SearXNG</option>
-              <option value="custom">Custom</option>
-            </select>
+              ariaLabel="Search provider"
+              options={[
+                { value: "brave", label: "Brave Search (Recommended)" },
+                { value: "tavily", label: "Tavily" },
+                { value: "searxng", label: "SearXNG" },
+                { value: "custom", label: "Custom" },
+              ]}
+            />
           </div>
 
           {(config.search?.provider ?? "brave") === "brave" && (
@@ -179,23 +182,25 @@ export function WebToolsSection({
           </p>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Provider</label>
-            <select
+            <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
               value={config.imageGeneration?.provider ?? "openai"}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 onUpdate({
                   imageGeneration: {
                     ...config.imageGeneration,
-                    provider: e.target.value as "openai" | "custom" | "pixai",
+                    provider: value as "openai" | "custom" | "pixai",
                   },
                 })
               }
-            >
-              <option value="openai">OpenAI</option>
-              <option value="custom">Custom</option>
-              <option value="pixai">PixAI</option>
-            </select>
+              ariaLabel="Image generation provider"
+              options={[
+                { value: "openai", label: "OpenAI" },
+                { value: "custom", label: "Custom" },
+                { value: "pixai", label: "PixAI" },
+              ]}
+            />
           </div>
 
           {/* Common: API Key */}
@@ -352,7 +357,7 @@ function PixAIConfigFields({
       {/* System Image Prompt */}
       <div className="space-y-1.5">
         <label className="text-sm font-medium">System Image Prompt</label>
-        <textarea
+        <Textarea
           disabled={disabled}
           className="border-input flex min-h-[60px] w-full rounded-md border bg-transparent px-3 py-2 text-sm disabled:opacity-50"
           value={pixaiConfig.systemImagePrompt ?? ""}
@@ -582,13 +587,13 @@ function PixAIConfigFields({
         </p>
         <div className="flex flex-wrap gap-x-6 gap-y-2">
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Switch
               id="pixaiPromptHelper"
               disabled={disabled}
               checked={pixaiConfig.promptHelper ?? false}
-              onChange={(e) => updatePixai({ promptHelper: e.target.checked || undefined })}
-              className="border-input h-4 w-4 rounded"
+              onCheckedChange={(promptHelper) =>
+                updatePixai({ promptHelper: promptHelper || undefined })
+              }
             />
             <label htmlFor="pixaiPromptHelper" className="text-sm font-medium">
               Prompt Helper
@@ -598,13 +603,11 @@ function PixAIConfigFields({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Switch
               id="pixaiLightning"
               disabled={disabled}
               checked={pixaiConfig.lightning ?? false}
-              onChange={(e) => updatePixai({ lightning: e.target.checked || undefined })}
-              className="border-input h-4 w-4 rounded"
+              onCheckedChange={(lightning) => updatePixai({ lightning: lightning || undefined })}
             />
             <label htmlFor="pixaiLightning" className="text-sm font-medium">
               Lightning Mode
@@ -612,13 +615,11 @@ function PixAIConfigFields({
             <span className="text-muted-foreground text-xs">(trades some quality for speed)</span>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Switch
               id="pixaiPrivate"
               disabled={disabled}
               checked={pixaiConfig.isPrivate ?? false}
-              onChange={(e) => updatePixai({ isPrivate: e.target.checked || undefined })}
-              className="border-input h-4 w-4 rounded"
+              onCheckedChange={(isPrivate) => updatePixai({ isPrivate: isPrivate || undefined })}
             />
             <label htmlFor="pixaiPrivate" className="text-sm font-medium">
               Private Mode

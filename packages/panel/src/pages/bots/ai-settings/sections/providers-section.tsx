@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import type { AiProviderEntryPublic } from "@cos-tool-bot/shared";
 import { Check, ChevronDown, KeyRound, Plus, Server, Trash2 } from "lucide-react";
 import { useState } from "react";
@@ -41,6 +42,8 @@ export function ProvidersSection({
 
   const removeProvider = (id: string) => {
     if (id === activeProviderId) return;
+    const provider = providers.find((entry) => entry.id === id);
+    if (!window.confirm(`Delete provider “${provider?.label ?? id}”?`)) return;
     onProvidersChange(providers.filter((p) => p.id !== id));
     onDraftApiKeyChange(id, "");
   };
@@ -90,7 +93,7 @@ export function ProvidersSection({
             <div className="group flex min-h-16 items-center gap-3 px-5 py-3 transition-colors duration-150 hover:bg-slate-50/80">
               <button
                 type="button"
-                className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none"
+                className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
                 onClick={() => setExpandedId((id) => (id === p.id ? null : p.id))}
                 aria-expanded={expandedId === p.id}
               >
@@ -136,18 +139,20 @@ export function ProvidersSection({
                     <label className="text-muted-foreground text-xs font-medium">
                       Provider Format
                     </label>
-                    <select
+                    <SelectMenu
                       className="border-input flex h-9 w-full rounded-md border bg-white px-2 text-sm"
                       value={p.providerFormat}
-                      onChange={(e) =>
+                      onValueChange={(value) =>
                         updateProvider(p.id, {
-                          providerFormat: e.target.value as "openai" | "gemini",
+                          providerFormat: value as "openai" | "gemini",
                         })
                       }
-                    >
-                      <option value="openai">OpenAI Compatible</option>
-                      <option value="gemini">Gemini Native</option>
-                    </select>
+                      ariaLabel="Provider format"
+                      options={[
+                        { value: "openai", label: "OpenAI Compatible" },
+                        { value: "gemini", label: "Gemini Native" },
+                      ]}
+                    />
                   </div>
                   <div className="space-y-1">
                     <label className="text-muted-foreground text-xs font-medium">Base URL</label>
@@ -234,19 +239,21 @@ export function ProvidersSection({
               </div>
               <div className="space-y-1">
                 <label className="text-muted-foreground text-xs">Provider Format</label>
-                <select
+                <SelectMenu
                   className="border-input flex h-8 w-full rounded-md border bg-transparent px-2 text-sm"
                   value={newDraft.providerFormat}
-                  onChange={(e) =>
+                  onValueChange={(value) =>
                     setNewDraft({
                       ...newDraft,
-                      providerFormat: e.target.value as "openai" | "gemini",
+                      providerFormat: value as "openai" | "gemini",
                     })
                   }
-                >
-                  <option value="openai">OpenAI Compatible</option>
-                  <option value="gemini">Gemini Native</option>
-                </select>
+                  ariaLabel="Provider format"
+                  options={[
+                    { value: "openai", label: "OpenAI Compatible" },
+                    { value: "gemini", label: "Gemini Native" },
+                  ]}
+                />
               </div>
               <div className="space-y-1">
                 <label className="text-muted-foreground text-xs">Base URL</label>

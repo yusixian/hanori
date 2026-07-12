@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { SelectMenu } from "@/components/ui/select-menu";
 import type { LucideIcon } from "lucide-react";
 
 export type AiSettingsSectionId =
@@ -31,18 +32,14 @@ export function AiSettingsNavigation({
         <label htmlFor="ai-settings-section" className="sr-only">
           Settings section
         </label>
-        <select
+        <SelectMenu
           id="ai-settings-section"
           value={activeId}
-          onChange={(event) => onChange(event.target.value as AiSettingsSectionId)}
+          onValueChange={(value) => onChange(value as AiSettingsSectionId)}
           className="border-input h-11 w-full rounded-xl border bg-white px-3 text-sm font-medium shadow-sm"
-        >
-          {items.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.label}
-            </option>
-          ))}
-        </select>
+          ariaLabel="Settings section"
+          options={items.map((item) => ({ value: item.id, label: item.label }))}
+        />
       </div>
 
       <nav aria-label="AI settings sections" className="hidden md:block">

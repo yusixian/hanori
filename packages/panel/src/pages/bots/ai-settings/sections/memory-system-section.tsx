@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { SelectMenu } from "@/components/ui/select-menu";
 import type { MemoryConfig } from "@cos-tool-bot/shared";
 
 export function MemorySystemSection({
@@ -16,12 +18,10 @@ export function MemorySystemSection({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="memoryEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="memoryEnabled" className="text-sm font-medium">
             Enable Memory System
@@ -48,17 +48,19 @@ export function MemorySystemSection({
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Tool Choice</label>
-            <select
+            <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
               value={config.toolChoice}
-              onChange={(e) =>
-                onUpdate({ toolChoice: e.target.value as MemoryConfig["toolChoice"] })
+              onValueChange={(value) =>
+                onUpdate({ toolChoice: value as MemoryConfig["toolChoice"] })
               }
-            >
-              <option value="auto">Auto (recommended)</option>
-              <option value="required">Required</option>
-            </select>
+              ariaLabel="Tool choice"
+              options={[
+                { value: "auto", label: "Auto (Recommended)" },
+                { value: "required", label: "Required" },
+              ]}
+            />
             <p className="text-muted-foreground text-xs">
               Auto: LLM decides when to use tools. Required: must call at least one tool.
             </p>
@@ -66,13 +68,11 @@ export function MemorySystemSection({
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="autoReadProfile"
             disabled={!config.enabled}
             checked={config.autoReadProfile}
-            onChange={(e) => onUpdate({ autoReadProfile: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(autoReadProfile) => onUpdate({ autoReadProfile })}
           />
           <label htmlFor="autoReadProfile" className="text-sm">
             Auto-read user profile before reply
@@ -80,13 +80,11 @@ export function MemorySystemSection({
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="autoUpdateLastSeen"
             disabled={!config.enabled}
             checked={config.autoUpdateLastSeen}
-            onChange={(e) => onUpdate({ autoUpdateLastSeen: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(autoUpdateLastSeen) => onUpdate({ autoUpdateLastSeen })}
           />
           <label htmlFor="autoUpdateLastSeen" className="text-sm">
             Auto-update last seen on message

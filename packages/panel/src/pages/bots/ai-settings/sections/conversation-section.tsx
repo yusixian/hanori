@@ -1,5 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
+import { Switch } from "@/components/ui/switch";
 import type { ConversationConfig } from "@cos-tool-bot/shared";
 
 export function ConversationSection({
@@ -21,12 +23,10 @@ export function ConversationSection({
             Basic Settings
           </p>
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Switch
               id="convEnabled"
               checked={config.enabled}
-              onChange={(e) => onUpdate({ enabled: e.target.checked })}
-              className="border-input h-4 w-4 rounded"
+              onCheckedChange={(enabled) => onUpdate({ enabled })}
             />
             <label htmlFor="convEnabled" className="text-sm font-medium">
               Enable Conversation History
@@ -35,19 +35,21 @@ export function ConversationSection({
 
           <div className="space-y-1.5">
             <label className="text-sm font-medium">History Format</label>
-            <select
+            <SelectMenu
               className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
               disabled={!config.enabled}
               value={config.historyFormat ?? "prompt"}
-              onChange={(e) =>
+              onValueChange={(value) =>
                 onUpdate({
-                  historyFormat: e.target.value as ConversationConfig["historyFormat"],
+                  historyFormat: value as ConversationConfig["historyFormat"],
                 })
               }
-            >
-              <option value="prompt">Prompt (recommended)</option>
-              <option value="messages">Messages</option>
-            </select>
+              ariaLabel="History format"
+              options={[
+                { value: "prompt", label: "Prompt (Recommended)" },
+                { value: "messages", label: "Messages" },
+              ]}
+            />
             <p className="text-muted-foreground text-xs">
               Prompt: pack history into system prompt, best compatibility. Messages: standard
               multi-turn format, only for models with native multi-turn support.
@@ -104,40 +106,44 @@ export function ConversationSection({
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Include Group Context</label>
-              <select
+              <SelectMenu
                 className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
                 disabled={!config.enabled}
                 value={config.groupContextMode}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   onUpdate({
-                    groupContextMode: e.target.value as ConversationConfig["groupContextMode"],
+                    groupContextMode: value as ConversationConfig["groupContextMode"],
                   })
                 }
-              >
-                <option value="all">All triggers</option>
-                <option value="random_only">Random reply only</option>
-                <option value="none">Never</option>
-              </select>
+                ariaLabel="Include group context"
+                options={[
+                  { value: "all", label: "All Triggers" },
+                  { value: "random_only", label: "Random Reply Only" },
+                  { value: "none", label: "Never" },
+                ]}
+              />
               <p className="text-muted-foreground text-xs">
                 When to include recent group messages in LLM context
               </p>
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Save Group Context</label>
-              <select
+              <SelectMenu
                 className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
                 disabled={!config.enabled}
                 value={config.saveGroupContext}
-                onChange={(e) =>
+                onValueChange={(value) =>
                   onUpdate({
-                    saveGroupContext: e.target.value as ConversationConfig["saveGroupContext"],
+                    saveGroupContext: value as ConversationConfig["saveGroupContext"],
                   })
                 }
-              >
-                <option value="random_only">Random reply only</option>
-                <option value="all">All triggers</option>
-                <option value="none">Never</option>
-              </select>
+                ariaLabel="Save group context"
+                options={[
+                  { value: "random_only", label: "Random Reply Only" },
+                  { value: "all", label: "All Triggers" },
+                  { value: "none", label: "Never" },
+                ]}
+              />
               <p className="text-muted-foreground text-xs">
                 When to persist group context to database
               </p>
@@ -151,13 +157,11 @@ export function ConversationSection({
             Compression Settings
           </p>
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
+            <Switch
               id="autoSummarize"
               disabled={!config.enabled}
               checked={config.autoSummarize}
-              onChange={(e) => onUpdate({ autoSummarize: e.target.checked })}
-              className="border-input h-4 w-4 rounded"
+              onCheckedChange={(autoSummarize) => onUpdate({ autoSummarize })}
             />
             <label htmlFor="autoSummarize" className="text-sm font-medium">
               Auto-summarize with LLM

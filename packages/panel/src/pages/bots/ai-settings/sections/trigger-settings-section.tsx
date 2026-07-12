@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { AiTriggerConfig } from "@cos-tool-bot/shared";
 
 export function TriggerSettingsSection({
@@ -20,12 +21,10 @@ export function TriggerSettingsSection({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="replyToBot"
             checked={config.replyToBot}
-            onChange={(e) => onUpdate("replyToBot", e.target.checked)}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(checked) => onUpdate("replyToBot", checked)}
           />
           <label htmlFor="replyToBot" className="text-sm">
             Trigger when replying to bot
@@ -33,12 +32,10 @@ export function TriggerSettingsSection({
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="mentionBot"
             checked={config.mentionBot}
-            onChange={(e) => onUpdate("mentionBot", e.target.checked)}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(checked) => onUpdate("mentionBot", checked)}
           />
           <label htmlFor="mentionBot" className="text-sm">
             Trigger when @mentioning bot

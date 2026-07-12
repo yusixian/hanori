@@ -1,21 +1,23 @@
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { SelectMenu } from "@/components/ui/select-menu";
 import { Popover } from "@/components/ui/popover";
 import type { ModelCapability, ModelEntry } from "@cos-tool-bot/shared";
 import { inferCapabilities } from "@cos-tool-bot/shared";
 import { Minus, Settings } from "lucide-react";
 import { CAPABILITY_BADGES } from "../types";
+import type { ReactNode } from "react";
 
 export function ModelRow({
   entry,
   isActive,
-  onSetActive,
+  radioControl,
   onRemove,
   onUpdate,
 }: {
   entry: ModelEntry;
   isActive: boolean;
-  onSetActive: () => void;
+  radioControl: ReactNode;
   onRemove: () => void;
   onUpdate: (updates: Partial<ModelEntry>) => void;
 }) {
@@ -25,12 +27,7 @@ export function ModelRow({
     <div
       className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm ${isActive ? "bg-primary/10 border-primary/30" : "hover:bg-accent/50 border-transparent"}`}
     >
-      <button
-        type="button"
-        className={`h-3 w-3 shrink-0 rounded-full border-2 ${isActive ? "border-primary bg-primary" : "border-muted-foreground/40"}`}
-        onClick={onSetActive}
-        title={isActive ? "Current default" : "Set as default"}
-      />
+      <span className="flex size-8 shrink-0 items-center justify-center">{radioControl}</span>
       <span className="flex-1 truncate font-mono text-xs">{entry.id}</span>
       {entry.label && <span className="text-muted-foreground text-xs">({entry.label})</span>}
       <span className="flex gap-0.5">
@@ -47,7 +44,11 @@ export function ModelRow({
       </span>
       <Popover
         trigger={
-          <button type="button" className="text-muted-foreground hover:text-foreground p-0.5">
+          <button
+            type="button"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg focus-visible:ring-2"
+            aria-label={`Configure ${entry.id}`}
+          >
             <Settings className="h-3.5 w-3.5" />
           </button>
         }
@@ -97,20 +98,22 @@ export function ModelRow({
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <label className="text-xs">Thinking</label>
-              <select
-                value={entry.thinking ?? ""}
-                onChange={(e) => {
-                  const val = e.target.value;
+              <SelectMenu
+                value={entry.thinking ?? "default"}
+                onValueChange={(val) => {
                   onUpdate({
                     thinking: val === "enabled" || val === "disabled" ? val : undefined,
                   });
                 }}
                 className="border-input bg-background h-7 w-full rounded border px-2 text-xs"
-              >
-                <option value="">Default</option>
-                <option value="enabled">Enabled</option>
-                <option value="disabled">Disabled</option>
-              </select>
+                placeholder="Default"
+                ariaLabel="Thinking mode"
+                options={[
+                  { value: "default", label: "Default" },
+                  { value: "enabled", label: "Enabled" },
+                  { value: "disabled", label: "Disabled" },
+                ]}
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs">Thinking Budget</label>
@@ -160,8 +163,9 @@ export function ModelRow({
       </Popover>
       <button
         type="button"
-        className="text-muted-foreground p-0.5 hover:text-red-500"
-        onClick={onRemove}
+        className="text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg hover:bg-red-50 hover:text-red-500 focus-visible:ring-2"
+        onClick={() => window.confirm(`Remove model “${entry.id}”?`) && onRemove()}
+        aria-label={`Remove ${entry.id}`}
       >
         <Minus className="h-3.5 w-3.5" />
       </button>

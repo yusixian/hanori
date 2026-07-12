@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { ArtworkToolsConfig } from "@cos-tool-bot/shared";
 
 export function ArtworkToolsSection({
@@ -16,12 +17,10 @@ export function ArtworkToolsSection({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="artworkToolsEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="artworkToolsEnabled" className="text-sm font-medium">
             Enable Artwork Tools

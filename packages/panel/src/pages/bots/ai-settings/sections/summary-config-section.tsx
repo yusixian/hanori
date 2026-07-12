@@ -2,6 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { SummaryConfigStored } from "@cos-tool-bot/shared";
 import { Link } from "react-router";
+import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Textarea } from "@/components/ui/textarea";
 
 export function SummaryConfigSection({
   botId,
@@ -37,12 +40,10 @@ export function SummaryConfigSection({
         </p>
 
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="summaryEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="summaryEnabled" className="text-sm font-medium">
             Enable chat summaries
@@ -137,11 +138,9 @@ export function SummaryConfigSection({
           <div className="flex gap-4">
             {roleOptions.map((role) => (
               <label key={role} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={currentRoleFilter.includes(role)}
-                  onChange={() => toggleRole(role)}
-                  className="border-input h-4 w-4 rounded"
+                  onCheckedChange={() => toggleRole(role)}
                 />
                 {role}
               </label>
@@ -151,8 +150,7 @@ export function SummaryConfigSection({
 
         <div className="space-y-1.5">
           <label className="text-sm font-medium">System prompt (optional)</label>
-          <textarea
-            className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          <Textarea
             placeholder="Leave empty to use the built-in prompt"
             value={config.systemPrompt ?? ""}
             onChange={(e) => onUpdate({ systemPrompt: e.target.value || undefined })}

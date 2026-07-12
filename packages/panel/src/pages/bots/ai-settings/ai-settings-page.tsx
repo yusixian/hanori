@@ -33,7 +33,7 @@ import {
   Server,
   Wrench,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PromptPreviewDialog } from "./prompt-preview-dialog";
 import { useParams, useSearchParams } from "react-router";
 import {
@@ -65,12 +65,38 @@ import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
 import { WebToolsSection } from "./sections/web-tools-section";
 import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
 import type { StatusMessage } from "./types";
+import { toast } from "sonner";
+
+const DEFAULT_SUMMARY_CONFIG: SummaryConfigStored = {
+  enabled: false,
+  defaultWindowHours: 24,
+  defaultMaxMessages: 2000,
+  defaultCooldownSeconds: 300,
+};
+
+const DEFAULT_IMAGE_OCR_CONFIG: ImageOcrConfig = { enabled: false };
+
+function serializeDraft(
+  config: AiConfigPublic,
+  triggerWordsText: string,
+  stickerPacksText: string,
+  summaryConfig: SummaryConfigStored,
+  imageOcrConfig: ImageOcrConfig,
+) {
+  return JSON.stringify({
+    config,
+    triggerWordsText,
+    stickerPacksText,
+    summaryConfig,
+    imageOcrConfig,
+  });
+}
 
 export function BotAiSettingsPage() {
   const { botId } = useParams<{ botId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
-  const [apiKey, setApiKey] = useState("");
+  const savedDraftRef = useRef("");
   // Draft per-provider api keys: keyed by provider id (or temp "__new_..." id until saved).
   // Cleared on save. Preserve-when-empty: empty string ⇒ keep existing encrypted key.
   const [providerApiKeys, setProviderApiKeys] = useState<Record<string, string>>({});
@@ -81,15 +107,8 @@ export function BotAiSettingsPage() {
   const [stickerPacksText, setStickerPacksText] = useState("");
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>({
-    enabled: false,
-    defaultWindowHours: 24,
-    defaultMaxMessages: 2000,
-    defaultCooldownSeconds: 300,
-  });
-  const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>({
-    enabled: false,
-  });
+  const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
+  const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
 
   const sectionItems: AiSettingsNavItem[] = useMemo(
     () => [
@@ -144,15 +163,22 @@ export function BotAiSettingsPage() {
       const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
       const json = await res.json();
       if (json.ok) {
+        const triggerText = json.data.triggerConfig.triggerWords.join(", ");
+        const stickersText = json.data.stickerPacks?.join(", ") ?? "";
+        const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
+        const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
         setConfig(json.data);
-        setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
-        setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
-        if (json.data.summaryConfig) {
-          setSummaryConfig(json.data.summaryConfig);
-        }
-        if (json.data.imageOcrConfig) {
-          setImageOcrConfig(json.data.imageOcrConfig);
-        }
+        setTriggerWordsText(triggerText);
+        setStickerPacksText(stickersText);
+        setSummaryConfig(nextSummary);
+        setImageOcrConfig(nextOcr);
+        savedDraftRef.current = serializeDraft(
+          json.data,
+          triggerText,
+          stickersText,
+          nextSummary,
+          nextOcr,
+        );
       }
     } catch {
       setMessage({ type: "error", text: "Failed to load AI config" });
@@ -164,6 +190,28 @@ export function BotAiSettingsPage() {
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  useEffect(() => {
+    if (!message) return;
+    if (message.type === "success") toast.success(message.text);
+    else toast.error(message.text);
+  }, [message]);
+
+  const isDirty =
+    savedDraftRef.current !== "" &&
+    (savedDraftRef.current !==
+      serializeDraft(config, triggerWordsText, stickerPacksText, summaryConfig, imageOcrConfig) ||
+      embeddingApiKey !== "" ||
+      Object.keys(providerApiKeys).length > 0);
+
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [isDirty]);
 
   const handleSave = async () => {
     if (!botId) return;
@@ -177,14 +225,19 @@ export function BotAiSettingsPage() {
         param: { botId },
         json: {
           enabled: config.enabled,
-          apiKey: apiKey || undefined,
           baseURL: activeProvider?.baseURL ?? config.baseURL,
           providerFormat: activeProvider?.providerFormat ?? config.providerFormat,
           model: activeProvider?.defaultModel ?? config.model,
           systemPrompt: config.systemPrompt,
           behavioralPrompt: config.behavioralPrompt || undefined,
           groupBehavioralPrompt: config.groupBehavioralPrompt || undefined,
-          triggerConfig: config.triggerConfig,
+          triggerConfig: {
+            ...config.triggerConfig,
+            triggerWords: triggerWordsText
+              .split(",")
+              .map((word) => word.trim())
+              .filter(Boolean),
+          },
           groupOverrides: config.groupOverrides,
           conversationConfig: config.conversationConfig,
           memoryConfig: config.memoryConfig,
@@ -243,12 +296,22 @@ export function BotAiSettingsPage() {
       }
       const json = await res.json();
       if (json.ok) {
+        const triggerText = json.data.triggerConfig.triggerWords.join(", ");
+        const stickersText = json.data.stickerPacks?.join(", ") ?? "";
+        const nextSummary = json.data.summaryConfig ?? summaryConfig;
+        const nextOcr = json.data.imageOcrConfig ?? imageOcrConfig;
         setConfig(json.data);
-        setTriggerWordsText(json.data.triggerConfig.triggerWords.join(", "));
-        setStickerPacksText(json.data.stickerPacks?.join(", ") ?? "");
-        setApiKey("");
+        setTriggerWordsText(triggerText);
+        setStickerPacksText(stickersText);
         setEmbeddingApiKey("");
         setProviderApiKeys({});
+        savedDraftRef.current = serializeDraft(
+          json.data,
+          triggerText,
+          stickersText,
+          nextSummary,
+          nextOcr,
+        );
         setMessage({ type: "success", text: "AI config saved" });
       } else {
         setMessage({
@@ -429,7 +492,7 @@ export function BotAiSettingsPage() {
   };
 
   if (loading) {
-    return <p className="text-muted-foreground text-sm">Loading...</p>;
+    return <p className="text-muted-foreground text-sm">Loading…</p>;
   }
 
   return (
@@ -438,9 +501,14 @@ export function BotAiSettingsPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-balance">AI Settings</h1>
-            <p className="mt-1 hidden text-sm text-slate-500 sm:block">
-              Configure how this bot thinks, responds, and uses tools.
-            </p>
+            <div className="mt-1 hidden items-center gap-2 text-sm text-slate-500 sm:flex">
+              <span>Configure how this bot thinks, responds, and uses tools.</span>
+              {isDirty && (
+                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                  Unsaved Changes
+                </span>
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => setPreviewOpen(true)}>
@@ -452,7 +520,7 @@ export function BotAiSettingsPage() {
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving...
+                  Saving…
                 </>
               ) : (
                 "Save"
@@ -469,7 +537,16 @@ export function BotAiSettingsPage() {
 
       <PromptPreviewDialog
         botId={botId!}
-        config={config}
+        config={{
+          ...config,
+          triggerConfig: {
+            ...config.triggerConfig,
+            triggerWords: triggerWordsText
+              .split(",")
+              .map((word) => word.trim())
+              .filter(Boolean),
+          },
+        }}
         stickerPacks={stickerPacksText
           .split(",")
           .map((s) => s.trim())
@@ -477,15 +554,6 @@ export function BotAiSettingsPage() {
         open={previewOpen}
         onClose={() => setPreviewOpen(false)}
       />
-
-      {message && (
-        <div
-          role="status"
-          className={`fixed right-5 bottom-5 z-50 max-w-sm rounded-xl px-4 py-3 text-sm shadow-lg ${message.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}
-        >
-          {message.text}
-        </div>
-      )}
 
       <div className="space-y-5">
         <div className="min-w-0">

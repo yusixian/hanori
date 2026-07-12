@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { CodeBlock } from "@/components/ui/code-block";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import type { AiConfigPublic } from "@cos-tool-bot/shared";
@@ -148,17 +149,34 @@ export function PromptPreviewDialog({
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
+      <button
+        type="button"
+        className="absolute inset-0 bg-black/50"
+        onClick={onClose}
+        aria-label="Close prompt preview"
+      />
 
       {/* Dialog */}
-      <div className="bg-card relative mx-4 flex max-h-[90vh] w-full max-w-4xl flex-col rounded-lg shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="prompt-preview-title"
+        className="bg-card relative mx-4 flex max-h-[90vh] w-full max-w-4xl flex-col overscroll-contain rounded-lg shadow-xl"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div className="flex items-center gap-3">
             <Eye className="h-5 w-5 text-purple-500" />
-            <h2 className="text-lg font-semibold">Prompt Preview</h2>
+            <h2 id="prompt-preview-title" className="text-lg font-semibold">
+              Prompt Preview
+            </h2>
           </div>
-          <button type="button" className="hover:bg-accent rounded p-1" onClick={onClose}>
+          <button
+            type="button"
+            className="hover:bg-accent focus-visible:ring-ring rounded p-1 focus-visible:ring-2"
+            onClick={onClose}
+            aria-label="Close prompt preview"
+          >
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -176,6 +194,7 @@ export function PromptPreviewDialog({
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setIsPrivate(true)}
+              aria-pressed={isPrivate}
             >
               Private
             </button>
@@ -188,6 +207,7 @@ export function PromptPreviewDialog({
                   : "text-muted-foreground hover:text-foreground",
               )}
               onClick={() => setIsPrivate(false)}
+              aria-pressed={!isPrivate}
             >
               Group
             </button>
@@ -195,7 +215,7 @@ export function PromptPreviewDialog({
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={handleCopy}>
             <ClipboardCopy className="h-3.5 w-3.5" />
-            {copied ? "Copied!" : "Copy"}
+            {copied ? "Copied" : "Copy"}
           </Button>
         </div>
 
@@ -206,9 +226,9 @@ export function PromptPreviewDialog({
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
           ) : (
-            <pre className="font-mono text-sm leading-relaxed break-words whitespace-pre-wrap">
+            <CodeBlock className="max-h-none text-sm leading-relaxed">
               {highlightDynamic(fullPrompt)}
-            </pre>
+            </CodeBlock>
           )}
         </div>
 

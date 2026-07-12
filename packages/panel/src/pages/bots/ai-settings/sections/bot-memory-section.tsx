@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { BotMemoryConfig } from "@cos-tool-bot/shared";
 
 export function BotMemorySection({
@@ -16,12 +17,10 @@ export function BotMemorySection({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="botMemoryEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="botMemoryEnabled" className="text-sm font-medium">
             Enable Bot Memory
@@ -49,13 +48,11 @@ export function BotMemorySection({
         </div>
 
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="autoInjectMemories"
             disabled={!config.enabled}
             checked={config.autoInjectMemories}
-            onChange={(e) => onUpdate({ autoInjectMemories: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(autoInjectMemories) => onUpdate({ autoInjectMemories })}
           />
           <label htmlFor="autoInjectMemories" className="text-sm">
             Auto-inject memories into system prompt

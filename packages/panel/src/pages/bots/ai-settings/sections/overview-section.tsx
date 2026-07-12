@@ -1,4 +1,5 @@
 import { Card } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import type { AiConfigPublic } from "@cos-tool-bot/shared";
 import { AlertTriangle, Bot, Boxes, Brain, ChevronRight, Wrench } from "lucide-react";
@@ -59,12 +60,7 @@ export function OverviewSection({
             </div>
           </div>
           <label className="flex min-h-10 cursor-pointer items-center gap-3 text-sm font-medium">
-            <input
-              type="checkbox"
-              checked={config.enabled}
-              onChange={(event) => onEnabledChange(event.target.checked)}
-              className="border-input size-4 rounded"
-            />
+            <Switch checked={config.enabled} onCheckedChange={onEnabledChange} />
             Enable AI replies
           </label>
         </div>

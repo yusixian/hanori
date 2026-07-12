@@ -1,4 +1,6 @@
 import type { AiConfigPublic } from "@cos-tool-bot/shared";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 
 export function GlobalSettingsSection({
   config,
@@ -10,9 +12,8 @@ export function GlobalSettingsSection({
   return (
     <div className="space-y-4 p-1">
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Behavioral Prompt</label>
-        <textarea
-          className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+        <Label>Behavioral Prompt</Label>
+        <Textarea
           value={config.behavioralPrompt ?? ""}
           onChange={(e) => onConfigChange({ behavioralPrompt: e.target.value })}
           placeholder="General behavioral instructions (persona, tone, rules...). Injected before system prompt for both private and group chats."
@@ -23,9 +24,8 @@ export function GlobalSettingsSection({
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Group Behavioral Prompt</label>
-        <textarea
-          className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-20 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+        <Label>Group Behavioral Prompt</Label>
+        <Textarea
           value={config.groupBehavioralPrompt ?? ""}
           onChange={(e) => onConfigChange({ groupBehavioralPrompt: e.target.value })}
           placeholder="Group-only behavioral instructions (group etiquette, multi-user rules...). Only injected in group chats."
@@ -36,9 +36,8 @@ export function GlobalSettingsSection({
       </div>
 
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">System Prompt</label>
-        <textarea
-          className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none"
+        <Label>System Prompt</Label>
+        <Textarea
           value={config.systemPrompt}
           onChange={(e) => onConfigChange({ systemPrompt: e.target.value })}
           placeholder="You are a helpful assistant..."

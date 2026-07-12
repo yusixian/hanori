@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { client } from "@/lib/client";
 import { ExternalLink, Plug, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -58,7 +59,7 @@ export function McpServersSection({
       </CardHeader>
       <CardContent>
         {loading ? (
-          <p className="text-muted-foreground text-sm">Loading...</p>
+          <p className="text-muted-foreground text-sm">Loading…</p>
         ) : error ? (
           <p className="text-sm text-red-500">{error}</p>
         ) : servers.length === 0 ? (
@@ -76,11 +77,9 @@ export function McpServersSection({
                 key={server.id}
                 className="hover:bg-accent/50 flex cursor-pointer items-center gap-3 rounded-md p-2 transition-colors"
               >
-                <input
-                  type="checkbox"
-                  className="border-input h-4 w-4 rounded"
+                <Checkbox
                   checked={selectedIds.includes(server.id)}
-                  onChange={() => toggle(server.id)}
+                  onCheckedChange={() => toggle(server.id)}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

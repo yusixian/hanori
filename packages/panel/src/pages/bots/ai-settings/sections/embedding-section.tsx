@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 
 export interface EmbeddingFormConfig {
   enabled: boolean;
@@ -24,12 +25,10 @@ export function EmbeddingSection({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <Switch
             id="embeddingEnabled"
             checked={config.enabled}
-            onChange={(e) => onUpdate({ enabled: e.target.checked })}
-            className="border-input h-4 w-4 rounded"
+            onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="embeddingEnabled" className="text-sm font-medium">
             Enable Embedding

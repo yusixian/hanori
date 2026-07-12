@@ -6,6 +6,7 @@ import { BrowserRouter, Routes, Route, Outlet } from "react-router";
 import { authProvider } from "@/providers/auth-provider";
 import { dataProvider } from "@/providers/data-provider";
 import { AppLayout } from "@/components/layout/app-layout";
+import { Toaster } from "@/components/ui/sonner";
 
 const LoginPage = lazy(() => import("@/pages/login").then((m) => ({ default: m.LoginPage })));
 const BackupPage = lazy(() => import("@/pages/backup").then((m) => ({ default: m.BackupPage })));
@@ -150,6 +151,7 @@ export function App() {
           </Suspense>
         </Refine>
       </BrowserRouter>
+      <Toaster />
     </ErrorBoundary>
   );
 }

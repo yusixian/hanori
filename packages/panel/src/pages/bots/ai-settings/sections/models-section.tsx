@@ -2,6 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { cn } from "@/lib/utils";
 import { client } from "@/lib/client";
 import type { ModelEntry } from "@cos-tool-bot/shared";
@@ -116,7 +118,7 @@ export function ModelsSection({
       <CardContent className="space-y-4">
         {/* Configured models list */}
         {models.length > 0 ? (
-          <div className="space-y-2">
+          <RadioGroup value={activeModel} onValueChange={onActiveModelChange} className="space-y-2">
             {groupModelsByProvider(models).map(([group, entries]) => (
               <div key={group}>
                 <p className="text-muted-foreground mb-1 text-xs font-medium uppercase">{group}</p>
@@ -125,14 +127,16 @@ export function ModelsSection({
                     key={m.id}
                     entry={m}
                     isActive={m.id === activeModel}
-                    onSetActive={() => onActiveModelChange(m.id)}
+                    radioControl={
+                      <RadioGroupItem value={m.id} aria-label={`Set ${m.id} as default`} />
+                    }
                     onRemove={() => removeModel(m.id)}
                     onUpdate={(updates) => updateModelEntry(m.id, updates)}
                   />
                 ))}
               </div>
             ))}
-          </div>
+          </RadioGroup>
         ) : (
           <p className="text-muted-foreground text-sm">
             No models configured. Click "Fetch Models" to discover available models.
@@ -259,14 +263,12 @@ export function ModelsSection({
                                     : "hover:bg-accent/50",
                               )}
                             >
-                              {/* Custom checkbox */}
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 disabled={alreadyAdded}
                                 checked={alreadyAdded || isSelected}
-                                onChange={(e) => {
+                                onCheckedChange={(checked) => {
                                   const next = new Set(selectedFetchedModels);
-                                  if (e.target.checked) next.add(m.id);
+                                  if (checked === true) next.add(m.id);
                                   else next.delete(m.id);
                                   setSelectedFetchedModels(next);
                                 }}
@@ -346,15 +348,31 @@ export function ModelsSection({
 
         {/* /model command access */}
         <div className="space-y-1.5 border-t pt-4">
-          <label className="text-sm font-medium">/model Command Access</label>
-          <select
-            className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
+          <span className="text-sm font-medium">/model Command Access</span>
+          <RadioGroup
+            className="grid gap-2 sm:grid-cols-2"
             value={modelCommandAccess}
-            onChange={(e) => onModelCommandAccessChange(e.target.value as "admin" | "all")}
+            onValueChange={(value) => onModelCommandAccessChange(value as "admin" | "all")}
           >
-            <option value="admin">Admin only</option>
-            <option value="all">All users</option>
-          </select>
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
+              <RadioGroupItem value="admin" />
+              <span>
+                <span className="block text-sm font-medium">Admin Only</span>
+                <span className="text-xs text-slate-500">
+                  Only bot administrators can switch models.
+                </span>
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
+              <RadioGroupItem value="all" />
+              <span>
+                <span className="block text-sm font-medium">All Users</span>
+                <span className="text-xs text-slate-500">
+                  Anyone in the chat can switch models.
+                </span>
+              </span>
+            </label>
+          </RadioGroup>
           <p className="text-muted-foreground text-xs">
             Who can use the /model command to switch AI models per-chat in Telegram.
           </p>
