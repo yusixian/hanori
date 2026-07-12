@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import type { RssCollectionRecord } from "@cos-tool-bot/shared";
 import { Loader2 } from "lucide-react";
@@ -97,7 +98,7 @@ export function CollectionForm({
         <label className="text-muted-foreground text-xs">
           Digest Prompt (optional, variables: {"{{name}}"} {"{{slug}}"} {"{{date}}"})
         </label>
-        <textarea
+        <Textarea
           className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           placeholder={DIGEST_PROMPT_PLACEHOLDER}
           value={digestPrompt}

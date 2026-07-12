@@ -2,6 +2,9 @@ import { AuthImage } from "@/components/ui/auth-image";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Pagination } from "@/components/ui/pagination";
+import { Select } from "@/components/ui/select";
+import { InlineDisclosure } from "@/components/ui/inline-disclosure";
+import { CodeBlock } from "@/components/ui/code-block";
 import { authFetch, client } from "@/lib/client";
 import { formatDuration } from "@/lib/format";
 import { DEFAULT_NSFW_THRESHOLD } from "@cos-tool-bot/shared";
@@ -225,15 +228,11 @@ function NsfwScoresDetails({ scores }: { scores: NsfwScores[] }) {
 
 function PixaiConfigDetails({ config }: { config: Record<string, unknown> }) {
   return (
-    <details className="group/cfg mt-1 border-t pt-1">
-      <summary className="flex cursor-pointer list-none items-center gap-1 select-none">
-        <ChevronDown className="h-3 w-3 transition-transform group-open/cfg:rotate-180" />
-        <span className="text-[10px] font-semibold tracking-wider uppercase">Image Config</span>
-      </summary>
-      <pre className="bg-muted mt-1 max-h-48 overflow-auto rounded p-2 text-[11px] leading-relaxed">
+    <InlineDisclosure title="Image Config" className="mt-1 border-t pt-1" contentClassName="pt-1">
+      <CodeBlock className="max-h-48 text-[11px] leading-relaxed">
         {JSON.stringify(config, null, 2)}
-      </pre>
-    </details>
+      </CodeBlock>
+    </InlineDisclosure>
   );
 }
 
@@ -323,7 +322,7 @@ export function BotGenerationsPage() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <Select
           className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
           value={filterStatus}
           onChange={(e) => {
@@ -335,7 +334,7 @@ export function BotGenerationsPage() {
           <option value="pending">Pending</option>
           <option value="completed">Completed</option>
           <option value="failed">Failed</option>
-        </select>
+        </Select>
 
         {filterStatus && (
           <button
@@ -483,11 +482,7 @@ export function BotGenerationsPage() {
                   )}
 
                   {/* Prompt (collapsible) */}
-                  <details className="group">
-                    <summary className="text-muted-foreground flex cursor-pointer list-none items-center gap-1 text-xs select-none">
-                      <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-                      <span className="font-medium">Prompt</span>
-                    </summary>
+                  <InlineDisclosure title="Prompt">
                     <div className="mt-1.5 space-y-1.5 pl-4">
                       <div className="text-sm break-words whitespace-pre-wrap">{g.prompt}</div>
                       {g.negativePrompt && (
@@ -496,14 +491,10 @@ export function BotGenerationsPage() {
                         </div>
                       )}
                     </div>
-                  </details>
+                  </InlineDisclosure>
 
                   {/* Meta info (collapsible) */}
-                  <details className="group">
-                    <summary className="text-muted-foreground flex cursor-pointer list-none items-center gap-1 border-t pt-2 text-xs select-none">
-                      <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
-                      <span className="font-medium">Details</span>
-                    </summary>
+                  <InlineDisclosure title="Details" className="border-t pt-1">
                     <div className="text-muted-foreground mt-1.5 space-y-0.5 pl-4 text-xs">
                       <div>
                         <span className="font-medium">Model:</span> {g.modelId}
@@ -555,7 +546,7 @@ export function BotGenerationsPage() {
                           <PixaiConfigDetails config={g.pixaiConfig as Record<string, unknown>} />
                         )}
                     </div>
-                  </details>
+                  </InlineDisclosure>
                 </CardContent>
               </Card>
             </div>

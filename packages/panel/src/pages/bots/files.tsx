@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Popover } from "@/components/ui/popover";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
@@ -907,12 +908,7 @@ export function BotFilesPage() {
                 <div className="flex items-center gap-2">
                   {fileCategory === "text" && (
                     <label className="text-muted-foreground mr-1 flex cursor-pointer items-center gap-2 text-xs whitespace-nowrap">
-                      <input
-                        type="checkbox"
-                        checked={autoSave}
-                        onChange={(e) => setAutoSave(e.target.checked)}
-                        className="accent-blue-600"
-                      />
+                      <Switch checked={autoSave} onCheckedChange={setAutoSave} />
                       Auto-save
                     </label>
                   )}

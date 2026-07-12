@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
 import { Download, Loader2 } from "lucide-react";
@@ -116,14 +117,14 @@ export function BotExportPage() {
               )}
               Export
             </Button>
-            <select
+            <Select
               value={exportFormat}
               onChange={(e) => setExportFormat(e.target.value as ExportFormat)}
               className="border-input bg-background text-foreground rounded-md border px-3 py-1.5 text-sm"
             >
               <option value="json">JSON</option>
               <option value="gzip">Gzip (.json.gz)</option>
-            </select>
+            </Select>
           </div>
         </CardContent>
       </Card>

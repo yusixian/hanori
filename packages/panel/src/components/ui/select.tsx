@@ -1,16 +1,52 @@
-import { cn } from "@/lib/utils";
-import type { SelectHTMLAttributes } from "react";
+import { SelectMenu, type SelectMenuOption } from "@/components/ui/select-menu";
+import {
+  Children,
+  isValidElement,
+  type ChangeEvent,
+  type ReactNode,
+  type SelectHTMLAttributes,
+} from "react";
 
-export function Select({ className, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
+const EMPTY_VALUE = "__select_empty_value__";
+
+function collectOptions(children: ReactNode): SelectMenuOption[] {
+  return Children.toArray(children).flatMap((child) => {
+    if (!isValidElement<{ value?: string | number; children?: ReactNode }>(child)) return [];
+    if (child.type === "option") {
+      const value = String(child.props.value ?? "");
+      return [
+        { value: value === "" ? EMPTY_VALUE : value, label: String(child.props.children ?? "") },
+      ];
+    }
+    return collectOptions(child.props.children);
+  });
+}
+
+export function Select({
+  value,
+  defaultValue,
+  onChange,
+  children,
+  className,
+  disabled,
+  id,
+  "aria-label": ariaLabel,
+}: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select
-      className={cn(
-        "flex h-10 rounded-lg border border-input bg-white px-3.5 py-2 text-sm shadow-sm transition-[border-color,box-shadow] duration-150",
-        "focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/20",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        className,
-      )}
-      {...props}
+    <SelectMenu
+      id={id}
+      value={String(value ?? defaultValue ?? "") || EMPTY_VALUE}
+      disabled={disabled}
+      className={className}
+      ariaLabel={ariaLabel}
+      options={collectOptions(children)}
+      onValueChange={(nextValue) => {
+        const resolvedValue = nextValue === EMPTY_VALUE ? "" : nextValue;
+        onChange?.({
+          target: { value: resolvedValue },
+          currentTarget: { value: resolvedValue },
+        } as ChangeEvent<HTMLSelectElement>);
+      }}
     />
   );
 }

@@ -3,6 +3,8 @@ import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -213,7 +215,7 @@ export function BotMemoriesPage() {
               <label htmlFor="create-mem-content" className="text-muted-foreground text-xs">
                 Content *
               </label>
-              <textarea
+              <Textarea
                 id="create-mem-content"
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 rows={3}
@@ -289,7 +291,7 @@ export function BotMemoriesPage() {
           Search
         </Button>
 
-        <select
+        <Select
           className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
           value={filterCategory}
           onChange={(e) => {
@@ -303,9 +305,9 @@ export function BotMemoriesPage() {
               {c}
             </option>
           ))}
-        </select>
+        </Select>
 
-        <select
+        <Select
           className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
           value={filterTelegramId}
           onChange={(e) => {
@@ -315,7 +317,7 @@ export function BotMemoriesPage() {
         >
           <option value="">All Memories</option>
           <option value="general">General Only</option>
-        </select>
+        </Select>
 
         {(search || filterCategory || filterTelegramId) && (
           <Button
@@ -367,7 +369,7 @@ export function BotMemoriesPage() {
                       >
                         Content
                       </label>
-                      <textarea
+                      <Textarea
                         id={`edit-mem-content-${m.id}`}
                         className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                         rows={3}

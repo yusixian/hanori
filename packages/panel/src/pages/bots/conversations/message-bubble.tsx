@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { CodeBlock } from "@/components/ui/code-block";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { CollapsibleContent } from "./collapsible-content";
@@ -67,11 +68,7 @@ function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
               </>
             )}
           </button>
-          {expanded && (
-            <pre className="mt-1 max-h-60 overflow-auto rounded bg-black/5 p-2 font-mono text-xs dark:bg-white/5">
-              {parsedArgs}
-            </pre>
-          )}
+          {expanded && <CodeBlock className="mt-1 max-h-60 text-xs">{parsedArgs}</CodeBlock>}
         </>
       )}
     </div>

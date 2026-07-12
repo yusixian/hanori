@@ -1,6 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { CodeBlock } from "@/components/ui/code-block";
 import { client } from "@/lib/client";
 import type {
   AiProviderEntryPublic,
@@ -166,13 +170,7 @@ export function SummaryConfigForm({
           />
         </div>
         <div className="flex items-center gap-2 pt-5">
-          <input
-            type="checkbox"
-            id="isActive"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-            className="border-input h-4 w-4 rounded"
-          />
+          <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
           <label htmlFor="isActive" className="text-sm font-medium">
             启用
           </label>
@@ -242,21 +240,21 @@ export function SummaryConfigForm({
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">权限</label>
-          <select
+          <Select
             className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
             value={accessMode}
             onChange={(e) => setAccessMode(e.target.value as SummaryAccessMode)}
           >
             <option value="all">全员</option>
             <option value="admin">仅管理员</option>
-          </select>
+          </Select>
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <label className="text-sm font-medium">Provider</label>
-          <select
+          <Select
             className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm"
             value={providerId}
             onChange={(e) => setProviderId(e.target.value)}
@@ -271,7 +269,7 @@ export function SummaryConfigForm({
                 {p.label} ({p.providerFormat})
               </option>
             ))}
-          </select>
+          </Select>
           {providersError && <p className="text-xs text-red-500">{providersError}</p>}
         </div>
         <div className="space-y-1">
@@ -309,13 +307,11 @@ export function SummaryConfigForm({
             {loadingDefaults ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <pre className="font-mono break-words whitespace-pre-wrap">
-                {defaults?.systemPrompt ?? "—"}
-              </pre>
+              <CodeBlock>{defaults?.systemPrompt ?? "—"}</CodeBlock>
             )}
           </div>
         )}
-        <textarea
+        <Textarea
           className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           placeholder="留空 = 使用全局默认 prompt"
           value={customPrompt}

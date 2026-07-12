@@ -1,6 +1,9 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ALL_EMAIL_EVENT_TYPES, DEFAULT_LARK_MENTION_MAP } from "@cos-tool-bot/shared";
 import type { BotPlatform, EmailEventType } from "@cos-tool-bot/shared";
 import type { FormEvent } from "react";
@@ -107,30 +110,27 @@ function EventTypeFilter({
       <label className="text-xs font-medium">Notification Types</label>
       {EVENT_TYPE_GROUPS.map((group) => {
         const allDisabled = group.events.every((e) => disabledEvents.has(e));
+        const disabledCount = group.events.filter((event) => disabledEvents.has(event)).length;
         return (
           <div key={group.label} className="space-y-1">
             <div className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={!allDisabled}
-                onChange={() => toggleGroup(group.events, allDisabled)}
+              <Checkbox
+                checked={
+                  disabledCount > 0 && disabledCount < group.events.length
+                    ? "indeterminate"
+                    : !allDisabled
+                }
+                onCheckedChange={() => toggleGroup(group.events, allDisabled)}
                 className="border-input h-3.5 w-3.5 rounded"
-                ref={(el) => {
-                  if (el) {
-                    const disabledCount = group.events.filter((e) => disabledEvents.has(e)).length;
-                    el.indeterminate = disabledCount > 0 && disabledCount < group.events.length;
-                  }
-                }}
               />
               <span className="text-xs font-medium">{group.label}</span>
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5">
               {group.events.map((event) => (
                 <label key={event} className="flex items-center gap-1 text-xs">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={!disabledEvents.has(event)}
-                    onChange={() => toggle(event)}
+                    onCheckedChange={() => toggle(event)}
                     className="border-input h-3 w-3 rounded"
                   />
                   {formatEventLabel(event)}
@@ -273,30 +273,20 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
           {!isEdit && (
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Platform</label>
-              <div className="flex gap-3">
+              <RadioGroup
+                value={platform}
+                onValueChange={(value) => setPlatform(value as BotPlatform)}
+                className="flex gap-3"
+              >
                 <label className="flex items-center gap-1.5 text-sm">
-                  <input
-                    type="radio"
-                    name="platform"
-                    value="telegram"
-                    checked={platform === "telegram"}
-                    onChange={() => setPlatform("telegram")}
-                    className="border-input h-4 w-4"
-                  />
+                  <RadioGroupItem value="telegram" />
                   Telegram
                 </label>
                 <label className="flex items-center gap-1.5 text-sm">
-                  <input
-                    type="radio"
-                    name="platform"
-                    value="lark-webhook"
-                    checked={platform === "lark-webhook"}
-                    onChange={() => setPlatform("lark-webhook")}
-                    className="border-input h-4 w-4"
-                  />
+                  <RadioGroupItem value="lark-webhook" />
                   Lark Webhook
                 </label>
-              </div>
+              </RadioGroup>
             </div>
           )}
 
@@ -397,12 +387,10 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
               <div className="space-y-3 rounded-md border p-3">
                 <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <Switch
                     id="emailForward"
                     checked={emailEnabled}
-                    onChange={(e) => setEmailEnabled(e.target.checked)}
-                    className="border-input h-4 w-4 rounded"
+                    onCheckedChange={setEmailEnabled}
                   />
                   <label htmlFor="emailForward" className="text-sm font-medium">
                     Email Forwarding (IMAP)
@@ -552,7 +540,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                           >
                             Export CSV
                           </Button>
-                          <input
+                          <Input
                             ref={csvInputRef}
                             type="file"
                             accept=".csv"
@@ -582,13 +570,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
           )}
 
           <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="isActive"
-              checked={isActive}
-              onChange={(e) => setIsActive(e.target.checked)}
-              className="border-input h-4 w-4 rounded"
-            />
+            <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
             <label htmlFor="isActive" className="text-sm font-medium">
               Auto-start on server launch
             </label>

@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { CodeBlock } from "@/components/ui/code-block";
 import { client } from "@/lib/client";
 import type { ChatSummaryRecord, SummaryConfigRecord } from "@cos-tool-bot/shared";
 import {
@@ -60,7 +61,7 @@ function HistoryDetailModal({
         {record.errorMessage ? (
           <p className="text-sm text-red-500">{record.errorMessage}</p>
         ) : (
-          <pre className="text-sm break-words whitespace-pre-wrap">{record.content}</pre>
+          <CodeBlock className="max-h-none text-sm">{record.content}</CodeBlock>
         )}
       </div>
     </div>

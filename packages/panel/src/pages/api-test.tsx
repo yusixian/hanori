@@ -1,6 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { Loader2, Play, Trash2 } from "lucide-react";
@@ -184,14 +186,14 @@ export function ApiTestPage() {
           </div>
 
           <div className="flex gap-2">
-            <select
+            <Select
               className="border-input flex h-9 w-24 rounded-md border bg-transparent px-2 py-1 text-sm"
               value={method}
               onChange={(e) => setMethod(e.target.value as "GET" | "POST")}
             >
               <option value="GET">GET</option>
               <option value="POST">POST</option>
-            </select>
+            </Select>
             <Input
               value={endpoint}
               onChange={(e) => setEndpoint(e.target.value)}
@@ -213,7 +215,7 @@ export function ApiTestPage() {
               <label htmlFor="api-request-body" className="text-sm font-medium">
                 Request Body (JSON)
               </label>
-              <textarea
+              <Textarea
                 id="api-request-body"
                 className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-32 w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm focus-visible:ring-2 focus-visible:outline-none"
                 value={body}

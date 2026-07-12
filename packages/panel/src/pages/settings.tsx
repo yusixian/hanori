@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { authFetch } from "@/lib/client";
 import { useEffect, useState, type FormEvent } from "react";
 
@@ -267,7 +268,7 @@ export function SettingsPage() {
                 </label>
                 <label className="space-y-2 text-sm font-medium">
                   角色
-                  <select
+                  <Select
                     className="border-input h-10 rounded-lg border bg-white px-3 text-sm"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value)}
@@ -275,7 +276,7 @@ export function SettingsPage() {
                     {isOwner && <option value="admin">admin</option>}
                     <option value="editor">editor</option>
                     <option value="viewer">viewer</option>
-                  </select>
+                  </Select>
                 </label>
                 <Button type="submit">生成并复制链接</Button>
               </form>
@@ -301,7 +302,7 @@ export function SettingsPage() {
                       {member.role === "owner" ? (
                         <span className="bg-accent rounded-md px-2 py-1 text-xs">owner</span>
                       ) : (
-                        <select
+                        <Select
                           className="border-input h-9 rounded-lg border bg-white px-2 text-xs"
                           value={member.role}
                           onChange={(e) => void changeRole(member.id, e.target.value)}
@@ -309,7 +310,7 @@ export function SettingsPage() {
                           {isOwner && <option value="admin">admin</option>}
                           <option value="editor">editor</option>
                           <option value="viewer">viewer</option>
-                        </select>
+                        </Select>
                       )}
                       {isOwner && member.userId !== me.user.id && (
                         <Button

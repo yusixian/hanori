@@ -2,6 +2,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
 import { formatDuration } from "@/lib/format";
@@ -461,20 +463,18 @@ function StorageConfigSection() {
         {/* Storage type */}
         <div>
           <label className="mb-1 block text-sm font-medium">Storage Type</label>
-          <div className="flex gap-3">
+          <RadioGroup
+            value={form.storageType}
+            onValueChange={(value) => setField("storageType", value as BackupStorageType)}
+            className="flex gap-3"
+          >
             {(["local", "webdav", "s3"] as const).map((t) => (
               <label key={t} className="flex items-center gap-1.5 text-sm">
-                <input
-                  type="radio"
-                  name="storageType"
-                  value={t}
-                  checked={form.storageType === t}
-                  onChange={() => setField("storageType", t)}
-                />
+                <RadioGroupItem value={t} />
                 {t === "local" ? "Local Only" : t === "webdav" ? "WebDAV" : "S3"}
               </label>
             ))}
-          </div>
+          </RadioGroup>
         </div>
 
         {/* WebDAV fields */}
@@ -609,10 +609,9 @@ function StorageConfigSection() {
               {form.showAdvanced && (
                 <div className="mt-3 space-y-3">
                   <label className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
+                    <Switch
                       checked={form.s3ForcePathStyle}
-                      onChange={(e) => setField("s3ForcePathStyle", e.target.checked)}
+                      onCheckedChange={(checked) => setField("s3ForcePathStyle", checked)}
                     />
                     <span className="font-medium">Force Path Style</span>
                     <span className="text-muted-foreground">

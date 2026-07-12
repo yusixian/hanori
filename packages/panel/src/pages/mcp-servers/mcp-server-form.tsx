@@ -2,6 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import type { McpServerPreset } from "@cos-tool-bot/shared";
 import { Loader2 } from "lucide-react";
 
@@ -124,7 +126,7 @@ export function McpServerForm({
         </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">Headers (JSON)</label>
-          <textarea
+          <Textarea
             className="border-input min-h-[80px] w-full rounded-md border bg-transparent px-3 py-2 font-mono text-sm"
             value={form.headers}
             onChange={(e) => onFormChange({ ...form, headers: e.target.value })}
@@ -142,11 +144,9 @@ export function McpServerForm({
           </div>
           <div className="flex items-end pb-1">
             <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                className="border-input h-4 w-4 rounded"
+              <Switch
                 checked={form.isActive}
-                onChange={(e) => onFormChange({ ...form, isActive: e.target.checked })}
+                onCheckedChange={(isActive) => onFormChange({ ...form, isActive })}
               />
               <span className="text-sm font-medium">Active</span>
             </label>

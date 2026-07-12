@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { InlineDisclosure } from "@/components/ui/inline-disclosure";
 import { Select } from "@/components/ui/select";
 import type { PixAIConfig, WebToolsConfig } from "@cos-tool-bot/shared";
 
@@ -632,10 +633,7 @@ function PixAIConfigFields({
       </div>
 
       {/* Advanced (collapsible) */}
-      <details className="space-y-4">
-        <summary className="text-muted-foreground cursor-pointer text-xs font-medium tracking-wider uppercase">
-          Advanced Settings
-        </summary>
+      <InlineDisclosure title="Advanced Settings">
         <div className="mt-4 space-y-4">
           <div className="space-y-1.5">
             <label className="text-sm font-medium">Model Style Key ID</label>
@@ -691,7 +689,7 @@ function PixAIConfigFields({
             </div>
           </div>
         </div>
-      </details>
+      </InlineDisclosure>
     </>
   );
 }

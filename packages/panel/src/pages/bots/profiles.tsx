@@ -3,6 +3,7 @@ import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
@@ -275,7 +276,7 @@ export function BotProfilesPage() {
               <label htmlFor="create-notes" className="text-muted-foreground text-xs">
                 Notes
               </label>
-              <textarea
+              <Textarea
                 id="create-notes"
                 className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                 rows={3}
@@ -450,7 +451,7 @@ export function BotProfilesPage() {
                       >
                         Notes
                       </label>
-                      <textarea
+                      <Textarea
                         id={`edit-notes-${p.id}`}
                         className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
                         rows={3}
