@@ -1,35 +1,45 @@
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
-import { COLLAPSE_LINE_THRESHOLD } from "./constants";
+import { useId, useState } from "react";
+import { COLLAPSE_CHARACTER_THRESHOLD, COLLAPSE_LINE_THRESHOLD } from "./constants";
+import { DisclosureIcon } from "./disclosure-icon";
 
 export function CollapsibleContent({ content }: { content: string }) {
   const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
   const lines = content.split("\n");
-  const shouldCollapse = lines.length > COLLAPSE_LINE_THRESHOLD;
+  const exceedsLineLimit = lines.length > COLLAPSE_LINE_THRESHOLD;
+  const exceedsCharacterLimit = content.length > COLLAPSE_CHARACTER_THRESHOLD;
+  const shouldCollapse = exceedsLineLimit || exceedsCharacterLimit;
 
   if (!shouldCollapse) {
-    return <p className="text-sm whitespace-pre-wrap">{content}</p>;
+    return <p className="break-words whitespace-pre-wrap">{content}</p>;
   }
 
-  const preview = lines.slice(0, COLLAPSE_LINE_THRESHOLD).join("\n");
+  const linePreview = lines
+    .slice(0, COLLAPSE_LINE_THRESHOLD)
+    .join("\n")
+    .slice(0, COLLAPSE_CHARACTER_THRESHOLD);
+  const preview = (exceedsLineLimit ? linePreview : content.slice(0, COLLAPSE_CHARACTER_THRESHOLD))
+    .trimEnd()
+    .concat("…");
 
   return (
     <div>
-      <p className="text-sm whitespace-pre-wrap">{expanded ? content : `${preview}\n...`}</p>
+      <p id={contentId} className="break-words whitespace-pre-wrap">
+        {expanded ? content : preview}
+      </p>
       <button
         type="button"
-        className="mt-1 flex items-center gap-1 text-xs opacity-60 hover:opacity-100"
-        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-controls={contentId}
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
+        onClick={() => setExpanded((value) => !value)}
       >
-        {expanded ? (
-          <>
-            <ChevronUp className="h-3 w-3" /> Collapse
-          </>
-        ) : (
-          <>
-            <ChevronDown className="h-3 w-3" /> Expand ({lines.length} lines)
-          </>
-        )}
+        <DisclosureIcon expanded={expanded} />
+        {expanded
+          ? "Collapse"
+          : exceedsLineLimit
+            ? `Expand ${lines.length} lines`
+            : "Expand message"}
       </button>
     </div>
   );

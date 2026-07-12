@@ -1,76 +1,107 @@
-import { cn } from "@/lib/utils";
 import { CodeBlock } from "@/components/ui/code-block";
-import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { cn } from "@/lib/utils";
+import {
+  Braces,
+  FileText,
+  Loader2,
+  Sparkles,
+  Terminal,
+  Trash2,
+  UserRound,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
+import { useId, useMemo, useState } from "react";
 import { CollapsibleContent } from "./collapsible-content";
-import { roleLabels, roleStyles } from "./constants";
+import { roleIconStyles, roleLabels } from "./constants";
+import { DisclosureIcon } from "./disclosure-icon";
 import type { ConversationMessage } from "./types";
+
+const roleIcons: Record<string, LucideIcon> = {
+  user: UserRound,
+  assistant: Sparkles,
+  context: FileText,
+  system: Terminal,
+  tool_call: Wrench,
+  tool_result: Braces,
+};
 
 function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
   const usage = meta.usage as Record<string, number> | undefined;
   const model = meta.model as string | undefined;
   const trigger = meta.trigger as string | undefined;
+  const promptTokens = usage?.prompt_tokens;
+  const completionTokens = usage?.completion_tokens;
+  const totalTokens = usage?.total_tokens;
+  const hasFullBreakdown =
+    Number.isFinite(promptTokens) &&
+    Number.isFinite(completionTokens) &&
+    Number.isFinite(totalTokens);
+  const tokenLabel = hasFullBreakdown
+    ? `${promptTokens}+${completionTokens}=${totalTokens} tokens`
+    : Number.isFinite(totalTokens)
+      ? `${totalTokens} tokens`
+      : null;
 
   if (!usage && !model) return null;
 
   return (
-    <div className="mt-2 flex flex-wrap gap-2">
-      {model && (
-        <span className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-[10px] dark:bg-white/10">
+    <div className="mt-3 flex flex-wrap gap-1.5">
+      {model ? (
+        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600">
           {model}
         </span>
-      )}
-      {trigger && (
-        <span className="rounded bg-black/5 px-1.5 py-0.5 text-[10px] dark:bg-white/10">
+      ) : null}
+      {trigger ? (
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
           trigger: {trigger}
         </span>
-      )}
-      {usage && (
-        <span className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-[10px] dark:bg-white/10">
-          {usage.prompt_tokens}+{usage.completion_tokens}={usage.total_tokens} tokens
+      ) : null}
+      {tokenLabel ? (
+        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600 tabular-nums">
+          {tokenLabel}
         </span>
-      )}
+      ) : null}
     </div>
   );
 }
 
 function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false);
+  const argsId = useId();
   const toolName = meta.toolName as string;
   const args = meta.args as string | undefined;
-
-  let parsedArgs: string | undefined;
-  if (args) {
+  const parsedArgs = useMemo(() => {
+    if (!args || !expanded) return undefined;
     try {
-      parsedArgs = JSON.stringify(JSON.parse(args), null, 2);
+      return JSON.stringify(JSON.parse(args), null, 2);
     } catch {
-      parsedArgs = args;
+      return args;
     }
-  }
+  }, [args, expanded]);
 
   return (
     <div>
-      <p className="text-sm font-medium">{toolName}()</p>
-      {parsedArgs && (
+      <p className="font-mono text-sm font-semibold">{toolName}()</p>
+      {args ? (
         <>
           <button
             type="button"
-            className="mt-1 flex items-center gap-1 text-xs opacity-60 hover:opacity-100"
-            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            aria-controls={argsId}
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
+            onClick={() => setExpanded((value) => !value)}
           >
-            {expanded ? (
-              <>
-                <ChevronUp className="h-3 w-3" /> Hide args
-              </>
-            ) : (
-              <>
-                <ChevronDown className="h-3 w-3" /> Show args
-              </>
-            )}
+            <DisclosureIcon expanded={expanded} />
+            {expanded ? "Hide arguments" : "Show arguments"}
           </button>
-          {expanded && <CodeBlock className="mt-1 max-h-60 text-xs">{parsedArgs}</CodeBlock>}
+          {expanded ? (
+            <CodeBlock id={argsId} className="mt-1 max-h-60 text-xs">
+              {parsedArgs}
+            </CodeBlock>
+          ) : null}
         </>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -79,70 +110,100 @@ export function MessageBubble({
   msg,
   onDelete,
   pendingDelete,
+  deleteBusy,
 }: {
   msg: ConversationMessage;
   onDelete?: (messageId: number) => void;
   pendingDelete?: boolean;
+  deleteBusy?: boolean;
 }) {
   const isToolCall = msg.role === "tool_call" && msg.meta;
   const isAssistantWithMeta = msg.role === "assistant" && msg.meta;
   const needsCollapse =
     msg.role === "system" || msg.role === "tool_result" || msg.role === "context";
+  const RoleIcon = roleIcons[msg.role] ?? FileText;
 
   return (
-    <div
-      className={cn(
-        "group/msg min-w-0 rounded-xl border-l-2 p-3 text-foreground ring-1 ring-black/[0.04] dark:ring-white/[0.06]",
-        roleStyles[msg.role] ?? "bg-zinc-100 dark:bg-zinc-800",
-      )}
-    >
-      <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-        <span className="min-w-0 text-xs font-medium">
-          <span className="text-muted-foreground mr-1 font-mono opacity-50">#{msg.id}</span>
-          {roleLabels[msg.role] ?? msg.role}
-          {msg.userName && ` (${msg.userName})`}
-          {msg.role === "user" && msg.userId && (
-            <span className="text-muted-foreground ml-1 font-mono text-[10px]">
-              uid:{msg.userId}
-            </span>
+    <article data-hover-actions className="group/msg text-foreground min-w-0 p-3.5 sm:p-4">
+      <div className="flex min-w-0 flex-wrap items-start gap-2.5">
+        <div
+          className={cn(
+            "flex size-8 shrink-0 items-center justify-center rounded-lg",
+            roleIconStyles[msg.role] ?? "bg-slate-100 text-slate-500",
           )}
-          {isToolCall && msg.meta && (
-            <span className="ml-1 font-mono">{msg.meta.toolName as string}</span>
-          )}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5">
-          {onDelete && (
+        >
+          <RoleIcon className="size-3.5" aria-hidden="true" />
+        </div>
+
+        <div className="min-w-0 flex-1 pt-0.5">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+            <span className="text-xs font-semibold">{roleLabels[msg.role] ?? msg.role}</span>
+            {msg.userName ? (
+              <span className="min-w-0 truncate text-xs font-medium">{msg.userName}</span>
+            ) : null}
+            {isToolCall && msg.meta ? (
+              <span className="min-w-0 truncate font-mono text-xs">
+                {msg.meta.toolName as string}
+              </span>
+            ) : null}
+          </div>
+          <div className="text-muted-foreground mt-0.5 flex flex-wrap gap-x-2 text-[10px] tabular-nums">
+            <span className="font-mono">#{msg.id}</span>
+            {msg.role === "user" && msg.userId ? (
+              <span className="font-mono">uid:{msg.userId}</span>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="ml-auto flex items-center gap-1">
+          <time
+            className="text-muted-foreground text-[11px] whitespace-nowrap tabular-nums"
+            dateTime={new Date(msg.createdAt).toISOString()}
+          >
+            {new Date(msg.createdAt).toLocaleString()}
+          </time>
+          {onDelete ? (
             <button
               type="button"
+              disabled={deleteBusy}
+              data-active={pendingDelete || deleteBusy ? "true" : undefined}
               className={cn(
-                "flex size-10 items-center justify-center rounded-lg transition-colors active:scale-[0.96]",
+                "hover-action focus-visible:ring-ring flex size-10 items-center justify-center rounded-lg transition-[background-color,color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none",
                 pendingDelete
-                  ? "bg-red-500/15 text-red-600 opacity-100 dark:text-red-400"
-                  : "text-muted-foreground hover:text-destructive opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100 sm:focus-visible:opacity-100",
+                  ? "bg-red-50 text-red-600 opacity-100"
+                  : "text-muted-foreground hover:bg-red-50 hover:text-destructive",
               )}
               onClick={() => onDelete(msg.id)}
-              title={pendingDelete ? "再次点击确认删除" : "删除消息"}
+              aria-label={
+                deleteBusy
+                  ? "Deleting this message"
+                  : pendingDelete
+                    ? "Confirm deleting this message"
+                    : "Delete this message"
+              }
+              title={pendingDelete ? "Click again to confirm" : "Delete message"}
             >
-              <Trash2 className="h-3.5 w-3.5" />
+              {deleteBusy ? (
+                <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Trash2 className="size-3.5" aria-hidden="true" />
+              )}
             </button>
-          )}
-          <span className="text-muted-foreground text-xs whitespace-nowrap tabular-nums">
-            {new Date(msg.createdAt).toLocaleString()}
-          </span>
+          ) : null}
         </div>
       </div>
 
-      {isToolCall ? (
-        <ToolCallContent meta={msg.meta!} />
-      ) : needsCollapse ? (
-        <CollapsibleContent content={msg.content} />
-      ) : (
-        <p className="text-sm leading-6 text-pretty break-words whitespace-pre-wrap">
-          {msg.content}
-        </p>
-      )}
+      <div className="mt-3 max-w-[80ch] text-sm leading-6 sm:pl-10">
+        {isToolCall ? (
+          <ToolCallContent meta={msg.meta!} />
+        ) : needsCollapse ? (
+          <CollapsibleContent content={msg.content} />
+        ) : (
+          <p className="break-words whitespace-pre-wrap">{msg.content}</p>
+        )}
 
-      {isAssistantWithMeta && <UsageBadge meta={msg.meta!} />}
-    </div>
+        {isAssistantWithMeta ? <UsageBadge meta={msg.meta!} /> : null}
+      </div>
+    </article>
   );
 }

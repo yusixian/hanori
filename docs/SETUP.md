@@ -116,6 +116,7 @@ Google 登录是可选功能。不需要 Google 登录时，这两个变量都�
    ```
 
    注意：URI 必须逐字一致，包括 `http`/`https`、域名、端口和路径；末尾不要再加 `/`。`localhost` 和 `127.0.0.1` 也会被视为不同地址。
+
 9. 点击“创建”。弹窗中会显示“客户端 ID”和“客户端密钥”：
    - 客户端 ID 填入 `GOOGLE_CLIENT_ID`
    - 客户端密钥填入 `GOOGLE_CLIENT_SECRET`

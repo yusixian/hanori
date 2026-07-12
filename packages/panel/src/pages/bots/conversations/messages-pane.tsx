@@ -1,33 +1,46 @@
 import { Pagination } from "@/components/ui/pagination";
-import { cn } from "@/lib/utils";
-import { ArrowDown, ArrowUp } from "lucide-react";
-import { PANE_MAX_HEIGHT } from "./constants";
+import { ArrowDown, ArrowUp, FilterX } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { MessageBubble } from "./message-bubble";
 import type { ConversationMessage } from "./types";
 
-function ScrollButtons({ containerRef }: { containerRef: React.RefObject<HTMLDivElement | null> }) {
+function ScrollButtons({
+  containerRef,
+  canScrollUp,
+  canScrollDown,
+}: {
+  containerRef: RefObject<HTMLDivElement | null>;
+  canScrollUp: boolean;
+  canScrollDown: boolean;
+}) {
+  if (!canScrollUp && !canScrollDown) return null;
+
+  const scrollTo = (top: number) => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    containerRef.current?.scrollTo({ top, behavior: reduceMotion ? "auto" : "smooth" });
+  };
+
   return (
-    <div className="absolute right-3 bottom-3 flex flex-col gap-1">
+    <div className="absolute right-3 bottom-3 flex flex-col gap-1.5">
       <button
         type="button"
-        className="rounded-full bg-zinc-800/50 p-1.5 text-white opacity-50 transition hover:opacity-100 dark:bg-white/30"
-        onClick={() => containerRef.current?.scrollTo({ top: 0, behavior: "smooth" })}
+        disabled={!canScrollUp}
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
+        onClick={() => scrollTo(0)}
+        aria-label="Scroll to first message"
         title="Scroll to top"
       >
-        <ArrowUp className="h-3.5 w-3.5" />
+        <ArrowUp className="size-4" aria-hidden="true" />
       </button>
       <button
         type="button"
-        className="rounded-full bg-zinc-800/50 p-1.5 text-white opacity-50 transition hover:opacity-100 dark:bg-white/30"
-        onClick={() =>
-          containerRef.current?.scrollTo({
-            top: containerRef.current.scrollHeight,
-            behavior: "smooth",
-          })
-        }
+        disabled={!canScrollDown}
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
+        onClick={() => scrollTo(containerRef.current?.scrollHeight ?? 0)}
+        aria-label="Scroll to last message"
         title="Scroll to bottom"
       >
-        <ArrowDown className="h-3.5 w-3.5" />
+        <ArrowDown className="size-4" aria-hidden="true" />
       </button>
     </div>
   );
@@ -39,6 +52,7 @@ export function MessagesPane({
   showSystem,
   onDelete,
   pendingDeleteId,
+  deleteBusyId,
   containerRef,
   page,
   totalPages,
@@ -49,38 +63,114 @@ export function MessagesPane({
   showSystem: boolean;
   onDelete: (id: number) => void;
   pendingDeleteId: number | null;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  deleteBusyId: number | null;
+  containerRef: RefObject<HTMLDivElement | null>;
   page: number;
   totalPages: number;
   onPageChange: (p: number) => void;
 }) {
-  return (
-    <>
-      <div ref={containerRef} className={cn(PANE_MAX_HEIGHT, "space-y-3 overflow-y-auto pr-1")}>
-        {messages
-          .filter(
-            (msg) =>
-              (showTools || (msg.role !== "tool_call" && msg.role !== "tool_result")) &&
-              (showSystem || msg.role !== "system"),
-          )
-          .map((msg) => (
-            <MessageBubble
-              key={msg.id}
-              msg={msg}
-              onDelete={onDelete}
-              pendingDelete={pendingDeleteId === msg.id}
-            />
-          ))}
-      </div>
+  const listRef = useRef<HTMLOListElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const [scrollEdges, setScrollEdges] = useState({ up: false, down: false });
+  const visibleMessages = messages.filter(
+    (message) =>
+      (showTools || (message.role !== "tool_call" && message.role !== "tool_result")) &&
+      (showSystem || message.role !== "system"),
+  );
 
-      <ScrollButtons containerRef={containerRef} />
+  const updateScrollEdges = useCallback(() => {
+    const element = containerRef.current;
+    if (!element) return;
+    const maxScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    const nextEdges = {
+      up: element.scrollTop > 8,
+      down: maxScrollTop - element.scrollTop > 8,
+    };
+    setScrollEdges((current) => {
+      if (current.up === nextEdges.up && current.down === nextEdges.down) return current;
+      return nextEdges;
+    });
+  }, [containerRef]);
+
+  const scheduleScrollEdgeUpdate = useCallback(() => {
+    if (scrollFrameRef.current !== null) return;
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      updateScrollEdges();
+    });
+  }, [updateScrollEdges]);
+
+  useEffect(() => {
+    const element = containerRef.current;
+    if (!element) return;
+
+    scheduleScrollEdgeUpdate();
+    element.addEventListener("scroll", scheduleScrollEdgeUpdate, { passive: true });
+    const observer = new ResizeObserver(scheduleScrollEdgeUpdate);
+    observer.observe(element);
+    if (listRef.current) observer.observe(listRef.current);
+
+    return () => {
+      if (scrollFrameRef.current !== null) cancelAnimationFrame(scrollFrameRef.current);
+      scrollFrameRef.current = null;
+      element.removeEventListener("scroll", scheduleScrollEdgeUpdate);
+      observer.disconnect();
+    };
+  }, [containerRef, scheduleScrollEdgeUpdate, visibleMessages.length]);
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <div
+          ref={containerRef}
+          className="h-full overflow-y-auto overscroll-contain bg-slate-50/70 p-3 pb-16 sm:p-4 sm:pb-16"
+        >
+          {visibleMessages.length === 0 ? (
+            <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
+              <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+                <FilterX className="size-5" aria-hidden="true" />
+              </span>
+              <p className="text-foreground mt-3 text-sm font-semibold">No visible messages</p>
+              <p className="mt-1 max-w-xs text-xs leading-5">
+                This page only contains roles hidden by the current filters.
+              </p>
+            </div>
+          ) : (
+            <ol
+              ref={listRef}
+              className="divide-y divide-slate-100 overflow-hidden rounded-xl bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_rgb(15_23_42/0.04)]"
+              aria-label="Conversation messages"
+            >
+              {visibleMessages.map((message) => (
+                <li
+                  key={message.id}
+                  className="[contain-intrinsic-size:auto_8rem] [content-visibility:auto]"
+                >
+                  <MessageBubble
+                    msg={message}
+                    onDelete={onDelete}
+                    pendingDelete={pendingDeleteId === message.id}
+                    deleteBusy={deleteBusyId === message.id}
+                  />
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        <ScrollButtons
+          containerRef={containerRef}
+          canScrollUp={scrollEdges.up}
+          canScrollDown={scrollEdges.down}
+        />
+      </div>
 
       <Pagination
         page={page}
         totalPages={totalPages}
         onPageChange={onPageChange}
-        className="flex items-center justify-center gap-2 pt-3"
+        className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
       />
-    </>
+    </div>
   );
 }

@@ -1,25 +1,30 @@
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination } from "@/components/ui/pagination";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import {
-  ArrowLeft,
-  BookOpen,
-  Loader2,
-  MessageSquare,
-  Terminal,
-  Trash2,
-  Wrench,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Inbox, Loader2, MessageSquareText, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
-import { PANE_MAX_HEIGHT, PENDING_DELETE_MS } from "./constants";
+import { PENDING_DELETE_MS } from "./constants";
 import { ConversationDetailHeader } from "./conversation-detail-header";
 import { ConversationListItem } from "./conversation-list-item";
+import { ConversationToolbar } from "./conversation-toolbar";
 import { MessagesPane } from "./messages-pane";
 import { SummaryCard } from "./summary-card";
 import type { ConversationItem, ConversationMessage, ConversationSummary } from "./types";
+
+function PaneLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="text-muted-foreground flex min-h-56 flex-1 items-center justify-center gap-2 text-sm"
+      role="status"
+      aria-live="polite"
+    >
+      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+      <span>{label}</span>
+    </div>
+  );
+}
 
 export function BotConversationsPage() {
   const { botId } = useParams<{ botId: string }>();
@@ -42,20 +47,58 @@ export function BotConversationsPage() {
   const [sumPendingDelete, setSumPendingDelete] = useState<number | null>(null);
   const [sumDeleteBusy, setSumDeleteBusy] = useState<number | null>(null);
   const [msgPendingDelete, setMsgPendingDelete] = useState<number | null>(null);
+  const [msgDeleteBusy, setMsgDeleteBusy] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{
     kind: "all" | "chat";
     chatId?: number;
   } | null>(null);
+  const [confirmDeleteBusy, setConfirmDeleteBusy] = useState(false);
+  const [confirmDeleteError, setConfirmDeleteError] = useState<string | null>(null);
 
   const msgContainerRef = useRef<HTMLDivElement>(null);
   const msgReqToken = useRef(0);
   const sumReqToken = useRef(0);
   const msgPendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sumPendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deleteDialogRef = useRef<HTMLDivElement>(null);
+  const cancelDeleteButtonRef = useRef<HTMLButtonElement>(null);
+  const conversationListHeadingRef = useRef<HTMLHeadingElement>(null);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+  const skipDialogFocusRestoreRef = useRef(false);
+  const confirmDeleteBusyRef = useRef(false);
 
   const limit = 20;
   const msgLimit = 50;
   const sumLimit = 20;
+
+  const resetConversationDetail = useCallback((chatId: number | null) => {
+    msgReqToken.current += 1;
+    sumReqToken.current += 1;
+    setSelectedChat(chatId);
+    setMessages([]);
+    setMsgTotal(0);
+    setSummaries([]);
+    setSumTotal(0);
+    setMsgPage(1);
+    setSumPage(1);
+    setDetailView("messages");
+    setMsgLoading(chatId !== null);
+    setSumLoading(false);
+    setMsgPendingDelete(null);
+    setSumPendingDelete(null);
+    setMsgDeleteBusy(null);
+    setSumDeleteBusy(null);
+  }, []);
+
+  const focusConversationList = useCallback((chatId?: number) => {
+    requestAnimationFrame(() => {
+      const row =
+        chatId === undefined
+          ? null
+          : document.querySelector<HTMLButtonElement>(`[data-conversation-id="${chatId}"]`);
+      (row ?? conversationListHeadingRef.current)?.focus();
+    });
+  }, []);
 
   useEffect(
     () => () => {
@@ -65,25 +108,71 @@ export function BotConversationsPage() {
     [],
   );
 
-  const loadConversations = useCallback(async () => {
-    if (!botId) return;
-    setLoading(true);
-    try {
-      const res = await client.api.bots[":botId"].conversations.$get({
-        param: { botId },
-        query: { page: String(page), limit: String(limit) },
-      });
-      const json = await res.json();
-      if (json.ok) {
-        setConversations(json.data);
-        setTotal(json.total);
+  useEffect(() => {
+    if (!confirmDelete) return;
+
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => cancelDeleteButtonRef.current?.focus());
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (confirmDeleteBusyRef.current) return;
+        setConfirmDelete(null);
+        return;
       }
-    } catch (err) {
-      console.error("Failed to load conversations:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId, page]);
+
+      if (event.key !== "Tab" || !deleteDialogRef.current) return;
+      const focusable = Array.from(
+        deleteDialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", handleKeyDown);
+      if (skipDialogFocusRestoreRef.current) skipDialogFocusRestoreRef.current = false;
+      else if (previouslyFocused?.isConnected) previouslyFocused.focus();
+    };
+  }, [confirmDelete]);
+
+  const loadConversations = useCallback(
+    async (silent = false) => {
+      if (!botId) return;
+      if (!silent) setLoading(true);
+      try {
+        const res = await client.api.bots[":botId"].conversations.$get({
+          param: { botId },
+          query: { page: String(page), limit: String(limit) },
+        });
+        const json = await res.json();
+        if (json.ok) {
+          setConversations(json.data);
+          setTotal(json.total);
+        }
+      } catch (err) {
+        console.error("Failed to load conversations:", err);
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [botId, page],
+  );
 
   const loadMessages = useCallback(async () => {
     if (!botId || selectedChat === null) return;
@@ -156,32 +245,74 @@ export function BotConversationsPage() {
   }, [selectedChat]);
 
   const handleClearAll = async () => {
-    if (!botId) return;
+    if (!botId) return false;
     try {
-      await client.api.bots[":botId"].conversations.$delete({ param: { botId } });
+      const response = await client.api.bots[":botId"].conversations.$delete({ param: { botId } });
+      if (!response.ok) throw new Error(`Failed to clear conversations (${response.status})`);
       setConversations([]);
       setTotal(0);
-      setSelectedChat(null);
-      setMessages([]);
+      resetConversationDetail(null);
+      return true;
     } catch (err) {
       console.error("Failed to clear conversations:", err);
+      return false;
     }
   };
 
   const handleClearChat = async (chatId: number) => {
-    if (!botId) return;
+    if (!botId) return false;
     try {
-      await client.api.bots[":botId"].conversations[":chatId"].$delete({
+      const response = await client.api.bots[":botId"].conversations[":chatId"].$delete({
         param: { botId, chatId: String(chatId) },
       });
+      if (!response.ok) throw new Error(`Failed to delete conversation (${response.status})`);
+      const isLastOnPage = conversations.length === 1;
       setConversations((prev) => prev.filter((c) => c.chatId !== chatId));
+      setTotal((prev) => Math.max(0, prev - 1));
       if (selectedChat === chatId) {
-        setSelectedChat(null);
-        setMessages([]);
+        resetConversationDetail(null);
       }
+      if (isLastOnPage && page > 1) setPage((current) => current - 1);
+      else await loadConversations(true);
+      return true;
     } catch (err) {
       console.error("Failed to clear chat:", err);
+      return false;
     }
+  };
+
+  const openDeleteDialog = (target: { kind: "all" | "chat"; chatId?: number }) => {
+    setConfirmDeleteError(null);
+    setConfirmDelete(target);
+  };
+
+  const closeDeleteDialog = () => {
+    if (confirmDeleteBusyRef.current) return;
+    setConfirmDeleteError(null);
+    setConfirmDelete(null);
+  };
+
+  const confirmConversationDelete = async () => {
+    if (!confirmDelete || confirmDeleteBusy) return;
+    const target = confirmDelete;
+    confirmDeleteBusyRef.current = true;
+    setConfirmDeleteBusy(true);
+    setConfirmDeleteError(null);
+    const deleted =
+      target.kind === "all"
+        ? await handleClearAll()
+        : target.chatId !== undefined && (await handleClearChat(target.chatId));
+    confirmDeleteBusyRef.current = false;
+    setConfirmDeleteBusy(false);
+
+    if (!deleted) {
+      setConfirmDeleteError("Delete failed. Check your connection and try again.");
+      return;
+    }
+
+    skipDialogFocusRestoreRef.current = true;
+    setConfirmDelete(null);
+    focusConversationList();
   };
 
   const armPendingDelete = (
@@ -222,6 +353,7 @@ export function BotConversationsPage() {
           param: { botId, chatId: String(selectedChat), id: String(id) },
         },
       );
+      if (!res.ok) throw new Error(`Failed to delete summary (${res.status})`);
       const json = await res.json();
       if (json.ok) {
         const isLastOnPage = summaries.length === 1;
@@ -237,6 +369,7 @@ export function BotConversationsPage() {
         if (sumTotal - 1 === 0) {
           setDetailView("messages");
         } else if (isLastOnPage && sumPage > 1) {
+          setSumLoading(true);
           setSumPage((p) => p - 1);
         }
       }
@@ -254,24 +387,35 @@ export function BotConversationsPage() {
       return;
     }
     clearPendingDelete(setMsgPendingDelete, msgPendingTimer);
+    setMsgDeleteBusy(messageId);
     try {
       const res = await client.api.bots[":botId"].conversations[":chatId"].messages[
         ":messageId"
       ].$delete({
         param: { botId, chatId: String(selectedChat), messageId: String(messageId) },
       });
+      if (!res.ok) throw new Error(`Failed to delete message (${res.status})`);
       const json = await res.json();
       if (json.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== messageId));
-        setMsgTotal((prev) => prev - 1);
+        const isLastOnPage = messages.length === 1;
+        if (isLastOnPage && msgPage > 1) {
+          setMsgLoading(true);
+          setMsgPage((current) => current - 1);
+        } else {
+          setMessages((prev) => prev.filter((m) => m.id !== messageId));
+        }
+        setMsgTotal((prev) => Math.max(0, prev - 1));
         setConversations((prev) =>
           prev.map((c) =>
-            c.chatId === selectedChat ? { ...c, messageCount: c.messageCount - 1 } : c,
+            c.chatId === selectedChat ? { ...c, messageCount: Math.max(0, c.messageCount - 1) } : c,
           ),
         );
+        await loadConversations(true);
       }
     } catch (err) {
       console.error("Failed to delete message:", err);
+    } finally {
+      setMsgDeleteBusy(null);
     }
   };
 
@@ -281,269 +425,315 @@ export function BotConversationsPage() {
   const selectedConv = conversations.find((c) => c.chatId === selectedChat) ?? null;
   const hasSummaries = selectedConv?.hasSummaries ?? false;
 
-  const openSummaries = useCallback(() => setDetailView("summaries"), []);
-  const detailHeader = useMemo(() => {
-    if (!selectedConv) return null;
-    return (
-      <ConversationDetailHeader
-        conv={selectedConv}
-        onOpenSummaries={hasSummaries ? openSummaries : undefined}
-      />
-    );
-  }, [selectedConv, hasSummaries, openSummaries]);
+  const handleConversationPageChange = (nextPage: number) => {
+    setPage(nextPage);
+    resetConversationDetail(null);
+  };
+
+  const handleSelectConversation = (chatId: number) => {
+    if (selectedChat === chatId) return;
+    resetConversationDetail(chatId);
+    if (!window.matchMedia("(min-width: 80rem)").matches) {
+      requestAnimationFrame(() => backButtonRef.current?.focus());
+    }
+  };
+
+  const handleBackToConversations = () => {
+    const previousChat = selectedChat;
+    resetConversationDetail(null);
+    focusConversationList(previousChat ?? undefined);
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:h-[calc(100vh-7rem)]">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-balance">Conversations</h1>
-          <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
-            Inspect message history and compressed summaries.
-          </p>
+    <>
+      <div
+        inert={confirmDelete !== null}
+        className="flex h-[calc(100dvh-5.5rem)] min-h-[32rem] min-w-0 flex-1 flex-col gap-5 sm:h-[calc(100dvh-6.5rem)] md:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-5rem)]"
+      >
+        <div className="shrink-0">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight text-balance sm:text-[1.7rem]">
+              Conversations
+            </h1>
+            <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
+              Inspect message history and compressed summaries.
+            </p>
+          </div>
         </div>
-        {conversations.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="text-destructive hover:text-destructive active:scale-[0.96]"
-            onClick={() => setConfirmDelete({ kind: "all" })}
-          >
-            <Trash2 className="h-4 w-4" />
-            <span className="hidden sm:inline">Clear all</span>
-          </Button>
-        )}
-      </div>
 
-      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(320px,360px)_minmax(0,1fr)]">
-        <Card
-          className={cn(
-            "min-h-0 flex-col overflow-hidden rounded-2xl",
-            selectedChat === null ? "flex" : "hidden lg:flex",
-          )}
-        >
-          <CardHeader>
-            <CardTitle className="text-base">Conversations {total > 0 && `(${total})`}</CardTitle>
-          </CardHeader>
-          <CardContent className="min-h-0 flex-1 overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin" />
+        <div className="grid min-h-0 min-w-0 flex-1 overflow-hidden rounded-[20px] bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_-1px_rgb(15_23_42/0.06),0_12px_32px_-20px_rgb(15_23_42/0.2)] xl:grid-cols-[minmax(19rem,21rem)_minmax(0,1fr)]">
+          <aside
+            className={cn(
+              "min-h-0 min-w-0 flex-col bg-white xl:border-r xl:border-slate-200/80",
+              selectedConv === null ? "flex" : "hidden xl:flex",
+            )}
+            aria-label="Conversation list"
+          >
+            <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200/80 px-4">
+              <div>
+                <h2
+                  ref={conversationListHeadingRef}
+                  tabIndex={-1}
+                  className="text-sm font-semibold focus:outline-none"
+                >
+                  All conversations
+                </h2>
+                <p className="text-muted-foreground mt-0.5 text-xs">Most recent activity first</p>
               </div>
-            ) : conversations.length === 0 ? (
-              <p className="text-muted-foreground py-8 text-center text-sm">No conversations yet</p>
-            ) : (
-              <div className="flex h-full min-h-0 flex-col">
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                  {conversations.map((conv) => (
+              <div className="flex items-center gap-1">
+                <span className="text-muted-foreground rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold tabular-nums">
+                  {total}
+                </span>
+                {total > 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-muted-foreground hover:text-destructive size-10 transition-[background-color,color,scale] active:scale-[0.96]"
+                    onClick={() => openDeleteDialog({ kind: "all" })}
+                    aria-label="Clear all conversations"
+                    title="Clear all conversations"
+                  >
+                    <Trash2 className="size-4" aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-hidden p-2" aria-busy={loading}>
+              {loading ? (
+                <PaneLoading label="Loading conversations…" />
+              ) : conversations.length === 0 ? (
+                <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+                    <Inbox className="size-5" aria-hidden="true" />
+                  </span>
+                  <p className="text-foreground mt-3 text-sm font-semibold">No conversations yet</p>
+                  <p className="mt-1 max-w-52 text-xs leading-5">
+                    New chat history will appear here after the bot receives messages.
+                  </p>
+                </div>
+              ) : (
+                <ol className="h-full space-y-1 overflow-y-auto overscroll-contain pr-0.5">
+                  {conversations.map((conversation) => (
                     <ConversationListItem
-                      key={conv.chatId}
-                      conv={conv}
-                      selected={selectedChat === conv.chatId}
-                      onSelect={() => {
-                        setSelectedChat(conv.chatId);
-                        setMsgPage(1);
-                      }}
-                      onClear={() => setConfirmDelete({ kind: "chat", chatId: conv.chatId })}
+                      key={conversation.chatId}
+                      conv={conversation}
+                      selected={selectedChat === conversation.chatId}
+                      onSelect={() => handleSelectConversation(conversation.chatId)}
+                      onClear={() =>
+                        openDeleteDialog({ kind: "chat", chatId: conversation.chatId })
+                      }
                     />
                   ))}
-                </div>
+                </ol>
+              )}
+            </div>
 
-                <Pagination
-                  page={page}
-                  totalPages={totalPages}
-                  onPageChange={setPage}
-                  className="flex items-center justify-center gap-2 pt-3"
-                />
-              </div>
-            )}
-          </CardContent>
-        </Card>
+            {totalPages > 1 ? (
+              <Pagination
+                page={page}
+                totalPages={totalPages}
+                onPageChange={handleConversationPageChange}
+                className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 px-3 py-2"
+              />
+            ) : null}
+          </aside>
 
-        <Card
-          className={cn(
-            "min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl",
-            selectedChat !== null ? "flex" : "hidden lg:flex",
-          )}
-        >
-          <CardHeader className="flex-row items-center gap-2">
-            {selectedChat !== null && (
-              <button
-                type="button"
-                onClick={() => setSelectedChat(null)}
-                className="text-muted-foreground hover:bg-muted -ml-2 flex size-10 shrink-0 items-center justify-center rounded-lg active:scale-[0.96] lg:hidden"
-                aria-label="Back to conversations"
-              >
-                <ArrowLeft className="size-5" />
-              </button>
+          <section
+            className={cn(
+              "min-h-0 min-w-0 flex-col bg-slate-50/70",
+              selectedConv !== null ? "flex" : "hidden xl:flex",
             )}
-            <CardTitle className="min-w-0 flex-1 text-base">
-              {detailHeader ?? "Select a conversation"}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="relative min-h-0 flex-1 overflow-hidden">
-            {selectedChat === null ? (
-              <p className="text-muted-foreground py-8 text-center text-sm">
-                Click a conversation to view messages
-              </p>
-            ) : (
+            aria-label="Conversation details"
+          >
+            {selectedConv ? (
               <>
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setDetailView("messages")}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
-                        detailView === "messages"
-                          ? "bg-blue-500/15 text-blue-700 dark:text-blue-300"
-                          : "text-muted-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                      )}
-                    >
-                      <MessageSquare className="h-3 w-3" />
-                      Messages
-                    </button>
-                    <button
-                      type="button"
-                      disabled={!hasSummaries}
-                      onClick={() => setDetailView("summaries")}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors disabled:opacity-40",
-                        detailView === "summaries"
-                          ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                          : "text-muted-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800",
-                      )}
-                      title={hasSummaries ? "查看压缩摘要" : "无压缩摘要"}
-                    >
-                      <BookOpen className="h-3 w-3" />
-                      Summaries
-                      {hasSummaries && (
-                        <span className="ml-0.5 opacity-70">({selectedConv?.summaryCount})</span>
-                      )}
-                    </button>
-                  </div>
-                  {detailView === "messages" && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
-                          showSystem
-                            ? "bg-purple-500/15 text-purple-700 dark:text-purple-300"
-                            : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700",
-                        )}
-                        onClick={() => setShowSystem((v) => !v)}
-                      >
-                        <Terminal className="h-3 w-3" />
-                        {showSystem ? "Hide system" : "Show system"}
-                      </button>
-                      <button
-                        type="button"
-                        className={cn(
-                          "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors",
-                          showTools
-                            ? "bg-orange-500/15 text-orange-700 dark:text-orange-300"
-                            : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700",
-                        )}
-                        onClick={() => setShowTools((v) => !v)}
-                      >
-                        <Wrench className="h-3 w-3" />
-                        {showTools ? "Hide tools" : "Show tools"}
-                      </button>
-                    </div>
-                  )}
+                <div className="flex min-h-[72px] shrink-0 items-start gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:px-4 xl:h-[72px] xl:items-center">
+                  <button
+                    ref={backButtonRef}
+                    type="button"
+                    onClick={handleBackToConversations}
+                    className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
+                    aria-label="Back to conversations"
+                  >
+                    <ArrowLeft className="size-5" aria-hidden="true" />
+                  </button>
+                  <ConversationDetailHeader conv={selectedConv} />
                 </div>
+
+                <ConversationToolbar
+                  view={detailView}
+                  hasSummaries={hasSummaries}
+                  summaryCount={selectedConv.summaryCount}
+                  showSystem={showSystem}
+                  showTools={showTools}
+                  onViewChange={setDetailView}
+                  onToggleSystem={() => setShowSystem((value) => !value)}
+                  onToggleTools={() => setShowTools((value) => !value)}
+                />
+
                 {detailView === "messages" ? (
-                  msgLoading ? (
-                    <div className="flex items-center justify-center py-8">
-                      <Loader2 className="h-6 w-6 animate-spin" />
-                    </div>
-                  ) : messages.length === 0 ? (
-                    <p className="text-muted-foreground py-8 text-center text-sm">No messages</p>
-                  ) : (
-                    <MessagesPane
-                      messages={messages}
-                      showTools={showTools}
-                      showSystem={showSystem}
-                      onDelete={handleDeleteMessage}
-                      pendingDeleteId={msgPendingDelete}
-                      containerRef={msgContainerRef}
-                      page={msgPage}
-                      totalPages={msgTotalPages}
-                      onPageChange={setMsgPage}
-                    />
-                  )
-                ) : sumLoading ? (
-                  <div className="flex items-center justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
+                  <div
+                    id="conversation-messages-panel"
+                    role="tabpanel"
+                    aria-labelledby="conversation-messages-tab"
+                    className="flex min-h-0 flex-1 flex-col"
+                    aria-busy={msgLoading}
+                  >
+                    {msgLoading ? (
+                      <PaneLoading label="Loading messages…" />
+                    ) : messages.length === 0 ? (
+                      <div className="text-muted-foreground flex min-h-56 flex-1 flex-col items-center justify-center px-6 text-center">
+                        <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+                          <MessageSquareText className="size-5" aria-hidden="true" />
+                        </span>
+                        <p className="text-foreground mt-3 text-sm font-semibold">No messages</p>
+                        <p className="mt-1 text-xs">
+                          This conversation does not have message history.
+                        </p>
+                      </div>
+                    ) : (
+                      <MessagesPane
+                        messages={messages}
+                        showTools={showTools}
+                        showSystem={showSystem}
+                        onDelete={handleDeleteMessage}
+                        pendingDeleteId={msgPendingDelete}
+                        deleteBusyId={msgDeleteBusy}
+                        containerRef={msgContainerRef}
+                        page={msgPage}
+                        totalPages={msgTotalPages}
+                        onPageChange={setMsgPage}
+                      />
+                    )}
                   </div>
-                ) : summaries.length === 0 ? (
-                  <p className="text-muted-foreground py-8 text-center text-sm">No summaries</p>
                 ) : (
-                  <div className="space-y-3">
-                    <div className={cn(PANE_MAX_HEIGHT, "space-y-3 overflow-y-auto pr-1")}>
-                      {summaries.map((s) => (
-                        <SummaryCard
-                          key={s.id}
-                          summary={s}
-                          onDelete={handleDeleteSummary}
-                          pendingDelete={sumPendingDelete === s.id}
-                          busy={sumDeleteBusy === s.id}
-                        />
-                      ))}
-                    </div>
-                    <Pagination
-                      page={sumPage}
-                      totalPages={sumTotalPages}
-                      onPageChange={setSumPage}
-                      className="flex items-center justify-center gap-2 pt-3"
-                    />
+                  <div
+                    id="conversation-summaries-panel"
+                    role="tabpanel"
+                    aria-labelledby="conversation-summaries-tab"
+                    className="flex min-h-0 flex-1 flex-col"
+                    aria-busy={sumLoading}
+                  >
+                    {sumLoading ? (
+                      <PaneLoading label="Loading summaries…" />
+                    ) : summaries.length === 0 ? (
+                      <div className="text-muted-foreground flex min-h-56 flex-1 items-center justify-center text-sm">
+                        No summaries
+                      </div>
+                    ) : (
+                      <>
+                        <ol className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain p-3 sm:p-4">
+                          {summaries.map((summary) => (
+                            <li
+                              key={summary.id}
+                              className="[contain-intrinsic-size:auto_8rem] [content-visibility:auto]"
+                            >
+                              <SummaryCard
+                                summary={summary}
+                                onDelete={handleDeleteSummary}
+                                pendingDelete={sumPendingDelete === summary.id}
+                                busy={sumDeleteBusy === summary.id}
+                              />
+                            </li>
+                          ))}
+                        </ol>
+                        {sumTotalPages > 1 ? (
+                          <Pagination
+                            page={sumPage}
+                            totalPages={sumTotalPages}
+                            onPageChange={setSumPage}
+                            className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
+                          />
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 )}
               </>
+            ) : (
+              <div className="text-muted-foreground flex h-full min-h-72 flex-col items-center justify-center px-8 text-center">
+                <span className="flex size-12 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-[0_0_0_1px_rgb(15_23_42/0.06),0_4px_12px_rgb(15_23_42/0.06)]">
+                  <MessageSquareText className="size-5" aria-hidden="true" />
+                </span>
+                <h2 className="text-foreground mt-4 text-sm font-semibold">
+                  Choose a conversation
+                </h2>
+                <p className="mt-1 max-w-xs text-xs leading-5">
+                  Select a conversation from the list to inspect its messages and summaries.
+                </p>
+              </div>
             )}
-          </CardContent>
-        </Card>
+          </section>
+        </div>
       </div>
-      {confirmDelete && (
+
+      {confirmDelete ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onMouseDown={(event) => event.target === event.currentTarget && setConfirmDelete(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain bg-slate-950/35 p-4 backdrop-blur-[2px]"
+          onClick={(event) => event.target === event.currentTarget && closeDeleteDialog()}
         >
           <div
+            ref={deleteDialogRef}
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="delete-title"
-            className="bg-background w-full max-w-sm rounded-2xl p-5 shadow-2xl ring-1 ring-black/10 dark:ring-white/10"
+            aria-describedby="delete-description"
+            className="w-full max-w-sm rounded-[20px] bg-white p-5 shadow-[0_24px_64px_rgb(15_23_42/0.22),0_0_0_1px_rgb(15_23_42/0.08)]"
           >
-            <h2 id="delete-title" className="text-lg font-semibold">
-              {confirmDelete.kind === "all"
-                ? "Clear all conversations?"
-                : "Delete this conversation?"}
-            </h2>
-            <p className="text-muted-foreground mt-2 text-sm text-pretty">
-              {confirmDelete.kind === "all"
-                ? "Every conversation and its messages will be permanently deleted."
-                : `Chat ${confirmDelete.chatId} and all of its messages will be permanently deleted.`}
-            </p>
+            <div className="flex items-start gap-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+                <Trash2 className="size-4" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 id="delete-title" className="text-lg font-semibold tracking-tight">
+                  {confirmDelete.kind === "all"
+                    ? "Clear all conversations?"
+                    : "Delete this conversation?"}
+                </h2>
+                <p
+                  id="delete-description"
+                  className="text-muted-foreground mt-1.5 text-sm leading-6 text-pretty"
+                >
+                  {confirmDelete.kind === "all"
+                    ? "Every conversation and its messages will be permanently deleted."
+                    : `Chat ${confirmDelete.chatId} and all of its messages will be permanently deleted.`}
+                </p>
+                {confirmDeleteError ? (
+                  <p className="mt-2 text-sm text-red-600" role="alert">
+                    {confirmDeleteError}
+                  </p>
+                ) : null}
+              </div>
+            </div>
             <div className="mt-5 flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setConfirmDelete(null)}>
+              <Button
+                ref={cancelDeleteButtonRef}
+                variant="outline"
+                disabled={confirmDeleteBusy}
+                onClick={closeDeleteDialog}
+              >
                 Cancel
               </Button>
               <Button
                 variant="destructive"
-                onClick={async () => {
-                  const target = confirmDelete;
-                  setConfirmDelete(null);
-                  if (target.kind === "all") await handleClearAll();
-                  else if (target.chatId !== undefined) await handleClearChat(target.chatId);
-                }}
+                className="transition-[background-color,scale] active:scale-[0.96]"
+                disabled={confirmDeleteBusy}
+                onClick={confirmConversationDelete}
               >
-                Delete
+                {confirmDeleteBusy ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                    Deleting…
+                  </>
+                ) : (
+                  "Delete"
+                )}
               </Button>
             </div>
           </div>
         </div>
-      )}
-    </div>
+      ) : null}
+    </>
   );
 }

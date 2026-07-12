@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* The panel is intentionally light-only today. Keep dark utilities opt-in so an
+   OS-level dark preference cannot partially recolor otherwise light surfaces. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* Native UI faces suit an operational control panel and avoid a branded web-font dependency. */
   --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -88,6 +92,18 @@ li {
   border-radius: 999px;
   background: rgb(100 116 139 / 0.38);
   background-clip: padding-box;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-hover-actions] .hover-action {
+    opacity: 0;
+  }
+
+  [data-hover-actions]:hover .hover-action,
+  [data-hover-actions] .hover-action:focus-visible,
+  [data-hover-actions] .hover-action[data-active="true"] {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

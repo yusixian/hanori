@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { Loader2, Trash2 } from "lucide-react";
+import { BookOpen, Loader2, Trash2 } from "lucide-react";
 import { CollapsibleContent } from "./collapsible-content";
 import type { ConversationSummary } from "./types";
 
@@ -15,34 +15,44 @@ export function SummaryCard({
   busy: boolean;
 }) {
   return (
-    <div className="rounded-md border p-3">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-          <span className="font-mono">#{summary.id}</span>
-          <span>{new Date(summary.createdAt).toLocaleString()}</span>
-          <span>压缩 {summary.messageCount} 条</span>
-          <span className="font-mono opacity-70">up to msg #{summary.summarizedUpToId}</span>
+    <article className="rounded-xl bg-white p-4 shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_rgb(15_23_42/0.04)]">
+      <div className="mb-3 flex items-start gap-2.5">
+        <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+          <BookOpen className="size-3.5" aria-hidden="true" />
+        </div>
+        <div className="text-muted-foreground min-w-0 flex-1 pt-0.5 text-xs tabular-nums">
+          <div className="text-foreground font-semibold">Summary #{summary.id}</div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <time dateTime={new Date(summary.createdAt).toISOString()}>
+              {new Date(summary.createdAt).toLocaleString()}
+            </time>
+            <span aria-hidden="true">·</span>
+            <span>{summary.messageCount} messages compressed</span>
+            <span aria-hidden="true">·</span>
+            <span className="font-mono">through #{summary.summarizedUpToId}</span>
+          </div>
         </div>
         <button
           type="button"
           disabled={busy}
           onClick={() => onDelete(summary.id)}
-          title={pendingDelete ? "再次点击确认删除" : "删除"}
+          aria-label={pendingDelete ? "Confirm deleting this summary" : "Delete this summary"}
+          title={pendingDelete ? "Click again to confirm" : "Delete summary"}
           className={cn(
-            "shrink-0 rounded p-1 transition-colors",
-            pendingDelete
-              ? "bg-red-500/15 text-red-600 dark:text-red-400"
-              : "text-muted-foreground hover:text-destructive",
+            "text-muted-foreground hover:text-destructive focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
+            pendingDelete && "bg-red-50 text-red-600",
           )}
         >
           {busy ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : (
-            <Trash2 className="h-3.5 w-3.5" />
+            <Trash2 className="size-3.5" aria-hidden="true" />
           )}
         </button>
       </div>
-      <CollapsibleContent content={summary.content} />
-    </div>
+      <div className="max-w-[80ch] pl-0 text-sm leading-6 sm:pl-10">
+        <CollapsibleContent content={summary.content} />
+      </div>
+    </article>
   );
 }

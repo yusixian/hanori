@@ -1,16 +1,15 @@
 export const COLLAPSE_LINE_THRESHOLD = 4;
-
-export const PANE_MAX_HEIGHT = "h-[calc(100dvh-15rem)] min-h-72 lg:h-[calc(100vh-20rem)]";
+export const COLLAPSE_CHARACTER_THRESHOLD = 800;
 
 export const PENDING_DELETE_MS = 3000;
 
-export const roleStyles: Record<string, string> = {
-  user: "border-l-blue-500 bg-blue-500/[0.06]",
-  assistant: "border-l-emerald-500 bg-emerald-500/[0.06]",
-  context: "border-l-zinc-400 bg-zinc-500/[0.06]",
-  system: "border-l-purple-500 bg-purple-500/[0.06]",
-  tool_call: "border-l-orange-500 bg-orange-500/[0.06]",
-  tool_result: "border-l-cyan-500 bg-cyan-500/[0.06]",
+export const roleIconStyles: Record<string, string> = {
+  user: "bg-blue-50 text-blue-600",
+  assistant: "bg-emerald-50 text-emerald-600",
+  context: "bg-slate-100 text-slate-500",
+  system: "bg-violet-50 text-violet-600",
+  tool_call: "bg-amber-50 text-amber-600",
+  tool_result: "bg-cyan-50 text-cyan-600",
 };
 
 export const roleLabels: Record<string, string> = {
@@ -20,13 +19,4 @@ export const roleLabels: Record<string, string> = {
   system: "System",
   tool_call: "Tool Call",
   tool_result: "Tool Result",
-};
-
-export const roleColors: Record<string, string> = {
-  user: "bg-blue-500",
-  assistant: "bg-green-500",
-  tool_call: "bg-orange-500",
-  tool_result: "bg-cyan-500",
-  system: "bg-purple-500",
-  context: "bg-zinc-400",
 };
