@@ -113,8 +113,12 @@ export function inferCapabilities(modelId: string): ModelCapability[] {
     return KNOWN_CAPABILITIES[modelId];
   }
 
-  // Try prefix match (e.g. "gpt-4o-2024-11-20" matches "gpt-4o")
-  for (const [key, caps] of Object.entries(KNOWN_CAPABILITIES)) {
+  // Try prefix match (e.g. "gpt-4o-2024-11-20" matches "gpt-4o").
+  // Longest key first so "o1-mini" wins over "o1".
+  const byKeyLengthDesc = Object.entries(KNOWN_CAPABILITIES).sort(
+    ([a], [b]) => b.length - a.length,
+  );
+  for (const [key, caps] of byKeyLengthDesc) {
     if (modelId.startsWith(key)) {
       return caps;
     }

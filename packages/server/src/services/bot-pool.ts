@@ -53,6 +53,8 @@ import type { SummaryConfigService } from "./summary-config-service.js";
 
 export class BotPool {
   private managers = new Map<string, IBotManager>();
+  // Serializes start/stop/restart per botId to avoid concurrent double-start races.
+  private opLocks = new Map<string, Promise<unknown>>();
   private botTimerHandlers = new Map<string, BotTimerHandlers>();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
@@ -163,10 +165,36 @@ export class BotPool {
     }
   }
 
+  private enqueue<T>(botId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.opLocks.get(botId) ?? Promise.resolve();
+    const result = prev.then(fn, fn);
+    const done = result.then(
+      () => {},
+      () => {},
+    );
+    this.opLocks.set(botId, done);
+    void done.then(() => {
+      if (this.opLocks.get(botId) === done) this.opLocks.delete(botId);
+    });
+    return result;
+  }
+
   async startBot(botId: string) {
-    if (this.managers.has(botId)) {
-      this.logger.warn(`Bot ${botId} is already managed, skipping`);
-      return;
+    return this.enqueue(botId, () => this.startBotImpl(botId));
+  }
+
+  private async startBotImpl(botId: string) {
+    const existing = this.managers.get(botId);
+    if (existing) {
+      if (existing.status === "running") {
+        this.logger.warn(`Bot ${botId} is already running, skipping`);
+        return;
+      }
+      // Stale manager left behind by a crash/failed start — clean it up before restarting.
+      this.logger.warn(
+        `Bot ${botId} has a stale manager (status=${existing.status}); cleaning up before start`,
+      );
+      await this.stopBotImpl(botId);
     }
 
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
@@ -730,6 +758,11 @@ export class BotPool {
 
     this.managers.set(botId, manager);
     await manager.start();
+    if (manager.status !== "running") {
+      this.managers.delete(botId);
+      this.botTimerHandlers.delete(botId);
+      throw new Error("Bot failed to start; check bot logs for details");
+    }
   }
 
   private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {
@@ -783,6 +816,10 @@ export class BotPool {
   }
 
   async stopBot(botId: string) {
+    return this.enqueue(botId, () => this.stopBotImpl(botId));
+  }
+
+  private async stopBotImpl(botId: string) {
     const manager = this.managers.get(botId);
     if (!manager) return;
     await manager.stop();
@@ -791,8 +828,10 @@ export class BotPool {
   }
 
   async restartBot(botId: string) {
-    await this.stopBot(botId);
-    await this.startBot(botId);
+    return this.enqueue(botId, async () => {
+      await this.stopBotImpl(botId);
+      await this.startBotImpl(botId);
+    });
   }
 
   getManager(botId: string): IBotManager | undefined {

@@ -25,11 +25,18 @@ export function BotDashboardPage() {
 
   const bot = data?.data;
 
-  const action = async (fn: () => Promise<unknown>) => {
+  const action = async (fn: () => Promise<Response>) => {
     setBusy(true);
     try {
-      await fn();
+      const res = await fn();
+      const json = (await res.json()) as { ok: boolean; error?: string };
+      if (!json.ok) {
+        alert(`Action failed: ${json.error ?? "unknown error"}`);
+        return;
+      }
       invalidate({ resource: "bots", invalidates: ["detail", "list"] });
+    } catch {
+      alert("Action failed: network error");
     } finally {
       setBusy(false);
     }

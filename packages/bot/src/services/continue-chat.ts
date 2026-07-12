@@ -50,9 +50,7 @@ import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-pre
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { assembleContinueChatContext } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
-
-// Per-chat promise chain to prevent concurrent streamText calls
-const chatLocks = new Map<number, Promise<void>>();
+import { withChatLock } from "./chat-lock.js";
 
 export interface ContinueChatConfig {
   model: LanguageModel;
@@ -114,24 +112,8 @@ export async function continueChat(
   config: ContinueChatConfig,
   event: ContinueChatEvent,
 ): Promise<void> {
-  // Per-chat lock: queue behind any ongoing generateText for the same chat
-  const prev = chatLocks.get(event.chatId) ?? Promise.resolve();
-  let resolve!: () => void;
-  const current = new Promise<void>((r) => {
-    resolve = r;
-  });
-  chatLocks.set(event.chatId, current);
-
-  try {
-    await prev;
-    await doContinueChat(api, config, event);
-  } finally {
-    resolve();
-    // Clean up if we're still the latest
-    if (chatLocks.get(event.chatId) === current) {
-      chatLocks.delete(event.chatId);
-    }
-  }
+  // Shared per-chat lock: mutually exclusive with the main AI-reply handler's streamText.
+  await withChatLock(event.chatId, () => doContinueChat(api, config, event));
 }
 
 async function doContinueChat(

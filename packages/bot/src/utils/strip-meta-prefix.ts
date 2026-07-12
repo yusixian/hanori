@@ -16,7 +16,7 @@ export type MetaPrefixLogger = (info: { pattern: string; strippedLength: number 
 
 const PATTERNS: Array<{ re: RegExp; label: string }> = [
   // [From: name] or [From: name (@username)]
-  { re: /\[From:\s*[^\]\n]*\]\s*/g, label: "[From:...]" },
+  { re: /\[From:\s*[^\]\n]*\]\s*/gi, label: "[From:...]" },
 ];
 
 /** Strip all known meta prefixes from a complete text. */

@@ -42,6 +42,7 @@ import { assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
+import { acquireChatLock } from "../services/chat-lock.js";
 import {
   createActionTools,
   createAgentTools,
@@ -1055,7 +1056,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
     // Hoisted so the outer finally can unregister even on early errors.
     let manualAbort: AbortController | null = null;
+    let releaseChatLock: (() => void) | null = null;
     try {
+      // Shared per-chat lock: mutually exclusive with timer-driven continueChat
+      // so their streamText runs never race over recentBotMessageIds/moodState/history.
+      releaseChatLock = await acquireChatLock(chatId);
       await ctx.replyWithChatAction("typing");
 
       // Lazy-load sticker packs (deduped via shared promise)
@@ -1866,6 +1871,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         await ctx.directlyReply(errorReply).catch(() => {});
       }
     } finally {
+      releaseChatLock?.();
       if (manualAbort) activeAbortControllers.delete(manualAbort);
     }
   };

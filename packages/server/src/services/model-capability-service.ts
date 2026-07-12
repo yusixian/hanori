@@ -123,8 +123,10 @@ export class ModelCapabilityService {
     const exact = this.cache.get(modelId);
     if (exact) return exact;
 
-    // 2. Prefix match (e.g. "gpt-4o-2024-11-20" → "gpt-4o")
-    for (const [key, caps] of this.cache) {
+    // 2. Prefix match (e.g. "gpt-4o-2024-11-20" → "gpt-4o").
+    //    Longest key first so "o1-mini" wins over "o1".
+    const byKeyLengthDesc = [...this.cache].sort(([a], [b]) => b.length - a.length);
+    for (const [key, caps] of byKeyLengthDesc) {
       if (modelId.startsWith(key)) return caps;
     }
 

@@ -2,20 +2,34 @@ import { authFetch } from "@/lib/client";
 import type { LogEntry } from "@cos-tool-bot/shared";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const INITIAL_RETRY_DELAY = 1000;
+const MAX_RETRY_DELAY = 30_000;
+
 export function useSSEConnection(url: string) {
   const [connected, setConnected] = useState(false);
   const [liveLogs, setLiveLogs] = useState<LogEntry[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryDelayRef = useRef(INITIAL_RETRY_DELAY);
 
   const connect = useCallback(() => {
     abortRef.current?.abort();
+    if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
     const controller = new AbortController();
     abortRef.current = controller;
+
+    const scheduleReconnect = () => {
+      if (controller.signal.aborted) return;
+      const delay = retryDelayRef.current;
+      retryDelayRef.current = Math.min(delay * 2, MAX_RETRY_DELAY);
+      retryTimeoutRef.current = setTimeout(connect, delay);
+    };
 
     authFetch(url, { signal: controller.signal })
       .then(async (res) => {
         if (!res.ok || !res.body) return;
         setConnected(true);
+        retryDelayRef.current = INITIAL_RETRY_DELAY;
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -44,12 +58,18 @@ export function useSSEConnection(url: string) {
       .catch(() => {
         /* aborted or network error */
       })
-      .finally(() => setConnected(false));
+      .finally(() => {
+        setConnected(false);
+        scheduleReconnect();
+      });
   }, [url]);
 
   useEffect(() => {
     connect();
-    return () => abortRef.current?.abort();
+    return () => {
+      abortRef.current?.abort();
+      if (retryTimeoutRef.current) clearTimeout(retryTimeoutRef.current);
+    };
   }, [connect]);
 
   const clearLiveLogs = useCallback(() => setLiveLogs([]), []);
