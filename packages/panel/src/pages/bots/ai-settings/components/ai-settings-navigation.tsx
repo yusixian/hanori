@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { SelectMenu } from "@/components/ui/select-menu";
 import type { LucideIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export type AiSettingsSectionId =
   | "overview"
@@ -26,23 +27,25 @@ export function AiSettingsNavigation({
   activeId: AiSettingsSectionId;
   onChange: (id: AiSettingsSectionId) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <>
       <div className="md:hidden">
         <label htmlFor="ai-settings-section" className="sr-only">
-          Settings section
+          {t("navigation.settingsSection")}
         </label>
         <SelectMenu
           id="ai-settings-section"
           value={activeId}
           onValueChange={(value) => onChange(value as AiSettingsSectionId)}
           className="border-input h-11 w-full rounded-xl border bg-white px-3 text-sm font-medium shadow-sm"
-          ariaLabel="Settings section"
+          ariaLabel={t("navigation.settingsSection")}
           options={items.map((item) => ({ value: item.id, label: item.label }))}
         />
       </div>
 
-      <nav aria-label="AI settings sections" className="hidden md:block">
+      <nav aria-label={t("navigation.ariaLabel")} className="hidden md:block">
         <div className="flex flex-wrap gap-2">
           {items.map((item) => {
             const active = activeId === item.id;

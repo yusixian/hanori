@@ -3,9 +3,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth-client";
 import { useEffect, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router";
 
-async function acceptInvitation(invitationId: string): Promise<string | null> {
+async function acceptInvitation(
+  invitationId: string,
+  fallbackMessage: string,
+): Promise<string | null> {
   const response = await fetch("/api/auth/organization/accept-invitation", {
     method: "POST",
     credentials: "include",
@@ -15,13 +19,14 @@ async function acceptInvitation(invitationId: string): Promise<string | null> {
   if (response.ok) return null;
   try {
     const body = (await response.json()) as { message?: string; error?: string };
-    return body.message || body.error || "接受邀请失败";
+    return body.message || body.error || fallbackMessage;
   } catch {
-    return "接受邀请失败";
+    return fallbackMessage;
   }
 }
 
 export function AcceptInvitationPage() {
+  const { t } = useTranslation("auth");
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const invitationId = params.get("id") || "";
@@ -37,7 +42,7 @@ export function AcceptInvitationPage() {
       const result = await authClient.getSession();
       if (!("data" in result) || !result.data?.user) return;
       setLoading(true);
-      const message = await acceptInvitation(invitationId);
+      const message = await acceptInvitation(invitationId, t("errors.invitationAcceptFailed"));
       if (message) setError(message);
       else navigate("/", { replace: true });
       setLoading(false);
@@ -50,11 +55,11 @@ export function AcceptInvitationPage() {
     setLoading(true);
     const result = await authClient.signUp.email({ name, email, password });
     if ("error" in result && result.error) {
-      setError(result.error.message || "注册失败");
+      setError(result.error.message || t("errors.signUpFailed"));
       setLoading(false);
       return;
     }
-    const message = await acceptInvitation(invitationId);
+    const message = await acceptInvitation(invitationId, t("errors.invitationAcceptFailed"));
     if (message) setError(message);
     else navigate("/", { replace: true });
     setLoading(false);
@@ -65,25 +70,25 @@ export function AcceptInvitationPage() {
     setLoading(true);
     const result = await authClient.signIn.email({ email, password });
     if ("error" in result && result.error) {
-      setError(result.error.message || "登录失败");
+      setError(result.error.message || t("errors.loginFailed"));
       setLoading(false);
       return;
     }
-    const message = await acceptInvitation(invitationId);
+    const message = await acceptInvitation(invitationId, t("errors.invitationAcceptFailed"));
     if (message) setError(message);
     else navigate("/", { replace: true });
     setLoading(false);
   };
 
   if (!invitationId)
-    return <div className="p-8 text-center text-sm text-red-600">邀请链接缺少参数</div>;
+    return <div className="p-8 text-center text-sm text-red-600">{t("invitation.missingId")}</div>;
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-5">
       <Card className="relative w-full max-w-[440px]">
         <CardHeader>
-          <CardTitle>加入工作区</CardTitle>
-          <CardDescription>请使用受邀邮箱注册或登录，然后接受邀请。</CardDescription>
+          <CardTitle>{t("invitation.title")}</CardTitle>
+          <CardDescription>{t("invitation.description")}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
@@ -91,14 +96,14 @@ export function AcceptInvitationPage() {
           )}
           <form onSubmit={signUp} className="grid gap-3">
             <Input
-              placeholder="姓名"
+              placeholder={t("invitation.namePlaceholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
             />
             <Input
               type="email"
-              placeholder="受邀邮箱"
+              placeholder={t("invitation.emailPlaceholder")}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               autoComplete="email"
@@ -106,7 +111,7 @@ export function AcceptInvitationPage() {
             />
             <Input
               type="password"
-              placeholder="设置密码（至少 8 位）"
+              placeholder={t("invitation.passwordPlaceholder")}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               minLength={8}
@@ -114,7 +119,7 @@ export function AcceptInvitationPage() {
               required
             />
             <Button type="submit" disabled={loading}>
-              注册并加入
+              {t("invitation.signUpAndJoin")}
             </Button>
           </form>
           <Button
@@ -124,7 +129,7 @@ export function AcceptInvitationPage() {
             onClick={() => void signIn()}
             disabled={loading || !email || !password}
           >
-            已有账号，登录并加入
+            {t("invitation.signInAndJoin")}
           </Button>
           <Button
             type="button"
@@ -135,7 +140,7 @@ export function AcceptInvitationPage() {
             }
             disabled={loading}
           >
-            使用 Google 登录并加入
+            {t("invitation.googleSignInAndJoin")}
           </Button>
         </CardContent>
       </Card>

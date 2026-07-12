@@ -1,3 +1,5 @@
+import type { TFunction } from "i18next";
+
 interface DebugEventExport {
   sequence: number;
   kind: string;
@@ -26,7 +28,7 @@ function json(value: unknown) {
 
 const CODE_FENCE = "````";
 
-export function buildDebugRunMarkdown(run: DebugRunExport) {
+export function buildDebugRunMarkdown(run: DebugRunExport, t: TFunction<"botData">) {
   const events = [...(run.events ?? [])].sort((a, b) => a.sequence - b.sequence);
   const summary = {
     runId: run.id,
@@ -42,33 +44,33 @@ export function buildDebugRunMarkdown(run: DebugRunExport) {
   const eventSections = events.map(
     (event) => `### ${event.sequence}. ${event.kind}
 
-- Level: ${event.level}
-- Timestamp: ${event.createdAt}
+- ${t("debugger.markdown.level")}: ${event.level}
+- ${t("debugger.markdown.timestamp")}: ${event.createdAt}
 
 ${CODE_FENCE}json
 ${json(event.data)}
 ${CODE_FENCE}`,
   );
 
-  return `# AI Debug Run
+  return `# ${t("debugger.markdown.title")}
 
-> Analyze this run as a chronological diagnostic trace. Identify the first root-cause error, distinguish it from downstream/cascade errors, and cite event sequence numbers. The content was redacted before persistence, but may still contain operational metadata.
+> ${t("debugger.markdown.analysisPrompt")}
 
-## Run summary
+## ${t("debugger.markdown.runSummary")}
 
 ${CODE_FENCE}json
 ${json(summary)}
 ${CODE_FENCE}
 
-## Input and configuration snapshot
+## ${t("debugger.markdown.inputSnapshot")}
 
 ${CODE_FENCE}json
 ${json({ input: run.input, config: run.configSnapshot })}
 ${CODE_FENCE}
 
-## Event timeline
+## ${t("debugger.markdown.eventTimeline")}
 
-${eventSections.length > 0 ? eventSections.join("\n\n") : "No events were recorded."}
+${eventSections.length > 0 ? eventSections.join("\n\n") : t("debugger.markdown.noEvents")}
 `;
 }
 
@@ -80,9 +82,9 @@ export function debugRunFilename(run: Pick<DebugRunExport, "id" | "createdAt">) 
   return `ai-debug-run-${run.id.slice(0, 8)}-${stamp}.md`;
 }
 
-export function downloadDebugRun(run: DebugRunExport) {
+export function downloadDebugRun(run: DebugRunExport, t: TFunction<"botData">) {
   const url = URL.createObjectURL(
-    new Blob([buildDebugRunMarkdown(run)], { type: "text/markdown;charset=utf-8" }),
+    new Blob([buildDebugRunMarkdown(run, t)], { type: "text/markdown;charset=utf-8" }),
   );
   const anchor = document.createElement("a");
   anchor.href = url;

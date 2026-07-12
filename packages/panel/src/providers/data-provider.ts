@@ -1,5 +1,6 @@
 import type { CrudFilter, DataProvider } from "@refinedev/core";
 import { client } from "@/lib/client";
+import { i18n } from "@/i18n";
 
 function getFilterValue(filters: CrudFilter[] | undefined, field: string): string | undefined {
   const f = filters?.find((filter) => "field" in filter && filter.field === field);
@@ -37,7 +38,7 @@ export const dataProvider: DataProvider = {
           total: json.total,
         };
       }
-      throw new Error("Failed to fetch logs");
+      throw new Error(i18n.t("dataProvider.fetchLogsFailed"));
     }
 
     if (resource === "bots") {
@@ -54,10 +55,10 @@ export const dataProvider: DataProvider = {
           total: json.total,
         };
       }
-      throw new Error("Failed to fetch bots");
+      throw new Error(i18n.t("dataProvider.fetchBotsFailed"));
     }
 
-    throw new Error(`Resource "${resource}" not supported`);
+    throw new Error(i18n.t("dataProvider.unsupportedResource", { resource }));
   },
 
   getOne: async ({ resource, id }) => {
@@ -67,9 +68,9 @@ export const dataProvider: DataProvider = {
       if (json.ok) {
         return { data: json.data as any };
       }
-      throw new Error("Bot not found");
+      throw new Error(i18n.t("dataProvider.botNotFound"));
     }
-    throw new Error(`Resource "${resource}" not supported`);
+    throw new Error(i18n.t("dataProvider.unsupportedResource", { resource }));
   },
 
   create: async ({ resource, variables }) => {
@@ -85,9 +86,9 @@ export const dataProvider: DataProvider = {
       if (json.ok) {
         return { data: json.data as any };
       }
-      throw new Error("Failed to create bot");
+      throw new Error(i18n.t("dataProvider.createBotFailed"));
     }
-    throw new Error(`Resource "${resource}" not supported`);
+    throw new Error(i18n.t("dataProvider.unsupportedResource", { resource }));
   },
 
   update: async ({ resource, id, variables }) => {
@@ -106,9 +107,9 @@ export const dataProvider: DataProvider = {
       if (json.ok) {
         return { data: json.data as any };
       }
-      throw new Error("Failed to update bot");
+      throw new Error(i18n.t("dataProvider.updateBotFailed"));
     }
-    throw new Error(`Resource "${resource}" not supported`);
+    throw new Error(i18n.t("dataProvider.unsupportedResource", { resource }));
   },
 
   deleteOne: async ({ resource, id }) => {
@@ -120,9 +121,9 @@ export const dataProvider: DataProvider = {
       if (json.ok) {
         return { data: {} as any };
       }
-      throw new Error("Failed to delete bot");
+      throw new Error(i18n.t("dataProvider.deleteBotFailed"));
     }
-    throw new Error(`Resource "${resource}" not supported`);
+    throw new Error(i18n.t("dataProvider.unsupportedResource", { resource }));
   },
 
   getApiUrl: () => "/api",

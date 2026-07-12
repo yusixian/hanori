@@ -6,13 +6,11 @@ import { Select } from "@/components/ui/select";
 import { InlineDisclosure } from "@/components/ui/inline-disclosure";
 import { CodeBlock } from "@/components/ui/code-block";
 import { authFetch, client } from "@/lib/client";
-import { formatDuration } from "@/lib/format";
 import { DEFAULT_NSFW_THRESHOLD } from "@cos-tool-bot/shared";
 import type { NsfwScores } from "@cos-tool-bot/shared";
 import type { InferResponseType } from "hono/client";
 import { cn } from "@/lib/utils";
 import {
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Clock,
@@ -23,8 +21,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
 type GenerationsResponse = InferResponseType<
@@ -61,7 +60,10 @@ function ImageLightbox({
   nsfw?: boolean;
   onReveal?: () => void;
 }) {
+  const { t, i18n } = useTranslation("botData");
   const openedBlobUrls = useRef<string[]>([]);
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
 
   useEffect(() => {
     return () => {
@@ -107,6 +109,7 @@ function ImageLightbox({
         type="button"
         className="absolute top-4 right-4 z-10 rounded-full bg-black/50 p-2 text-white transition-colors hover:bg-black/70"
         onClick={onClose}
+        aria-label={t("generations.closePreview")}
       >
         <X className="h-5 w-5" />
       </button>
@@ -119,6 +122,7 @@ function ImageLightbox({
             type="button"
             className="absolute -left-12 z-10 rounded-full bg-black/50 p-2 text-white transition-colors hover:bg-black/70"
             onClick={() => onNavigate(index - 1)}
+            aria-label={t("generations.previousImage")}
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -127,7 +131,7 @@ function ImageLightbox({
         <div className="relative overflow-hidden rounded-lg">
           <AuthImage
             src={currentImage}
-            alt="Full size"
+            alt={t("generations.fullSizeAlt")}
             className={cn(
               "max-h-[85vh] max-w-[90vw] object-contain transition-[filter] duration-300",
               nsfw && "scale-105 blur-3xl",
@@ -146,7 +150,7 @@ function ImageLightbox({
             >
               <EyeOff className="h-10 w-10 text-white drop-shadow" />
               <span className="text-sm font-medium text-white drop-shadow">
-                NSFW — Click to reveal
+                {t("generations.nsfwReveal")}
               </span>
             </button>
           )}
@@ -158,6 +162,7 @@ function ImageLightbox({
             type="button"
             className="absolute -right-12 z-10 rounded-full bg-black/50 p-2 text-white transition-colors hover:bg-black/70"
             onClick={() => onNavigate(index + 1)}
+            aria-label={t("generations.nextImage")}
           >
             <ChevronRight className="h-5 w-5" />
           </button>
@@ -168,7 +173,10 @@ function ImageLightbox({
       <div className="relative z-10 mt-4 flex items-center gap-4">
         {images.length > 1 && (
           <span className="text-sm text-white/70">
-            {index + 1} / {images.length}
+            {t("generations.imagePosition", {
+              current: numberFormatter.format(index + 1),
+              total: numberFormatter.format(images.length),
+            })}
           </span>
         )}
         <button
@@ -177,7 +185,7 @@ function ImageLightbox({
           onClick={openOriginal}
         >
           <ExternalLink className="h-4 w-4" />
-          Open Original
+          {t("generations.openOriginal")}
         </button>
       </div>
     </div>,
@@ -197,28 +205,41 @@ function hasNsfwFlag(scores: NsfwScores[]): boolean {
 }
 
 function NsfwScoresDetails({ scores }: { scores: NsfwScores[] }) {
+  const { t, i18n } = useTranslation("botData");
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const scoreFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+    [locale],
+  );
+
   return (
     <div className="mt-1 space-y-1">
       {scores.map((s, i) => (
         <div key={i} className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
           {scores.length > 1 && <span className="text-muted-foreground font-medium">#{i + 1}</span>}
           <span>
-            porn:{" "}
-            <strong className={s.porn >= 0.3 ? "text-red-500" : ""}>{s.porn.toFixed(2)}</strong>
+            {t("generations.pornScore")}:{" "}
+            <strong className={s.porn >= 0.3 ? "text-red-500" : ""}>
+              {scoreFormatter.format(s.porn)}
+            </strong>
           </span>
           <span>
-            sexy:{" "}
-            <strong className={s.sexy >= 0.3 ? "text-orange-500" : ""}>{s.sexy.toFixed(2)}</strong>
+            {t("generations.sexyScore")}:{" "}
+            <strong className={s.sexy >= 0.3 ? "text-orange-500" : ""}>
+              {scoreFormatter.format(s.sexy)}
+            </strong>
           </span>
           <span>
-            hentai:{" "}
-            <strong className={s.hentai >= 0.3 ? "text-red-500" : ""}>{s.hentai.toFixed(2)}</strong>
+            {t("generations.hentaiScore")}:{" "}
+            <strong className={s.hentai >= 0.3 ? "text-red-500" : ""}>
+              {scoreFormatter.format(s.hentai)}
+            </strong>
           </span>
           <span>
-            neutral: <strong>{s.neutral.toFixed(2)}</strong>
+            {t("generations.neutralScore")}: <strong>{scoreFormatter.format(s.neutral)}</strong>
           </span>
           <span>
-            drawing: <strong>{s.drawing.toFixed(2)}</strong>
+            {t("generations.drawingScore")}: <strong>{scoreFormatter.format(s.drawing)}</strong>
           </span>
         </div>
       ))}
@@ -227,8 +248,14 @@ function NsfwScoresDetails({ scores }: { scores: NsfwScores[] }) {
 }
 
 function PixaiConfigDetails({ config }: { config: Record<string, unknown> }) {
+  const { t } = useTranslation("botData");
+
   return (
-    <InlineDisclosure title="Image Config" className="mt-1 border-t pt-1" contentClassName="pt-1">
+    <InlineDisclosure
+      title={t("generations.imageConfig")}
+      className="mt-1 border-t pt-1"
+      contentClassName="pt-1"
+    >
       <CodeBlock className="max-h-48 text-[11px] leading-relaxed">
         {JSON.stringify(config, null, 2)}
       </CodeBlock>
@@ -237,6 +264,7 @@ function PixaiConfigDetails({ config }: { config: Record<string, unknown> }) {
 }
 
 export function BotGenerationsPage() {
+  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
   const [generations, setGenerations] = useState<GenerationItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -246,6 +274,25 @@ export function BotGenerationsPage() {
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [revealedIds, setRevealedIds] = useState<Set<number>>(new Set());
   const pageSize = 20;
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const decimalFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }),
+    [locale],
+  );
+  const dateTimeFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
+    [locale],
+  );
+  const statusLabels: Record<string, string> = {
+    pending: t("generations.pending"),
+    completed: t("generations.completed"),
+    failed: t("generations.failed"),
+  };
+  const formatGenerationDuration = (milliseconds: number) =>
+    milliseconds < 1000
+      ? t("generations.milliseconds", { value: numberFormatter.format(milliseconds) })
+      : t("generations.seconds", { value: decimalFormatter.format(milliseconds / 1000) });
 
   const loadGenerations = useCallback(async () => {
     if (!botId) return;
@@ -298,7 +345,7 @@ export function BotGenerationsPage() {
   };
 
   const handleDelete = async (generationId: number) => {
-    if (!botId || !window.confirm("确定要删除此生成记录及其文件吗？")) return;
+    if (!botId || !window.confirm(t("generations.deleteConfirm"))) return;
     try {
       const res = await client.api.bots[":botId"].generations[":generationId"].$delete({
         param: { botId, generationId: String(generationId) },
@@ -316,8 +363,10 @@ export function BotGenerationsPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">Generations</h1>
-        <span className="text-muted-foreground text-sm">{total} total</span>
+        <h1 className="text-2xl font-bold">{t("generations.title")}</h1>
+        <span className="text-muted-foreground text-sm">
+          {t("common.total", { value: numberFormatter.format(total) })}
+        </span>
       </div>
 
       {/* Filters */}
@@ -330,10 +379,10 @@ export function BotGenerationsPage() {
             setPage(1);
           }}
         >
-          <option value="">All Status</option>
-          <option value="pending">Pending</option>
-          <option value="completed">Completed</option>
-          <option value="failed">Failed</option>
+          <option value="">{t("generations.allStatuses")}</option>
+          <option value="pending">{t("generations.pending")}</option>
+          <option value="completed">{t("generations.completed")}</option>
+          <option value="failed">{t("generations.failed")}</option>
         </Select>
 
         {filterStatus && (
@@ -345,7 +394,7 @@ export function BotGenerationsPage() {
               setPage(1);
             }}
           >
-            Clear Filters
+            {t("common.clearFilters")}
           </button>
         )}
       </div>
@@ -353,10 +402,12 @@ export function BotGenerationsPage() {
       {loading ? (
         <div className="flex items-center gap-2 py-8">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="text-muted-foreground text-sm">Loading...</span>
+          <span className="text-muted-foreground text-sm">{t("common.loading")}</span>
         </div>
       ) : generations.length === 0 ? (
-        <div className="text-muted-foreground py-8 text-center text-sm">No generations found.</div>
+        <div className="text-muted-foreground py-8 text-center text-sm">
+          {t("generations.empty")}
+        </div>
       ) : (
         <div className="columns-1 gap-4 sm:columns-2 lg:columns-3">
           {generations.map((g) => (
@@ -381,7 +432,7 @@ export function BotGenerationsPage() {
                             >
                               <AuthImage
                                 src={getImageUrl(g.botId, file)}
-                                alt="Generated"
+                                alt={t("generations.generatedAlt")}
                                 className={cn(
                                   "w-full object-cover transition-[filter] duration-300",
                                   blurred && "scale-105 blur-2xl",
@@ -406,7 +457,7 @@ export function BotGenerationsPage() {
                               >
                                 <EyeOff className="h-6 w-6 text-white drop-shadow" />
                                 <span className="text-xs font-medium text-white drop-shadow">
-                                  NSFW — Click to reveal
+                                  {t("generations.nsfwReveal")}
                                 </span>
                               </button>
                             )}
@@ -424,7 +475,7 @@ export function BotGenerationsPage() {
                   >
                     <div className="text-muted-foreground flex flex-col items-center gap-2">
                       <Loader2 className="h-6 w-6 animate-spin" />
-                      <span className="text-xs">Generating...</span>
+                      <span className="text-xs">{t("generations.generating")}</span>
                     </div>
                   </div>
                 )}
@@ -438,12 +489,12 @@ export function BotGenerationsPage() {
                         "default"
                       }
                     >
-                      {g.status}
+                      {statusLabels[g.status] ?? g.status}
                     </Badge>
                     {g.nsfwScores && Array.isArray(g.nsfwScores) && hasNsfwFlag(g.nsfwScores) && (
                       <Badge variant="destructive" className="gap-0.5 text-[10px]">
                         <ShieldAlert className="h-3 w-3" />
-                        NSFW
+                        {t("generations.nsfw")}
                       </Badge>
                     )}
                     {(() => {
@@ -455,22 +506,23 @@ export function BotGenerationsPage() {
                       ) : null;
                     })()}
                     <span className="text-muted-foreground text-xs">
-                      {g.width}x{g.height}
+                      {numberFormatter.format(g.width)}x{numberFormatter.format(g.height)}
                     </span>
                     {g.durationMs != null && (
                       <span className="text-muted-foreground flex items-center gap-1 text-xs">
                         <Clock className="h-3 w-3" />
-                        {formatDuration(g.durationMs)}
+                        {formatGenerationDuration(g.durationMs)}
                       </span>
                     )}
                     <span className="text-muted-foreground ml-auto shrink-0 text-xs">
-                      {new Date(g.createdAt).toLocaleString()}
+                      {dateTimeFormatter.format(new Date(g.createdAt))}
                     </span>
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-destructive shrink-0 p-0.5 transition-colors"
                       onClick={() => handleDelete(g.id)}
-                      title="Delete generation"
+                      title={t("generations.deleteTitle")}
+                      aria-label={t("generations.deleteTitle")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -478,64 +530,69 @@ export function BotGenerationsPage() {
 
                   {/* Error message */}
                   {g.status === "failed" && g.errorMessage && (
-                    <p className="text-destructive text-xs">Error: {g.errorMessage}</p>
+                    <p className="text-destructive text-xs">
+                      {t("generations.error", { message: g.errorMessage })}
+                    </p>
                   )}
 
                   {/* Prompt (collapsible) */}
-                  <InlineDisclosure title="Prompt">
+                  <InlineDisclosure title={t("generations.prompt")}>
                     <div className="mt-1.5 space-y-1.5 pl-4">
                       <div className="text-sm break-words whitespace-pre-wrap">{g.prompt}</div>
                       {g.negativePrompt && (
                         <div className="text-muted-foreground text-xs break-words whitespace-pre-wrap">
-                          <span className="font-medium">Negative:</span> {g.negativePrompt}
+                          <span className="font-medium">{t("generations.negativePrompt")}:</span>{" "}
+                          {g.negativePrompt}
                         </div>
                       )}
                     </div>
                   </InlineDisclosure>
 
                   {/* Meta info (collapsible) */}
-                  <InlineDisclosure title="Details" className="border-t pt-1">
+                  <InlineDisclosure title={t("generations.details")} className="border-t pt-1">
                     <div className="text-muted-foreground mt-1.5 space-y-0.5 pl-4 text-xs">
                       <div>
-                        <span className="font-medium">Model:</span> {g.modelId}
+                        <span className="font-medium">{t("generations.model")}:</span> {g.modelId}
                       </div>
                       <div>
-                        <span className="font-medium">Task:</span> {g.taskId}
+                        <span className="font-medium">{t("generations.task")}:</span> {g.taskId}
                       </div>
                       <div>
-                        <span className="font-medium">Chat:</span> {g.chatId}
+                        <span className="font-medium">{t("generations.chat")}:</span> {g.chatId}
                       </div>
                       {g.samplingSteps != null && (
                         <div>
-                          <span className="font-medium">Steps:</span> {g.samplingSteps}
+                          <span className="font-medium">{t("generations.steps")}:</span>{" "}
+                          {numberFormatter.format(g.samplingSteps)}
                         </div>
                       )}
                       {g.cfgScale != null && (
                         <div>
-                          <span className="font-medium">CFG Scale:</span> {g.cfgScale}
+                          <span className="font-medium">{t("generations.cfgScale")}:</span>{" "}
+                          {decimalFormatter.format(g.cfgScale)}
                         </div>
                       )}
                       {g.promptHelper != null && (
                         <div>
-                          <span className="font-medium">Prompt Helper:</span>{" "}
-                          {g.promptHelper ? "On" : "Off"}
+                          <span className="font-medium">{t("generations.promptHelper")}:</span>{" "}
+                          {g.promptHelper ? t("common.on") : t("common.off")}
                         </div>
                       )}
                       {g.userId && (
                         <div>
-                          <span className="font-medium">User:</span> {g.userId}
+                          <span className="font-medium">{t("generations.user")}:</span> {g.userId}
                         </div>
                       )}
                       {g.completedAt && (
                         <div>
-                          <span className="font-medium">Completed:</span>{" "}
-                          {new Date(g.completedAt).toLocaleString()}
+                          <span className="font-medium">{t("generations.completedAt")}:</span>{" "}
+                          {dateTimeFormatter.format(new Date(g.completedAt))}
                         </div>
                       )}
                       {g.nsfwScores && Array.isArray(g.nsfwScores) && g.nsfwScores.length > 0 && (
                         <div className="border-t pt-1">
                           <span className="text-[10px] font-semibold tracking-wider uppercase">
-                            NSFW Scores
+                            {t("generations.nsfwScores")}
                           </span>
                           <NsfwScoresDetails scores={g.nsfwScores} />
                         </div>

@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
+import { useTranslation } from "react-i18next";
 
 export function SummaryConfigSection({
   botId,
@@ -15,6 +16,7 @@ export function SummaryConfigSection({
   config: SummaryConfigStored;
   onUpdate: (updates: Partial<SummaryConfigStored>) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
   const roleOptions: Array<"user" | "context" | "assistant"> = ["user", "context", "assistant"];
   const currentRoleFilter = config.roleFilter ?? ["user", "context", "assistant"];
 
@@ -28,15 +30,15 @@ export function SummaryConfigSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Chat summaries</CardTitle>
+        <CardTitle className="text-base">{t("summary.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-muted-foreground text-xs">
-          These are the global defaults. Manage group-specific schedules and windows on the{" "}
+          {t("summary.descriptionBefore")}{" "}
           <Link to={`/bots/${botId}/summary`} className="underline hover:opacity-80">
-            Chat Summaries page
+            {t("summary.pageLink")}
           </Link>{" "}
-          .
+          {t("summary.descriptionAfter")}
         </p>
 
         <div className="flex items-center gap-2">
@@ -46,13 +48,13 @@ export function SummaryConfigSection({
             onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="summaryEnabled" className="text-sm font-medium">
-            Enable chat summaries
+            {t("summary.enable")}
           </label>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Default window (hours)</label>
+            <label className="text-sm font-medium">{t("summary.defaultWindow")}</label>
             <Input
               type="number"
               min={1}
@@ -62,7 +64,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Maximum messages</label>
+            <label className="text-sm font-medium">{t("summary.maxMessages")}</label>
             <Input
               type="number"
               min={10}
@@ -72,7 +74,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Default cooldown (seconds)</label>
+            <label className="text-sm font-medium">{t("summary.defaultCooldown")}</label>
             <Input
               type="number"
               min={0}
@@ -82,7 +84,7 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Timezone</label>
+            <label className="text-sm font-medium">{t("summary.timezone")}</label>
             <Input
               placeholder="Asia/Shanghai"
               value={config.timezone ?? ""}
@@ -93,12 +95,12 @@ export function SummaryConfigSection({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Global schedule hour (0–23)</label>
+            <label className="text-sm font-medium">{t("summary.scheduleHour")}</label>
             <Input
               type="number"
               min={0}
               max={23}
-              placeholder="Leave empty for no global schedule"
+              placeholder={t("summary.noSchedulePlaceholder")}
               value={config.globalScheduleHour != null ? String(config.globalScheduleHour) : ""}
               onChange={(e) =>
                 onUpdate({
@@ -108,12 +110,12 @@ export function SummaryConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Global schedule minute (0–59)</label>
+            <label className="text-sm font-medium">{t("summary.scheduleMinute")}</label>
             <Input
               type="number"
               min={0}
               max={59}
-              placeholder="Leave empty for no global schedule"
+              placeholder={t("summary.noSchedulePlaceholder")}
               value={config.globalScheduleMinute != null ? String(config.globalScheduleMinute) : ""}
               onChange={(e) =>
                 onUpdate({
@@ -125,16 +127,16 @@ export function SummaryConfigSection({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Model ID (optional)</label>
+          <label className="text-sm font-medium">{t("summary.modelId")}</label>
           <Input
-            placeholder="Leave empty to use the main model"
+            placeholder={t("summary.modelPlaceholder")}
             value={config.modelId ?? ""}
             onChange={(e) => onUpdate({ modelId: e.target.value || undefined })}
           />
         </div>
 
         <div className="space-y-2">
-          <label className="text-sm font-medium">Message role filter</label>
+          <label className="text-sm font-medium">{t("summary.roleFilter")}</label>
           <div className="flex gap-4">
             {roleOptions.map((role) => (
               <label key={role} className="flex items-center gap-1.5 text-sm">
@@ -142,16 +144,16 @@ export function SummaryConfigSection({
                   checked={currentRoleFilter.includes(role)}
                   onCheckedChange={() => toggleRole(role)}
                 />
-                {role}
+                {t(`summary.roles.${role}`)}
               </label>
             ))}
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">System prompt (optional)</label>
+          <label className="text-sm font-medium">{t("summary.systemPrompt")}</label>
           <Textarea
-            placeholder="Leave empty to use the built-in prompt"
+            placeholder={t("summary.systemPromptPlaceholder")}
             value={config.systemPrompt ?? ""}
             onChange={(e) => onUpdate({ systemPrompt: e.target.value || undefined })}
             rows={4}

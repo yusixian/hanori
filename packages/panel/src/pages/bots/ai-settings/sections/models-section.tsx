@@ -13,6 +13,7 @@ import { ModelRow } from "../components/model-row";
 import type { ModelOption } from "../types";
 import { CAPABILITY_BADGES } from "../types";
 import { groupFetchedModels, groupModelsByProvider } from "../utils";
+import { useTranslation } from "react-i18next";
 
 export function ModelsSection({
   botId,
@@ -43,6 +44,7 @@ export function ModelsSection({
   const [selectedFetchedModels, setSelectedFetchedModels] = useState<Set<string>>(new Set());
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
+  const { t } = useTranslation("aiSettings");
 
   const filteredFetchedModels = useMemo(() => {
     if (!modelSearchQuery.trim()) return fetchedModels;
@@ -51,9 +53,13 @@ export function ModelsSection({
       (m) =>
         m.id.toLowerCase().includes(q) ||
         m.owned_by.toLowerCase().includes(q) ||
-        m.capabilities.some((c) => CAPABILITY_BADGES[c]?.label.toLowerCase().includes(q)),
+        m.capabilities.some((c) =>
+          CAPABILITY_BADGES[c]
+            ? t(CAPABILITY_BADGES[c].labelKey).toLowerCase().includes(q)
+            : c.toLowerCase().includes(q),
+        ),
     );
-  }, [fetchedModels, modelSearchQuery]);
+  }, [fetchedModels, modelSearchQuery, t]);
 
   const handleFetchModels = async () => {
     setFetchingModels(true);
@@ -71,10 +77,10 @@ export function ModelsSection({
         setShowFetchedModels(true);
         setSelectedFetchedModels(new Set());
       } else {
-        onError("error" in json ? String(json.error) : "Failed to fetch models");
+        onError("error" in json ? String(json.error) : t("models.fetchError"));
       }
     } catch {
-      onError("Failed to fetch models");
+      onError(t("models.fetchError"));
     } finally {
       setFetchingModels(false);
     }
@@ -109,9 +115,9 @@ export function ModelsSection({
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">Models</CardTitle>
+          <CardTitle className="text-base">{t("models.title")}</CardTitle>
           <Button variant="outline" size="sm" onClick={handleFetchModels} disabled={fetchingModels}>
-            {fetchingModels ? <Loader2 className="h-4 w-4 animate-spin" /> : "Fetch Models"}
+            {fetchingModels ? <Loader2 className="h-4 w-4 animate-spin" /> : t("models.fetch")}
           </Button>
         </div>
       </CardHeader>
@@ -128,7 +134,10 @@ export function ModelsSection({
                     entry={m}
                     isActive={m.id === activeModel}
                     radioControl={
-                      <RadioGroupItem value={m.id} aria-label={`Set ${m.id} as default`} />
+                      <RadioGroupItem
+                        value={m.id}
+                        aria-label={t("models.setDefaultAria", { model: m.id })}
+                      />
                     }
                     onRemove={() => removeModel(m.id)}
                     onUpdate={(updates) => updateModelEntry(m.id, updates)}
@@ -138,9 +147,7 @@ export function ModelsSection({
             ))}
           </RadioGroup>
         ) : (
-          <p className="text-muted-foreground text-sm">
-            No models configured. Click "Fetch Models" to discover available models.
-          </p>
+          <p className="text-muted-foreground text-sm">{t("models.empty")}</p>
         )}
 
         {/* Fetched models panel */}
@@ -148,7 +155,9 @@ export function ModelsSection({
           <div className="space-y-3 rounded-md border p-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <p className="text-sm font-medium">Available Models ({fetchedModels.length})</p>
+                <p className="text-sm font-medium">
+                  {t("models.available", { count: fetchedModels.length })}
+                </p>
                 <div className="flex gap-1.5">
                   <button
                     type="button"
@@ -160,7 +169,7 @@ export function ModelsSection({
                       setSelectedFetchedModels(new Set(addable.map((m) => m.id)));
                     }}
                   >
-                    Select all
+                    {t("models.selectAll")}
                   </button>
                   <span className="text-muted-foreground text-xs">|</span>
                   <button
@@ -168,7 +177,7 @@ export function ModelsSection({
                     className="text-muted-foreground hover:text-foreground text-xs underline"
                     onClick={() => setSelectedFetchedModels(new Set())}
                   >
-                    Deselect all
+                    {t("models.deselectAll")}
                   </button>
                 </div>
               </div>
@@ -180,7 +189,7 @@ export function ModelsSection({
                   disabled={selectedFetchedModels.size === 0}
                 >
                   <Plus className="h-4 w-4" />
-                  Add Selected ({selectedFetchedModels.size})
+                  {t("models.addSelected", { count: selectedFetchedModels.size })}
                 </Button>
                 <Button
                   variant="ghost"
@@ -191,7 +200,7 @@ export function ModelsSection({
                     setCollapsedProviders(new Set());
                   }}
                 >
-                  Close
+                  {t("common.close")}
                 </Button>
               </div>
             </div>
@@ -202,7 +211,7 @@ export function ModelsSection({
               <Input
                 value={modelSearchQuery}
                 onChange={(e) => setModelSearchQuery(e.target.value)}
-                placeholder="Search models, providers, capabilities..."
+                placeholder={t("models.searchPlaceholder")}
                 className="pl-8"
               />
             </div>
@@ -212,7 +221,7 @@ export function ModelsSection({
               {groupFetchedModels(filteredFetchedModels).length === 0 ? (
                 <div className="text-muted-foreground flex flex-col items-center gap-1 py-8 text-sm">
                   <Search className="h-5 w-5 opacity-50" />
-                  <p>No models match "{modelSearchQuery}"</p>
+                  <p>{t("models.noMatch", { query: modelSearchQuery })}</p>
                 </div>
               ) : (
                 groupFetchedModels(filteredFetchedModels).map(([group, groupModels]) => {
@@ -243,7 +252,7 @@ export function ModelsSection({
                         </span>
                         {isCollapsed && selectedCount > 0 && (
                           <Badge variant="default" className="ml-auto px-1.5 py-0 text-[10px]">
-                            {selectedCount} selected
+                            {t("models.selectedCount", { count: selectedCount })}
                           </Badge>
                         )}
                       </button>
@@ -287,7 +296,7 @@ export function ModelsSection({
                               <span className="flex-1 truncate font-mono text-xs">{m.id}</span>
                               {alreadyAdded && (
                                 <span className="text-muted-foreground text-[10px] uppercase">
-                                  Added
+                                  {t("models.added")}
                                 </span>
                               )}
                               <span className="flex gap-0.5">
@@ -295,11 +304,17 @@ export function ModelsSection({
                                   <Badge
                                     key={cap}
                                     variant="muted"
-                                    title={CAPABILITY_BADGES[cap]?.label ?? cap}
+                                    title={
+                                      CAPABILITY_BADGES[cap]
+                                        ? t(CAPABILITY_BADGES[cap].labelKey)
+                                        : cap
+                                    }
                                     className="px-1 py-0 text-[10px]"
                                   >
                                     {CAPABILITY_BADGES[cap]?.emoji ?? cap}{" "}
-                                    {CAPABILITY_BADGES[cap]?.label ?? cap}
+                                    {CAPABILITY_BADGES[cap]
+                                      ? t(CAPABILITY_BADGES[cap].labelKey)
+                                      : cap}
                                   </Badge>
                                 ))}
                               </span>
@@ -326,20 +341,23 @@ export function ModelsSection({
                       setSelectedFetchedModels(new Set(addable.map((m) => m.id)));
                     }}
                   >
-                    Select all
+                    {t("models.selectAll")}
                   </button>
                   <button
                     type="button"
                     className="text-muted-foreground hover:text-foreground text-xs underline"
                     onClick={() => setSelectedFetchedModels(new Set())}
                   >
-                    Deselect all
+                    {t("models.deselectAll")}
                   </button>
                 </div>
                 <span className="text-muted-foreground text-xs">
-                  {selectedFetchedModels.size} of{" "}
-                  {filteredFetchedModels.filter((m) => !models.some((cm) => cm.id === m.id)).length}{" "}
-                  available selected
+                  {t("models.availableSelected", {
+                    selected: selectedFetchedModels.size,
+                    available: filteredFetchedModels.filter(
+                      (m) => !models.some((cm) => cm.id === m.id),
+                    ).length,
+                  })}
                 </span>
               </div>
             </div>
@@ -348,7 +366,7 @@ export function ModelsSection({
 
         {/* /model command access */}
         <div className="space-y-1.5 border-t pt-4">
-          <span className="text-sm font-medium">/model Command Access</span>
+          <span className="text-sm font-medium">{t("models.commandAccess")}</span>
           <RadioGroup
             className="grid gap-2 sm:grid-cols-2"
             value={modelCommandAccess}
@@ -357,25 +375,19 @@ export function ModelsSection({
             <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
               <RadioGroupItem value="admin" />
               <span>
-                <span className="block text-sm font-medium">Admin Only</span>
-                <span className="text-xs text-slate-500">
-                  Only bot administrators can switch models.
-                </span>
+                <span className="block text-sm font-medium">{t("models.adminOnly")}</span>
+                <span className="text-xs text-slate-500">{t("models.adminOnlyDescription")}</span>
               </span>
             </label>
             <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
               <RadioGroupItem value="all" />
               <span>
-                <span className="block text-sm font-medium">All Users</span>
-                <span className="text-xs text-slate-500">
-                  Anyone in the chat can switch models.
-                </span>
+                <span className="block text-sm font-medium">{t("models.allUsers")}</span>
+                <span className="text-xs text-slate-500">{t("models.allUsersDescription")}</span>
               </span>
             </label>
           </RadioGroup>
-          <p className="text-muted-foreground text-xs">
-            Who can use the /model command to switch AI models per-chat in Telegram.
-          </p>
+          <p className="text-muted-foreground text-xs">{t("models.commandAccessDescription")}</p>
         </div>
       </CardContent>
     </Card>

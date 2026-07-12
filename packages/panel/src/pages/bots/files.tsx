@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Popover } from "@/components/ui/popover";
@@ -30,7 +30,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
 interface FileEntry {
@@ -70,10 +71,10 @@ function getFileCategory(name: string): FileCategory {
   return "binary";
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
+function formatBytes(bytes: number, formatter: Intl.NumberFormat): string {
+  if (bytes < 1024) return `${formatter.format(bytes)} B`;
   const kb = bytes / 1024;
-  return kb < 1024 ? `${kb.toFixed(1)} KB` : `${(kb / 1024).toFixed(1)} MB`;
+  return kb < 1024 ? `${formatter.format(kb)} KB` : `${formatter.format(kb / 1024)} MB`;
 }
 
 /** Encode each segment of a path like `generations/foo.png` */
@@ -85,6 +86,7 @@ function encodeFilePath(filePath: string): string {
 }
 
 export function BotFilesPage() {
+  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,6 +125,12 @@ export function BotFilesPage() {
   const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
   const [autoSave, setAutoSave] = useState(
     () => localStorage.getItem("files:auto-save") === "true",
+  );
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const byteFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }),
+    [locale],
   );
 
   const isDirty = content !== originalContent;
@@ -329,7 +337,7 @@ export function BotFilesPage() {
       const fileName = filePath.includes("/")
         ? filePath.slice(filePath.lastIndexOf("/") + 1)
         : filePath;
-      if (!confirm(`Delete "${fileName}"?`)) return;
+      if (!confirm(t("files.deleteFileConfirm", { name: fileName }))) return;
       try {
         const res = await authFetch(`/api/bots/${botId}/files/${encodeFilePath(filePath)}`, {
           method: "DELETE",
@@ -347,12 +355,15 @@ export function BotFilesPage() {
         console.error("Failed to delete file:", err);
       }
     },
-    [botId, selectedFile, loadFiles],
+    [botId, selectedFile, loadFiles, t],
   );
 
   const deleteBatch = useCallback(async () => {
     if (!botId || selectedFiles.size === 0) return;
-    if (!confirm(`Delete ${selectedFiles.size} file(s)?`)) return;
+    if (
+      !confirm(t("files.deleteBatchConfirm", { count: numberFormatter.format(selectedFiles.size) }))
+    )
+      return;
     setDeleting(true);
     try {
       const res = await authFetch(`/api/bots/${botId}/files-delete-batch`, {
@@ -375,7 +386,7 @@ export function BotFilesPage() {
     } finally {
       setDeleting(false);
     }
-  }, [botId, selectedFiles, selectedFile, loadFiles]);
+  }, [botId, selectedFiles, selectedFile, loadFiles, numberFormatter, t]);
 
   const createFile = useCallback(async () => {
     if (!botId || !newFileName.trim()) return;
@@ -525,8 +536,8 @@ export function BotFilesPage() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Files</h1>
-          <p className="text-muted-foreground mt-0.5 text-sm">Manage this bot's workspace files.</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t("files.title")}</h1>
+          <p className="text-muted-foreground mt-0.5 text-sm">{t("files.description")}</p>
         </div>
         <div className="flex items-center gap-2">
           {selectedFiles.size > 0 && (
@@ -536,12 +547,12 @@ export function BotFilesPage() {
               ) : (
                 <Trash2 className="mr-1 h-4 w-4" />
               )}
-              Delete Selected ({selectedFiles.size})
+              {t("files.deleteSelected", { count: numberFormatter.format(selectedFiles.size) })}
             </Button>
           )}
           <Button size="sm" onClick={() => setShowNewFile(true)} disabled={showNewFile}>
             <FilePlus className="mr-1 h-4 w-4" />
-            New File
+            {t("files.newFile")}
           </Button>
           <Popover
             placement="bottom-end"
@@ -550,7 +561,7 @@ export function BotFilesPage() {
                 variant="outline"
                 size="icon"
                 className="h-10 w-10"
-                aria-label="More file actions"
+                aria-label={t("files.moreActions")}
               >
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
@@ -562,7 +573,7 @@ export function BotFilesPage() {
                 onClick={() => downloadZip(currentPath)}
               >
                 <Archive className="h-4 w-4 shrink-0" />
-                Download current folder
+                {t("files.downloadCurrentFolder")}
               </button>
               <button
                 className="hover:bg-accent focus-visible:bg-accent flex h-10 w-full items-center gap-2.5 rounded-lg px-3 text-left text-sm whitespace-nowrap transition-colors outline-none disabled:pointer-events-none disabled:opacity-50"
@@ -570,7 +581,7 @@ export function BotFilesPage() {
                 disabled={initializing}
               >
                 <PackagePlus className="h-4 w-4 shrink-0" />
-                Restore templates
+                {t("files.restoreTemplates")}
               </button>
             </div>
           </Popover>
@@ -582,7 +593,8 @@ export function BotFilesPage() {
         <div className="flex items-center gap-2">
           <Shield className="h-4 w-4 text-blue-500" />
           <span className="text-muted-foreground text-sm">
-            Prompt files: {injectedFiles.length} &middot; {formatBytes(injectedSize)} /{" "}
+            {t("files.promptFiles")}: {numberFormatter.format(injectedFiles.length)} &middot;{" "}
+            {formatBytes(injectedSize, byteFormatter)} /{" "}
             {editingMaxSize ? (
               <span className="inline-flex items-center gap-1">
                 <Input
@@ -627,12 +639,12 @@ export function BotFilesPage() {
                   setEditingMaxSize(true);
                 }}
               >
-                {formatBytes(injection.maxTotalSize)}
+                {formatBytes(injection.maxTotalSize, byteFormatter)}
               </button>
             )}
           </span>
           {injectedSize > injection.maxTotalSize && (
-            <span className="text-xs text-red-500">(exceeded limit)</span>
+            <span className="text-xs text-red-500">{t("files.exceededLimit")}</span>
           )}
         </div>
       </div>
@@ -653,7 +665,7 @@ export function BotFilesPage() {
                 className="hover:text-foreground cursor-pointer hover:underline"
                 onClick={() => navigateTo("")}
               >
-                Workspace
+                {t("files.workspace")}
               </button>
               {pathSegments.map((seg, i) => (
                 <span
@@ -678,7 +690,7 @@ export function BotFilesPage() {
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search files"
+                placeholder={t("files.searchPlaceholder")}
                 className="h-8 pl-8 text-xs"
               />
             </div>
@@ -697,7 +709,7 @@ export function BotFilesPage() {
                   ) : (
                     <Square className="h-3.5 w-3.5" />
                   )}
-                  {selectionMode ? "Select all" : "Select files"}
+                  {selectionMode ? t("files.selectAll") : t("files.selectFiles")}
                 </button>
                 {selectionMode && (
                   <button
@@ -707,7 +719,7 @@ export function BotFilesPage() {
                       setSelectedFiles(new Set());
                     }}
                   >
-                    Done
+                    {t("files.done")}
                   </button>
                 )}
               </div>
@@ -718,7 +730,7 @@ export function BotFilesPage() {
                 <Input
                   value={newFileName}
                   onChange={(e) => setNewFileName(e.target.value)}
-                  placeholder="filename.md"
+                  placeholder={t("files.newFilePlaceholder")}
                   className="h-7 text-xs"
                   autoFocus
                   onKeyDown={(e) => {
@@ -757,13 +769,11 @@ export function BotFilesPage() {
             )}
             {loading ? (
               <div className="text-muted-foreground flex items-center gap-2 px-2 py-4 text-xs">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading...
+                <Loader2 className="h-3 w-3 animate-spin" /> {t("common.loading")}
               </div>
             ) : files.length === 0 ? (
               <div className="text-muted-foreground px-2 py-4 text-center text-xs">
-                {currentPath
-                  ? "Empty directory."
-                  : 'No files yet. Click "Init Templates" to create default files.'}
+                {currentPath ? t("files.emptyDirectory") : t("files.noFiles")}
               </div>
             ) : (
               visibleFiles.map((file) => {
@@ -824,9 +834,7 @@ export function BotFilesPage() {
                               : "border-muted-foreground/30 hover:border-blue-400"
                           }`}
                           title={
-                            isInjectable
-                              ? "Injected into system prompt (click to remove)"
-                              : "Click to inject into system prompt"
+                            isInjectable ? t("files.injectedTitle") : t("files.notInjectedTitle")
                           }
                           onClick={(e) => {
                             e.stopPropagation();
@@ -857,7 +865,9 @@ export function BotFilesPage() {
                         <File className="h-3.5 w-3.5 shrink-0 opacity-60" />
                       )}
                       <span className="truncate">{file.name}</span>
-                      {isInjectable && <Badge className="px-1.5 py-0 text-[9px]">Prompt</Badge>}
+                      {isInjectable && (
+                        <Badge className="px-1.5 py-0 text-[9px]">{t("files.promptBadge")}</Badge>
+                      )}
                     </div>
                     {!isInjectable && !isSelected && (
                       <Button
@@ -902,14 +912,14 @@ export function BotFilesPage() {
                   )}
                   <span className="text-sm font-medium">{selectedFile}</span>
                   {fileCategory === "text" && isDirty && (
-                    <span className="text-xs text-amber-600">Unsaved</span>
+                    <span className="text-xs text-amber-600">{t("files.unsaved")}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
                   {fileCategory === "text" && (
                     <label className="text-muted-foreground mr-1 flex cursor-pointer items-center gap-2 text-xs whitespace-nowrap">
                       <Switch checked={autoSave} onCheckedChange={setAutoSave} />
-                      Auto-save
+                      {t("files.autoSave")}
                     </label>
                   )}
                   <Button
@@ -923,7 +933,7 @@ export function BotFilesPage() {
                     ) : (
                       <Download className="mr-1 h-4 w-4" />
                     )}
-                    Download
+                    {t("files.download")}
                   </Button>
                   {fileCategory === "text" && (
                     <Button size="sm" onClick={saveFile} disabled={saving || !isDirty}>
@@ -932,7 +942,7 @@ export function BotFilesPage() {
                       ) : (
                         <Save className="mr-1 h-4 w-4" />
                       )}
-                      Save
+                      {t("common.save")}
                     </Button>
                   )}
                 </div>
@@ -940,7 +950,7 @@ export function BotFilesPage() {
               <div className="flex-1">
                 {fileLoading ? (
                   <div className="text-muted-foreground flex h-full items-center justify-center gap-2 text-sm">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Loading file...
+                    <Loader2 className="h-4 w-4 animate-spin" /> {t("files.loadingFile")}
                   </div>
                 ) : fileCategory === "text" ? (
                   <Editor
@@ -971,7 +981,7 @@ export function BotFilesPage() {
                 ) : (
                   <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-3">
                     <File className="h-12 w-12 opacity-30" />
-                    <p className="text-sm">This file cannot be previewed</p>
+                    <p className="text-sm">{t("files.cannotPreview")}</p>
                     <Button
                       variant="outline"
                       size="sm"
@@ -983,7 +993,7 @@ export function BotFilesPage() {
                       ) : (
                         <Download className="mr-1 h-4 w-4" />
                       )}
-                      Download File
+                      {t("files.downloadFile")}
                     </Button>
                   </div>
                 )}
@@ -992,7 +1002,7 @@ export function BotFilesPage() {
           ) : (
             <div className="text-muted-foreground flex h-full flex-col items-center justify-center gap-2">
               <FolderOpen className="h-8 w-8 opacity-40" />
-              <p className="text-sm">Select a file to edit</p>
+              <p className="text-sm">{t("files.selectToEdit")}</p>
             </div>
           )}
         </div>

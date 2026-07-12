@@ -1,8 +1,10 @@
 import { useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { COLLAPSE_CHARACTER_THRESHOLD, COLLAPSE_LINE_THRESHOLD } from "./constants";
 import { DisclosureIcon } from "./disclosure-icon";
 
 export function CollapsibleContent({ content }: { content: string }) {
+  const { t } = useTranslation("bots");
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
   const lines = content.split("\n");
@@ -36,10 +38,10 @@ export function CollapsibleContent({ content }: { content: string }) {
       >
         <DisclosureIcon expanded={expanded} />
         {expanded
-          ? "Collapse"
+          ? t("conversations.collapse")
           : exceedsLineLimit
-            ? `Expand ${lines.length} lines`
-            : "Expand message"}
+            ? t("conversations.expandLines", { count: lines.length })
+            : t("conversations.expandMessage")}
       </button>
     </div>
   );

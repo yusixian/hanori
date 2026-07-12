@@ -29,3 +29,15 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Check translations
+        run: pnpm i18n:check
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Install Chromium
+        run: pnpm --filter @cos-tool-bot/panel exec playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: pnpm test:browser

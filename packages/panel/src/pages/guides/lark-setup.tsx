@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 
 function Step({
@@ -31,174 +32,145 @@ function Code({ children }: { children: React.ReactNode }) {
 }
 
 export function LarkSetupGuidePage() {
+  const { t } = useTranslation("admin");
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Lark Webhook Bot Setup Guide</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Step-by-step guide to create and configure a Lark/Feishu custom webhook bot.
-        </p>
+        <h1 className="text-2xl font-bold">{t("larkGuide.title")}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t("larkGuide.subtitle")}</p>
       </div>
 
       <div className="space-y-4">
-        <Step number={1} title="Create a Custom Bot in Lark Group">
+        <Step number={1} title={t("larkGuide.steps.create.title")}>
           <ol className="list-inside list-decimal space-y-2">
-            <li>Open a Lark/Feishu group chat</li>
-            <li>
-              Click the group name at the top to open <strong>Group Settings</strong>
-            </li>
-            <li>
-              Navigate to <strong>Bots</strong> section
-            </li>
-            <li>
-              Click <strong>Add Bot</strong> and select <strong>Custom Bot</strong>
-            </li>
-            <li>Give your bot a name and optional description, then confirm</li>
+            <li>{t("larkGuide.steps.create.openChat")}</li>
+            <li>{t("larkGuide.steps.create.openSettings")}</li>
+            <li>{t("larkGuide.steps.create.botsSection")}</li>
+            <li>{t("larkGuide.steps.create.addBot")}</li>
+            <li>{t("larkGuide.steps.create.nameBot")}</li>
           </ol>
         </Step>
 
-        <Step number={2} title="Copy the Webhook URL">
-          <p>
-            After creation, Lark will display a <strong>Webhook URL</strong> like:
-          </p>
+        <Step number={2} title={t("larkGuide.steps.webhook.title")}>
+          <p>{t("larkGuide.steps.webhook.intro")}</p>
           <div className="bg-muted mt-2 overflow-x-auto rounded-md p-3 font-mono text-xs">
             https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
           </div>
-          <p className="mt-2">Copy this URL — you'll need it when adding the bot in the panel.</p>
+          <p className="mt-2">{t("larkGuide.steps.webhook.copy")}</p>
         </Step>
 
-        <Step number={3} title="Configure Signature Verification (Optional)">
-          <p>
-            For added security, you can enable <strong>Signature Verification</strong>:
-          </p>
+        <Step number={3} title={t("larkGuide.steps.signature.title")}>
+          <p>{t("larkGuide.steps.signature.intro")}</p>
           <ol className="mt-2 list-inside list-decimal space-y-2">
-            <li>
-              In the bot settings dialog, find the <strong>Security Settings</strong> section
-            </li>
-            <li>
-              Enable <strong>Signature Verification</strong>
-            </li>
-            <li>
-              Copy the generated <strong>Sign Secret</strong> (starts with <Code>SEC</Code>)
-            </li>
+            <li>{t("larkGuide.steps.signature.findSecurity")}</li>
+            <li>{t("larkGuide.steps.signature.enable")}</li>
+            <li>{t("larkGuide.steps.signature.copySecret")}</li>
           </ol>
-          <p className="text-muted-foreground mt-2">
-            If you skip this, leave the Sign Secret field empty when creating the bot.
-          </p>
+          <p className="text-muted-foreground mt-2">{t("larkGuide.steps.signature.skip")}</p>
         </Step>
 
-        <Step number={4} title="Add the Bot in Panel">
-          <p>Fill in the bot creation form with the following fields:</p>
+        <Step number={4} title={t("larkGuide.steps.panel.title")}>
+          <p>{t("larkGuide.steps.panel.intro")}</p>
           <div className="mt-3 space-y-2">
             <div className="flex gap-2">
-              <span className="text-muted-foreground w-28 shrink-0 font-medium">Platform</span>
-              <span>Select "Lark Webhook"</span>
+              <span className="text-muted-foreground w-28 shrink-0 font-medium">
+                {t("larkGuide.steps.panel.platform")}
+              </span>
+              <span>{t("larkGuide.steps.panel.platformValue")}</span>
             </div>
             <div className="flex gap-2">
-              <span className="text-muted-foreground w-28 shrink-0 font-medium">Name</span>
-              <span>A friendly name for your bot</span>
+              <span className="text-muted-foreground w-28 shrink-0 font-medium">
+                {t("larkGuide.steps.panel.name")}
+              </span>
+              <span>{t("larkGuide.steps.panel.nameValue")}</span>
             </div>
             <div className="flex gap-2">
-              <span className="text-muted-foreground w-28 shrink-0 font-medium">Webhook URL</span>
-              <span>Paste the URL from Step 2</span>
+              <span className="text-muted-foreground w-28 shrink-0 font-medium">
+                {t("larkGuide.steps.panel.webhookUrl")}
+              </span>
+              <span>{t("larkGuide.steps.panel.webhookValue")}</span>
             </div>
             <div className="flex gap-2">
-              <span className="text-muted-foreground w-28 shrink-0 font-medium">Sign Secret</span>
-              <span>Paste the secret from Step 3 (leave empty if not configured)</span>
+              <span className="text-muted-foreground w-28 shrink-0 font-medium">
+                {t("larkGuide.steps.panel.signSecret")}
+              </span>
+              <span>{t("larkGuide.steps.panel.signSecretValue")}</span>
             </div>
           </div>
         </Step>
 
-        <Step number={5} title="Email Forwarding (Optional)">
-          <p>
-            You can configure the bot to monitor an email inbox via IMAP and forward matching emails
-            to the Lark group. This is useful for forwarding GitHub notifications, alerts, etc.
-          </p>
+        <Step number={5} title={t("larkGuide.steps.email.title")}>
+          <p>{t("larkGuide.steps.email.intro")}</p>
 
-          <h4 className="mt-3 font-medium">Gmail IMAP Setup:</h4>
+          <h4 className="mt-3 font-medium">{t("larkGuide.steps.email.gmailTitle")}</h4>
           <ol className="mt-1 list-inside list-decimal space-y-2">
+            <li>{t("larkGuide.steps.email.gmailEnable")}</li>
+            <li>{t("larkGuide.steps.email.gmailTwoStep")}</li>
             <li>
-              Enable IMAP in Gmail: <strong>Settings</strong> &rarr;{" "}
-              <strong>See all settings</strong> &rarr; <strong>Forwarding and POP/IMAP</strong>{" "}
-              &rarr; Enable IMAP
-            </li>
-            <li>Enable 2-Step Verification on your Google Account (required for App Passwords)</li>
-            <li>
-              Go to{" "}
+              {t("larkGuide.steps.email.gmailPassword")}{" "}
               <a
                 href="https://myaccount.google.com/apppasswords"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-blue-400 underline underline-offset-2"
               >
-                Google App Passwords
+                {t("larkGuide.steps.email.googleAppPasswords")}
               </a>{" "}
-              &rarr; Create a new app password (select "Mail")
+              {t("larkGuide.steps.email.gmailPasswordAction")}
             </li>
-            <li>Copy the generated 16-character password — use this as the IMAP password</li>
+            <li>{t("larkGuide.steps.email.gmailCopy")}</li>
           </ol>
           <div className="bg-muted mt-2 space-y-1 rounded-md p-3 font-mono text-xs">
             <div>
-              Host: <strong>imap.gmail.com</strong>
+              {t("larkGuide.steps.email.host")} <strong>imap.gmail.com</strong>
             </div>
             <div>
-              Port: <strong>993</strong>
+              {t("larkGuide.steps.email.port")} <strong>993</strong>
             </div>
           </div>
 
-          <h4 className="mt-3 font-medium">QQ Mail IMAP Setup:</h4>
+          <h4 className="mt-3 font-medium">{t("larkGuide.steps.email.qqTitle")}</h4>
           <ol className="mt-1 list-inside list-decimal space-y-2">
-            <li>
-              Go to QQ Mail &rarr; <strong>Settings</strong> &rarr; <strong>Accounts</strong>
-            </li>
-            <li>
-              Enable <strong>IMAP/SMTP Service</strong>
-            </li>
-            <li>
-              Generate an <strong>Authorization Code</strong> (this is your password, not your QQ
-              password)
-            </li>
+            <li>{t("larkGuide.steps.email.qqSettings")}</li>
+            <li>{t("larkGuide.steps.email.qqEnable")}</li>
+            <li>{t("larkGuide.steps.email.qqCode")}</li>
           </ol>
           <div className="bg-muted mt-2 space-y-1 rounded-md p-3 font-mono text-xs">
             <div>
-              Host: <strong>imap.qq.com</strong>
+              {t("larkGuide.steps.email.host")} <strong>imap.qq.com</strong>
             </div>
             <div>
-              Port: <strong>993</strong>
+              {t("larkGuide.steps.email.port")} <strong>993</strong>
             </div>
           </div>
 
-          <h4 className="mt-3 font-medium">Filter Configuration:</h4>
+          <h4 className="mt-3 font-medium">{t("larkGuide.steps.email.filterTitle")}</h4>
           <ul className="mt-1 list-inside list-disc space-y-1">
             <li>
-              <strong>Sender Filter</strong> — e.g. <Code>notifications@github.com</Code>
+              <strong>{t("larkGuide.steps.email.senderFilter")}</strong> — e.g.{" "}
+              <Code>notifications@github.com</Code>
             </li>
             <li>
-              <strong>Subject Filter</strong> — e.g. <Code>pull request</Code>
+              <strong>{t("larkGuide.steps.email.subjectFilter")}</strong> — e.g.{" "}
+              <Code>pull request</Code>
             </li>
           </ul>
-          <p className="text-muted-foreground mt-2">
-            Only emails matching the filters will be forwarded.
-          </p>
+          <p className="text-muted-foreground mt-2">{t("larkGuide.steps.email.filterHint")}</p>
         </Step>
 
-        <Step number={6} title="Test Your Bot">
+        <Step number={6} title={t("larkGuide.steps.test.title")}>
           <ol className="list-inside list-decimal space-y-2">
-            <li>Start the bot from the bot list page</li>
-            <li>
-              On the bot dashboard, click the <strong>Send Test</strong> button
-            </li>
-            <li>Check your Lark group — you should see a test message</li>
+            <li>{t("larkGuide.steps.test.start")}</li>
+            <li>{t("larkGuide.steps.test.send")}</li>
+            <li>{t("larkGuide.steps.test.check")}</li>
           </ol>
-          <p className="text-muted-foreground mt-2">
-            If the message doesn't appear, verify the Webhook URL and Sign Secret are correct.
-          </p>
+          <p className="text-muted-foreground mt-2">{t("larkGuide.steps.test.troubleshoot")}</p>
         </Step>
       </div>
 
       <div className="flex justify-center pt-2">
         <Link to="/bots/new">
-          <Button size="lg">Create Lark Bot</Button>
+          <Button size="lg">{t("larkGuide.createBot")}</Button>
         </Link>
       </div>
     </div>

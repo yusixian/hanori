@@ -5,6 +5,7 @@ import { client } from "@/lib/client";
 import { ExternalLink, Plug, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
+import { useTranslation } from "react-i18next";
 
 type ServerListItem = Awaited<
   ReturnType<Awaited<ReturnType<(typeof client.api)["mcp-servers"]["$get"]>>["json"]>
@@ -20,6 +21,7 @@ export function McpServersSection({
   const [servers, setServers] = useState<ServerListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { t } = useTranslation("aiSettings");
 
   useEffect(() => {
     client.api["mcp-servers"]
@@ -28,9 +30,9 @@ export function McpServersSection({
       .then((json) => {
         if (json.ok) setServers(json.data);
       })
-      .catch(() => setError("Failed to load MCP servers"))
+      .catch(() => setError(t("mcpServers.loadError")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   const toggle = (id: number) => {
     if (selectedIds.includes(id)) {
@@ -46,29 +48,29 @@ export function McpServersSection({
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Plug className="h-4 w-4" />
-            MCP Servers
+            {t("mcpServers.title")}
           </CardTitle>
           <Link
             to="/mcp-servers"
             className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs"
           >
-            Manage
+            {t("common.manage")}
             <ExternalLink className="h-3 w-3" />
           </Link>
         </div>
       </CardHeader>
       <CardContent>
         {loading ? (
-          <p className="text-muted-foreground text-sm">Loading…</p>
+          <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
         ) : error ? (
           <p className="text-sm text-red-500">{error}</p>
         ) : servers.length === 0 ? (
           <p className="text-muted-foreground text-sm">
-            No MCP servers configured.{" "}
+            {t("mcpServers.emptyBefore")}{" "}
             <Link to="/mcp-servers" className="text-primary underline">
-              Add one
+              {t("mcpServers.addOne")}
             </Link>{" "}
-            to get started.
+            {t("mcpServers.emptyAfter")}
           </p>
         ) : (
           <div className="space-y-2">
@@ -85,7 +87,9 @@ export function McpServersSection({
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium">{server.name}</span>
                     <Badge variant={server.status.connected ? "success" : "destructive"}>
-                      {server.status.connected ? "Connected" : "Disconnected"}
+                      {server.status.connected
+                        ? t("mcpServers.connected")
+                        : t("mcpServers.disconnected")}
                     </Badge>
                     {server.status.toolCount > 0 && (
                       <Badge variant="muted">
@@ -100,10 +104,7 @@ export function McpServersSection({
                 </div>
               </label>
             ))}
-            <p className="text-muted-foreground mt-2 text-xs">
-              Selected servers' tools will be available to this bot's AI. Restart required after
-              changes.
-            </p>
+            <p className="text-muted-foreground mt-2 text-xs">{t("mcpServers.description")}</p>
           </div>
         )}
       </CardContent>

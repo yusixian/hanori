@@ -22,21 +22,24 @@ import {
   Trash2,
   Wifi,
 } from "lucide-react";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 // ── Helpers ──
 
-function formatBytes(bytes: number): string {
+function formatBytes(bytes: number, locale?: string): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  const value = Number((bytes / Math.pow(k, i)).toFixed(1));
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 1 }).format(value)} ${sizes[i]}`;
 }
 
 // ── Create Backup Section ──
 
 function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
+  const { t, i18n } = useTranslation("admin");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -49,13 +52,18 @@ function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
       const res = await client.api.backup.$post();
       const json = await res.json();
       if (json.ok) {
-        setSuccess(`Backup created: ${json.data.filename} (${formatBytes(json.data.sizeBytes)})`);
+        setSuccess(
+          t("backup.create.success", {
+            filename: json.data.filename,
+            size: formatBytes(json.data.sizeBytes, i18n.resolvedLanguage),
+          }),
+        );
         onCreated();
       } else {
         setError(json.error);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create backup");
+      setError(err instanceof Error ? err.message : t("backup.create.failed"));
     } finally {
       setCreating(false);
     }
@@ -66,17 +74,14 @@ function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Plus className="h-5 w-5" />
-          Create Backup
+          {t("backup.create.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-muted-foreground text-sm">
-          Create a full database backup (pg_dump, gzipped). If remote storage is configured, the
-          backup will also be uploaded.
-        </p>
+        <p className="text-muted-foreground text-sm">{t("backup.create.description")}</p>
         <Button onClick={handleCreate} disabled={creating}>
           {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-          {creating ? "Creating backup..." : "Create Backup"}
+          {creating ? t("backup.create.creating") : t("backup.create.action")}
         </Button>
         {error && (
           <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
@@ -106,36 +111,47 @@ function BackupHistorySection({
   loading: boolean;
   onRefresh: () => void;
 }) {
+  const { t, i18n } = useTranslation("admin");
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
+  const dateTimeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(i18n.resolvedLanguage, {
+        dateStyle: "medium",
+        timeStyle: "medium",
+      }),
+    [i18n.resolvedLanguage],
+  );
 
   const handleDownload = async (record: BackupRecord) => {
     setDownloadingId(record.id);
     try {
       const res = await authFetch(`/api/backup/${record.id}/download`);
       if (!res.ok) {
-        alert("Download failed");
+        alert(t("backup.history.downloadFailed"));
         return;
       }
       const blob = await res.blob();
       triggerDownload(blob, record.filename);
     } catch {
-      alert("Download failed");
+      alert(t("backup.history.downloadFailed"));
     } finally {
       setDownloadingId(null);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this backup? This cannot be undone.")) return;
+    if (!confirm(t("backup.history.deleteConfirm"))) return;
     setDeletingId(id);
     try {
       const res = await client.api.backup[":id"].$delete({ param: { id: String(id) } });
       const json = await res.json();
-      if (!json.ok) alert("Delete failed: " + json.error);
+      if (!json.ok) {
+        alert(t("backup.history.deleteFailedWithReason", { error: json.error }));
+      }
       onRefresh();
     } catch {
-      alert("Delete failed");
+      alert(t("backup.history.deleteFailed"));
     } finally {
       setDeletingId(null);
     }
@@ -146,29 +162,29 @@ function BackupHistorySection({
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <HardDrive className="h-5 w-5" />
-          Backup History
+          {t("backup.history.title")}
         </CardTitle>
       </CardHeader>
       <CardContent>
         {loading ? (
           <div className="flex items-center gap-2 py-4">
             <Loader2 className="h-4 w-4 animate-spin" />
-            <span className="text-muted-foreground text-sm">Loading...</span>
+            <span className="text-muted-foreground text-sm">{t("backup.history.loading")}</span>
           </div>
         ) : records.length === 0 ? (
-          <p className="text-muted-foreground py-4 text-sm">No backups yet.</p>
+          <p className="text-muted-foreground py-4 text-sm">{t("backup.history.empty")}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-muted-foreground border-b text-left">
-                  <th className="pr-4 pb-2 font-medium">Filename</th>
-                  <th className="pr-4 pb-2 font-medium">Size</th>
-                  <th className="pr-4 pb-2 font-medium">Duration</th>
-                  <th className="pr-4 pb-2 font-medium">Status</th>
-                  <th className="pr-4 pb-2 font-medium">Remote</th>
-                  <th className="pr-4 pb-2 font-medium">Created</th>
-                  <th className="pb-2 font-medium">Actions</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.filename")}</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.size")}</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.duration")}</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.status")}</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.remote")}</th>
+                  <th className="pr-4 pb-2 font-medium">{t("backup.history.created")}</th>
+                  <th className="pb-2 font-medium">{t("backup.history.actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -177,11 +193,13 @@ function BackupHistorySection({
                     <td className="max-w-48 truncate py-2 pr-4 font-mono text-xs">
                       {record.filename}
                     </td>
-                    <td className="py-2 pr-4">{formatBytes(record.sizeBytes)}</td>
+                    <td className="py-2 pr-4">
+                      {formatBytes(record.sizeBytes, i18n.resolvedLanguage)}
+                    </td>
                     <td className="py-2 pr-4">{formatDuration(record.durationMs)}</td>
                     <td className="py-2 pr-4">
                       <Badge variant={record.status === "completed" ? "default" : "destructive"}>
-                        {record.status}
+                        {t(`backup.history.${record.status}`)}
                       </Badge>
                       {record.error && (
                         <span
@@ -196,11 +214,11 @@ function BackupHistorySection({
                       {record.remoteProvider ? (
                         <Badge variant="muted">{record.remoteProvider}</Badge>
                       ) : (
-                        <span className="text-muted-foreground">local</span>
+                        <span className="text-muted-foreground">{t("backup.history.local")}</span>
                       )}
                     </td>
                     <td className="py-2 pr-4 text-xs">
-                      {new Date(record.createdAt).toLocaleString()}
+                      {dateTimeFormatter.format(new Date(record.createdAt))}
                     </td>
                     <td className="py-2">
                       <div className="flex gap-1">
@@ -210,6 +228,8 @@ function BackupHistorySection({
                             size="sm"
                             onClick={() => handleDownload(record)}
                             disabled={downloadingId === record.id}
+                            title={t("backup.history.download")}
+                            aria-label={t("backup.history.download")}
                           >
                             {downloadingId === record.id ? (
                               <Loader2 className="h-3 w-3 animate-spin" />
@@ -223,6 +243,8 @@ function BackupHistorySection({
                           size="sm"
                           onClick={() => handleDelete(record.id)}
                           disabled={deletingId === record.id}
+                          title={t("backup.history.delete")}
+                          aria-label={t("backup.history.delete")}
                         >
                           {deletingId === record.id ? (
                             <Loader2 className="h-3 w-3 animate-spin" />
@@ -303,6 +325,7 @@ function storageFormReducer(state: StorageFormState, action: StorageFormAction):
 }
 
 function StorageConfigSection() {
+  const { t } = useTranslation("admin");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -409,13 +432,13 @@ function StorageConfigSection() {
       const res = await client.api.backup.config.$put({ json: buildPayload() });
       const json = await res.json();
       if (json.ok) {
-        setSuccess("Configuration saved");
+        setSuccess(t("backup.storage.saved"));
         setTimeout(() => setSuccess(null), 3000);
       } else {
-        setError("error" in json ? String(json.error) : "Failed to save");
+        setError("error" in json ? String(json.error) : t("backup.storage.saveFailed"));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : t("backup.storage.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -431,10 +454,16 @@ function StorageConfigSection() {
       if (json.ok) {
         setTestResult(json.data as { ok: boolean; error?: string });
       } else {
-        setTestResult({ ok: false, error: "error" in json ? String(json.error) : "Test failed" });
+        setTestResult({
+          ok: false,
+          error: "error" in json ? String(json.error) : t("backup.storage.testFailed"),
+        });
       }
     } catch (err) {
-      setTestResult({ ok: false, error: err instanceof Error ? err.message : "Test failed" });
+      setTestResult({
+        ok: false,
+        error: err instanceof Error ? err.message : t("backup.storage.testFailed"),
+      });
     } finally {
       setTesting(false);
     }
@@ -445,7 +474,7 @@ function StorageConfigSection() {
       <Card>
         <CardContent className="flex items-center gap-2 py-8">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span className="text-muted-foreground text-sm">Loading configuration...</span>
+          <span className="text-muted-foreground text-sm">{t("backup.storage.loading")}</span>
         </CardContent>
       </Card>
     );
@@ -456,22 +485,26 @@ function StorageConfigSection() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Settings className="h-5 w-5" />
-          Storage Configuration
+          {t("backup.storage.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Storage type */}
         <div>
-          <label className="mb-1 block text-sm font-medium">Storage Type</label>
+          <label className="mb-1 block text-sm font-medium">{t("backup.storage.type")}</label>
           <RadioGroup
             value={form.storageType}
             onValueChange={(value) => setField("storageType", value as BackupStorageType)}
             className="flex gap-3"
           >
-            {(["local", "webdav", "s3"] as const).map((t) => (
-              <label key={t} className="flex items-center gap-1.5 text-sm">
-                <RadioGroupItem value={t} />
-                {t === "local" ? "Local Only" : t === "webdav" ? "WebDAV" : "S3"}
+            {(["local", "webdav", "s3"] as const).map((storageType) => (
+              <label key={storageType} className="flex items-center gap-1.5 text-sm">
+                <RadioGroupItem value={storageType} />
+                {storageType === "local"
+                  ? t("backup.storage.localOnly")
+                  : storageType === "webdav"
+                    ? "WebDAV"
+                    : "S3"}
               </label>
             ))}
           </RadioGroup>
@@ -482,7 +515,7 @@ function StorageConfigSection() {
           <div className="space-y-3 rounded-md border p-3">
             <div>
               <label htmlFor="webdav-url" className="mb-1 block text-sm font-medium">
-                WebDAV URL
+                {t("backup.storage.webdavUrl")}
               </label>
               <Input
                 id="webdav-url"
@@ -493,7 +526,7 @@ function StorageConfigSection() {
             </div>
             <div>
               <label htmlFor="webdav-username" className="mb-1 block text-sm font-medium">
-                Username
+                {t("backup.storage.username")}
               </label>
               <Input
                 id="webdav-username"
@@ -504,7 +537,7 @@ function StorageConfigSection() {
             </div>
             <div>
               <label htmlFor="webdav-password" className="mb-1 block text-sm font-medium">
-                Password
+                {t("backup.storage.password")}
               </label>
               <Input
                 id="webdav-password"
@@ -523,7 +556,7 @@ function StorageConfigSection() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="s3-bucket" className="mb-1 block text-sm font-medium">
-                  Bucket
+                  {t("backup.storage.bucket")}
                 </label>
                 <Input
                   id="s3-bucket"
@@ -534,7 +567,7 @@ function StorageConfigSection() {
               </div>
               <div>
                 <label htmlFor="s3-region" className="mb-1 block text-sm font-medium">
-                  Region
+                  {t("backup.storage.region")}
                 </label>
                 <Input
                   id="s3-region"
@@ -546,7 +579,7 @@ function StorageConfigSection() {
             </div>
             <div>
               <label htmlFor="s3-endpoint" className="mb-1 block text-sm font-medium">
-                Endpoint (optional)
+                {t("backup.storage.endpointOptional")}
               </label>
               <Input
                 id="s3-endpoint"
@@ -558,7 +591,7 @@ function StorageConfigSection() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label htmlFor="s3-access-key" className="mb-1 block text-sm font-medium">
-                  Access Key ID
+                  {t("backup.storage.accessKeyId")}
                 </label>
                 <Input
                   id="s3-access-key"
@@ -569,7 +602,7 @@ function StorageConfigSection() {
               </div>
               <div>
                 <label htmlFor="s3-secret-key" className="mb-1 block text-sm font-medium">
-                  Secret Access Key
+                  {t("backup.storage.secretAccessKey")}
                 </label>
                 <Input
                   id="s3-secret-key"
@@ -582,7 +615,7 @@ function StorageConfigSection() {
             </div>
             <div>
               <label htmlFor="s3-prefix" className="mb-1 block text-sm font-medium">
-                Prefix (optional)
+                {t("backup.storage.prefixOptional")}
               </label>
               <Input
                 id="s3-prefix"
@@ -604,7 +637,7 @@ function StorageConfigSection() {
                 ) : (
                   <ChevronRight className="h-4 w-4" />
                 )}
-                Advanced Options
+                {t("backup.storage.advancedOptions")}
               </button>
               {form.showAdvanced && (
                 <div className="mt-3 space-y-3">
@@ -613,14 +646,14 @@ function StorageConfigSection() {
                       checked={form.s3ForcePathStyle}
                       onCheckedChange={(checked) => setField("s3ForcePathStyle", checked)}
                     />
-                    <span className="font-medium">Force Path Style</span>
+                    <span className="font-medium">{t("backup.storage.forcePathStyle")}</span>
                     <span className="text-muted-foreground">
-                      (MinIO / R2 / other S3-compatible services)
+                      {t("backup.storage.forcePathStyleHint")}
                     </span>
                   </label>
                   <div>
                     <label htmlFor="s3-storage-class" className="mb-1 block text-sm font-medium">
-                      Storage Class
+                      {t("backup.storage.storageClass")}
                     </label>
                     <Input
                       id="s3-storage-class"
@@ -631,7 +664,7 @@ function StorageConfigSection() {
                   </div>
                   <div>
                     <label htmlFor="s3-sse" className="mb-1 block text-sm font-medium">
-                      Server-Side Encryption
+                      {t("backup.storage.serverSideEncryption")}
                     </label>
                     <Input
                       id="s3-sse"
@@ -643,7 +676,7 @@ function StorageConfigSection() {
                   {form.s3ServerSideEncryption === "aws:kms" && (
                     <div>
                       <label htmlFor="s3-kms-key" className="mb-1 block text-sm font-medium">
-                        KMS Key ID
+                        {t("backup.storage.kmsKeyId")}
                       </label>
                       <Input
                         id="s3-kms-key"
@@ -663,7 +696,7 @@ function StorageConfigSection() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label htmlFor="backup-file-prefix" className="mb-1 block text-sm font-medium">
-              File Prefix
+              {t("backup.storage.filePrefix")}
             </label>
             <Input
               id="backup-file-prefix"
@@ -674,7 +707,7 @@ function StorageConfigSection() {
           </div>
           <div>
             <label htmlFor="backup-max-count" className="mb-1 block text-sm font-medium">
-              Max Backups (0 = unlimited)
+              {t("backup.storage.maxBackups")}
             </label>
             <Input
               id="backup-max-count"
@@ -695,7 +728,7 @@ function StorageConfigSection() {
             ) : (
               <Settings className="h-4 w-4" />
             )}
-            Save
+            {t("backup.storage.save")}
           </Button>
           {form.storageType !== "local" && (
             <Button variant="outline" onClick={handleTest} disabled={testing}>
@@ -704,7 +737,7 @@ function StorageConfigSection() {
               ) : (
                 <Wifi className="h-4 w-4" />
               )}
-              Test Connection
+              {t("backup.storage.testConnection")}
             </Button>
           )}
         </div>
@@ -723,7 +756,11 @@ function StorageConfigSection() {
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
             )}
             <p className={cn("text-sm", testResult.ok ? "text-emerald-600" : "text-red-600")}>
-              {testResult.ok ? "Connection successful" : `Connection failed: ${testResult.error}`}
+              {testResult.ok
+                ? t("backup.storage.connectionSuccessful")
+                : t("backup.storage.connectionFailed", {
+                    error: testResult.error ?? t("backup.storage.testFailed"),
+                  })}
             </p>
           </div>
         )}
@@ -747,6 +784,7 @@ function StorageConfigSection() {
 // ── Backup Page ──
 
 export function BackupPage() {
+  const { t } = useTranslation("admin");
   const [records, setRecords] = useState<BackupRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -771,7 +809,7 @@ export function BackupPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Backup</h1>
+      <h1 className="text-2xl font-bold">{t("backup.title")}</h1>
       <CreateBackupSection onCreated={loadRecords} />
       <BackupHistorySection records={records} loading={loading} onRefresh={loadRecords} />
       <StorageConfigSection />

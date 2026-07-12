@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { AgentToolsConfig } from "@cos-tool-bot/shared";
+import { useTranslation } from "react-i18next";
 
 export function AgentToolsSection({
   config,
@@ -10,10 +11,12 @@ export function AgentToolsSection({
   config: AgentToolsConfig;
   onUpdate: (updates: Partial<AgentToolsConfig>) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Agent Tools</CardTitle>
+        <CardTitle className="text-base">{t("agentTools.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
@@ -23,28 +26,24 @@ export function AgentToolsSection({
             onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
           <label htmlFor="agentToolsEnabled" className="text-sm font-medium">
-            Enable Agent Tools
+            {t("agentTools.enable")}
           </label>
         </div>
-        <p className="text-muted-foreground text-xs">
-          Allow the AI to delegate tasks to sub-agents for complex multi-step work.
-        </p>
+        <p className="text-muted-foreground text-xs">{t("agentTools.description")}</p>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Sub-agent Model</label>
+          <label className="text-sm font-medium">{t("agentTools.model")}</label>
           <Input
             disabled={!config.enabled}
             value={config.subAgentModel ?? ""}
             onChange={(e) => onUpdate({ subAgentModel: e.target.value || undefined })}
-            placeholder="Leave empty to use main model"
+            placeholder={t("agentTools.modelPlaceholder")}
           />
-          <p className="text-muted-foreground text-xs">
-            Optional model for sub-agents. Leave empty to use the same model as the main AI.
-          </p>
+          <p className="text-muted-foreground text-xs">{t("agentTools.modelDescription")}</p>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Max Sub-agent Steps</label>
+          <label className="text-sm font-medium">{t("agentTools.maxSteps")}</label>
           <Input
             type="number"
             min={1}
@@ -53,9 +52,7 @@ export function AgentToolsSection({
             value={config.maxSubAgentSteps ?? 5}
             onChange={(e) => onUpdate({ maxSubAgentSteps: Number(e.target.value) })}
           />
-          <p className="text-muted-foreground text-xs">
-            Maximum tool-calling rounds per sub-agent (1-15)
-          </p>
+          <p className="text-muted-foreground text-xs">{t("agentTools.maxStepsDescription")}</p>
         </div>
       </CardContent>
     </Card>

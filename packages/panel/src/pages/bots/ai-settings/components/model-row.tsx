@@ -7,6 +7,7 @@ import { inferCapabilities } from "@cos-tool-bot/shared";
 import { Minus, Settings } from "lucide-react";
 import { CAPABILITY_BADGES } from "../types";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
 export function ModelRow({
   entry,
@@ -22,6 +23,7 @@ export function ModelRow({
   onUpdate: (updates: Partial<ModelEntry>) => void;
 }) {
   const capabilities = entry.capabilities ?? inferCapabilities(entry.id);
+  const { t } = useTranslation("aiSettings");
 
   return (
     <div
@@ -35,7 +37,7 @@ export function ModelRow({
           <Badge
             key={cap}
             variant="muted"
-            title={CAPABILITY_BADGES[cap]?.label ?? cap}
+            title={CAPABILITY_BADGES[cap] ? t(CAPABILITY_BADGES[cap].labelKey) : cap}
             className="px-1 py-0 text-[10px]"
           >
             {CAPABILITY_BADGES[cap]?.emoji ?? cap}
@@ -47,7 +49,7 @@ export function ModelRow({
           <button
             type="button"
             className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg focus-visible:ring-2"
-            aria-label={`Configure ${entry.id}`}
+            aria-label={t("modelRow.configureAria", { model: entry.id })}
           >
             <Settings className="h-3.5 w-3.5" />
           </button>
@@ -55,19 +57,19 @@ export function ModelRow({
         className="w-64 p-3"
       >
         <div className="space-y-3">
-          <p className="text-xs font-medium">Model Settings</p>
+          <p className="text-xs font-medium">{t("modelRow.title")}</p>
           <div className="space-y-1.5">
-            <label className="text-xs">Label</label>
+            <label className="text-xs">{t("modelRow.label")}</label>
             <Input
               value={entry.label ?? ""}
               onChange={(e) => onUpdate({ label: e.target.value || undefined })}
-              placeholder="Display name"
+              placeholder={t("modelRow.displayNamePlaceholder")}
               className="h-7 text-xs"
             />
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-xs">Temperature</label>
+              <label className="text-xs">{t("modelRow.temperature")}</label>
               <Input
                 type="number"
                 min={0}
@@ -77,12 +79,12 @@ export function ModelRow({
                 onChange={(e) =>
                   onUpdate({ temperature: e.target.value ? Number(e.target.value) : undefined })
                 }
-                placeholder="default"
+                placeholder={t("common.defaultLower")}
                 className="h-7 text-xs"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs">Max Tokens</label>
+              <label className="text-xs">{t("modelRow.maxTokens")}</label>
               <Input
                 type="number"
                 min={1}
@@ -90,14 +92,14 @@ export function ModelRow({
                 onChange={(e) =>
                   onUpdate({ maxTokens: e.target.value ? Number(e.target.value) : undefined })
                 }
-                placeholder="default"
+                placeholder={t("common.defaultLower")}
                 className="h-7 text-xs"
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
-              <label className="text-xs">Thinking</label>
+              <label className="text-xs">{t("modelRow.thinking")}</label>
               <SelectMenu
                 value={entry.thinking ?? "default"}
                 onValueChange={(val) => {
@@ -106,17 +108,17 @@ export function ModelRow({
                   });
                 }}
                 className="border-input bg-background h-7 w-full rounded border px-2 text-xs"
-                placeholder="Default"
-                ariaLabel="Thinking mode"
+                placeholder={t("common.default")}
+                ariaLabel={t("modelRow.thinkingMode")}
                 options={[
-                  { value: "default", label: "Default" },
-                  { value: "enabled", label: "Enabled" },
-                  { value: "disabled", label: "Disabled" },
+                  { value: "default", label: t("common.default") },
+                  { value: "enabled", label: t("common.enabled") },
+                  { value: "disabled", label: t("common.disabled") },
                 ]}
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs">Thinking Budget</label>
+              <label className="text-xs">{t("modelRow.thinkingBudget")}</label>
               <Input
                 type="number"
                 value={entry.thinkingBudget ?? ""}
@@ -125,19 +127,19 @@ export function ModelRow({
                     thinkingBudget: e.target.value ? Number(e.target.value) : undefined,
                   })
                 }
-                placeholder="default"
+                placeholder={t("common.defaultLower")}
                 className="h-7 text-xs"
                 disabled={!entry.thinking}
               />
             </div>
           </div>
           <div className="space-y-1">
-            <label className="text-xs">Capabilities</label>
+            <label className="text-xs">{t("modelRow.capabilities")}</label>
             <div className="flex flex-wrap gap-1">
               {(
                 Object.entries(CAPABILITY_BADGES) as [
                   ModelCapability,
-                  { emoji: string; label: string },
+                  { emoji: string; labelKey: string },
                 ][]
               ).map(([cap, badge]) => {
                 const hasCap = capabilities.includes(cap);
@@ -153,7 +155,7 @@ export function ModelRow({
                       onUpdate({ capabilities: next });
                     }}
                   >
-                    {badge.emoji} {badge.label}
+                    {badge.emoji} {t(badge.labelKey)}
                   </button>
                 );
               })}
@@ -164,8 +166,10 @@ export function ModelRow({
       <button
         type="button"
         className="text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg hover:bg-red-50 hover:text-red-500 focus-visible:ring-2"
-        onClick={() => window.confirm(`Remove model “${entry.id}”?`) && onRemove()}
-        aria-label={`Remove ${entry.id}`}
+        onClick={() =>
+          window.confirm(t("modelRow.removeConfirm", { model: entry.id })) && onRemove()
+        }
+        aria-label={t("modelRow.removeAria", { model: entry.id })}
       >
         <Minus className="h-3.5 w-3.5" />
       </button>

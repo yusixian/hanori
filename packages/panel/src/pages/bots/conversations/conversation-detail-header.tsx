@@ -1,11 +1,15 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { MessageSquare, User, Users } from "lucide-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import type { ConversationItem } from "./types";
 
-export function getConversationTitle(conv: ConversationItem) {
+export function getConversationTitle(conv: ConversationItem, t: TFunction<"bots">) {
   if (!conv.userNames?.length) {
-    return conv.chatType === "group" ? "Group conversation" : "Private conversation";
+    return conv.chatType === "group"
+      ? t("conversations.groupConversation")
+      : t("conversations.privateConversation");
   }
 
   const visibleNames = conv.userNames.slice(0, 2);
@@ -20,6 +24,7 @@ export function ChatTypeBadge({
   type: "private" | "group";
   className?: string;
 }) {
+  const { t } = useTranslation("bots");
   return (
     <Badge
       variant="muted"
@@ -30,11 +35,11 @@ export function ChatTypeBadge({
     >
       {type === "private" ? (
         <>
-          <User className="mr-1 size-3" aria-hidden="true" /> Private
+          <User className="mr-1 size-3" aria-hidden="true" /> {t("conversations.private")}
         </>
       ) : (
         <>
-          <Users className="mr-1 size-3" aria-hidden="true" /> Group
+          <Users className="mr-1 size-3" aria-hidden="true" /> {t("conversations.group")}
         </>
       )}
     </Badge>
@@ -42,7 +47,8 @@ export function ChatTypeBadge({
 }
 
 export function ConversationDetailHeader({ conv }: { conv: ConversationItem }) {
-  const title = getConversationTitle(conv);
+  const { t, i18n } = useTranslation("bots");
+  const title = getConversationTitle(conv, t);
 
   return (
     <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -63,13 +69,13 @@ export function ConversationDetailHeader({ conv }: { conv: ConversationItem }) {
             {conv.chatId}
           </span>
           <span aria-hidden="true">·</span>
-          <span>{conv.messageCount} messages</span>
+          <span>{t("conversations.messageCount", { count: conv.messageCount })}</span>
           <span aria-hidden="true">·</span>
-          <span>{conv.distinctUserCount} users</span>
+          <span>{t("conversations.userCount", { count: conv.distinctUserCount })}</span>
           <span aria-hidden="true">·</span>
           <span className="min-w-0 truncate">
-            {new Date(conv.firstActive).toLocaleDateString()} —{" "}
-            {new Date(conv.lastActive).toLocaleDateString()}
+            {new Date(conv.firstActive).toLocaleDateString(i18n.resolvedLanguage)} —{" "}
+            {new Date(conv.lastActive).toLocaleDateString(i18n.resolvedLanguage)}
           </span>
         </div>
       </div>

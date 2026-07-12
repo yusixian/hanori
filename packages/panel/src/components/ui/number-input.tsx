@@ -3,6 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Minus, Plus } from "lucide-react";
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 
 export function NumberInput({
   value,
@@ -19,6 +20,7 @@ export function NumberInput({
   max?: number;
   step?: number;
 }) {
+  const { t } = useTranslation("common");
   const adjust = (direction: -1 | 1) => {
     const current = value === "" ? 0 : Number(value);
     const next = current + direction * step;
@@ -33,7 +35,7 @@ export function NumberInput({
         className="rounded-r-none border-r-0 shadow-none"
         onClick={() => adjust(-1)}
         disabled={props.disabled || (value !== "" && min != null && Number(value) <= min)}
-        aria-label="Decrease"
+        aria-label={t("numberInput.decrease")}
       >
         <Minus className="size-4" />
       </Button>
@@ -59,7 +61,7 @@ export function NumberInput({
         className="rounded-l-none border-l-0 shadow-none"
         onClick={() => adjust(1)}
         disabled={props.disabled || (value !== "" && max != null && Number(value) >= max)}
-        aria-label="Increase"
+        aria-label={t("numberInput.increase")}
       >
         <Plus className="size-4" />
       </Button>

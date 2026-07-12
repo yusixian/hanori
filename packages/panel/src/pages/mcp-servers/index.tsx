@@ -20,17 +20,24 @@ import {
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { type FormState, McpServerForm, PresetPicker, emptyForm } from "./mcp-server-form";
 
 type ServerWithStatus = McpServerRecord & { status: McpServerStatus };
+type PageMessage = {
+  type: "success" | "error";
+  key?: string;
+  text?: string;
+};
 
 export function McpServersPage() {
+  const { t } = useTranslation("admin");
   const [servers, setServers] = useState<ServerWithStatus[]>([]);
   const [presets, setPresets] = useState<McpServerPreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [message, setMessage] = useState<PageMessage | null>(null);
   const [toolsExpanded, setToolsExpanded] = useState<Set<number>>(new Set());
 
   const loadServers = useCallback(async () => {
@@ -40,7 +47,7 @@ export function McpServersPage() {
       if (json.ok) setServers(json.data as ServerWithStatus[]);
     } catch {
       setServers([]);
-      setMessage({ type: "error", text: "Failed to load MCP servers" });
+      setMessage({ type: "error", key: "mcp.loadFailed" });
     } finally {
       setLoading(false);
     }
@@ -54,7 +61,7 @@ export function McpServersPage() {
       .then((json) => {
         if (json.ok) setPresets(json.data);
       })
-      .catch((err) => console.error("Failed to load MCP presets", err));
+      .catch((err) => console.error(t("mcp.loadPresetsFailed"), err));
   }, [loadServers]);
 
   const handlePresetSelect = (preset: McpServerPreset) => {
@@ -82,7 +89,7 @@ export function McpServersPage() {
         try {
           headers = JSON.parse(form.headers);
         } catch {
-          setMessage({ type: "error", text: "Headers must be valid JSON" });
+          setMessage({ type: "error", key: "mcp.invalidHeaders" });
           setSaving(false);
           return;
         }
@@ -103,7 +110,11 @@ export function McpServersPage() {
         });
         const json = await res.json();
         if (!json.ok) {
-          setMessage({ type: "error", text: "error" in json ? String(json.error) : "Failed" });
+          setMessage(
+            "error" in json
+              ? { type: "error", text: String(json.error) }
+              : { type: "error", key: "mcp.failed" },
+          );
           return;
         }
       } else if (form.id != null) {
@@ -123,7 +134,11 @@ export function McpServersPage() {
         });
         const json = await res.json();
         if (!json.ok) {
-          setMessage({ type: "error", text: "error" in json ? String(json.error) : "Failed" });
+          setMessage(
+            "error" in json
+              ? { type: "error", text: String(json.error) }
+              : { type: "error", key: "mcp.failed" },
+          );
           return;
         }
       }
@@ -131,23 +146,23 @@ export function McpServersPage() {
       setForm(null);
       setMessage({
         type: "success",
-        text: form.mode === "create" ? "Server added" : "Server updated",
+        key: form.mode === "create" ? "mcp.added" : "mcp.updated",
       });
       await loadServers();
     } catch {
-      setMessage({ type: "error", text: "Failed to save" });
+      setMessage({ type: "error", key: "mcp.saveFailed" });
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Delete this MCP server?")) return;
+    if (!confirm(t("mcp.deleteConfirm"))) return;
     try {
       await client.api["mcp-servers"][":id"].$delete({ param: { id: String(id) } });
       await loadServers();
     } catch {
-      setMessage({ type: "error", text: "Failed to delete" });
+      setMessage({ type: "error", key: "mcp.deleteFailed" });
     }
   };
 
@@ -157,10 +172,10 @@ export function McpServersPage() {
       await loadServers();
       setMessage({
         type: "success",
-        text: "Connected. Restart bots using this server to pick up tool changes.",
+        key: "mcp.connectedMessage",
       });
     } catch {
-      setMessage({ type: "error", text: "Failed to connect" });
+      setMessage({ type: "error", key: "mcp.connectFailed" });
     }
   };
 
@@ -170,10 +185,10 @@ export function McpServersPage() {
       await loadServers();
       setMessage({
         type: "success",
-        text: "Disconnected. Restart bots using this server to remove stale tools.",
+        key: "mcp.disconnectedMessage",
       });
     } catch {
-      setMessage({ type: "error", text: "Failed to disconnect" });
+      setMessage({ type: "error", key: "mcp.disconnectFailed" });
     }
   };
 
@@ -186,22 +201,23 @@ export function McpServersPage() {
     });
   };
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading...</p>;
+  if (loading) return <p className="text-muted-foreground text-sm">{t("mcp.loading")}</p>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Plug className="h-6 w-6" />
-          <h1 className="text-2xl font-bold">MCP Servers</h1>
+          <h1 className="text-2xl font-bold">{t("mcp.title")}</h1>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={loadServers}>
             <RefreshCw className="h-4 w-4" />
+            <span className="sr-only">{t("mcp.refresh")}</span>
           </Button>
           <Button size="sm" onClick={() => setForm({ ...emptyForm })}>
             <Plus className="h-4 w-4" />
-            Add Server
+            {t("mcp.addServer")}
           </Button>
         </div>
       </div>
@@ -210,7 +226,7 @@ export function McpServersPage() {
         <div
           className={`rounded-md p-3 text-sm ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}
         >
-          {message.text}
+          {message.text ?? (message.key ? t(message.key) : null)}
         </div>
       )}
 
@@ -232,9 +248,7 @@ export function McpServersPage() {
         <Card>
           <CardContent className="py-12 text-center">
             <Plug className="text-muted-foreground mx-auto mb-3 h-10 w-10" />
-            <p className="text-muted-foreground text-sm">
-              No MCP servers configured. Add one to extend your bot's capabilities.
-            </p>
+            <p className="text-muted-foreground text-sm">{t("mcp.empty")}</p>
           </CardContent>
         </Card>
       )}
@@ -248,15 +262,15 @@ export function McpServersPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{server.name}</span>
                     <Badge variant={server.status.connected ? "success" : "destructive"}>
-                      {server.status.connected ? "Connected" : "Disconnected"}
+                      {server.status.connected ? t("mcp.connected") : t("mcp.disconnected")}
                     </Badge>
                     {server.status.toolCount > 0 && (
                       <Badge variant="muted">
                         <Wrench className="mr-1 h-3 w-3" />
-                        {server.status.toolCount} tools
+                        {t("mcp.tools", { count: server.status.toolCount })}
                       </Badge>
                     )}
-                    {!server.isActive && <Badge variant="warning">Inactive</Badge>}
+                    {!server.isActive && <Badge variant="warning">{t("mcp.inactive")}</Badge>}
                   </div>
                   <div className="text-muted-foreground mt-1 text-xs">
                     {server.transport.toUpperCase()} &middot; {server.url}
@@ -283,7 +297,8 @@ export function McpServersPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleDisconnect(server.id)}
-                      title="Disconnect"
+                      title={t("mcp.disconnect")}
+                      aria-label={t("mcp.disconnect")}
                     >
                       <Unplug className="h-4 w-4" />
                     </Button>
@@ -292,7 +307,8 @@ export function McpServersPage() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleConnect(server.id)}
-                      title="Connect"
+                      title={t("mcp.connect")}
+                      aria-label={t("mcp.connect")}
                     >
                       <PlugZap className="h-4 w-4" />
                     </Button>
@@ -315,7 +331,8 @@ export function McpServersPage() {
                         hadHeaders: server.hasHeaders,
                       })
                     }
-                    title="Edit"
+                    title={t("mcp.edit")}
+                    aria-label={t("mcp.edit")}
                   >
                     <Wrench className="h-4 w-4" />
                   </Button>
@@ -323,7 +340,8 @@ export function McpServersPage() {
                     variant="ghost"
                     size="sm"
                     onClick={() => handleDelete(server.id)}
-                    title="Delete"
+                    title={t("mcp.delete")}
+                    aria-label={t("mcp.delete")}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -342,10 +360,11 @@ export function McpServersPage() {
 }
 
 function ToolList({ tools }: { tools: McpServerToolInfo[] }) {
+  const { t } = useTranslation("admin");
   return (
     <div className="mt-3 border-t pt-3">
       <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wider uppercase">
-        Available Tools
+        {t("mcp.availableTools")}
       </p>
       <div className="space-y-2">
         {tools.map((tool) => (

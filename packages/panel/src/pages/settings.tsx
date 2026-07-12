@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { authFetch } from "@/lib/client";
 import { useEffect, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 type Me = {
   user: { id: string; name: string; email: string };
@@ -14,12 +15,12 @@ type Me = {
 type Member = { id: string; userId: string; name: string; email: string; role: string };
 type Invitation = { id: string; email: string; role: string; status: string; expiresAt: string };
 
-async function readError(response: Response): Promise<string> {
+async function readError(response: Response, fallbackMessage: string): Promise<string> {
   try {
     const body = (await response.json()) as { error?: string; message?: string };
-    return body.error || body.message || "操作失败";
+    return body.error || body.message || fallbackMessage;
   } catch {
-    return "操作失败";
+    return fallbackMessage;
   }
 }
 
@@ -34,6 +35,7 @@ async function tryCopy(text: string): Promise<boolean> {
 }
 
 export function SettingsPage() {
+  const { t } = useTranslation("auth");
   const [me, setMe] = useState<Me | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -49,7 +51,7 @@ export function SettingsPage() {
   const load = async () => {
     const meResponse = await authFetch("/api/authz/me");
     if (!meResponse.ok) {
-      setError(await readError(meResponse));
+      setError(await readError(meResponse, t("errors.operationFailed")));
       return;
     }
     const meBody = (await meResponse.json()) as { data: Me };
@@ -80,7 +82,7 @@ export function SettingsPage() {
     setNotice("");
     setGeneratedLink("");
     if (newPassword !== confirmPassword) {
-      setError("两次输入的新密码不一致");
+      setError(t("errors.passwordMismatch"));
       return;
     }
     const response = await authFetch("/api/auth/change-password", {
@@ -93,13 +95,13 @@ export function SettingsPage() {
       }),
     });
     if (!response.ok) {
-      setError(await readError(response));
+      setError(await readError(response, t("errors.operationFailed")));
       return;
     }
     setCurrentPassword("");
     setNewPassword("");
     setConfirmPassword("");
-    setNotice("密码已修改，其他设备的登录已失效");
+    setNotice(t("settings.passwordChanged"));
   };
 
   const createInvitation = async (event: FormEvent) => {
@@ -113,14 +115,14 @@ export function SettingsPage() {
       body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
     });
     if (!response.ok) {
-      setError(await readError(response));
+      setError(await readError(response, t("errors.operationFailed")));
       return;
     }
     const body = (await response.json()) as { data: { link: string } };
     setInviteEmail("");
     setGeneratedLink(body.data.link);
     const copied = await tryCopy(body.data.link);
-    setNotice(copied ? "邀请链接已生成并复制到剪贴板" : "邀请链接已生成，请手动复制下方链接");
+    setNotice(copied ? t("settings.invitationLinkCopied") : t("settings.invitationLinkGenerated"));
     await load();
   };
 
@@ -132,15 +134,13 @@ export function SettingsPage() {
       method: "POST",
     });
     if (!response.ok) {
-      setError(await readError(response));
+      setError(await readError(response, t("errors.operationFailed")));
       return;
     }
     const body = (await response.json()) as { data: { link: string } };
     setGeneratedLink(body.data.link);
     const copied = await tryCopy(body.data.link);
-    setNotice(
-      copied ? "密码重置链接已生成并复制到剪贴板" : "密码重置链接已生成，请手动复制下方链接",
-    );
+    setNotice(copied ? t("settings.resetLinkCopied") : t("settings.resetLinkGenerated"));
   };
 
   const changeRole = async (memberId: string, role: string) => {
@@ -149,13 +149,13 @@ export function SettingsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role }),
     });
-    if (!response.ok) setError(await readError(response));
+    if (!response.ok) setError(await readError(response, t("errors.operationFailed")));
     else await load();
   };
 
   const cancelInvitation = async (id: string) => {
     const response = await authFetch(`/api/authz/invitations/${id}`, { method: "DELETE" });
-    if (!response.ok) setError(await readError(response));
+    if (!response.ok) setError(await readError(response, t("errors.operationFailed")));
     else await load();
   };
 
@@ -163,18 +163,25 @@ export function SettingsPage() {
     return error ? (
       <div className="py-10 text-sm text-red-700">{error}</div>
     ) : (
-      <div className="text-muted-foreground py-10 text-sm">正在加载设置…</div>
+      <div className="text-muted-foreground py-10 text-sm">{t("settings.loading")}</div>
     );
   }
 
   const canManageMembers = me.member.role === "owner" || me.member.role === "admin";
   const isOwner = me.member.role === "owner";
+  const roleLabels: Record<string, string> = {
+    owner: t("roles.owner"),
+    admin: t("roles.admin"),
+    editor: t("roles.editor"),
+    viewer: t("roles.viewer"),
+  };
+  const getRoleLabel = (role: string) => roleLabels[role] ?? role;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground mt-1 text-sm">管理账户、成员和工作区权限</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t("settings.title")}</h1>
+        <p className="text-muted-foreground mt-1 text-sm">{t("settings.description")}</p>
       </div>
 
       {(notice || error) && (
@@ -196,15 +203,15 @@ export function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Account</CardTitle>
+          <CardTitle>{t("settings.accountTitle")}</CardTitle>
           <CardDescription>
-            {me.user.name} · {me.user.email} · {me.member.role}
+            {me.user.name} · {me.user.email} · {getRoleLabel(me.member.role)}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={changePassword} className="grid max-w-xl gap-4">
             <label className="space-y-2 text-sm font-medium">
-              当前密码
+              {t("settings.currentPassword")}
               <Input
                 type="password"
                 value={currentPassword}
@@ -214,7 +221,7 @@ export function SettingsPage() {
               />
             </label>
             <label className="space-y-2 text-sm font-medium">
-              新密码
+              {t("settings.newPassword")}
               <Input
                 type="password"
                 value={newPassword}
@@ -225,7 +232,7 @@ export function SettingsPage() {
               />
             </label>
             <label className="space-y-2 text-sm font-medium">
-              确认新密码
+              {t("settings.confirmNewPassword")}
               <Input
                 type="password"
                 value={confirmPassword}
@@ -236,7 +243,7 @@ export function SettingsPage() {
               />
             </label>
             <Button type="submit" className="w-fit">
-              修改密码
+              {t("settings.changePassword")}
             </Button>
           </form>
         </CardContent>
@@ -246,10 +253,8 @@ export function SettingsPage() {
         <>
           <Card>
             <CardHeader>
-              <CardTitle>Invite member</CardTitle>
-              <CardDescription>
-                邀请链接有效期 48 小时，只能接受一次，并绑定指定邮箱。
-              </CardDescription>
+              <CardTitle>{t("settings.inviteTitle")}</CardTitle>
+              <CardDescription>{t("settings.inviteDescription")}</CardDescription>
             </CardHeader>
             <CardContent>
               <form
@@ -257,35 +262,35 @@ export function SettingsPage() {
                 className="flex max-w-2xl flex-wrap items-end gap-3"
               >
                 <label className="min-w-64 flex-1 space-y-2 text-sm font-medium">
-                  邮箱
+                  {t("settings.emailLabel")}
                   <Input
                     type="email"
                     value={inviteEmail}
                     onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="member@example.com"
+                    placeholder={t("settings.emailPlaceholder")}
                     required
                   />
                 </label>
                 <label className="space-y-2 text-sm font-medium">
-                  角色
+                  {t("settings.roleLabel")}
                   <Select
                     className="border-input h-10 rounded-lg border bg-white px-3 text-sm"
                     value={inviteRole}
                     onChange={(e) => setInviteRole(e.target.value)}
                   >
-                    {isOwner && <option value="admin">admin</option>}
-                    <option value="editor">editor</option>
-                    <option value="viewer">viewer</option>
+                    {isOwner && <option value="admin">{t("roles.admin")}</option>}
+                    <option value="editor">{t("roles.editor")}</option>
+                    <option value="viewer">{t("roles.viewer")}</option>
                   </Select>
                 </label>
-                <Button type="submit">生成并复制链接</Button>
+                <Button type="submit">{t("settings.generateAndCopyLink")}</Button>
               </form>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Members</CardTitle>
+              <CardTitle>{t("settings.membersTitle")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="divide-y rounded-xl border">
@@ -300,16 +305,18 @@ export function SettingsPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       {member.role === "owner" ? (
-                        <span className="bg-accent rounded-md px-2 py-1 text-xs">owner</span>
+                        <span className="bg-accent rounded-md px-2 py-1 text-xs">
+                          {t("roles.owner")}
+                        </span>
                       ) : (
                         <Select
                           className="border-input h-9 rounded-lg border bg-white px-2 text-xs"
                           value={member.role}
                           onChange={(e) => void changeRole(member.id, e.target.value)}
                         >
-                          {isOwner && <option value="admin">admin</option>}
-                          <option value="editor">editor</option>
-                          <option value="viewer">viewer</option>
+                          {isOwner && <option value="admin">{t("roles.admin")}</option>}
+                          <option value="editor">{t("roles.editor")}</option>
+                          <option value="viewer">{t("roles.viewer")}</option>
                         </Select>
                       )}
                       {isOwner && member.userId !== me.user.id && (
@@ -319,7 +326,7 @@ export function SettingsPage() {
                           variant="outline"
                           onClick={() => void copyResetLink(member.id)}
                         >
-                          重置密码
+                          {t("settings.resetPassword")}
                         </Button>
                       )}
                     </div>
@@ -331,7 +338,7 @@ export function SettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Invitations</CardTitle>
+              <CardTitle>{t("settings.invitationsTitle")}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="divide-y rounded-xl border">
@@ -343,7 +350,7 @@ export function SettingsPage() {
                       className="flex items-center justify-between gap-3 px-4 py-3 text-sm"
                     >
                       <span>
-                        {invitation.email} · {invitation.role}
+                        {invitation.email} · {getRoleLabel(invitation.role)}
                       </span>
                       <Button
                         type="button"
@@ -351,12 +358,14 @@ export function SettingsPage() {
                         variant="ghost"
                         onClick={() => void cancelInvitation(invitation.id)}
                       >
-                        撤销
+                        {t("settings.revoke")}
                       </Button>
                     </div>
                   ))}
                 {invitations.filter((item) => item.status === "pending").length === 0 && (
-                  <div className="text-muted-foreground px-4 py-5 text-sm">暂无待处理邀请</div>
+                  <div className="text-muted-foreground px-4 py-5 text-sm">
+                    {t("settings.noPendingInvitations")}
+                  </div>
                 )}
               </div>
             </CardContent>
@@ -367,8 +376,10 @@ export function SettingsPage() {
       {isOwner && (
         <Card>
           <CardHeader>
-            <CardTitle>Organization</CardTitle>
-            <CardDescription>{me.organization.name} · owner 可以管理完整成员权限。</CardDescription>
+            <CardTitle>{t("settings.organizationTitle")}</CardTitle>
+            <CardDescription>
+              {t("settings.ownerDescription", { name: me.organization.name })}
+            </CardDescription>
           </CardHeader>
         </Card>
       )}

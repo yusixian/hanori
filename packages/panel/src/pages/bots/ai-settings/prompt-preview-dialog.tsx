@@ -7,6 +7,7 @@ import { DEFAULT_BOT_MEMORY_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/
 import { ClipboardCopy, Eye, Loader2, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 interface PromptPreviewDialogProps {
   botId: string;
@@ -78,6 +79,7 @@ export function PromptPreviewDialog({
   const [fullPrompt, setFullPrompt] = useState("");
   const [estimatedTokens, setEstimatedTokens] = useState(0);
   const [copied, setCopied] = useState(false);
+  const { t, i18n } = useTranslation("aiSettings");
 
   const fetchPreview = useCallback(async () => {
     setLoading(true);
@@ -106,17 +108,21 @@ export function PromptPreviewDialog({
         setFullPrompt(json.data.fullPrompt);
         setEstimatedTokens(json.data.estimatedTokens);
       } else {
-        setFullPrompt(`Error: ${"error" in json ? String(json.error) : "Failed to load preview"}`);
+        setFullPrompt(
+          t("promptPreview.errorWithDetail", {
+            detail: "error" in json ? String(json.error) : t("promptPreview.loadError"),
+          }),
+        );
         setEstimatedTokens(0);
       }
     } catch (err) {
       console.error("Failed to fetch prompt preview:", err);
-      setFullPrompt("Failed to load preview");
+      setFullPrompt(t("promptPreview.loadError"));
       setEstimatedTokens(0);
     } finally {
       setLoading(false);
     }
-  }, [botId, config, stickerPacks, isPrivate]);
+  }, [botId, config, stickerPacks, isPrivate, t]);
 
   useEffect(() => {
     if (open) {
@@ -153,7 +159,7 @@ export function PromptPreviewDialog({
         type="button"
         className="absolute inset-0 bg-black/50"
         onClick={onClose}
-        aria-label="Close prompt preview"
+        aria-label={t("promptPreview.closeAria")}
       />
 
       {/* Dialog */}
@@ -168,14 +174,14 @@ export function PromptPreviewDialog({
           <div className="flex items-center gap-3">
             <Eye className="h-5 w-5 text-purple-500" />
             <h2 id="prompt-preview-title" className="text-lg font-semibold">
-              Prompt Preview
+              {t("promptPreview.title")}
             </h2>
           </div>
           <button
             type="button"
             className="hover:bg-accent focus-visible:ring-ring rounded p-1 focus-visible:ring-2"
             onClick={onClose}
-            aria-label="Close prompt preview"
+            aria-label={t("promptPreview.closeAria")}
           >
             <X className="h-5 w-5" />
           </button>
@@ -183,7 +189,7 @@ export function PromptPreviewDialog({
 
         {/* Controls */}
         <div className="flex items-center gap-3 border-b px-5 py-3">
-          <span className="text-sm font-medium">Chat type:</span>
+          <span className="text-sm font-medium">{t("promptPreview.chatType")}</span>
           <div className="bg-muted flex gap-1 rounded-md p-0.5">
             <button
               type="button"
@@ -196,7 +202,7 @@ export function PromptPreviewDialog({
               onClick={() => setIsPrivate(true)}
               aria-pressed={isPrivate}
             >
-              Private
+              {t("promptPreview.private")}
             </button>
             <button
               type="button"
@@ -209,13 +215,13 @@ export function PromptPreviewDialog({
               onClick={() => setIsPrivate(false)}
               aria-pressed={!isPrivate}
             >
-              Group
+              {t("promptPreview.group")}
             </button>
           </div>
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={handleCopy}>
             <ClipboardCopy className="h-3.5 w-3.5" />
-            {copied ? "Copied" : "Copy"}
+            {copied ? t("promptPreview.copied") : t("common.copy")}
           </Button>
         </div>
 
@@ -235,15 +241,25 @@ export function PromptPreviewDialog({
         {/* Footer */}
         <div className="flex items-center justify-between border-t px-5 py-3">
           <div className="text-muted-foreground flex gap-4 text-xs">
-            <span>{fullPrompt.length.toLocaleString()} chars</span>
-            <span>~{estimatedTokens.toLocaleString()} tokens (est.)</span>
+            <span>
+              {t("promptPreview.chars", {
+                count: fullPrompt.length.toLocaleString(i18n.resolvedLanguage),
+              })}
+            </span>
+            <span>
+              {t("promptPreview.tokens", {
+                count: estimatedTokens.toLocaleString(i18n.resolvedLanguage),
+              })}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <span
               className="inline-block h-2.5 w-2.5 rounded border border-dashed border-amber-400/60 bg-amber-500/10"
-              title="Dynamic placeholder"
+              title={t("promptPreview.dynamicPlaceholder")}
             />
-            <span className="text-muted-foreground text-xs">= runtime dynamic content</span>
+            <span className="text-muted-foreground text-xs">
+              {t("promptPreview.dynamicContent")}
+            </span>
           </div>
         </div>
       </div>

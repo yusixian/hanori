@@ -4,10 +4,7 @@ import { client } from "@/lib/client";
 import type { RssFeedRecord } from "@cos-tool-bot/shared";
 import { Loader2, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
-
-function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString();
-}
+import { useTranslation } from "react-i18next";
 
 export function FeedList({
   botId,
@@ -20,6 +17,7 @@ export function FeedList({
   feeds: RssFeedRecord[];
   onChanged: () => void;
 }) {
+  const { t, i18n } = useTranslation("bots");
   const [showAdd, setShowAdd] = useState(false);
   const [feedUrl, setFeedUrl] = useState("");
   const [adding, setAdding] = useState(false);
@@ -40,7 +38,7 @@ export function FeedList({
       setShowAdd(false);
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to add feed");
+      setError(err instanceof Error ? err.message : t("rss.addFeedFailed"));
     } finally {
       setAdding(false);
     }
@@ -59,17 +57,17 @@ export function FeedList({
       });
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove feed");
+      setError(err instanceof Error ? err.message : t("rss.removeFeedFailed"));
     }
   };
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Feeds ({feeds.length})</h3>
+        <h3 className="text-sm font-medium">{t("rss.feedCount", { count: feeds.length })}</h3>
         <Button size="sm" variant="outline" onClick={() => setShowAdd(!showAdd)}>
           {showAdd ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
-          {showAdd ? "Cancel" : "Add Feed"}
+          {showAdd ? t("common:common.cancel") : t("rss.addFeed")}
         </Button>
       </div>
 
@@ -78,14 +76,14 @@ export function FeedList({
       {showAdd && (
         <form onSubmit={addFeed} className="flex gap-2">
           <Input
-            placeholder="RSS/Atom feed URL"
+            placeholder={t("rss.feedUrlPlaceholder")}
             value={feedUrl}
             onChange={(e) => setFeedUrl(e.target.value)}
             className="flex-1"
             required
           />
           <Button type="submit" size="sm" disabled={adding}>
-            {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Add"}
+            {adding ? <Loader2 className="h-4 w-4 animate-spin" /> : t("common:common.add")}
           </Button>
         </form>
       )}
@@ -101,14 +99,16 @@ export function FeedList({
               <div className="flex items-center gap-2">
                 {feed.lastFetchAt && (
                   <span className="text-muted-foreground text-xs">
-                    {fmtDateTime(feed.lastFetchAt)}
+                    {new Date(feed.lastFetchAt).toLocaleString(i18n.resolvedLanguage)}
                   </span>
                 )}
                 <Button
                   size="sm"
                   variant={confirmRemove === feed.id ? "destructive" : "ghost"}
                   onClick={() => removeFeed(feed.id)}
-                  title={confirmRemove === feed.id ? "Click again to confirm" : "Remove"}
+                  title={
+                    confirmRemove === feed.id ? t("rss.clickAgain") : t("common:common.remove")
+                  }
                 >
                   <Trash2
                     className={`h-3 w-3 ${confirmRemove === feed.id ? "" : "text-red-500"}`}

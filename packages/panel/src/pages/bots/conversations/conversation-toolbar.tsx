@@ -1,6 +1,7 @@
 import { cn } from "@/lib/utils";
 import { BookOpen, MessageSquare, Terminal, Wrench, type LucideIcon } from "lucide-react";
 import type { KeyboardEvent } from "react";
+import { useTranslation } from "react-i18next";
 
 type DetailView = "messages" | "summaries";
 
@@ -26,7 +27,7 @@ function FilterToggle({
     <button
       type="button"
       aria-pressed={pressed}
-      aria-label={`${label} messages`}
+      aria-label={label}
       onClick={onPressedChange}
       className={cn(
         "focus-visible:ring-ring inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,box-shadow,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]",
@@ -65,6 +66,7 @@ export function ConversationToolbar({
   onToggleSystem: () => void;
   onToggleTools: () => void;
 }) {
+  const { t } = useTranslation("bots");
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: DetailView) => {
     if (!hasSummaries) return;
     let nextView: DetailView | null = null;
@@ -88,7 +90,7 @@ export function ConversationToolbar({
     <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
       <div
         role="tablist"
-        aria-label="Conversation detail view"
+        aria-label={t("conversations.detailView")}
         className="grid w-full grid-cols-2 rounded-xl bg-slate-100 p-1 sm:w-auto"
       >
         <button
@@ -111,7 +113,7 @@ export function ConversationToolbar({
             className={cn("size-3.5", view === "messages" && "text-primary")}
             aria-hidden="true"
           />
-          Messages
+          {t("conversations.messages")}
         </button>
         <button
           id="conversation-summaries-tab"
@@ -129,13 +131,13 @@ export function ConversationToolbar({
               ? "text-foreground bg-white shadow-[0_1px_2px_rgb(15_23_42/0.08),0_0_0_1px_rgb(15_23_42/0.04)]"
               : "text-muted-foreground hover:text-foreground",
           )}
-          title={hasSummaries ? undefined : "No compressed summaries"}
+          title={hasSummaries ? undefined : t("conversations.noSummaries")}
         >
           <BookOpen
             className={cn("size-3.5", view === "summaries" && "text-amber-600")}
             aria-hidden="true"
           />
-          Summaries
+          {t("conversations.summaries")}
           {hasSummaries ? (
             <span className="text-muted-foreground tabular-nums">{summaryCount}</span>
           ) : null}
@@ -146,17 +148,17 @@ export function ConversationToolbar({
         <div
           className="flex items-center justify-end gap-1"
           role="group"
-          aria-label="Message filters"
+          aria-label={t("conversations.messageFilters")}
         >
           <FilterToggle
-            label="System"
+            label={t("conversations.system")}
             icon={Terminal}
             pressed={showSystem}
             tone="violet"
             onPressedChange={onToggleSystem}
           />
           <FilterToggle
-            label="Tools"
+            label={t("conversations.tools")}
             icon={Wrench}
             pressed={showTools}
             tone="amber"

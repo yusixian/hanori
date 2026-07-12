@@ -1,8 +1,10 @@
 import { ErrorBoundary } from "@/components/error-boundary";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Refine, Authenticated } from "@refinedev/core";
 import routerProvider, { NavigateToResource, CatchAllNavigate } from "@refinedev/react-router";
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Outlet } from "react-router";
+import { BrowserRouter, Routes, Route, Outlet, useLocation } from "react-router";
+import { useTranslation } from "react-i18next";
 import { authProvider } from "@/providers/auth-provider";
 import { dataProvider } from "@/providers/data-provider";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -81,20 +83,34 @@ const ResetPasswordPage = lazy(() =>
 );
 
 function LoadingFallback() {
+  const { t } = useTranslation("common");
+
   return (
     <div className="flex items-center justify-center py-20" role="status" aria-live="polite">
       <div className="text-muted-foreground flex items-center gap-3 text-sm">
         <span className="border-t-primary size-4 animate-spin rounded-full border-2 border-slate-200" />
-        Loading…
+        {t("common.loading")}
       </div>
     </div>
   );
+}
+
+function PublicLanguageSwitcher() {
+  const { pathname } = useLocation();
+  const normalizedPathname = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  const isPublicAuthPage =
+    normalizedPathname === "/login" ||
+    normalizedPathname === "/accept-invitation" ||
+    normalizedPathname === "/reset-password";
+
+  return isPublicAuthPage ? <LanguageSwitcher className="fixed top-4 right-4 z-[70]" /> : null;
 }
 
 export function App() {
   return (
     <ErrorBoundary>
       <BrowserRouter>
+        <PublicLanguageSwitcher />
         <Refine
           routerProvider={routerProvider}
           authProvider={authProvider}

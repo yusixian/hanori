@@ -1,6 +1,7 @@
 import { authFetch } from "@/lib/client";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface AuthImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src"> {
   src: string;
@@ -10,6 +11,7 @@ interface AuthImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>,
 }
 
 export function AuthImage({ src, fallback, alt, placeholderSize = 96, ...props }: AuthImageProps) {
+  const { t } = useTranslation("common");
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const blobUrlRef = useRef<string | null>(null);
@@ -61,7 +63,7 @@ export function AuthImage({ src, fallback, alt, placeholderSize = 96, ...props }
         className="bg-muted text-muted-foreground flex items-center justify-center text-xs"
         style={{ width: placeholderSize, height: placeholderSize }}
       >
-        Failed
+        {t("errors.imageFailed")}
       </div>
     );
   }

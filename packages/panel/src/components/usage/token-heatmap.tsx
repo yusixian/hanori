@@ -1,5 +1,6 @@
 import { formatTokens } from "@/lib/format";
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 
 interface HeatmapDay {
   date: string;
@@ -20,26 +21,6 @@ const LABEL_WIDTH = 28;
 const HEADER_HEIGHT = 16;
 
 const COLORS = ["#161b22", "#0e4429", "#1d4ed8", "#3b82f6", "#60a5fa"];
-
-const MONTH_LABELS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
-const DAY_LABELS: [number, string][] = [
-  [1, "Mon"],
-  [3, "Wed"],
-  [5, "Fri"],
-];
 
 function toLocalISO(d: Date): string {
   const y = d.getFullYear();
@@ -110,37 +91,59 @@ function buildGrid(data: HeatmapDay[]): GridCell[] {
   return cells;
 }
 
-function getMonthLabels(cells: GridCell[]): { label: string; week: number }[] {
+function getMonthLabels(cells: GridCell[], locale: string | undefined) {
   const labels: { label: string; week: number }[] = [];
+  const formatter = new Intl.DateTimeFormat(locale, { month: "short" });
   let lastMonth = -1;
   for (const cell of cells) {
     if (cell.day !== 0) continue;
-    const month = new Date(cell.date).getMonth();
+    const date = new Date(`${cell.date}T00:00:00`);
+    const month = date.getMonth();
     if (month !== lastMonth) {
-      labels.push({ label: MONTH_LABELS[month]!, week: cell.week });
+      labels.push({ label: formatter.format(date), week: cell.week });
       lastMonth = month;
     }
   }
   return labels;
 }
 
-function getCellTooltip(cell: GridCell): string {
-  if (cell.future) return cell.date;
-  if (cell.value > 0) return `${formatTokens(cell.value)} tokens — ${cell.date}`;
-  return `No usage — ${cell.date}`;
-}
-
 export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
+  const { t, i18n } = useTranslation("admin");
   const [tooltip, setTooltip] = useState<{
     x: number;
     y: number;
-    text: string;
+    cell: GridCell;
   } | null>(null);
 
   const cells = useMemo(() => buildGrid(data), [data]);
   const thresholds = useMemo(() => computeThresholds(cells.map((c) => c.value)), [cells]);
-  const monthLabels = useMemo(() => getMonthLabels(cells), [cells]);
+  const monthLabels = useMemo(
+    () => getMonthLabels(cells, i18n.resolvedLanguage),
+    [cells, i18n.resolvedLanguage],
+  );
   const hasData = useMemo(() => cells.some((c) => c.value > 0), [cells]);
+  const dateFormatter = useMemo(
+    () => new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "medium" }),
+    [i18n.resolvedLanguage],
+  );
+  const dayLabels: [number, string][] = [
+    [1, t("usage.heatmap.monday")],
+    [3, t("usage.heatmap.wednesday")],
+    [5, t("usage.heatmap.friday")],
+  ];
+  const tooltipText = tooltip
+    ? (() => {
+        const date = dateFormatter.format(new Date(`${tooltip.cell.date}T00:00:00`));
+        if (tooltip.cell.future) return date;
+        if (tooltip.cell.value > 0) {
+          return t("usage.heatmap.tokens", {
+            tokens: formatTokens(tooltip.cell.value),
+            date,
+          });
+        }
+        return t("usage.heatmap.noUsage", { date });
+      })()
+    : null;
 
   const svgWidth = LABEL_WIDTH + WEEKS * STEP;
   const svgHeight = HEADER_HEIGHT + DAYS * STEP;
@@ -158,7 +161,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
             className="text-muted-foreground flex items-center justify-center text-sm"
             style={{ width: svgWidth, height: svgHeight }}
           >
-            No usage data
+            {t("usage.heatmap.noData")}
           </div>
         ) : (
           <svg
@@ -180,7 +183,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
               </text>
             ))}
             {/* Day labels */}
-            {DAY_LABELS.map(([row, label]) => (
+            {dayLabels.map(([row, label]) => (
               <text
                 key={label}
                 x={0}
@@ -213,7 +216,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
                     setTooltip({
                       x: rect.left - containerRect.left + rect.width / 2,
                       y: rect.top - containerRect.top - 8,
-                      text: getCellTooltip(cell),
+                      cell,
                     });
                   }}
                   onMouseLeave={() => setTooltip(null)}
@@ -228,7 +231,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
       {/* Legend */}
       {!loading && hasData && (
         <div className="mt-2 flex items-center justify-end gap-1 text-xs">
-          <span className="text-muted-foreground mr-1">Less</span>
+          <span className="text-muted-foreground mr-1">{t("usage.heatmap.less")}</span>
           {COLORS.map((color, i) => (
             <span
               key={i}
@@ -236,7 +239,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
               style={{ width: CELL_SIZE, height: CELL_SIZE, backgroundColor: color }}
             />
           ))}
-          <span className="text-muted-foreground ml-1">More</span>
+          <span className="text-muted-foreground ml-1">{t("usage.heatmap.more")}</span>
         </div>
       )}
 
@@ -250,7 +253,7 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
             transform: "translate(-50%, -100%)",
           }}
         >
-          {tooltip.text}
+          {tooltipText}
         </div>
       )}
     </div>

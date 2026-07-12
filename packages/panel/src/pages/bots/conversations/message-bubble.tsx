@@ -12,8 +12,9 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useId, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { CollapsibleContent } from "./collapsible-content";
-import { roleIconStyles, roleLabels } from "./constants";
+import { roleIconStyles, roleLabelKeys } from "./constants";
 import { DisclosureIcon } from "./disclosure-icon";
 import type { ConversationMessage } from "./types";
 
@@ -27,6 +28,7 @@ const roleIcons: Record<string, LucideIcon> = {
 };
 
 function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
+  const { t } = useTranslation("bots");
   const usage = meta.usage as Record<string, number> | undefined;
   const model = meta.model as string | undefined;
   const trigger = meta.trigger as string | undefined;
@@ -38,9 +40,9 @@ function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
     Number.isFinite(completionTokens) &&
     Number.isFinite(totalTokens);
   const tokenLabel = hasFullBreakdown
-    ? `${promptTokens}+${completionTokens}=${totalTokens} tokens`
+    ? `${promptTokens}+${completionTokens}=${totalTokens} ${t("conversations.tokens")}`
     : Number.isFinite(totalTokens)
-      ? `${totalTokens} tokens`
+      ? `${totalTokens} ${t("conversations.tokens")}`
       : null;
 
   if (!usage && !model) return null;
@@ -54,7 +56,7 @@ function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
       ) : null}
       {trigger ? (
         <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
-          trigger: {trigger}
+          {t("conversations.trigger")}: {trigger}
         </span>
       ) : null}
       {tokenLabel ? (
@@ -67,6 +69,7 @@ function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
 }
 
 function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
+  const { t } = useTranslation("bots");
   const [expanded, setExpanded] = useState(false);
   const argsId = useId();
   const toolName = meta.toolName as string;
@@ -93,7 +96,7 @@ function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
             onClick={() => setExpanded((value) => !value)}
           >
             <DisclosureIcon expanded={expanded} />
-            {expanded ? "Hide arguments" : "Show arguments"}
+            {expanded ? t("conversations.hideArgs") : t("conversations.showArgs")}
           </button>
           {expanded ? (
             <CodeBlock id={argsId} className="mt-1 max-h-60 text-xs">
@@ -117,6 +120,7 @@ export function MessageBubble({
   pendingDelete?: boolean;
   deleteBusy?: boolean;
 }) {
+  const { t, i18n } = useTranslation("bots");
   const isToolCall = msg.role === "tool_call" && msg.meta;
   const isAssistantWithMeta = msg.role === "assistant" && msg.meta;
   const needsCollapse =
@@ -137,7 +141,7 @@ export function MessageBubble({
 
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
-            <span className="text-xs font-semibold">{roleLabels[msg.role] ?? msg.role}</span>
+            <span className="text-xs font-semibold">{t(roleLabelKeys[msg.role] ?? msg.role)}</span>
             {msg.userName ? (
               <span className="min-w-0 truncate text-xs font-medium">{msg.userName}</span>
             ) : null}
@@ -160,7 +164,7 @@ export function MessageBubble({
             className="text-muted-foreground text-[11px] whitespace-nowrap tabular-nums"
             dateTime={new Date(msg.createdAt).toISOString()}
           >
-            {new Date(msg.createdAt).toLocaleString()}
+            {new Date(msg.createdAt).toLocaleString(i18n.resolvedLanguage)}
           </time>
           {onDelete ? (
             <button
@@ -176,12 +180,16 @@ export function MessageBubble({
               onClick={() => onDelete(msg.id)}
               aria-label={
                 deleteBusy
-                  ? "Deleting this message"
+                  ? t("conversations.deletingMessage")
                   : pendingDelete
-                    ? "Confirm deleting this message"
-                    : "Delete this message"
+                    ? t("conversations.confirmDeleteMessage")
+                    : t("conversations.deleteThisMessage")
               }
-              title={pendingDelete ? "Click again to confirm" : "Delete message"}
+              title={
+                pendingDelete
+                  ? t("conversations.clickAgainToDelete")
+                  : t("conversations.deleteMessage")
+              }
             >
               {deleteBusy ? (
                 <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />

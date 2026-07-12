@@ -9,6 +9,7 @@ import type { BotPlatform, EmailEventType } from "@cos-tool-bot/shared";
 import type { FormEvent } from "react";
 import { useRef, useState } from "react";
 import { Link } from "react-router";
+import { useTranslation } from "react-i18next";
 
 interface EmailForwardFormData {
   imapHost: string;
@@ -58,29 +59,21 @@ interface BotFormProps {
   isEdit?: boolean;
 }
 
-const EVENT_TYPE_GROUPS: Array<{ label: string; events: EmailEventType[] }> = [
+const EVENT_TYPE_GROUPS: Array<{ labelKey: string; events: EmailEventType[] }> = [
   {
-    label: "PR Events",
+    labelKey: "form.email.eventGroups.pullRequest",
     events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("pr:")),
   },
   {
-    label: "CI Events",
+    labelKey: "form.email.eventGroups.ci",
     events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("ci:")),
   },
   {
-    label: "Issue Events",
+    labelKey: "form.email.eventGroups.issue",
     events: ALL_EMAIL_EVENT_TYPES.filter((t): t is EmailEventType => t.startsWith("issue:")),
   },
-  { label: "Other", events: ["generic"] },
+  { labelKey: "form.email.eventGroups.other", events: ["generic"] },
 ];
-
-function formatEventLabel(event: string): string {
-  const action = event.includes(":") ? event.split(":")[1]! : event;
-  return action
-    .split("_")
-    .map((w) => w[0]!.toUpperCase() + w.slice(1))
-    .join(" ");
-}
 
 function EventTypeFilter({
   disabledEvents,
@@ -89,6 +82,8 @@ function EventTypeFilter({
   disabledEvents: Set<string>;
   setDisabledEvents: (s: Set<string>) => void;
 }) {
+  const { t } = useTranslation("bots");
+
   const toggle = (event: string) => {
     const next = new Set(disabledEvents);
     if (next.has(event)) next.delete(event);
@@ -107,12 +102,12 @@ function EventTypeFilter({
 
   return (
     <div className="space-y-2 rounded-md border p-2">
-      <label className="text-xs font-medium">Notification Types</label>
+      <label className="text-xs font-medium">{t("form.email.notificationTypes")}</label>
       {EVENT_TYPE_GROUPS.map((group) => {
         const allDisabled = group.events.every((e) => disabledEvents.has(e));
         const disabledCount = group.events.filter((event) => disabledEvents.has(event)).length;
         return (
-          <div key={group.label} className="space-y-1">
+          <div key={group.labelKey} className="space-y-1">
             <div className="flex items-center gap-1.5">
               <Checkbox
                 checked={
@@ -123,7 +118,7 @@ function EventTypeFilter({
                 onCheckedChange={() => toggleGroup(group.events, allDisabled)}
                 className="border-input h-3.5 w-3.5 rounded"
               />
-              <span className="text-xs font-medium">{group.label}</span>
+              <span className="text-xs font-medium">{t(group.labelKey)}</span>
             </div>
             <div className="flex flex-wrap gap-x-3 gap-y-1 pl-5">
               {group.events.map((event) => (
@@ -133,7 +128,7 @@ function EventTypeFilter({
                     onCheckedChange={() => toggle(event)}
                     className="border-input h-3 w-3 rounded"
                   />
-                  {formatEventLabel(event)}
+                  {t(`form.email.events.${event.replace(":", ".")}`)}
                 </label>
               ))}
             </div>
@@ -145,6 +140,7 @@ function EventTypeFilter({
 }
 
 export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormProps) {
+  const { t } = useTranslation("bots");
   const [platform, setPlatform] = useState<BotPlatform>(initialData?.platform ?? "telegram");
   const [name, setName] = useState(initialData?.name ?? "");
   const [token, setToken] = useState("");
@@ -266,13 +262,15 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
   return (
     <Card className="mx-auto max-w-lg">
       <CardHeader>
-        <CardTitle className="text-base">{isEdit ? "Edit Bot" : "Create Bot"}</CardTitle>
+        <CardTitle className="text-base">
+          {isEdit ? t("form.editTitle") : t("form.createTitle")}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {!isEdit && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Platform</label>
+              <label className="text-sm font-medium">{t("form.platform")}</label>
               <RadioGroup
                 value={platform}
                 onValueChange={(value) => setPlatform(value as BotPlatform)}
@@ -292,13 +290,13 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
           <div className="space-y-1.5">
             <label htmlFor="bot-name" className="text-sm font-medium">
-              Name
+              {t("form.name")}
             </label>
             <Input
               id="bot-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="My Bot"
+              placeholder={t("form.namePlaceholder")}
               required
             />
           </div>
@@ -307,7 +305,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
             <>
               <div className="space-y-1.5">
                 <label htmlFor="bot-token" className="text-sm font-medium">
-                  Bot Token
+                  {t("form.botToken")}
                 </label>
                 <Input
                   id="bot-token"
@@ -315,19 +313,19 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                   onChange={(e) => setToken(e.target.value)}
                   placeholder={
                     isEdit
-                      ? (initialData?.tokenMasked ?? "Leave empty to keep current")
+                      ? (initialData?.tokenMasked ?? t("form.keepCurrent"))
                       : "123456:ABC-DEF..."
                   }
                   required={!isEdit}
                 />
                 {isEdit && (
-                  <p className="text-muted-foreground text-xs">Leave empty to keep current token</p>
+                  <p className="text-muted-foreground text-xs">{t("form.keepCurrentToken")}</p>
                 )}
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="bot-admin-ids" className="text-sm font-medium">
-                  Admin Chat IDs
+                  {t("form.adminChatIds")}
                 </label>
                 <Input
                   id="bot-admin-ids"
@@ -335,25 +333,25 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                   onChange={(e) => setAdminChatIds(e.target.value)}
                   placeholder="123456, 789012"
                 />
-                <p className="text-muted-foreground text-xs">Comma-separated chat IDs</p>
+                <p className="text-muted-foreground text-xs">{t("form.adminChatIdsHint")}</p>
               </div>
             </>
           ) : (
             <>
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm dark:border-blue-900 dark:bg-blue-950">
-                First time setting up a Lark bot?{" "}
+                {t("form.larkFirstTime")}{" "}
                 <Link
                   to="/guides/lark-setup"
                   target="_blank"
                   className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                 >
-                  See the setup guide &rarr;
+                  {t("form.larkSetupGuide")} &rarr;
                 </Link>
               </div>
 
               <div className="space-y-1.5">
                 <label htmlFor="webhook-url" className="text-sm font-medium">
-                  Webhook URL
+                  {t("form.webhookUrl")}
                 </label>
                 <Input
                   id="webhook-url"
@@ -366,7 +364,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
               <div className="space-y-1.5">
                 <label htmlFor="sign-secret" className="text-sm font-medium">
-                  Sign Secret (optional)
+                  {t("form.signSecret")}
                 </label>
                 <Input
                   id="sign-secret"
@@ -374,14 +372,12 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                   onChange={(e) => setSignSecret(e.target.value)}
                   placeholder={
                     isEdit && initialData?.hasSignSecret
-                      ? "Leave empty to keep current"
-                      : "Leave empty if not configured"
+                      ? t("form.keepCurrent")
+                      : t("form.leaveEmptyIfNotConfigured")
                   }
                 />
                 {isEdit && initialData?.hasSignSecret && (
-                  <p className="text-muted-foreground text-xs">
-                    Leave empty to keep current secret
-                  </p>
+                  <p className="text-muted-foreground text-xs">{t("form.keepCurrentSecret")}</p>
                 )}
               </div>
 
@@ -393,7 +389,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                     onCheckedChange={setEmailEnabled}
                   />
                   <label htmlFor="emailForward" className="text-sm font-medium">
-                    Email Forwarding (IMAP)
+                    {t("form.email.title")}
                   </label>
                 </div>
 
@@ -401,7 +397,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs font-medium">IMAP Host</label>
+                        <label className="text-xs font-medium">{t("form.email.imapHost")}</label>
                         <Input
                           value={imapHost}
                           onChange={(e) => setImapHost(e.target.value)}
@@ -410,7 +406,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-medium">Port</label>
+                        <label className="text-xs font-medium">{t("form.email.port")}</label>
                         <Input
                           value={imapPort}
                           onChange={(e) => setImapPort(e.target.value)}
@@ -420,7 +416,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                       </div>
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-medium">Email</label>
+                      <label className="text-xs font-medium">{t("form.email.address")}</label>
                       <Input
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
@@ -429,26 +425,26 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                       />
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-medium">Password / App Token</label>
+                      <label className="text-xs font-medium">{t("form.email.password")}</label>
                       <Input
                         type="password"
                         value={emailPassword}
                         onChange={(e) => setEmailPassword(e.target.value)}
                         placeholder={
                           isEdit && initEmail?.hasPassword
-                            ? "Leave empty to keep current"
-                            : "IMAP authorization code"
+                            ? t("form.keepCurrent")
+                            : t("form.email.authorizationCode")
                         }
                         required={!isEdit || !initEmail?.hasPassword}
                       />
                       {isEdit && initEmail?.hasPassword && (
                         <p className="text-muted-foreground text-xs">
-                          Leave empty to keep current password
+                          {t("form.email.keepCurrentPassword")}
                         </p>
                       )}
                     </div>
                     <div className="space-y-1">
-                      <label className="text-xs font-medium">Poll Interval (sec)</label>
+                      <label className="text-xs font-medium">{t("form.email.pollInterval")}</label>
                       <Input
                         value={pollInterval}
                         onChange={(e) => setPollInterval(e.target.value)}
@@ -457,7 +453,9 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <label className="text-xs font-medium">Sender Filter</label>
+                        <label className="text-xs font-medium">
+                          {t("form.email.senderFilter")}
+                        </label>
                         <Input
                           value={senderFilter}
                           onChange={(e) => setSenderFilter(e.target.value)}
@@ -465,7 +463,9 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-medium">Subject Filter</label>
+                        <label className="text-xs font-medium">
+                          {t("form.email.subjectFilter")}
+                        </label>
                         <Input
                           value={subjectFilter}
                           onChange={(e) => setSubjectFilter(e.target.value)}
@@ -480,9 +480,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                     />
 
                     <div className="space-y-2 rounded-md border p-2">
-                      <label className="text-xs font-medium">
-                        Lark @Mention (GitHub Username → Lark Open ID)
-                      </label>
+                      <label className="text-xs font-medium">{t("form.email.mentionMap")}</label>
                       <div className="space-y-1">
                         <div className="max-h-48 space-y-1 overflow-y-auto">
                           {mentionMap.map(([ghLogin, larkId], idx) => (
@@ -495,7 +493,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                                   next[idx] = [e.target.value, larkId];
                                   setMentionMap(next);
                                 }}
-                                placeholder="GitHub login"
+                                placeholder={t("form.email.githubLogin")}
                               />
                               <Input
                                 className="h-7 text-xs"
@@ -529,7 +527,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                             className="h-7 text-xs"
                             onClick={() => setMentionMap([...mentionMap, ["", ""]])}
                           >
-                            + Add Mapping
+                            {t("form.email.addMapping")}
                           </Button>
                           <Button
                             type="button"
@@ -538,7 +536,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                             className="h-7 text-xs"
                             onClick={exportMentionCsv}
                           >
-                            Export CSV
+                            {t("form.email.exportCsv")}
                           </Button>
                           <Input
                             ref={csvInputRef}
@@ -558,7 +556,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                             className="h-7 text-xs"
                             onClick={() => csvInputRef.current?.click()}
                           >
-                            Import CSV
+                            {t("form.email.importCsv")}
                           </Button>
                         </div>
                       </div>
@@ -572,12 +570,12 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
           <div className="flex items-center gap-2">
             <Switch id="isActive" checked={isActive} onCheckedChange={setIsActive} />
             <label htmlFor="isActive" className="text-sm font-medium">
-              Auto-start on server launch
+              {t("form.autoStart")}
             </label>
           </div>
 
           <Button type="submit" disabled={submitting} className="w-full">
-            {submitting ? "Saving..." : submitLabel}
+            {submitting ? t("common:common.saving") : submitLabel}
           </Button>
         </form>
       </CardContent>

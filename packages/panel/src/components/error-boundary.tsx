@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { i18n } from "@/i18n";
 
 interface Props {
   children: ReactNode;
@@ -29,14 +30,14 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="flex min-h-screen items-center justify-center p-8">
           <div className="max-w-md space-y-4 text-center">
-            <h1 className="text-2xl font-bold">Something went wrong</h1>
+            <h1 className="text-2xl font-bold">{i18n.t("errors.unexpectedTitle")}</h1>
             <p className="text-muted-foreground text-sm">{this.state.error?.message}</p>
             <button
               type="button"
               className="bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer rounded-md px-4 py-2 text-sm font-medium"
               onClick={() => window.location.reload()}
             >
-              Reload Page
+              {i18n.t("errors.reloadPage")}
             </button>
           </div>
         </div>

@@ -6,12 +6,7 @@ import { client } from "@/lib/client";
 import type { RssCollectionRecord } from "@cos-tool-bot/shared";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
-
-const DIGEST_PROMPT_PLACEHOLDER = `Leave empty for default. Example:
-1. Summarize each item with key bullet points
-2. Include original links
-3. Use multi_message to send in segments
-4. Save to rss/{{slug}}/{{date}}.md`;
+import { useTranslation } from "react-i18next";
 
 export function CollectionForm({
   botId,
@@ -24,6 +19,7 @@ export function CollectionForm({
   onSaved: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useTranslation("bots");
   const isEdit = !!collection;
   const [name, setName] = useState(collection?.name ?? "");
   const [chatId, setChatId] = useState(collection ? String(collection.chatId) : "");
@@ -61,12 +57,16 @@ export function CollectionForm({
             json: payload,
           });
       if (!res.ok) {
-        setError(`Failed to ${isEdit ? "update" : "create"} collection (${res.status})`);
+        setError(
+          isEdit
+            ? t("rss.updateFailed", { status: res.status })
+            : t("rss.createFailed", { status: res.status }),
+        );
         return;
       }
       onSaved();
     } catch {
-      setError("Network error, please try again");
+      setError(t("rss.networkError"));
     } finally {
       setSubmitting(false);
     }
@@ -76,38 +76,45 @@ export function CollectionForm({
     <form onSubmit={handleSubmit} className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
         <Input
-          placeholder="Collection name"
+          placeholder={t("rss.collectionName")}
           value={name}
           onChange={(e) => setName(e.target.value)}
           required
         />
         <Input
           type="number"
-          placeholder="Chat ID (target)"
+          placeholder={t("rss.targetChatId")}
           value={chatId}
           onChange={(e) => setChatId(e.target.value)}
           required
         />
       </div>
       <Input
-        placeholder="Description (optional, shown in collection header)"
+        placeholder={t("rss.descriptionPlaceholder")}
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
       <div className="space-y-1">
         <label className="text-muted-foreground text-xs">
-          Digest Prompt (optional, variables: {"{{name}}"} {"{{slug}}"} {"{{date}}"})
+          {t("rss.digestPromptLabel", {
+            name: "{{name}}",
+            slug: "{{slug}}",
+            date: "{{date}}",
+          })}
         </label>
         <Textarea
           className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-          placeholder={DIGEST_PROMPT_PLACEHOLDER}
+          placeholder={t("rss.digestPromptPlaceholder", {
+            slug: "{{slug}}",
+            date: "{{date}}",
+          })}
           value={digestPrompt}
           onChange={(e) => setDigestPrompt(e.target.value)}
           rows={5}
         />
       </div>
       <div className="flex items-center gap-3">
-        <label className="text-sm">Digest Time (UTC):</label>
+        <label className="text-sm">{t("rss.digestTime")}</label>
         <Input
           type="time"
           className="w-28"
@@ -119,10 +126,10 @@ export function CollectionForm({
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          {isEdit ? "Save" : "Create"}
+          {isEdit ? t("common:common.save") : t("common:common.create")}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>
-          Cancel
+          {t("common:common.cancel")}
         </Button>
       </div>
     </form>

@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { AiTriggerConfig } from "@cos-tool-bot/shared";
+import { useTranslation } from "react-i18next";
 
 export function TriggerSettingsSection({
   config,
@@ -14,10 +15,12 @@ export function TriggerSettingsSection({
   onTriggerWordsTextChange: (text: string) => void;
   onUpdate: (key: keyof AiTriggerConfig, value: AiTriggerConfig[keyof AiTriggerConfig]) => void;
 }) {
+  const { t } = useTranslation("aiSettings");
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Default Trigger Settings</CardTitle>
+        <CardTitle className="text-base">{t("triggerSettings.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-2">
@@ -27,7 +30,7 @@ export function TriggerSettingsSection({
             onCheckedChange={(checked) => onUpdate("replyToBot", checked)}
           />
           <label htmlFor="replyToBot" className="text-sm">
-            Trigger when replying to bot
+            {t("triggerSettings.replyToBot")}
           </label>
         </div>
 
@@ -38,12 +41,12 @@ export function TriggerSettingsSection({
             onCheckedChange={(checked) => onUpdate("mentionBot", checked)}
           />
           <label htmlFor="mentionBot" className="text-sm">
-            Trigger when @mentioning bot
+            {t("triggerSettings.mentionBot")}
           </label>
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">Trigger Words</label>
+          <label className="text-sm font-medium">{t("triggerSettings.triggerWords")}</label>
           <Input
             value={triggerWordsText}
             onChange={(e) => onTriggerWordsTextChange(e.target.value)}
@@ -59,13 +62,13 @@ export function TriggerSettingsSection({
             placeholder="ai, help, ask"
           />
           <p className="text-muted-foreground text-xs">
-            Comma-separated keywords (case-insensitive)
+            {t("triggerSettings.triggerWordsDescription")}
           </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Random Reply %</label>
+            <label className="text-sm font-medium">{t("triggerSettings.randomReply")}</label>
             <Input
               type="number"
               min={0}
@@ -75,7 +78,7 @@ export function TriggerSettingsSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">Cooldown (seconds)</label>
+            <label className="text-sm font-medium">{t("triggerSettings.cooldown")}</label>
             <Input
               type="number"
               min={0}

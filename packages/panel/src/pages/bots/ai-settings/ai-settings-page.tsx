@@ -66,6 +66,7 @@ import { WebToolsSection } from "./sections/web-tools-section";
 import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
 import type { StatusMessage } from "./types";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
 
 const DEFAULT_SUMMARY_CONFIG: SummaryConfigStored = {
   enabled: false,
@@ -94,6 +95,7 @@ function serializeDraft(
 
 export function BotAiSettingsPage() {
   const { botId } = useParams<{ botId: string }>();
+  const { t, i18n } = useTranslation("aiSettings");
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
   const savedDraftRef = useRef("");
@@ -114,37 +116,42 @@ export function BotAiSettingsPage() {
     () => [
       {
         id: "overview",
-        label: "Overview",
-        description: "Status and quick actions",
+        label: t("navigation.overview"),
+        description: t("navigation.overviewDescription"),
         icon: LayoutDashboard,
       },
       {
         id: "providers",
-        label: "Providers & Models",
-        description: "Connections and model defaults",
+        label: t("navigation.providers"),
+        description: t("navigation.providersDescription"),
         icon: Server,
       },
       {
         id: "replies",
-        label: "Reply Behavior",
-        description: "Prompts, triggers, and delivery",
+        label: t("navigation.replies"),
+        description: t("navigation.repliesDescription"),
         icon: MessageSquare,
       },
       {
         id: "memory",
-        label: "Memory",
-        description: "Context, embeddings, and summaries",
+        label: t("navigation.memory"),
+        description: t("navigation.memoryDescription"),
         icon: Brain,
       },
-      { id: "tools", label: "Tools", description: "Web, agents, MCP, and OCR", icon: Wrench },
+      {
+        id: "tools",
+        label: t("navigation.tools"),
+        description: t("navigation.toolsDescription"),
+        icon: Wrench,
+      },
       {
         id: "access",
-        label: "Access & Groups",
-        description: "Private and group permissions",
+        label: t("navigation.access"),
+        description: t("navigation.accessDescription"),
         icon: KeyRound,
       },
     ],
-    [],
+    [t],
   );
   const requestedSection = searchParams.get("section") as AiSettingsSectionId | null;
   const activeSection = sectionItems.some((item) => item.id === requestedSection)
@@ -181,11 +188,11 @@ export function BotAiSettingsPage() {
         );
       }
     } catch {
-      setMessage({ type: "error", text: "Failed to load AI config" });
+      setMessage({ type: "error", text: i18n.t("page.loadError", { ns: "aiSettings" }) });
     } finally {
       setLoading(false);
     }
-  }, [botId]);
+  }, [botId, i18n]);
 
   useEffect(() => {
     loadConfig();
@@ -288,9 +295,9 @@ export function BotAiSettingsPage() {
                 )
                 .join("; ")
             : JSON.stringify(errorJson);
-          setMessage({ type: "error", text: `Save failed: ${detail}` });
+          setMessage({ type: "error", text: t("page.saveErrorDetail", { detail }) });
         } catch {
-          setMessage({ type: "error", text: `Save failed (HTTP ${res.status})` });
+          setMessage({ type: "error", text: t("page.saveErrorHttp", { status: res.status }) });
         }
         return;
       }
@@ -312,15 +319,15 @@ export function BotAiSettingsPage() {
           nextSummary,
           nextOcr,
         );
-        setMessage({ type: "success", text: "AI config saved" });
+        setMessage({ type: "success", text: t("page.saveSuccess") });
       } else {
         setMessage({
           type: "error",
-          text: "error" in json ? String(json.error) : "Failed to save",
+          text: "error" in json ? String(json.error) : t("page.saveError"),
         });
       }
     } catch {
-      setMessage({ type: "error", text: "Failed to save AI config" });
+      setMessage({ type: "error", text: t("page.saveConfigError") });
     } finally {
       setSaving(false);
     }
@@ -492,7 +499,7 @@ export function BotAiSettingsPage() {
   };
 
   if (loading) {
-    return <p className="text-muted-foreground text-sm">Loading…</p>;
+    return <p className="text-muted-foreground text-sm">{t("common.loading")}</p>;
   }
 
   return (
@@ -500,12 +507,12 @@ export function BotAiSettingsPage() {
       <div className="sticky top-0 z-20 -mx-2 space-y-3 rounded-b-2xl bg-slate-50/95 px-2 pt-1 pb-3 shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)] backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-balance">AI Settings</h1>
+            <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
             <div className="mt-1 hidden items-center gap-2 text-sm text-slate-500 sm:flex">
-              <span>Configure how this bot thinks, responds, and uses tools.</span>
+              <span>{t("page.description")}</span>
               {isDirty && (
                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  Unsaved Changes
+                  {t("page.unsavedChanges")}
                 </span>
               )}
             </div>
@@ -513,17 +520,17 @@ export function BotAiSettingsPage() {
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => setPreviewOpen(true)}>
               <Eye className="h-4 w-4" />
-              <span className="hidden sm:inline">Preview Prompt</span>
-              <span className="sm:hidden">Preview</span>
+              <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
+              <span className="sm:hidden">{t("page.preview")}</span>
             </Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Saving…
+                  {t("common.saving")}
                 </>
               ) : (
-                "Save"
+                t("common.save")
               )}
             </Button>
           </div>
@@ -619,8 +626,8 @@ export function BotAiSettingsPage() {
           {activeSection === "replies" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
-                title="Reply prompts"
-                description="Define the bot's persona, behavior, and system instructions."
+                title={t("disclosures.replyPrompts.title")}
+                description={t("disclosures.replyPrompts.description")}
                 defaultOpen
                 flattenCard={false}
               >
@@ -630,9 +637,11 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Triggers"
-                description="Choose when the bot should reply."
-                summary={`${config.triggerConfig.triggerWords.length} trigger words`}
+                title={t("disclosures.triggers.title")}
+                description={t("disclosures.triggers.description")}
+                summary={t("disclosures.triggers.summary", {
+                  count: config.triggerConfig.triggerWords.length,
+                })}
               >
                 <TriggerSettingsSection
                   config={config.triggerConfig}
@@ -642,26 +651,26 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Conversation context"
-                description="Control history windows and context construction."
+                title={t("disclosures.conversationContext.title")}
+                description={t("disclosures.conversationContext.description")}
               >
                 <ConversationSection config={convCfg} onUpdate={updateConv} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Message delivery"
-                description="Configure splitting and pacing for long replies."
+                title={t("disclosures.messageDelivery.title")}
+                description={t("disclosures.messageDelivery.description")}
               >
                 <MessageSplittingSection config={msgCfg} onUpdate={updateMessageConfig} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Timeouts"
-                description="Set operation-specific time limits."
+                title={t("disclosures.timeouts.title")}
+                description={t("disclosures.timeouts.description")}
               >
                 <TimeoutSection config={timeoutCfg} onUpdate={updateTimeoutConfig} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Sticker packs"
-                description="Allow the bot to include configured stickers."
+                title={t("disclosures.stickerPacks.title")}
+                description={t("disclosures.stickerPacks.description")}
               >
                 <StickerPacksSection
                   stickerPacksText={stickerPacksText}
@@ -674,30 +683,30 @@ export function BotAiSettingsPage() {
           {activeSection === "memory" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
-                title="Conversation memory"
-                description="Retain useful facts from conversations."
-                summary={memCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.conversationMemory.title")}
+                description={t("disclosures.conversationMemory.description")}
+                summary={memCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Bot memory"
-                description="Configure the bot's persistent memory store."
-                summary={botMemCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.botMemory.title")}
+                description={t("disclosures.botMemory.description")}
+                summary={botMemCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Embeddings"
-                description="Configure semantic indexing and retrieval."
-                summary={embCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.embeddings.title")}
+                description={t("disclosures.embeddings.description")}
+                summary={embCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <EmbeddingSection config={embCfg} onUpdate={updateEmbedding} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Chat summaries"
-                description="Generate scheduled or manual conversation summaries."
-                summary={summaryConfig.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.chatSummaries.title")}
+                description={t("disclosures.chatSummaries.description")}
+                summary={summaryConfig.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <SummaryConfigSection
                   botId={botId!}
@@ -711,30 +720,32 @@ export function BotAiSettingsPage() {
           {activeSection === "tools" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
-                title="Web tools"
-                description="Search, browse, and research information online."
-                summary={webCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.webTools.title")}
+                description={t("disclosures.webTools.description")}
+                summary={webCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <WebToolsSection config={webCfg} onUpdate={updateWebTools} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Agent tools"
-                description="Delegate complex work to sub-agents."
-                summary={agentCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.agentTools.title")}
+                description={t("disclosures.agentTools.description")}
+                summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Artwork tools"
-                description="Fetch artwork information and images."
-                summary={artworkCfg.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.artworkTools.title")}
+                description={t("disclosures.artworkTools.description")}
+                summary={artworkCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <ArtworkToolsSection config={artworkCfg} onUpdate={updateArtworkTools} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="MCP servers"
-                description="Connect external tools and data sources."
-                summary={`${config.mcpServerIds?.length ?? 0} selected`}
+                title={t("disclosures.mcpServers.title")}
+                description={t("disclosures.mcpServers.description")}
+                summary={t("disclosures.mcpServers.summary", {
+                  count: config.mcpServerIds?.length ?? 0,
+                })}
               >
                 <McpServersSection
                   selectedIds={config.mcpServerIds ?? []}
@@ -742,9 +753,9 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Image OCR"
-                description="Describe images before they reach the main model."
-                summary={imageOcrConfig.enabled ? "Enabled" : "Disabled"}
+                title={t("disclosures.imageOcr.title")}
+                description={t("disclosures.imageOcr.description")}
+                summary={imageOcrConfig.enabled ? t("common.enabled") : t("common.disabled")}
               >
                 <ImageOcrConfigSection
                   config={imageOcrConfig}
@@ -759,9 +770,11 @@ export function BotAiSettingsPage() {
           {activeSection === "access" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
-                title="Private chat whitelist"
-                description="Control who can use the bot in private chats."
-                summary={`${config.privateChatWhitelist?.length ?? 0} users`}
+                title={t("disclosures.privateWhitelist.title")}
+                description={t("disclosures.privateWhitelist.description")}
+                summary={t("disclosures.privateWhitelist.summary", {
+                  count: config.privateChatWhitelist?.length ?? 0,
+                })}
               >
                 <PrivateChatWhitelistSection
                   whitelist={config.privateChatWhitelist ?? []}
@@ -770,9 +783,11 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
-                title="Group overrides"
-                description="Customize behavior for individual groups."
-                summary={`${Object.keys(config.groupOverrides).length} groups`}
+                title={t("disclosures.groupOverrides.title")}
+                description={t("disclosures.groupOverrides.description")}
+                summary={t("disclosures.groupOverrides.summary", {
+                  count: Object.keys(config.groupOverrides).length,
+                })}
               >
                 <GroupOverridesSection
                   overrides={config.groupOverrides}

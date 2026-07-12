@@ -1,4 +1,5 @@
 import type { AuthProvider } from "@refinedev/core";
+import { i18n } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
 import { authFetch } from "@/lib/client";
 
@@ -11,13 +12,17 @@ export const authProvider: AuthProvider = {
       await authClient.signOut();
       return {
         success: false,
-        error: new Error("该账号尚未加入工作区，请使用邀请链接注册"),
+        error: new Error(i18n.t("auth:errors.membershipRequired")),
       };
     }
 
     return {
       success: false,
-      error: new Error("error" in result && result.error ? result.error.message : "登录失败"),
+      error: new Error(
+        "error" in result && result.error
+          ? result.error.message
+          : i18n.t("auth:errors.loginFailed"),
+      ),
     };
   },
 

@@ -16,6 +16,7 @@ import {
 } from "@cos-tool-bot/shared";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export function ImageOcrConfigSection({
   config,
@@ -29,21 +30,19 @@ export function ImageOcrConfigSection({
   onUpdate: (updates: Partial<ImageOcrConfig>) => void;
 }) {
   const [showDefault, setShowDefault] = useState(false);
+  const { t } = useTranslation("aiSettings");
   const activeLabel =
     providers.find((p) => p.id === activeProviderId)?.label ??
     activeProviderId ??
-    "Active provider";
+    t("imageOcr.activeProvider");
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Image OCR and descriptions</CardTitle>
+        <CardTitle className="text-base">{t("imageOcr.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-muted-foreground text-xs">
-          When enabled, the bot uses AI to describe incoming images and adds the result to the
-          conversation context for later summaries and replies.
-        </p>
+        <p className="text-muted-foreground text-xs">{t("imageOcr.description")}</p>
 
         <div className="flex items-center gap-2">
           <Switch
@@ -51,21 +50,24 @@ export function ImageOcrConfigSection({
             checked={config.enabled}
             onCheckedChange={(enabled) => onUpdate({ enabled })}
           />
-          <Label htmlFor="ocrEnabled">Enable image descriptions</Label>
+          <Label htmlFor="ocrEnabled">{t("imageOcr.enable")}</Label>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-provider">Provider</Label>
+            <Label htmlFor="ocr-provider">{t("common.provider")}</Label>
             <SelectMenu
               id="ocr-provider"
               value={config.providerId ?? "default"}
               onValueChange={(value) =>
                 onUpdate({ providerId: value === "default" ? undefined : value })
               }
-              ariaLabel="OCR provider"
+              ariaLabel={t("imageOcr.providerAria")}
               options={[
-                { value: "default", label: `Default (${activeLabel})` },
+                {
+                  value: "default",
+                  label: t("imageOcr.defaultProvider", { provider: activeLabel }),
+                },
                 ...providers.map((provider) => ({
                   value: provider.id,
                   label: `${provider.label} (${provider.providerFormat})`,
@@ -74,13 +76,13 @@ export function ImageOcrConfigSection({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-model-id">Model ID</Label>
+            <Label htmlFor="ocr-model-id">{t("common.modelId")}</Label>
             <Input
               id="ocr-model-id"
               name="ocrModelId"
               autoComplete="off"
               spellCheck={false}
-              placeholder="Leave empty to use the provider default"
+              placeholder={t("imageOcr.modelPlaceholder")}
               value={config.modelId ?? ""}
               onChange={(e) => onUpdate({ modelId: e.target.value || undefined })}
             />
@@ -89,54 +91,54 @@ export function ImageOcrConfigSection({
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-images-per-message">Images per message</Label>
+            <Label htmlFor="ocr-images-per-message">{t("imageOcr.imagesPerMessage")}</Label>
             <NumberInput
               id="ocr-images-per-message"
               name="ocrImagesPerMessage"
               min={0}
-              placeholder={`Default: ${DEFAULT_MAX_IMAGES_PER_MESSAGE}`}
+              placeholder={t("common.defaultValue", { value: DEFAULT_MAX_IMAGES_PER_MESSAGE })}
               value={config.maxImagesPerMessage ?? ""}
               onValueChange={(maxImagesPerMessage) => onUpdate({ maxImagesPerMessage })}
             />
             <p className="text-muted-foreground text-xs">
-              Additional images keep a placeholder but skip OCR.
+              {t("imageOcr.imagesPerMessageDescription")}
             </p>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-cooldown">Cooldown (seconds)</Label>
+            <Label htmlFor="ocr-cooldown">{t("imageOcr.cooldown")}</Label>
             <NumberInput
               id="ocr-cooldown"
               name="ocrCooldownSeconds"
               min={0}
-              placeholder={`Default: ${DEFAULT_OCR_COOLDOWN_SECONDS}`}
+              placeholder={t("common.defaultValue", { value: DEFAULT_OCR_COOLDOWN_SECONDS })}
               value={config.cooldownSeconds ?? ""}
               onValueChange={(cooldownSeconds) => onUpdate({ cooldownSeconds })}
             />
-            <p className="text-muted-foreground text-xs">
-              Time between OCR requests in the same group. Use 0 for no rate limit.
-            </p>
+            <p className="text-muted-foreground text-xs">{t("imageOcr.cooldownDescription")}</p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-description-length">Maximum description length</Label>
+            <Label htmlFor="ocr-description-length">{t("imageOcr.maxDescriptionLength")}</Label>
             <NumberInput
               id="ocr-description-length"
               name="ocrDescriptionLength"
               min={10}
-              placeholder={`Default: ${DEFAULT_OCR_MAX_DESCRIPTION_LENGTH}`}
+              placeholder={t("common.defaultValue", {
+                value: DEFAULT_OCR_MAX_DESCRIPTION_LENGTH,
+              })}
               value={config.maxDescriptionLength ?? ""}
               onValueChange={(maxDescriptionLength) => onUpdate({ maxDescriptionLength })}
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ocr-timeout">Request timeout (milliseconds)</Label>
+            <Label htmlFor="ocr-timeout">{t("imageOcr.timeout")}</Label>
             <NumberInput
               id="ocr-timeout"
               name="ocrTimeoutMs"
               min={1000}
-              placeholder={`Default: ${DEFAULT_OCR_TIMEOUT_MS}`}
+              placeholder={t("common.defaultValue", { value: DEFAULT_OCR_TIMEOUT_MS })}
               value={config.timeoutMs ?? ""}
               onValueChange={(timeoutMs) => onUpdate({ timeoutMs })}
             />
@@ -145,7 +147,7 @@ export function ImageOcrConfigSection({
 
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
-            <Label htmlFor="ocr-system-prompt">System prompt (optional)</Label>
+            <Label htmlFor="ocr-system-prompt">{t("imageOcr.systemPrompt")}</Label>
             <button
               type="button"
               onClick={() => setShowDefault((v) => !v)}
@@ -156,7 +158,7 @@ export function ImageOcrConfigSection({
               ) : (
                 <ChevronRight className="h-3 w-3" />
               )}
-              View default
+              {t("imageOcr.viewDefault")}
             </button>
           </div>
           {showDefault && <CodeBlock>{DEFAULT_OCR_PROMPT}</CodeBlock>}
@@ -169,7 +171,7 @@ export function ImageOcrConfigSection({
             onChange={(e) => onUpdate({ systemPrompt: e.target.value || undefined })}
             rows={3}
           />
-          <p className="text-muted-foreground text-xs">Leave empty to use the default.</p>
+          <p className="text-muted-foreground text-xs">{t("imageOcr.defaultPromptHelp")}</p>
         </div>
       </CardContent>
     </Card>

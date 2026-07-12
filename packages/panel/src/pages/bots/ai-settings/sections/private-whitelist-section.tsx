@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Plus, Trash2, UserRound } from "lucide-react";
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 
 export function PrivateChatWhitelistSection({
   whitelist,
@@ -14,6 +15,7 @@ export function PrivateChatWhitelistSection({
   onRemove: (userId: number) => void;
 }) {
   const [newUserId, setNewUserId] = useState("");
+  const { t } = useTranslation("aiSettings");
 
   const handleAdd = () => {
     const userId = Number(newUserId);
@@ -26,13 +28,10 @@ export function PrivateChatWhitelistSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Private Chat Whitelist</CardTitle>
+        <CardTitle className="text-base">{t("privateWhitelist.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-muted-foreground text-xs">
-          Allow specific users to chat with the bot in private messages. Whitelisted users can use
-          AI replies but do NOT have admin command access (restart, backup, etc.).
-        </p>
+        <p className="text-muted-foreground text-xs">{t("privateWhitelist.description")}</p>
 
         {whitelist.length > 0 && (
           <div className="divide-y overflow-hidden rounded-lg border bg-white">
@@ -49,9 +48,10 @@ export function PrivateChatWhitelistSection({
                   size="icon"
                   className="text-slate-400 hover:bg-red-50 hover:text-red-600"
                   onClick={() =>
-                    window.confirm(`Remove user ${userId} from the whitelist?`) && onRemove(userId)
+                    window.confirm(t("privateWhitelist.removeConfirm", { user: userId })) &&
+                    onRemove(userId)
                   }
-                  aria-label={`Remove user ${userId}`}
+                  aria-label={t("privateWhitelist.removeAria", { user: userId })}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
@@ -68,10 +68,10 @@ export function PrivateChatWhitelistSection({
             autoComplete="off"
             value={newUserId}
             onChange={(e) => setNewUserId(e.target.value)}
-            placeholder="Telegram User ID"
+            placeholder={t("privateWhitelist.userIdPlaceholder")}
             onKeyDown={(e) => e.key === "Enter" && handleAdd()}
           />
-          <Button size="icon" onClick={handleAdd} aria-label="Add user">
+          <Button size="icon" onClick={handleAdd} aria-label={t("privateWhitelist.addAria")}>
             <Plus className="h-4 w-4" />
           </Button>
         </div>

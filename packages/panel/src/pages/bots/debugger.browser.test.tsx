@@ -1,7 +1,8 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { i18n } from "@/i18n";
 import { BotDebuggerPage } from "./debugger";
 import { buildDebugRunMarkdown, debugRunFilename } from "./debugger-export";
 
@@ -34,6 +35,10 @@ class MockEventSource {
     this.onerror?.(new Event("error"));
   }
 }
+
+beforeEach(async () => {
+  await i18n.changeLanguage("en");
+});
 
 afterEach(() => {
   MockEventSource.instances = [];
@@ -128,11 +133,11 @@ test("keeps a running stream open across transient errors and closes it on compl
   completed = true;
   source.emit("bot-run-complete");
   expect(source.close).toHaveBeenCalledOnce();
-  await expect.element(page.getByText("succeeded", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Succeeded", { exact: true })).toBeVisible();
 });
 
 test("builds an AI-oriented chronological Markdown export", () => {
-  const markdown = buildDebugRunMarkdown(failedRun);
+  const markdown = buildDebugRunMarkdown(failedRun, i18n.getFixedT("en", "botData"));
   expect(markdown).toContain("Identify the first root-cause error");
   expect(markdown).toContain('"failureReason": "provider_stream_failed"');
   expect(markdown).toContain('"apiKey": "[REDACTED]"');

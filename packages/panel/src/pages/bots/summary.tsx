@@ -19,9 +19,10 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { SummaryConfigForm } from "./summary-config-form";
+import { useTranslation } from "react-i18next";
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString("zh-CN", { hour12: false });
+function formatDate(iso: string, locale: string | undefined) {
+  return new Date(iso).toLocaleString(locale, { hour12: false });
 }
 
 function HistoryDetailModal({
@@ -31,6 +32,8 @@ function HistoryDetailModal({
   record: ChatSummaryRecord;
   onClose: () => void;
 }) {
+  const { t, i18n } = useTranslation("bots");
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
@@ -42,21 +45,31 @@ function HistoryDetailModal({
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">
-            总结内容 — Chat {record.chatId} · {formatDate(record.createdAt)}
+            {t("summary.detailTitle", {
+              chatId: record.chatId,
+              date: formatDate(record.createdAt, i18n.resolvedLanguage),
+            })}
           </h2>
           <Button size="sm" variant="ghost" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
         <div className="text-muted-foreground mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-          <span>触发: {record.trigger === "manual" ? "手动" : "定时"}</span>
-          <span>消息数: {record.messageCount}</span>
-          <span>模型: {record.modelId}</span>
-          {record.promptTokens != null && <span>Prompt tokens: {record.promptTokens}</span>}
-          {record.completionTokens != null && (
-            <span>Completion tokens: {record.completionTokens}</span>
+          <span>
+            {t("summary.trigger")}:{" "}
+            {record.trigger === "manual" ? t("summary.manual") : t("summary.scheduled")}
+          </span>
+          <span>{t("summary.messageCount", { count: record.messageCount })}</span>
+          <span>{t("summary.model", { model: record.modelId })}</span>
+          {record.promptTokens != null && (
+            <span>{t("summary.promptTokens", { count: record.promptTokens })}</span>
           )}
-          {record.durationMs != null && <span>耗时: {record.durationMs}ms</span>}
+          {record.completionTokens != null && (
+            <span>{t("summary.completionTokens", { count: record.completionTokens })}</span>
+          )}
+          {record.durationMs != null && (
+            <span>{t("summary.duration", { duration: record.durationMs })}</span>
+          )}
         </div>
         {record.errorMessage ? (
           <p className="text-sm text-red-500">{record.errorMessage}</p>
@@ -69,6 +82,7 @@ function HistoryDetailModal({
 }
 
 function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: () => void }) {
+  const { t, i18n } = useTranslation("bots");
   const [configs, setConfigs] = useState<SummaryConfigRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -101,7 +115,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
     try {
       await fn();
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Operation failed");
+      showToast("error", err instanceof Error ? err.message : t("rss.operationFailed"));
     } finally {
       setBusy(null);
     }
@@ -118,7 +132,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
       await client.api.bots[":botId"].summary.configs[":id"].$delete({
         param: { botId, id: String(id) },
       });
-      showToast("success", "已删除");
+      showToast("success", t("summary.deleted"));
       await fetchConfigs();
       onChanged?.();
     });
@@ -132,23 +146,26 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
       });
       const json = await res.json();
       if (json.ok && json.data.ok) {
-        showToast("success", "触发成功");
+        showToast("success", t("summary.triggered"));
         onChanged?.();
       } else {
-        showToast("error", json.ok && json.data.reason ? json.data.reason : "触发失败");
+        showToast(
+          "error",
+          json.ok && json.data.reason ? json.data.reason : t("summary.triggerFailed"),
+        );
       }
     });
   };
 
-  if (loading) return <p className="text-muted-foreground text-sm">Loading...</p>;
+  if (loading) return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">配置列表</h2>
+        <h2 className="text-lg font-semibold">{t("summary.configList")}</h2>
         <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
           <Plus className="h-4 w-4" />
-          新增配置
+          {t("summary.addConfig")}
         </Button>
       </div>
 
@@ -175,13 +192,13 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
             className="ml-2 h-auto p-0 underline"
             onClick={() => setToast(null)}
           >
-            关闭
+            {t("common:common.close")}
           </Button>
         </p>
       )}
 
       {configs.length === 0 && !showCreate && (
-        <p className="text-muted-foreground text-sm">暂无配置。</p>
+        <p className="text-muted-foreground text-sm">{t("summary.noConfigs")}</p>
       )}
 
       {configs.map((cfg) => (
@@ -189,19 +206,24 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
           <CardHeader>
             <div className="flex items-center justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="font-mono text-base">Chat {cfg.chatId}</CardTitle>
+                <CardTitle className="font-mono text-base">
+                  {t("summary.chatTitle", { chatId: cfg.chatId })}
+                </CardTitle>
                 <Badge variant={cfg.isActive ? "default" : "muted"}>
-                  {cfg.isActive ? "启用" : "停用"}
+                  {cfg.isActive ? t("common:common.enabled") : t("common:common.disabled")}
                 </Badge>
                 {cfg.scheduleHour != null && cfg.scheduleMinute != null && (
                   <span className="text-muted-foreground text-xs">
-                    定时 {String(cfg.scheduleHour).padStart(2, "0")}:
+                    {t("summary.scheduledAt")} {String(cfg.scheduleHour).padStart(2, "0")}:
                     {String(cfg.scheduleMinute).padStart(2, "0")}
                   </span>
                 )}
-                <span className="text-muted-foreground text-xs">窗口 {cfg.windowHours}h</span>
                 <span className="text-muted-foreground text-xs">
-                  权限: {cfg.accessMode === "all" ? "全员" : "管理员"}
+                  {t("summary.windowHours", { count: cfg.windowHours })}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {t("summary.access")}:{" "}
+                  {cfg.accessMode === "all" ? t("summary.form.everyone") : t("summary.admins")}
                 </span>
               </div>
               <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -210,7 +232,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
                   variant="ghost"
                   disabled={busy !== null}
                   onClick={() => setEditingId(editingId === cfg.id ? null : cfg.id)}
-                  title="编辑"
+                  title={t("common:common.edit")}
                 >
                   <Pencil className="h-4 w-4" />
                 </Button>
@@ -219,7 +241,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
                   variant="ghost"
                   disabled={busy !== null}
                   onClick={() => triggerNow(cfg.id)}
-                  title="立即触发"
+                  title={t("summary.triggerNow")}
                 >
                   {busy === `trigger-${cfg.id}` ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -232,16 +254,25 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
                   variant={confirmDelete === cfg.id ? "destructive" : "ghost"}
                   disabled={busy !== null}
                   onClick={() => deleteConfig(cfg.id)}
-                  title={confirmDelete === cfg.id ? "再次点击确认" : "删除"}
+                  title={confirmDelete === cfg.id ? t("rss.clickAgain") : t("common:common.delete")}
                 >
                   <Trash2 className={`h-4 w-4 ${confirmDelete === cfg.id ? "" : "text-red-500"}`} />
                 </Button>
               </div>
             </div>
             <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-4 text-xs">
-              {cfg.lastManualAt && <span>上次手动: {formatDate(cfg.lastManualAt)}</span>}
-              {cfg.lastScheduledAt && <span>上次定时: {formatDate(cfg.lastScheduledAt)}</span>}
-              {cfg.modelId && <span>模型: {cfg.modelId}</span>}
+              {cfg.lastManualAt && (
+                <span>
+                  {t("summary.lastManual")}: {formatDate(cfg.lastManualAt, i18n.resolvedLanguage)}
+                </span>
+              )}
+              {cfg.lastScheduledAt && (
+                <span>
+                  {t("summary.lastScheduled")}:{" "}
+                  {formatDate(cfg.lastScheduledAt, i18n.resolvedLanguage)}
+                </span>
+              )}
+              {cfg.modelId && <span>{t("summary.model", { model: cfg.modelId })}</span>}
             </div>
           </CardHeader>
 
@@ -266,6 +297,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
 }
 
 function SummaryHistoryList({ botId }: { botId: string }) {
+  const { t, i18n } = useTranslation("bots");
   const [history, setHistory] = useState<ChatSummaryRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -325,7 +357,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">历史记录</h2>
+        <h2 className="text-lg font-semibold">{t("summary.history")}</h2>
         <Button size="sm" variant="outline" onClick={fetchHistory} disabled={loading}>
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
@@ -338,7 +370,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
       <div className="flex items-center gap-2">
         <Input
           type="number"
-          placeholder="按 Chat ID 筛选"
+          placeholder={t("summary.filterChatId")}
           className="w-40"
           value={filterChatId}
           onChange={(e) => {
@@ -361,7 +393,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
       </div>
 
       {history.length === 0 && !loading && (
-        <p className="text-muted-foreground text-sm">暂无历史记录。</p>
+        <p className="text-muted-foreground text-sm">{t("summary.noHistory")}</p>
       )}
 
       <div className="space-y-2">
@@ -370,15 +402,19 @@ function SummaryHistoryList({ botId }: { botId: string }) {
             <CardContent className="flex items-center justify-between py-3">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-sm">Chat {rec.chatId}</span>
+                  <span className="font-mono text-sm">
+                    {t("summary.chatTitle", { chatId: rec.chatId })}
+                  </span>
                   <Badge variant={rec.errorMessage ? "destructive" : "default"}>
-                    {rec.errorMessage ? "失败" : "成功"}
+                    {rec.errorMessage ? t("summary.failed") : t("summary.succeeded")}
                   </Badge>
-                  <Badge variant="muted">{rec.trigger === "manual" ? "手动" : "定时"}</Badge>
+                  <Badge variant="muted">
+                    {rec.trigger === "manual" ? t("summary.manual") : t("summary.scheduled")}
+                  </Badge>
                 </div>
                 <div className="text-muted-foreground mt-1 flex flex-wrap gap-x-3 text-xs">
-                  <span>{formatDate(rec.createdAt)}</span>
-                  <span>{rec.messageCount} 条消息</span>
+                  <span>{formatDate(rec.createdAt, i18n.resolvedLanguage)}</span>
+                  <span>{t("summary.messageCountValue", { count: rec.messageCount })}</span>
                   <span>{rec.modelId}</span>
                 </div>
                 {rec.errorMessage && (
@@ -391,9 +427,9 @@ function SummaryHistoryList({ botId }: { botId: string }) {
                     size="sm"
                     variant="outline"
                     onClick={() => setSelectedRecord(rec)}
-                    title="查看内容"
+                    title={t("summary.viewContent")}
                   >
-                    查看
+                    {t("summary.view")}
                   </Button>
                 )}
                 <Button
@@ -401,7 +437,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
                   variant={confirmDelete === rec.id ? "destructive" : "ghost"}
                   disabled={busy === rec.id}
                   onClick={() => deleteHistory(rec.id)}
-                  title={confirmDelete === rec.id ? "再次点击确认" : "删除"}
+                  title={confirmDelete === rec.id ? t("rss.clickAgain") : t("common:common.delete")}
                 >
                   {busy === rec.id ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -428,7 +464,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
             <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="text-muted-foreground text-sm">
-            {page} / {totalPages} (共 {total} 条)
+            {t("summary.pagination", { page, totalPages, total })}
           </span>
           <Button
             size="sm"
@@ -449,14 +485,15 @@ function SummaryHistoryList({ botId }: { botId: string }) {
 }
 
 export function BotSummaryPage() {
+  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
   const [historyKey, setHistoryKey] = useState(0);
 
-  if (!botId) return <p className="text-muted-foreground text-sm">Bot not found</p>;
+  if (!botId) return <p className="text-muted-foreground text-sm">{t("dashboard.notFound")}</p>;
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold">群聊总结</h1>
+      <h1 className="text-2xl font-bold">{t("summary.title")}</h1>
 
       <SummaryConfigList botId={botId} onChanged={() => setHistoryKey((k) => k + 1)} />
 
