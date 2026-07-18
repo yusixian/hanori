@@ -26,6 +26,23 @@ pnpm lint             # oxlint 代码检查
 
 首次初始化、认证迁移、Google OAuth 和 Docker 环境变量配置，请阅读 [配置与初始化指南](docs/SETUP.md)。
 
+## CI / Self-hosted Runner
+
+CI(`.github/workflows/ci.yml`)运行在维护者的 Mac 上（self-hosted runner，标签 `cos-tool-bot`),**不使用 GitHub 托管的 runner**。runner 不在线时，workflow 会一直排队等待，不会执行。推送代码 / 开 PR 前请确认 runner 服务已启动：
+
+```bash
+cd ~/actions-runner/cos-tool-bot
+
+./svc.sh status   # 查看运行状态
+./svc.sh start    # 启动（安装后重启系统会自动运行）
+./svc.sh stop     # 停止
+```
+
+- runner 目录：`~/actions-runner/cos-tool-bot`（与其他项目的 runner 实例相互独立，一台机器可以同时作为多个项目的 runner)
+- 运行日志：`~/actions-runner/cos-tool-bot/_diag/`
+- 服务通过 launchd 注册（`~/Library/LaunchAgents/actions.runner.example-owner-cos-tool-bot.*.plist`)，安装命令为 `./svc.sh install`
+- 需要重新注册时：在仓库 Settings → Actions → Runners → New self-hosted runner 获取 token 后重新运行 `./config.sh`，再执行 `./svc.sh install && ./svc.sh start`
+
 ## 环境变量
 
 ```bash
