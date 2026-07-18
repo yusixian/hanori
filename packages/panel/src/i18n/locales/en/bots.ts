@@ -206,6 +206,10 @@ export const bots = {
     throughMessage: "through #{{id}}",
     confirmDeleteSummary: "Confirm deleting this summary",
     deleteSummary: "Delete this summary",
+    activeSummary: "Active",
+    activeSummaryDescription: "This summary currently anchors the conversation context.",
+    activeSummaryDeleteBlocked:
+      "The active summary cannot be deleted. Delete or clear its source history instead.",
     roles: {
       user: "User",
       assistant: "AI",

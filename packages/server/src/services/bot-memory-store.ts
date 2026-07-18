@@ -66,6 +66,7 @@ export class BotMemoryStore {
       scope?: "general_only" | "user_only" | "all";
       limit?: number;
       queryEmbedding?: number[];
+      maxDistance?: number;
     },
   ): Promise<BotMemory[]> {
     const limit = params.limit ?? 20;
@@ -83,10 +84,15 @@ export class BotMemoryStore {
         } else {
           conditions.push(sql`1=0`);
         }
-      } else if (scope === "all" && params.telegramId != null) {
-        conditions.push(
-          or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
-        );
+      } else if (scope === "all") {
+        if (params.telegramId != null) {
+          conditions.push(
+            or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
+          );
+        } else {
+          // Never broaden an unscoped lookup to every user's private memories.
+          conditions.push(isNull(botMemories.telegramId));
+        }
       }
 
       if (params.category) {
@@ -113,11 +119,16 @@ export class BotMemoryStore {
         .limit(30);
 
       // Vector search
+      const distance = cosineDistance(botMemories.embedding, params.queryEmbedding);
+      const vectorConditions = [...conditions, isNotNull(botMemories.embedding)];
+      if (params.maxDistance != null) {
+        vectorConditions.push(lt(distance, params.maxDistance));
+      }
       const vectorResults = await this.db
         .select()
         .from(botMemories)
-        .where(and(...conditions, isNotNull(botMemories.embedding)))
-        .orderBy(cosineDistance(botMemories.embedding, params.queryEmbedding))
+        .where(and(...vectorConditions))
+        .orderBy(distance)
         .limit(30);
 
       return rrfMerge(keywordResults, vectorResults, 0.7, 0.3, 60, limit).map(toDto);
@@ -126,11 +137,16 @@ export class BotMemoryStore {
     // Vector-only search (query embedding but no text query)
     if (params.queryEmbedding && !params.query) {
       const conditions = buildConditions();
+      const distance = cosineDistance(botMemories.embedding, params.queryEmbedding);
+      const vectorConditions = [...conditions, isNotNull(botMemories.embedding)];
+      if (params.maxDistance != null) {
+        vectorConditions.push(lt(distance, params.maxDistance));
+      }
       const rows = await this.db
         .select()
         .from(botMemories)
-        .where(and(...conditions, isNotNull(botMemories.embedding)))
-        .orderBy(cosineDistance(botMemories.embedding, params.queryEmbedding))
+        .where(and(...vectorConditions))
+        .orderBy(distance)
         .limit(limit);
       return rows.map(toDto);
     }
@@ -221,10 +237,16 @@ export class BotMemoryStore {
     return result.length > 0;
   }
 
-  async getMemoriesForPrompt(botId: string, telegramId?: number, limit = 20): Promise<BotMemory[]> {
+  async getMemoriesForPrompt(
+    botId: string,
+    params: { telegramId?: number; limit?: number },
+  ): Promise<BotMemory[]> {
+    const limit = params.limit ?? 20;
     const conditions = [eq(botMemories.botId, botId), eq(botMemories.isActive, true)];
-    if (telegramId != null) {
-      conditions.push(or(isNull(botMemories.telegramId), eq(botMemories.telegramId, telegramId))!);
+    if (params.telegramId != null) {
+      conditions.push(
+        or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
+      );
     } else {
       conditions.push(isNull(botMemories.telegramId));
     }

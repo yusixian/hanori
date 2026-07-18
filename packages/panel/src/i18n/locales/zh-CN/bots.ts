@@ -200,6 +200,9 @@ export const bots = {
     throughMessage: "截至 #{{id}}",
     confirmDeleteSummary: "确认删除这条摘要",
     deleteSummary: "删除这条摘要",
+    activeSummary: "当前使用",
+    activeSummaryDescription: "这条摘要当前用于构建对话上下文。",
+    activeSummaryDeleteBlocked: "当前使用的摘要不能删除，请改为删除或清空对应的原始对话。",
     roles: {
       user: "用户",
       assistant: "AI",

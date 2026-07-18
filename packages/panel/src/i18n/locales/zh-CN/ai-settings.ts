@@ -440,6 +440,10 @@ export const aiSettings = {
     tokens: "约 {{count}} Token（估算）",
     dynamicPlaceholder: "动态占位符",
     dynamicContent: "= 运行时动态内容",
+    traceTitle: "Prompt 分段",
+    staticPrefix: "静态前缀 {{hash}}",
+    sectionTokens: "约 {{count}} Token",
+    unestimatedParts: "{{count}} 个非文本部分未估算",
   },
   webTools: {
     title: "联网工具",

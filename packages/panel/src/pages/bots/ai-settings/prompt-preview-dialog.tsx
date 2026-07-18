@@ -17,12 +17,33 @@ interface PromptPreviewDialogProps {
   onClose: () => void;
 }
 
+interface PromptSectionTrace {
+  id: string;
+  source: string;
+  stability: string;
+  trust: string;
+  role: string;
+  messageIndex: number;
+  status: string;
+  chars: number;
+  estimatedTokens: number;
+  refs?: Array<string | number>;
+  unestimatedParts?: number;
+}
+
+interface PromptTrace {
+  sections: PromptSectionTrace[];
+  totalEstimatedTokens: number;
+  staticPrefixHash: string;
+}
+
 const PLACEHOLDER_PATTERNS = [
   "[Environment: injected at runtime — username, chat type, and more]",
   "[Current user profile: injected at runtime]",
   "[Current mood: injected at runtime]",
   "[Long-term memory: injected at runtime]",
   "[Conversation history: injected at runtime]",
+  "[Current request: injected at runtime]",
   "--- Dynamic content below (changes for every request) ---",
 ];
 
@@ -78,6 +99,7 @@ export function PromptPreviewDialog({
   const [loading, setLoading] = useState(false);
   const [fullPrompt, setFullPrompt] = useState("");
   const [estimatedTokens, setEstimatedTokens] = useState(0);
+  const [trace, setTrace] = useState<PromptTrace | null>(null);
   const [copied, setCopied] = useState(false);
   const { t, i18n } = useTranslation("aiSettings");
 
@@ -107,6 +129,7 @@ export function PromptPreviewDialog({
       if (json.ok) {
         setFullPrompt(json.data.fullPrompt);
         setEstimatedTokens(json.data.estimatedTokens);
+        setTrace(json.data.trace);
       } else {
         setFullPrompt(
           t("promptPreview.errorWithDetail", {
@@ -114,11 +137,13 @@ export function PromptPreviewDialog({
           }),
         );
         setEstimatedTokens(0);
+        setTrace(null);
       }
     } catch (err) {
       console.error("Failed to fetch prompt preview:", err);
       setFullPrompt(t("promptPreview.loadError"));
       setEstimatedTokens(0);
+      setTrace(null);
     } finally {
       setLoading(false);
     }
@@ -235,6 +260,48 @@ export function PromptPreviewDialog({
             <CodeBlock className="max-h-none text-sm leading-relaxed">
               {highlightDynamic(fullPrompt)}
             </CodeBlock>
+          )}
+          {!loading && trace && (
+            <div className="mt-4 overflow-hidden rounded-lg border">
+              <div className="bg-muted/50 flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+                <span className="text-sm font-medium">{t("promptPreview.traceTitle")}</span>
+                <span className="text-muted-foreground font-mono text-xs">
+                  {t("promptPreview.staticPrefix", { hash: trace.staticPrefixHash })}
+                </span>
+              </div>
+              <div className="divide-y">
+                {trace.sections.map((section, index) => (
+                  <div
+                    key={`${section.messageIndex}:${section.id}:${index}`}
+                    className="grid gap-2 px-3 py-2 text-xs sm:grid-cols-[minmax(0,1fr)_auto]"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="truncate font-mono font-medium" title={section.id}>
+                          {section.id}
+                        </span>
+                        <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                          {section.stability}
+                        </span>
+                        <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+                          {section.trust}
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground mt-1 truncate" title={section.source}>
+                        {section.source}
+                        {section.refs?.length ? ` · ${section.refs.join(", ")}` : ""}
+                      </p>
+                    </div>
+                    <span className="text-muted-foreground tabular-nums sm:text-right">
+                      {t("promptPreview.sectionTokens", { count: section.estimatedTokens })}
+                      {section.unestimatedParts
+                        ? ` · ${t("promptPreview.unestimatedParts", { count: section.unestimatedParts })}`
+                        : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
 

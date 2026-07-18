@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
@@ -34,12 +33,12 @@ import {
 } from "@cos-tool-bot/shared";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { JSONValue, LanguageModel, ModelMessage, Tool, UserModelMessage } from "ai";
+import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api, Middleware } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
-import { assembleContext } from "../services/context-assembler.js";
+import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
@@ -827,10 +826,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     });
   };
 
-  function getModelEntry(modelId: string): ModelEntry | undefined {
-    return config.models?.find((m) => m.id === modelId);
-  }
-
   function buildProviderOptions(
     entry?: ModelEntry,
     providerFormat?: "openai" | "gemini",
@@ -1180,39 +1175,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         }
       }
 
-      // Assemble context using ContextAssembler
-      const { messages } = await assembleContext({
-        systemPrompt: effectivePrompt,
-        behavioralPrompt: config.behavioralPrompt,
-        groupBehavioralPrompt: config.groupBehavioralPrompt,
-        isPrivate,
-        chatId,
-        userName,
-        userUsername: ctx.from?.username,
-        chatTitle: ctx.chat?.title,
-        conversationConfig: config.conversationConfig,
-        conversation: useConversation ? config.conversation : undefined,
-        historyFormat: conversationCfg.historyFormat,
-        maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
-        ringBufferContext: ringBufferContext || undefined,
-        memoryConfig: config.memoryConfig,
-        memory: config.memory,
-        userId,
-        memoryTools,
-        botMemoryConfig: config.botMemoryConfig,
-        botMemory: config.botMemory,
-        botMemoryTools,
-        currentMood: moodState.get(chatId),
-        stickerPacks: config.stickerPacks,
-        webToolsConfig: config.webToolsConfig,
-        webTools,
-        agentToolsConfig: config.agentToolsConfig,
-        artworkToolsEnabled: config.artworkToolsConfig?.enabled,
-        hasFileTools: !!fileTools,
-        dataFiles: config.dataFiles,
-        messageConfig: getEffectiveMessageConfig(),
-      });
-
       // --- Download images for vision / OCR ---
       const hasVision = inferCapabilities(currentModel).includes("vision");
       const ocrEnabled = !!config.imageOcrConfig?.enabled;
@@ -1307,9 +1269,44 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
       const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
 
+      // Build context after OCR/file enrichment so automatic memory retrieval sees
+      // the same textual request that is persisted and sent to the model.
+      const promptBundle = await assembleContext({
+        systemPrompt: effectivePrompt,
+        behavioralPrompt: config.behavioralPrompt,
+        groupBehavioralPrompt: config.groupBehavioralPrompt,
+        isPrivate,
+        chatId,
+        userName,
+        userUsername: ctx.from?.username,
+        chatTitle: ctx.chat?.title,
+        conversationConfig: config.conversationConfig,
+        conversation: useConversation ? config.conversation : undefined,
+        historyFormat: conversationCfg.historyFormat,
+        maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
+        ringBufferContext: ringBufferContext || undefined,
+        memoryConfig: config.memoryConfig,
+        memory: config.memory,
+        userId,
+        memoryTools,
+        botMemoryConfig: config.botMemoryConfig,
+        botMemory: config.botMemory,
+        botMemoryTools,
+        retrievalQuery: rawContent || messageText,
+        currentMood: moodState.get(chatId),
+        stickerPacks: config.stickerPacks,
+        webToolsConfig: config.webToolsConfig,
+        webTools,
+        agentToolsConfig: config.agentToolsConfig,
+        artworkToolsEnabled: config.artworkToolsConfig?.enabled,
+        hasFileTools: !!fileTools,
+        dataFiles: config.dataFiles,
+        messageConfig: getEffectiveMessageConfig(),
+      });
+
       // --- Assemble final user message (multimodal or text-only) ---
       const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
-      const aiMessages = messages as ModelMessage[];
+      let currentRequest: UserModelMessage;
       if (allImageBuffers.length > 0) {
         const parts: UserModelMessage["content"] = allImageBuffers.map((img) => ({
           type: "image" as const,
@@ -1317,10 +1314,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           mimeType: img.mimeType,
         }));
         parts.push({ type: "text" as const, text: textContent || "用户发送了一张图片" });
-        aiMessages.push({ role: "user", content: parts });
+        currentRequest = { role: "user", content: parts };
       } else {
-        aiMessages.push({ role: "user", content: textContent });
+        currentRequest = { role: "user", content: textContent };
       }
+      const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, currentRequest);
 
       // Combine all tools
       const allTools: Record<string, Tool> = {
@@ -1399,10 +1397,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // Debug: AI request
       const startTime = Date.now();
-      const staticPrefixHash = createHash("md5")
-        .update(typeof messages[0]?.content === "string" ? messages[0].content : "")
-        .digest("hex")
-        .slice(0, 8);
       config.onLog?.({
         level: "debug",
         message: "AI request",
@@ -1414,7 +1408,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           providerFormat: currentProviderRuntime.providerFormat,
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
-          staticPrefixHash,
+          staticPrefixHash: promptTrace.staticPrefixHash,
+          promptSections: promptTrace.sections,
+          promptEstimatedTokens: promptTrace.totalEstimatedTokens,
           toolsEnabled: Object.keys(allTools),
           maxSteps,
           toolChoice,
@@ -1847,16 +1843,18 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           },
         });
 
-        config.conversation!.addMessages(toSave).catch((err) => {
-          config.onLog?.({
-            level: "error",
-            message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId },
+        config
+          .conversation!.addMessages(toSave)
+          .then(() => {
+            config.conversation!.triggerCompression(chatId);
+          })
+          .catch((err) => {
+            config.onLog?.({
+              level: "error",
+              message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
+              meta: { chatId },
+            });
           });
-        });
-
-        // Trigger compression check asynchronously
-        config.conversation!.triggerCompression(chatId);
       }
 
       config.onLog?.({

@@ -426,9 +426,19 @@ export function createBot(config: BotConfig) {
 
 export { WrapperContext, type BotContext } from "./context.js";
 export {
+  buildPromptBundle,
+  appendCurrentRequest,
   assemblePromptPreview,
+  type CompletedPromptBundle,
+  type ContextAssemblyInput,
+  type PromptBundle,
   type PromptPreviewInput,
   type PromptPreviewResult,
+  type PromptSectionStatus,
+  type PromptSectionTrace,
+  type PromptStability,
+  type PromptTrace,
+  type PromptTrust,
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
 export type { SummaryCallbacks } from "./commands/summary.js";

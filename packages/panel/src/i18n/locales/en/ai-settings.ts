@@ -478,6 +478,10 @@ export const aiSettings = {
     tokens: "~{{count}} tokens (est.)",
     dynamicPlaceholder: "Dynamic placeholder",
     dynamicContent: "= runtime dynamic content",
+    traceTitle: "Prompt sections",
+    staticPrefix: "Static prefix {{hash}}",
+    sectionTokens: "~{{count}} tokens",
+    unestimatedParts: "{{count}} non-text parts unestimated",
   },
   webTools: {
     title: "Web Tools",

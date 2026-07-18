@@ -45,17 +45,24 @@ import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import { selectMemoriesForPrompt } from "./prompt-memory-selector.js";
 import type { McpClientManager } from "./mcp-client-manager.js";
 import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
 
+const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+
 export class BotPool {
   private managers = new Map<string, IBotManager>();
   // Serializes start/stop/restart per botId to avoid concurrent double-start races.
   private opLocks = new Map<string, Promise<unknown>>();
   private botTimerHandlers = new Map<string, BotTimerHandlers>();
+  private conversationCleanupAt = new Map<string, number>();
+  private conversationCleanupInFlight = new Map<string, Promise<void>>();
+  private conversationCleanupSweep?: Promise<void>;
+  private conversationCleanupTimer?: ReturnType<typeof setInterval>;
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
@@ -133,6 +140,94 @@ export class BotPool {
     return this.botMemoryStore;
   }
 
+  private runConversationCleanup(
+    botId: string,
+    retentionDays: number,
+    force = false,
+  ): Promise<void> {
+    if (retentionDays <= 0) return Promise.resolve();
+
+    const existing = this.conversationCleanupInFlight.get(botId);
+    if (existing) return existing;
+
+    const now = Date.now();
+    const lastCleanupAt = this.conversationCleanupAt.get(botId) ?? 0;
+    if (!force && now - lastCleanupAt < CONVERSATION_CLEANUP_INTERVAL_MS) {
+      return Promise.resolve();
+    }
+
+    this.conversationCleanupAt.set(botId, now);
+    const cleanup = this.conversationStore
+      .cleanup(botId, retentionDays)
+      .catch((err) => {
+        if (this.conversationCleanupAt.get(botId) === now) {
+          this.conversationCleanupAt.delete(botId);
+        }
+        this.logger.warn(err, `Conversation retention cleanup failed for bot=${botId}`);
+      })
+      .finally(() => {
+        if (this.conversationCleanupInFlight.get(botId) === cleanup) {
+          this.conversationCleanupInFlight.delete(botId);
+        }
+      });
+    this.conversationCleanupInFlight.set(botId, cleanup);
+    return cleanup;
+  }
+
+  private triggerConversationCleanup(botId: string, retentionDays: number) {
+    void this.runConversationCleanup(botId, retentionDays);
+  }
+
+  private runConversationCleanupSweep(
+    activeBots?: Array<Pick<typeof bots.$inferSelect, "id" | "aiConfig">>,
+    force = false,
+  ): Promise<void> {
+    if (this.conversationCleanupSweep) return this.conversationCleanupSweep;
+
+    const sweep = (async () => {
+      const currentBots =
+        activeBots ??
+        (await this.db
+          .select({ id: bots.id, aiConfig: bots.aiConfig })
+          .from(bots)
+          .where(eq(bots.isActive, true)));
+
+      await Promise.all(
+        currentBots.map((bot) =>
+          this.runConversationCleanup(
+            bot.id,
+            bot.aiConfig?.conversationConfig?.retentionDays ??
+              DEFAULT_CONVERSATION_CONFIG.retentionDays,
+            force,
+          ),
+        ),
+      );
+    })().finally(() => {
+      if (this.conversationCleanupSweep === sweep) {
+        this.conversationCleanupSweep = undefined;
+      }
+    });
+    this.conversationCleanupSweep = sweep;
+    return sweep;
+  }
+
+  private startConversationCleanupScheduler() {
+    if (this.conversationCleanupTimer) return;
+
+    this.conversationCleanupTimer = setInterval(() => {
+      void this.runConversationCleanupSweep().catch((err) => {
+        this.logger.warn(err, "Conversation retention sweep failed");
+      });
+    }, CONVERSATION_CLEANUP_INTERVAL_MS);
+    this.conversationCleanupTimer.unref();
+  }
+
+  private stopConversationCleanupScheduler() {
+    if (!this.conversationCleanupTimer) return;
+    clearInterval(this.conversationCleanupTimer);
+    this.conversationCleanupTimer = undefined;
+  }
+
   async startAll() {
     let activeBots;
     try {
@@ -141,6 +236,10 @@ export class BotPool {
       this.logger.warn(err, "Failed to query active bots (table may not exist — run migrations)");
       return;
     }
+
+    await this.runConversationCleanupSweep(activeBots, true);
+    this.startConversationCleanupScheduler();
+
     if (activeBots.length === 0) return;
     this.logger.info(`Starting ${activeBots.length} active bot(s)...`);
     for (const bot of activeBots) {
@@ -154,6 +253,12 @@ export class BotPool {
   }
 
   async stopAll() {
+    this.stopConversationCleanupScheduler();
+    if (this.conversationCleanupSweep) {
+      await Promise.allSettled([this.conversationCleanupSweep]);
+    }
+    await Promise.allSettled(this.conversationCleanupInFlight.values());
+
     const ids = [...this.managers.keys()];
     for (const id of ids) {
       try {
@@ -325,6 +430,7 @@ export class BotPool {
           }
         },
         triggerCompression: (chatId) => {
+          this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
           compressConversation({
             botId,
             chatId,
@@ -413,7 +519,19 @@ export class BotPool {
           },
           deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
           getMemoriesForPrompt: (telegramId, limit) =>
-            ms.getMemoriesForPrompt(botId, telegramId, limit ?? botMemoryCfg.maxMemories),
+            ms.getMemoriesForPrompt(botId, {
+              telegramId,
+              limit: limit ?? botMemoryCfg.maxMemories,
+            }),
+          getMemoriesForQuery: (params) =>
+            selectMemoriesForPrompt({
+              botId,
+              query: params.query,
+              telegramId: params.telegramId,
+              limit: params.limit ?? botMemoryCfg.maxMemories,
+              store: ms,
+              embeddingService: es,
+            }),
           searchProfiles: async (query, telegramId) => {
             const pStore = this.profileStore;
             const [exactProfile, searched] = await Promise.all([

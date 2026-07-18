@@ -1,19 +1,55 @@
 import type { Database } from "@cos-tool-bot/database";
-import { conversationMessages, conversationSummaries } from "@cos-tool-bot/database";
+import {
+  conversationCompactionState,
+  conversationMessages,
+  conversationSummaries,
+} from "@cos-tool-bot/database";
 import type { ConversationRole } from "@cos-tool-bot/shared";
 import {
   and,
+  asc,
   cosineDistance,
   count,
   desc,
   eq,
+  gt,
   ilike,
   inArray,
   isNotNull,
   lt,
+  lte,
   sql,
 } from "drizzle-orm";
 import { escapeLike, rrfMerge } from "../utils/search.js";
+
+class CompactionConflictError extends Error {}
+
+export const COMPACTION_MAX_BATCH_MESSAGES = 200;
+export const COMPACTION_MAX_BATCH_JSON_CHARS = 120_000;
+const COMPACTION_MAX_SOURCE_MESSAGE_CHARS = 20_000;
+const JSON_ESCAPE_EXPANSION_FACTOR = 6;
+const TRUNCATION_MARKER = "\n…[truncated for compaction]…\n";
+
+export interface CompactionCandidate {
+  activeSummaryId: number | null;
+  oldCursorId: number;
+  existingSummary: string | null;
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    userName: string | null;
+  }>;
+  newCursorId: number;
+}
+
+function truncateCompactionContent(content: string, maxChars: number): string {
+  if (content.length <= maxChars) return content;
+  if (maxChars <= TRUNCATION_MARKER.length) return content.slice(0, maxChars);
+  const available = maxChars - TRUNCATION_MARKER.length;
+  const headLength = Math.ceil(available / 2);
+  return `${content.slice(0, headLength)}${TRUNCATION_MARKER}${content.slice(-Math.floor(available / 2))}`;
+}
 
 export class ConversationStore {
   constructor(private db: Database) {}
@@ -68,12 +104,8 @@ export class ConversationStore {
   }
 
   async getHistory(botId: string, chatId: number, limit: number) {
-    const [latestSummary] = await this.db
-      .select()
-      .from(conversationSummaries)
-      .where(and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)))
-      .orderBy(desc(conversationSummaries.id))
-      .limit(1);
+    const active = await this.getActiveCompaction(botId, chatId);
+    const cursorId = active?.cursorId ?? 0;
 
     const messages = await this.db
       .select({
@@ -86,6 +118,7 @@ export class ConversationStore {
         and(
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
+          gt(conversationMessages.id, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
         ),
       )
@@ -93,9 +126,31 @@ export class ConversationStore {
       .limit(limit);
 
     return {
-      summary: latestSummary?.content ?? null,
+      summary: active?.content ?? null,
       messages: messages.reverse(),
     };
+  }
+
+  private async getActiveCompaction(botId: string, chatId: number) {
+    const [active] = await this.db
+      .select({
+        summaryId: conversationSummaries.id,
+        cursorId: conversationSummaries.summarizedUpToId,
+        content: conversationSummaries.content,
+      })
+      .from(conversationCompactionState)
+      .innerJoin(
+        conversationSummaries,
+        eq(conversationCompactionState.activeSummaryId, conversationSummaries.id),
+      )
+      .where(
+        and(
+          eq(conversationCompactionState.botId, botId),
+          eq(conversationCompactionState.chatId, chatId),
+        ),
+      )
+      .limit(1);
+    return active;
   }
 
   async getMessageCount(botId: string, chatId: number): Promise<number> {
@@ -106,88 +161,288 @@ export class ConversationStore {
     return Number(result?.total ?? 0);
   }
 
-  async compressMessages(
+  async getUncompactedMessageCount(botId: string, chatId: number): Promise<number> {
+    const active = await this.getActiveCompaction(botId, chatId);
+    const [result] = await this.db
+      .select({ total: count() })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          gt(conversationMessages.id, active?.cursorId ?? 0),
+        ),
+      );
+    return Number(result?.total ?? 0);
+  }
+
+  async getCompactionCandidate(
     botId: string,
     chatId: number,
-    summaryText: string,
-    upToId: number,
-    messageCount: number,
-  ) {
-    await this.db.transaction(async (tx) => {
-      await tx.insert(conversationSummaries).values({
-        botId,
-        chatId,
-        content: summaryText,
-        summarizedUpToId: upToId,
-        messageCount,
+    keepRecent: number,
+  ): Promise<CompactionCandidate | null> {
+    const active = await this.getActiveCompaction(botId, chatId);
+    const oldCursorId = active?.cursorId ?? 0;
+    const cutoff = await this.db
+      .select({ id: conversationMessages.id })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          gt(conversationMessages.id, oldCursorId),
+        ),
+      )
+      .orderBy(desc(conversationMessages.id))
+      .limit(1)
+      .offset(Math.max(0, keepRecent));
+
+    if (cutoff.length === 0) return null;
+    const newCursorId = cutoff[0]!.id;
+
+    const messages = await this.db
+      .select({
+        id: conversationMessages.id,
+        role: conversationMessages.role,
+        content: sql<string>`case
+          when char_length(${conversationMessages.content}) > ${COMPACTION_MAX_SOURCE_MESSAGE_CHARS}
+          then left(${conversationMessages.content}, ${Math.ceil((COMPACTION_MAX_SOURCE_MESSAGE_CHARS - TRUNCATION_MARKER.length) / 2)})
+            || ${TRUNCATION_MARKER}
+            || right(${conversationMessages.content}, ${Math.floor((COMPACTION_MAX_SOURCE_MESSAGE_CHARS - TRUNCATION_MARKER.length) / 2)})
+          else ${conversationMessages.content}
+        end`,
+        userName: conversationMessages.userName,
+      })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          gt(conversationMessages.id, oldCursorId),
+          lte(conversationMessages.id, newCursorId),
+        ),
+      )
+      .orderBy(asc(conversationMessages.id))
+      .limit(COMPACTION_MAX_BATCH_MESSAGES);
+
+    if (messages.length === 0) return null;
+    const batch: CompactionCandidate["messages"] = [];
+    let jsonChars = 0;
+    for (const message of messages) {
+      const jsonOverhead =
+        JSON.stringify({
+          id: message.id,
+          role: message.role,
+          userName: message.userName,
+          content: "",
+        }).length + 1;
+      const remainingChars = COMPACTION_MAX_BATCH_JSON_CHARS - jsonChars - jsonOverhead;
+      if (batch.length > 0 && remainingChars <= 0) break;
+
+      const contentBudget = Math.max(
+        1,
+        Math.floor(Math.max(1, remainingChars) / JSON_ESCAPE_EXPANSION_FACTOR),
+      );
+      const content = truncateCompactionContent(message.content, contentBudget);
+      batch.push({ ...message, content });
+      jsonChars += jsonOverhead + content.length * JSON_ESCAPE_EXPANSION_FACTOR;
+      if (jsonChars >= COMPACTION_MAX_BATCH_JSON_CHARS) break;
+    }
+
+    const lastMessage = batch.at(-1);
+    if (!lastMessage) return null;
+    return {
+      activeSummaryId: active?.summaryId ?? null,
+      oldCursorId,
+      existingSummary: active?.content ?? null,
+      messages: batch,
+      newCursorId: lastMessage.id,
+    };
+  }
+
+  async commitCompaction(params: {
+    botId: string;
+    chatId: number;
+    expectedActiveSummaryId: number | null;
+    oldCursorId: number;
+    newCursorId: number;
+    summaryText: string;
+    messageCount: number;
+    sourceMessageIds: number[];
+  }): Promise<boolean> {
+    if (
+      params.newCursorId <= params.oldCursorId ||
+      params.messageCount <= 0 ||
+      params.sourceMessageIds.length !== params.messageCount
+    ) {
+      return false;
+    }
+
+    try {
+      await this.db.transaction(async (tx) => {
+        const sourceRows = await tx
+          .select({ id: conversationMessages.id })
+          .from(conversationMessages)
+          .where(
+            and(
+              eq(conversationMessages.botId, params.botId),
+              eq(conversationMessages.chatId, params.chatId),
+              gt(conversationMessages.id, params.oldCursorId),
+              lte(conversationMessages.id, params.newCursorId),
+            ),
+          )
+          .orderBy(asc(conversationMessages.id))
+          .for("update");
+        if (
+          sourceRows.length !== params.sourceMessageIds.length ||
+          sourceRows.some((row, index) => row.id !== params.sourceMessageIds[index])
+        ) {
+          throw new CompactionConflictError();
+        }
+
+        if (params.expectedActiveSummaryId !== null) {
+          const [current] = await tx
+            .select({ cursorId: conversationSummaries.summarizedUpToId })
+            .from(conversationCompactionState)
+            .innerJoin(
+              conversationSummaries,
+              eq(conversationCompactionState.activeSummaryId, conversationSummaries.id),
+            )
+            .where(
+              and(
+                eq(conversationCompactionState.botId, params.botId),
+                eq(conversationCompactionState.chatId, params.chatId),
+                eq(conversationCompactionState.activeSummaryId, params.expectedActiveSummaryId),
+              ),
+            )
+            .limit(1);
+          if (!current || current.cursorId > params.newCursorId) {
+            throw new CompactionConflictError();
+          }
+        }
+
+        const [summary] = await tx
+          .insert(conversationSummaries)
+          .values({
+            botId: params.botId,
+            chatId: params.chatId,
+            content: params.summaryText,
+            previousSummarizedUpToId: params.oldCursorId,
+            summarizedUpToId: params.newCursorId,
+            messageCount: params.messageCount,
+          })
+          .returning({ id: conversationSummaries.id });
+        if (!summary) throw new Error("Failed to persist conversation summary");
+
+        const activated =
+          params.expectedActiveSummaryId === null
+            ? await tx
+                .insert(conversationCompactionState)
+                .values({
+                  botId: params.botId,
+                  chatId: params.chatId,
+                  activeSummaryId: summary.id,
+                })
+                .onConflictDoNothing()
+                .returning({ activeSummaryId: conversationCompactionState.activeSummaryId })
+            : await tx
+                .update(conversationCompactionState)
+                .set({ activeSummaryId: summary.id, updatedAt: new Date() })
+                .where(
+                  and(
+                    eq(conversationCompactionState.botId, params.botId),
+                    eq(conversationCompactionState.chatId, params.chatId),
+                    eq(conversationCompactionState.activeSummaryId, params.expectedActiveSummaryId),
+                  ),
+                )
+                .returning({ activeSummaryId: conversationCompactionState.activeSummaryId });
+
+        if (activated.length === 0) throw new CompactionConflictError();
       });
-      await tx
+      return true;
+    } catch (error) {
+      if (error instanceof CompactionConflictError) return false;
+      throw error;
+    }
+  }
+
+  async deleteMessage(botId: string, chatId: number, messageId: number): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const result = await tx
         .delete(conversationMessages)
         .where(
           and(
+            eq(conversationMessages.id, messageId),
             eq(conversationMessages.botId, botId),
             eq(conversationMessages.chatId, chatId),
-            lt(conversationMessages.id, upToId + 1),
           ),
+        )
+        .returning({ id: conversationMessages.id });
+      if (result.length === 0) return false;
+
+      const [active] = await tx
+        .select({
+          summaryId: conversationCompactionState.activeSummaryId,
+          cursorId: conversationSummaries.summarizedUpToId,
+        })
+        .from(conversationCompactionState)
+        .innerJoin(
+          conversationSummaries,
+          eq(conversationCompactionState.activeSummaryId, conversationSummaries.id),
+        )
+        .where(
+          and(
+            eq(conversationCompactionState.botId, botId),
+            eq(conversationCompactionState.chatId, chatId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+
+      if (active && messageId <= active.cursorId) {
+        await tx
+          .delete(conversationCompactionState)
+          .where(
+            and(
+              eq(conversationCompactionState.botId, botId),
+              eq(conversationCompactionState.chatId, chatId),
+              eq(conversationCompactionState.activeSummaryId, active.summaryId),
+            ),
+          );
+      }
+      return true;
+    });
+  }
+
+  async clearHistory(botId: string, chatId: number) {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(conversationMessages)
+        .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)));
+      await tx
+        .delete(conversationCompactionState)
+        .where(
+          and(
+            eq(conversationCompactionState.botId, botId),
+            eq(conversationCompactionState.chatId, chatId),
+          ),
+        );
+      await tx
+        .delete(conversationSummaries)
+        .where(
+          and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)),
         );
     });
   }
 
-  async deleteOldestMessages(botId: string, chatId: number, keepCount: number) {
-    const cutoff = await this.db
-      .select({ id: conversationMessages.id })
-      .from(conversationMessages)
-      .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)))
-      .orderBy(desc(conversationMessages.id))
-      .limit(1)
-      .offset(keepCount);
-
-    if (cutoff.length === 0) return;
-    const cutoffId = cutoff[0]!.id;
-
-    await this.db
-      .delete(conversationMessages)
-      .where(
-        and(
-          eq(conversationMessages.botId, botId),
-          eq(conversationMessages.chatId, chatId),
-          lt(conversationMessages.id, cutoffId + 1),
-        ),
-      );
-  }
-
-  async deleteMessage(botId: string, chatId: number, messageId: number): Promise<boolean> {
-    const result = await this.db
-      .delete(conversationMessages)
-      .where(
-        and(
-          eq(conversationMessages.id, messageId),
-          eq(conversationMessages.botId, botId),
-          eq(conversationMessages.chatId, chatId),
-        ),
-      )
-      .returning({ id: conversationMessages.id });
-    return result.length > 0;
-  }
-
-  async clearHistory(botId: string, chatId: number) {
-    await Promise.all([
-      this.db
-        .delete(conversationMessages)
-        .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId))),
-      this.db
-        .delete(conversationSummaries)
-        .where(
-          and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)),
-        ),
-    ]);
-  }
-
   async clearAllForBot(botId: string) {
-    await Promise.all([
-      this.db.delete(conversationMessages).where(eq(conversationMessages.botId, botId)),
-      this.db.delete(conversationSummaries).where(eq(conversationSummaries.botId, botId)),
-    ]);
+    await this.db.transaction(async (tx) => {
+      await tx.delete(conversationMessages).where(eq(conversationMessages.botId, botId));
+      await tx
+        .delete(conversationCompactionState)
+        .where(eq(conversationCompactionState.botId, botId));
+      await tx.delete(conversationSummaries).where(eq(conversationSummaries.botId, botId));
+    });
   }
 
   async getConversationList(botId: string, page: number, limit: number) {
@@ -305,7 +560,7 @@ export class ConversationStore {
 
   async getConversationSummaries(botId: string, chatId: number, page: number, limit: number) {
     const offset = (page - 1) * limit;
-    const [rows, [totalResult]] = await Promise.all([
+    const [rows, [totalResult], active] = await Promise.all([
       this.db
         .select()
         .from(conversationSummaries)
@@ -321,32 +576,54 @@ export class ConversationStore {
         .where(
           and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId)),
         ),
+      this.getActiveCompaction(botId, chatId),
     ]);
 
     return {
       data: rows.map((r) => ({
         id: r.id,
         content: r.content,
+        previousSummarizedUpToId: r.previousSummarizedUpToId,
         summarizedUpToId: r.summarizedUpToId,
         messageCount: r.messageCount,
         createdAt: r.createdAt.toISOString(),
+        isActive: r.id === active?.summaryId,
       })),
       total: Number(totalResult?.total ?? 0),
     };
   }
 
-  async deleteConversationSummary(botId: string, chatId: number, id: number): Promise<boolean> {
-    const result = await this.db
-      .delete(conversationSummaries)
-      .where(
-        and(
-          eq(conversationSummaries.id, id),
-          eq(conversationSummaries.botId, botId),
-          eq(conversationSummaries.chatId, chatId),
-        ),
-      )
-      .returning({ id: conversationSummaries.id });
-    return result.length > 0;
+  async deleteConversationSummary(
+    botId: string,
+    chatId: number,
+    id: number,
+  ): Promise<"deleted" | "active" | "not_found"> {
+    return this.db.transaction(async (tx) => {
+      const [active] = await tx
+        .select({ activeSummaryId: conversationCompactionState.activeSummaryId })
+        .from(conversationCompactionState)
+        .where(
+          and(
+            eq(conversationCompactionState.botId, botId),
+            eq(conversationCompactionState.chatId, chatId),
+            eq(conversationCompactionState.activeSummaryId, id),
+          ),
+        )
+        .limit(1);
+      if (active) return "active";
+
+      const result = await tx
+        .delete(conversationSummaries)
+        .where(
+          and(
+            eq(conversationSummaries.id, id),
+            eq(conversationSummaries.botId, botId),
+            eq(conversationSummaries.chatId, chatId),
+          ),
+        )
+        .returning({ id: conversationSummaries.id });
+      return result.length > 0 ? "deleted" : "not_found";
+    });
   }
 
   async getConversationMessages(botId: string, chatId: number, page: number, limit: number) {
@@ -478,39 +755,53 @@ export class ConversationStore {
     return rows.map(toResult);
   }
 
-  async cleanup(retentionDays: number) {
+  async cleanup(botId: string, retentionDays: number) {
     if (retentionDays <= 0) return;
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-    await this.db
-      .delete(conversationMessages)
-      .where(lt(conversationMessages.createdAt, cutoffDate));
-  }
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(conversationMessages)
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            lt(conversationMessages.createdAt, cutoffDate),
+          ),
+        );
 
-  async getOldestMessages(botId: string, chatId: number, keepRecent: number) {
-    const recentIds = this.db
-      .select({ id: conversationMessages.id })
-      .from(conversationMessages)
-      .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)))
-      .orderBy(desc(conversationMessages.id))
-      .limit(keepRecent);
+      const expiredActiveStates = await tx
+        .select({ summaryId: conversationCompactionState.activeSummaryId })
+        .from(conversationCompactionState)
+        .innerJoin(
+          conversationSummaries,
+          eq(conversationCompactionState.activeSummaryId, conversationSummaries.id),
+        )
+        .where(
+          and(
+            eq(conversationCompactionState.botId, botId),
+            lt(conversationSummaries.createdAt, cutoffDate),
+          ),
+        )
+        .for("update");
+      if (expiredActiveStates.length > 0) {
+        await tx.delete(conversationCompactionState).where(
+          and(
+            eq(conversationCompactionState.botId, botId),
+            inArray(
+              conversationCompactionState.activeSummaryId,
+              expiredActiveStates.map((state) => state.summaryId),
+            ),
+          ),
+        );
+      }
 
-    const oldMessages = await this.db
-      .select()
-      .from(conversationMessages)
-      .where(
-        and(
-          eq(conversationMessages.botId, botId),
-          eq(conversationMessages.chatId, chatId),
-          sql`${conversationMessages.id} not in (${recentIds})`,
-        ),
-      )
-      .orderBy(conversationMessages.id);
-
-    return oldMessages.map((m) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      userName: m.userName,
-    }));
+      await tx
+        .delete(conversationSummaries)
+        .where(
+          and(
+            eq(conversationSummaries.botId, botId),
+            lt(conversationSummaries.createdAt, cutoffDate),
+          ),
+        );
+    });
   }
 }

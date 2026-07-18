@@ -23,8 +23,18 @@ export function SummaryCard({
           <BookOpen className="size-3.5" aria-hidden="true" />
         </div>
         <div className="text-muted-foreground min-w-0 flex-1 pt-0.5 text-xs tabular-nums">
-          <div className="text-foreground font-semibold">
-            {t("conversations.summaryNumber", { id: summary.id })}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-foreground font-semibold">
+              {t("conversations.summaryNumber", { id: summary.id })}
+            </span>
+            {summary.isActive ? (
+              <span
+                className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                title={t("conversations.activeSummaryDescription")}
+              >
+                {t("conversations.activeSummary")}
+              </span>
+            ) : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
             <time dateTime={new Date(summary.createdAt).toISOString()}>
@@ -40,15 +50,21 @@ export function SummaryCard({
         </div>
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || summary.isActive}
           onClick={() => onDelete(summary.id)}
           aria-label={
-            pendingDelete
-              ? t("conversations.confirmDeleteSummary")
-              : t("conversations.deleteSummary")
+            summary.isActive
+              ? t("conversations.activeSummaryDeleteBlocked")
+              : pendingDelete
+                ? t("conversations.confirmDeleteSummary")
+                : t("conversations.deleteSummary")
           }
           title={
-            pendingDelete ? t("conversations.clickAgainToDelete") : t("conversations.deleteSummary")
+            summary.isActive
+              ? t("conversations.activeSummaryDeleteBlocked")
+              : pendingDelete
+                ? t("conversations.clickAgainToDelete")
+                : t("conversations.deleteSummary")
           }
           className={cn(
             "text-muted-foreground hover:text-destructive focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
