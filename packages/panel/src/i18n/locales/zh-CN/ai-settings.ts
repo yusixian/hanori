@@ -260,7 +260,7 @@ export const aiSettings = {
     title: "回复模式与消息拆分",
     richMessage: "Telegram 原生富文本",
     richMessageDescription:
-      "全局开启后，所有 AI 回复优先使用 Rich Message；关闭后使用兼容 HTML/纯文本格式。",
+      "开启后，私聊流式回复固定使用 Rich Message；其他回复仅在包含标题、列表等结构化格式时使用。纯文本及粗体、斜体使用普通消息。",
     richMessageCommand: "Bot 管理员也可以使用 /richtext on|off 修改此设置。",
     replyMode: "回复模式",
     streamOption: "流式（实时草稿动画）",

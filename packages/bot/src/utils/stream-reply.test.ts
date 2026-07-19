@@ -8,9 +8,27 @@ describe("Rich Message streaming", () => {
     const api = { sendRichMessageDraft } as unknown as Api;
 
     await expect(showRichThinkingDraft(api, 123, 7)).resolves.toBe(true);
-    expect(sendRichMessageDraft).toHaveBeenCalledWith(123, 7, {
-      html: "<tg-thinking>Thinking...</tg-thinking>",
-    });
+    expect(sendRichMessageDraft).toHaveBeenCalledWith(
+      123,
+      7,
+      {
+        html: "<tg-thinking>Thinking...</tg-thinking>",
+      },
+      undefined,
+    );
+  });
+
+  it("routes the thinking draft to the current message thread", async () => {
+    const sendRichMessageDraft = vi.fn().mockResolvedValue(true);
+    const api = { sendRichMessageDraft } as unknown as Api;
+
+    await expect(showRichThinkingDraft(api, -100, 8, 99)).resolves.toBe(true);
+    expect(sendRichMessageDraft).toHaveBeenCalledWith(
+      -100,
+      8,
+      { html: "<tg-thinking>Thinking...</tg-thinking>" },
+      { message_thread_id: 99 },
+    );
   });
 
   it("streams accumulated Markdown and persists a clean final Rich Message", async () => {

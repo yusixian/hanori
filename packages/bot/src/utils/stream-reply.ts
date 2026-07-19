@@ -10,11 +10,17 @@ export async function showRichThinkingDraft(
   api: Api,
   chatId: number,
   draftId: number,
+  messageThreadId?: number,
 ): Promise<boolean> {
   try {
-    await api.sendRichMessageDraft(chatId, draftId, {
-      html: "<tg-thinking>Thinking...</tg-thinking>",
-    });
+    await api.sendRichMessageDraft(
+      chatId,
+      draftId,
+      {
+        html: "<tg-thinking>Thinking...</tg-thinking>",
+      },
+      messageThreadId === undefined ? undefined : { message_thread_id: messageThreadId },
+    );
     return true;
   } catch {
     return false;

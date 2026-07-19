@@ -1,4 +1,4 @@
-import { throwCapturedStreamError } from "../utils/stream-error.js";
+import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
   AiGroupOverride,
@@ -285,7 +285,7 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
   }
 }
 
-async function safeFormattedReply(
+export async function safeFormattedReply(
   ctx: WrapperContext,
   text: string,
   richMessageEnabled: boolean,
@@ -293,23 +293,71 @@ async function safeFormattedReply(
 ): Promise<number | undefined> {
   if (!richMessageEnabled) return safeReply(ctx, text);
 
+  const messageThreadId = ctx.message?.message_thread_id;
+  const topicOptions =
+    messageThreadId === undefined ? undefined : { message_thread_id: messageThreadId };
+  const replyParameters =
+    ctx.chat?.type === "private" ? undefined : { message_id: ctx.message!.message_id };
   try {
+    let result;
+    try {
+      result = await sendMarkdownWithFallback(
+        ctx.api,
+        ctx.chat!.id,
+        text,
+        richMessageEnabled,
+        { ...topicOptions, reply_parameters: replyParameters },
+        onFallback,
+      );
+    } catch (error) {
+      if (!replyParameters) throw error;
+      result = await sendMarkdownWithFallback(
+        ctx.api,
+        ctx.chat!.id,
+        text,
+        richMessageEnabled,
+        topicOptions,
+        onFallback,
+      );
+    }
     await ctx.deleteWaiting();
-    const result = await sendMarkdownWithFallback(
-      ctx.api,
-      ctx.chat!.id,
-      text,
-      true,
-      {
-        reply_parameters:
-          ctx.chat?.type === "private" ? undefined : { message_id: ctx.message!.message_id },
-      },
-      onFallback,
-    );
     return result.message.message_id;
   } catch {
-    return undefined;
+    return safeReply(ctx, text);
   }
+}
+
+export async function sendFormattedChunks(
+  ctx: WrapperContext,
+  text: string,
+  messageConfig: MessageConfig,
+  richMessageEnabled: boolean,
+  onFallback?: (mode: "rich" | "html", error: unknown) => void,
+  shouldAbort?: () => boolean,
+): Promise<number[]> {
+  const threshold = messageConfig.autoSplitThreshold ?? 0;
+  const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
+  const messageIds: number[] = [];
+
+  for (const [index, chunk] of chunks.entries()) {
+    if (shouldAbort?.()) break;
+    if (index > 0) {
+      await ctx.api.sendChatAction(ctx.chat!.id, "typing").catch(() => {});
+      await sleep(messageConfig.splitDelayMs ?? 800);
+      if (shouldAbort?.()) break;
+    }
+
+    const replyMsgId = await safeFormattedReply(ctx, chunk, richMessageEnabled, onFallback);
+    if (!replyMsgId) throw new Error("Telegram reply delivery failed");
+    messageIds.push(replyMsgId);
+    // A final fallback may edit the waiting message even when Rich delivery is enabled.
+    // Detach it after conversion so later chunks become additional persistent messages.
+    if (ctx.waiting_message?.message_id === replyMsgId) {
+      ctx.waiting_message = undefined;
+    }
+  }
+
+  return messageIds;
 }
 
 /** Handle the case when AI returned empty text and no multi_message was used */
@@ -1600,20 +1648,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               meta: { chatId, userId },
             });
           });
-          // Accumulate filtered text locally so catch can fall back without waiting
-          // for `await result.text` to drain fullStream (which can take seconds).
-          let accumulatedFiltered = "";
           // Buffer leading whitespace so the first yield always carries a visible char.
           // Telegram draft methods reject cumulative content that trims to empty.
           let leadingBuffer = "";
           let hasVisibleContent = false;
           async function* managedTextStream() {
             const emit = async (out: string) => {
-              if (!streamStarted) {
-                streamStarted = true;
-                await ctx.deleteWaiting();
-              }
-              accumulatedFiltered += out;
+              if (out) await ctx.deleteWaiting();
             };
             for await (const chunk of result.textStream) {
               const afterThink = thinkFilter.push(chunk);
@@ -1653,6 +1694,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                 ctx.api,
                 chatId,
                 ctx.update.update_id,
+                ctx.message?.message_thread_id,
               );
               if (thinkingShown) await ctx.deleteWaiting();
               sentMessages.push(await ctx.replyWithMarkdownStream(managedTextStream()));
@@ -1661,6 +1703,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               await formatSentMessagesHtml(ctx.api, legacyMessages);
               sentMessages.push(...legacyMessages);
             }
+            streamStarted = sentMessages.length > 0;
           } catch (streamErr) {
             capturedStreamError = streamErr;
             const streamMethod = richMessageEnabled ? "replyWithMarkdownStream" : "replyWithStream";
@@ -1677,33 +1720,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                     : undefined,
               },
             });
-            // Immediate fallback using locally accumulated text so the user isn't left
-            // hanging while `await result.text` below drains fullStream (can be seconds).
-            // Downstream fallback at the streamStarted check is a no-op once we send here.
-            await ctx.deleteWaiting().catch(() => {});
-            const fallbackText = accumulatedFiltered.trim();
-            if (fallbackText) {
-              const replyMsgId = await safeReply(ctx, fallbackText);
-              if (replyMsgId) {
-                chatBotMsgIds.push(replyMsgId);
-                streamStarted = true;
-                config.onLog?.({
-                  level: "info",
-                  message: `${streamMethod} fallback sent ${fallbackText.length} chars`,
-                  meta: { chatId, userId, replyMsgId },
-                });
-              } else {
-                streamStarted = false;
-                config.onLog?.({
-                  level: "error",
-                  message: `${streamMethod} fallback: safeReply returned undefined`,
-                  meta: { chatId, userId, textLength: fallbackText.length },
-                });
-              }
-            } else {
-              // Nothing accumulated yet — let downstream path (using await result.text) handle it.
-              streamStarted = false;
-            }
+            // The draft may contain only a prefix. Wait for result.text below, then persist
+            // the complete response through the same split/fallback path as group replies.
+            streamStarted = false;
           }
 
           for (const message of sentMessages) chatBotMsgIds.push(message.message_id);
@@ -1729,8 +1748,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         return;
       }
 
-      throwCapturedStreamError(capturedStreamError, streamStarted);
-      const rawText = (await result.text).trim();
+      const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
       const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
         config.onLog?.({
           level: "info",
@@ -1751,15 +1769,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // ─── Send final reply (when streaming/multi_message didn't handle it) ───
       if (isStreamMode && !streamStarted) {
-        // Group chats cannot stream drafts; send the complete formatted message here.
+        // Group chats cannot stream drafts. Private stream failures also land here only
+        // after the complete provider result has been drained and filtered.
         if (text) {
-          const replyMsgId = await safeFormattedReply(
+          const messageIds = await sendFormattedChunks(
             ctx,
             text,
+            msgCfg,
             richMessageEnabled,
             logRichFallback,
+            () => aiDisabled || !!manualAbort?.signal.aborted,
           );
-          if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+          chatBotMsgIds.push(...messageIds);
+          streamStarted = messageIds.length > 0;
+        } else if (capturedStreamError) {
+          throwCapturedStreamError(capturedStreamError, false);
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
         }
@@ -1767,27 +1791,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         if (sentViaMultiMessage) {
           await ctx.deleteWaiting();
         } else if (text) {
-          const threshold = msgCfg.autoSplitThreshold ?? 0;
-          const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
-          for (const [i, chunk] of chunks.entries()) {
-            if (aiDisabled || manualAbort?.signal.aborted) break;
-            if (i > 0) {
-              await ctx.api.sendChatAction(chatId, "typing").catch(() => {});
-              await sleep(msgCfg.splitDelayMs ?? 800);
-              if (aiDisabled || manualAbort?.signal.aborted) break;
-            }
-            const replyMsgId = await safeFormattedReply(
-              ctx,
-              chunk,
-              richMessageEnabled,
-              logRichFallback,
-            );
-            if (replyMsgId) chatBotMsgIds.push(replyMsgId);
-          }
+          const messageIds = await sendFormattedChunks(
+            ctx,
+            text,
+            msgCfg,
+            richMessageEnabled,
+            logRichFallback,
+            () => aiDisabled || !!manualAbort?.signal.aborted,
+          );
+          chatBotMsgIds.push(...messageIds);
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
         }
       }
+
+      throwCapturedStreamError(capturedStreamError, streamStarted);
 
       const durationMs = Date.now() - startTime;
 
