@@ -22,6 +22,7 @@ import type {
   PixAIGenerationRecord,
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
+  TelegramRichMessageSender,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import {
@@ -85,6 +86,12 @@ interface GenerationRecoveryConfig {
   apiKey: string;
   timeoutMs: number;
   preexistingPendingCutoff: Date;
+}
+
+function supportsTelegramRichMessages(
+  manager: IBotManager,
+): manager is IBotManager & TelegramRichMessageSender {
+  return "sendRichMessage" in manager && typeof manager.sendRichMessage === "function";
 }
 
 export class BotPool {
@@ -178,6 +185,9 @@ export class BotPool {
     const manager = this.managers.get(botId);
     if (!manager) {
       throw new Error(`Bot ${botId} is not running`);
+    }
+    if (!supportsTelegramRichMessages(manager)) {
+      throw new Error(`Bot ${botId} does not support Telegram Rich Messages`);
     }
     return manager.sendRichMessage(chatId, format, content);
   }

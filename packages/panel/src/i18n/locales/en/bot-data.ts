@@ -183,6 +183,7 @@ export const botData = {
       error: "Error",
     },
     errors: {
+      loadBot: "Failed to load bot details",
       loadRuns: "Failed to load runs",
       loadRun: "Failed to load run details",
       replay: "Replay failed",

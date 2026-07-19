@@ -708,6 +708,14 @@ export interface TelegramRichMessageReceipt {
   format: TelegramRichMessageFormat;
 }
 
+export interface TelegramRichMessageSender {
+  sendRichMessage(
+    chatId: number,
+    format: TelegramRichMessageFormat,
+    content: string,
+  ): Promise<TelegramRichMessageReceipt>;
+}
+
 export interface IBotManager {
   readonly botId: string;
   readonly status: BotStatus;
@@ -715,11 +723,6 @@ export interface IBotManager {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendHtml(chatId: number, html: string): Promise<void>;
-  sendRichMessage(
-    chatId: number,
-    format: TelegramRichMessageFormat,
-    content: string,
-  ): Promise<TelegramRichMessageReceipt>;
 }
 
 export type LogLevel = "debug" | "info" | "warn" | "error";

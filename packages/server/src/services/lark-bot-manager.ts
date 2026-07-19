@@ -1,9 +1,4 @@
-import type {
-  BotStatus,
-  IBotManager,
-  TelegramRichMessageFormat,
-  TelegramRichMessageReceipt,
-} from "@cos-tool-bot/shared";
+import type { BotStatus, IBotManager } from "@cos-tool-bot/shared";
 import type { DbLogger } from "./db-logger.js";
 import type { ImapEmailMonitor } from "./imap-email-monitor.js";
 import type { LarkWebhookClient } from "./lark-webhook-client.js";
@@ -85,13 +80,5 @@ export class LarkBotManager implements IBotManager {
 
   async sendHtml(_chatId: number, _html: string): Promise<void> {
     throw new Error("sendHtml not supported on Lark webhook bot");
-  }
-
-  async sendRichMessage(
-    _chatId: number,
-    _format: TelegramRichMessageFormat,
-    _content: string,
-  ): Promise<TelegramRichMessageReceipt> {
-    throw new Error("Telegram Rich Messages are not supported on Lark webhook bots");
   }
 }

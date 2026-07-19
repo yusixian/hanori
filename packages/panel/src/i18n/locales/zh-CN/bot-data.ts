@@ -182,6 +182,7 @@ export const botData = {
       error: "错误",
     },
     errors: {
+      loadBot: "加载 Bot 详情失败",
       loadRuns: "加载运行记录失败",
       loadRun: "加载运行详情失败",
       replay: "重放失败",

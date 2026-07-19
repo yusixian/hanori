@@ -14,6 +14,7 @@ import type {
   PixAIGenerationRecord,
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
+  TelegramRichMessageSender,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
@@ -36,7 +37,7 @@ interface BotManagerOptions {
   summary?: SummaryCallbacks;
 }
 
-export class BotManager implements IBotManager {
+export class BotManager implements IBotManager, TelegramRichMessageSender {
   readonly botId: string;
   private bot: ReturnType<typeof createBot> | null = null;
   private runnerHandle: RunnerHandle | null = null;
