@@ -39,6 +39,7 @@ import type { Api, Middleware } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
+import { GroupContextPersistenceTracker } from "../services/group-context-persistence-tracker.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
@@ -945,14 +946,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     number,
     { buffer: RingBuffer<BufferedMessage>; lastActive: number }
   >();
-  const savedGroupContextThrough = new Map<number, number>();
+  const groupContextPersistence = new GroupContextPersistenceTracker();
 
   const bufferCleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [chatId, entry] of groupBuffers) {
       if (now - entry.lastActive > BUFFER_STALE_MS) {
         groupBuffers.delete(chatId);
-        savedGroupContextThrough.delete(chatId);
+        groupContextPersistence.clearChat(chatId);
       }
     }
   }, BUFFER_CLEANUP_INTERVAL);
@@ -1770,10 +1771,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             const buffer = groupBuffers.get(chatId);
             if (buffer) {
               const allMessages = buffer.buffer.getAll();
-              const previousWatermark = savedGroupContextThrough.get(chatId) ?? 0;
-              const contextMessages = allMessages.filter(
-                (message) =>
-                  message.messageId !== msg.message_id && message.messageId > previousWatermark,
+              const contextMessages = groupContextPersistence.selectUnsavedContext(
+                chatId,
+                msg.message_id,
+                allMessages,
               );
               if (contextMessages.length > 0) {
                 contextSavedThrough = contextMessages.at(-1)!.messageId;
@@ -1876,10 +1877,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         config
           .conversation!.addMessages(toSave)
           .then(() => {
-            if (contextSavedThrough !== undefined) {
-              savedGroupContextThrough.set(
+            if (!isPrivate && conversationCfg.saveGroupContext !== "none") {
+              const bufferedMessageIds =
+                groupBuffers
+                  .get(chatId)
+                  ?.buffer.getAll()
+                  .map((message) => message.messageId) ?? [];
+              groupContextPersistence.commitReply(
                 chatId,
-                Math.max(savedGroupContextThrough.get(chatId) ?? 0, contextSavedThrough),
+                msg.message_id,
+                contextSavedThrough,
+                bufferedMessageIds,
               );
             }
             config.conversation!.triggerCompression(chatId);

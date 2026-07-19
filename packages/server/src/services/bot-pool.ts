@@ -54,6 +54,7 @@ import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
 
 export class BotPool {
   private managers = new Map<string, IBotManager>();
@@ -386,11 +387,12 @@ export class BotPool {
           void dbLogger.warn(String(message), meta);
         },
       });
-      const governChat = (chatId: number) =>
+      const governChat = (chatId: number, summaryGraceMs?: number) =>
         historyGovernor.run({
           botId,
           chatId,
           maxRawMessagesPerChat: conversationCfg.maxRawMessagesPerChat,
+          summaryGraceMs,
           summarize: () =>
             compressConversation({
               botId,
@@ -408,8 +410,9 @@ export class BotPool {
         if (conversationCfg.maxRawMessagesPerChat <= 0) return;
         const warningThreshold = Math.floor(conversationCfg.maxRawMessagesPerChat * 0.8);
         const chats = await store.listChatsAtOrAboveMessageCount(botId, warningThreshold);
-        for (const chat of chats) {
-          await governChat(chat.chatId);
+        const hardLimitFirst = chats.sort((left, right) => right.count - left.count);
+        for (const chat of hardLimitFirst) {
+          await governChat(chat.chatId, CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS);
         }
       };
 

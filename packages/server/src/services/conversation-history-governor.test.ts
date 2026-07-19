@@ -141,4 +141,38 @@ describe("ConversationHistoryGovernor", () => {
     );
     expect(store.enforceHistoryLimit).not.toHaveBeenCalled();
   });
+
+  it("continues warning-level startup governance after the configured summary grace period", async () => {
+    vi.useFakeTimers();
+    const store = {
+      getMessageCount: vi.fn().mockResolvedValue(40_000),
+      enforceHistoryLimit: vi.fn().mockResolvedValue({
+        countBefore: 40_000,
+        countAfter: 40_000,
+        limit: 50_000,
+        warningThreshold: 40_000,
+        prunedCount: 0,
+        warning: true,
+      }),
+    } as unknown as ConversationStore;
+    const logger = { warn: vi.fn() } as unknown as Logger;
+    const governor = new ConversationHistoryGovernor(store, logger);
+    let completed = false;
+
+    void governor
+      .run({
+        botId: "00000000-0000-4000-8000-000000000017",
+        chatId: 42,
+        maxRawMessagesPerChat: 50_000,
+        summaryGraceMs: 15_000,
+        summarize: () => new Promise(() => {}),
+      })
+      .then(() => {
+        completed = true;
+      });
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(completed).toBe(true);
+    expect(store.enforceHistoryLimit).toHaveBeenCalledOnce();
+  });
 });

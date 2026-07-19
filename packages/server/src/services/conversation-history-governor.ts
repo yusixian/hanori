@@ -8,6 +8,7 @@ export interface ConversationHistoryGovernanceOptions {
   botId: string;
   chatId: number;
   maxRawMessagesPerChat: number;
+  summaryGraceMs?: number;
   summarize: () => Promise<void>;
 }
 
@@ -49,10 +50,11 @@ export class ConversationHistoryGovernor {
       );
     });
 
-    if (atHardLimit) {
+    const summaryGraceMs = atHardLimit ? HARD_LIMIT_SUMMARY_GRACE_MS : options.summaryGraceMs;
+    if (summaryGraceMs !== undefined) {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const gracePeriod = new Promise<"timeout">((resolve) => {
-        timeout = setTimeout(() => resolve("timeout"), HARD_LIMIT_SUMMARY_GRACE_MS);
+        timeout = setTimeout(() => resolve("timeout"), Math.max(0, summaryGraceMs));
         timeout.unref?.();
       });
       const outcome = await Promise.race([
@@ -62,8 +64,8 @@ export class ConversationHistoryGovernor {
       if (timeout) clearTimeout(timeout);
       if (outcome === "timeout") {
         this.logger.warn(
-          { botId: options.botId, chatId: options.chatId, graceMs: HARD_LIMIT_SUMMARY_GRACE_MS },
-          "Conversation summarization grace period expired; enforcing hard limit",
+          { botId: options.botId, chatId: options.chatId, graceMs: summaryGraceMs, atHardLimit },
+          "Conversation summarization grace period expired; continuing history governance",
         );
       }
     } else {
