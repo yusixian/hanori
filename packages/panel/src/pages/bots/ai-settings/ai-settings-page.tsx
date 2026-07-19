@@ -14,6 +14,7 @@ import type {
   SummaryConfigStored,
   TimeoutConfig,
   WebToolsConfig,
+  WebToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_ARTWORK_TOOLS_CONFIG,
@@ -93,6 +94,34 @@ function serializeDraft(
   });
 }
 
+function toWebToolsConfigUpdate(
+  config: WebToolsConfigPublic | undefined,
+  searchApiKey: string,
+  imageApiKey: string,
+): WebToolsConfig | undefined {
+  if (!config) return undefined;
+  return {
+    enabled: config.enabled,
+    search: config.search
+      ? {
+          provider: config.search.provider,
+          apiKey: searchApiKey || undefined,
+          baseURL: config.search.baseURL,
+        }
+      : undefined,
+    imageGeneration: config.imageGeneration
+      ? {
+          provider: config.imageGeneration.provider,
+          apiKey: imageApiKey || undefined,
+          baseURL: config.imageGeneration.baseURL,
+          model: config.imageGeneration.model,
+          size: config.imageGeneration.size,
+          pixaiConfig: config.imageGeneration.pixaiConfig,
+        }
+      : undefined,
+  };
+}
+
 export function BotAiSettingsPage() {
   const { botId } = useParams<{ botId: string }>();
   const { t, i18n } = useTranslation("aiSettings");
@@ -108,6 +137,8 @@ export function BotAiSettingsPage() {
   const [triggerWordsText, setTriggerWordsText] = useState("");
   const [stickerPacksText, setStickerPacksText] = useState("");
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
+  const [webSearchApiKey, setWebSearchApiKey] = useState("");
+  const [webImageApiKey, setWebImageApiKey] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
@@ -175,6 +206,8 @@ export function BotAiSettingsPage() {
         const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
         const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
         setConfig(json.data);
+        setWebSearchApiKey("");
+        setWebImageApiKey("");
         setTriggerWordsText(triggerText);
         setStickerPacksText(stickersText);
         setSummaryConfig(nextSummary);
@@ -209,6 +242,8 @@ export function BotAiSettingsPage() {
     (savedDraftRef.current !==
       serializeDraft(config, triggerWordsText, stickerPacksText, summaryConfig, imageOcrConfig) ||
       embeddingApiKey !== "" ||
+      webSearchApiKey !== "" ||
+      webImageApiKey !== "" ||
       Object.keys(providerApiKeys).length > 0);
 
   useEffect(() => {
@@ -249,7 +284,11 @@ export function BotAiSettingsPage() {
           conversationConfig: config.conversationConfig,
           memoryConfig: config.memoryConfig,
           botMemoryConfig: config.botMemoryConfig,
-          webToolsConfig: config.webToolsConfig,
+          webToolsConfig: toWebToolsConfigUpdate(
+            config.webToolsConfig,
+            webSearchApiKey,
+            webImageApiKey,
+          ),
           agentToolsConfig: config.agentToolsConfig,
           artworkToolsConfig: config.artworkToolsConfig,
           messageConfig: config.messageConfig,
@@ -311,6 +350,8 @@ export function BotAiSettingsPage() {
         setTriggerWordsText(triggerText);
         setStickerPacksText(stickersText);
         setEmbeddingApiKey("");
+        setWebSearchApiKey("");
+        setWebImageApiKey("");
         setProviderApiKeys({});
         savedDraftRef.current = serializeDraft(
           json.data,
@@ -365,7 +406,7 @@ export function BotAiSettingsPage() {
   };
 
   const webCfg = config.webToolsConfig ?? DEFAULT_WEB_TOOLS;
-  const updateWebTools = (updates: Partial<WebToolsConfig>) => {
+  const updateWebTools = (updates: Partial<WebToolsConfigPublic>) => {
     setConfig((prev) => ({
       ...prev,
       webToolsConfig: { ...webCfg, ...prev.webToolsConfig, ...updates },
@@ -727,7 +768,14 @@ export function BotAiSettingsPage() {
                 description={t("disclosures.webTools.description")}
                 summary={webCfg.enabled ? t("common.enabled") : t("common.disabled")}
               >
-                <WebToolsSection config={webCfg} onUpdate={updateWebTools} />
+                <WebToolsSection
+                  config={webCfg}
+                  searchApiKey={webSearchApiKey}
+                  imageApiKey={webImageApiKey}
+                  onSearchApiKeyChange={setWebSearchApiKey}
+                  onImageApiKeyChange={setWebImageApiKey}
+                  onUpdate={updateWebTools}
+                />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
                 title={t("disclosures.agentTools.title")}

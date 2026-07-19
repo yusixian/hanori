@@ -147,6 +147,7 @@ export interface AiReplyConfig {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  onWebToolApiKeyUpdate?: (target: "image" | "search", apiKey: string) => void | Promise<void>;
   onTimerCreate?: (params: {
     timerId: string;
     chatId: number;
@@ -545,6 +546,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  updateWebToolApiKey: (target: "image" | "search", apiKey: string) => Promise<boolean>;
   getPixaiRateLimitStats: () => RateLimitStats;
   canUseImageGeneration: (isPrivate: boolean, isAdmin: boolean, chatId: number) => boolean;
   directGenerate: (
@@ -673,6 +675,22 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
     }
     await config.onPixaiConfigUpdate?.(updates);
+  }
+
+  async function updateWebToolApiKey(target: "image" | "search", apiKey: string): Promise<boolean> {
+    const webToolsConfig = config.webToolsConfig;
+    if (!webToolsConfig) return false;
+
+    const targetConfig =
+      target === "image" ? webToolsConfig.imageGeneration : webToolsConfig.search;
+    if (!targetConfig) return false;
+
+    await config.onWebToolApiKeyUpdate?.(target, apiKey);
+    targetConfig.apiKey = apiKey;
+    if (webToolsConfig.enabled) {
+      webTools = createWebTools({ config: webToolsConfig, timeoutConfig: config.timeoutConfig });
+    }
+    return true;
   }
 
   // Provider registry: prefer config.providers; fall back to legacy top-level fields.
@@ -1993,6 +2011,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     setImageGenEnabled,
     getPixaiFullConfig,
     updatePixaiConfig,
+    updateWebToolApiKey,
     getPixaiRateLimitStats: () => pixaiRateLimiter.getStats(),
     canUseImageGeneration,
     directGenerate: buildDirectGenerate(),

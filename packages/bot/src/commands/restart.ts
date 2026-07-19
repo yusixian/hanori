@@ -11,8 +11,13 @@ export function createRestartCommand(
     await ctx.wait("正在重启服务...");
     try {
       await ctx.resolveWait("重启命令已执行，bot 将在 2s 后重启");
-      setTimeout(async () => {
-        await onRestart();
+      setTimeout(() => {
+        void Promise.resolve()
+          .then(onRestart)
+          .catch((error: unknown) => {
+            const msg = error instanceof Error ? error.message : "未知错误";
+            void ctx.reply(`重启失败: ${msg}`).catch(() => {});
+          });
       }, 2000);
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : "未知错误";

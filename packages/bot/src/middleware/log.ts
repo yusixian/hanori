@@ -23,7 +23,7 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
       const match = ctx.message.text.match(/^\/(\w+)(?:@\S+)?(?:\s+(.*))?/);
       if (match) {
         meta.command = match[1];
-        meta.args = match[2] ?? "";
+        meta.args = match[1]?.toLowerCase() === "apikey" ? "[REDACTED]" : (match[2] ?? "");
         onLog({ level: "info", message: `Command /${match[1]} from ${username}`, meta });
       }
     } else if (ctx.message?.text) {

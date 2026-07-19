@@ -11,6 +11,8 @@ interface RetentionTestPool {
   conversationCleanupInFlight: Map<string, Promise<void>>;
   conversationCleanupSweep?: Promise<void>;
   conversationCleanupTimer?: ReturnType<typeof setInterval>;
+  generationRecoveryConfigs: Map<string, unknown>;
+  generationRecoveryTimer?: ReturnType<typeof setInterval>;
   conversationStore: { cleanup: ReturnType<typeof vi.fn> };
   managers: Map<string, unknown>;
   db: unknown;
@@ -28,6 +30,7 @@ function createPool(
   const pool = Object.create(BotPool.prototype) as RetentionTestPool;
   pool.conversationCleanupAt = new Map();
   pool.conversationCleanupInFlight = new Map();
+  pool.generationRecoveryConfigs = new Map();
   pool.conversationStore = { cleanup };
   pool.managers = new Map();
   pool.db = {

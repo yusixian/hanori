@@ -5,7 +5,7 @@ import type {
   SummaryCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
-import { createBot } from "@cos-tool-bot/bot";
+import { createBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import type {
   BotStatus,
@@ -25,6 +25,7 @@ interface BotManagerOptions {
   dbLogger: DbLogger;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
+  onRestart?: () => void | Promise<void>;
   onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
@@ -50,7 +51,7 @@ export class BotManager implements IBotManager {
       botId: options.botId,
       adminChatIds: options.adminChatIds,
       logger: options.logger,
-      onRestart: () => this.restart(),
+      onRestart: options.onRestart ?? (() => this.restart()),
       onBackup: options.onBackup,
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
       onTokenUsage: options.onTokenUsage,
@@ -138,5 +139,29 @@ export class BotManager implements IBotManager {
       throw new Error(`Bot ${this.botId} is not running`);
     }
     await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+  }
+
+  async recoverPixaiGeneration(
+    record: PixAIGenerationRecord,
+    apiKey: string,
+    timeoutMs: number,
+    createdAtMs: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (!this.bot) {
+      throw new Error(`Bot ${this.botId} is not running`);
+    }
+
+    await recoverPixAIGeneration({
+      apiKey,
+      api: this.bot.api,
+      record,
+      timeoutMs,
+      createdAtMs,
+      onLog: this.botConfig.onLog,
+      onGenerationTrack: this.botConfig.onGenerationTrack,
+      nsfwChecker: this.botConfig.aiReply?.nsfwChecker,
+      signal,
+    });
   }
 }

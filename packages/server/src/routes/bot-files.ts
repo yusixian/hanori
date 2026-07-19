@@ -313,18 +313,22 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       async (c) => {
         const botId = c.req.param("botId");
         const body = c.req.valid("json");
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+        const updated = await botPool.withAiConfigLock(botId, async () => {
+          const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+          if (!bot) return null;
 
-        const aiConfig = bot.aiConfig ?? ({} as NonNullable<typeof bot.aiConfig>);
-        const updated = {
-          ...aiConfig,
-          dataFilesConfig: {
-            injectableFiles: body.injectableFiles,
-            maxTotalSize: body.maxTotalSize,
-          },
-        };
-        await db.update(bots).set({ aiConfig: updated }).where(eq(bots.id, botId));
+          const aiConfig = bot.aiConfig ?? ({} as NonNullable<typeof bot.aiConfig>);
+          const next = {
+            ...aiConfig,
+            dataFilesConfig: {
+              injectableFiles: body.injectableFiles,
+              maxTotalSize: body.maxTotalSize,
+            },
+          };
+          await db.update(bots).set({ aiConfig: next }).where(eq(bots.id, botId));
+          return next;
+        });
+        if (!updated) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
         // Restart bot if running so new config takes effect
         const manager = botPool.getManager(botId);
@@ -362,9 +366,12 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         }
       }
 
-      // Set default dataFilesConfig if not already configured
-      if (!bot.aiConfig?.dataFilesConfig) {
-        const aiConfig = bot.aiConfig ?? ({} as NonNullable<typeof bot.aiConfig>);
+      // Set default dataFilesConfig if not already configured. Re-read inside the lock so a
+      // concurrent AI settings save cannot be overwritten by the earlier existence check.
+      await botPool.withAiConfigLock(botId, async () => {
+        const [current] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!current || current.aiConfig?.dataFilesConfig) return;
+        const aiConfig = current.aiConfig ?? ({} as NonNullable<typeof current.aiConfig>);
         await db
           .update(bots)
           .set({
@@ -377,7 +384,7 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
             },
           })
           .where(eq(bots.id, botId));
-      }
+      });
 
       return c.json({ ok: true as const, created });
     });

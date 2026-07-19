@@ -11,6 +11,7 @@ import { stream } from "@grammyjs/stream";
 import { Bot, GrammyError, HttpError } from "grammy";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
+import { createApiKeyCommand } from "./commands/api-key.js";
 import { createClearCommand } from "./commands/clear.js";
 import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
@@ -38,6 +39,7 @@ import { createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
 import { createPollAnswerHandler, createCallbackQueryHandler } from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
+import { getUpdateConstraint } from "./middleware/update-constraint.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
@@ -95,15 +97,10 @@ export function createBot(config: BotConfig) {
   const authGuard = createAuthGuard(adminChatIds);
 
   // Serialize updates per chat so streamText calls for the same chat don't race,
-  // but allow different chats to run concurrently. Kill-switch commands (/stop,
-  // /resume) bypass the constraint so they can fire even when the chat's queue is
-  // blocked by a stuck AI reply.
-  bot.use(
-    sequentialize((ctx) => {
-      if (ctx.hasCommand(["stop", "resume"])) return undefined;
-      return ctx.chat?.id.toString();
-    }),
-  );
+  // but allow different chats to run concurrently. Kill-switch commands bypass
+  // the constraint; /apikey uses its own bot-global queue so it can bypass a stuck
+  // AI reply without racing another full-config API key update from a different chat.
+  bot.use(sequentialize(getUpdateConstraint));
   bot.use(stream());
   bot.use(createLogMiddleware(config.onLog));
 
@@ -136,6 +133,9 @@ export function createBot(config: BotConfig) {
     | ReturnType<typeof createAiReplyHandler>["getPixaiFullConfig"]
     | undefined;
   let aiUpdatePixaiConfig: ReturnType<typeof createAiReplyHandler>["updatePixaiConfig"] | undefined;
+  let aiUpdateWebToolApiKey:
+    | ReturnType<typeof createAiReplyHandler>["updateWebToolApiKey"]
+    | undefined;
   let aiGetPixaiRateLimitStats:
     | ReturnType<typeof createAiReplyHandler>["getPixaiRateLimitStats"]
     | undefined;
@@ -185,6 +185,7 @@ export function createBot(config: BotConfig) {
     aiSetImageGenEnabled = result.setImageGenEnabled;
     aiGetPixaiFullConfig = result.getPixaiFullConfig;
     aiUpdatePixaiConfig = result.updatePixaiConfig;
+    aiUpdateWebToolApiKey = result.updateWebToolApiKey;
     aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
@@ -211,6 +212,20 @@ export function createBot(config: BotConfig) {
   if (aiSetAiEnabled) {
     bot.command("stop", authGuard, createStopCommand(aiSetAiEnabled));
     bot.command("resume", authGuard, createResumeCommand(aiSetAiEnabled));
+  }
+  if (aiUpdateWebToolApiKey) {
+    bot.command(
+      "apikey",
+      authGuard,
+      createApiKeyCommand({
+        updateApiKey: aiUpdateWebToolApiKey,
+        onError: (target) =>
+          config.onLog?.({
+            level: "error",
+            message: `Failed to update ${target} API key`,
+          }),
+      }),
+    );
   }
   if (config.mcpCallbacks) {
     bot.command("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
@@ -445,3 +460,12 @@ export type { SummaryCallbacks } from "./commands/summary.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";
+export {
+  isTerminalPixAIRecoveryError,
+  PixAIRecoveryTerminalError,
+  PixAITaskTerminalError,
+  recoverPixAIGeneration,
+  type PixAIRecoveryTerminalReason,
+  type PixAITaskTerminalStatus,
+  type RecoverPixAIGenerationOptions,
+} from "./tools/pixai.js";

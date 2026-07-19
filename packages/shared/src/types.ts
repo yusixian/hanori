@@ -121,6 +121,9 @@ export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
   pixaiTaskMs: 600_000,
 };
 
+/** Keeps PixAI polling below the bounded pending-insert fallback retention window. */
+export const PIXAI_TASK_TIMEOUT_MAX_MS = 23 * 60 * 60 * 1000;
+
 export interface AiTriggerConfig {
   replyToBot: boolean;
   mentionBot: boolean;
@@ -273,6 +276,23 @@ export interface WebToolsConfig {
   imageGeneration?: {
     provider: "openai" | "custom" | "pixai";
     apiKey?: string;
+    baseURL?: string;
+    model?: string;
+    size?: string;
+    pixaiConfig?: PixAIConfig;
+  };
+}
+
+export interface WebToolsConfigPublic {
+  enabled: boolean;
+  search?: {
+    provider: "tavily" | "searxng" | "brave" | "custom";
+    hasApiKey?: boolean;
+    baseURL?: string;
+  };
+  imageGeneration?: {
+    provider: "openai" | "custom" | "pixai";
+    hasApiKey?: boolean;
     baseURL?: string;
     model?: string;
     size?: string;
@@ -604,7 +624,7 @@ export interface AiConfigPublic {
   conversationConfig?: ConversationConfig;
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
-  webToolsConfig?: WebToolsConfig;
+  webToolsConfig?: WebToolsConfigPublic;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;

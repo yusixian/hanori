@@ -24,6 +24,7 @@ export const PIXAI_DEFAULT_MODEL_ID = "1935090615918113018";
 
 const PIXAI_REST_URL = "https://api.pixai.art/v1";
 const GRAPHQL_ENDPOINT = "https://api.pixai.art/graphql";
+const PIXAI_REQUEST_TIMEOUT_MS = 30_000;
 
 // --- GraphQL documents ---
 
@@ -80,6 +81,37 @@ interface GraphQLResponse<T> {
   errors?: Array<{ message: string }>;
 }
 
+export type PixAITaskTerminalStatus = "failed" | "cancelled" | "timeout";
+
+export class PixAITaskTerminalError extends Error {
+  readonly pixaiErrorKind = "task-terminal" as const;
+
+  constructor(
+    readonly status: PixAITaskTerminalStatus,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PixAITaskTerminalError";
+  }
+}
+
+export type PixAIRecoveryTerminalReason =
+  | "task-not-found"
+  | "empty-task-response"
+  | "completed-without-images";
+
+export class PixAIRecoveryTerminalError extends Error {
+  readonly pixaiErrorKind = "recovery-terminal" as const;
+
+  constructor(
+    readonly reason: PixAIRecoveryTerminalReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PixAIRecoveryTerminalError";
+  }
+}
+
 // --- PixAI Client (dual-mode: GraphQL + REST) ---
 
 type ApiMode = "graphql" | "rest";
@@ -115,6 +147,7 @@ export class PixAIClient {
   constructor(
     private apiKey: string,
     private apiMode: ApiMode = "graphql",
+    private requestTimeoutMs = PIXAI_REQUEST_TIMEOUT_MS,
   ) {}
 
   async createTask(params: CreateTaskParams): Promise<PixAITaskResponse> {
@@ -124,39 +157,48 @@ export class PixAIClient {
     return this.createTaskREST(params);
   }
 
-  async getTask(taskId: string): Promise<PixAITaskResponse> {
+  async getTask(taskId: string, signal?: AbortSignal): Promise<PixAITaskResponse> {
     if (this.apiMode === "graphql") {
-      return this.getTaskGraphQL(taskId);
+      return this.getTaskGraphQL(taskId, signal);
     }
-    return this.getTaskREST(taskId);
+    return this.getTaskREST(taskId, signal);
   }
 
   async pollUntilComplete(
     taskId: string,
     timeoutMs: number,
     intervalMs = 5000,
+    initialDelayMs = intervalMs,
+    signal?: AbortSignal,
   ): Promise<TaskPollResult> {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = Date.now() + Math.max(0, timeoutMs);
 
     // Initial delay: image generation takes several seconds at minimum
-    await sleep(intervalMs);
+    await sleepWithSignal(initialDelayMs, signal);
 
-    while (Date.now() < deadline) {
-      const task = await this.getTask(taskId);
+    do {
+      signal?.throwIfAborted();
+      const task = await this.getTask(taskId, signal);
 
       if (task.status === "failed" || task.status === "cancelled") {
-        throw new Error(`PixAI task ${task.status}: ${task.error ?? "unknown error"}`);
+        throw new PixAITaskTerminalError(
+          task.status,
+          `PixAI task ${task.status}: ${task.error ?? "unknown error"}`,
+        );
       }
 
       if (task.status === "completed") {
         return this.extractImagesFromTask(task);
       }
 
-      // Still waiting/running — sleep then retry
-      await sleep(intervalMs);
-    }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
 
-    throw new Error(`PixAI task timed out after ${timeoutMs / 1000}s`);
+      // Still waiting/running — sleep then retry
+      await sleepWithSignal(Math.min(intervalMs, remainingMs), signal);
+    } while (Date.now() < deadline);
+
+    throw new PixAITaskTerminalError("timeout", `PixAI task timed out after ${timeoutMs / 1000}s`);
   }
 
   // --- Private: GraphQL ---
@@ -199,6 +241,7 @@ export class PixAIClient {
         query: CREATE_TASK_MUTATION,
         variables: { parameters },
       }),
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
     });
 
     if (!res.ok) {
@@ -220,7 +263,7 @@ export class PixAIClient {
     return json.data.createGenerationTask;
   }
 
-  private async getTaskGraphQL(taskId: string): Promise<PixAITaskResponse> {
+  private async getTaskGraphQL(taskId: string, signal?: AbortSignal): Promise<PixAITaskResponse> {
     const res = await fetch(GRAPHQL_ENDPOINT, {
       method: "POST",
       headers: {
@@ -231,10 +274,17 @@ export class PixAIClient {
         query: GET_TASK_QUERY,
         variables: { id: taskId },
       }),
+      signal: requestSignal(this.requestTimeoutMs, signal),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      if (res.status === 404) {
+        throw new PixAIRecoveryTerminalError(
+          "task-not-found",
+          `PixAI GraphQL get task failed: HTTP ${res.status} ${text}`,
+        );
+      }
       throw new Error(`PixAI GraphQL get task failed: HTTP ${res.status} ${text}`);
     }
 
@@ -245,7 +295,10 @@ export class PixAIClient {
     }
 
     if (!json.data?.task) {
-      throw new Error("PixAI GraphQL get task: unexpected empty response");
+      throw new PixAIRecoveryTerminalError(
+        "empty-task-response",
+        "PixAI GraphQL get task: unexpected empty response",
+      );
     }
     return json.data.task;
   }
@@ -274,6 +327,7 @@ export class PixAIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(this.requestTimeoutMs),
     });
 
     if (!res.ok) {
@@ -284,13 +338,20 @@ export class PixAIClient {
     return (await res.json()) as PixAITaskResponse;
   }
 
-  private async getTaskREST(taskId: string): Promise<PixAITaskResponse> {
+  private async getTaskREST(taskId: string, signal?: AbortSignal): Promise<PixAITaskResponse> {
     const res = await fetch(`${PIXAI_REST_URL}/task/${taskId}`, {
       headers: { Authorization: `Bearer ${this.apiKey}` },
+      signal: requestSignal(this.requestTimeoutMs, signal),
     });
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      if (res.status === 404) {
+        throw new PixAIRecoveryTerminalError(
+          "task-not-found",
+          `PixAI get task failed: HTTP ${res.status} ${text}`,
+        );
+      }
       throw new Error(`PixAI get task failed: HTTP ${res.status} ${text}`);
     }
 
@@ -351,7 +412,157 @@ export class PixAIClient {
       };
     }
 
-    throw new Error("PixAI task completed but no images returned");
+    throw new PixAIRecoveryTerminalError(
+      "completed-without-images",
+      "PixAI task completed but no images returned",
+    );
+  }
+}
+
+function requestSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
+function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms);
+  if (signal.aborted) return Promise.reject(signal.reason);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export class PixAIGenerationPersistenceError extends Error {
+  constructor(taskId: string, cause: unknown) {
+    super(`Failed to persist completed PixAI task ${taskId}`, { cause });
+    this.name = "PixAIGenerationPersistenceError";
+  }
+}
+
+export async function trackPendingGeneration(
+  record: PixAIGenerationRecord,
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>,
+  onLog?: (entry: BotLogEntry) => void | Promise<void>,
+): Promise<void> {
+  try {
+    await onGenerationTrack?.(record);
+  } catch (err) {
+    try {
+      await onLog?.({
+        level: "error",
+        message: `Failed to persist pending PixAI task: ${err instanceof Error ? err.message : String(err)}`,
+        meta: { chatId: record.chatId, taskId: record.taskId },
+      });
+    } catch {
+      // Logging must not abandon a task that was already created remotely.
+    }
+  }
+}
+
+export function isTerminalPixAITaskError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { pixaiErrorKind?: unknown; status?: unknown };
+  return (
+    candidate.pixaiErrorKind === "task-terminal" &&
+    (candidate.status === "failed" ||
+      candidate.status === "cancelled" ||
+      candidate.status === "timeout")
+  );
+}
+
+export function isTerminalPixAIRecoveryError(error: unknown): boolean {
+  if (isTerminalPixAITaskError(error)) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { pixaiErrorKind?: unknown; reason?: unknown };
+  return (
+    candidate.pixaiErrorKind === "recovery-terminal" &&
+    (candidate.reason === "task-not-found" ||
+      candidate.reason === "empty-task-response" ||
+      candidate.reason === "completed-without-images")
+  );
+}
+
+interface PixAIBackgroundFailureOptions {
+  api: Api;
+  chatId: number;
+  baseRecord: Omit<PixAIGenerationRecord, "status">;
+  startTime: number;
+  logPrefix: string;
+  onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+}
+
+async function logBackgroundFailure(
+  options: PixAIBackgroundFailureOptions,
+  level: BotLogEntry["level"],
+  message: string,
+): Promise<void> {
+  try {
+    await options.onLog?.({
+      level,
+      message,
+      meta: { chatId: options.chatId, taskId: options.baseRecord.taskId },
+    });
+  } catch {
+    // Failure handling must not create an unhandled rejection when logging is unavailable.
+  }
+}
+
+export async function handlePixAIBackgroundFailure(
+  error: unknown,
+  options: PixAIBackgroundFailureOptions,
+): Promise<void> {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  if (error instanceof PixAIGenerationPersistenceError) {
+    await logBackgroundFailure(options, "error", errorMessage);
+    return;
+  }
+
+  if (!isTerminalPixAITaskError(error)) {
+    await logBackgroundFailure(
+      options,
+      "warn",
+      `${options.logPrefix} hit a retryable error; leaving task pending for recovery: ${errorMessage}`,
+    );
+    return;
+  }
+
+  await logBackgroundFailure(options, "error", `${options.logPrefix} failed: ${errorMessage}`);
+
+  try {
+    await options.onGenerationTrack?.({
+      ...options.baseRecord,
+      status: "failed",
+      errorMessage,
+      durationMs: Date.now() - options.startTime,
+    });
+  } catch (trackError) {
+    await logBackgroundFailure(
+      options,
+      "error",
+      `Failed to persist PixAI failure: ${trackError instanceof Error ? trackError.message : String(trackError)}`,
+    );
+    return;
+  }
+
+  try {
+    await options.api.sendMessage(options.chatId, `图片生成失败: ${errorMessage}`);
+  } catch (sendError) {
+    await logBackgroundFailure(
+      options,
+      "warn",
+      `Failed to notify user about PixAI error: ${sendError instanceof Error ? sendError.message : String(sendError)}`,
+    );
   }
 }
 
@@ -412,7 +623,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
       startTime: number;
     },
   ): Promise<{ taskId: string; status: string; message: string }> {
-    return client.createTask(resolvedParams).then((task) => {
+    return client.createTask(resolvedParams).then(async (task) => {
       const configSnapshot: PixAIConfig = {
         ...pixaiConfig,
         modelStyle: ctx.resolvedModelStyle,
@@ -440,12 +651,12 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         meta: { chatId, taskId: task.id, apiMode, prompt: ctx.resolvedPrompt.slice(0, 200) },
       });
 
-      onGenerationTrack?.({ ...baseRecord, status: "pending" });
-
       rateLimiter?.registerTask(task.id, chatId, userId);
 
+      await trackPendingGeneration({ ...baseRecord, status: "pending" }, onGenerationTrack, onLog);
+
       const taskTimeoutMs = timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
-      pollAndSend(client, task.id, taskTimeoutMs, {
+      void pollAndSend(client, task.id, taskTimeoutMs, {
         api,
         chatId,
         recentBotMessageIds,
@@ -456,27 +667,17 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
         startTime: ctx.startTime,
         onDone: rateLimiter ? () => rateLimiter.releaseTask(task.id) : undefined,
         nsfwChecker,
-      }).catch((err) => {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        onLog?.({
-          level: "error",
-          message: `PixAI background task failed: ${errMsg}`,
-          meta: { chatId, taskId: task.id },
-        });
-        onGenerationTrack?.({
-          ...baseRecord,
-          status: "failed",
-          errorMessage: errMsg,
-          durationMs: Date.now() - ctx.startTime,
-        });
-        api.sendMessage(chatId, `图片生成失败: ${errMsg}`).catch((sendErr) => {
-          onLog?.({
-            level: "warn",
-            message: `Failed to notify user about PixAI error: ${sendErr}`,
-            meta: { chatId, taskId: task.id },
-          });
-        });
-      });
+      }).catch((error) =>
+        handlePixAIBackgroundFailure(error, {
+          api,
+          chatId,
+          baseRecord,
+          startTime: ctx.startTime,
+          logPrefix: "PixAI background task",
+          onLog,
+          onGenerationTrack,
+        }),
+      );
 
       return {
         taskId: task.id,
@@ -725,10 +926,19 @@ export async function pollAndSend(
     startTime: number;
     onDone?: () => void;
     nsfwChecker?: NsfwChecker;
+    signal?: AbortSignal;
   },
+  initialDelayMs = 5000,
 ): Promise<void> {
   try {
-    const { urls, mediaIds } = await client.pollUntilComplete(taskId, timeoutMs);
+    const { urls, mediaIds } = await client.pollUntilComplete(
+      taskId,
+      timeoutMs,
+      5000,
+      initialDelayMs,
+      ctx.signal,
+    );
+    ctx.signal?.throwIfAborted();
     const caption = ctx.prompt.length > 200 ? `${ctx.prompt.slice(0, 200)}...` : ctx.prompt;
 
     // NSFW detection: check images before sending
@@ -747,35 +957,52 @@ export async function pollAndSend(
       }
     }
 
-    if (urls.length === 1) {
-      const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, {
-        caption,
-        has_spoiler: hasSpoiler,
+    ctx.signal?.throwIfAborted();
+
+    try {
+      await ctx.onGenerationTrack?.({
+        ...ctx.baseRecord,
+        status: "completed",
+        mediaUrls: urls,
+        mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
+        nsfwScores,
+        durationMs: Date.now() - ctx.startTime,
       });
-      ctx.recentBotMessageIds.push(sent.message_id);
-    } else {
-      // Multiple images: use sendMediaGroup
-      const media = urls.map((url, i) => ({
-        type: "photo" as const,
-        media: url,
-        has_spoiler: hasSpoiler,
-        ...(i === 0 ? { caption } : {}),
-      }));
-      const sent = await ctx.api.sendMediaGroup(ctx.chatId, media);
-      for (const msg of sent) {
-        ctx.recentBotMessageIds.push(msg.message_id);
-      }
+    } catch (err) {
+      throw new PixAIGenerationPersistenceError(taskId, err);
     }
 
-    // Track completed generation
-    ctx.onGenerationTrack?.({
-      ...ctx.baseRecord,
-      status: "completed",
-      mediaUrls: urls,
-      mediaIds: mediaIds.length > 0 ? mediaIds : undefined,
-      nsfwScores,
-      durationMs: Date.now() - ctx.startTime,
-    });
+    try {
+      if (urls.length === 1) {
+        const sent = await ctx.api.sendPhoto(ctx.chatId, urls[0]!, {
+          caption,
+          has_spoiler: hasSpoiler,
+        });
+        ctx.recentBotMessageIds.push(sent.message_id);
+      } else {
+        const media = urls.map((url, i) => ({
+          type: "photo" as const,
+          media: url,
+          has_spoiler: hasSpoiler,
+          ...(i === 0 ? { caption } : {}),
+        }));
+        const sent = await ctx.api.sendMediaGroup(ctx.chatId, media);
+        for (const msg of sent) {
+          ctx.recentBotMessageIds.push(msg.message_id);
+        }
+      }
+    } catch (err) {
+      try {
+        await ctx.onLog?.({
+          level: "error",
+          message: `PixAI task completed but Telegram delivery failed: ${err instanceof Error ? err.message : String(err)}`,
+          meta: { chatId: ctx.chatId, taskId, imageCount: urls.length },
+        });
+      } catch {
+        // Delivery failure must not overwrite the completed generation state.
+      }
+      return;
+    }
 
     ctx.onLog?.({
       level: "info",
@@ -785,4 +1012,64 @@ export async function pollAndSend(
   } finally {
     ctx.onDone?.();
   }
+}
+
+export interface RecoverPixAIGenerationOptions {
+  apiKey: string;
+  api: Api;
+  record: PixAIGenerationRecord;
+  timeoutMs: number;
+  createdAtMs: number;
+  onLog?: (entry: BotLogEntry) => void | Promise<void>;
+  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
+  nsfwChecker?: NsfwChecker;
+  signal?: AbortSignal;
+}
+
+export async function recoverPixAIGeneration(
+  options: RecoverPixAIGenerationOptions,
+): Promise<void> {
+  const { record } = options;
+  const client = new PixAIClient(options.apiKey, record.pixaiConfig?.apiMode ?? "graphql");
+  const startTime = Math.max(options.createdAtMs, Date.now() - 2_147_483_647);
+  const remainingTimeoutMs = Math.max(0, options.createdAtMs + options.timeoutMs - Date.now());
+
+  await options.onLog?.({
+    level: "info",
+    message: `Recovering PixAI task: ${record.taskId}`,
+    meta: { chatId: record.chatId, taskId: record.taskId },
+  });
+
+  await pollAndSend(
+    client,
+    record.taskId,
+    remainingTimeoutMs,
+    {
+      api: options.api,
+      chatId: record.chatId,
+      recentBotMessageIds: [],
+      prompt: record.prompt,
+      baseRecord: {
+        chatId: record.chatId,
+        userId: record.userId,
+        taskId: record.taskId,
+        prompt: record.prompt,
+        negativePrompt: record.negativePrompt,
+        modelId: record.modelId,
+        width: record.width,
+        height: record.height,
+        batchSize: record.batchSize,
+        samplingSteps: record.samplingSteps,
+        cfgScale: record.cfgScale,
+        promptHelper: record.promptHelper,
+        pixaiConfig: record.pixaiConfig,
+      },
+      onLog: options.onLog,
+      onGenerationTrack: options.onGenerationTrack,
+      startTime,
+      nsfwChecker: options.nsfwChecker,
+      signal: options.signal,
+    },
+    0,
+  );
 }

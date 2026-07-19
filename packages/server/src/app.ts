@@ -86,7 +86,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
-    .route("/api/bots", generationRoutes(db))
+    .route("/api/bots", generationRoutes(db, botPool))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))
