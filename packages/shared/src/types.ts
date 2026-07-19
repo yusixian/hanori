@@ -151,6 +151,7 @@ export interface ConversationConfig {
   autoSummarize: boolean;
   summarizeThreshold: number;
   retentionDays: number;
+  maxRawMessagesPerChat: number;
 }
 
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
@@ -163,6 +164,7 @@ export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
   autoSummarize: true,
   summarizeThreshold: 30,
   retentionDays: 30,
+  maxRawMessagesPerChat: 50_000,
 };
 
 export type ConversationRole =
@@ -187,6 +189,7 @@ export interface ConversationCallbacks {
     content: string;
     userId?: number;
     userName?: string;
+    sourceKey?: string;
     meta?: Record<string, unknown>;
   }): Promise<void>;
   addMessages(
@@ -196,6 +199,7 @@ export interface ConversationCallbacks {
       content: string;
       userId?: number;
       userName?: string;
+      sourceKey?: string;
       meta?: Record<string, unknown>;
     }>,
   ): Promise<void>;

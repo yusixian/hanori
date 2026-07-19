@@ -39,6 +39,7 @@ import type { Api, Middleware } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
+import { GroupContextPersistenceTracker } from "../services/group-context-persistence-tracker.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
@@ -219,6 +220,7 @@ function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
 
 interface BufferedMessage {
+  messageId: number;
   userId: number;
   userName: string;
   text: string;
@@ -944,11 +946,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     number,
     { buffer: RingBuffer<BufferedMessage>; lastActive: number }
   >();
+  const groupContextPersistence = new GroupContextPersistenceTracker();
 
   const bufferCleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [chatId, entry] of groupBuffers) {
-      if (now - entry.lastActive > BUFFER_STALE_MS) groupBuffers.delete(chatId);
+      if (now - entry.lastActive > BUFFER_STALE_MS) {
+        groupBuffers.delete(chatId);
+        groupContextPersistence.clearChat(chatId);
+      }
     }
   }, BUFFER_CLEANUP_INTERVAL);
   bufferCleanupTimer.unref();
@@ -1022,7 +1028,15 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           : msg.document
             ? `[文件: ${msg.document.file_name ?? "unknown"}]`
             : "");
-      buffer.push({ userId, userName, text: bufferText, timestamp: Date.now() });
+      if (bufferText) {
+        buffer.push({
+          messageId: msg.message_id,
+          userId,
+          userName,
+          text: bufferText,
+          timestamp: Date.now(),
+        });
+      }
     }
 
     let effectivePrompt = config.systemPrompt;
@@ -1724,8 +1738,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           content: string;
           userId?: number;
           userName?: string;
+          sourceKey?: string;
           meta?: Record<string, unknown>;
         }> = [];
+        const sourcePrefix = `telegram:${msg.message_id}`;
+        let contextSavedThrough: number | undefined;
 
         // Save system prompt used for this reply (deduplicated per chat)
         const sysMsg = messages.find((m) => m.role === "system")?.content;
@@ -1738,6 +1755,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               chatId,
               role: "system" as ConversationRole,
               content: sysMsg,
+              sourceKey: `${sourcePrefix}:system`,
               meta: { model: currentModel, trigger: triggerResult },
             });
           }
@@ -1753,12 +1771,18 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             const buffer = groupBuffers.get(chatId);
             if (buffer) {
               const allMessages = buffer.buffer.getAll();
-              const contextMessages = allMessages.slice(0, -1);
+              const contextMessages = groupContextPersistence.selectUnsavedContext(
+                chatId,
+                msg.message_id,
+                allMessages,
+              );
               if (contextMessages.length > 0) {
+                contextSavedThrough = contextMessages.at(-1)!.messageId;
                 toSave.push({
                   chatId,
                   role: "context",
                   content: formatGroupContextMessages(contextMessages),
+                  sourceKey: `${sourcePrefix}:context`,
                 });
               }
             }
@@ -1772,6 +1796,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           content: rawContent || messageText,
           userId,
           userName,
+          sourceKey: `${sourcePrefix}:user`,
           meta: { tgMessageId: msg.message_id },
         });
 
@@ -1782,6 +1807,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               chatId,
               role: "tool_call",
               content: tc.toolName,
+              sourceKey: `${sourcePrefix}:tool-call:${tc.toolCallId}`,
               meta: {
                 toolName: tc.toolName,
                 args: JSON.stringify(tc.input),
@@ -1793,7 +1819,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             toSave.push({
               chatId,
               role: "tool_result",
-              content: typeof tr.output === "string" ? tr.output : JSON.stringify(tr.output),
+              content:
+                typeof tr.output === "string"
+                  ? tr.output
+                  : (JSON.stringify(tr.output) ?? String(tr.output)),
+              sourceKey: `${sourcePrefix}:tool-result:${tr.toolCallId}`,
               meta: {
                 toolName: tr.toolName,
                 toolCallId: tr.toolCallId,
@@ -1836,6 +1866,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId,
           role: "assistant",
           content: assistantContent,
+          sourceKey: `${sourcePrefix}:assistant`,
           meta: {
             model: currentModel,
             trigger: triggerResult,
@@ -1846,6 +1877,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         config
           .conversation!.addMessages(toSave)
           .then(() => {
+            if (!isPrivate && conversationCfg.saveGroupContext !== "none") {
+              const bufferedMessageIds =
+                groupBuffers
+                  .get(chatId)
+                  ?.buffer.getAll()
+                  .map((message) => message.messageId) ?? [];
+              groupContextPersistence.commitReply(
+                chatId,
+                msg.message_id,
+                contextSavedThrough,
+                bufferedMessageIds,
+              );
+            }
             config.conversation!.triggerCompression(chatId);
           })
           .catch((err) => {

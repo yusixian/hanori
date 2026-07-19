@@ -87,6 +87,22 @@ export function ConversationSection({
                 {t("conversation.retentionDescription")}
               </p>
             </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">
+                {t("conversation.maxRawMessagesPerChat")}
+              </label>
+              <Input
+                type="number"
+                min={0}
+                max={1_000_000}
+                disabled={!config.enabled}
+                value={config.maxRawMessagesPerChat}
+                onChange={(e) => onUpdate({ maxRawMessagesPerChat: Number(e.target.value) })}
+              />
+              <p className="text-muted-foreground text-xs">
+                {t("conversation.maxRawMessagesDescription")}
+              </p>
+            </div>
           </div>
         </div>
 
