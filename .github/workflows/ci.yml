@@ -8,7 +8,9 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Self-hosted runner on the maintainer's Mac; see readme "CI / Self-hosted Runner".
+    # Jobs remain queued while the local runner service is offline.
+    runs-on: [self-hosted, macOS, ARM64, cos-tool-bot]
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +39,8 @@ jobs:
         run: pnpm test
 
       - name: Install Chromium
-        run: pnpm --filter @cos-tool-bot/panel exec playwright install --with-deps chromium
+        # Playwright's --with-deps option is only supported on Debian/Ubuntu.
+        run: pnpm --filter @cos-tool-bot/panel exec playwright install chromium
 
       - name: Browser tests
         run: pnpm test:browser

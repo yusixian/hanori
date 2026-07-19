@@ -43,17 +43,18 @@ export class EmbeddingService {
     return { [EMBEDDING_PROVIDER_NAME]: { dimensions: this._dimensions } };
   }
 
-  async generateEmbedding(text: string): Promise<number[] | null> {
+  async generateEmbedding(text: string, abortSignal?: AbortSignal): Promise<number[] | null> {
     try {
       const truncated = text.slice(0, MAX_TEXT_LENGTH);
       const { embedding } = await embed({
         model: this.model,
         value: truncated,
         providerOptions: this.embeddingProviderOptions,
+        abortSignal,
       });
       return embedding;
-    } catch (err) {
-      this.logger?.warn(err, "Embedding generation failed, degrading gracefully");
+    } catch {
+      this.logger?.warn("Embedding generation failed, degrading gracefully");
       return null;
     }
   }
@@ -68,8 +69,8 @@ export class EmbeddingService {
         providerOptions: this.embeddingProviderOptions,
       });
       return embeddings;
-    } catch (err) {
-      this.logger?.warn(err, "Batch embedding generation failed, degrading gracefully");
+    } catch {
+      this.logger?.warn("Batch embedding generation failed, degrading gracefully");
       return texts.map(() => null);
     }
   }

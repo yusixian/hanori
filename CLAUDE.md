@@ -83,6 +83,10 @@ pnpm typecheck        # must pass with no type errors
 
 If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed files.
 
+## CI
+
+`.github/workflows/ci.yml` runs lint, format check, typecheck, i18n check, unit tests (vitest) and browser tests (Playwright Chromium) on every push/PR to `main`. It runs on a **self-hosted runner** on the maintainer's Mac (`~/actions-runner/cos-tool-bot`, label `cos-tool-bot`) — if that runner is offline, CI jobs queue indefinitely. Start it with `cd ~/actions-runner/cos-tool-bot && ./svc.sh start`. See readme "CI / Self-hosted Runner".
+
 ## Conventions
 
 - **ESM only** — all packages use `"type": "module"`, imports require `.js` extensions in non-bundled code
@@ -92,4 +96,4 @@ If format check fails, run `pnpm fmt` to auto-fix, then re-stage the changed fil
 - **TypeScript** — strict mode, `module: "ESNext"`, `moduleResolution: "bundler"`
 - **Panel styling** — Tailwind CSS v4, utility classes via `clsx` + `tailwind-merge`
 - **State** — Refine v4 for data/auth, jotai for local state
-- **No test framework** — currently no tests configured
+- **Tests** — vitest (unit) + Playwright browser tests, run in CI

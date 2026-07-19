@@ -48,7 +48,7 @@ import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
-import { assembleContinueChatContext } from "./context-assembler.js";
+import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 import { withChatLock } from "./chat-lock.js";
 
@@ -124,6 +124,7 @@ async function doContinueChat(
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
+  const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
 
   // Global AI kill switch check — skip entirely if /stop is active
   if (config.isAiDisabled?.()) {
@@ -143,8 +144,19 @@ async function doContinueChat(
 
   let manualAbort: AbortController | null = null;
   try {
+    let memoryTools: Record<string, Tool> | undefined;
+    if (memCfg.enabled && config.memory) {
+      const { createMemoryTools } = await import("../tools/index.js");
+      memoryTools = createMemoryTools(config.memory);
+    }
+    let botMemoryTools: Record<string, Tool> | undefined;
+    if (botMemCfg.enabled && config.botMemory) {
+      const { createBotMemoryTools } = await import("../tools/bot-memory.js");
+      botMemoryTools = createBotMemoryTools(config.botMemory);
+    }
+
     // Build messages using ContextAssembler
-    const messages = await assembleContinueChatContext({
+    const promptBundle = await buildContinueChatPromptBundle({
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
       conversationConfig: config.conversationConfig,
@@ -159,12 +171,15 @@ async function doContinueChat(
       hasFileTools: !!config.dataFiles,
       dataFiles: config.dataFiles,
       stickerPacks: config.stickerPacks,
+      memoryTools,
+      botMemoryTools,
       botMemoryConfig: config.botMemoryConfig,
       botMemory: config.botMemory,
+      retrievalQuery: eventDescription,
+      userId: event.userId,
     });
 
-    // Inject event as a system notification
-    messages.push({
+    const { messages } = appendCurrentRequest(promptBundle, {
       role: "user",
       content: `[系统事件通知] ${eventDescription}`,
     });
@@ -248,18 +263,8 @@ async function doContinueChat(
       Object.assign(allTools, config.agentToolsFactory());
     }
 
-    // Memory tools - only inject if configured
-    if (memCfg.enabled && config.memory) {
-      const { createMemoryTools } = await import("../tools/index.js");
-      Object.assign(allTools, createMemoryTools(config.memory));
-    }
-
-    // Bot memory tools
-    const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
-    if (botMemCfg.enabled && config.botMemory) {
-      const { createBotMemoryTools } = await import("../tools/bot-memory.js");
-      Object.assign(allTools, createBotMemoryTools(config.botMemory));
-    }
+    if (memoryTools) Object.assign(allTools, memoryTools);
+    if (botMemoryTools) Object.assign(allTools, botMemoryTools);
 
     // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
     injectPixAITool(allTools, {
@@ -498,15 +503,18 @@ async function doContinueChat(
         });
       }
 
-      config.conversation.addMessages(toSave).catch((err) => {
-        config.onLog?.({
-          level: "error",
-          message: `Failed to save continuation conversation: ${err instanceof Error ? err.message : String(err)}`,
-          meta: { chatId },
+      config.conversation
+        .addMessages(toSave)
+        .then(() => {
+          config.conversation!.triggerCompression(chatId);
+        })
+        .catch((err) => {
+          config.onLog?.({
+            level: "error",
+            message: `Failed to save continuation conversation: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId },
+          });
         });
-      });
-
-      config.conversation.triggerCompression(chatId);
     }
 
     config.onLog?.({

@@ -6,6 +6,7 @@ import { ArrowLeft, Inbox, Loader2, MessageSquareText, Trash2 } from "lucide-rea
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
+import { toast } from "sonner";
 import { PENDING_DELETE_MS } from "./constants";
 import { ConversationDetailHeader } from "./conversation-detail-header";
 import { ConversationListItem } from "./conversation-list-item";
@@ -343,6 +344,10 @@ export function BotConversationsPage() {
 
   const handleDeleteSummary = async (id: number) => {
     if (!botId || selectedChat === null) return;
+    if (summaries.some((summary) => summary.id === id && summary.isActive)) {
+      toast.error(t("conversations.activeSummaryDeleteBlocked"));
+      return;
+    }
     if (sumPendingDelete !== id) {
       armPendingDelete(id, setSumPendingDelete, sumPendingTimer);
       return;
@@ -355,8 +360,15 @@ export function BotConversationsPage() {
           param: { botId, chatId: String(selectedChat), id: String(id) },
         },
       );
-      if (!res.ok) throw new Error(`Failed to delete summary (${res.status})`);
       const json = await res.json();
+      if (!res.ok) {
+        toast.error(
+          res.status === 409
+            ? t("conversations.activeSummaryDeleteBlocked")
+            : t("conversations.deleteFailed"),
+        );
+        return;
+      }
       if (json.ok) {
         const isLastOnPage = summaries.length === 1;
         setSummaries((prev) => prev.filter((s) => s.id !== id));

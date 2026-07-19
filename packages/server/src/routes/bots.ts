@@ -750,12 +750,37 @@ export function botsRoutes(
           webToolsConfig: body.webToolsConfig,
           agentToolsConfig: body.agentToolsConfig,
           artworkToolsEnabled: body.artworkToolsEnabled,
-          hasFileTools: !!dataFilesConfig,
+          hasFileTools: !!dataFiles,
           dataFiles,
           messageConfig: body.messageConfig,
         });
 
-        return c.json({ ok: true as const, data: result });
+        // Keep the public RPC response structurally named inside the server package. Returning
+        // the imported result object directly makes declaration emit reference bot internals.
+        return c.json({
+          ok: true as const,
+          data: {
+            fullPrompt: result.fullPrompt,
+            estimatedTokens: result.estimatedTokens,
+            trace: {
+              totalEstimatedTokens: result.trace.totalEstimatedTokens,
+              staticPrefixHash: result.trace.staticPrefixHash,
+              sections: result.trace.sections.map((section) => ({
+                id: section.id,
+                source: section.source,
+                stability: String(section.stability),
+                trust: String(section.trust),
+                role: String(section.role),
+                messageIndex: section.messageIndex,
+                status: String(section.status),
+                chars: section.chars,
+                estimatedTokens: section.estimatedTokens,
+                refs: section.refs,
+                unestimatedParts: section.unestimatedParts,
+              })),
+            },
+          },
+        });
       },
     )
     .get("/:botId/ai-config", async (c) => {
@@ -949,8 +974,13 @@ export function botsRoutes(
       if (Number.isNaN(chatId) || Number.isNaN(id))
         return c.json({ ok: false as const, error: "Invalid chatId or id" }, 400);
       const store = botPool.getConversationStore();
-      const deleted = await store.deleteConversationSummary(botId, chatId, id);
-      if (!deleted) return c.json({ ok: false as const, error: "Summary not found" }, 404);
+      const result = await store.deleteConversationSummary(botId, chatId, id);
+      if (result === "active") {
+        return c.json({ ok: false as const, error: "Active summary cannot be deleted" }, 409);
+      }
+      if (result === "not_found") {
+        return c.json({ ok: false as const, error: "Summary not found" }, 404);
+      }
       return c.json({ ok: true as const });
     })
     .delete("/:botId/conversations", async (c) => {

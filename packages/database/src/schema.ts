@@ -6,6 +6,7 @@ import {
   integer,
   json,
   pgTable,
+  primaryKey,
   real,
   serial,
   text,
@@ -329,7 +330,7 @@ export const conversationMessages = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
-    index("conv_msg_bot_chat_idx").on(t.botId, t.chatId),
+    index("conv_msg_bot_chat_idx").on(t.botId, t.chatId, t.id),
     index("conv_msg_created_idx").on(t.createdAt),
     index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
   ],
@@ -344,11 +345,33 @@ export const conversationSummaries = pgTable(
       .notNull(),
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
     content: text("content").notNull(),
+    previousSummarizedUpToId: integer("previous_summarized_up_to_id"),
     summarizedUpToId: integer("summarized_up_to_id").notNull(),
     messageCount: integer("message_count").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("conv_summary_bot_chat_idx").on(t.botId, t.chatId)],
+);
+
+export const conversationCompactionState = pgTable(
+  "conversation_compaction_state",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    activeSummaryId: integer("active_summary_id")
+      .references(() => conversationSummaries.id, { onDelete: "no action" })
+      .notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.chatId] }),
+    index("conv_compaction_active_summary_idx").on(t.activeSummaryId),
+  ],
 );
 
 export const peopleProfiles = pgTable(
