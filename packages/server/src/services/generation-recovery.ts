@@ -1,20 +1,31 @@
+import { DEFAULT_TIMEOUT_CONFIG, PIXAI_TASK_TIMEOUT_MAX_MS } from "@cos-tool-bot/shared";
+
 export function isTerminalGenerationRecoveryError(errorMessage: string): boolean {
   return (
     /PixAI task (?:failed|cancelled)/i.test(errorMessage) ||
-    /PixAI task timed out after/i.test(errorMessage)
+    /PixAI task timed out after/i.test(errorMessage) ||
+    /PixAI task completed but no images returned/i.test(errorMessage) ||
+    /PixAI (?:GraphQL )?get task failed: HTTP 404\b/i.test(errorMessage) ||
+    /PixAI GraphQL get task: unexpected empty response/i.test(errorMessage)
   );
 }
 
-export type TerminalGenerationFailurePersistenceResult =
-  | { ok: true }
+export function resolvePixaiTaskTimeoutMs(timeoutMs?: number): number {
+  return Math.min(
+    Math.max(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs, 1_000),
+    PIXAI_TASK_TIMEOUT_MAX_MS,
+  );
+}
+
+export type TerminalGenerationFailurePersistenceResult<T> =
+  | { ok: true; value: T }
   | { ok: false; error: unknown };
 
-export async function tryPersistTerminalGenerationFailure(
-  persist: () => Promise<unknown>,
-): Promise<TerminalGenerationFailurePersistenceResult> {
+export async function tryPersistTerminalGenerationFailure<T>(
+  persist: () => Promise<T>,
+): Promise<TerminalGenerationFailurePersistenceResult<T>> {
   try {
-    await persist();
-    return { ok: true };
+    return { ok: true, value: await persist() };
   } catch (error) {
     return { ok: false, error };
   }
@@ -41,7 +52,7 @@ type PendingInsertFallbackEntry =
   | { state: "claimed"; claim: symbol; expiresAt: number }
   | { state: "suppressed"; expiresAt: number };
 
-const DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS = PIXAI_TASK_TIMEOUT_MAX_MS + 60 * 60 * 1000;
 
 export class PendingGenerationInsertFallbackTracker {
   private readonly entries = new Map<string, PendingInsertFallbackEntry>();
@@ -125,7 +136,8 @@ export class PendingGenerationInsertFallbackTracker {
       if (!this.isCurrentClaim(key, claim)) return false;
       insertStarted = true;
       await insert();
-      if (this.isCurrentClaim(key, claim)) this.entries.delete(key);
+      if (!this.isCurrentClaim(key, claim)) return false;
+      this.entries.delete(key);
       return true;
     } catch (error) {
       if (this.isCurrentClaim(key, claim)) {

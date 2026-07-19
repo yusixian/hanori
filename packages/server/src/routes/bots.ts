@@ -21,6 +21,7 @@ import { LarkBotManager } from "../services/lark-bot-manager.js";
 import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "../services/ai-config-web-tools.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
+import { resolvePixaiTaskTimeoutMs } from "../services/generation-recovery.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
@@ -196,7 +197,13 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
       : undefined,
     dataFilesConfig: migrated.dataFilesConfig,
     privateChatWhitelist: migrated.privateChatWhitelist,
-    timeoutConfig: migrated.timeoutConfig,
+    timeoutConfig:
+      migrated.timeoutConfig?.pixaiTaskMs === undefined
+        ? migrated.timeoutConfig
+        : {
+            ...migrated.timeoutConfig,
+            pixaiTaskMs: resolvePixaiTaskTimeoutMs(migrated.timeoutConfig.pixaiTaskMs),
+          },
     mcpServerIds: migrated.mcpServerIds,
     summaryConfig: migrated.summaryConfig,
     imageOcrConfig: migrated.imageOcrConfig,
@@ -899,7 +906,13 @@ export function botsRoutes(
           artworkToolsConfig: body.artworkToolsConfig,
           botMemoryConfig: body.botMemoryConfig,
           messageConfig: body.messageConfig,
-          timeoutConfig: body.timeoutConfig,
+          timeoutConfig:
+            body.timeoutConfig?.pixaiTaskMs === undefined
+              ? body.timeoutConfig
+              : {
+                  ...body.timeoutConfig,
+                  pixaiTaskMs: resolvePixaiTaskTimeoutMs(body.timeoutConfig.pixaiTaskMs),
+                },
           models: body.models,
           modelCommandAccess: body.modelCommandAccess,
           embeddingConfig,

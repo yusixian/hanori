@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
 import { NsfwChecker } from "@cos-tool-bot/bot";
+import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
   EMBEDDING_DIMENSIONS,
@@ -24,7 +25,6 @@ import type {
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
-  DEFAULT_TIMEOUT_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
@@ -51,6 +51,7 @@ import {
   isTerminalGenerationRecoveryError,
   PendingGenerationInsertFallbackTracker,
   persistTerminalGenerationClaim,
+  resolvePixaiTaskTimeoutMs,
   tryPersistTerminalGenerationFailure,
 } from "./generation-recovery.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
@@ -411,6 +412,10 @@ export class BotPool {
     let conversation: ConversationCallbacks | undefined;
     let runInitialHistoryGovernance: (() => Promise<void>) | undefined;
     const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+    const pixaiTaskTimeoutMs = resolvePixaiTaskTimeoutMs(aiConfig?.timeoutConfig?.pixaiTaskMs);
+    const runtimeTimeoutConfig = aiConfig?.timeoutConfig
+      ? { ...aiConfig.timeoutConfig, pixaiTaskMs: pixaiTaskTimeoutMs }
+      : undefined;
     // Decrypt all providers up front — kept in-memory for bot lifetime.
     // Track skip reasons separately so operators can distinguish "no key configured"
     // from "encryption key mismatch" when diagnosing.
@@ -728,7 +733,7 @@ export class BotPool {
         botMemory,
         messageConfig: aiConfig.messageConfig,
         imageOcrConfig: aiConfig.imageOcrConfig,
-        timeoutConfig: aiConfig.timeoutConfig,
+        timeoutConfig: runtimeTimeoutConfig,
         models: activeProvider.models ?? aiConfig.models,
         modelCommandAccess: aiConfig.modelCommandAccess,
         modelOverride: {
@@ -821,8 +826,7 @@ export class BotPool {
             await this.cancelGenerationRecoveries(botId, "PixAI API key updated");
             const currentManager = this.managers.get(botId);
             if (currentManager instanceof BotManager) {
-              const timeoutMs =
-                aiConfig.timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
+              const timeoutMs = pixaiTaskTimeoutMs;
               this.generationRecoveryConfigs.set(botId, {
                 manager: currentManager,
                 apiKey,
@@ -1149,7 +1153,7 @@ export class BotPool {
 
     const imageGeneration = aiConfig?.webToolsConfig?.imageGeneration;
     if (imageGeneration?.provider === "pixai" && imageGeneration.apiKey) {
-      const timeoutMs = aiConfig?.timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
+      const timeoutMs = pixaiTaskTimeoutMs;
       this.generationRecoveryConfigs.set(botId, {
         manager,
         apiKey: imageGeneration.apiKey,
@@ -1354,7 +1358,8 @@ export class BotPool {
                   eq(pixaiGenerations.taskId, row.taskId),
                   eq(pixaiGenerations.status, "pending"),
                 ),
-              ),
+              )
+              .returning({ chatId: pixaiGenerations.chatId }),
           );
           if (!persistence.ok) {
             this.logger.error(
@@ -1367,6 +1372,23 @@ export class BotPool {
               "Failed to persist terminal generation recovery failure",
             );
             return;
+          }
+          const claimed = persistence.value[0];
+          if (!claimed) {
+            this.logger.info(
+              { botId, taskId: row.taskId },
+              "Terminal generation recovery was already claimed",
+            );
+            return;
+          }
+
+          try {
+            await manager.sendHtml(claimed.chatId, escapeHtml(`图片生成失败: ${errorMessage}`));
+          } catch (notifyError) {
+            this.logger.warn(
+              { err: notifyError, botId, taskId: row.taskId },
+              "Failed to notify user about recovered PixAI failure",
+            );
           }
           this.logger.warn(
             { botId, taskId: row.taskId, errorMessage },

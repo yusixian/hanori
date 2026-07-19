@@ -79,7 +79,21 @@ function createManager(recover = vi.fn().mockResolvedValue(undefined)) {
   return {
     status: "running",
     recoverPixaiGeneration: recover,
+    sendHtml: vi.fn().mockResolvedValue(undefined),
   } as unknown as BotManager;
+}
+
+function setTerminalClaimResult(pool: RecoveryTestPool, claimed: Array<{ chatId: number }>) {
+  pool.db = {
+    ...(pool.db as object),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() => ({
+          returning: vi.fn().mockResolvedValue(claimed),
+        })),
+      })),
+    })),
+  };
 }
 
 afterEach(() => {
@@ -167,5 +181,41 @@ describe("BotPool generation recovery lifecycle", () => {
     pool.generationRecoveryConfigs.clear();
     pool.stopGenerationRecoverySchedulerIfIdle();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("notifies only after atomically claiming a terminal recovery failure", async () => {
+    let rejectRecovery!: (error: Error) => void;
+    const recover = vi.fn(() => new Promise<void>((_resolve, reject) => (rejectRecovery = reject)));
+    const pool = createPool(async () => [pendingRow()]);
+    setTerminalClaimResult(pool, [{ chatId: 123 }]);
+    const manager = createManager(recover);
+    pool.managers.set("bot-a", manager);
+
+    await expect(
+      pool.schedulePendingGenerationRecovery("bot-a", manager, "key", 1_000),
+    ).resolves.toBe(1);
+    const completion = pool.generationRecoveries.get("bot-a:task-1")!.promise;
+    rejectRecovery(new Error("PixAI task failed: rejected"));
+    await completion;
+
+    expect(manager.sendHtml).toHaveBeenCalledWith(123, "图片生成失败: PixAI task failed: rejected");
+  });
+
+  it("does not notify after another worker owns the terminal failure", async () => {
+    let rejectRecovery!: (error: Error) => void;
+    const recover = vi.fn(() => new Promise<void>((_resolve, reject) => (rejectRecovery = reject)));
+    const pool = createPool(async () => [pendingRow()]);
+    setTerminalClaimResult(pool, []);
+    const manager = createManager(recover);
+    pool.managers.set("bot-a", manager);
+
+    await expect(
+      pool.schedulePendingGenerationRecovery("bot-a", manager, "key", 1_000),
+    ).resolves.toBe(1);
+    const completion = pool.generationRecoveries.get("bot-a:task-1")!.promise;
+    rejectRecovery(new Error("PixAI task failed: rejected"));
+    await completion;
+
+    expect(manager.sendHtml).not.toHaveBeenCalled();
   });
 });

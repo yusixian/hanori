@@ -80,13 +80,21 @@ export function generationRoutes(db: Database, botPool: BotPool) {
       if (Number.isNaN(generationId))
         return c.json({ ok: false as const, error: "Invalid generationId" }, 400);
 
+      const where = and(eq(pixaiGenerations.id, generationId), eq(pixaiGenerations.botId, botId));
+      const [existing] = await db
+        .select({ taskId: pixaiGenerations.taskId })
+        .from(pixaiGenerations)
+        .where(where);
+
+      if (!existing) return c.json({ ok: false as const, error: "Generation not found" }, 404);
+      botPool.suppressGenerationFallback(botId, existing.taskId);
+
       const [row] = await db
         .delete(pixaiGenerations)
-        .where(and(eq(pixaiGenerations.id, generationId), eq(pixaiGenerations.botId, botId)))
+        .where(where)
         .returning({ localFiles: pixaiGenerations.localFiles, taskId: pixaiGenerations.taskId });
 
       if (!row) return c.json({ ok: false as const, error: "Generation not found" }, 404);
-      botPool.suppressGenerationFallback(botId, row.taskId);
 
       // Clean up local files in background
       if (row.localFiles) {

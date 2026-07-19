@@ -2,11 +2,14 @@ import { describe, expect, test, vi } from "vitest";
 import {
   AsyncTaskLimiter,
   confirmPendingInsertAbsent,
+  DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS,
   isTerminalGenerationRecoveryError,
   PendingGenerationInsertFallbackTracker,
   persistTerminalGenerationClaim,
+  resolvePixaiTaskTimeoutMs,
   tryPersistTerminalGenerationFailure,
 } from "./generation-recovery.js";
+import { PIXAI_TASK_TIMEOUT_MAX_MS } from "@cos-tool-bot/shared";
 
 describe("confirmPendingInsertAbsent", () => {
   test("distinguishes confirmed absence, presence, and a transient lookup failure", async () => {
@@ -26,6 +29,10 @@ describe("isTerminalGenerationRecoveryError", () => {
     "PixAI task failed: provider error",
     "PixAI task cancelled: user cancelled",
     "PixAI task timed out after 1200s",
+    "PixAI task completed but no images returned",
+    "PixAI GraphQL get task failed: HTTP 404 not found",
+    "PixAI get task failed: HTTP 404 not found",
+    "PixAI GraphQL get task: unexpected empty response",
   ])("marks remote terminal results as failed: %s", (message) => {
     expect(isTerminalGenerationRecoveryError(message)).toBe(true);
   });
@@ -34,13 +41,30 @@ describe("isTerminalGenerationRecoveryError", () => {
     'PixAI GraphQL get task failed: HTTP 401 {"message":"invalid token"}',
     "TypeError: fetch failed",
     "PixAI GraphQL get task failed: HTTP 503",
+    "PixAI GraphQL error: provider temporarily unavailable",
     "Bot is not running",
   ])("keeps retryable recovery errors pending: %s", (message) => {
     expect(isTerminalGenerationRecoveryError(message)).toBe(false);
   });
 });
 
+describe("resolvePixaiTaskTimeoutMs", () => {
+  test("clamps legacy oversized values below the bounded fallback retention window", () => {
+    expect(resolvePixaiTaskTimeoutMs(Number.MAX_SAFE_INTEGER)).toBe(PIXAI_TASK_TIMEOUT_MAX_MS);
+    expect(DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS).toBeGreaterThan(
+      resolvePixaiTaskTimeoutMs(Number.MAX_SAFE_INTEGER),
+    );
+  });
+});
+
 describe("tryPersistTerminalGenerationFailure", () => {
+  test("returns the claimed row from a successful atomic update", async () => {
+    const claimed = [{ chatId: 123 }];
+    await expect(
+      tryPersistTerminalGenerationFailure(() => Promise.resolve(claimed)),
+    ).resolves.toEqual({ ok: true, value: claimed });
+  });
+
   test("contains database update failures", async () => {
     const error = new Error("database unavailable");
 
@@ -128,6 +152,40 @@ describe("PendingGenerationInsertFallbackTracker", () => {
 
     await expect(fallback).resolves.toBe(false);
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  test("does not claim delivery when deletion suppresses an in-flight fallback insert", async () => {
+    const tracker = new PendingGenerationInsertFallbackTracker();
+    let releaseInsert!: () => void;
+    const insert = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseInsert = resolve;
+        }),
+    );
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+
+    const fallback = tracker.insertIfClaimed(
+      "bot-a",
+      "task-1",
+      vi.fn().mockResolvedValue(true),
+      insert,
+    );
+    await vi.waitFor(() => expect(insert).toHaveBeenCalledOnce());
+    tracker.suppress("bot-a", "task-1");
+    releaseInsert();
+
+    await expect(fallback).resolves.toBe(false);
+
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+    await expect(
+      tracker.insertIfClaimed(
+        "bot-a",
+        "task-1",
+        vi.fn().mockResolvedValue(true),
+        vi.fn().mockResolvedValue(undefined),
+      ),
+    ).resolves.toBe(false);
   });
 
   test("does not resurrect a deletion when a late pending-insert failure is reported", async () => {
