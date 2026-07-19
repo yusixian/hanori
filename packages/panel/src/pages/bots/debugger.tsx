@@ -4,7 +4,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
-import type { BotWithStatus } from "@cos-tool-bot/shared";
+import type {
+  BotWithStatus,
+  TelegramRichMessageFormat,
+  TelegramRichMessageReceipt,
+} from "@cos-tool-bot/shared";
 import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -33,12 +37,6 @@ interface BotRun {
   pinned?: boolean;
   createdAt: string;
   events?: BotRunEvent[];
-}
-
-interface RichMessageReceipt {
-  messageId: number;
-  chatId: number;
-  format: "markdown" | "html";
 }
 
 function statusVariant(status: string) {
@@ -73,11 +71,11 @@ export function BotDebuggerPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [richChatId, setRichChatId] = useState("");
-  const [richFormat, setRichFormat] = useState<"markdown" | "html">("markdown");
+  const [richFormat, setRichFormat] = useState<TelegramRichMessageFormat>("markdown");
   const [richContent, setRichContent] = useState(() => t("debugger.richMessage.sampleMarkdown"));
   const [richBusy, setRichBusy] = useState(false);
   const [richError, setRichError] = useState<string | null>(null);
-  const [richReceipt, setRichReceipt] = useState<RichMessageReceipt | null>(null);
+  const [richReceipt, setRichReceipt] = useState<TelegramRichMessageReceipt | null>(null);
   const [loadedBot, setLoadedBot] = useState<{
     id: string;
     platform: BotWithStatus["platform"];
@@ -258,7 +256,7 @@ export function BotDebuggerPage() {
       });
       const json = (await response.json()) as {
         ok: boolean;
-        data?: RichMessageReceipt;
+        data?: TelegramRichMessageReceipt;
         error?: string;
       };
       if (!response.ok || !json.ok || !json.data) {
