@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
 import { NsfwChecker } from "@cos-tool-bot/bot";
@@ -929,90 +929,7 @@ export class BotPool {
             throw err;
           }
         } else {
-          // Download images to local storage
-          let localFiles: string[] | undefined;
-          if (record.status === "completed" && record.mediaUrls?.length) {
-            localFiles = await downloadGenerationImages(
-              botId,
-              record.taskId,
-              record.mediaUrls,
-              this.logger,
-            );
-          }
-          const completedAt = new Date();
-          await persistTerminalGenerationClaim(
-            record.taskId,
-            async () => {
-              const updated = await this.db
-                .update(pixaiGenerations)
-                .set({
-                  status: record.status,
-                  mediaUrls: record.mediaUrls,
-                  mediaIds: record.mediaIds,
-                  localFiles,
-                  nsfwScores: record.nsfwScores,
-                  errorMessage: record.errorMessage,
-                  durationMs: record.durationMs,
-                  completedAt,
-                })
-                .where(
-                  and(
-                    eq(pixaiGenerations.botId, botId),
-                    eq(pixaiGenerations.taskId, record.taskId),
-                    eq(pixaiGenerations.status, "pending"),
-                  ),
-                )
-                .returning({ id: pixaiGenerations.id });
-
-              if (updated.length > 0) {
-                this.generationInsertFallbacks.clear(botId, record.taskId);
-                return true;
-              }
-              return false;
-            },
-            () =>
-              this.generationInsertFallbacks.insertIfClaimed(
-                botId,
-                record.taskId,
-                async () => {
-                  const [existing] = await this.db
-                    .select({ id: pixaiGenerations.id })
-                    .from(pixaiGenerations)
-                    .where(
-                      and(
-                        eq(pixaiGenerations.botId, botId),
-                        eq(pixaiGenerations.taskId, record.taskId),
-                      ),
-                    );
-                  return existing === undefined;
-                },
-                () =>
-                  this.db.insert(pixaiGenerations).values({
-                    botId,
-                    chatId: record.chatId,
-                    userId: record.userId,
-                    taskId: record.taskId,
-                    prompt: record.prompt,
-                    negativePrompt: record.negativePrompt,
-                    modelId: record.modelId,
-                    width: record.width,
-                    height: record.height,
-                    batchSize: record.batchSize,
-                    samplingSteps: record.samplingSteps,
-                    cfgScale: record.cfgScale,
-                    promptHelper: record.promptHelper,
-                    pixaiConfig: record.pixaiConfig,
-                    status: record.status,
-                    mediaUrls: record.mediaUrls,
-                    mediaIds: record.mediaIds,
-                    localFiles,
-                    nsfwScores: record.nsfwScores,
-                    errorMessage: record.errorMessage,
-                    durationMs: record.durationMs,
-                    completedAt,
-                  }),
-              ),
-          );
+          await this.persistTerminalGeneration(botId, record);
         }
       } catch (err) {
         this.logger.error(err, "Failed to write PixAI generation record");
@@ -1182,6 +1099,119 @@ export class BotPool {
       ).catch((err) => {
         this.logger.error(err, "Failed to schedule startup generation recovery");
       });
+    }
+  }
+
+  private async persistTerminalGeneration(
+    botId: string,
+    record: PixAIGenerationRecord,
+    downloadImages = downloadGenerationImages,
+    cleanupImages = cleanupGenerationImages,
+  ): Promise<void> {
+    const completedAt = new Date();
+    let claimedGenerationId: number | undefined;
+    await persistTerminalGenerationClaim(
+      record.taskId,
+      async () => {
+        const [updated] = await this.db
+          .update(pixaiGenerations)
+          .set({
+            status: record.status,
+            mediaUrls: record.mediaUrls,
+            mediaIds: record.mediaIds,
+            nsfwScores: record.nsfwScores,
+            errorMessage: record.errorMessage,
+            durationMs: record.durationMs,
+            completedAt,
+          })
+          .where(
+            and(
+              eq(pixaiGenerations.botId, botId),
+              eq(pixaiGenerations.taskId, record.taskId),
+              eq(pixaiGenerations.status, "pending"),
+            ),
+          )
+          .returning({ id: pixaiGenerations.id });
+
+        if (!updated) return false;
+        claimedGenerationId = updated.id;
+        this.generationInsertFallbacks.clear(botId, record.taskId);
+        return true;
+      },
+      () =>
+        this.generationInsertFallbacks.insertIfClaimed(
+          botId,
+          record.taskId,
+          async () => {
+            const [existing] = await this.db
+              .select({ id: pixaiGenerations.id })
+              .from(pixaiGenerations)
+              .where(
+                and(eq(pixaiGenerations.botId, botId), eq(pixaiGenerations.taskId, record.taskId)),
+              );
+            return existing === undefined;
+          },
+          async () => {
+            const [inserted] = await this.db
+              .insert(pixaiGenerations)
+              .values({
+                botId,
+                chatId: record.chatId,
+                userId: record.userId,
+                taskId: record.taskId,
+                prompt: record.prompt,
+                negativePrompt: record.negativePrompt,
+                modelId: record.modelId,
+                width: record.width,
+                height: record.height,
+                batchSize: record.batchSize,
+                samplingSteps: record.samplingSteps,
+                cfgScale: record.cfgScale,
+                promptHelper: record.promptHelper,
+                pixaiConfig: record.pixaiConfig,
+                status: record.status,
+                mediaUrls: record.mediaUrls,
+                mediaIds: record.mediaIds,
+                nsfwScores: record.nsfwScores,
+                errorMessage: record.errorMessage,
+                durationMs: record.durationMs,
+                completedAt,
+              })
+              .returning({ id: pixaiGenerations.id });
+            if (!inserted) throw new Error(`Failed to insert PixAI generation ${record.taskId}`);
+            claimedGenerationId = inserted.id;
+          },
+        ),
+    );
+
+    if (record.status !== "completed" || !record.mediaUrls?.length) return;
+    if (claimedGenerationId === undefined) {
+      throw new Error(`PixAI generation ${record.taskId} claim did not return an id`);
+    }
+
+    let localFiles: string[];
+    try {
+      localFiles = await downloadImages(botId, record.taskId, record.mediaUrls, this.logger);
+    } catch (err) {
+      this.logger.warn({ err, botId, taskId: record.taskId }, "PixAI image download failed");
+      return;
+    }
+    if (localFiles.length === 0) return;
+
+    try {
+      const updated = await this.db
+        .update(pixaiGenerations)
+        .set({ localFiles })
+        .where(eq(pixaiGenerations.id, claimedGenerationId))
+        .returning({ id: pixaiGenerations.id });
+      if (updated.length === 0) {
+        await cleanupImages(botId, localFiles, this.logger);
+      }
+    } catch (err) {
+      this.logger.warn(
+        { err, botId, taskId: record.taskId },
+        "Failed to persist PixAI local files; keeping files because commit outcome is unknown",
+      );
     }
   }
 
@@ -1598,4 +1628,21 @@ async function downloadGenerationImages(
     }),
   );
   return results.filter((f): f is string => f != null);
+}
+
+async function cleanupGenerationImages(
+  botId: string,
+  localFiles: string[],
+  logger: Logger,
+): Promise<void> {
+  const dir = path.join(getDataDir(botId), "generations");
+  await Promise.all(
+    localFiles.map(async (filename) => {
+      try {
+        await unlink(path.join(dir, filename));
+      } catch (err) {
+        logger.warn(err, `PixAI image cleanup error: file=${filename}`);
+      }
+    }),
+  );
 }
