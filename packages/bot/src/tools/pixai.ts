@@ -152,12 +152,12 @@ export class PixAIClient {
     initialDelayMs = intervalMs,
     signal?: AbortSignal,
   ): Promise<TaskPollResult> {
-    const deadline = Date.now() + timeoutMs;
+    const deadline = Date.now() + Math.max(0, timeoutMs);
 
     // Initial delay: image generation takes several seconds at minimum
     await sleepWithSignal(initialDelayMs, signal);
 
-    while (Date.now() < deadline) {
+    do {
       signal?.throwIfAborted();
       const task = await this.getTask(taskId, signal);
 
@@ -172,9 +172,12 @@ export class PixAIClient {
         return this.extractImagesFromTask(task);
       }
 
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+
       // Still waiting/running — sleep then retry
-      await sleepWithSignal(intervalMs, signal);
-    }
+      await sleepWithSignal(Math.min(intervalMs, remainingMs), signal);
+    } while (Date.now() < deadline);
 
     throw new PixAITaskTerminalError("timeout", `PixAI task timed out after ${timeoutMs / 1000}s`);
   }
@@ -975,6 +978,7 @@ export async function recoverPixAIGeneration(
   const { record } = options;
   const client = new PixAIClient(options.apiKey, record.pixaiConfig?.apiMode ?? "graphql");
   const startTime = Math.max(options.createdAtMs, Date.now() - 2_147_483_647);
+  const remainingTimeoutMs = Math.max(0, options.createdAtMs + options.timeoutMs - Date.now());
 
   await options.onLog?.({
     level: "info",
@@ -985,7 +989,7 @@ export async function recoverPixAIGeneration(
   await pollAndSend(
     client,
     record.taskId,
-    options.timeoutMs,
+    remainingTimeoutMs,
     {
       api: options.api,
       chatId: record.chatId,

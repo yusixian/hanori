@@ -8,11 +8,12 @@ import {
   PixAIGenerationPersistenceError,
   PixAITaskTerminalError,
   pollAndSend,
+  recoverPixAIGeneration,
   trackPendingGeneration,
 } from "./pixai.js";
 
 describe("PixAI recovery", () => {
-  test("can query an existing task immediately with a request timeout", async () => {
+  test("queries an existing task immediately even when the polling budget is exhausted", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -26,7 +27,7 @@ describe("PixAI recovery", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new PixAIClient("key", "rest", 1000);
-    await expect(client.pollUntilComplete("task-1", 1000, 10, 0)).resolves.toEqual({
+    await expect(client.pollUntilComplete("task-1", 0, 10, 0)).resolves.toEqual({
       urls: ["https://example.com/image.png"],
       mediaIds: [],
     });
@@ -34,6 +35,30 @@ describe("PixAI recovery", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     vi.unstubAllGlobals();
+  });
+
+  test("uses only the timeout remaining since the task was created", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-20T00:00:00.000Z"));
+    const poll = vi.spyOn(PixAIClient.prototype, "pollUntilComplete").mockResolvedValue({
+      urls: ["https://example.com/image.png"],
+      mediaIds: [],
+    });
+    const api = {
+      sendPhoto: vi.fn().mockResolvedValue({ message_id: 42 }),
+    } as unknown as Api;
+
+    await recoverPixAIGeneration({
+      apiKey: "key",
+      api,
+      record: { ...baseRecord(), status: "pending" },
+      timeoutMs: 60_000,
+      createdAtMs: Date.now() - 45_000,
+    });
+
+    expect(poll).toHaveBeenCalledWith("task-1", 15_000, 5000, 0, undefined);
+    poll.mockRestore();
+    vi.useRealTimers();
   });
 
   test("waits for the completed state to be persisted", async () => {

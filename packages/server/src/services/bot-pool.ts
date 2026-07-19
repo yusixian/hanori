@@ -28,7 +28,7 @@ import {
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
-import { and, eq, lt } from "drizzle-orm";
+import { and, asc, eq, lte } from "drizzle-orm";
 import type { Logger } from "pino";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
@@ -68,6 +68,7 @@ import type { SummaryConfigService } from "./summary-config-service.js";
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
 const GENERATION_RECOVERY_CONCURRENCY = 3;
+const GENERATION_RECOVERY_BATCH_SIZE = GENERATION_RECOVERY_CONCURRENCY;
 const GENERATION_RECOVERY_SWEEP_INTERVAL_MS = 60_000;
 const GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -80,6 +81,7 @@ interface GenerationRecoveryConfig {
   manager: BotManager;
   apiKey: string;
   timeoutMs: number;
+  preexistingPendingCutoff: Date;
 }
 
 export class BotPool {
@@ -274,6 +276,12 @@ export class BotPool {
           config.manager,
           config.apiKey,
           config.timeoutMs,
+          new Date(
+            Math.max(
+              config.preexistingPendingCutoff.getTime(),
+              Date.now() - config.timeoutMs - 60_000,
+            ),
+          ),
         ).catch((err) => {
           this.logger.error({ err, botId }, "Failed to schedule periodic generation recovery");
         }),
@@ -823,6 +831,7 @@ export class BotPool {
           );
 
           if (shouldRecoverPending) {
+            const preexistingPendingCutoff = new Date();
             await this.cancelGenerationRecoveries(botId, "PixAI API key updated");
             const currentManager = this.managers.get(botId);
             if (currentManager instanceof BotManager) {
@@ -831,6 +840,7 @@ export class BotPool {
                 manager: currentManager,
                 apiKey,
                 timeoutMs,
+                preexistingPendingCutoff,
               });
               this.startGenerationRecoveryScheduler();
               void this.schedulePendingGenerationRecovery(
@@ -838,6 +848,7 @@ export class BotPool {
                 currentManager,
                 apiKey,
                 timeoutMs,
+                preexistingPendingCutoff,
               ).catch((err) => {
                 this.logger.error(err, "Failed to schedule pending generation recovery");
               });
@@ -1138,6 +1149,7 @@ export class BotPool {
       summary: summaryCallbacks,
     });
 
+    const preexistingPendingCutoff = new Date();
     this.managers.set(botId, manager);
     await manager.start();
     if (manager.status !== "running") {
@@ -1158,6 +1170,7 @@ export class BotPool {
         manager,
         apiKey: imageGeneration.apiKey,
         timeoutMs,
+        preexistingPendingCutoff,
       });
       this.startGenerationRecoveryScheduler();
       void this.schedulePendingGenerationRecovery(
@@ -1165,6 +1178,7 @@ export class BotPool {
         manager,
         imageGeneration.apiKey,
         timeoutMs,
+        preexistingPendingCutoff,
       ).catch((err) => {
         this.logger.error(err, "Failed to schedule startup generation recovery");
       });
@@ -1265,24 +1279,32 @@ export class BotPool {
     manager: BotManager,
     apiKey: string,
     timeoutMs: number,
+    pendingCutoff: Date,
   ): Promise<number> {
     const epoch = this.generationRecoveryEpochs.get(botId) ?? 0;
-    const staleBefore = new Date(Date.now() - timeoutMs - 60_000);
+    if (!this.isCurrentGenerationRecovery(botId, manager, epoch)) return 0;
+
+    if (this.countGenerationRecoveries(botId) >= GENERATION_RECOVERY_BATCH_SIZE) return 0;
+
+    const pendingCondition = and(
+      eq(pixaiGenerations.botId, botId),
+      eq(pixaiGenerations.status, "pending"),
+      lte(pixaiGenerations.createdAt, pendingCutoff),
+    );
     const pending = await this.db
       .select()
       .from(pixaiGenerations)
-      .where(
-        and(
-          eq(pixaiGenerations.botId, botId),
-          eq(pixaiGenerations.status, "pending"),
-          lt(pixaiGenerations.createdAt, staleBefore),
-        ),
-      );
+      .where(pendingCondition)
+      .orderBy(asc(pixaiGenerations.createdAt))
+      .limit(GENERATION_RECOVERY_BATCH_SIZE);
 
     if (!this.isCurrentGenerationRecovery(botId, manager, epoch)) return 0;
+    const availableSlots = GENERATION_RECOVERY_BATCH_SIZE - this.countGenerationRecoveries(botId);
+    if (availableSlots <= 0) return 0;
 
     let started = 0;
     for (const row of pending) {
+      if (started >= availableSlots) break;
       if (!this.isCurrentGenerationRecovery(botId, manager, epoch)) break;
       const recoveryKey = `${botId}:${row.taskId}`;
       if (this.generationRecoveries.has(recoveryKey)) continue;
@@ -1410,6 +1432,15 @@ export class BotPool {
       this.logger.info({ botId, count: started }, "Scheduled pending generation recovery");
     }
     return started;
+  }
+
+  private countGenerationRecoveries(botId: string): number {
+    const prefix = `${botId}:`;
+    let count = 0;
+    for (const key of this.generationRecoveries.keys()) {
+      if (key.startsWith(prefix)) count++;
+    }
+    return count;
   }
 
   private isCurrentGenerationRecovery(botId: string, manager: BotManager, epoch: number): boolean {
