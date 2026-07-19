@@ -24,7 +24,7 @@ pnpm build            # 构建所有包
 pnpm lint             # oxlint 代码检查
 ```
 
-首次初始化、认证迁移、Google OAuth 和 Docker 环境变量配置，请阅读 [配置与初始化指南](docs/SETUP.md)。
+首次部署或更新服务器，请阅读 [Docker 部署指南](docs/DEPLOYMENT.md)。认证迁移、Google OAuth 和完整环境变量说明见 [配置与初始化指南](docs/SETUP.md)。
 
 ## CI / Self-hosted Runner
 
@@ -63,10 +63,16 @@ ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 ## 部署
 
 ```bash
-docker compose up -d
+docker compose -p cos-bot-prod up -d --build
 ```
 
-详见 `docker-compose.yml` 和 `Dockerfile`。
+后续更新可以使用自动备份、拉取、构建和健康检查脚本：
+
+```bash
+./scripts/update-production.sh
+```
+
+首次部署和脚本使用方法见 [Docker 部署指南](docs/DEPLOYMENT.md)。
 
 ### 从旧版本升级（pgvector 迁移）
 
