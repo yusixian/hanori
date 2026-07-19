@@ -486,3 +486,203 @@ describe("ConversationStore.cleanup", () => {
     expect(state.messages.map((row) => row.id)).toEqual([2, 3]);
   });
 });
+
+function createHistoryLimitDb(messageIds: number[]) {
+  const state = { messageIds: [...messageIds] };
+  let selectedForDeletion: number[] = [];
+  const tx = {
+    execute: async () => undefined,
+    select: () => {
+      let limit = Number.POSITIVE_INFINITY;
+      const query = {
+        from: () => query,
+        where: () => query,
+        orderBy: () => query,
+        limit: (value: number) => {
+          limit = value;
+          return query;
+        },
+        // oxlint-disable-next-line unicorn/no-thenable -- Drizzle queries are intentionally awaitable.
+        then: <TResult1 = unknown[], TResult2 = never>(
+          onfulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        ): PromiseLike<TResult1 | TResult2> => {
+          if (limit === Number.POSITIVE_INFINITY) {
+            return Promise.resolve([{ total: state.messageIds.length }]).then(
+              onfulfilled,
+              onrejected,
+            );
+          }
+          selectedForDeletion = state.messageIds.slice(0, limit);
+          return Promise.resolve(selectedForDeletion.map((id) => ({ id }))).then(
+            onfulfilled,
+            onrejected,
+          );
+        },
+      };
+      return query;
+    },
+    delete: () => ({
+      where: () => ({
+        returning: async () => {
+          const selected = new Set(selectedForDeletion);
+          const deleted = state.messageIds.filter((id) => selected.has(id));
+          state.messageIds = state.messageIds.filter((id) => !selected.has(id));
+          return deleted.map((id) => ({ id }));
+        },
+      }),
+    }),
+  };
+  const db = {
+    transaction: (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
+  } as unknown as Database;
+  return { db, state };
+}
+
+describe("ConversationStore.enforceHistoryLimit", () => {
+  it("leaves raw history unlimited when the configured limit is zero", async () => {
+    const transaction = vi.fn();
+    const store = new ConversationStore({ transaction } as unknown as Database);
+
+    await expect(
+      store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 0),
+    ).resolves.toEqual({
+      countBefore: 0,
+      countAfter: 0,
+      limit: 0,
+      warningThreshold: 0,
+      prunedCount: 0,
+      warning: false,
+    });
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
+  it("prunes the oldest rows back to the 80% warning threshold at the hard limit", async () => {
+    const { db, state } = createHistoryLimitDb(Array.from({ length: 10 }, (_, index) => index + 1));
+    const store = new ConversationStore(db);
+
+    const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 10);
+
+    expect(result).toEqual({
+      countBefore: 10,
+      countAfter: 8,
+      limit: 10,
+      warningThreshold: 8,
+      prunedCount: 2,
+      warning: true,
+    });
+    expect(state.messageIds).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
+  it("absorbs a batch overshoot and still returns to the configured warning threshold", async () => {
+    const { db, state } = createHistoryLimitDb(Array.from({ length: 13 }, (_, index) => index + 1));
+    const store = new ConversationStore(db);
+
+    const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 10);
+
+    expect(result.prunedCount).toBe(5);
+    expect(result.countAfter).toBe(8);
+    expect(state.messageIds).toEqual([6, 7, 8, 9, 10, 11, 12, 13]);
+  });
+});
+
+function createMessageWriteDb() {
+  const state = { inserted: [] as Array<Record<string, unknown>> };
+  const db = {
+    insert: () => ({
+      values: (rows: Array<Record<string, unknown>>) => {
+        let ignoreConflicts = false;
+        const returning = async () => {
+          const seenSourceKeys = new Set(
+            state.inserted.map((row) => row["sourceKey"]).filter((key) => typeof key === "string"),
+          );
+          const inserted = rows.filter((row) => {
+            const sourceKey = row["sourceKey"];
+            if (!ignoreConflicts || typeof sourceKey !== "string") return true;
+            if (seenSourceKeys.has(sourceKey)) return false;
+            seenSourceKeys.add(sourceKey);
+            return true;
+          });
+          state.inserted.push(...inserted);
+          return inserted.map((row, index) => ({
+            id: index + 1,
+            role: row["role"],
+            content: row["content"],
+          }));
+        };
+        return {
+          returning,
+          onConflictDoNothing: () => {
+            ignoreConflicts = true;
+            return { returning };
+          },
+        };
+      },
+    }),
+  } as unknown as Database;
+  return { db, state };
+}
+
+describe("ConversationStore.addMessages", () => {
+  it("drops empty and display-only history while bounding durable tool traces", async () => {
+    const { db, state } = createMessageWriteDb();
+    const store = new ConversationStore(db);
+
+    const persisted = await store.addMessages([
+      { botId: baseParams.botId, chatId: baseParams.chatId, role: "assistant", content: "   " },
+      {
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        role: "tool_call",
+        content: "send_sticker",
+        meta: { toolName: "send_sticker", args: '{"emoji":"🥳"}' },
+      },
+      {
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        role: "tool_result",
+        content: '{"success":true}',
+        meta: { toolName: "send_sticker" },
+      },
+      {
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        role: "tool_call",
+        content: "set_timer",
+        meta: { toolName: "set_timer", args: "x".repeat(10_000) },
+      },
+      {
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        role: "tool_result",
+        content: "y".repeat(10_000),
+        meta: { toolName: "set_timer" },
+      },
+    ]);
+
+    expect(state.inserted).toHaveLength(2);
+    expect(state.inserted.map((row) => row["role"])).toEqual(["tool_call", "tool_result"]);
+    expect(
+      (state.inserted[0]?.["meta"] as { args: string } | undefined)?.args.length ?? 0,
+    ).toBeLessThanOrEqual(2_100);
+    expect(String(state.inserted[1]?.["content"]).length).toBeLessThanOrEqual(2_100);
+    expect(persisted).toHaveLength(2);
+  });
+
+  it("persists each platform source record only once", async () => {
+    const { db, state } = createMessageWriteDb();
+    const store = new ConversationStore(db);
+    const message = {
+      botId: baseParams.botId,
+      chatId: baseParams.chatId,
+      role: "user" as const,
+      content: "hello",
+      sourceKey: "telegram:42:user",
+    };
+
+    await store.addMessages([message, message]);
+
+    expect(state.inserted).toHaveLength(1);
+    expect(state.inserted[0]?.["sourceKey"]).toBe("telegram:42:user");
+  });
+});

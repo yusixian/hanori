@@ -1,0 +1,2 @@
+ALTER TABLE "conversation_messages" ADD COLUMN "source_key" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "conv_msg_bot_chat_source_uniq" ON "conversation_messages" USING btree ("bot_id","chat_id","source_key");

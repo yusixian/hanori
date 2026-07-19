@@ -38,6 +38,7 @@ import { BotMemoryStore } from "./bot-memory-store.js";
 import { ChatModelStore } from "./chat-model-store.js";
 import { ChatProviderStore } from "./chat-provider-store.js";
 import { compressConversation } from "./conversation-compressor.js";
+import { ConversationHistoryGovernor } from "./conversation-history-governor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import { EmbeddingService } from "./embedding-service.js";
@@ -325,6 +326,7 @@ export class BotPool {
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
     let conversation: ConversationCallbacks | undefined;
+    let runInitialHistoryGovernance: (() => Promise<void>) | undefined;
     const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
     // Decrypt all providers up front — kept in-memory for bot lifetime.
     // Track skip reasons separately so operators can distinguish "no key configured"
@@ -374,8 +376,42 @@ export class BotPool {
           `AI providers skipped (encryption key mismatch, cannot decrypt): ${skippedDecryptFail.join(", ")}`,
         );
       }
-      const conversationCfg = aiConfig.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+      const conversationCfg = {
+        ...DEFAULT_CONVERSATION_CONFIG,
+        ...aiConfig.conversationConfig,
+      };
       const store = this.conversationStore;
+      const historyGovernor = new ConversationHistoryGovernor(store, {
+        warn: (meta: unknown, message?: string) => {
+          void dbLogger.warn(String(message), meta);
+        },
+      });
+      const governChat = (chatId: number) =>
+        historyGovernor.run({
+          botId,
+          chatId,
+          maxRawMessagesPerChat: conversationCfg.maxRawMessagesPerChat,
+          summarize: () =>
+            compressConversation({
+              botId,
+              chatId,
+              store,
+              conversationConfig: conversationCfg,
+              apiKey: activeProvider.apiKey,
+              baseURL: activeProvider.baseURL,
+              model: activeProvider.defaultModel,
+              providerFormat: activeProvider.providerFormat,
+              logger: this.logger,
+            }),
+        });
+      runInitialHistoryGovernance = async () => {
+        if (conversationCfg.maxRawMessagesPerChat <= 0) return;
+        const warningThreshold = Math.floor(conversationCfg.maxRawMessagesPerChat * 0.8);
+        const chats = await store.listChatsAtOrAboveMessageCount(botId, warningThreshold);
+        for (const chat of chats) {
+          await governChat(chat.chatId);
+        }
+      };
 
       // Create embedding service early so closures can reference it
       let embeddingService: EmbeddingService | undefined;
@@ -403,18 +439,17 @@ export class BotPool {
         getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
         addMessage: (p) => store.addMessage({ botId, ...p }),
         addMessages: async (msgs) => {
-          const ids = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
+          const persisted = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
           // Fire-and-forget: async generate embeddings (non-blocking)
-          if (embeddingService && ids.length > 0) {
-            const toEmbed = msgs
-              .map((m, i) => ({ msg: m, id: ids[i]! }))
-              .filter(
-                ({ msg }) =>
-                  msg.content.length > 0 && (msg.role === "user" || msg.role === "assistant"),
-              );
+          if (embeddingService && persisted.length > 0) {
+            const toEmbed = persisted.filter(
+              (message) =>
+                message.content.length > 0 &&
+                (message.role === "user" || message.role === "assistant"),
+            );
             if (toEmbed.length > 0) {
               embeddingService
-                .generateEmbeddings(toEmbed.map((e) => e.msg.content))
+                .generateEmbeddings(toEmbed.map((message) => message.content))
                 .then((embeddings) => {
                   for (let i = 0; i < embeddings.length; i++) {
                     const emb = embeddings[i];
@@ -433,20 +468,10 @@ export class BotPool {
         },
         triggerCompression: (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
-          compressConversation({
-            botId,
-            chatId,
-            store,
-            conversationConfig: conversationCfg,
-            apiKey: activeProvider.apiKey,
-            baseURL: activeProvider.baseURL,
-            model: activeProvider.defaultModel,
-            providerFormat: activeProvider.providerFormat,
-            logger: this.logger,
-          }).catch((err) => {
-            this.logger.error(
-              err,
-              `Conversation compression failed for bot=${botId} chat=${chatId}`,
+          governChat(chatId).catch((err) => {
+            void dbLogger.error(
+              `Conversation history governance failed for chat=${chatId}: ${err instanceof Error ? err.message : String(err)}`,
+              { chatId },
             );
           });
         },
@@ -883,6 +908,11 @@ export class BotPool {
       this.botTimerHandlers.delete(botId);
       throw new Error("Bot failed to start; check bot logs for details");
     }
+    void runInitialHistoryGovernance?.().catch((err) => {
+      void dbLogger.error(
+        `Initial conversation history governance failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
   }
 
   private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {

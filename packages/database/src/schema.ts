@@ -88,6 +88,7 @@ interface AiConfigJson {
     autoSummarize: boolean;
     summarizeThreshold: number;
     retentionDays: number;
+    maxRawMessagesPerChat: number;
   };
   memoryConfig?: {
     enabled: boolean;
@@ -325,12 +326,14 @@ export const conversationMessages = pgTable(
     content: text("content").notNull(),
     userId: bigint("user_id", { mode: "number" }),
     userName: text("user_name"),
+    sourceKey: text("source_key"),
     meta: json("meta").$type<Record<string, unknown>>(),
     embedding: halfvec("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [
     index("conv_msg_bot_chat_idx").on(t.botId, t.chatId, t.id),
+    uniqueIndex("conv_msg_bot_chat_source_uniq").on(t.botId, t.chatId, t.sourceKey),
     index("conv_msg_created_idx").on(t.createdAt),
     index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
   ],

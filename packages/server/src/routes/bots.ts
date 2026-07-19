@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { assemblePromptPreview } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
-import { IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
+import { DEFAULT_CONVERSATION_CONFIG, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
   AiConfigStored,
@@ -253,6 +253,12 @@ const aiConfigSchema = z
         autoSummarize: z.boolean(),
         summarizeThreshold: z.number().min(10).max(200),
         retentionDays: z.number().min(0).max(365),
+        maxRawMessagesPerChat: z
+          .number()
+          .int()
+          .min(0)
+          .max(1_000_000)
+          .default(DEFAULT_CONVERSATION_CONFIG.maxRawMessagesPerChat),
       })
       .optional(),
     memoryConfig: z

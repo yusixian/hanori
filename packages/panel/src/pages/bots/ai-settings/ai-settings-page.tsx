@@ -353,7 +353,10 @@ export function BotAiSettingsPage() {
     }));
   };
 
-  const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+  const convCfg = {
+    ...DEFAULT_CONVERSATION_CONFIG,
+    ...config.conversationConfig,
+  };
   const updateConv = (updates: Partial<ConversationConfig>) => {
     setConfig((prev) => ({
       ...prev,

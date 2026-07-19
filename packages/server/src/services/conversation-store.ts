@@ -12,6 +12,7 @@ import {
   count,
   desc,
   eq,
+  gte,
   gt,
   ilike,
   inArray,
@@ -29,6 +30,26 @@ export const COMPACTION_MAX_BATCH_JSON_CHARS = 120_000;
 const COMPACTION_MAX_SOURCE_MESSAGE_CHARS = 20_000;
 const JSON_ESCAPE_EXPANSION_FACTOR = 6;
 const TRUNCATION_MARKER = "\n…[truncated for compaction]…\n";
+const HISTORY_TOOL_TRACE_MAX_CHARS = 2_000;
+const HISTORY_TOOL_TRUNCATION_MARKER = "…[truncated]";
+const HISTORY_PRUNE_BATCH_SIZE = 10_000;
+const DISPLAY_ONLY_HISTORY_TOOLS = new Set([
+  "multi_message",
+  "react_to_message",
+  "send_dice",
+  "send_sticker",
+]);
+
+interface ConversationMessageInput {
+  botId: string;
+  chatId: number;
+  role: ConversationRole;
+  content: string;
+  userId?: number;
+  userName?: string;
+  sourceKey?: string;
+  meta?: Record<string, unknown>;
+}
 
 export interface CompactionCandidate {
   activeSummaryId: number | null;
@@ -43,6 +64,15 @@ export interface CompactionCandidate {
   newCursorId: number;
 }
 
+export interface HistoryLimitResult {
+  countBefore: number;
+  countAfter: number;
+  limit: number;
+  warningThreshold: number;
+  prunedCount: number;
+  warning: boolean;
+}
+
 function truncateCompactionContent(content: string, maxChars: number): string {
   if (content.length <= maxChars) return content;
   if (maxChars <= TRUNCATION_MARKER.length) return content.slice(0, maxChars);
@@ -51,56 +81,75 @@ function truncateCompactionContent(content: string, maxChars: number): string {
   return `${content.slice(0, headLength)}${TRUNCATION_MARKER}${content.slice(-Math.floor(available / 2))}`;
 }
 
+function compactHistoryToolValue(value: string): string {
+  if (value.length <= HISTORY_TOOL_TRACE_MAX_CHARS) return value;
+  return `${value.slice(0, HISTORY_TOOL_TRACE_MAX_CHARS - HISTORY_TOOL_TRUNCATION_MARKER.length)}${HISTORY_TOOL_TRUNCATION_MARKER}`;
+}
+
+function normalizeConversationMessage(
+  message: ConversationMessageInput,
+): ConversationMessageInput | null {
+  if (
+    (message.role === "user" || message.role === "assistant" || message.role === "context") &&
+    message.content.trim().length === 0
+  ) {
+    return null;
+  }
+
+  if (message.role !== "tool_call" && message.role !== "tool_result") return message;
+
+  const toolName =
+    typeof message.meta?.["toolName"] === "string"
+      ? message.meta["toolName"]
+      : message.role === "tool_call"
+        ? message.content
+        : undefined;
+  if (toolName && DISPLAY_ONLY_HISTORY_TOOLS.has(toolName)) return null;
+
+  const meta = message.meta ? { ...message.meta } : undefined;
+  if (typeof meta?.["args"] === "string") {
+    meta["args"] = compactHistoryToolValue(meta["args"]);
+  }
+  return {
+    ...message,
+    content: compactHistoryToolValue(message.content),
+    meta,
+  };
+}
+
 export class ConversationStore {
   constructor(private db: Database) {}
 
-  async addMessage(params: {
-    botId: string;
-    chatId: number;
-    role: ConversationRole;
-    content: string;
-    userId?: number;
-    userName?: string;
-    meta?: Record<string, unknown>;
-  }) {
-    await this.db.insert(conversationMessages).values({
-      botId: params.botId,
-      chatId: params.chatId,
-      role: params.role,
-      content: params.content,
-      userId: params.userId,
-      userName: params.userName,
-      meta: params.meta,
-    });
+  async addMessage(params: ConversationMessageInput) {
+    await this.addMessages([params]);
   }
 
-  async addMessages(
-    messages: Array<{
-      botId: string;
-      chatId: number;
-      role: ConversationRole;
-      content: string;
-      userId?: number;
-      userName?: string;
-      meta?: Record<string, unknown>;
-    }>,
-  ): Promise<number[]> {
-    if (messages.length === 0) return [];
+  async addMessages(messages: ConversationMessageInput[]) {
+    const normalized = messages
+      .map(normalizeConversationMessage)
+      .filter((message): message is ConversationMessageInput => message !== null);
+    if (normalized.length === 0) return [];
     const rows = await this.db
       .insert(conversationMessages)
       .values(
-        messages.map((m) => ({
+        normalized.map((m) => ({
           botId: m.botId,
           chatId: m.chatId,
           role: m.role,
           content: m.content,
           userId: m.userId,
           userName: m.userName,
+          sourceKey: m.sourceKey,
           meta: m.meta,
         })),
       )
-      .returning({ id: conversationMessages.id });
-    return rows.map((r) => r.id);
+      .onConflictDoNothing()
+      .returning({
+        id: conversationMessages.id,
+        role: conversationMessages.role,
+        content: conversationMessages.content,
+      });
+    return rows;
   }
 
   async getHistory(botId: string, chatId: number, limit: number) {
@@ -159,6 +208,17 @@ export class ConversationStore {
       .from(conversationMessages)
       .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)));
     return Number(result?.total ?? 0);
+  }
+
+  async listChatsAtOrAboveMessageCount(botId: string, minimumCount: number) {
+    const total = count();
+    const rows = await this.db
+      .select({ chatId: conversationMessages.chatId, total })
+      .from(conversationMessages)
+      .where(eq(conversationMessages.botId, botId))
+      .groupBy(conversationMessages.chatId)
+      .having(gte(total, minimumCount));
+    return rows.map((row) => ({ chatId: row.chatId, count: Number(row.total) }));
   }
 
   async getUncompactedMessageCount(botId: string, chatId: number): Promise<number> {
@@ -753,6 +813,79 @@ export class ConversationStore {
       .orderBy(desc(conversationMessages.createdAt))
       .limit(limit);
     return rows.map(toResult);
+  }
+
+  async enforceHistoryLimit(
+    botId: string,
+    chatId: number,
+    maxRawMessagesPerChat: number,
+  ): Promise<HistoryLimitResult> {
+    const limit = Math.max(0, Math.floor(maxRawMessagesPerChat));
+    const warningThreshold = limit > 0 ? Math.floor(limit * 0.8) : 0;
+    if (limit === 0) {
+      return {
+        countBefore: 0,
+        countAfter: 0,
+        limit,
+        warningThreshold,
+        prunedCount: 0,
+        warning: false,
+      };
+    }
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`${botId}:${chatId}`}, 0))`,
+      );
+
+      const [countRow] = await tx
+        .select({ total: count() })
+        .from(conversationMessages)
+        .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)));
+      const countBefore = Number(countRow?.total ?? 0);
+      let prunedCount = 0;
+
+      if (countBefore >= limit) {
+        let remaining = countBefore - warningThreshold;
+        while (remaining > 0) {
+          const oldestRows = await tx
+            .select({ id: conversationMessages.id })
+            .from(conversationMessages)
+            .where(
+              and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)),
+            )
+            .orderBy(asc(conversationMessages.id))
+            .limit(Math.min(remaining, HISTORY_PRUNE_BATCH_SIZE));
+          if (oldestRows.length === 0) break;
+
+          const deleted = await tx
+            .delete(conversationMessages)
+            .where(
+              and(
+                eq(conversationMessages.botId, botId),
+                eq(conversationMessages.chatId, chatId),
+                inArray(
+                  conversationMessages.id,
+                  oldestRows.map((row) => row.id),
+                ),
+              ),
+            )
+            .returning({ id: conversationMessages.id });
+          prunedCount += deleted.length;
+          remaining -= deleted.length;
+          if (deleted.length === 0) break;
+        }
+      }
+
+      return {
+        countBefore,
+        countAfter: countBefore - prunedCount,
+        limit,
+        warningThreshold,
+        prunedCount,
+        warning: countBefore >= warningThreshold,
+      };
+    });
   }
 
   async cleanup(botId: string, retentionDays: number) {
