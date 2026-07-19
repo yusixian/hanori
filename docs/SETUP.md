@@ -4,7 +4,7 @@
 
 ## 1. 前置条件
 
-- Node.js 20 或更高版本
+- Node.js 22 或更高版本
 - pnpm 10+
 - PostgreSQL 17，并启用 pgvector
 - 生产环境建议使用随机生成的加密密钥，不要使用示例值

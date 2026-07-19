@@ -159,6 +159,7 @@ interface AiConfigJson {
     replyMode?: "stream" | "segment";
     autoSplitThreshold: number;
     splitDelayMs: number;
+    richMessageEnabled?: boolean;
   };
   models?: Array<{
     id: string;
