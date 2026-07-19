@@ -280,6 +280,23 @@ export interface WebToolsConfig {
   };
 }
 
+export interface WebToolsConfigPublic {
+  enabled: boolean;
+  search?: {
+    provider: "tavily" | "searxng" | "brave" | "custom";
+    hasApiKey?: boolean;
+    baseURL?: string;
+  };
+  imageGeneration?: {
+    provider: "openai" | "custom" | "pixai";
+    hasApiKey?: boolean;
+    baseURL?: string;
+    model?: string;
+    size?: string;
+    pixaiConfig?: PixAIConfig;
+  };
+}
+
 export interface AgentToolsConfig {
   enabled: boolean;
   subAgentModel?: string;
@@ -604,7 +621,7 @@ export interface AiConfigPublic {
   conversationConfig?: ConversationConfig;
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
-  webToolsConfig?: WebToolsConfig;
+  webToolsConfig?: WebToolsConfigPublic;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;

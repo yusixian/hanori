@@ -23,11 +23,7 @@ export async function tryPersistTerminalGenerationFailure(
 export async function confirmPendingInsertAbsent(
   findExisting: () => Promise<unknown | undefined>,
 ): Promise<boolean> {
-  try {
-    return (await findExisting()) === undefined;
-  } catch {
-    return false;
-  }
+  return (await findExisting()) === undefined;
 }
 
 export async function persistTerminalGenerationClaim(
@@ -40,37 +36,114 @@ export async function persistTerminalGenerationClaim(
   throw new Error(`PixAI generation ${taskId} was already claimed or is no longer pending`);
 }
 
-type PendingInsertFallbackClaim = symbol;
+type PendingInsertFallbackEntry =
+  | { state: "available"; expiresAt: number }
+  | { state: "claimed"; claim: symbol; expiresAt: number }
+  | { state: "suppressed"; expiresAt: number };
+
+const DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class PendingGenerationInsertFallbackTracker {
-  private readonly entries = new Map<string, PendingInsertFallbackClaim | null>();
+  private readonly entries = new Map<string, PendingInsertFallbackEntry>();
+
+  constructor(
+    private readonly ttlMs = DEFAULT_PENDING_INSERT_FALLBACK_TTL_MS,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+      throw new Error("Pending insert fallback TTL must be positive");
+    }
+  }
 
   markPendingInsertFailure(botId: string, taskId: string): void {
-    this.entries.set(this.key(botId, taskId), null);
+    this.pruneExpired();
+    const key = this.key(botId, taskId);
+    const current = this.entries.get(key);
+    if (current?.state === "claimed" || current?.state === "suppressed") return;
+    this.entries.set(key, { state: "available", expiresAt: this.now() + this.ttlMs });
   }
 
   clear(botId: string, taskId: string): void {
+    this.pruneExpired();
     this.entries.delete(this.key(botId, taskId));
+  }
+
+  suppress(botId: string, taskId: string): void {
+    this.pruneExpired();
+    this.entries.set(this.key(botId, taskId), {
+      state: "suppressed",
+      expiresAt: this.now() + this.ttlMs,
+    });
+  }
+
+  clearBot(botId: string): void {
+    this.pruneExpired();
+    const prefix = `${botId}:`;
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(prefix)) this.entries.delete(key);
+    }
+  }
+
+  pruneExpired(): number {
+    const now = this.now();
+    let pruned = 0;
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt > now) continue;
+      this.entries.delete(key);
+      pruned++;
+    }
+    return pruned;
   }
 
   async insertIfClaimed(
     botId: string,
     taskId: string,
+    confirmAbsent: () => Promise<boolean>,
     insert: () => Promise<unknown>,
   ): Promise<boolean> {
+    this.pruneExpired();
     const key = this.key(botId, taskId);
-    if (this.entries.get(key) !== null) return false;
+    const current = this.entries.get(key);
+    if (current?.state !== "available") return false;
 
     const claim = Symbol(key);
-    this.entries.set(key, claim);
+    const claimed: PendingInsertFallbackEntry = {
+      state: "claimed",
+      claim,
+      expiresAt: current.expiresAt,
+    };
+    this.entries.set(key, claimed);
+    let insertStarted = false;
+
     try {
+      if (!(await confirmAbsent())) {
+        if (this.isCurrentClaim(key, claim)) this.entries.delete(key);
+        return false;
+      }
+
+      // A delete can suppress fallback while the confirmation query is in flight.
+      if (!this.isCurrentClaim(key, claim)) return false;
+      insertStarted = true;
       await insert();
-      if (this.entries.get(key) === claim) this.entries.delete(key);
+      if (this.isCurrentClaim(key, claim)) this.entries.delete(key);
       return true;
     } catch (error) {
-      if (this.entries.get(key) === claim) this.entries.delete(key);
+      if (this.isCurrentClaim(key, claim)) {
+        // A failed absence check ran before any write, so retrying remains safe. Once
+        // insert starts its commit outcome can be ambiguous, so eligibility is consumed.
+        if (insertStarted) {
+          this.entries.delete(key);
+        } else {
+          this.entries.set(key, { state: "available", expiresAt: claimed.expiresAt });
+        }
+      }
       throw error;
     }
+  }
+
+  private isCurrentClaim(key: string, claim: symbol): boolean {
+    const entry = this.entries.get(key);
+    return entry?.state === "claimed" && entry.claim === claim && entry.expiresAt > this.now();
   }
 
   private key(botId: string, taskId: string): string {

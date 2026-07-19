@@ -3,8 +3,10 @@ import { describe, expect, test, vi } from "vitest";
 import type { PixAIGenerationRecord } from "@cos-tool-bot/shared";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import {
+  handlePixAIBackgroundFailure,
   PixAIClient,
   PixAIGenerationPersistenceError,
+  PixAITaskTerminalError,
   pollAndSend,
   trackPendingGeneration,
 } from "./pixai.js";
@@ -304,6 +306,75 @@ describe("PixAI recovery", () => {
   });
 });
 
+describe("PixAI background failure handling", () => {
+  test("leaves retryable HTTP failures pending", async () => {
+    const harness = backgroundFailureHarness();
+
+    await handlePixAIBackgroundFailure(
+      new Error("PixAI GraphQL get task failed: HTTP 401 unauthorized"),
+      harness.options,
+    );
+
+    expect(harness.onGenerationTrack).not.toHaveBeenCalled();
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    expect(harness.onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "warn",
+        message: expect.stringContaining("leaving task pending for recovery"),
+      }),
+    );
+  });
+
+  test("does not notify after losing the terminal failure claim", async () => {
+    const onGenerationTrack = vi.fn().mockRejectedValue(new Error("already claimed"));
+    const harness = backgroundFailureHarness(onGenerationTrack);
+
+    await handlePixAIBackgroundFailure(
+      new PixAITaskTerminalError("failed", "PixAI task failed: rejected"),
+      harness.options,
+    );
+
+    expect(onGenerationTrack).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "failed", errorMessage: "PixAI task failed: rejected" }),
+    );
+    expect(harness.sendMessage).not.toHaveBeenCalled();
+    expect(harness.onLog).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("already claimed") }),
+    );
+  });
+
+  test("persists and notifies for a terminal timeout when the claim succeeds", async () => {
+    const harness = backgroundFailureHarness();
+
+    await handlePixAIBackgroundFailure(
+      new PixAITaskTerminalError("timeout", "PixAI task timed out after 300s"),
+      harness.options,
+    );
+
+    expect(harness.onGenerationTrack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        errorMessage: "PixAI task timed out after 300s",
+      }),
+    );
+    expect(harness.sendMessage).toHaveBeenCalledWith(
+      123,
+      "图片生成失败: PixAI task timed out after 300s",
+    );
+  });
+
+  test("treats a missing tracking callback as ownership", async () => {
+    const harness = backgroundFailureHarness();
+
+    await handlePixAIBackgroundFailure(
+      new PixAITaskTerminalError("cancelled", "PixAI task cancelled: user request"),
+      { ...harness.options, onGenerationTrack: undefined },
+    );
+
+    expect(harness.sendMessage).toHaveBeenCalledOnce();
+  });
+});
+
 function baseRecord(): Omit<PixAIGenerationRecord, "status"> {
   return {
     chatId: 123,
@@ -313,5 +384,26 @@ function baseRecord(): Omit<PixAIGenerationRecord, "status"> {
     width: 512,
     height: 512,
     batchSize: 1,
+  };
+}
+
+function backgroundFailureHarness(
+  onGenerationTrack = vi.fn<(record: PixAIGenerationRecord) => Promise<void>>().mockResolvedValue(),
+) {
+  const sendMessage = vi.fn().mockResolvedValue({ message_id: 42 });
+  const onLog = vi.fn();
+  return {
+    onGenerationTrack,
+    onLog,
+    sendMessage,
+    options: {
+      api: { sendMessage } as unknown as Api,
+      chatId: 123,
+      baseRecord: baseRecord(),
+      startTime: Date.now(),
+      logPrefix: "PixAI test task",
+      onLog,
+      onGenerationTrack,
+    },
   };
 }

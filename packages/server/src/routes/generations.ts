@@ -7,8 +7,9 @@ import { Hono } from "hono";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import type { BotPool } from "../services/bot-pool.js";
 
-export function generationRoutes(db: Database) {
+export function generationRoutes(db: Database, botPool: BotPool) {
   return new Hono()
     .get(
       "/:botId/generations",
@@ -82,9 +83,10 @@ export function generationRoutes(db: Database) {
       const [row] = await db
         .delete(pixaiGenerations)
         .where(and(eq(pixaiGenerations.id, generationId), eq(pixaiGenerations.botId, botId)))
-        .returning({ localFiles: pixaiGenerations.localFiles });
+        .returning({ localFiles: pixaiGenerations.localFiles, taskId: pixaiGenerations.taskId });
 
       if (!row) return c.json({ ok: false as const, error: "Generation not found" }, 404);
+      botPool.suppressGenerationFallback(botId, row.taskId);
 
       // Clean up local files in background
       if (row.localFiles) {

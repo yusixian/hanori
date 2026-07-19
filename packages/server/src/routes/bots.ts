@@ -18,6 +18,7 @@ import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
+import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "../services/ai-config-web-tools.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
@@ -177,7 +178,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     conversationConfig: migrated.conversationConfig,
     memoryConfig: migrated.memoryConfig,
     stickerPacks: migrated.stickerPacks,
-    webToolsConfig: migrated.webToolsConfig,
+    webToolsConfig: toWebToolsConfigPublic(migrated.webToolsConfig),
     agentToolsConfig: migrated.agentToolsConfig,
     artworkToolsConfig: migrated.artworkToolsConfig,
     botMemoryConfig: migrated.botMemoryConfig,
@@ -678,6 +679,7 @@ export function botsRoutes(
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       await botPool.stopBot(botId);
       await db.delete(bots).where(eq(bots.id, botId));
+      botPool.clearGenerationFallbacks(botId);
       return c.json({ ok: true as const });
     })
     .post("/:botId/start", async (c) => {
@@ -889,7 +891,10 @@ export function botsRoutes(
           conversationConfig: body.conversationConfig,
           memoryConfig: body.memoryConfig,
           stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
-          webToolsConfig: body.webToolsConfig,
+          webToolsConfig: mergeWebToolsApiKeys(
+            existingMigrated?.webToolsConfig,
+            body.webToolsConfig,
+          ),
           agentToolsConfig: body.agentToolsConfig,
           artworkToolsConfig: body.artworkToolsConfig,
           botMemoryConfig: body.botMemoryConfig,

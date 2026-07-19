@@ -888,22 +888,28 @@ export class BotPool {
             });
             this.generationInsertFallbacks.clear(botId, record.taskId);
           } catch (err) {
-            const confirmedAbsent = await confirmPendingInsertAbsent(async () => {
-              const [existing] = await this.db
-                .select({ id: pixaiGenerations.id })
-                .from(pixaiGenerations)
-                .where(
-                  and(
-                    eq(pixaiGenerations.botId, botId),
-                    eq(pixaiGenerations.taskId, record.taskId),
-                  ),
-                );
-              return existing;
-            });
-            if (confirmedAbsent) {
+            try {
+              const confirmedAbsent = await confirmPendingInsertAbsent(async () => {
+                const [existing] = await this.db
+                  .select({ id: pixaiGenerations.id })
+                  .from(pixaiGenerations)
+                  .where(
+                    and(
+                      eq(pixaiGenerations.botId, botId),
+                      eq(pixaiGenerations.taskId, record.taskId),
+                    ),
+                  );
+                return existing;
+              });
+              if (confirmedAbsent) {
+                this.generationInsertFallbacks.markPendingInsertFailure(botId, record.taskId);
+              } else {
+                this.generationInsertFallbacks.clear(botId, record.taskId);
+              }
+            } catch {
+              // The insert and verification both had transient failures. Keep a
+              // bounded marker so terminal persistence can safely re-check later.
               this.generationInsertFallbacks.markPendingInsertFailure(botId, record.taskId);
-            } else {
-              this.generationInsertFallbacks.clear(botId, record.taskId);
             }
             throw err;
           }
@@ -950,31 +956,46 @@ export class BotPool {
               return false;
             },
             () =>
-              this.generationInsertFallbacks.insertIfClaimed(botId, record.taskId, () =>
-                this.db.insert(pixaiGenerations).values({
-                  botId,
-                  chatId: record.chatId,
-                  userId: record.userId,
-                  taskId: record.taskId,
-                  prompt: record.prompt,
-                  negativePrompt: record.negativePrompt,
-                  modelId: record.modelId,
-                  width: record.width,
-                  height: record.height,
-                  batchSize: record.batchSize,
-                  samplingSteps: record.samplingSteps,
-                  cfgScale: record.cfgScale,
-                  promptHelper: record.promptHelper,
-                  pixaiConfig: record.pixaiConfig,
-                  status: record.status,
-                  mediaUrls: record.mediaUrls,
-                  mediaIds: record.mediaIds,
-                  localFiles,
-                  nsfwScores: record.nsfwScores,
-                  errorMessage: record.errorMessage,
-                  durationMs: record.durationMs,
-                  completedAt,
-                }),
+              this.generationInsertFallbacks.insertIfClaimed(
+                botId,
+                record.taskId,
+                async () => {
+                  const [existing] = await this.db
+                    .select({ id: pixaiGenerations.id })
+                    .from(pixaiGenerations)
+                    .where(
+                      and(
+                        eq(pixaiGenerations.botId, botId),
+                        eq(pixaiGenerations.taskId, record.taskId),
+                      ),
+                    );
+                  return existing === undefined;
+                },
+                () =>
+                  this.db.insert(pixaiGenerations).values({
+                    botId,
+                    chatId: record.chatId,
+                    userId: record.userId,
+                    taskId: record.taskId,
+                    prompt: record.prompt,
+                    negativePrompt: record.negativePrompt,
+                    modelId: record.modelId,
+                    width: record.width,
+                    height: record.height,
+                    batchSize: record.batchSize,
+                    samplingSteps: record.samplingSteps,
+                    cfgScale: record.cfgScale,
+                    promptHelper: record.promptHelper,
+                    pixaiConfig: record.pixaiConfig,
+                    status: record.status,
+                    mediaUrls: record.mediaUrls,
+                    mediaIds: record.mediaIds,
+                    localFiles,
+                    nsfwScores: record.nsfwScores,
+                    errorMessage: record.errorMessage,
+                    durationMs: record.durationMs,
+                    completedAt,
+                  }),
               ),
           );
         }
@@ -1048,30 +1069,36 @@ export class BotPool {
               .from(mcpServers)
               .where(eq(mcpServers.id, serverId));
             if (!server) return { ok: false as const, error: "服务器不存在" };
-            const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
-            if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
-            const ids = new Set(current.aiConfig.mcpServerIds ?? []);
-            if (ids.has(serverId)) return { ok: false as const, error: "已启用" };
-            ids.add(serverId);
-            await this.db
-              .update(bots)
-              .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
-              .where(eq(bots.id, botId));
-            setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
-            return { ok: true as const };
+            const result = await this.withAiConfigLock(botId, async () => {
+              const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
+              const ids = new Set(current.aiConfig.mcpServerIds ?? []);
+              if (ids.has(serverId)) return { ok: false as const, error: "已启用" };
+              ids.add(serverId);
+              await this.db
+                .update(bots)
+                .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
+                .where(eq(bots.id, botId));
+              return { ok: true as const };
+            });
+            if (result.ok) setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
+            return result;
           },
           removeServer: async (serverId: number) => {
-            const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
-            if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
-            const ids = new Set(current.aiConfig.mcpServerIds ?? []);
-            if (!ids.has(serverId)) return { ok: false as const, error: "未启用" };
-            ids.delete(serverId);
-            await this.db
-              .update(bots)
-              .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
-              .where(eq(bots.id, botId));
-            setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
-            return { ok: true as const };
+            const result = await this.withAiConfigLock(botId, async () => {
+              const [current] = await this.db.select().from(bots).where(eq(bots.id, botId));
+              if (!current?.aiConfig) return { ok: false as const, error: "AI 未配置" };
+              const ids = new Set(current.aiConfig.mcpServerIds ?? []);
+              if (!ids.has(serverId)) return { ok: false as const, error: "未启用" };
+              ids.delete(serverId);
+              await this.db
+                .update(bots)
+                .set({ aiConfig: { ...current.aiConfig, mcpServerIds: [...ids] } })
+                .where(eq(bots.id, botId));
+              return { ok: true as const };
+            });
+            if (result.ok) setTimeout(() => this.restartBot(botId).catch(() => {}), 2000);
+            return result;
           },
         }
       : undefined;
@@ -1218,6 +1245,14 @@ export class BotPool {
 
   getAllManagers(): Map<string, IBotManager> {
     return this.managers;
+  }
+
+  suppressGenerationFallback(botId: string, taskId: string): void {
+    this.generationInsertFallbacks.suppress(botId, taskId);
+  }
+
+  clearGenerationFallbacks(botId: string): void {
+    this.generationInsertFallbacks.clearBot(botId);
   }
 
   private async schedulePendingGenerationRecovery(

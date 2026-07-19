@@ -3,7 +3,7 @@ import type {
   AiConfigPublic,
   AiTriggerConfig,
   ModelCapability,
-  WebToolsConfig,
+  WebToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 
 export interface ModelOption {
@@ -29,7 +29,7 @@ export const DEFAULT_TRIGGER: AiTriggerConfig = {
   randomReplyCooldown: 60,
 };
 
-export const DEFAULT_WEB_TOOLS: WebToolsConfig = {
+export const DEFAULT_WEB_TOOLS: WebToolsConfigPublic = {
   enabled: false,
 };
 

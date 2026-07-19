@@ -9,16 +9,15 @@ import {
 } from "./generation-recovery.js";
 
 describe("confirmPendingInsertAbsent", () => {
-  test("only confirms absence after a successful empty lookup", async () => {
+  test("distinguishes confirmed absence, presence, and a transient lookup failure", async () => {
     await expect(confirmPendingInsertAbsent(vi.fn().mockResolvedValue(undefined))).resolves.toBe(
       true,
     );
     await expect(confirmPendingInsertAbsent(vi.fn().mockResolvedValue({ id: 1 }))).resolves.toBe(
       false,
     );
-    await expect(
-      confirmPendingInsertAbsent(vi.fn().mockRejectedValue(new Error("lookup failed"))),
-    ).resolves.toBe(false);
+    const error = new Error("lookup failed");
+    await expect(confirmPendingInsertAbsent(vi.fn().mockRejectedValue(error))).rejects.toBe(error);
   });
 });
 
@@ -56,7 +55,9 @@ describe("PendingGenerationInsertFallbackTracker", () => {
     const tracker = new PendingGenerationInsertFallbackTracker();
     const insert = vi.fn().mockResolvedValue(undefined);
 
-    await expect(tracker.insertIfClaimed("bot-a", "task-1", insert)).resolves.toBe(false);
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
     expect(insert).not.toHaveBeenCalled();
   });
 
@@ -71,13 +72,95 @@ describe("PendingGenerationInsertFallbackTracker", () => {
     );
     tracker.markPendingInsertFailure("bot-a", "task-1");
 
-    const first = tracker.insertIfClaimed("bot-a", "task-1", insert);
-    const second = tracker.insertIfClaimed("bot-a", "task-1", insert);
+    const confirmAbsent = vi.fn().mockResolvedValue(true);
+    const first = tracker.insertIfClaimed("bot-a", "task-1", confirmAbsent, insert);
+    const second = tracker.insertIfClaimed("bot-a", "task-1", confirmAbsent, insert);
 
     await expect(second).resolves.toBe(false);
     expect(insert).toHaveBeenCalledOnce();
+    expect(confirmAbsent).toHaveBeenCalledOnce();
     releaseInsert();
     await expect(first).resolves.toBe(true);
+  });
+
+  test("retains eligibility when absence confirmation fails before any insert", async () => {
+    const tracker = new PendingGenerationInsertFallbackTracker();
+    const transientError = new Error("database unavailable");
+    const confirmAbsent = vi.fn().mockRejectedValueOnce(transientError).mockResolvedValueOnce(true);
+    const insert = vi.fn().mockResolvedValue(undefined);
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+
+    await expect(tracker.insertIfClaimed("bot-a", "task-1", confirmAbsent, insert)).rejects.toBe(
+      transientError,
+    );
+    await expect(tracker.insertIfClaimed("bot-a", "task-1", confirmAbsent, insert)).resolves.toBe(
+      true,
+    );
+    expect(insert).toHaveBeenCalledOnce();
+  });
+
+  test("does not insert when terminal confirmation finds an existing row", async () => {
+    const tracker = new PendingGenerationInsertFallbackTracker();
+    const insert = vi.fn().mockResolvedValue(undefined);
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(false), insert),
+    ).resolves.toBe(false);
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  test("suppresses an in-flight fallback when the user deletes the generation", async () => {
+    const tracker = new PendingGenerationInsertFallbackTracker();
+    let releaseConfirmation!: (absent: boolean) => void;
+    const confirmAbsent = vi.fn(
+      () => new Promise<boolean>((resolve) => (releaseConfirmation = resolve)),
+    );
+    const insert = vi.fn().mockResolvedValue(undefined);
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+
+    const fallback = tracker.insertIfClaimed("bot-a", "task-1", confirmAbsent, insert);
+    tracker.suppress("bot-a", "task-1");
+    releaseConfirmation(true);
+
+    await expect(fallback).resolves.toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  test("does not resurrect a deletion when a late pending-insert failure is reported", async () => {
+    const tracker = new PendingGenerationInsertFallbackTracker();
+    const insert = vi.fn().mockResolvedValue(undefined);
+
+    tracker.suppress("bot-a", "task-1");
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  test("expires stale markers and clears all markers for a deleted bot", async () => {
+    let now = 1_000;
+    const tracker = new PendingGenerationInsertFallbackTracker(100, () => now);
+    tracker.markPendingInsertFailure("bot-a", "task-1");
+    tracker.markPendingInsertFailure("bot-b", "task-2");
+    tracker.suppress("bot-a", "task-3");
+    tracker.clearBot("bot-a");
+
+    const insert = vi.fn().mockResolvedValue(undefined);
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
+    now += 101;
+    expect(tracker.pruneExpired()).toBe(1);
+    await expect(
+      tracker.insertIfClaimed("bot-b", "task-2", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
+    expect(insert).not.toHaveBeenCalled();
   });
 
   test("consumes eligibility when the fallback insert fails", async () => {
@@ -86,8 +169,12 @@ describe("PendingGenerationInsertFallbackTracker", () => {
     const insert = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);
     tracker.markPendingInsertFailure("bot-a", "task-1");
 
-    await expect(tracker.insertIfClaimed("bot-a", "task-1", insert)).rejects.toBe(error);
-    await expect(tracker.insertIfClaimed("bot-a", "task-1", insert)).resolves.toBe(false);
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).rejects.toBe(error);
+    await expect(
+      tracker.insertIfClaimed("bot-a", "task-1", vi.fn().mockResolvedValue(true), insert),
+    ).resolves.toBe(false);
     expect(insert).toHaveBeenCalledOnce();
   });
 });

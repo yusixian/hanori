@@ -5,15 +5,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { InlineDisclosure } from "@/components/ui/inline-disclosure";
 import { Select } from "@/components/ui/select";
-import type { PixAIConfig, WebToolsConfig } from "@cos-tool-bot/shared";
+import type { PixAIConfig, WebToolsConfigPublic } from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function WebToolsSection({
   config,
+  searchApiKey,
+  imageApiKey,
+  onSearchApiKeyChange,
+  onImageApiKeyChange,
   onUpdate,
 }: {
-  config: WebToolsConfig;
-  onUpdate: (updates: Partial<WebToolsConfig>) => void;
+  config: WebToolsConfigPublic;
+  searchApiKey: string;
+  imageApiKey: string;
+  onSearchApiKeyChange: (apiKey: string) => void;
+  onImageApiKeyChange: (apiKey: string) => void;
+  onUpdate: (updates: Partial<WebToolsConfigPublic>) => void;
 }) {
   const { t } = useTranslation("aiSettings");
 
@@ -49,7 +57,7 @@ export function WebToolsSection({
                 onUpdate({
                   search: {
                     ...config.search,
-                    provider: value as NonNullable<WebToolsConfig["search"]>["provider"],
+                    provider: value as NonNullable<WebToolsConfigPublic["search"]>["provider"],
                   },
                 })
               }
@@ -65,17 +73,20 @@ export function WebToolsSection({
 
           {(config.search?.provider ?? "brave") === "brave" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("common.apiKey")}</label>
+              <label className="text-sm font-medium">
+                {t("common.apiKey")}{" "}
+                {config.search?.hasApiKey && t("common.configuredParenthetical")}
+              </label>
               <Input
                 type="password"
                 disabled={!config.enabled}
-                value={config.search?.apiKey ?? ""}
-                onChange={(e) =>
-                  onUpdate({
-                    search: { ...config.search, provider: "brave", apiKey: e.target.value },
-                  })
+                value={searchApiKey}
+                onChange={(e) => onSearchApiKeyChange(e.target.value)}
+                placeholder={
+                  config.search?.hasApiKey
+                    ? t("providers.keepKeyPlaceholder")
+                    : t("webTools.search.braveKeyPlaceholder")
                 }
-                placeholder={t("webTools.search.braveKeyPlaceholder")}
               />
               <p className="text-muted-foreground text-xs">
                 {t("webTools.search.visit")}{" "}
@@ -94,17 +105,20 @@ export function WebToolsSection({
 
           {config.search?.provider === "tavily" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("common.apiKey")}</label>
+              <label className="text-sm font-medium">
+                {t("common.apiKey")}{" "}
+                {config.search?.hasApiKey && t("common.configuredParenthetical")}
+              </label>
               <Input
                 type="password"
                 disabled={!config.enabled}
-                value={config.search?.apiKey ?? ""}
-                onChange={(e) =>
-                  onUpdate({
-                    search: { ...config.search, provider: "tavily", apiKey: e.target.value },
-                  })
+                value={searchApiKey}
+                onChange={(e) => onSearchApiKeyChange(e.target.value)}
+                placeholder={
+                  config.search?.hasApiKey
+                    ? t("providers.keepKeyPlaceholder")
+                    : t("webTools.search.tavilyKeyPlaceholder")
                 }
-                placeholder={t("webTools.search.tavilyKeyPlaceholder")}
               />
               <p className="text-muted-foreground text-xs">
                 {t("webTools.search.visit")}{" "}
@@ -159,17 +173,20 @@ export function WebToolsSection({
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t("common.apiKey")}</label>
+                <label className="text-sm font-medium">
+                  {t("common.apiKey")}{" "}
+                  {config.search?.hasApiKey && t("common.configuredParenthetical")}
+                </label>
                 <Input
                   type="password"
                   disabled={!config.enabled}
-                  value={config.search?.apiKey ?? ""}
-                  onChange={(e) =>
-                    onUpdate({
-                      search: { ...config.search, provider: "custom", apiKey: e.target.value },
-                    })
+                  value={searchApiKey}
+                  onChange={(e) => onSearchApiKeyChange(e.target.value)}
+                  placeholder={
+                    config.search?.hasApiKey
+                      ? t("providers.keepKeyPlaceholder")
+                      : t("webTools.search.customKeyPlaceholder")
                   }
-                  placeholder={t("webTools.search.customKeyPlaceholder")}
                 />
               </div>
               <p className="text-muted-foreground text-xs">{t("webTools.search.customHelp")}</p>
@@ -207,24 +224,21 @@ export function WebToolsSection({
 
           {/* Common: API Key */}
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("common.apiKey")}</label>
+            <label className="text-sm font-medium">
+              {t("common.apiKey")}{" "}
+              {config.imageGeneration?.hasApiKey && t("common.configuredParenthetical")}
+            </label>
             <Input
               type="password"
               disabled={!config.enabled}
-              value={config.imageGeneration?.apiKey ?? ""}
-              onChange={(e) =>
-                onUpdate({
-                  imageGeneration: {
-                    ...config.imageGeneration,
-                    provider: config.imageGeneration?.provider ?? "openai",
-                    apiKey: e.target.value,
-                  },
-                })
-              }
+              value={imageApiKey}
+              onChange={(e) => onImageApiKeyChange(e.target.value)}
               placeholder={
-                config.imageGeneration?.provider === "pixai"
-                  ? t("webTools.image.pixaiKeyPlaceholder")
-                  : t("webTools.image.keyPlaceholder")
+                config.imageGeneration?.hasApiKey
+                  ? t("providers.keepKeyPlaceholder")
+                  : config.imageGeneration?.provider === "pixai"
+                    ? t("webTools.image.pixaiKeyPlaceholder")
+                    : t("webTools.image.keyPlaceholder")
               }
             />
             {config.imageGeneration?.provider === "pixai" && (
