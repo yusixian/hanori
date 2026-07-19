@@ -799,112 +799,117 @@ export function botsRoutes(
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
 
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      const aiConfig = await botPool.withAiConfigLock(botId, async () => {
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return null;
 
-      // Migrate existing stored config first so we can reliably look up per-provider
-      // encrypted keys by id when the client sends back the same provider without a new apiKey.
-      const existingMigrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
-      const existingProvidersById = new Map<string, AiProviderEntry>();
-      for (const p of existingMigrated?.providers ?? []) {
-        existingProvidersById.set(p.id, p);
-      }
+        // Migrate existing stored config first so we can reliably look up per-provider
+        // encrypted keys by id when the client sends back the same provider without a new apiKey.
+        const existingMigrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+        const existingProvidersById = new Map<string, AiProviderEntry>();
+        for (const p of existingMigrated?.providers ?? []) {
+          existingProvidersById.set(p.id, p);
+        }
 
-      // Build new providers list with preserve-when-empty apiKey per entry.
-      // Client sends temp ids like "__new_xxx" for unsaved providers; map them to real
-      // UUIDs here and remap activeProviderId through the same mapping so the client's
-      // selection survives the id rewrite.
-      let providers: AiProviderEntry[] | undefined;
-      let activeProviderId: string | undefined = body.activeProviderId;
-      if (body.providers !== undefined) {
-        const idMap = new Map<string, string>();
-        providers = body.providers.map((p) => {
-          const isTemp = !p.id || p.id.startsWith("__new_");
-          const finalId = isTemp ? randomUUID() : p.id!;
-          if (p.id) idMap.set(p.id, finalId);
-          const existing = isTemp ? undefined : existingProvidersById.get(finalId);
-          const encryptedApiKey =
-            p.apiKey !== undefined && p.apiKey !== ""
-              ? encrypt(p.apiKey, env.ENCRYPTION_KEY)
-              : (existing?.encryptedApiKey ?? null);
-          return {
-            id: finalId,
-            label: p.label,
-            encryptedApiKey,
-            baseURL: p.baseURL,
-            providerFormat: p.providerFormat,
-            defaultModel: p.defaultModel,
-            models: p.models,
+        // Build new providers list with preserve-when-empty apiKey per entry.
+        // Client sends temp ids like "__new_xxx" for unsaved providers; map them to real
+        // UUIDs here and remap activeProviderId through the same mapping so the client's
+        // selection survives the id rewrite.
+        let providers: AiProviderEntry[] | undefined;
+        let activeProviderId: string | undefined = body.activeProviderId;
+        if (body.providers !== undefined) {
+          const idMap = new Map<string, string>();
+          providers = body.providers.map((p) => {
+            const isTemp = !p.id || p.id.startsWith("__new_");
+            const finalId = isTemp ? randomUUID() : p.id!;
+            if (p.id) idMap.set(p.id, finalId);
+            const existing = isTemp ? undefined : existingProvidersById.get(finalId);
+            const encryptedApiKey =
+              p.apiKey !== undefined && p.apiKey !== ""
+                ? encrypt(p.apiKey, env.ENCRYPTION_KEY)
+                : (existing?.encryptedApiKey ?? null);
+            return {
+              id: finalId,
+              label: p.label,
+              encryptedApiKey,
+              baseURL: p.baseURL,
+              providerFormat: p.providerFormat,
+              defaultModel: p.defaultModel,
+              models: p.models,
+            };
+          });
+          if (activeProviderId && idMap.has(activeProviderId)) {
+            activeProviderId = idMap.get(activeProviderId);
+          }
+          if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
+            activeProviderId = providers[0]?.id;
+          }
+        }
+
+        // Legacy top-level apiKey handling (kept for backward-compat clients that don't yet
+        // send providers[]). Preserve-when-empty.
+        let encryptedApiKey = bot.aiConfig?.encryptedApiKey ?? null;
+        if (body.apiKey !== undefined && body.apiKey !== "") {
+          encryptedApiKey = encrypt(body.apiKey, env.ENCRYPTION_KEY);
+        }
+
+        // If model is empty but models array has entries, use first model as default
+        const effectiveModel =
+          body.model || (body.models?.length ? body.models[0]!.id : (bot.aiConfig?.model ?? ""));
+
+        // Handle embedding config encryption
+        let embeddingConfig = bot.aiConfig?.embeddingConfig;
+        if (body.embeddingConfig) {
+          let embEncryptedApiKey = embeddingConfig?.encryptedApiKey ?? "";
+          if (body.embeddingConfig.apiKey) {
+            embEncryptedApiKey = encrypt(body.embeddingConfig.apiKey, env.ENCRYPTION_KEY);
+          }
+          embeddingConfig = {
+            enabled: body.embeddingConfig.enabled,
+            encryptedApiKey: embEncryptedApiKey,
+            baseURL: body.embeddingConfig.baseURL,
+            model: body.embeddingConfig.model,
+            dimensions: EMBEDDING_DIMENSIONS,
           };
-        });
-        if (activeProviderId && idMap.has(activeProviderId)) {
-          activeProviderId = idMap.get(activeProviderId);
         }
-        if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
-          activeProviderId = providers[0]?.id;
-        }
-      }
 
-      // Legacy top-level apiKey handling (kept for backward-compat clients that don't yet
-      // send providers[]). Preserve-when-empty.
-      let encryptedApiKey = bot.aiConfig?.encryptedApiKey ?? null;
-      if (body.apiKey !== undefined && body.apiKey !== "") {
-        encryptedApiKey = encrypt(body.apiKey, env.ENCRYPTION_KEY);
-      }
-
-      // If model is empty but models array has entries, use first model as default
-      const effectiveModel =
-        body.model || (body.models?.length ? body.models[0]!.id : (bot.aiConfig?.model ?? ""));
-
-      // Handle embedding config encryption
-      let embeddingConfig = bot.aiConfig?.embeddingConfig;
-      if (body.embeddingConfig) {
-        let embEncryptedApiKey = embeddingConfig?.encryptedApiKey ?? "";
-        if (body.embeddingConfig.apiKey) {
-          embEncryptedApiKey = encrypt(body.embeddingConfig.apiKey, env.ENCRYPTION_KEY);
-        }
-        embeddingConfig = {
-          enabled: body.embeddingConfig.enabled,
-          encryptedApiKey: embEncryptedApiKey,
-          baseURL: body.embeddingConfig.baseURL,
-          model: body.embeddingConfig.model,
-          dimensions: EMBEDDING_DIMENSIONS,
+        const updatedAiConfig: AiConfigStored = {
+          enabled: body.enabled,
+          encryptedApiKey,
+          baseURL: body.baseURL,
+          model: effectiveModel,
+          providerFormat: body.providerFormat,
+          providers: providers ?? existingMigrated?.providers,
+          activeProviderId: activeProviderId ?? existingMigrated?.activeProviderId,
+          systemPrompt: body.systemPrompt,
+          behavioralPrompt: body.behavioralPrompt,
+          groupBehavioralPrompt: body.groupBehavioralPrompt,
+          triggerConfig: body.triggerConfig,
+          groupOverrides: body.groupOverrides,
+          conversationConfig: body.conversationConfig,
+          memoryConfig: body.memoryConfig,
+          stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
+          webToolsConfig: body.webToolsConfig,
+          agentToolsConfig: body.agentToolsConfig,
+          artworkToolsConfig: body.artworkToolsConfig,
+          botMemoryConfig: body.botMemoryConfig,
+          messageConfig: body.messageConfig,
+          timeoutConfig: body.timeoutConfig,
+          models: body.models,
+          modelCommandAccess: body.modelCommandAccess,
+          embeddingConfig,
+          dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
+          privateChatWhitelist: body.privateChatWhitelist,
+          mcpServerIds: body.mcpServerIds,
+          summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
+          imageOcrConfig: body.imageOcrConfig ?? bot.aiConfig?.imageOcrConfig,
         };
-      }
 
-      const aiConfig: AiConfigStored = {
-        enabled: body.enabled,
-        encryptedApiKey,
-        baseURL: body.baseURL,
-        model: effectiveModel,
-        providerFormat: body.providerFormat,
-        providers: providers ?? existingMigrated?.providers,
-        activeProviderId: activeProviderId ?? existingMigrated?.activeProviderId,
-        systemPrompt: body.systemPrompt,
-        behavioralPrompt: body.behavioralPrompt,
-        groupBehavioralPrompt: body.groupBehavioralPrompt,
-        triggerConfig: body.triggerConfig,
-        groupOverrides: body.groupOverrides,
-        conversationConfig: body.conversationConfig,
-        memoryConfig: body.memoryConfig,
-        stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
-        webToolsConfig: body.webToolsConfig,
-        agentToolsConfig: body.agentToolsConfig,
-        artworkToolsConfig: body.artworkToolsConfig,
-        botMemoryConfig: body.botMemoryConfig,
-        messageConfig: body.messageConfig,
-        timeoutConfig: body.timeoutConfig,
-        models: body.models,
-        modelCommandAccess: body.modelCommandAccess,
-        embeddingConfig,
-        dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
-        privateChatWhitelist: body.privateChatWhitelist,
-        mcpServerIds: body.mcpServerIds,
-        summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
-        imageOcrConfig: body.imageOcrConfig ?? bot.aiConfig?.imageOcrConfig,
-      };
+        await db.update(bots).set({ aiConfig: updatedAiConfig }).where(eq(bots.id, botId));
+        return updatedAiConfig;
+      });
 
-      await db.update(bots).set({ aiConfig }).where(eq(bots.id, botId));
+      if (!aiConfig) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       // Restart bot if running so new config takes effect
       const manager = botPool.getManager(botId);

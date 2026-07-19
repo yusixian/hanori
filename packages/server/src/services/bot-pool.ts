@@ -17,16 +17,18 @@ import type {
   IBotManager,
   MemoryCallbacks,
   ModelEntry,
+  PixAIConfig,
   PixAIGenerationRecord,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_TIMEOUT_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
-import { and, eq } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type { Logger } from "pino";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
@@ -43,8 +45,17 @@ import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import { EmbeddingService } from "./embedding-service.js";
 import { ImapEmailMonitor } from "./imap-email-monitor.js";
+import {
+  AsyncTaskLimiter,
+  confirmPendingInsertAbsent,
+  isTerminalGenerationRecoveryError,
+  PendingGenerationInsertFallbackTracker,
+  persistTerminalGenerationClaim,
+  tryPersistTerminalGenerationFailure,
+} from "./generation-recovery.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
+import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
 import { selectMemoriesForPrompt } from "./prompt-memory-selector.js";
 import type { McpClientManager } from "./mcp-client-manager.js";
@@ -55,16 +66,38 @@ import type { SummaryConfigService } from "./summary-config-service.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
+const GENERATION_RECOVERY_CONCURRENCY = 3;
+const GENERATION_RECOVERY_SWEEP_INTERVAL_MS = 60_000;
+const GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+interface GenerationRecoveryEntry {
+  controller: AbortController;
+  promise: Promise<void>;
+}
+
+interface GenerationRecoveryConfig {
+  manager: BotManager;
+  apiKey: string;
+  timeoutMs: number;
+}
 
 export class BotPool {
   private managers = new Map<string, IBotManager>();
   // Serializes start/stop/restart per botId to avoid concurrent double-start races.
   private opLocks = new Map<string, Promise<unknown>>();
+  private aiConfigLocks = new KeyedAsyncLock();
   private botTimerHandlers = new Map<string, BotTimerHandlers>();
   private conversationCleanupAt = new Map<string, number>();
   private conversationCleanupInFlight = new Map<string, Promise<void>>();
   private conversationCleanupSweep?: Promise<void>;
   private conversationCleanupTimer?: ReturnType<typeof setInterval>;
+  private generationRecoveries = new Map<string, GenerationRecoveryEntry>();
+  private generationRecoveryLimiter = new AsyncTaskLimiter(GENERATION_RECOVERY_CONCURRENCY);
+  private generationRecoveryConfigs = new Map<string, GenerationRecoveryConfig>();
+  private generationRecoveryEpochs = new Map<string, number>();
+  private generationRecoverySweep?: Promise<void>;
+  private generationRecoveryTimer?: ReturnType<typeof setInterval>;
+  private generationInsertFallbacks = new PendingGenerationInsertFallbackTracker();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
@@ -230,6 +263,46 @@ export class BotPool {
     this.conversationCleanupTimer = undefined;
   }
 
+  private runGenerationRecoverySweep(): Promise<void> {
+    if (this.generationRecoverySweep) return this.generationRecoverySweep;
+
+    const sweep = Promise.all(
+      [...this.generationRecoveryConfigs.entries()].map(([botId, config]) =>
+        this.schedulePendingGenerationRecovery(
+          botId,
+          config.manager,
+          config.apiKey,
+          config.timeoutMs,
+        ).catch((err) => {
+          this.logger.error({ err, botId }, "Failed to schedule periodic generation recovery");
+        }),
+      ),
+    )
+      .then(() => undefined)
+      .finally(() => {
+        if (this.generationRecoverySweep === sweep) {
+          this.generationRecoverySweep = undefined;
+        }
+      });
+    this.generationRecoverySweep = sweep;
+    return sweep;
+  }
+
+  private startGenerationRecoveryScheduler() {
+    if (this.generationRecoveryTimer) return;
+
+    this.generationRecoveryTimer = setInterval(() => {
+      void this.runGenerationRecoverySweep();
+    }, GENERATION_RECOVERY_SWEEP_INTERVAL_MS);
+    this.generationRecoveryTimer.unref();
+  }
+
+  private stopGenerationRecoverySchedulerIfIdle() {
+    if (this.generationRecoveryConfigs.size > 0 || !this.generationRecoveryTimer) return;
+    clearInterval(this.generationRecoveryTimer);
+    this.generationRecoveryTimer = undefined;
+  }
+
   async startAll() {
     let activeBots;
     try {
@@ -258,6 +331,8 @@ export class BotPool {
 
   async stopAll() {
     this.stopConversationCleanupScheduler();
+    this.generationRecoveryConfigs.clear();
+    this.stopGenerationRecoverySchedulerIfIdle();
     if (this.conversationCleanupSweep) {
       await Promise.allSettled([this.conversationCleanupSweep]);
     }
@@ -271,6 +346,9 @@ export class BotPool {
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error(err, `Failed to stop bot ${id}: ${msg}`);
       }
+    }
+    if (this.generationRecoverySweep) {
+      await Promise.allSettled([this.generationRecoverySweep]);
     }
   }
 
@@ -286,6 +364,10 @@ export class BotPool {
       if (this.opLocks.get(botId) === done) this.opLocks.delete(botId);
     });
     return result;
+  }
+
+  withAiConfigLock<T>(botId: string, operation: () => Promise<T>): Promise<T> {
+    return this.aiConfigLocks.run(botId, operation);
   }
 
   async startBot(botId: string) {
@@ -665,44 +747,97 @@ export class BotPool {
         nsfwChecker,
         onGroupOverrideUpdate: async (chatId, override) => {
           try {
-            await this.db.transaction(async (tx) => {
-              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-              if (!current?.aiConfig) return;
-              await tx
-                .update(bots)
-                .set({
-                  aiConfig: {
-                    ...current.aiConfig,
-                    groupOverrides: {
-                      ...current.aiConfig.groupOverrides,
-                      [String(chatId)]: override,
+            await this.withAiConfigLock(botId, () =>
+              this.db.transaction(async (tx) => {
+                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+                if (!current?.aiConfig) return;
+                await tx
+                  .update(bots)
+                  .set({
+                    aiConfig: {
+                      ...current.aiConfig,
+                      groupOverrides: {
+                        ...current.aiConfig.groupOverrides,
+                        [String(chatId)]: override,
+                      },
                     },
-                  },
-                })
-                .where(eq(bots.id, botId));
-            });
+                  })
+                  .where(eq(bots.id, botId));
+              }),
+            );
           } catch (err) {
             this.logger.error(err, "Failed to persist group override update");
           }
         },
         onPixaiConfigUpdate: async (updates) => {
           try {
-            await this.db.transaction(async (tx) => {
-              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-              if (!current?.aiConfig) return;
-              const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
-              if (!imgGen) return;
-              if (updates.model !== undefined) imgGen.model = updates.model;
-              if (updates.pixaiConfig) {
-                imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
-              }
-              await tx
-                .update(bots)
-                .set({ aiConfig: { ...current.aiConfig } })
-                .where(eq(bots.id, botId));
-            });
+            await this.withAiConfigLock(botId, () =>
+              this.db.transaction(async (tx) => {
+                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+                if (!current?.aiConfig) return;
+                const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
+                if (!imgGen) return;
+                if (updates.model !== undefined) imgGen.model = updates.model;
+                if (updates.pixaiConfig) {
+                  imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
+                }
+                await tx
+                  .update(bots)
+                  .set({ aiConfig: { ...current.aiConfig } })
+                  .where(eq(bots.id, botId));
+              }),
+            );
           } catch (err) {
             this.logger.error(err, "Failed to persist pixai config update");
+          }
+        },
+        onWebToolApiKeyUpdate: async (target, apiKey) => {
+          let shouldRecoverPending = false;
+          await this.withAiConfigLock(botId, () =>
+            this.db.transaction(async (tx) => {
+              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+              const webToolsConfig = current?.aiConfig?.webToolsConfig;
+              if (!current?.aiConfig || !webToolsConfig) {
+                throw new Error("Web tools are not configured");
+              }
+
+              const targetConfig =
+                target === "image" ? webToolsConfig.imageGeneration : webToolsConfig.search;
+              if (!targetConfig) {
+                throw new Error(`${target} web tool is not configured`);
+              }
+
+              targetConfig.apiKey = apiKey;
+              shouldRecoverPending =
+                target === "image" && webToolsConfig.imageGeneration?.provider === "pixai";
+              await tx
+                .update(bots)
+                .set({ aiConfig: { ...current.aiConfig, webToolsConfig: { ...webToolsConfig } } })
+                .where(eq(bots.id, botId));
+            }),
+          );
+
+          if (shouldRecoverPending) {
+            await this.cancelGenerationRecoveries(botId, "PixAI API key updated");
+            const currentManager = this.managers.get(botId);
+            if (currentManager instanceof BotManager) {
+              const timeoutMs =
+                aiConfig.timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
+              this.generationRecoveryConfigs.set(botId, {
+                manager: currentManager,
+                apiKey,
+                timeoutMs,
+              });
+              this.startGenerationRecoveryScheduler();
+              void this.schedulePendingGenerationRecovery(
+                botId,
+                currentManager,
+                apiKey,
+                timeoutMs,
+              ).catch((err) => {
+                this.logger.error(err, "Failed to schedule pending generation recovery");
+              });
+            }
           }
         },
         rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
@@ -733,23 +868,45 @@ export class BotPool {
     const onGenerationTrack = async (record: PixAIGenerationRecord) => {
       try {
         if (record.status === "pending") {
-          await this.db.insert(pixaiGenerations).values({
-            botId,
-            chatId: record.chatId,
-            userId: record.userId,
-            taskId: record.taskId,
-            prompt: record.prompt,
-            negativePrompt: record.negativePrompt,
-            modelId: record.modelId,
-            width: record.width,
-            height: record.height,
-            batchSize: record.batchSize,
-            samplingSteps: record.samplingSteps,
-            cfgScale: record.cfgScale,
-            promptHelper: record.promptHelper,
-            pixaiConfig: record.pixaiConfig,
-            status: record.status,
-          });
+          try {
+            await this.db.insert(pixaiGenerations).values({
+              botId,
+              chatId: record.chatId,
+              userId: record.userId,
+              taskId: record.taskId,
+              prompt: record.prompt,
+              negativePrompt: record.negativePrompt,
+              modelId: record.modelId,
+              width: record.width,
+              height: record.height,
+              batchSize: record.batchSize,
+              samplingSteps: record.samplingSteps,
+              cfgScale: record.cfgScale,
+              promptHelper: record.promptHelper,
+              pixaiConfig: record.pixaiConfig,
+              status: record.status,
+            });
+            this.generationInsertFallbacks.clear(botId, record.taskId);
+          } catch (err) {
+            const confirmedAbsent = await confirmPendingInsertAbsent(async () => {
+              const [existing] = await this.db
+                .select({ id: pixaiGenerations.id })
+                .from(pixaiGenerations)
+                .where(
+                  and(
+                    eq(pixaiGenerations.botId, botId),
+                    eq(pixaiGenerations.taskId, record.taskId),
+                  ),
+                );
+              return existing;
+            });
+            if (confirmedAbsent) {
+              this.generationInsertFallbacks.markPendingInsertFailure(botId, record.taskId);
+            } else {
+              this.generationInsertFallbacks.clear(botId, record.taskId);
+            }
+            throw err;
+          }
         } else {
           // Download images to local storage
           let localFiles: string[] | undefined;
@@ -761,24 +918,69 @@ export class BotPool {
               this.logger,
             );
           }
-          await this.db
-            .update(pixaiGenerations)
-            .set({
-              status: record.status,
-              mediaUrls: record.mediaUrls,
-              mediaIds: record.mediaIds,
-              localFiles,
-              nsfwScores: record.nsfwScores,
-              errorMessage: record.errorMessage,
-              durationMs: record.durationMs,
-              completedAt: new Date(),
-            })
-            .where(
-              and(eq(pixaiGenerations.botId, botId), eq(pixaiGenerations.taskId, record.taskId)),
-            );
+          const completedAt = new Date();
+          await persistTerminalGenerationClaim(
+            record.taskId,
+            async () => {
+              const updated = await this.db
+                .update(pixaiGenerations)
+                .set({
+                  status: record.status,
+                  mediaUrls: record.mediaUrls,
+                  mediaIds: record.mediaIds,
+                  localFiles,
+                  nsfwScores: record.nsfwScores,
+                  errorMessage: record.errorMessage,
+                  durationMs: record.durationMs,
+                  completedAt,
+                })
+                .where(
+                  and(
+                    eq(pixaiGenerations.botId, botId),
+                    eq(pixaiGenerations.taskId, record.taskId),
+                    eq(pixaiGenerations.status, "pending"),
+                  ),
+                )
+                .returning({ id: pixaiGenerations.id });
+
+              if (updated.length > 0) {
+                this.generationInsertFallbacks.clear(botId, record.taskId);
+                return true;
+              }
+              return false;
+            },
+            () =>
+              this.generationInsertFallbacks.insertIfClaimed(botId, record.taskId, () =>
+                this.db.insert(pixaiGenerations).values({
+                  botId,
+                  chatId: record.chatId,
+                  userId: record.userId,
+                  taskId: record.taskId,
+                  prompt: record.prompt,
+                  negativePrompt: record.negativePrompt,
+                  modelId: record.modelId,
+                  width: record.width,
+                  height: record.height,
+                  batchSize: record.batchSize,
+                  samplingSteps: record.samplingSteps,
+                  cfgScale: record.cfgScale,
+                  promptHelper: record.promptHelper,
+                  pixaiConfig: record.pixaiConfig,
+                  status: record.status,
+                  mediaUrls: record.mediaUrls,
+                  mediaIds: record.mediaIds,
+                  localFiles,
+                  nsfwScores: record.nsfwScores,
+                  errorMessage: record.errorMessage,
+                  durationMs: record.durationMs,
+                  completedAt,
+                }),
+              ),
+          );
         }
       } catch (err) {
         this.logger.error(err, "Failed to write PixAI generation record");
+        throw err;
       }
     };
 
@@ -896,6 +1098,7 @@ export class BotPool {
       dbLogger,
       aiReply,
       conversation,
+      onRestart: () => this.restartBot(botId),
       onBackup,
       onTokenUsage,
       onGenerationTrack,
@@ -916,6 +1119,25 @@ export class BotPool {
         `Initial conversation history governance failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
+
+    const imageGeneration = aiConfig?.webToolsConfig?.imageGeneration;
+    if (imageGeneration?.provider === "pixai" && imageGeneration.apiKey) {
+      const timeoutMs = aiConfig?.timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
+      this.generationRecoveryConfigs.set(botId, {
+        manager,
+        apiKey: imageGeneration.apiKey,
+        timeoutMs,
+      });
+      this.startGenerationRecoveryScheduler();
+      void this.schedulePendingGenerationRecovery(
+        botId,
+        manager,
+        imageGeneration.apiKey,
+        timeoutMs,
+      ).catch((err) => {
+        this.logger.error(err, "Failed to schedule startup generation recovery");
+      });
+    }
   }
 
   private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {
@@ -973,6 +1195,9 @@ export class BotPool {
   }
 
   private async stopBotImpl(botId: string) {
+    this.generationRecoveryConfigs.delete(botId);
+    this.stopGenerationRecoverySchedulerIfIdle();
+    await this.cancelGenerationRecoveries(botId, `Bot ${botId} stopped`);
     const manager = this.managers.get(botId);
     if (!manager) return;
     await manager.stop();
@@ -993,6 +1218,160 @@ export class BotPool {
 
   getAllManagers(): Map<string, IBotManager> {
     return this.managers;
+  }
+
+  private async schedulePendingGenerationRecovery(
+    botId: string,
+    manager: BotManager,
+    apiKey: string,
+    timeoutMs: number,
+  ): Promise<number> {
+    const epoch = this.generationRecoveryEpochs.get(botId) ?? 0;
+    const staleBefore = new Date(Date.now() - timeoutMs - 60_000);
+    const pending = await this.db
+      .select()
+      .from(pixaiGenerations)
+      .where(
+        and(
+          eq(pixaiGenerations.botId, botId),
+          eq(pixaiGenerations.status, "pending"),
+          lt(pixaiGenerations.createdAt, staleBefore),
+        ),
+      );
+
+    if (!this.isCurrentGenerationRecovery(botId, manager, epoch)) return 0;
+
+    let started = 0;
+    for (const row of pending) {
+      if (!this.isCurrentGenerationRecovery(botId, manager, epoch)) break;
+      const recoveryKey = `${botId}:${row.taskId}`;
+      if (this.generationRecoveries.has(recoveryKey)) continue;
+
+      const record: PixAIGenerationRecord = {
+        chatId: row.chatId,
+        userId: row.userId ?? undefined,
+        taskId: row.taskId,
+        prompt: row.prompt,
+        negativePrompt: row.negativePrompt ?? undefined,
+        modelId: row.modelId,
+        width: row.width,
+        height: row.height,
+        batchSize: row.batchSize,
+        samplingSteps: row.samplingSteps ?? undefined,
+        cfgScale: row.cfgScale ?? undefined,
+        promptHelper: row.promptHelper ?? undefined,
+        pixaiConfig: (row.pixaiConfig as PixAIConfig | null) ?? undefined,
+        status: "pending",
+      };
+
+      const controller = new AbortController();
+      const entry: GenerationRecoveryEntry = {
+        controller,
+        promise: Promise.resolve(),
+      };
+      entry.promise = this.generationRecoveryLimiter
+        .run(
+          () =>
+            manager.recoverPixaiGeneration(
+              record,
+              apiKey,
+              timeoutMs,
+              row.createdAt.getTime(),
+              controller.signal,
+            ),
+          controller.signal,
+        )
+        .then(() => {
+          this.logger.info({ botId, taskId: row.taskId }, "Pending generation recovery completed");
+        })
+        .catch(async (err) => {
+          if (controller.signal.aborted) {
+            this.logger.info(
+              { botId, taskId: row.taskId },
+              "Pending generation recovery cancelled",
+            );
+            return;
+          }
+
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          const terminal = isTerminalGenerationRecoveryError(errorMessage);
+
+          if (!terminal) {
+            this.logger.warn(
+              { err, botId, taskId: row.taskId },
+              "Pending generation recovery paused; record remains pending",
+            );
+            return;
+          }
+
+          const persistence = await tryPersistTerminalGenerationFailure(() =>
+            this.db
+              .update(pixaiGenerations)
+              .set({
+                status: "failed",
+                errorMessage,
+                durationMs: Math.min(Date.now() - row.createdAt.getTime(), 2_147_483_647),
+                completedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(pixaiGenerations.botId, botId),
+                  eq(pixaiGenerations.taskId, row.taskId),
+                  eq(pixaiGenerations.status, "pending"),
+                ),
+              ),
+          );
+          if (!persistence.ok) {
+            this.logger.error(
+              {
+                err: persistence.error,
+                botId,
+                taskId: row.taskId,
+                recoveryError: errorMessage,
+              },
+              "Failed to persist terminal generation recovery failure",
+            );
+            return;
+          }
+          this.logger.warn(
+            { botId, taskId: row.taskId, errorMessage },
+            "Pending generation recovery reached a terminal failure",
+          );
+        })
+        .finally(() => {
+          if (this.generationRecoveries.get(recoveryKey) === entry) {
+            this.generationRecoveries.delete(recoveryKey);
+          }
+        });
+
+      this.generationRecoveries.set(recoveryKey, entry);
+      started++;
+    }
+
+    if (started > 0) {
+      this.logger.info({ botId, count: started }, "Scheduled pending generation recovery");
+    }
+    return started;
+  }
+
+  private isCurrentGenerationRecovery(botId: string, manager: BotManager, epoch: number): boolean {
+    return (
+      (this.generationRecoveryEpochs.get(botId) ?? 0) === epoch &&
+      this.managers.get(botId) === manager &&
+      manager.status === "running"
+    );
+  }
+
+  private async cancelGenerationRecoveries(botId: string, reason: string): Promise<void> {
+    this.generationRecoveryEpochs.set(botId, (this.generationRecoveryEpochs.get(botId) ?? 0) + 1);
+    const prefix = `${botId}:`;
+    const pending: Promise<void>[] = [];
+    for (const [key, entry] of this.generationRecoveries) {
+      if (!key.startsWith(prefix)) continue;
+      entry.controller.abort(new Error(reason));
+      pending.push(entry.promise);
+    }
+    await Promise.allSettled(pending);
   }
 
   /** Cancel a timer, clearing both the registry and the bot's PendingActionRegistry. */
@@ -1113,7 +1492,9 @@ async function downloadGenerationImages(
       const ext = guessExtension(url);
       const filename = `${taskId}_${i}${ext}`;
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS),
+        });
         if (!res.ok) {
           logger.warn({ taskId, index: i, status: res.status }, "PixAI image download failed");
           return null;

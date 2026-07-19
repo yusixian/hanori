@@ -9,7 +9,14 @@ import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import type { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
-import { PixAIClient, pollAndSend, resolvePrompt, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
+import {
+  handlePixAIBackgroundFailure,
+  PixAIClient,
+  pollAndSend,
+  resolvePrompt,
+  trackPendingGeneration,
+  PIXAI_DEFAULT_MODEL_ID,
+} from "./pixai.js";
 import type { CreateTaskParams } from "./pixai.js";
 
 export type InferenceProfile = "standard" | "pro" | "ultra";
@@ -150,11 +157,16 @@ export async function directPixAIGenerate(
         },
       });
 
-      opts.onGenerationTrack?.({ ...record, status: "pending" });
       opts.rateLimiter?.registerTask(task.id, opts.chatId, opts.userId);
 
+      await trackPendingGeneration(
+        { ...record, status: "pending" },
+        opts.onGenerationTrack,
+        opts.onLog,
+      );
+
       const taskTimeoutMs = opts.timeoutConfig?.pixaiTaskMs ?? DEFAULT_TIMEOUT_CONFIG.pixaiTaskMs;
-      pollAndSend(client, task.id, taskTimeoutMs, {
+      void pollAndSend(client, task.id, taskTimeoutMs, {
         api: opts.api,
         chatId: opts.chatId,
         recentBotMessageIds: opts.recentBotMessageIds,
@@ -165,21 +177,17 @@ export async function directPixAIGenerate(
         startTime,
         onDone: opts.rateLimiter ? () => opts.rateLimiter!.releaseTask(task.id) : undefined,
         nsfwChecker: opts.nsfwChecker,
-      }).catch((err) => {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        opts.onLog?.({
-          level: "error",
-          message: `PixAI direct task failed: ${errMsg}`,
-          meta: { chatId: opts.chatId, taskId: task.id },
-        });
-        opts.onGenerationTrack?.({
-          ...record,
-          status: "failed",
-          errorMessage: errMsg,
-          durationMs: Date.now() - startTime,
-        });
-        opts.api.sendMessage(opts.chatId, `图片生成失败: ${errMsg}`).catch(() => {});
-      });
+      }).catch((error) =>
+        handlePixAIBackgroundFailure(error, {
+          api: opts.api,
+          chatId: opts.chatId,
+          baseRecord: record,
+          startTime,
+          logPrefix: "PixAI direct task",
+          onLog: opts.onLog,
+          onGenerationTrack: opts.onGenerationTrack,
+        }),
+      );
 
       return { ok: true, taskId: task.id, message: "图片正在后台生成，完成后会自动发送" };
     } catch (err) {
