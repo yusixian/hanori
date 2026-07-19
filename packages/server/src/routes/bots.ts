@@ -686,7 +686,7 @@ export function botsRoutes(
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       await botPool.stopBot(botId);
       await db.delete(bots).where(eq(bots.id, botId));
-      botPool.clearGenerationFallbacks(botId);
+      botPool.clearDeletedBotGenerationState(botId);
       return c.json({ ok: true as const });
     })
     .post("/:botId/start", async (c) => {

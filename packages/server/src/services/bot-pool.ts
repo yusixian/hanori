@@ -1255,8 +1255,9 @@ export class BotPool {
     this.generationInsertFallbacks.suppress(botId, taskId);
   }
 
-  clearGenerationFallbacks(botId: string): void {
+  clearDeletedBotGenerationState(botId: string): void {
     this.generationInsertFallbacks.clearBot(botId);
+    this.generationRecoveryEpochs.delete(botId);
   }
 
   private async schedulePendingGenerationRecovery(

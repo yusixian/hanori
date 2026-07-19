@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AsyncTaskLimiter } from "./generation-recovery.js";
+import { AsyncTaskLimiter, PendingGenerationInsertFallbackTracker } from "./generation-recovery.js";
 import type { BotManager } from "./bot-manager.js";
 import { BotPool } from "./bot-pool.js";
 
@@ -25,6 +25,7 @@ interface RecoveryTestPool {
   generationRecoveryConfigs: Map<string, RecoveryConfig>;
   generationRecoveryEpochs: Map<string, number>;
   generationRecoveryLimiter: AsyncTaskLimiter;
+  generationInsertFallbacks: PendingGenerationInsertFallbackTracker;
   generationRecoverySweep?: Promise<void>;
   generationRecoveryTimer?: ReturnType<typeof setInterval>;
   db: unknown;
@@ -36,6 +37,7 @@ interface RecoveryTestPool {
     timeoutMs: number,
   ): Promise<number>;
   cancelGenerationRecoveries(botId: string, reason: string): Promise<void>;
+  clearDeletedBotGenerationState(botId: string): void;
   startGenerationRecoveryScheduler(): void;
   stopGenerationRecoverySchedulerIfIdle(): void;
 }
@@ -66,6 +68,7 @@ function createPool(queryPending: () => Promise<ReturnType<typeof pendingRow>[]>
   pool.generationRecoveryConfigs = new Map();
   pool.generationRecoveryEpochs = new Map();
   pool.generationRecoveryLimiter = new AsyncTaskLimiter(3);
+  pool.generationInsertFallbacks = new PendingGenerationInsertFallbackTracker();
   pool.db = {
     select: vi.fn(() => ({
       from: vi.fn(() => ({ where: vi.fn(queryPending) })),
@@ -102,6 +105,18 @@ afterEach(() => {
 });
 
 describe("BotPool generation recovery lifecycle", () => {
+  it("retains the recovery epoch across stops and clears it only after permanent deletion", async () => {
+    const pool = createPool(async () => []);
+
+    await pool.cancelGenerationRecoveries("bot-a", "bot stopped");
+
+    expect(pool.generationRecoveryEpochs.get("bot-a")).toBe(1);
+
+    pool.clearDeletedBotGenerationState("bot-a");
+
+    expect(pool.generationRecoveryEpochs.has("bot-a")).toBe(false);
+  });
+
   it("invalidates a stale database scan before it can enqueue work", async () => {
     let releaseQuery!: (rows: ReturnType<typeof pendingRow>[]) => void;
     const query = new Promise<ReturnType<typeof pendingRow>[]>((resolve) => {
