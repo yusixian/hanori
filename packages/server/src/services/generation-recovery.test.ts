@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { PixAIRecoveryTerminalError, PixAITaskTerminalError } from "@cos-tool-bot/bot";
 import {
   AsyncTaskLimiter,
   confirmPendingInsertAbsent,
@@ -26,25 +27,36 @@ describe("confirmPendingInsertAbsent", () => {
 
 describe("isTerminalGenerationRecoveryError", () => {
   test.each([
-    "PixAI task failed: provider error",
-    "PixAI task cancelled: user cancelled",
-    "PixAI task timed out after 1200s",
-    "PixAI task completed but no images returned",
-    "PixAI GraphQL get task failed: HTTP 404 not found",
-    "PixAI get task failed: HTTP 404 not found",
-    "PixAI GraphQL get task: unexpected empty response",
-  ])("marks remote terminal results as failed: %s", (message) => {
-    expect(isTerminalGenerationRecoveryError(message)).toBe(true);
+    new PixAITaskTerminalError("failed", "completely changed message"),
+    new PixAITaskTerminalError("cancelled", "another message"),
+    new PixAITaskTerminalError("timeout", "deadline reached"),
+    new PixAIRecoveryTerminalError("completed-without-images", "no output"),
+    new PixAIRecoveryTerminalError("task-not-found", "gone"),
+    new PixAIRecoveryTerminalError("empty-task-response", "empty"),
+  ])("classifies structured terminal errors independently of message text", (error) => {
+    expect(isTerminalGenerationRecoveryError(error)).toBe(true);
   });
 
   test.each([
-    'PixAI GraphQL get task failed: HTTP 401 {"message":"invalid token"}',
-    "TypeError: fetch failed",
-    "PixAI GraphQL get task failed: HTTP 503",
-    "PixAI GraphQL error: provider temporarily unavailable",
-    "Bot is not running",
-  ])("keeps retryable recovery errors pending: %s", (message) => {
-    expect(isTerminalGenerationRecoveryError(message)).toBe(false);
+    new Error("PixAI task failed: provider error"),
+    new Error("PixAI task timed out after 1200s"),
+    new Error("PixAI task completed but no images returned"),
+    new Error("PixAI GraphQL get task failed: HTTP 404 not found"),
+    new Error('PixAI GraphQL get task failed: HTTP 401 {"message":"invalid token"}'),
+    new Error("PixAI GraphQL get task failed: HTTP 503"),
+    new Error("TypeError: fetch failed"),
+  ])("does not infer recovery terminality from legacy message text", (error) => {
+    expect(isTerminalGenerationRecoveryError(error)).toBe(false);
+  });
+
+  test("accepts a structurally compatible discriminant from another bundle", () => {
+    expect(
+      isTerminalGenerationRecoveryError({
+        pixaiErrorKind: "recovery-terminal",
+        reason: "task-not-found",
+        message: "different bundle",
+      }),
+    ).toBe(true);
   });
 });
 

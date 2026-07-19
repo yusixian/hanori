@@ -1,13 +1,8 @@
+import { isTerminalPixAIRecoveryError } from "@cos-tool-bot/bot";
 import { DEFAULT_TIMEOUT_CONFIG, PIXAI_TASK_TIMEOUT_MAX_MS } from "@cos-tool-bot/shared";
 
-export function isTerminalGenerationRecoveryError(errorMessage: string): boolean {
-  return (
-    /PixAI task (?:failed|cancelled)/i.test(errorMessage) ||
-    /PixAI task timed out after/i.test(errorMessage) ||
-    /PixAI task completed but no images returned/i.test(errorMessage) ||
-    /PixAI (?:GraphQL )?get task failed: HTTP 404\b/i.test(errorMessage) ||
-    /PixAI GraphQL get task: unexpected empty response/i.test(errorMessage)
-  );
+export function isTerminalGenerationRecoveryError(error: unknown): boolean {
+  return isTerminalPixAIRecoveryError(error);
 }
 
 export function resolvePixaiTaskTimeoutMs(timeoutMs?: number): number {

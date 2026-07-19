@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import { PixAITaskTerminalError } from "@cos-tool-bot/bot";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -341,7 +342,7 @@ describe("BotPool generation recovery lifecycle", () => {
       pool.schedulePendingGenerationRecovery("bot-a", manager, "key", 1_000, new Date()),
     ).resolves.toBe(1);
     const completion = pool.generationRecoveries.get("bot-a:task-1")!.promise;
-    rejectRecovery(new Error("PixAI task failed: rejected"));
+    rejectRecovery(new PixAITaskTerminalError("failed", "PixAI task failed: rejected"));
     await completion;
 
     expect(manager.sendHtml).toHaveBeenCalledWith(123, "图片生成失败: PixAI task failed: rejected");
@@ -359,7 +360,7 @@ describe("BotPool generation recovery lifecycle", () => {
       pool.schedulePendingGenerationRecovery("bot-a", manager, "key", 1_000, new Date()),
     ).resolves.toBe(1);
     const completion = pool.generationRecoveries.get("bot-a:task-1")!.promise;
-    rejectRecovery(new Error("PixAI task failed: rejected"));
+    rejectRecovery(new PixAITaskTerminalError("failed", "PixAI task failed: rejected"));
     await completion;
 
     expect(manager.sendHtml).not.toHaveBeenCalled();

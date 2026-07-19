@@ -84,12 +84,31 @@ interface GraphQLResponse<T> {
 export type PixAITaskTerminalStatus = "failed" | "cancelled" | "timeout";
 
 export class PixAITaskTerminalError extends Error {
+  readonly pixaiErrorKind = "task-terminal" as const;
+
   constructor(
     readonly status: PixAITaskTerminalStatus,
     message: string,
   ) {
     super(message);
     this.name = "PixAITaskTerminalError";
+  }
+}
+
+export type PixAIRecoveryTerminalReason =
+  | "task-not-found"
+  | "empty-task-response"
+  | "completed-without-images";
+
+export class PixAIRecoveryTerminalError extends Error {
+  readonly pixaiErrorKind = "recovery-terminal" as const;
+
+  constructor(
+    readonly reason: PixAIRecoveryTerminalReason,
+    message: string,
+  ) {
+    super(message);
+    this.name = "PixAIRecoveryTerminalError";
   }
 }
 
@@ -260,6 +279,12 @@ export class PixAIClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      if (res.status === 404) {
+        throw new PixAIRecoveryTerminalError(
+          "task-not-found",
+          `PixAI GraphQL get task failed: HTTP ${res.status} ${text}`,
+        );
+      }
       throw new Error(`PixAI GraphQL get task failed: HTTP ${res.status} ${text}`);
     }
 
@@ -270,7 +295,10 @@ export class PixAIClient {
     }
 
     if (!json.data?.task) {
-      throw new Error("PixAI GraphQL get task: unexpected empty response");
+      throw new PixAIRecoveryTerminalError(
+        "empty-task-response",
+        "PixAI GraphQL get task: unexpected empty response",
+      );
     }
     return json.data.task;
   }
@@ -318,6 +346,12 @@ export class PixAIClient {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      if (res.status === 404) {
+        throw new PixAIRecoveryTerminalError(
+          "task-not-found",
+          `PixAI get task failed: HTTP ${res.status} ${text}`,
+        );
+      }
       throw new Error(`PixAI get task failed: HTTP ${res.status} ${text}`);
     }
 
@@ -378,7 +412,10 @@ export class PixAIClient {
       };
     }
 
-    throw new Error("PixAI task completed but no images returned");
+    throw new PixAIRecoveryTerminalError(
+      "completed-without-images",
+      "PixAI task completed but no images returned",
+    );
   }
 }
 
@@ -432,9 +469,26 @@ export async function trackPendingGeneration(
 }
 
 export function isTerminalPixAITaskError(error: unknown): boolean {
-  if (error instanceof PixAITaskTerminalError) return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return /^PixAI task (?:(?:failed|cancelled)(?::|$)|timed out after\b)/i.test(message);
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { pixaiErrorKind?: unknown; status?: unknown };
+  return (
+    candidate.pixaiErrorKind === "task-terminal" &&
+    (candidate.status === "failed" ||
+      candidate.status === "cancelled" ||
+      candidate.status === "timeout")
+  );
+}
+
+export function isTerminalPixAIRecoveryError(error: unknown): boolean {
+  if (isTerminalPixAITaskError(error)) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { pixaiErrorKind?: unknown; reason?: unknown };
+  return (
+    candidate.pixaiErrorKind === "recovery-terminal" &&
+    (candidate.reason === "task-not-found" ||
+      candidate.reason === "empty-task-response" ||
+      candidate.reason === "completed-without-images")
+  );
 }
 
 interface PixAIBackgroundFailureOptions {

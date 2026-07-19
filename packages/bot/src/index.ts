@@ -460,4 +460,12 @@ export type { SummaryCallbacks } from "./commands/summary.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";
-export { recoverPixAIGeneration, type RecoverPixAIGenerationOptions } from "./tools/pixai.js";
+export {
+  isTerminalPixAIRecoveryError,
+  PixAIRecoveryTerminalError,
+  PixAITaskTerminalError,
+  recoverPixAIGeneration,
+  type PixAIRecoveryTerminalReason,
+  type PixAITaskTerminalStatus,
+  type RecoverPixAIGenerationOptions,
+} from "./tools/pixai.js";

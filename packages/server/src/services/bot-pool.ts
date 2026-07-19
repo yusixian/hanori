@@ -1386,7 +1386,7 @@ export class BotPool {
           }
 
           const errorMessage = err instanceof Error ? err.message : String(err);
-          const terminal = isTerminalGenerationRecoveryError(errorMessage);
+          const terminal = isTerminalGenerationRecoveryError(err);
 
           if (!terminal) {
             this.logger.warn(
