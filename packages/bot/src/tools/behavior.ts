@@ -3,7 +3,7 @@ import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
-import { markdownToTelegramHtml } from "../utils/format.js";
+import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { sleep } from "../utils/sleep.js";
 import { stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { stripThinkingContent } from "../utils/strip-thinking.js";
@@ -21,12 +21,21 @@ export interface BehaviorToolsOptions {
   chatId: number;
   recentBotMessageIds: number[];
   moodState: Map<number, MoodInfo>;
+  richMessageEnabled?: boolean;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onceGuard?: OnceGuardContext;
 }
 
 export function createBehaviorTools(options: BehaviorToolsOptions): Record<string, Tool> {
-  const { api, chatId, recentBotMessageIds, moodState, onLog, onceGuard } = options;
+  const {
+    api,
+    chatId,
+    recentBotMessageIds,
+    moodState,
+    richMessageEnabled = true,
+    onLog,
+    onceGuard,
+  } = options;
 
   const tools: Record<string, Tool> = {
     multi_message: tool({
@@ -71,9 +80,24 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
               await api.sendChatAction(chatId, "typing");
               await sleep(Math.min(msg.delay_ms, 5000));
             }
-            const html = markdownToTelegramHtml(clean);
-            const sent = await api.sendMessage(chatId, html, { parse_mode: "HTML" });
-            recentBotMessageIds.push(sent.message_id);
+            const { message } = await sendMarkdownWithFallback(
+              api,
+              chatId,
+              clean,
+              richMessageEnabled,
+              undefined,
+              (mode, error) => {
+                onLog?.({
+                  level: "warn",
+                  message: `${mode === "rich" ? "Rich Message" : "HTML"} multi_message delivery failed, falling back`,
+                  meta: {
+                    chatId,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                });
+              },
+            );
+            recentBotMessageIds.push(message.message_id);
             sentCount++;
           }
           return { sent: sentCount };

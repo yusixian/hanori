@@ -137,7 +137,7 @@ export const botData = {
     title: "AI Debugger",
     description:
       "Dry-run the current bot configuration and inspect model-stream events, error chains, and replayable run records.",
-    ownerOnly: "Owner only · no external side effects",
+    ownerOnly: "Owner only",
     newRun: "New Run",
     messageMode: "Message",
     rawMode: "Raw Channel Event",
@@ -190,6 +190,39 @@ export const botData = {
       mutate: "Failed to update the run",
       invalidJson: "Raw channel event must be valid JSON",
       unknown: "Unknown debugger error",
+    },
+    richMessage: {
+      title: "Telegram Rich Message Test",
+      description:
+        "Call sendRichMessage through the running bot to verify Telegram's actual parsing and rendering.",
+      warning:
+        "This is not a dry-run. Sending immediately creates a real message in the target Telegram chat, and failures are not downgraded.",
+      chatId: "Target Chat ID",
+      chatIdPlaceholder: "For example, 123456789 or -1001234567890",
+      format: "Content format",
+      contentAria: "Telegram rich message content",
+      sampleMarkdown: `# Rich Message Test
+
+**Bold**, _italic_, ==marked text==, and $E = mc^2$
+
+- First list item
+- Second list item
+
+| Feature | Status |
+| --- | --- |
+| Rich Message | Working |
+
+<details><summary>Open details</summary>This content is collapsible.</details>`,
+      sampleHtml: `<h1>Rich Message Test</h1>
+<p><b>Bold</b>, <i>italic</i>, <mark>marked text</mark>, and <tg-math>E = mc^2</tg-math></p>
+<ul><li>First list item</li><li>Second list item</li></ul>
+<details><summary>Open details</summary><p>This content is collapsible.</p></details>`,
+      send: "Send real Rich Message",
+      sending: "Sending…",
+      success: "Sent: message_id={{messageId}} · chat_id={{chatId}} · {{format}}",
+      errors: {
+        send: "Failed to send Telegram Rich Message",
+      },
     },
     markdown: {
       title: "AI Debug Run",

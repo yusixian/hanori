@@ -360,6 +360,7 @@ const aiConfigSchema = z
     messageConfig: z
       .object({
         replyMode: z.enum(["stream", "segment"]).optional(),
+        richMessageEnabled: z.boolean().optional(),
         autoSplitThreshold: z.number().min(0).max(4096),
         splitDelayMs: z.number().min(0).max(5000),
       })

@@ -20,6 +20,7 @@ import { summaryRoutes } from "./routes/summary.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
+import { botDebugRoutes } from "./routes/bot-debug.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ChatSummaryService } from "./services/chat-summary-service.js";
@@ -83,6 +84,8 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/*", requireAppAccess(auth, db))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
     .use("/api/bots/:botId/runs/*", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/debug", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/debug/*", requireRoles(ownerOnly))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
@@ -90,6 +93,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))
+    .route("/api/bots", botDebugRoutes(botPool))
     .use("/api/logs", requireAppAccess(auth, db))
     .use("/api/logs/*", requireAppAccess(auth, db))
     .route("/api/logs", logRoutes(db))

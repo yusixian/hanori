@@ -12,6 +12,8 @@ import type {
   ConversationCallbacks,
   IBotManager,
   PixAIGenerationRecord,
+  TelegramRichMessageFormat,
+  TelegramRichMessageReceipt,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
@@ -139,6 +141,21 @@ export class BotManager implements IBotManager {
       throw new Error(`Bot ${this.botId} is not running`);
     }
     await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+  }
+
+  async sendRichMessage(
+    chatId: number,
+    format: TelegramRichMessageFormat,
+    content: string,
+  ): Promise<TelegramRichMessageReceipt> {
+    if (!this.bot) {
+      throw new Error(`Bot ${this.botId} is not running`);
+    }
+    const sent = await this.bot.api.sendRichMessage(
+      chatId,
+      format === "markdown" ? { markdown: content } : { html: content },
+    );
+    return { messageId: sent.message_id, chatId: sent.chat.id, format };
   }
 
   async recoverPixaiGeneration(

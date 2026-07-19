@@ -29,6 +29,7 @@ import {
   DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
   inferCapabilities,
+  isRichMessageEnabled,
   isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
@@ -72,10 +73,11 @@ import {
   wrapToolsWithCache,
 } from "../tools/utils.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
-import { formatSentMessagesHtml } from "../utils/stream-reply.js";
+import { formatSentMessagesHtml, showRichThinkingDraft } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { describeImages } from "../services/image-ocr.js";
@@ -147,6 +149,7 @@ export interface AiReplyConfig {
     model?: string;
     pixaiConfig?: Partial<PixAIConfig>;
   }) => void | Promise<void>;
+  onMessageConfigUpdate?: (updates: Partial<MessageConfig>) => void | Promise<void>;
   onWebToolApiKeyUpdate?: (target: "image" | "search", apiKey: string) => void | Promise<void>;
   onTimerCreate?: (params: {
     timerId: string;
@@ -279,6 +282,33 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
       const sent = await ctx.directlyReply(text).catch(() => undefined);
       return sent?.message_id;
     }
+  }
+}
+
+async function safeFormattedReply(
+  ctx: WrapperContext,
+  text: string,
+  richMessageEnabled: boolean,
+  onFallback?: (mode: "rich" | "html", error: unknown) => void,
+): Promise<number | undefined> {
+  if (!richMessageEnabled) return safeReply(ctx, text);
+
+  try {
+    await ctx.deleteWaiting();
+    const result = await sendMarkdownWithFallback(
+      ctx.api,
+      ctx.chat!.id,
+      text,
+      true,
+      {
+        reply_parameters:
+          ctx.chat?.type === "private" ? undefined : { message_id: ctx.message!.message_id },
+      },
+      onFallback,
+    );
+    return result.message.message_id;
+  } catch {
+    return undefined;
   }
 }
 
@@ -539,6 +569,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   getModelsForChat: (chatId: number) => ModelEntry[];
   getReplyMode: () => ReplyMode;
   setReplyMode: (mode: ReplyMode) => void;
+  getRichMessageEnabled: () => boolean;
+  setRichMessageEnabled: (enabled: boolean) => Promise<void>;
   getImageGenEnabled: (chatId: number) => boolean;
   setImageGenEnabled: (chatId: number, enabled: boolean) => void;
   getPixaiFullConfig: () => { model: string | undefined; pixaiConfig: PixAIConfig };
@@ -616,11 +648,20 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   let replyModeOverride: ReplyMode | undefined;
 
   function getEffectiveMessageConfig(): MessageConfig {
-    const base = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
+    const base = { ...DEFAULT_MESSAGE_CONFIG, ...config.messageConfig };
     if (replyModeOverride !== undefined) {
       return { ...base, replyMode: replyModeOverride };
     }
     return base;
+  }
+
+  async function setRichMessageEnabled(enabled: boolean): Promise<void> {
+    await config.onMessageConfigUpdate?.({ richMessageEnabled: enabled });
+    config.messageConfig = {
+      ...DEFAULT_MESSAGE_CONFIG,
+      ...config.messageConfig,
+      richMessageEnabled: enabled,
+    };
   }
 
   function canUseImageGeneration(isPrivate: boolean, isAdmin: boolean, chatId: number): boolean {
@@ -1153,6 +1194,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         chatId,
         recentBotMessageIds: chatBotMsgIds,
         moodState,
+        richMessageEnabled: isRichMessageEnabled(getEffectiveMessageConfig()),
         onLog: config.onLog,
         onceGuard,
       });
@@ -1410,10 +1452,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
 
       // Stream mode and segment mode are mutually exclusive:
-      // - Stream: multi_message is removed; text is piped via replyWithStream (draft animation)
+      // - Stream: multi_message is removed; private chats use the configured draft format
       // - Segment: multi_message is available; AI sends messages via tool, no streaming
       const msgCfg = getEffectiveMessageConfig();
       const isStreamMode = isStreamReplyMode(msgCfg);
+      const richMessageEnabled = isRichMessageEnabled(msgCfg);
       if (isStreamMode) {
         delete allTools.multi_message;
       }
@@ -1528,10 +1571,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       let capturedStreamError: unknown;
       // Track whether multi_message tool was used (segment mode only)
       let sentViaMultiMessage = false;
+      const logRichFallback = (mode: "rich" | "html", error: unknown) => {
+        config.onLog?.({
+          level: "warn",
+          message: `${mode === "rich" ? "Rich Message" : "HTML"} delivery failed, falling back`,
+          meta: {
+            chatId,
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      };
 
       try {
-        if (isStreamMode) {
-          // ─── Stream mode: pipe text to Telegram via replyWithStream ───
+        if (isStreamMode && ctx.chat?.type === "private") {
+          // ─── Private stream mode: Rich Markdown draft + persistent Rich Message ───
           const thinkFilter = createThinkingStreamFilter(({ pattern, strippedLength }) => {
             config.onLog?.({
               level: "info",
@@ -1550,8 +1604,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           // for `await result.text` to drain fullStream (which can take seconds).
           let accumulatedFiltered = "";
           // Buffer leading whitespace so the first yield always carries a visible char.
-          // @grammyjs/stream's sendMessageDraft fails with "text must be non-empty" if
-          // cumulative draft text trims to empty (Telegram validates with trim).
+          // Telegram draft methods reject cumulative content that trims to empty.
           let leadingBuffer = "";
           let hasVisibleContent = false;
           async function* managedTextStream() {
@@ -1593,14 +1646,27 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             }
           }
 
-          let sentMessages: Message.TextMessage[] = [];
+          const sentMessages: Message[] = [];
           try {
-            sentMessages = await ctx.replyWithStream(managedTextStream());
+            if (richMessageEnabled) {
+              const thinkingShown = await showRichThinkingDraft(
+                ctx.api,
+                chatId,
+                ctx.update.update_id,
+              );
+              if (thinkingShown) await ctx.deleteWaiting();
+              sentMessages.push(await ctx.replyWithMarkdownStream(managedTextStream()));
+            } else {
+              const legacyMessages = await ctx.replyWithStream(managedTextStream());
+              await formatSentMessagesHtml(ctx.api, legacyMessages);
+              sentMessages.push(...legacyMessages);
+            }
           } catch (streamErr) {
             capturedStreamError = streamErr;
+            const streamMethod = richMessageEnabled ? "replyWithMarkdownStream" : "replyWithStream";
             config.onLog?.({
               level: "warn",
-              message: `replyWithStream failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
+              message: `${streamMethod} failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
               meta: {
                 chatId,
                 userId,
@@ -1623,14 +1689,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                 streamStarted = true;
                 config.onLog?.({
                   level: "info",
-                  message: `replyWithStream fallback sent ${fallbackText.length} chars`,
+                  message: `${streamMethod} fallback sent ${fallbackText.length} chars`,
                   meta: { chatId, userId, replyMsgId },
                 });
               } else {
                 streamStarted = false;
                 config.onLog?.({
                   level: "error",
-                  message: "replyWithStream fallback: safeReply returned undefined",
+                  message: `${streamMethod} fallback: safeReply returned undefined`,
                   meta: { chatId, userId, textLength: fallbackText.length },
                 });
               }
@@ -1640,12 +1706,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             }
           }
 
-          await formatSentMessagesHtml(ctx.api, sentMessages);
-          for (const msg of sentMessages) {
-            chatBotMsgIds.push(msg.message_id);
-          }
+          for (const message of sentMessages) chatBotMsgIds.push(message.message_id);
         } else {
-          // ─── Segment mode: drain stream to drive tool execution ───
+          // ─── Segment mode and group stream mode: drain before final delivery ───
           // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
           for await (const _ of result.textStream) {
           }
@@ -1688,9 +1751,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // ─── Send final reply (when streaming/multi_message didn't handle it) ───
       if (isStreamMode && !streamStarted) {
-        // Stream yielded nothing — fall back to safeReply
+        // Group chats cannot stream drafts; send the complete formatted message here.
         if (text) {
-          const replyMsgId = await safeReply(ctx, text);
+          const replyMsgId = await safeFormattedReply(
+            ctx,
+            text,
+            richMessageEnabled,
+            logRichFallback,
+          );
           if (replyMsgId) chatBotMsgIds.push(replyMsgId);
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
@@ -1708,7 +1776,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
               await sleep(msgCfg.splitDelayMs ?? 800);
               if (aiDisabled || manualAbort?.signal.aborted) break;
             }
-            const replyMsgId = await safeReply(ctx, chunk);
+            const replyMsgId = await safeFormattedReply(
+              ctx,
+              chunk,
+              richMessageEnabled,
+              logRichFallback,
+            );
             if (replyMsgId) chatBotMsgIds.push(replyMsgId);
           }
         } else {
@@ -2007,6 +2080,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     setReplyMode: (mode: ReplyMode) => {
       replyModeOverride = mode;
     },
+    getRichMessageEnabled: () => isRichMessageEnabled(getEffectiveMessageConfig()),
+    setRichMessageEnabled,
     getImageGenEnabled,
     setImageGenEnabled,
     getPixaiFullConfig,

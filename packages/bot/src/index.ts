@@ -24,6 +24,7 @@ import { createImageGenCommand } from "./commands/imagegen.js";
 import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
 import { createImgCfgCommand } from "./commands/imgcfg.js";
 import { createReplyModeCommand } from "./commands/reply-mode.js";
+import { createRichTextCommand } from "./commands/rich-text.js";
 import { createRestartCommand } from "./commands/restart.js";
 import { createResumeCommand } from "./commands/resume.js";
 import { startCommand } from "./commands/start.js";
@@ -85,7 +86,7 @@ export interface BotConfig {
 export function createBot(config: BotConfig) {
   const { token, adminChatIds, logger } = config;
 
-  // StreamFlavor adds replyWithStream which is injected at runtime by stream() middleware,
+  // StreamFlavor adds plain and Rich Message streaming methods at runtime via stream() middleware,
   // so we need a double assertion to satisfy the type system while using our custom WrapperContext
   const bot = new Bot<BotContext>(token, {
     ContextConstructor: WrapperContext as unknown as new (
@@ -123,6 +124,12 @@ export function createBot(config: BotConfig) {
   let aiGetModelsForChat: ReturnType<typeof createAiReplyHandler>["getModelsForChat"] | undefined;
   let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
   let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
+  let aiGetRichMessageEnabled:
+    | ReturnType<typeof createAiReplyHandler>["getRichMessageEnabled"]
+    | undefined;
+  let aiSetRichMessageEnabled:
+    | ReturnType<typeof createAiReplyHandler>["setRichMessageEnabled"]
+    | undefined;
   let aiGetImageGenEnabled:
     | ReturnType<typeof createAiReplyHandler>["getImageGenEnabled"]
     | undefined;
@@ -181,6 +188,8 @@ export function createBot(config: BotConfig) {
     aiGetModelsForChat = result.getModelsForChat;
     aiGetReplyMode = result.getReplyMode;
     aiSetReplyMode = result.setReplyMode;
+    aiGetRichMessageEnabled = result.getRichMessageEnabled;
+    aiSetRichMessageEnabled = result.setRichMessageEnabled;
     aiGetImageGenEnabled = result.getImageGenEnabled;
     aiSetImageGenEnabled = result.setImageGenEnabled;
     aiGetPixaiFullConfig = result.getPixaiFullConfig;
@@ -304,6 +313,18 @@ export function createBot(config: BotConfig) {
       createReplyModeCommand({
         getReplyMode: aiGetReplyMode,
         setReplyMode: aiSetReplyMode,
+      }),
+    );
+  }
+
+  // Register /richtext command (admin only, persisted globally for this bot)
+  if (aiGetRichMessageEnabled && aiSetRichMessageEnabled) {
+    bot.command(
+      "richtext",
+      authGuard,
+      createRichTextCommand({
+        getEnabled: aiGetRichMessageEnabled,
+        setEnabled: aiSetRichMessageEnabled,
       }),
     );
   }

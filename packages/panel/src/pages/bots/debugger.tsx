@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
-import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
+import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -31,6 +32,12 @@ interface BotRun {
   pinned?: boolean;
   createdAt: string;
   events?: BotRunEvent[];
+}
+
+interface RichMessageReceipt {
+  messageId: number;
+  chatId: number;
+  format: "markdown" | "html";
 }
 
 function statusVariant(status: string) {
@@ -64,6 +71,12 @@ export function BotDebuggerPage() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [richChatId, setRichChatId] = useState("");
+  const [richFormat, setRichFormat] = useState<"markdown" | "html">("markdown");
+  const [richContent, setRichContent] = useState(() => t("debugger.richMessage.sampleMarkdown"));
+  const [richBusy, setRichBusy] = useState(false);
+  const [richError, setRichError] = useState<string | null>(null);
+  const [richReceipt, setRichReceipt] = useState<RichMessageReceipt | null>(null);
   const statusLabels = useMemo<Record<string, string>>(
     () => ({
       running: t("debugger.statuses.running"),
@@ -206,6 +219,37 @@ export function BotDebuggerPage() {
     }
   };
 
+  const sendRichMessage = async () => {
+    if (!botId) return;
+    setRichBusy(true);
+    setRichError(null);
+    setRichReceipt(null);
+    try {
+      const response = await authFetch(`/api/bots/${botId}/debug/rich-messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: richChatId,
+          format: richFormat,
+          content: richContent,
+        }),
+      });
+      const json = (await response.json()) as {
+        ok: boolean;
+        data?: RichMessageReceipt;
+        error?: string;
+      };
+      if (!response.ok || !json.ok || !json.data) {
+        throw new Error(json.error ?? t("debugger.richMessage.errors.send"));
+      }
+      setRichReceipt(json.data);
+    } catch (cause) {
+      setRichError(cause instanceof Error ? cause.message : t("debugger.richMessage.errors.send"));
+    } finally {
+      setRichBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6 xl:flex xl:h-[calc(100dvh-5rem)] xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
       <div className="flex flex-wrap items-start justify-between gap-3 xl:shrink-0 xl:pb-6">
@@ -289,6 +333,82 @@ export function BotDebuggerPage() {
               >
                 <Play className="size-4" />
                 {busy ? t("debugger.starting") : t("debugger.runDryRun")}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">{t("debugger.richMessage.title")}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-muted-foreground text-sm">
+                {t("debugger.richMessage.description")}
+              </p>
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                {t("debugger.richMessage.warning")}
+              </p>
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium">{t("debugger.richMessage.chatId")}</span>
+                <Input
+                  inputMode="numeric"
+                  value={richChatId}
+                  onChange={(event) => setRichChatId(event.target.value)}
+                  placeholder={t("debugger.richMessage.chatIdPlaceholder")}
+                />
+              </label>
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium">{t("debugger.richMessage.format")}</span>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant={richFormat === "markdown" ? "default" : "outline"}
+                    onClick={() => {
+                      setRichFormat("markdown");
+                      setRichContent(t("debugger.richMessage.sampleMarkdown"));
+                    }}
+                  >
+                    Markdown
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={richFormat === "html" ? "default" : "outline"}
+                    onClick={() => {
+                      setRichFormat("html");
+                      setRichContent(t("debugger.richMessage.sampleHtml"));
+                    }}
+                  >
+                    HTML
+                  </Button>
+                </div>
+              </div>
+              <Textarea
+                aria-label={t("debugger.richMessage.contentAria")}
+                className="font-mono text-xs"
+                rows={12}
+                value={richContent}
+                onChange={(event) => setRichContent(event.target.value)}
+              />
+              {richError && (
+                <p role="alert" className="text-destructive text-sm">
+                  {richError}
+                </p>
+              )}
+              {richReceipt && (
+                <p role="status" className="text-sm text-emerald-700">
+                  {t("debugger.richMessage.success", {
+                    messageId: richReceipt.messageId,
+                    chatId: richReceipt.chatId,
+                    format: richReceipt.format,
+                  })}
+                </p>
+              )}
+              <Button
+                disabled={richBusy || !richChatId.trim() || !richContent.trim()}
+                onClick={() => void sendRichMessage()}
+              >
+                <Send className="size-4" />
+                {richBusy ? t("debugger.richMessage.sending") : t("debugger.richMessage.send")}
               </Button>
             </CardContent>
           </Card>

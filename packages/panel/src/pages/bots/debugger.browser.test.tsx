@@ -93,6 +93,47 @@ test("offers message and raw Channel event dry-runs", async () => {
   await expect.element(page.getByRole("button", { name: "Run dry-run" })).toBeVisible();
 });
 
+test("strictly sends a custom Telegram Rich Message from the debugger", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/debug/rich-messages") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: { messageId: 77, chatId: 123456789, format: "markdown" },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+
+  await expect
+    .element(page.getByRole("status"))
+    .toHaveTextContent("Sent: message_id=77 · chat_id=123456789 · markdown");
+  const request = fetchMock.mock.calls.find(([input]) =>
+    String(input).endsWith("/debug/rich-messages"),
+  );
+  expect(request?.[1]).toMatchObject({ method: "POST" });
+  expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+    chatId: "123456789",
+    format: "markdown",
+  });
+});
+
 test("keeps a running stream open across transient errors and closes it on completion", async () => {
   const runningRun = {
     ...failedRun,

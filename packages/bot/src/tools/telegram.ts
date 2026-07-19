@@ -115,7 +115,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     }),
 
     send_media_group: tool({
-      description: "批量发送多张图片或文档。支持 URL、file_id、local:xxx 混合。最多 10 张。",
+      description: "批量发送多张同类型图片或文档。支持 URL、file_id、local:xxx 来源。最多 10 张。",
       inputSchema: zodToAiSchema(
         z.object({
           media: z
@@ -134,25 +134,33 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
       ),
       execute: async ({ media }) => {
         try {
-          const inputMedia = await Promise.all(
-            media.map(async (m) => {
-              const input = await resolveInput(m.source, dataDir);
-              if (m.type === "photo") {
-                return {
-                  type: "photo" as const,
-                  media: input,
-                  caption: m.caption,
-                  has_spoiler: m.has_spoiler ?? false,
-                };
-              }
-              return {
-                type: "document" as const,
-                media: input,
-                caption: m.caption,
-              };
-            }),
-          );
-          const sent = await api.sendMediaGroup(chatId, inputMedia);
+          const mediaType = media[0]!.type;
+          if (media.some((item) => item.type !== mediaType)) {
+            return { error: "Telegram media groups cannot mix photos and documents" };
+          }
+          const sent =
+            mediaType === "photo"
+              ? await api.sendMediaGroup(
+                  chatId,
+                  await Promise.all(
+                    media.map(async (item) => ({
+                      type: "photo" as const,
+                      media: await resolveInput(item.source, dataDir),
+                      caption: item.caption,
+                      has_spoiler: item.has_spoiler ?? false,
+                    })),
+                  ),
+                )
+              : await api.sendMediaGroup(
+                  chatId,
+                  await Promise.all(
+                    media.map(async (item) => ({
+                      type: "document" as const,
+                      media: await resolveInput(item.source, dataDir),
+                      caption: item.caption,
+                    })),
+                  ),
+                );
           for (const msg of sent) {
             recentBotMessageIds.push(msg.message_id);
           }

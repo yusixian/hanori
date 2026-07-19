@@ -20,11 +20,14 @@ import type {
   ModelEntry,
   PixAIConfig,
   PixAIGenerationRecord,
+  TelegramRichMessageFormat,
+  TelegramRichMessageReceipt,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
@@ -164,6 +167,19 @@ export class BotPool {
       return;
     }
     await manager.sendHtml(chatId, html);
+  }
+
+  async sendRichMessage(
+    botId: string,
+    chatId: number,
+    format: TelegramRichMessageFormat,
+    content: string,
+  ): Promise<TelegramRichMessageReceipt> {
+    const manager = this.managers.get(botId);
+    if (!manager) {
+      throw new Error(`Bot ${botId} is not running`);
+    }
+    return manager.sendRichMessage(chatId, format, content);
   }
 
   getConversationStore(): ConversationStore {
@@ -802,6 +818,32 @@ export class BotPool {
             );
           } catch (err) {
             this.logger.error(err, "Failed to persist pixai config update");
+          }
+        },
+        onMessageConfigUpdate: async (updates) => {
+          try {
+            await this.withAiConfigLock(botId, () =>
+              this.db.transaction(async (tx) => {
+                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+                if (!current?.aiConfig) throw new Error("AI is not configured");
+                await tx
+                  .update(bots)
+                  .set({
+                    aiConfig: {
+                      ...current.aiConfig,
+                      messageConfig: {
+                        ...DEFAULT_MESSAGE_CONFIG,
+                        ...current.aiConfig.messageConfig,
+                        ...updates,
+                      },
+                    },
+                  })
+                  .where(eq(bots.id, botId));
+              }),
+            );
+          } catch (error) {
+            this.logger.error(error, "Failed to persist message config update");
+            throw error;
           }
         },
         onWebToolApiKeyUpdate: async (target, apiKey) => {

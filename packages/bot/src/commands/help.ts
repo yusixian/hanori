@@ -18,6 +18,7 @@ const commands = [
   { command: "clearreceived", description: "(admin) 清理收到的文件缓存" },
   { command: "model", description: "查看/切换 AI 模型" },
   { command: "replymode", description: "(admin) 切换回复模式 (stream/segment)" },
+  { command: "richtext", description: "(admin) 全局切换 AI 富文本回复 (on/off)" },
   { command: "imagegen", description: "(admin) 切换群组生图权限 (on/off)" },
   { command: "apikey", description: "(admin) 在私聊中更新 Web 工具 API Key" },
   { command: "draw", description: "直接生图，发送 /draw 查看参数说明" },

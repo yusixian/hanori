@@ -261,6 +261,10 @@ export const aiSettings = {
   },
   messageSplitting: {
     title: "Reply Mode & Message Splitting",
+    richMessage: "Telegram Native Rich Messages",
+    richMessageDescription:
+      "When enabled globally, all AI replies prefer Rich Messages. When disabled, they use compatible HTML/plain text.",
+    richMessageCommand: "Bot administrators can also change this with /richtext on|off.",
     replyMode: "Reply Mode",
     streamOption: "Stream (real-time draft animation)",
     segmentOption: "Segment (multi_message tool, human-like)",
