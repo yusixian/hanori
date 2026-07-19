@@ -1,7 +1,7 @@
 import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
 import { generateText } from "ai";
 import type { Logger } from "pino";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationStore } from "./conversation-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 
@@ -50,6 +50,10 @@ function createOptions(store: ConversationStore) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(generateText).mockResolvedValue({ text: "Updated summary" } as never);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("compressConversation", () => {
@@ -120,12 +124,56 @@ describe("compressConversation", () => {
     );
   });
 
+  it("backs off after a failed summary before allowing another attempt", async () => {
+    vi.useFakeTimers();
+    const store = createStore();
+    const options = createOptions(store);
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("provider unavailable"));
+
+    await compressConversation(options);
+    await compressConversation(options);
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await compressConversation(options);
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(store.commitCompaction).toHaveBeenCalledOnce();
+  });
+
+  it("retries immediately when the provider configuration changes", async () => {
+    vi.useFakeTimers();
+    const store = createStore();
+    const options = createOptions(store);
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("invalid provider credentials"));
+
+    await compressConversation(options);
+    await compressConversation({ ...options, apiKey: "replacement-key" });
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(store.commitCompaction).toHaveBeenCalledOnce();
+  });
+
   it("does not move the cursor for an empty summary", async () => {
     const store = createStore();
     vi.mocked(generateText).mockResolvedValueOnce({ text: "  " } as never);
 
     await compressConversation(createOptions(store));
 
+    expect(store.commitCompaction).not.toHaveBeenCalled();
+  });
+
+  it("backs off when the provider returns an empty summary", async () => {
+    vi.useFakeTimers();
+    const store = createStore();
+    vi.mocked(generateText).mockResolvedValue({ text: "  " } as never);
+    const options = createOptions(store);
+
+    await compressConversation(options);
+    await compressConversation(options);
+
+    expect(generateText).toHaveBeenCalledOnce();
     expect(store.commitCompaction).not.toHaveBeenCalled();
   });
 

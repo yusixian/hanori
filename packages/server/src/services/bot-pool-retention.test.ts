@@ -101,6 +101,29 @@ describe("BotPool conversation retention", () => {
     await pool.stopAll();
   });
 
+  it("starts bots without waiting for retention cleanup to finish", async () => {
+    let resolveCleanup!: () => void;
+    const cleanup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCleanup = resolve;
+        }),
+    );
+    const pool = createPool(cleanup, () => [
+      { id: "bot-a", name: "A", aiConfig: { conversationConfig: { retentionDays: 30 } } },
+    ]);
+
+    const starting = pool.startAll();
+    await vi.waitFor(() => expect(cleanup).toHaveBeenCalledOnce());
+    const startedBeforeCleanupFinished = pool.startBot.mock.calls.length === 1;
+    resolveCleanup();
+    await starting;
+
+    expect(startedBeforeCleanupFinished).toBe(true);
+
+    await pool.stopAll();
+  });
+
   it("skips disabled retention during startup sweep and keeps bots isolated", async () => {
     const cleanup = vi.fn().mockResolvedValue(undefined);
     const pool = createPool(cleanup, () => [

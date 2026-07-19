@@ -237,8 +237,10 @@ export class BotPool {
       return;
     }
 
-    await this.runConversationCleanupSweep(activeBots, true);
     this.startConversationCleanupScheduler();
+    void this.runConversationCleanupSweep(activeBots, true).catch((err) => {
+      this.logger.warn(err, "Conversation retention startup sweep failed");
+    });
 
     if (activeBots.length === 0) return;
     this.logger.info(`Starting ${activeBots.length} active bot(s)...`);

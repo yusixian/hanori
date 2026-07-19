@@ -249,7 +249,7 @@ export const aiSettings = {
     saveGroupContextDescription: "何时将群聊上下文持久化到数据库",
     compressionSettings: "压缩设置",
     autoSummarize: "使用 LLM 自动总结",
-    autoSummarizeOff: "（关闭后使用滑动窗口，旧消息会被丢弃）",
+    autoSummarizeOff: "（关闭后不生成 LLM 摘要，原始消息按保留策略清理）",
     summarizeThreshold: "总结阈值",
     summarizeThresholdDescription: "消息数量超过此值时触发压缩",
   },

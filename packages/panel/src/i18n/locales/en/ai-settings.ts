@@ -252,7 +252,7 @@ export const aiSettings = {
     saveGroupContextDescription: "When to persist group context to the database",
     compressionSettings: "Compression Settings",
     autoSummarize: "Auto-summarize with LLM",
-    autoSummarizeOff: "(off = sliding window, old messages discarded)",
+    autoSummarizeOff: "(off = no LLM summaries; raw messages follow the retention policy)",
     summarizeThreshold: "Summarize Threshold",
     summarizeThresholdDescription: "Trigger compression when message count exceeds this",
   },
