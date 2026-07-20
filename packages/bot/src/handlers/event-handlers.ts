@@ -1,6 +1,7 @@
 import type { Api } from "grammy";
 import type { PollAnswer } from "grammy/types";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
+import type { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
 
@@ -158,5 +159,98 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     } catch {
       // logged inside continueChat
     }
+  };
+}
+
+export interface GitHubCallbackQueryHandlerOptions {
+  api: Api;
+  pendingActions: PendingGitHubActionRegistry;
+  adminIds: readonly number[];
+}
+
+export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHandlerOptions) {
+  return async (ctx: {
+    callbackQuery: {
+      id: string;
+      data?: string;
+      from: { id: number };
+      message?: { chat: { id: number }; message_id: number; text?: string };
+    };
+  }): Promise<boolean> => {
+    const data = ctx.callbackQuery.data;
+    if (!data?.startsWith("cos:gh:")) return false;
+    const [, , actionId, decision] = data.split(":");
+    if (!actionId || (decision !== "yes" && decision !== "no")) return true;
+
+    const action = options.pendingActions.get(actionId);
+    const callbackChatId = ctx.callbackQuery.message?.chat.id;
+    if (!action) {
+      await options.api.raw.answerCallbackQuery({
+        callback_query_id: ctx.callbackQuery.id,
+        text: "该 GitHub 请求已过期或已处理",
+        show_alert: true,
+      });
+      return true;
+    }
+    if (
+      !options.adminIds.includes(ctx.callbackQuery.from.id) ||
+      action.userId !== ctx.callbackQuery.from.id ||
+      action.chatId !== callbackChatId
+    ) {
+      await options.api.raw.answerCallbackQuery({
+        callback_query_id: ctx.callbackQuery.id,
+        text: "只有发起该请求的管理员可以确认",
+        show_alert: true,
+      });
+      return true;
+    }
+
+    options.pendingActions.take(actionId);
+    if (decision === "no") {
+      await options.api.raw.answerCallbackQuery({
+        callback_query_id: ctx.callbackQuery.id,
+        text: "已取消",
+      });
+      if (ctx.callbackQuery.message) {
+        await options.api
+          .editMessageText(
+            action.chatId,
+            ctx.callbackQuery.message.message_id,
+            `🔐 GitHub 管理员确认\n\n${action.description}\n\n❌ 已取消`,
+          )
+          .catch(() => {});
+      }
+      return true;
+    }
+
+    await options.api.raw.answerCallbackQuery({
+      callback_query_id: ctx.callbackQuery.id,
+      text: "正在执行 GitHub 操作",
+    });
+    try {
+      const result = await action.execute();
+      const url = result.url ? `\n${result.url}` : "";
+      if (ctx.callbackQuery.message) {
+        await options.api
+          .editMessageText(
+            action.chatId,
+            ctx.callbackQuery.message.message_id,
+            `🔐 GitHub 管理员确认\n\n${action.description}\n\n✅ ${result.summary}${url}`,
+          )
+          .catch(() => {});
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (ctx.callbackQuery.message) {
+        await options.api
+          .editMessageText(
+            action.chatId,
+            ctx.callbackQuery.message.message_id,
+            `🔐 GitHub 管理员确认\n\n${action.description}\n\n❌ 执行失败：${message}`,
+          )
+          .catch(() => {});
+      }
+    }
+    return true;
   };
 }

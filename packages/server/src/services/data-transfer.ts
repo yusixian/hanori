@@ -43,6 +43,13 @@ function sanitizeAiConfig(config: Record<string, unknown>): Record<string, unkno
     >;
     rest.embeddingConfig = embRest;
   }
+  if (rest.githubToolsConfig && typeof rest.githubToolsConfig === "object") {
+    const { encryptedToken: _githubToken, ...githubRest } = rest.githubToolsConfig as Record<
+      string,
+      unknown
+    >;
+    rest.githubToolsConfig = githubRest;
+  }
   return rest;
 }
 

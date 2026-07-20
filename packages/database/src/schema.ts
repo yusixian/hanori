@@ -146,6 +146,15 @@ interface AiConfigJson {
       }
     >;
   };
+  githubToolsConfig?: {
+    enabled: boolean;
+    publicReadEnabled: boolean;
+    encryptedToken?: string;
+    login?: string;
+    authorName: string;
+    authorEmail: string;
+    repositories: string[];
+  };
   artworkToolsConfig?: {
     enabled: boolean;
     pixivCookie?: string;

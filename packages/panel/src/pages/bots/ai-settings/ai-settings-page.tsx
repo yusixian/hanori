@@ -16,6 +16,7 @@ import type {
   TimeoutConfig,
   WebToolsConfig,
   WebToolsConfigPublic,
+  GitHubToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_ARTWORK_TOOLS_CONFIG,
@@ -46,6 +47,7 @@ import {
 import { SettingsDisclosureRow } from "./components/settings-disclosure-row";
 import { OverviewSection } from "./sections/overview-section";
 import { AgentToolsSection } from "./sections/agent-tools-section";
+import { GitHubToolsSection } from "./sections/github-tools-section";
 import { ArtworkToolsSection } from "./sections/artwork-tools-section";
 import { BotMemorySection } from "./sections/bot-memory-section";
 import type { EmbeddingFormConfig } from "./sections/embedding-section";
@@ -65,7 +67,12 @@ import { McpServersSection } from "./sections/mcp-servers-section";
 import { SummaryConfigSection } from "./sections/summary-config-section";
 import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
 import { WebToolsSection } from "./sections/web-tools-section";
-import { DEFAULT_AGENT_TOOLS, DEFAULT_CONFIG, DEFAULT_WEB_TOOLS } from "./types";
+import {
+  DEFAULT_AGENT_TOOLS,
+  DEFAULT_CONFIG,
+  DEFAULT_GITHUB_TOOLS,
+  DEFAULT_WEB_TOOLS,
+} from "./types";
 import type { StatusMessage } from "./types";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
@@ -140,6 +147,7 @@ export function BotAiSettingsPage() {
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [webSearchApiKey, setWebSearchApiKey] = useState("");
   const [webImageApiKey, setWebImageApiKey] = useState("");
+  const [githubToken, setGitHubToken] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
@@ -315,6 +323,17 @@ export function BotAiSettingsPage() {
             webImageApiKey,
           ),
           agentToolsConfig: config.agentToolsConfig,
+          githubToolsConfig: config.githubToolsConfig
+            ? {
+                enabled: config.githubToolsConfig.enabled,
+                publicReadEnabled: config.githubToolsConfig.publicReadEnabled,
+                token: githubToken || undefined,
+                login: config.githubToolsConfig.login,
+                authorName: config.githubToolsConfig.authorName,
+                authorEmail: config.githubToolsConfig.authorEmail,
+                repositories: config.githubToolsConfig.repositories,
+              }
+            : undefined,
           artworkToolsConfig: config.artworkToolsConfig,
           messageConfig: config.messageConfig,
           timeoutConfig: config.timeoutConfig,
@@ -377,6 +396,7 @@ export function BotAiSettingsPage() {
         setEmbeddingApiKey("");
         setWebSearchApiKey("");
         setWebImageApiKey("");
+        setGitHubToken("");
         setProviderApiKeys({});
         savedDraftRef.current = serializeDraft(
           json.data,
@@ -443,6 +463,14 @@ export function BotAiSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       agentToolsConfig: { ...agentCfg, ...prev.agentToolsConfig, ...updates },
+    }));
+  };
+
+  const githubCfg = config.githubToolsConfig ?? DEFAULT_GITHUB_TOOLS;
+  const updateGitHubTools = (updates: Partial<GitHubToolsConfigPublic>) => {
+    setConfig((prev) => ({
+      ...prev,
+      githubToolsConfig: { ...githubCfg, ...prev.githubToolsConfig, ...updates },
     }));
   };
 
@@ -804,6 +832,18 @@ export function BotAiSettingsPage() {
                   onSearchApiKeyChange={setWebSearchApiKey}
                   onImageApiKeyChange={setWebImageApiKey}
                   onUpdate={updateWebTools}
+                />
+              </SettingsDisclosureRow>
+              <SettingsDisclosureRow
+                title={t("disclosures.githubTools.title")}
+                description={t("disclosures.githubTools.description")}
+                summary={githubCfg.enabled ? t("common.enabled") : t("common.disabled")}
+              >
+                <GitHubToolsSection
+                  config={githubCfg}
+                  token={githubToken}
+                  onTokenChange={setGitHubToken}
+                  onUpdate={updateGitHubTools}
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow

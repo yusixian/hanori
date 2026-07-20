@@ -109,6 +109,10 @@ export const aiSettings = {
       title: "Web tools",
       description: "Search, browse, and research information online.",
     },
+    githubTools: {
+      title: "GitHub identity and code access",
+      description: "Configure Ai-chan's identity, repository allowlist, and confirmations.",
+    },
     agentTools: {
       title: "Agent tools",
       description: "Delegate complex work to sub-agents.",
@@ -149,7 +153,7 @@ export const aiSettings = {
     tools: "Tools",
     enabledCount: "{{count}} enabled",
     memoryDetail: "Memory, embeddings, and summaries",
-    toolsDetail: "Web, agent, artwork, MCP, and OCR",
+    toolsDetail: "Web, GitHub, agent, artwork, MCP, and OCR",
   },
   providers: {
     title: "AI Providers",
@@ -393,6 +397,26 @@ export const aiSettings = {
       "Optional model for sub-agents. Leave empty to use the same model as the main AI.",
     maxSteps: "Max Sub-agent Steps",
     maxStepsDescription: "Maximum tool-calling rounds per sub-agent (1–15)",
+  },
+  githubTools: {
+    enable: "Enable GitHub tools",
+    securityDescription:
+      "Credentials are decrypted only in the server and are never given to the model. Only bot administrators can use the configured identity; other members can at most read public repositories anonymously.",
+    publicRead: "Allow members to read public repositories",
+    publicReadDescription:
+      "Member requests never include Ai-chan's token and cannot create branches, commit, push, or change issues.",
+    login: "GitHub login",
+    token: "Fine-grained Personal Access Token",
+    tokenPlaceholder: "Enter the token for Ai-chan's account",
+    keepTokenPlaceholder: "Configured; leave empty to keep",
+    authorName: "Git commit author name",
+    authorEmail: "Git commit author email",
+    repositories: "Administrator repository allowlist",
+    repositoriesDescription:
+      "One owner/repository per line. Only allowlisted repositories may use the token for private reads or administrator writes.",
+    tokenPermissionsTitle: "Recommended minimum GitHub permissions",
+    tokenPermissions:
+      "Select only the repositories above; set Metadata: Read, Contents: Read and write, and Issues: Read and write. Add Pull requests: Read and write later if PR creation is enabled.",
   },
   artworkTools: {
     title: "Artwork Tools",

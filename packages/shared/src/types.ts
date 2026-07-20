@@ -473,6 +473,28 @@ export interface AiProviderEntryPublic {
   models?: ModelEntry[];
 }
 
+/** GitHub access persisted with a bot. The token is encrypted before this reaches storage. */
+export interface GitHubToolsConfigStored {
+  enabled: boolean;
+  publicReadEnabled: boolean;
+  encryptedToken?: string;
+  login?: string;
+  authorName: string;
+  authorEmail: string;
+  /** owner/repository entries that administrators may access with the configured identity. */
+  repositories: string[];
+}
+
+/** GitHub access returned to the panel. Credentials are represented only by hasToken. */
+export interface GitHubToolsConfigPublic extends Omit<GitHubToolsConfigStored, "encryptedToken"> {
+  hasToken: boolean;
+}
+
+/** Decrypted, in-memory-only configuration used by the bot runtime. */
+export interface GitHubToolsRuntimeConfig extends Omit<GitHubToolsConfigStored, "encryptedToken"> {
+  token?: string;
+}
+
 export interface AiConfigStored {
   enabled: boolean;
   /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */
@@ -495,6 +517,7 @@ export interface AiConfigStored {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  githubToolsConfig?: GitHubToolsConfigStored;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
@@ -674,6 +697,7 @@ export interface AiConfigPublic {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfigPublic;
   agentToolsConfig?: AgentToolsConfig;
+  githubToolsConfig?: GitHubToolsConfigPublic;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;

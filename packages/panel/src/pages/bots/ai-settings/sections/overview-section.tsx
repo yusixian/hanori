@@ -22,6 +22,7 @@ export function OverviewSection({
   const toolsEnabled = [
     config.webToolsConfig?.enabled,
     config.agentToolsConfig?.enabled,
+    config.githubToolsConfig?.enabled,
     config.artworkToolsConfig?.enabled,
     config.imageOcrConfig?.enabled,
   ].filter(Boolean).length;

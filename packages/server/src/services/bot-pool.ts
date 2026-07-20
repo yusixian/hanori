@@ -494,6 +494,29 @@ export class BotPool {
       providersRuntime[0];
     if (aiConfig?.enabled && activeProvider) {
       const apiKey = activeProvider.apiKey;
+      const githubToolsConfig = aiConfig.githubToolsConfig
+        ? {
+            enabled: aiConfig.githubToolsConfig.enabled,
+            publicReadEnabled: aiConfig.githubToolsConfig.publicReadEnabled,
+            login: aiConfig.githubToolsConfig.login,
+            authorName: aiConfig.githubToolsConfig.authorName,
+            authorEmail: aiConfig.githubToolsConfig.authorEmail,
+            repositories: aiConfig.githubToolsConfig.repositories,
+            token: aiConfig.githubToolsConfig.encryptedToken
+              ? (tryDecrypt(aiConfig.githubToolsConfig.encryptedToken, env.ENCRYPTION_KEY) ??
+                undefined)
+              : undefined,
+          }
+        : undefined;
+      if (
+        aiConfig.githubToolsConfig?.encryptedToken &&
+        githubToolsConfig &&
+        !githubToolsConfig.token
+      ) {
+        dbLogger.warn(
+          "GitHub credential cannot be decrypted; private repository and write access disabled.",
+        );
+      }
       if (skippedNoKey.length > 0) {
         dbLogger.warn(`AI providers skipped (no API key configured): ${skippedNoKey.join(", ")}`);
       }
@@ -767,6 +790,7 @@ export class BotPool {
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
         agentToolsConfig: aiConfig.agentToolsConfig,
+        githubToolsConfig,
         artworkToolsConfig: aiConfig.artworkToolsConfig,
         botMemoryConfig: botMemoryCfg,
         botMemory,

@@ -7,6 +7,7 @@ export interface McpToolEntry {
   description: string;
   inputSchema: Record<string, unknown>;
   prefix?: string;
+  adminOnly?: boolean;
 }
 
 export interface McpToolsOptions {
@@ -14,10 +15,14 @@ export interface McpToolsOptions {
   callTool: (serverId: number, toolName: string, args: unknown) => Promise<unknown>;
 }
 
-export function createMcpTools(options: McpToolsOptions): Record<string, Tool> {
+export function createMcpTools(
+  options: McpToolsOptions,
+  access: { includeAdminTools: boolean } = { includeAdminTools: false },
+): Record<string, Tool> {
   const result: Record<string, Tool> = {};
 
   for (const t of options.getTools()) {
+    if (t.adminOnly && !access.includeAdminTools) continue;
     const prefix = t.prefix || `mcp${t.serverId}`;
     const toolKey = `${prefix}_${t.name}`;
 

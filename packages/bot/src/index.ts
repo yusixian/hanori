@@ -38,7 +38,11 @@ import {
 import { WrapperContext, type BotContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
-import { createPollAnswerHandler, createCallbackQueryHandler } from "./handlers/event-handlers.js";
+import {
+  createPollAnswerHandler,
+  createCallbackQueryHandler,
+  createGitHubCallbackQueryHandler,
+} from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
 import { getUpdateConstraint } from "./middleware/update-constraint.js";
 
@@ -398,6 +402,11 @@ export function createBot(config: BotConfig) {
       pendingActions,
       getContinueChatConfig: (chatId) => aiState!.getContinueChatConfig(chatId),
     });
+    const githubCallbackQueryHandler = createGitHubCallbackQueryHandler({
+      api: bot.api,
+      pendingActions: aiState.getPendingGitHubActions(),
+      adminIds: adminChatIds,
+    });
 
     bot.on("poll_answer", async (ctx) => {
       await pollAnswerHandler(ctx.pollAnswer);
@@ -428,6 +437,7 @@ export function createBot(config: BotConfig) {
           return;
         }
       }
+      if (await githubCallbackQueryHandler(ctx)) return;
       await callbackQueryHandler(ctx);
     });
 
