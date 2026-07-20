@@ -1782,10 +1782,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           );
           chatBotMsgIds.push(...messageIds);
           streamStarted = messageIds.length > 0;
-        } else if (capturedStreamError) {
-          throwCapturedStreamError(capturedStreamError, false);
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+          capturedStreamError = undefined;
         }
       } else if (!isStreamMode) {
         if (sentViaMultiMessage) {
