@@ -116,6 +116,31 @@ export function buildGitHubCodingModelConfig(
   };
 }
 
+export function resolveGitHubCodingModelConfig(
+  config: Pick<GitHubToolsRuntimeConfig, "codingProviderId" | "codingModelId">,
+  providers: AiProviderRuntime[] | undefined,
+  fallbackProvider: AiProviderRuntime,
+  fallbackModelId: string,
+): GitHubCodingModelConfig | undefined {
+  if (!config.codingProviderId && !config.codingModelId) {
+    return buildGitHubCodingModelConfig(fallbackProvider, fallbackModelId);
+  }
+  if (!config.codingProviderId) return undefined;
+
+  const provider = providers?.find((candidate) => candidate.id === config.codingProviderId);
+  if (!provider) return undefined;
+
+  const modelId = config.codingModelId ?? provider.defaultModel;
+  if (
+    !modelId ||
+    (modelId !== provider.defaultModel &&
+      !provider.models?.some((candidate) => candidate.id === modelId))
+  ) {
+    return undefined;
+  }
+  return buildGitHubCodingModelConfig(provider, modelId);
+}
+
 export interface AiReplyConfig {
   botId: string;
   /** @deprecated active provider's apiKey — superseded by providers[] when present */
@@ -1344,7 +1369,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           api: ctx.api,
           pendingActions: pendingGitHubActions,
           codeCallbacks: config.githubCodeCallbacks,
-          codingModel: buildGitHubCodingModelConfig(currentProviderRuntime, currentModel),
+          codingModel: resolveGitHubCodingModelConfig(
+            config.githubToolsConfig,
+            config.providers,
+            currentProviderRuntime,
+            currentModel,
+          ),
         });
       }
 
