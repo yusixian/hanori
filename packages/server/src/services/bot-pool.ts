@@ -68,6 +68,10 @@ import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
+import {
+  BotNotRunningError,
+  TelegramRichMessagesUnsupportedError,
+} from "./telegram-rich-message-errors.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
@@ -184,10 +188,10 @@ export class BotPool {
   ): Promise<TelegramRichMessageReceipt> {
     const manager = this.managers.get(botId);
     if (!manager) {
-      throw new Error(`Bot ${botId} is not running`);
+      throw new BotNotRunningError(botId);
     }
     if (!supportsTelegramRichMessages(manager)) {
-      throw new Error(`Bot ${botId} does not support Telegram Rich Messages`);
+      throw new TelegramRichMessagesUnsupportedError(botId);
     }
     return manager.sendRichMessage(chatId, format, content);
   }

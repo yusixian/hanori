@@ -5,6 +5,10 @@ import type {
 } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import { BotPool } from "./bot-pool.js";
+import {
+  BotNotRunningError,
+  TelegramRichMessagesUnsupportedError,
+} from "./telegram-rich-message-errors.js";
 
 vi.mock("../env.js", () => ({
   env: { ENCRYPTION_KEY: "test-key" },
@@ -56,6 +60,9 @@ describe("BotPool Telegram Rich Message capability", () => {
     await expect(pool.sendRichMessage("bot-1", 123, "html", "<b>Hello</b>")).rejects.toThrow(
       "Bot bot-1 does not support Telegram Rich Messages",
     );
+    await expect(pool.sendRichMessage("bot-1", 123, "html", "<b>Hello</b>")).rejects.toBeInstanceOf(
+      TelegramRichMessagesUnsupportedError,
+    );
     expect(manager.sendHtml).not.toHaveBeenCalled();
   });
 
@@ -64,6 +71,9 @@ describe("BotPool Telegram Rich Message capability", () => {
 
     await expect(pool.sendRichMessage("missing", 123, "markdown", "Hello")).rejects.toThrow(
       "Bot missing is not running",
+    );
+    await expect(pool.sendRichMessage("missing", 123, "markdown", "Hello")).rejects.toBeInstanceOf(
+      BotNotRunningError,
     );
   });
 });

@@ -3,6 +3,10 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import type { BotPool } from "../services/bot-pool.js";
+import {
+  BotNotRunningError,
+  TelegramRichMessagesUnsupportedError,
+} from "../services/telegram-rich-message-errors.js";
 
 const sendRichMessageSchema = z.object({
   chatId: z
@@ -41,7 +45,12 @@ export function botDebugRoutes(botPool: RichMessageSender) {
         );
         return c.json({ ok: true as const, data: receipt });
       } catch (error) {
-        throw new HTTPException(400, {
+        const status =
+          error instanceof BotNotRunningError ||
+          error instanceof TelegramRichMessagesUnsupportedError
+            ? 409
+            : 502;
+        throw new HTTPException(status, {
           message: error instanceof Error ? error.message : String(error),
         });
       }
