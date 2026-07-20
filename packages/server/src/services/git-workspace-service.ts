@@ -435,47 +435,38 @@ export class GitWorkspaceService {
           if (currentBranch !== expected.branch) {
             throw new Error("Workspace branch changed while resuming; request a new inspection");
           }
-          const status = await this.gitWithWorkTree(
+          signal?.throwIfAborted();
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          canonicalTouched = true;
+          await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
+          await this.addBoundUntrackedPaths(
             workspace,
             staged.path,
-            ["status", "--porcelain"],
+            inspected.identity,
+            inspected.snapshot.untrackedPaths,
+            signal,
+          );
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          const stagedChanges = await this.gitWithWorkTree(
+            workspace,
+            staged.path,
+            ["diff", "--cached", "--name-only"],
             undefined,
             signal,
           );
-          if (status) {
+          if (stagedChanges) {
+            const commitMessage =
+              options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
+              "chore: recover Ai-chan coding workspace";
+            await this.assertWorkspaceIdentity(inspected.identity, signal);
             signal?.throwIfAborted();
-            await this.assertWorkspaceIdentity(inspected.identity, signal);
-            canonicalTouched = true;
-            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
-            await this.addBoundUntrackedPaths(
+            await this.gitWithWorkTree(
               workspace,
               staged.path,
-              inspected.identity,
-              inspected.snapshot.untrackedPaths,
-              signal,
-            );
-            await this.assertWorkspaceIdentity(inspected.identity, signal);
-            const stagedChanges = await this.gitWithWorkTree(
-              workspace,
-              staged.path,
-              ["diff", "--cached", "--name-only"],
+              ["commit", "-m", commitMessage],
               undefined,
               signal,
             );
-            if (stagedChanges) {
-              const commitMessage =
-                options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
-                "chore: recover Ai-chan coding workspace";
-              await this.assertWorkspaceIdentity(inspected.identity, signal);
-              signal?.throwIfAborted();
-              await this.gitWithWorkTree(
-                workspace,
-                staged.path,
-                ["commit", "-m", commitMessage],
-                undefined,
-                signal,
-              );
-            }
           }
 
           await this.stager.cleanup();
@@ -773,7 +764,22 @@ export class GitWorkspaceService {
     paths: string[],
     signal?: AbortSignal,
   ): Promise<void> {
-    for (const pathspecs of this.recoveryLiteralPathspecBatches(paths)) {
+    const stagedRoot = path.resolve(stagedWorkspace);
+    const existingPaths: string[] = [];
+    for (const relative of paths) {
+      const absolute = this.resolveBoundRecoveryPath(stagedRoot, relative);
+      signal?.throwIfAborted();
+      try {
+        await lstat(absolute);
+        existingPaths.push(relative);
+      } catch (error) {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+    }
+    for (const pathspecs of this.recoveryLiteralPathspecBatches(existingPaths)) {
       await this.assertWorkspaceIdentity(identity, signal);
       await this.gitWithWorkTree(
         workspace,
@@ -787,14 +793,7 @@ export class GitWorkspaceService {
 
   private recoveryLiteralPathspecBatches(paths: string[]): string[][] {
     const pathspecs = paths.map((relative) => {
-      if (
-        !relative ||
-        path.isAbsolute(relative) ||
-        relative.includes("\0") ||
-        relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
-      ) {
-        throw new Error("Recovery operation received an unsafe bound path");
-      }
+      this.validateBoundRecoveryPath(relative);
       return `:(literal)${relative}`;
     });
     const batches: string[][] = [];
@@ -802,6 +801,27 @@ export class GitWorkspaceService {
       batches.push(pathspecs.slice(offset, offset + RECOVERY_CLEAN_BATCH_SIZE));
     }
     return batches;
+  }
+
+  private resolveBoundRecoveryPath(root: string, relative: string): string {
+    this.validateBoundRecoveryPath(relative);
+    const resolvedRoot = path.resolve(root);
+    const absolute = path.resolve(resolvedRoot, relative);
+    if (!absolute.startsWith(`${resolvedRoot}${path.sep}`)) {
+      throw new Error("Recovery operation received an unsafe bound path");
+    }
+    return absolute;
+  }
+
+  private validateBoundRecoveryPath(relative: string): void {
+    if (
+      !relative ||
+      path.isAbsolute(relative) ||
+      relative.includes("\0") ||
+      relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
+    ) {
+      throw new Error("Recovery operation received an unsafe bound path");
+    }
   }
 
   private async restoreRecoveryCheckpoint(

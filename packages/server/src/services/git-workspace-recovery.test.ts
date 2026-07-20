@@ -222,7 +222,87 @@ describe("Git workspace recovery", () => {
     ).toBe("updated notes\n");
   });
 
-  it("removes a bound untracked file deleted by the worker", async () => {
+  it("force-stages bound files when an untracked ignore file hides the whole result", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await exec("git", ["-C", workspace, "rm", ".gitignore"]);
+    await exec("git", [
+      "-C",
+      workspace,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "stop tracking ignore rules",
+    ]);
+    await writeFile(path.join(workspace, ".gitignore"), ".env\n.cos-pi-cache/\n");
+    await writeFile(path.join(workspace, "notes.local"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await writeFile(
+        path.join(staged, ".gitignore"),
+        ".env\n.cos-pi-cache/\n.gitignore\nnotes.local\nunrelated.secret\n",
+      );
+      await writeFile(path.join(staged, "notes.local"), "updated notes\n");
+      await writeFile(path.join(staged, "unrelated.secret"), "do not commit\n");
+      return { summary: "kept bound ignored files", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Keep only the originally bound ignored files",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect(result.changedFiles).toEqual(expect.arrayContaining([".gitignore", "notes.local"]));
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "notes.local"), "utf8")).toBe("updated notes\n");
+    expect(
+      (await exec("git", ["-C", workspace, "show", `${result.commitSha}:.gitignore`])).stdout,
+    ).toContain(".gitignore\nnotes.local\nunrelated.secret\n");
+    await expect(
+      exec("git", ["-C", workspace, "show", `${result.commitSha}:unrelated.secret`]),
+    ).rejects.toThrow();
+    await expect(readFile(path.join(workspace, "unrelated.secret"))).rejects.toThrow();
+  });
+
+  it("skips a deleted bound path while committing another worker change", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "notes.local"), "delete me\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes.local"));
+      await writeFile(path.join(staged, "README.md"), "worker update\n");
+      return { summary: "updated README and removed notes", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Update README and remove notes.local",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("worker update\n");
+    await expect(readFile(path.join(workspace, "notes.local"))).rejects.toThrow();
+  });
+
+  it("returns no changes when the worker only deletes a bound untracked file", async () => {
     const { service, run, workspace, stagingRoot } = await fixture();
     await writeFile(path.join(workspace, "notes.local"), "delete me\n");
     const inspection = await service.inspectWorkspace(inspectOptions);
@@ -243,6 +323,7 @@ describe("Git workspace recovery", () => {
     );
 
     expect(result.status).toBe("no_changes");
+    expect(result.commitSha).toBe(inspection.headSha);
     expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
     await expect(readFile(path.join(workspace, "notes.local"))).rejects.toThrow();
   });
@@ -457,7 +538,7 @@ describe("Git workspace recovery", () => {
       .spyOn(internals, "gitWithWorkTree")
       .mockImplementation(async (...args) => {
         const result = await original(...args);
-        if (!swapped && args[2][0] === "status") {
+        if (!swapped && args[1] !== args[0] && args[2][0] === "branch") {
           swapped = true;
           await rename(workspace, movedWorkspace);
           await mkdir(workspace);
