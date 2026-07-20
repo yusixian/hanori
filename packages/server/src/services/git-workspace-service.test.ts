@@ -107,7 +107,6 @@ describe("Git workspace input validation", () => {
     await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
     await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
     await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
-
     const workspaceRoot = path.join(root, "workspaces");
     const gitRoot = path.join(root, "metadata");
     const stagingRoot = path.join(root, "coding-job");
@@ -243,7 +242,7 @@ describe("Git workspace input validation", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("does not create a commit when cancellation reaches the commit boundary", async () => {
+  it("restores an existing target branch when cancellation follows a successful commit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-abort-test-"));
     tempDirs.push(root);
     const remote = path.join(root, "remote.git");
@@ -266,6 +265,7 @@ describe("Git workspace input validation", () => {
     await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
     await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
     await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    const originalHead = (await exec("git", ["-C", seed, "rev-parse", "HEAD"])).stdout.trim();
 
     const workspaceRoot = path.join(root, "workspaces");
     const gitRoot = path.join(root, "metadata");
@@ -289,6 +289,12 @@ describe("Git workspace input validation", () => {
       new CodingJobStager(stagingRoot),
     );
     const internals = service as unknown as {
+      ensureWorkspace: (
+        botId: string,
+        repository: string,
+        token: string,
+        signal?: AbortSignal,
+      ) => Promise<string>;
       gitWithWorkTree: (
         canonicalWorkspace: string,
         workTree: string,
@@ -297,11 +303,14 @@ describe("Git workspace input validation", () => {
         signal?: AbortSignal,
       ) => Promise<string>;
     };
+    const workspace = await internals.ensureWorkspace("bot-1", "owner/repo", "github-secret");
+    await exec("git", ["-C", workspace, "branch", "feat/aborted", originalHead]);
     const gitWithWorkTree = internals.gitWithWorkTree.bind(service);
     vi.spyOn(internals, "gitWithWorkTree").mockImplementation(
-      (canonicalWorkspace, workTree, args, env, signal) => {
+      async (canonicalWorkspace, workTree, args, env, signal) => {
+        const result = await gitWithWorkTree(canonicalWorkspace, workTree, args, env, signal);
         if (args[0] === "commit") controller.abort(reason);
-        return gitWithWorkTree(canonicalWorkspace, workTree, args, env, signal);
+        return result;
       },
     );
 
@@ -327,14 +336,22 @@ describe("Git workspace input validation", () => {
       ),
     ).rejects.toBe(reason);
 
-    const gitDir = path.join(gitRoot, "bot-1", "owner", "repo.git");
-    const commitCount = await exec("git", [
-      `--git-dir=${gitDir}`,
-      "rev-list",
-      "--count",
-      "feat/aborted",
-    ]);
-    expect(commitCount.stdout.trim()).toBe("1");
+    expect((await exec("git", ["-C", workspace, "branch", "--show-current"])).stdout.trim()).toBe(
+      "main",
+    );
+    expect((await exec("git", ["-C", workspace, "rev-parse", "HEAD"])).stdout.trim()).toBe(
+      originalHead,
+    );
+    expect((await exec("git", ["-C", workspace, "status", "--porcelain"])).stdout.trim()).toBe("");
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
+    expect(
+      (
+        await exec("git", ["-C", workspace, "rev-parse", "--verify", "refs/heads/feat/aborted"])
+      ).stdout.trim(),
+    ).toBe(originalHead);
+    expect(
+      (await exec("git", ["-C", workspace, "rev-list", "--all", "--count"])).stdout.trim(),
+    ).toBe("1");
     await expect(
       readFile(path.join(stagingRoot, "workspace", "README.md"), "utf8"),
     ).rejects.toThrow();
@@ -363,6 +380,7 @@ describe("Git workspace input validation", () => {
     await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
     await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
     await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    const originalHead = (await exec("git", ["-C", seed, "rev-parse", "HEAD"])).stdout.trim();
 
     const workspaceRoot = path.join(root, "workspaces");
     const gitRoot = path.join(root, "metadata");
@@ -390,9 +408,10 @@ describe("Git workspace input validation", () => {
       ) => Promise<string>;
     };
     const git = internals.git.bind(service);
-    vi.spyOn(internals, "git").mockImplementation((cwd, args, env, signal) => {
+    vi.spyOn(internals, "git").mockImplementation(async (cwd, args, env, signal) => {
+      const result = await git(cwd, args, env, signal);
       if (args[0] === "checkout" && args[1] === "-b") controller.abort(reason);
-      return git(cwd, args, env, signal);
+      return result;
     });
 
     await expect(
@@ -417,6 +436,15 @@ describe("Git workspace input validation", () => {
       ),
     ).rejects.toBe(reason);
 
+    const workspace = path.join(workspaceRoot, "bot-1", "owner", "repo");
+    expect((await exec("git", ["-C", workspace, "branch", "--show-current"])).stdout.trim()).toBe(
+      "main",
+    );
+    expect((await exec("git", ["-C", workspace, "rev-parse", "HEAD"])).stdout.trim()).toBe(
+      originalHead,
+    );
+    expect((await exec("git", ["-C", workspace, "status", "--porcelain"])).stdout.trim()).toBe("");
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
     const gitDir = path.join(gitRoot, "bot-1", "owner", "repo.git");
     await expect(
       exec("git", [

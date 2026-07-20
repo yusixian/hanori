@@ -7,6 +7,7 @@ import {
   createPiRuntime,
   type CodingWorkerJob,
   resolveWorkspace,
+  runPiJob,
 } from "./worker.js";
 
 const tempDirs: string[] = [];
@@ -38,7 +39,40 @@ function job(): CodingWorkerJob {
   };
 }
 
+function jobRequest(overrides: Partial<CodingWorkerJob> = {}) {
+  return { expectedBootId: "boot-one", job: { ...job(), ...overrides } };
+}
+
 describe("coding worker boundary", () => {
+  it("rejects a stale preflight boot before accepting or consuming the worker", async () => {
+    const root = await workspaceRoot();
+    const runJob = vi.fn();
+    const onJobAccepted = vi.fn();
+    const handler = createCodingWorkerHandler({
+      secret: "worker-secret",
+      workspacesRoot: root,
+      bootId: "boot-two",
+      runJob,
+      onJobAccepted,
+    });
+
+    const response = await handler(
+      new Request("http://worker/jobs", {
+        method: "POST",
+        headers: { Authorization: "Bearer worker-secret" },
+        body: JSON.stringify({ expectedBootId: "boot-one", job: job() }),
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("X-Coding-Worker-One-Shot")).toBeNull();
+    expect(onJobAccepted).not.toHaveBeenCalled();
+    expect(runJob).not.toHaveBeenCalled();
+
+    const health = await handler(new Request("http://worker/health"));
+    expect(await health.json()).toEqual({ ok: true, busy: false, bootId: "boot-two" });
+  });
+
   it("reports a stable boot id and marks accepted jobs as one-shot", async () => {
     const root = await workspaceRoot();
     const onJobAccepted = vi.fn();
@@ -73,7 +107,7 @@ describe("coding worker boundary", () => {
       new Request("http://worker/jobs", {
         method: "POST",
         headers: { Authorization: "Bearer worker-secret" },
-        body: JSON.stringify(job()),
+        body: JSON.stringify(jobRequest()),
       }),
     );
     expect(response.headers.get("X-Coding-Worker-One-Shot")).toBe("true");
@@ -87,6 +121,7 @@ describe("coding worker boundary", () => {
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
+      bootId: "boot-one",
       runJob,
       onJobAccepted,
     });
@@ -106,13 +141,14 @@ describe("coding worker boundary", () => {
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
+      bootId: "boot-one",
       runJob,
     });
     const response = await handler(
       new Request("http://worker/jobs", {
         method: "POST",
         headers: { Authorization: "Bearer worker-secret" },
-        body: JSON.stringify(job()),
+        body: JSON.stringify(jobRequest()),
       }),
     );
 
@@ -136,16 +172,18 @@ describe("coding worker boundary", () => {
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
+      bootId: "boot-one",
       runJob,
     });
     const response = await handler(
       new Request("http://worker/jobs", {
         method: "POST",
         headers: { Authorization: "Bearer worker-secret" },
-        body: JSON.stringify({ ...job(), workspacePath: "another-repo" }),
+        body: JSON.stringify(jobRequest({ workspacePath: "another-repo" })),
       }),
     );
     expect(response.status).toBe(400);
+    expect(response.headers.get("X-Coding-Worker-One-Shot")).toBeNull();
     expect(runJob).not.toHaveBeenCalled();
   });
 
@@ -172,6 +210,7 @@ describe("coding worker boundary", () => {
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
+      bootId: "boot-one",
       runJob,
     });
     const response = await handler(
@@ -205,13 +244,14 @@ describe("coding worker boundary", () => {
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
+      bootId: "boot-one",
       runJob,
     });
     const responsePromise = handler(
       new Request("http://worker/jobs", {
         method: "POST",
         headers: { Authorization: "Bearer worker-secret" },
-        body: JSON.stringify(job()),
+        body: JSON.stringify(jobRequest()),
         signal: controller.signal,
       }),
     );
@@ -226,6 +266,51 @@ describe("coding worker boundary", () => {
     expect((receivedSignal.reason as Error).message).toBe("client disconnected");
     expect(response.status).toBe(400);
     expect(response.headers.get("X-Coding-Worker-One-Shot")).toBe("true");
+  });
+
+  it("starts the job timeout before Pi initialization and disposes a late session", async () => {
+    const root = await workspaceRoot();
+    let resolveInitialization!: (value: { session: LateSession }) => void;
+    const initialization = new Promise<{ session: LateSession }>((resolve) => {
+      resolveInitialization = resolve;
+    });
+    const session = lateSession();
+    const initializeSession = vi.fn(() => initialization);
+    const runWithDependencies = runPiJob as unknown as RunPiJobWithDependencies;
+
+    const running = runWithDependencies(
+      { ...job(), timeoutMs: 20 },
+      path.join(root, "workspace"),
+      undefined,
+      { initializeSession },
+    );
+
+    await expect(running).rejects.toThrow("Pi coding job timed out after 20ms");
+    expect(initializeSession).toHaveBeenCalledOnce();
+    resolveInitialization({ session });
+    await vi.waitFor(() => expect(session.dispose).toHaveBeenCalledOnce());
+  });
+
+  it("cancels during Pi initialization promptly and disposes a late session", async () => {
+    const root = await workspaceRoot();
+    const controller = new AbortController();
+    const reason = new Error("operator cancelled during initialization");
+    let resolveInitialization!: (value: { session: LateSession }) => void;
+    const initialization = new Promise<{ session: LateSession }>((resolve) => {
+      resolveInitialization = resolve;
+    });
+    const session = lateSession();
+    const initializeSession = vi.fn(() => initialization);
+    const runWithDependencies = runPiJob as unknown as RunPiJobWithDependencies;
+    const running = runWithDependencies(job(), path.join(root, "workspace"), controller.signal, {
+      initializeSession,
+    });
+    await vi.waitFor(() => expect(initializeSession).toHaveBeenCalledOnce());
+
+    controller.abort(reason);
+    await expect(running).rejects.toBe(reason);
+    resolveInitialization({ session });
+    await vi.waitFor(() => expect(session.dispose).toHaveBeenCalledOnce());
   });
 
   it("registers the runtime provider without loading repository extensions", async () => {
@@ -279,3 +364,21 @@ describe("coding worker boundary", () => {
   });
 });
 import { createHmac } from "node:crypto";
+
+type LateSession = ReturnType<typeof lateSession>;
+
+type RunPiJobWithDependencies = (
+  job: CodingWorkerJob,
+  workspace: string,
+  signal: AbortSignal | undefined,
+  dependencies: { initializeSession: () => Promise<{ session: LateSession }> },
+) => Promise<unknown>;
+
+function lateSession() {
+  return {
+    abort: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn(),
+    messages: [],
+    prompt: vi.fn().mockResolvedValue(undefined),
+  };
+}

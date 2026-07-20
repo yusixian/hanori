@@ -28,13 +28,19 @@ and repository builds can require substantially more.
   CGNAT, link-local, multicast, special-purpose, and metadata destinations for HTTP/HTTPS traffic.
 - The app and worker communicate over a mode-0770 tmpfs Unix-socket volume. The worker secret is
   removed from its environment and never written to that shared volume. Each worker handles one
-  accepted job, exits after flushing the response, and is restarted by Compose. For every health
-  poll the server generates a fresh random challenge and accepts the new boot only when its boot ID
-  and challenge carry a timing-safe verified HMAC. A detached process that replaces the socket can
-  see the challenge but cannot forge or replay the restart proof.
+  accepted job, exits after flushing the response, and is restarted by Compose. Requests rejected
+  for authentication, validation, stale boot ID, or worker-busy errors do not consume the worker.
+  For every health poll the server generates a fresh random challenge and accepts the boot only when
+  its boot ID and challenge carry a timing-safe verified HMAC. That signed boot ID is bound into the
+  job envelope and validated before the worker signals acceptance. After any accepted job, including
+  an interrupted one, another job is blocked until a different signed boot is healthy. A detached
+  process that replaces the socket can see the challenge but cannot forge or replay the proof.
 - The trusted server configures Ai-chan's Git author identity, creates the local branch, and creates a
-  local commit after Pi finishes. Push is a separate one-time Telegram confirmation bound to the
-  initiating administrator, chat, branch, and exact commit SHA.
+  local commit after Pi finishes. Before branch selection it checkpoints the original branch, HEAD,
+  and target-ref state; a failed or cancelled task restores those refs plus the clean index and
+  worktree even when Git completed a checkout or commit immediately before cancellation. Push is a
+  separate one-time Telegram confirmation bound to the initiating administrator, chat, branch, and
+  exact commit SHA.
 - After the branch is pushed, an administrator can separately propose a same-repository pull request.
   The trusted bot resolves head and base, binds confirmation to the exact remote head SHA, and
   rechecks it before creating or idempotently returning an existing open pull request. Pi never
@@ -98,8 +104,10 @@ docker compose --profile coding up -d --build
 
 Then enable **GitHub identity and code access** and **Pi coding agent** in the bot's AI settings.
 The worker is lazy-loaded: while idle it runs only the small HTTP shell; the Pi SDK is imported when
-the first job starts. Jobs are serialized and have a four-minute timeout so they complete inside the
-default five-minute AI reply budget.
+the first job starts. The job timeout and caller-cancellation signal are active before runtime and
+session initialization; late initialization is cleaned up if either deadline wins. Jobs are
+serialized and have a four-minute timeout so they complete inside the default five-minute AI reply
+budget.
 
 For local development, run the worker separately with the same secret and workspace directory:
 

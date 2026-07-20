@@ -25,6 +25,11 @@ export interface CodingWorkerResult {
   durationMs: number;
 }
 
+interface CodingWorkerRequest {
+  expectedBootId: string;
+  job: CodingWorkerJob;
+}
+
 export interface CodingWorkerOptions {
   secret: string;
   workspacesRoot: string;
@@ -132,6 +137,15 @@ function validateJob(value: unknown): CodingWorkerJob {
   return job as CodingWorkerJob;
 }
 
+function validateRequest(value: unknown): CodingWorkerRequest {
+  if (!value || typeof value !== "object") throw new Error("Invalid coding worker request");
+  const request = value as Partial<CodingWorkerRequest>;
+  if (typeof request.expectedBootId !== "string" || !request.expectedBootId) {
+    throw new Error("expectedBootId is required");
+  }
+  return { expectedBootId: request.expectedBootId, job: validateJob(request.job) };
+}
+
 export async function resolveWorkspace(root: string, relativePath: string): Promise<string> {
   const resolvedRoot = await realpath(root);
   const candidate = path.resolve(resolvedRoot, relativePath);
@@ -166,9 +180,35 @@ function assistantText(messages: readonly unknown[]): string {
   return "Pi completed without a textual summary.";
 }
 
-export async function createPiRuntime(job: CodingWorkerJob, workspace: string, agentDir: string) {
+interface PiSession {
+  abort(): unknown;
+  dispose(): void;
+  readonly messages: readonly unknown[];
+  prompt(
+    prompt: string,
+    options: { expandPromptTemplates: false; source: "rpc" },
+  ): Promise<unknown>;
+}
+
+interface PiJobDependencies {
+  initializeSession?: (options: {
+    job: CodingWorkerJob;
+    workspace: string;
+    agentDir: string;
+    signal: AbortSignal;
+  }) => Promise<{ session: PiSession }>;
+}
+
+export async function createPiRuntime(
+  job: CodingWorkerJob,
+  workspace: string,
+  agentDir: string,
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
   const { DefaultResourceLoader, ModelRuntime, SettingsManager } =
     await import("@earendil-works/pi-coding-agent");
+  signal?.throwIfAborted();
   const provider = "cos-tool-bot-runtime";
   const api = job.model.providerFormat === "gemini" ? "google-generative-ai" : "openai-completions";
   const modelRuntime = await ModelRuntime.create({
@@ -176,6 +216,7 @@ export async function createPiRuntime(job: CodingWorkerJob, workspace: string, a
     modelsPath: path.join(agentDir, "models.json"),
     allowModelNetwork: false,
   });
+  signal?.throwIfAborted();
   modelRuntime.registerProvider(provider, {
     name: "Cos Tool Bot Runtime",
     baseUrl: job.model.baseURL,
@@ -195,6 +236,7 @@ export async function createPiRuntime(job: CodingWorkerJob, workspace: string, a
     ],
   });
   await modelRuntime.setRuntimeApiKey(provider, job.model.apiKey);
+  signal?.throwIfAborted();
   const model = modelRuntime.getModel(provider, job.model.id);
   if (!model) throw new Error(`Failed to register Pi model ${provider}/${job.model.id}`);
 
@@ -206,71 +248,137 @@ export async function createPiRuntime(job: CodingWorkerJob, workspace: string, a
     noExtensions: true,
   });
   await resourceLoader.reload();
+  signal?.throwIfAborted();
 
   return { modelRuntime, model, settingsManager, resourceLoader };
+}
+
+async function initializePiSession(options: {
+  job: CodingWorkerJob;
+  workspace: string;
+  agentDir: string;
+  signal: AbortSignal;
+}): Promise<{ session: PiSession }> {
+  options.signal.throwIfAborted();
+  const { createAgentSession, SessionManager } = await import("@earendil-works/pi-coding-agent");
+  options.signal.throwIfAborted();
+  const { modelRuntime, model, settingsManager, resourceLoader } = await createPiRuntime(
+    options.job,
+    options.workspace,
+    options.agentDir,
+    options.signal,
+  );
+  return await createAgentSession({
+    cwd: options.workspace,
+    agentDir: options.agentDir,
+    modelRuntime,
+    model,
+    settingsManager,
+    resourceLoader,
+    thinkingLevel: model.reasoning ? "medium" : undefined,
+    tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
+    sessionManager: SessionManager.inMemory(options.workspace),
+  });
+}
+
+function disposeLateSession(session: PiSession): void {
+  try {
+    session.dispose();
+  } catch {
+    // The job has already ended; late cleanup must not create an unhandled failure.
+  }
+}
+
+function waitForPiInitialization(
+  initialization: Promise<{ session: PiSession }>,
+  signal: AbortSignal,
+): Promise<{ session: PiSession }> {
+  return new Promise((resolve, reject) => {
+    let finished = false;
+    const onAbort = () => {
+      if (finished) return;
+      finished = true;
+      reject(signal.reason);
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+    initialization.then(
+      (result) => {
+        if (finished) {
+          disposeLateSession(result.session);
+          return;
+        }
+        finished = true;
+        signal.removeEventListener("abort", onAbort);
+        resolve(result);
+      },
+      (error: unknown) => {
+        if (finished) return;
+        finished = true;
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }
 
 export async function runPiJob(
   job: CodingWorkerJob,
   workspace: string,
   signal?: AbortSignal,
+  dependencies: PiJobDependencies = {},
 ): Promise<CodingWorkerResult> {
   const startedAt = Date.now();
-  const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-agent-"));
-  const jobHome = path.join(agentDir, "home");
-  const jobCache = path.join(workspace, ".cos-pi-cache");
-  await mkdir(jobHome, { recursive: true });
-  const environmentOverrides = {
-    HOME: jobHome,
-    NPM_CONFIG_CACHE: path.join(jobCache, "npm"),
-    NPM_CONFIG_STORE_DIR: path.join(jobCache, "pnpm-store"),
-    XDG_CACHE_HOME: path.join(jobCache, "xdg-cache"),
-    XDG_CONFIG_HOME: path.join(agentDir, "xdg-config"),
-    XDG_DATA_HOME: path.join(jobCache, "xdg-data"),
-  } as const;
-  const previousEnvironment = new Map<string, string | undefined>();
-  for (const [name, value] of Object.entries(environmentOverrides)) {
-    previousEnvironment.set(name, process.env[name]);
-    process.env[name] = value;
-  }
-  const restoreEnvironment = () => {
-    for (const [name, value] of previousEnvironment) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-  };
-  const { session } = await (async () => {
-    try {
-      const { createAgentSession, SessionManager } =
-        await import("@earendil-works/pi-coding-agent");
-      const { modelRuntime, model, settingsManager, resourceLoader } = await createPiRuntime(
-        job,
-        workspace,
-        agentDir,
-      );
-      return await createAgentSession({
-        cwd: workspace,
-        agentDir,
-        modelRuntime,
-        model,
-        settingsManager,
-        resourceLoader,
-        thinkingLevel: model.reasoning ? "medium" : undefined,
-        tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
-        sessionManager: SessionManager.inMemory(workspace),
-      });
-    } catch (error) {
-      restoreEnvironment();
-      await rm(agentDir, { recursive: true, force: true });
-      throw error;
-    }
-  })();
   const timeoutController = new AbortController();
   const jobSignal = signal
     ? AbortSignal.any([signal, timeoutController.signal])
     : timeoutController.signal;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timeout = setTimeout(
+    () => timeoutController.abort(new Error(`Pi coding job timed out after ${job.timeoutMs}ms`)),
+    job.timeoutMs,
+  );
+  let agentDir: string | undefined;
+  let session: PiSession | undefined;
+  let restoreEnvironment = () => undefined;
   try {
+    jobSignal.throwIfAborted();
+    agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-agent-"));
+    jobSignal.throwIfAborted();
+    const jobHome = path.join(agentDir, "home");
+    const jobCache = path.join(workspace, ".cos-pi-cache");
+    await mkdir(jobHome, { recursive: true });
+    jobSignal.throwIfAborted();
+    const environmentOverrides = {
+      HOME: jobHome,
+      NPM_CONFIG_CACHE: path.join(jobCache, "npm"),
+      NPM_CONFIG_STORE_DIR: path.join(jobCache, "pnpm-store"),
+      XDG_CACHE_HOME: path.join(jobCache, "xdg-cache"),
+      XDG_CONFIG_HOME: path.join(agentDir, "xdg-config"),
+      XDG_DATA_HOME: path.join(jobCache, "xdg-data"),
+    } as const;
+    const previousEnvironment = new Map<string, string | undefined>();
+    for (const [name, value] of Object.entries(environmentOverrides)) {
+      previousEnvironment.set(name, process.env[name]);
+      process.env[name] = value;
+    }
+    restoreEnvironment = () => {
+      for (const [name, value] of previousEnvironment) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    };
+    const initialization = (dependencies.initializeSession ?? initializePiSession)({
+      job,
+      workspace,
+      agentDir,
+      signal: jobSignal,
+    });
+    ({ session } = await waitForPiInitialization(initialization, jobSignal));
+    jobSignal.throwIfAborted();
+    const activeSession = session;
     const prompt = [
       "You are Ai-chan's isolated coding worker.",
       "Work only in the current repository and implement the requested change completely.",
@@ -282,13 +390,13 @@ export async function runPiJob(
       "Task:",
       job.task,
     ].join("\n");
-    timeout = setTimeout(
-      () => timeoutController.abort(new Error(`Pi coding job timed out after ${job.timeoutMs}ms`)),
-      job.timeoutMs,
-    );
     await new Promise<void>((resolve, reject) => {
       const onAbort = () => {
-        void session.abort();
+        try {
+          void Promise.resolve(activeSession.abort()).catch(() => undefined);
+        } catch {
+          // Preserve the job cancellation or timeout as the primary failure.
+        }
         reject(jobSignal.reason);
       };
       if (jobSignal.aborted) {
@@ -296,19 +404,19 @@ export async function runPiJob(
         return;
       }
       jobSignal.addEventListener("abort", onAbort, { once: true });
-      session
+      activeSession
         .prompt(prompt, { expandPromptTemplates: false, source: "rpc" })
-        .then(resolve, reject)
+        .then(() => resolve(), reject)
         .finally(() => jobSignal.removeEventListener("abort", onAbort));
     });
-    return { summary: assistantText(session.messages), durationMs: Date.now() - startedAt };
+    return { summary: assistantText(activeSession.messages), durationMs: Date.now() - startedAt };
   } finally {
-    if (timeout) clearTimeout(timeout);
+    clearTimeout(timeout);
     try {
-      session.dispose();
+      session?.dispose();
     } finally {
       restoreEnvironment();
-      await rm(agentDir, { recursive: true, force: true });
+      if (agentDir) await rm(agentDir, { recursive: true, force: true });
     }
   }
 }
@@ -350,30 +458,38 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
 
     busy = true;
     let modelKey: string | undefined;
+    let accepted = false;
     try {
       const raw = await readRequestText(request);
-      const job = validateJob(JSON.parse(raw));
+      const envelope = validateRequest(JSON.parse(raw));
+      if (envelope.expectedBootId !== bootId) {
+        return json({ error: "Coding worker boot changed; retry with a fresh preflight" }, 409);
+      }
+      const { job } = envelope;
       if (job.workspacePath !== workspaceName) {
         throw new Error("Only the fixed staging workspace is allowed");
       }
       modelKey = job.model.apiKey;
       const workspace = await resolveWorkspace(options.workspacesRoot, job.workspacePath);
       options.onJobAccepted?.(request);
+      accepted = true;
       const response = json({ ok: true, result: await execute(job, workspace, request.signal) });
+      response.headers.set("X-Coding-Worker-Accepted-Boot-Id", bootId);
       response.headers.set("X-Coding-Worker-One-Shot", "true");
       return response;
     } catch (error) {
       if (error instanceof RequestTooLargeError) {
-        const response = json({ error: "Request too large" }, 413);
-        response.headers.set("X-Coding-Worker-One-Shot", "true");
-        return response;
+        return json({ error: "Request too large" }, 413);
       }
       const message = error instanceof Error ? error.message : String(error);
       const response = json(
         { error: modelKey ? message.split(modelKey).join("[redacted]") : message },
         400,
       );
-      response.headers.set("X-Coding-Worker-One-Shot", "true");
+      if (accepted) {
+        response.headers.set("X-Coding-Worker-Accepted-Boot-Id", bootId);
+        response.headers.set("X-Coding-Worker-One-Shot", "true");
+      }
       return response;
     } finally {
       busy = false;

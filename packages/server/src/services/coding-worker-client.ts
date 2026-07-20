@@ -1,6 +1,7 @@
 import type { GitHubCodingModelConfig } from "@cos-tool-bot/shared";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type ClientRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 
 export type CodingWorkerModel = GitHubCodingModelConfig;
 
@@ -32,6 +33,8 @@ interface WorkerHealth {
   challenge: string;
   proof: string;
 }
+
+const ACCEPTED_BOOT_HEADER = "x-coding-worker-accepted-boot-id";
 
 function healthProof(secret: string, challenge: string, bootId: string): Buffer {
   return createHmac("sha256", secret)
@@ -81,6 +84,7 @@ function isCodingWorkerResult(value: unknown): value is CodingWorkerResult {
 
 export class CodingWorkerClient {
   private readonly fetchImpl: typeof fetch;
+  private requiredFreshBootId?: string;
 
   constructor(private readonly options: CodingWorkerClientOptions) {
     this.fetchImpl = options.fetch ?? fetch;
@@ -93,7 +97,11 @@ export class CodingWorkerClient {
   async run(job: CodingWorkerJob, signal?: AbortSignal): Promise<CodingWorkerResult> {
     if (!this.configured) throw new Error("Pi coding worker is not configured");
     signal?.throwIfAborted();
-    const before = await this.waitForHealthyWorker(undefined, signal);
+    const requiredFreshBootId = this.requiredFreshBootId;
+    const before = await this.waitForHealthyWorker(requiredFreshBootId, signal);
+    if (requiredFreshBootId && this.requiredFreshBootId === requiredFreshBootId) {
+      this.requiredFreshBootId = undefined;
+    }
     let response: Response;
     let accepted = false;
     const timeoutSignal = AbortSignal.timeout(job.timeoutMs + 30_000);
@@ -107,18 +115,21 @@ export class CodingWorkerClient {
             Authorization: `Bearer ${this.options.secret}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify(job),
+          body: JSON.stringify({ expectedBootId: before.bootId, job }),
           signal: requestSignal,
         },
         () => {
           accepted = true;
+          this.requiredFreshBootId = before.bootId;
         },
+        before.bootId,
       );
     } catch (error) {
       const originalError = signal?.aborted ? signal.reason : error;
       if (accepted) {
         try {
-          await this.waitForHealthyWorker(before.bootId);
+          await this.waitForHealthyWorker(before.bootId, requestSignal);
+          if (this.requiredFreshBootId === before.bootId) this.requiredFreshBootId = undefined;
         } catch (restartError) {
           if (!requestSignal.aborted) throw restartError;
         }
@@ -128,7 +139,8 @@ export class CodingWorkerClient {
     const payload: unknown = await response.json().catch(() => null);
     if (accepted) {
       try {
-        await this.waitForHealthyWorker(before.bootId);
+        await this.waitForHealthyWorker(before.bootId, requestSignal);
+        if (this.requiredFreshBootId === before.bootId) this.requiredFreshBootId = undefined;
       } catch (restartError) {
         if (!requestSignal.aborted) throw restartError;
       }
@@ -150,22 +162,28 @@ export class CodingWorkerClient {
     pathname: string,
     init: RequestInit = {},
     onAccepted?: () => void,
+    expectedBootId?: string,
   ): Promise<Response> {
     init.signal?.throwIfAborted();
-    if (!this.options.socketPath) {
-      onAccepted?.();
-      return this.fetchImpl(`${this.options.url.replace(/\/+$/, "")}${pathname}`, init);
+    if (!this.options.socketPath && this.options.fetch) {
+      const response = await this.fetchImpl(
+        `${this.options.url.replace(/\/+$/, "")}${pathname}`,
+        init,
+      );
+      const acceptedBootId = response.headers.get(ACCEPTED_BOOT_HEADER);
+      if (acceptedBootId) {
+        if (!expectedBootId || acceptedBootId !== expectedBootId) {
+          throw new Error("Pi coding worker returned an invalid accepted boot id");
+        }
+        onAccepted?.();
+      }
+      return response;
     }
     return new Promise((resolve, reject) => {
       const headers = new Headers(init.headers);
       const body = typeof init.body === "string" ? init.body : undefined;
       if (body) headers.set("Content-Length", String(Buffer.byteLength(body)));
-      const request = httpRequest({
-        socketPath: this.options.socketPath,
-        path: pathname,
-        method: init.method ?? "GET",
-        headers: Object.fromEntries(headers),
-      });
+      const request = this.openRequest(pathname, init.method ?? "GET", headers);
       let accepted = false;
       const markAccepted = () => {
         if (accepted) return;
@@ -182,6 +200,18 @@ export class CodingWorkerClient {
       };
       init.signal?.addEventListener("abort", onAbort, { once: true });
       request.on("response", (incoming) => {
+        const acceptedHeader = incoming.headers[ACCEPTED_BOOT_HEADER];
+        const acceptedBootId = Array.isArray(acceptedHeader) ? acceptedHeader[0] : acceptedHeader;
+        if (acceptedBootId) {
+          if (!expectedBootId || acceptedBootId !== expectedBootId) {
+            init.signal?.removeEventListener("abort", onAbort);
+            incoming.resume();
+            reject(new Error("Pi coding worker returned an invalid accepted boot id"));
+            request.destroy();
+            return;
+          }
+          markAccepted();
+        }
         const chunks: Buffer[] = [];
         let bytes = 0;
         incoming.on("data", (chunk: Buffer) => {
@@ -214,6 +244,20 @@ export class CodingWorkerClient {
       if (body) request.write(body);
       request.end();
     });
+  }
+
+  private openRequest(pathname: string, method: string, headers: Headers): ClientRequest {
+    const options = { method, headers: Object.fromEntries(headers) };
+    if (this.options.socketPath) {
+      return httpRequest({ ...options, socketPath: this.options.socketPath, path: pathname });
+    }
+    const target = new URL(`${this.options.url.replace(/\/+$/, "")}${pathname}`);
+    if (target.username || target.password) {
+      throw new Error("Pi coding worker URL must not contain credentials");
+    }
+    if (target.protocol === "http:") return httpRequest(target, options);
+    if (target.protocol === "https:") return httpsRequest(target, options);
+    throw new Error("Pi coding worker URL must use http: or https:");
   }
 
   private async waitForHealthyWorker(

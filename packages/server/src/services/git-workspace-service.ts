@@ -99,6 +99,14 @@ interface RecoveryCheckpoint {
   treeSha: string;
 }
 
+interface CodeTaskCheckpoint {
+  identity: WorkspaceIdentity;
+  branch: string;
+  headSha: string;
+  targetBranch: string;
+  targetRefSha?: string;
+}
+
 export function validateRepository(repository: string): void {
   if (!REPOSITORY_RE.test(repository)) throw new Error("Invalid GitHub repository");
   const [owner, name] = repository.split("/");
@@ -201,13 +209,18 @@ export class GitWorkspaceService {
         if (options.baseRef) validateGitBranch(options.baseRef);
         await this.ensureWorkspace(options.botId, options.repository, options.token, signal);
         signal?.throwIfAborted();
-        await this.prepareBranch(workspace, options, signal);
-        signal?.throwIfAborted();
-        const startSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
-        const canonicalIdentity = await this.assertWorkspace(workspace, signal);
-        const staged = await this.stager.stage(workspace, signal);
+        const checkpoint = await this.createCodeTaskCheckpoint(workspace, options.branch, signal);
+        let canonicalTouched = false;
+        let staged: Awaited<ReturnType<CodingJobStager["stage"]>> | undefined;
         try {
-          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.prepareBranch(workspace, options, signal, () => {
+            canonicalTouched = true;
+          });
+          signal?.throwIfAborted();
+          const startSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+          staged = await this.stager.stage(workspace, signal);
+          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
+          canonicalTouched = true;
           const workerResult = await this.worker.run(
             {
               workspacePath: this.stager.workspaceName,
@@ -221,7 +234,7 @@ export class GitWorkspaceService {
           signal?.throwIfAborted();
           await this.stager.validateResult(staged, signal);
           signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           const currentBranch = await this.gitWithWorkTree(
             workspace,
             staged.path,
@@ -235,7 +248,7 @@ export class GitWorkspaceService {
             );
           }
 
-          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           const status = await this.gitWithWorkTree(
             workspace,
             staged.path,
@@ -245,13 +258,13 @@ export class GitWorkspaceService {
           );
           if (status) {
             signal?.throwIfAborted();
-            await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+            await this.assertWorkspaceIdentity(checkpoint.identity, signal);
             signal?.throwIfAborted();
             await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
             const commitMessage =
               options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
               "chore: apply Ai-chan coding task";
-            await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+            await this.assertWorkspaceIdentity(checkpoint.identity, signal);
             signal?.throwIfAborted();
             await this.gitWithWorkTree(
               workspace,
@@ -263,9 +276,9 @@ export class GitWorkspaceService {
           }
 
           signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
-          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
           const changed =
             commitSha === startSha
@@ -290,12 +303,19 @@ export class GitWorkspaceService {
             status: commitSha === startSha ? "no_changes" : "committed",
           };
         } catch (error) {
-          await this.assertWorkspaceIdentity(canonicalIdentity)
-            .then(() => this.git(workspace, ["reset", "--mixed", "HEAD"]))
-            .catch(() => undefined);
+          if (canonicalTouched) {
+            try {
+              await this.restoreCodeTaskCheckpoint(workspace, checkpoint);
+            } catch (rollbackError) {
+              throw new AggregateError(
+                [error, rollbackError],
+                "Coding task failed and its Git transaction could not be rolled back",
+              );
+            }
+          }
           throw error;
         } finally {
-          await this.stager.cleanup();
+          if (staged) await this.stager.cleanup();
         }
       }),
     );
@@ -814,10 +834,78 @@ export class GitWorkspaceService {
     }
   }
 
+  private async createCodeTaskCheckpoint(
+    workspace: string,
+    targetBranch: string,
+    signal?: AbortSignal,
+  ): Promise<CodeTaskCheckpoint> {
+    const identity = await this.assertWorkspace(workspace, signal);
+    const branch = await this.git(workspace, ["branch", "--show-current"], undefined, signal);
+    const headSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+    const targetRef = `refs/heads/${targetBranch}`;
+    const targetRefSha = (await this.gitSucceeds(
+      workspace,
+      ["show-ref", "--verify", targetRef],
+      signal,
+    ))
+      ? await this.git(workspace, ["rev-parse", "--verify", targetRef], undefined, signal)
+      : undefined;
+    return { identity, branch, headSha, targetBranch, targetRefSha };
+  }
+
+  private async restoreCodeTaskCheckpoint(
+    workspace: string,
+    checkpoint: CodeTaskCheckpoint,
+  ): Promise<void> {
+    await this.assertWorkspaceIdentity(checkpoint.identity);
+    if (checkpoint.branch) {
+      validateGitBranch(checkpoint.branch);
+      await this.git(workspace, [
+        "update-ref",
+        `refs/heads/${checkpoint.branch}`,
+        checkpoint.headSha,
+      ]);
+      await this.git(workspace, ["checkout", "--force", checkpoint.branch]);
+    } else {
+      await this.git(workspace, ["checkout", "--detach", "--force", checkpoint.headSha]);
+    }
+    await this.git(workspace, ["reset", "--hard", checkpoint.headSha]);
+
+    if (checkpoint.targetBranch !== checkpoint.branch) {
+      const targetRef = `refs/heads/${checkpoint.targetBranch}`;
+      if (checkpoint.targetRefSha) {
+        await this.git(workspace, ["update-ref", targetRef, checkpoint.targetRefSha]);
+      } else {
+        await this.git(workspace, ["update-ref", "-d", targetRef]);
+      }
+    }
+
+    const restoredBranch = await this.git(workspace, ["branch", "--show-current"]);
+    const restoredHead = await this.git(workspace, ["rev-parse", "HEAD"]);
+    const restoredStatus = await this.git(workspace, ["status", "--porcelain"]);
+    const targetRef = `refs/heads/${checkpoint.targetBranch}`;
+    const restoredTargetRefSha = (await this.gitSucceeds(workspace, [
+      "show-ref",
+      "--verify",
+      targetRef,
+    ]))
+      ? await this.git(workspace, ["rev-parse", "--verify", targetRef])
+      : undefined;
+    if (
+      restoredBranch !== checkpoint.branch ||
+      restoredHead !== checkpoint.headSha ||
+      restoredStatus ||
+      restoredTargetRefSha !== checkpoint.targetRefSha
+    ) {
+      throw new Error("Coding task Git transaction did not restore its original workspace state");
+    }
+  }
+
   private async prepareBranch(
     workspace: string,
     options: GitWorkspaceTaskOptions,
     signal?: AbortSignal,
+    onMutation?: () => void,
   ): Promise<void> {
     signal?.throwIfAborted();
     await this.git(workspace, ["check-ref-format", "--branch", options.branch], undefined, signal);
@@ -853,6 +941,7 @@ export class GitWorkspaceService {
     if (branchExists) {
       if (currentBranch !== options.branch) {
         signal?.throwIfAborted();
+        onMutation?.();
         await this.git(workspace, ["checkout", options.branch], undefined, signal);
       }
       return;
@@ -862,6 +951,7 @@ export class GitWorkspaceService {
       : await this.git(workspace, ["symbolic-ref", "refs/remotes/origin/HEAD"], undefined, signal);
     await this.git(workspace, ["rev-parse", "--verify", `${base}^{commit}`], undefined, signal);
     signal?.throwIfAborted();
+    onMutation?.();
     await this.git(workspace, ["checkout", "-b", options.branch, base], undefined, signal);
   }
 
