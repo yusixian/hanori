@@ -60,6 +60,18 @@ const DEFAULT_LIMITS: FileTreeLimits = {
 };
 const MAX_GIT_MANIFEST_BYTES = 64 * 1024 * 1024;
 
+export const PROTECTED_LOCAL_GIT_EXCLUDES = [
+  "/.env",
+  "/.cos-pi-cache",
+  "/.cos-pi-cache/**",
+] as const;
+
+export function isProtectedLocalPath(relative: string): boolean {
+  return (
+    relative === ".env" || relative === ".cos-pi-cache" || relative.startsWith(".cos-pi-cache/")
+  );
+}
+
 function isWithin(root: string, candidate: string): boolean {
   return candidate === root || candidate.startsWith(`${root}${path.sep}`);
 }
@@ -256,6 +268,27 @@ function changedPathsFromStatus(status: Buffer): string[] {
   return [...changed].sort();
 }
 
+function withoutProtectedUntrackedStatus(status: Buffer): Buffer {
+  const records = splitNullRecords(status);
+  const retained: string[] = [];
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!;
+    if (record.length < 4 || record[2] !== " ") throw new Error("Invalid Git status record");
+    const state = record.slice(0, 2);
+    const relative = record.slice(3);
+    validateManifestPath(relative);
+    const original = state.includes("R") || state.includes("C") ? records[++index] : undefined;
+    if ((state.includes("R") || state.includes("C")) && !original) {
+      throw new Error("Invalid Git rename status record");
+    }
+    if (original) validateManifestPath(original);
+    if (state === "??" && isProtectedLocalPath(relative)) continue;
+    retained.push(record);
+    if (original) retained.push(original);
+  }
+  return retained.length ? Buffer.from(`${retained.join("\0")}\0`) : Buffer.alloc(0);
+}
+
 function assertNoGitlinks(index: Buffer): void {
   for (const record of splitNullRecords(index)) {
     const separator = record.indexOf("\t");
@@ -279,9 +312,20 @@ async function captureRecoverySnapshot(
 ): Promise<RecoverySnapshot> {
   signal?.throwIfAborted();
   const sourceRoot = await realpath(sourceWorkspace);
-  const [trackedRaw, untrackedRaw, indexRaw, statusRaw] = await Promise.all([
+  const [trackedRaw, untrackedRaw, indexRaw, unfilteredStatusRaw] = await Promise.all([
     runGitRaw(sourceRoot, ["ls-files", "-z", "--cached"], owner, signal),
-    runGitRaw(sourceRoot, ["ls-files", "-z", "--others", "--exclude-standard"], owner, signal),
+    runGitRaw(
+      sourceRoot,
+      [
+        "ls-files",
+        "-z",
+        "--others",
+        "--exclude-standard",
+        ...PROTECTED_LOCAL_GIT_EXCLUDES.map((pattern) => `--exclude=${pattern}`),
+      ],
+      owner,
+      signal,
+    ),
     runGitRaw(sourceRoot, ["ls-files", "-z", "--stage"], owner, signal),
     runGitRaw(
       sourceRoot,
@@ -291,7 +335,15 @@ async function captureRecoverySnapshot(
     ),
   ]);
   const trackedPaths = new Set(splitNullRecords(trackedRaw));
-  const untrackedPaths = new Set(splitNullRecords(untrackedRaw));
+  for (const relative of trackedPaths) {
+    if (isProtectedLocalPath(relative)) {
+      throw new Error(`Tracked protected local path cannot be recovered: ${relative}`);
+    }
+  }
+  const untrackedPaths = new Set(
+    splitNullRecords(untrackedRaw).filter((relative) => !isProtectedLocalPath(relative)),
+  );
+  const statusRaw = withoutProtectedUntrackedStatus(unfilteredStatusRaw);
   assertNoGitlinks(indexRaw);
   for (const relative of trackedPaths) {
     if (untrackedPaths.has(relative)) throw new Error("Git returned a duplicate recovery path");

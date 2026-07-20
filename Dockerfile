@@ -78,15 +78,16 @@ CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]
 FROM base AS coding-worker
 ENV NODE_ENV=production
 ENV COREPACK_HOME=/opt/corepack
-RUN corepack prepare pnpm@10.5.2 --activate && apk add --no-cache bash git ripgrep && mkdir -p /job /coding-control /tmp/pi-agent && chown -R node:node /job /coding-control /tmp/pi-agent
+RUN corepack prepare pnpm@10.5.2 --activate && apk add --no-cache bash git ripgrep su-exec tini && mkdir -p /job /coding-control /tmp/pi-agent && chown node:node /tmp/pi-agent
 
 COPY --from=worker-runtime-deps /app/node_modules ./node_modules
 COPY --from=worker-runtime-deps /app/packages/coding-worker/node_modules ./packages/coding-worker/node_modules
 COPY --from=builder /app/packages/coding-worker/package.json ./packages/coding-worker/
 COPY --from=builder /app/packages/coding-worker/dist ./packages/coding-worker/dist
+COPY --chmod=755 infrastructure/coding-worker/entrypoint.sh /usr/local/bin/coding-worker-entrypoint
 
-USER node
-CMD ["sh", "-c", "umask 077; printf '%s' \"$CODING_WORKER_SECRET\" > /tmp/coding-worker-secret; exec env -u CODING_WORKER_SECRET node --max-old-space-size=768 packages/coding-worker/dist/index.js"]
+ENTRYPOINT ["/usr/local/bin/coding-worker-entrypoint"]
+CMD ["node", "--max-old-space-size=768", "packages/coding-worker/dist/index.js"]
 
 # Keep the existing default `docker build .` behavior on the main application image.
 FROM runner AS app

@@ -94,6 +94,16 @@ export class CodingWorkerClient {
     return Boolean((this.options.socketPath || this.options.url) && this.options.secret);
   }
 
+  async waitForFreshBoot(signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const requiredFreshBootId = this.requiredFreshBootId;
+    if (!requiredFreshBootId) return;
+    await this.waitForHealthyWorker(requiredFreshBootId, signal);
+    if (this.requiredFreshBootId === requiredFreshBootId) {
+      this.requiredFreshBootId = undefined;
+    }
+  }
+
   async run(job: CodingWorkerJob, signal?: AbortSignal): Promise<CodingWorkerResult> {
     if (!this.configured) throw new Error("Pi coding worker is not configured");
     signal?.throwIfAborted();

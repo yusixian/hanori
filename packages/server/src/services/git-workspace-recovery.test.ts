@@ -93,6 +93,7 @@ async function fixture() {
   return {
     service,
     stager,
+    worker,
     run,
     workspace: path.join(workspaceRoot, "bot-1", "owner", "repo"),
     stagingRoot,
@@ -100,6 +101,15 @@ async function fixture() {
 }
 
 const inspectOptions = { botId: "bot-1", repository: "owner/repo" };
+
+async function commitNegatedProtectedIgnores(workspace: string): Promise<void> {
+  await writeFile(
+    path.join(workspace, ".gitignore"),
+    "!.env\n!.cos-pi-cache/\n!.cos-pi-cache/**\n",
+  );
+  await exec("git", ["-C", workspace, "add", ".gitignore"]);
+  await exec("git", ["-C", workspace, "commit", "-m", "expose protected local paths"]);
+}
 
 describe("Git workspace recovery", () => {
   it("inspects clean state and fingerprints branch, HEAD, index, content, and metadata", async () => {
@@ -144,6 +154,182 @@ describe("Git workspace recovery", () => {
     const otherHead = await service.inspectWorkspace(inspectOptions);
     expect(otherHead.headSha).not.toBe(clean.headSha);
     expect(otherHead.fingerprint).not.toBe(otherBranch.fingerprint);
+  });
+
+  it("keeps protected untracked paths out of inspection even when .gitignore negates local excludes", async () => {
+    const { service, workspace } = await fixture();
+    await commitNegatedProtectedIgnores(workspace);
+    const clean = await service.inspectWorkspace(inspectOptions);
+
+    await writeFile(path.join(workspace, ".env"), "LOCAL_SECRET_CANARY\n");
+    await mkdir(path.join(workspace, ".cos-pi-cache"));
+    await writeFile(path.join(workspace, ".cos-pi-cache", "cache"), "local cache\n");
+    const rawStatus = (await exec("git", ["-C", workspace, "status", "--porcelain"])).stdout;
+    expect(rawStatus).toContain("?? .env");
+    expect(rawStatus).toContain("?? .cos-pi-cache/");
+
+    const inspected = await service.inspectWorkspace(inspectOptions);
+    expect(inspected).toEqual(clean);
+  });
+
+  it("does not copy or commit protected untracked paths when resuming through negated ignores", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await commitNegatedProtectedIgnores(workspace);
+    await writeFile(path.join(workspace, ".env"), "LOCAL_SECRET_CANARY\n");
+    await mkdir(path.join(workspace, ".cos-pi-cache"));
+    await writeFile(path.join(workspace, ".cos-pi-cache", "cache"), "local cache\n");
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    expect(inspection.changedFiles).toEqual(["README.md"]);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await expect(readFile(path.join(staged, ".env"))).rejects.toThrow();
+      await expect(readFile(path.join(staged, ".cos-pi-cache", "cache"))).rejects.toThrow();
+      await writeFile(path.join(staged, "README.md"), "recovered\n");
+      return { summary: "recovered", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Resume without local secrets",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect(await readFile(path.join(workspace, ".env"), "utf8")).toBe("LOCAL_SECRET_CANARY\n");
+    expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache"), "utf8")).toBe(
+      "local cache\n",
+    );
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    const committedPaths = (
+      await exec("git", ["-C", workspace, "show", "--pretty=", "--name-only", "HEAD"])
+    ).stdout;
+    expect(committedPaths).not.toContain(".env");
+    expect(committedPaths).not.toContain(".cos-pi-cache");
+  });
+
+  it("rejects protected paths created by the worker instead of ignoring or committing them", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await commitNegatedProtectedIgnores(workspace);
+    await writeFile(path.join(workspace, ".env"), "LOCAL_SECRET_CANARY\n");
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      await writeFile(path.join(stagingRoot, job.workspacePath, ".env"), "worker value\n");
+      return { summary: "created env", durationMs: 1 };
+    });
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Do not commit protected files",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+      ),
+    ).rejects.toThrow("Pi result changed protected local paths");
+
+    expect(await readFile(path.join(workspace, ".env"), "utf8")).toBe("LOCAL_SECRET_CANARY\n");
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("dirty\n");
+    await expect(
+      exec("git", ["-C", workspace, "ls-files", "--error-unmatch", ".env"]),
+    ).rejects.toThrow();
+  });
+
+  it("preserves protected untracked paths when discarding through negated ignores", async () => {
+    const { service, workspace } = await fixture();
+    await commitNegatedProtectedIgnores(workspace);
+    await writeFile(path.join(workspace, ".env"), "LOCAL_SECRET_CANARY\n");
+    await mkdir(path.join(workspace, ".cos-pi-cache"));
+    await writeFile(path.join(workspace, ".cos-pi-cache", "cache"), "local cache\n");
+    await writeFile(path.join(workspace, "untracked.txt"), "remove\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    expect(inspection.changedFiles).toEqual(["untracked.txt"]);
+
+    const result = await service.discardWorkspace(inspectOptions, inspection);
+
+    expect(result.clean).toBe(true);
+    await expect(readFile(path.join(workspace, "untracked.txt"))).rejects.toThrow();
+    expect(await readFile(path.join(workspace, ".env"), "utf8")).toBe("LOCAL_SECRET_CANARY\n");
+    expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache"), "utf8")).toBe(
+      "local cache\n",
+    );
+  });
+
+  it.each([".env", ".cos-pi-cache/tracked"])(
+    "fails closed when recovery encounters tracked protected path %s",
+    async (protectedPath) => {
+      const { service, stager, run, workspace } = await fixture();
+      const expected = await service.inspectWorkspace(inspectOptions);
+      await mkdir(path.dirname(path.join(workspace, protectedPath)), { recursive: true });
+      await writeFile(path.join(workspace, protectedPath), "tracked secret\n");
+      await exec("git", ["-C", workspace, "add", "-f", protectedPath]);
+      await exec("git", ["-C", workspace, "commit", "-m", "track protected local path"]);
+      const stage = vi.spyOn(stager, "stageRecoverySnapshot");
+
+      await expect(service.inspectWorkspace(inspectOptions)).rejects.toThrow(
+        `Tracked protected local path cannot be recovered: ${protectedPath}`,
+      );
+      await expect(
+        service.resumeWorkspace(
+          {
+            ...inspectOptions,
+            task: "Unsafe resume",
+            authorName: "Ai-chan",
+            authorEmail: "ai-chan@example.com",
+            model,
+          },
+          expected,
+        ),
+      ).rejects.toThrow(`Tracked protected local path cannot be recovered: ${protectedPath}`);
+      await expect(service.discardWorkspace(inspectOptions, expected)).rejects.toThrow(
+        `Tracked protected local path cannot be recovered: ${protectedPath}`,
+      );
+      expect(stage).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(await readFile(path.join(workspace, protectedPath), "utf8")).toBe("tracked secret\n");
+    },
+  );
+
+  it("waits for worker readiness before staging a recovery snapshot and honors cancellation", async () => {
+    const { service, stager, worker, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    const controller = new AbortController();
+    const reason = new Error("cancelled while waiting for fresh worker");
+    const waitForFreshBoot = vi.spyOn(worker, "waitForFreshBoot").mockImplementation(
+      async (signal) =>
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const stage = vi.spyOn(stager, "stageRecoverySnapshot");
+
+    const resuming = service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Resume after restart",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(waitForFreshBoot).toHaveBeenCalledWith(controller.signal));
+    expect(stage).not.toHaveBeenCalled();
+    controller.abort(reason);
+
+    await expect(resuming).rejects.toBe(reason);
+    expect(stage).not.toHaveBeenCalled();
   });
 
   it("resumes the exact dirty snapshot and commits tracked deletions and safe untracked files", async () => {

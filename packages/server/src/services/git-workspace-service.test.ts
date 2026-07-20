@@ -54,7 +54,7 @@ describe("Git workspace input validation", () => {
     let pushSignal: AbortSignal | undefined;
     vi.spyOn(internals, "git").mockImplementation(async (_cwd, args, _env, signal) => {
       if (args[0] === "rev-parse") return "a".repeat(40);
-      if (args[0] === "status" || args[0] === "remote") return "";
+      if (args[0] === "status" || args[0] === "ls-files" || args[0] === "remote") return "";
       if (args[0] === "push") {
         pushSignal = signal;
         started();
@@ -118,9 +118,14 @@ describe("Git workspace input validation", () => {
       expect(JSON.stringify(job)).not.toContain("github-secret");
       expect(job.workspacePath).toBe("workspace");
       await expect(readFile(path.join(stagingRoot, job.workspacePath, ".env"))).rejects.toThrow();
+      await writeFile(
+        path.join(stagingRoot, job.workspacePath, ".gitignore"),
+        "!.env\n!.cos-pi-cache/\n!.cos-pi-cache/**\n",
+      );
       await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
       return { summary: "updated README", durationMs: 1 };
     });
+    const stager = new CodingJobStager(stagingRoot);
     const service = new GitWorkspaceService(
       workspaceRoot,
       gitRoot,
@@ -128,7 +133,7 @@ describe("Git workspace input validation", () => {
       process.getuid?.() ?? 1000,
       process.getgid?.() ?? 1000,
       () => remote,
-      new CodingJobStager(stagingRoot),
+      stager,
     );
 
     const result = await service.runCodeTask({
@@ -154,6 +159,13 @@ describe("Git workspace input validation", () => {
     const workspace = path.join(workspaceRoot, "bot-1", "owner", "repo");
     const gitFile = await readFile(path.join(workspace, ".git"), "utf8");
     expect(gitFile).toContain(path.join(gitRoot, "bot-1", "owner", "repo.git"));
+    const partialCloneFilter = await exec("git", [
+      `--git-dir=${path.join(gitRoot, "bot-1", "owner", "repo.git")}`,
+      "config",
+      "--get",
+      "remote.origin.partialclonefilter",
+    ]);
+    expect(partialCloneFilter.stdout.trim()).toBe("blob:none");
     const excludeFile = await readFile(
       path.join(gitRoot, "bot-1", "owner", "repo.git", "info", "exclude"),
       "utf8",
@@ -162,7 +174,24 @@ describe("Git workspace input validation", () => {
     await mkdir(path.join(workspace, ".cos-pi-cache"));
     await writeFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "cached\n");
     await writeFile(path.join(workspace, ".env"), "IGNORED_SECRET_CANARY\n");
-    await service.runCodeTask({
+    const rawStatus = (await exec("git", ["-C", workspace, "status", "--porcelain"])).stdout;
+    expect(rawStatus).toContain("?? .env");
+    expect(rawStatus).toContain("?? .cos-pi-cache/");
+    type Git = (
+      cwd: string,
+      args: string[],
+      env?: NodeJS.ProcessEnv,
+      signal?: AbortSignal,
+    ) => Promise<string>;
+    const internals = service as unknown as { git: Git };
+    const git = vi.spyOn(internals, "git");
+    let releaseFreshBoot!: () => void;
+    const freshBoot = new Promise<void>((resolve) => {
+      releaseFreshBoot = resolve;
+    });
+    const waitForFreshBoot = vi.spyOn(worker, "waitForFreshBoot").mockReturnValueOnce(freshBoot);
+    const stage = vi.spyOn(stager, "stage");
+    const secondRun = service.runCodeTask({
       botId: "bot-1",
       repository: "owner/repo",
       token: "github-secret",
@@ -178,6 +207,15 @@ describe("Git workspace input validation", () => {
         capabilities: ["tool_calling", "code"],
       },
     });
+    await vi.waitFor(() => expect(waitForFreshBoot).toHaveBeenCalledOnce());
+    expect(stage).not.toHaveBeenCalled();
+    expect(
+      git.mock.calls.some(
+        (call) => call[1].join(" ") === "fetch --prune --filter=blob:none origin",
+      ),
+    ).toBe(true);
+    releaseFreshBoot();
+    await secondRun;
     expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "utf8")).toBe(
       "cached\n",
     );

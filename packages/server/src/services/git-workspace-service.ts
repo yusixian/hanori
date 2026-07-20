@@ -30,6 +30,7 @@ import {
   assertDirectoryIdentity,
   captureDirectoryIdentity,
   CodingJobStager,
+  PROTECTED_LOCAL_GIT_EXCLUDES,
   type PathIdentity,
   type RecoverySnapshot,
 } from "./coding-job-stager.js";
@@ -219,6 +220,7 @@ export class GitWorkspaceService {
           });
           signal?.throwIfAborted();
           const startSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+          await this.worker.waitForFreshBoot(signal);
           staged = await this.stager.stage(workspace, signal);
           await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           canonicalTouched = true;
@@ -249,6 +251,7 @@ export class GitWorkspaceService {
             );
           }
 
+          await this.assertNoProtectedStagedChanges(workspace, staged.path, signal);
           await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           const status = await this.gitWithWorkTree(
             workspace,
@@ -378,6 +381,7 @@ export class GitWorkspaceService {
           undefined,
           signal,
         );
+        await this.worker.waitForFreshBoot(signal);
         const staged = await this.stager.stageRecoverySnapshot(
           workspace,
           inspected.snapshot,
@@ -435,6 +439,7 @@ export class GitWorkspaceService {
           if (currentBranch !== expected.branch) {
             throw new Error("Workspace branch changed while resuming; request a new inspection");
           }
+          await this.assertNoProtectedStagedChanges(workspace, staged.path, signal);
           signal?.throwIfAborted();
           await this.assertWorkspaceIdentity(inspected.identity, signal);
           canonicalTouched = true;
@@ -598,7 +603,7 @@ export class GitWorkspaceService {
     return this.locks.run(workspace, async () => {
       validateGitBranch(options.branch);
       await this.assertWorkspace(workspace, signal);
-      const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
+      const status = await this.canonicalStatus(workspace, signal);
       if (status)
         throw new Error("Workspace has uncommitted changes; finish the local commit first");
       const commitSha = await this.git(
@@ -650,7 +655,7 @@ export class GitWorkspaceService {
           "The local branch changed after confirmation was requested; request a new push",
         );
       }
-      const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
+      const status = await this.canonicalStatus(workspace, signal);
       if (status) throw new Error("Workspace has uncommitted changes; refusing to push");
       await this.git(
         workspace,
@@ -983,7 +988,7 @@ export class GitWorkspaceService {
 
     const restoredBranch = await this.git(workspace, ["branch", "--show-current"]);
     const restoredHead = await this.git(workspace, ["rev-parse", "HEAD"]);
-    const restoredStatus = await this.git(workspace, ["status", "--porcelain"]);
+    const restoredStatus = await this.canonicalStatus(workspace);
     const targetRef = `refs/heads/${checkpoint.targetBranch}`;
     const restoredTargetRefSha = (await this.gitSucceeds(workspace, [
       "show-ref",
@@ -1028,7 +1033,7 @@ export class GitWorkspaceService {
       undefined,
       signal,
     );
-    const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
+    const status = await this.canonicalStatus(workspace, signal);
     const branchExists = await this.gitSucceeds(
       workspace,
       ["show-ref", "--verify", `refs/heads/${options.branch}`],
@@ -1094,6 +1099,7 @@ export class GitWorkspaceService {
                 "clone",
                 "--origin",
                 "origin",
+                "--filter=blob:none",
                 "--separate-git-dir",
                 gitDir,
                 this.remoteUrl(repository),
@@ -1127,7 +1133,8 @@ export class GitWorkspaceService {
     );
     await this.withAuth(
       token,
-      (env) => this.git(workspace, ["fetch", "--prune", "origin"], env, signal),
+      (env) =>
+        this.git(workspace, ["fetch", "--prune", "--filter=blob:none", "origin"], env, signal),
       signal,
     );
     return workspace;
@@ -1206,6 +1213,39 @@ export class GitWorkspaceService {
     await writeFile(excludePath, `${content}${separator}${missing.join("\n")}\n`, { mode: 0o600 });
     signal?.throwIfAborted();
     await chown(excludePath, this.workspaceUid, this.workspaceGid);
+  }
+
+  private async canonicalStatus(workspace: string, signal?: AbortSignal): Promise<string> {
+    const [tracked, untracked] = await Promise.all([
+      this.git(workspace, ["status", "--porcelain", "--untracked-files=no"], undefined, signal),
+      this.git(
+        workspace,
+        [
+          "ls-files",
+          "--others",
+          "--exclude-standard",
+          ...PROTECTED_LOCAL_GIT_EXCLUDES.map((pattern) => `--exclude=${pattern}`),
+        ],
+        undefined,
+        signal,
+      ),
+    ]);
+    return tracked || untracked;
+  }
+
+  private async assertNoProtectedStagedChanges(
+    workspace: string,
+    stagedWorkspace: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const status = await this.gitWithWorkTree(
+      workspace,
+      stagedWorkspace,
+      ["status", "--porcelain", "--", ".env", ".cos-pi-cache"],
+      undefined,
+      signal,
+    );
+    if (status) throw new Error("Pi result changed protected local paths");
   }
 
   private git(

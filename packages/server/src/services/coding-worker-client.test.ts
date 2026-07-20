@@ -221,8 +221,15 @@ describe("CodingWorkerClient", () => {
       ]);
       expect(promptOutcome).toBe(reason);
       await vi.waitFor(() => expect(initialJobAborted).toBe(true));
+      const freshBootBarrier = client.waitForFreshBoot();
+      const barrierOutcome = await Promise.race([
+        freshBootBarrier.then(() => "resolved"),
+        new Promise((resolve) => setTimeout(() => resolve("pending"), 20)),
+      ]);
+      expect(barrierOutcome).toBe("pending");
       allowFreshBoot = true;
       staleHealthCalls = 0;
+      await freshBootBarrier;
 
       await expect(client.run(codingJob)).resolves.toEqual({ summary: "done", durationMs: 1 });
       expect(staleHealthCalls).toBeGreaterThanOrEqual(2);
