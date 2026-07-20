@@ -17,6 +17,7 @@ export type BotContext = StreamFlavor<WrapperContext>;
 
 export class WrapperContext extends Context {
   waiting_message?: Message;
+  private waitingMessagePromise?: Promise<Message>;
   command: CommandEntity;
   isReply: boolean;
   reply_to_message?: Message;
@@ -57,30 +58,48 @@ export class WrapperContext extends Context {
   }
 
   async wait(message: string, auto_delete?: boolean, parse_mode?: ParseMode) {
-    if (!this.waiting_message) this.waiting_message = await this.directlyReply(message, parse_mode);
+    await this.getOrCreateWaiting(message, parse_mode);
     if (auto_delete) this.autoDelete();
   }
 
   async resolveWait(message: string, parse_mode?: ParseMode): Promise<number> {
-    if (this.waiting_message) {
-      await this.api.editMessageText(
-        this.waiting_message.chat.id,
-        this.waiting_message.message_id,
-        message,
-        { parse_mode },
-      );
-      return this.waiting_message.message_id;
-    } else {
-      const sent = await this.directlyReply(message, parse_mode);
-      return sent.message_id;
-    }
+    const waiting = await this.getOrCreateWaiting(message, parse_mode);
+    if (waiting.created) return waiting.message.message_id;
+
+    await this.api.editMessageText(waiting.message.chat.id, waiting.message.message_id, message, {
+      parse_mode,
+    });
+    return waiting.message.message_id;
   }
 
   async deleteWaiting() {
+    const pending = this.waitingMessagePromise;
+    if (pending) await pending.catch(() => undefined);
     if (this.waiting_message) {
       const msgId = this.waiting_message.message_id;
       this.waiting_message = undefined;
       await this.deleteMessages([msgId]).catch(() => {});
+    }
+  }
+
+  private async getOrCreateWaiting(
+    message: string,
+    parse_mode?: ParseMode,
+  ): Promise<{ message: Message; created: boolean }> {
+    if (this.waiting_message) return { message: this.waiting_message, created: false };
+    if (this.waitingMessagePromise) {
+      return { message: await this.waitingMessagePromise, created: false };
+    }
+
+    const pending = this.directlyReply(message, parse_mode).then((sent) => {
+      this.waiting_message = sent;
+      return sent;
+    });
+    this.waitingMessagePromise = pending;
+    try {
+      return { message: await pending, created: true };
+    } finally {
+      if (this.waitingMessagePromise === pending) this.waitingMessagePromise = undefined;
     }
   }
 }
