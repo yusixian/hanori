@@ -73,8 +73,16 @@ export interface PeopleProfileObservation {
   lastName: string | null;
   languageCode: string | null;
   isPremium: boolean;
-  avatarPath?: string | null;
-  avatarVersion?: string | null;
+}
+
+export interface PeopleProfileAvatarUpdate {
+  telegramId: number;
+  avatarPath: string | null;
+  avatarVersion: string | null;
+}
+
+export interface PeopleProfileAvatarUpdateResult {
+  previousAvatarPath: string | null;
 }
 
 export interface MemorySearchResult {
@@ -104,6 +112,9 @@ export interface MemoryCallbacks {
     limit?: number;
   }): Promise<MemorySearchResult[]>;
   touchProfile(observation: PeopleProfileObservation): Promise<void>;
+  updateProfileAvatar(
+    update: PeopleProfileAvatarUpdate,
+  ): Promise<PeopleProfileAvatarUpdateResult | null>;
 }
 
 export interface TimeoutConfig {

@@ -1,6 +1,7 @@
 import type { MemoryCallbacks, PeopleProfileObservation } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { User } from "grammy/types";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -39,6 +40,7 @@ function observationFromUser(user: User): PeopleProfileObservation {
 
 export class TelegramProfileObserver {
   private readonly nextRefreshAt = new Map<number, number>();
+  private readonly pendingTouches = new Map<number, Promise<void>>();
   private readonly refreshMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -49,10 +51,23 @@ export class TelegramProfileObserver {
     this.now = options.now ?? Date.now;
   }
 
+  private async removeCachedAvatar(relativePath: string | null) {
+    if (!relativePath || !this.options.dataDir) return;
+    const dataDir = path.resolve(this.options.dataDir);
+    const absolutePath = path.resolve(dataDir, relativePath);
+    if (!absolutePath.startsWith(`${dataDir}${path.sep}`)) return;
+    await fs.unlink(absolutePath).catch(() => {});
+  }
+
   observe(api: ProfilePhotoApi, user: User): void {
     const observation = observationFromUser(user);
-    const basicTouch = this.options.memory.touchProfile(observation);
-    void basicTouch.catch(() => {});
+    const previousTouch = this.pendingTouches.get(user.id) ?? Promise.resolve();
+    const basicTouch = previousTouch.then(() => this.options.memory.touchProfile(observation));
+    const settledTouch = basicTouch.catch(() => {});
+    this.pendingTouches.set(user.id, settledTouch);
+    void settledTouch.finally(() => {
+      if (this.pendingTouches.get(user.id) === settledTouch) this.pendingTouches.delete(user.id);
+    });
 
     if (!this.options.dataDir) return;
     const now = this.now();
@@ -71,16 +86,12 @@ export class TelegramProfileObserver {
     const sizes = photos.photos[0];
     const photo = sizes?.[sizes.length - 1];
     if (!photo) {
-      const avatarPath = path.join(
-        this.options.dataDir!,
-        path.posix.join("avatars", `${observation.telegramId}.jpg`),
-      );
-      await fs.unlink(avatarPath).catch(() => {});
-      await this.options.memory.touchProfile({
-        ...observation,
+      const result = await this.options.memory.updateProfileAvatar({
+        telegramId: observation.telegramId,
         avatarPath: null,
         avatarVersion: null,
       });
+      await this.removeCachedAvatar(result?.previousAvatarPath ?? null);
       return;
     }
 
@@ -97,14 +108,39 @@ export class TelegramProfileObserver {
     if (buffer.byteLength > MAX_AVATAR_BYTES)
       throw new Error("Telegram profile photo is too large");
 
-    const relativePath = path.posix.join("avatars", `${observation.telegramId}.jpg`);
+    const version = Buffer.from(photo.file_unique_id).toString("base64url");
+    const relativePath = path.posix.join(
+      "avatars",
+      `${observation.telegramId}-${version}-${randomUUID()}.jpg`,
+    );
     const absolutePath = path.join(this.options.dataDir!, relativePath);
+    const temporaryPath = `${absolutePath}.${randomUUID()}.tmp`;
     await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, buffer);
-    await this.options.memory.touchProfile({
-      ...observation,
-      avatarPath: relativePath,
-      avatarVersion: photo.file_unique_id,
-    });
+    try {
+      await fs.writeFile(temporaryPath, buffer, { flag: "wx" });
+      await fs.rename(temporaryPath, absolutePath);
+    } catch (error) {
+      await fs.unlink(temporaryPath).catch(() => {});
+      throw error;
+    }
+
+    let result;
+    try {
+      result = await this.options.memory.updateProfileAvatar({
+        telegramId: observation.telegramId,
+        avatarPath: relativePath,
+        avatarVersion: photo.file_unique_id,
+      });
+    } catch (error) {
+      await fs.unlink(absolutePath).catch(() => {});
+      throw error;
+    }
+    if (!result) {
+      await fs.unlink(absolutePath).catch(() => {});
+      return;
+    }
+    if (result.previousAvatarPath !== relativePath) {
+      await this.removeCachedAvatar(result.previousAvatarPath);
+    }
   }
 }

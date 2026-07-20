@@ -1,6 +1,10 @@
 import type { Database } from "@cos-tool-bot/database";
 import { peopleProfiles } from "@cos-tool-bot/database";
-import type { PeopleProfile, PeopleProfileObservation } from "@cos-tool-bot/shared";
+import type {
+  PeopleProfile,
+  PeopleProfileAvatarUpdate,
+  PeopleProfileObservation,
+} from "@cos-tool-bot/shared";
 import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 
 /** Map a Drizzle profile row to the shared PeopleProfile DTO. */
@@ -121,24 +125,34 @@ export class PeopleProfileStore {
   }
 
   async touchProfile(botId: string, observation: PeopleProfileObservation) {
-    const existing = await this.getProfile(botId, observation.telegramId);
-    if (existing) {
-      const updates: Partial<typeof peopleProfiles.$inferInsert> = {
-        lastSeen: new Date(),
-        displayName: observation.displayName,
-        firstName: observation.firstName,
-        lastName: observation.lastName,
-        languageCode: observation.languageCode,
-        isPremium: observation.isPremium,
-        username: observation.username,
-      };
-      if (observation.avatarPath !== undefined) updates.avatarPath = observation.avatarPath;
-      if (observation.avatarVersion !== undefined) {
-        updates.avatarVersion = observation.avatarVersion;
+    await this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${observation.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, observation.telegramId),
+          ),
+        );
+      if (existing) {
+        await tx
+          .update(peopleProfiles)
+          .set({
+            lastSeen: new Date(),
+            displayName: observation.displayName,
+            firstName: observation.firstName,
+            lastName: observation.lastName,
+            languageCode: observation.languageCode,
+            isPremium: observation.isPremium,
+            username: observation.username,
+          })
+          .where(eq(peopleProfiles.id, existing.id));
+        return;
       }
-      await this.db.update(peopleProfiles).set(updates).where(eq(peopleProfiles.id, existing.id));
-    } else {
-      await this.db.insert(peopleProfiles).values({
+      await tx.insert(peopleProfiles).values({
         botId,
         telegramId: observation.telegramId,
         displayName: observation.displayName,
@@ -147,12 +161,30 @@ export class PeopleProfileStore {
         lastName: observation.lastName,
         languageCode: observation.languageCode,
         isPremium: observation.isPremium,
-        avatarPath: observation.avatarPath,
-        avatarVersion: observation.avatarVersion,
         traits: [],
         interests: [],
       });
-    }
+    });
+  }
+
+  async updateProfileAvatar(botId: string, update: PeopleProfileAvatarUpdate) {
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${update.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, update.telegramId)),
+        );
+      if (!existing) return null;
+      const [updated] = await tx
+        .update(peopleProfiles)
+        .set({ avatarPath: update.avatarPath, avatarVersion: update.avatarVersion })
+        .where(eq(peopleProfiles.id, existing.id))
+        .returning({ id: peopleProfiles.id });
+      return updated ? { previousAvatarPath: existing.avatarPath } : null;
+    });
   }
 
   async searchProfiles(botId: string, query: string) {

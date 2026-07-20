@@ -627,6 +627,7 @@ export class BotPool {
             return cs.searchMessages(botId, { ...params, queryEmbedding });
           },
           touchProfile: (observation) => ps.touchProfile(botId, observation),
+          updateProfileAvatar: (update) => ps.updateProfileAvatar(botId, update),
         };
       }
 
