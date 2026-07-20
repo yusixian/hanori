@@ -90,19 +90,30 @@ fails. Treat every public endpoint and downloaded dependency used by a job as un
 
 ## Start the worker
 
-Generate a shared internal secret and put it in `.env`:
+Generate a shared internal secret and write both required settings into the existing `.env` file:
 
 ```bash
 CODING_WORKER_SECRET=$(openssl rand -hex 32)
+sed -i \
+  -e 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=coding/' \
+  -e "s/^CODING_WORKER_SECRET=.*/CODING_WORKER_SECRET=${CODING_WORKER_SECRET}/" \
+  .env
+unset CODING_WORKER_SECRET
+chmod 600 .env
 ```
 
-Start production Compose with the optional profile:
+The command expects `.env` to contain the two keys from `.env.example`; if either key was removed,
+add `COMPOSE_PROFILES=coding` and the generated `CODING_WORKER_SECRET` with your editor instead.
+Then start the production Compose project. Compose enables the profile from `.env`:
 
 ```bash
-docker compose --profile coding up -d --build
+docker compose -p cos-bot-prod up -d --build
 ```
 
 Then enable **GitHub identity and code access** and **Pi coding agent** in the bot's AI settings.
+The same section can select a dedicated coding provider and model. Leave both selectors on the
+follow-chat defaults to preserve the previous behavior, or choose a configured provider/model so
+coding jobs do not change when a chat switches models.
 The worker is lazy-loaded: while idle it runs only the small HTTP shell; the Pi SDK is imported when
 the first job starts. The job timeout and caller-cancellation signal are active before runtime and
 session initialization; late initialization is cleaned up if either deadline wins. Jobs are
