@@ -69,6 +69,7 @@ async function fixture() {
   await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
   const worker = new CodingWorkerClient({ url: "", secret: "" });
   const run = vi.spyOn(worker, "run").mockResolvedValue({ summary: "bootstrap", durationMs: 1 });
+  const stager = new CodingJobStager(stagingRoot);
   const service = new GitWorkspaceService(
     workspaceRoot,
     gitRoot,
@@ -76,7 +77,7 @@ async function fixture() {
     process.getuid?.() ?? 1000,
     process.getgid?.() ?? 1000,
     () => remote,
-    new CodingJobStager(stagingRoot),
+    stager,
   );
   await service.runCodeTask({
     botId: "bot-1",
@@ -91,6 +92,7 @@ async function fixture() {
   run.mockClear();
   return {
     service,
+    stager,
     run,
     workspace: path.join(workspaceRoot, "bot-1", "owner", "repo"),
     stagingRoot,
@@ -188,6 +190,61 @@ describe("Git workspace recovery", () => {
     expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
     await expect(readFile(path.join(workspace, "delete-me.txt"))).rejects.toThrow();
     expect(await readFile(path.join(workspace, "worker.txt"), "utf8")).toBe("worker\n");
+  });
+
+  it("force-stages a bound untracked file that the worker newly ignores", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "notes.local"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await writeFile(path.join(staged, ".gitignore"), ".env\n.cos-pi-cache/\nnotes.local\n");
+      await writeFile(path.join(staged, "notes.local"), "updated notes\n");
+      return { summary: "kept ignored notes", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Keep notes.local while ignoring future local notes",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "notes.local"), "utf8")).toBe("updated notes\n");
+    expect(
+      (await exec("git", ["-C", workspace, "show", `${result.commitSha}:notes.local`])).stdout,
+    ).toBe("updated notes\n");
+  });
+
+  it("removes a bound untracked file deleted by the worker", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "notes.local"), "delete me\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      await rm(path.join(stagingRoot, job.workspacePath, "notes.local"));
+      return { summary: "removed notes", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Remove notes.local",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("no_changes");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    await expect(readFile(path.join(workspace, "notes.local"))).rejects.toThrow();
   });
 
   it("recovers a tracked file replaced by a directory of non-ignored files", async () => {
@@ -306,6 +363,46 @@ describe("Git workspace recovery", () => {
       await expect(readFile(path.join(workspace, "worker.txt"))).rejects.toThrow();
     },
   );
+
+  it("restores the exact dirty snapshot when staging cleanup fails after commit", async () => {
+    const { service, stager, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "staged\n");
+    await exec("git", ["-C", workspace, "add", "README.md"]);
+    await writeFile(path.join(workspace, "README.md"), "unstaged\n");
+    await writeFile(path.join(workspace, "untracked.txt"), "original untracked\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      await writeFile(path.join(stagingRoot, job.workspacePath, "worker.txt"), "worker result\n");
+      return { summary: "worker result", durationMs: 1 };
+    });
+    const cleanupFailure = new Error("injected staging cleanup failure");
+    const cleanup = vi.spyOn(stager, "cleanup").mockRejectedValueOnce(cleanupFailure);
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Resume",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+      ),
+    ).rejects.toBe(cleanupFailure);
+
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect(await service.inspectWorkspace(inspectOptions)).toEqual(inspection);
+    expect((await exec("git", ["-C", workspace, "show", ":README.md"])).stdout).toBe("staged\n");
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("unstaged\n");
+    expect(await readFile(path.join(workspace, "untracked.txt"), "utf8")).toBe(
+      "original untracked\n",
+    );
+    await expect(readFile(path.join(workspace, "worker.txt"))).rejects.toThrow();
+    await expect(
+      readFile(path.join(stagingRoot, "workspace", "worker.txt"), "utf8"),
+    ).rejects.toThrow();
+  });
 
   it("fails and rolls back resume when a result exposes a previously ignored file", async () => {
     const { service, run, workspace, stagingRoot } = await fixture();

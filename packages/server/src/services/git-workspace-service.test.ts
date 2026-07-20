@@ -242,6 +242,93 @@ describe("Git workspace input validation", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
+  it("removes a committed target branch when staging cleanup fails", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-cleanup-test-"));
+    tempDirs.push(root);
+    const remote = path.join(root, "remote.git");
+    const seed = path.join(root, "seed");
+    await exec("git", ["init", "--bare", remote]);
+    await exec("git", ["init", "-b", "main", seed]);
+    await writeFile(path.join(seed, "README.md"), "before\n");
+    await exec("git", ["-C", seed, "add", "README.md"]);
+    await exec("git", [
+      "-C",
+      seed,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "initial",
+    ]);
+    await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
+    await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
+    await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    const originalHead = (await exec("git", ["-C", seed, "rev-parse", "HEAD"])).stdout.trim();
+
+    const workspaceRoot = path.join(root, "workspaces");
+    const gitRoot = path.join(root, "metadata");
+    const stagingRoot = path.join(root, "coding-job");
+    await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    vi.spyOn(worker, "run").mockImplementation(async (job) => {
+      await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
+      return { summary: "updated README", durationMs: 1 };
+    });
+    const stager = new CodingJobStager(stagingRoot);
+    const service = new GitWorkspaceService(
+      workspaceRoot,
+      gitRoot,
+      worker,
+      process.getuid?.() ?? 1000,
+      process.getgid?.() ?? 1000,
+      () => remote,
+      stager,
+    );
+    const cleanupFailure = new Error("injected staging cleanup failure");
+    const cleanup = vi.spyOn(stager, "cleanup").mockRejectedValueOnce(cleanupFailure);
+
+    await expect(
+      service.runCodeTask({
+        botId: "bot-1",
+        repository: "owner/repo",
+        token: "github-secret",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        task: "Update README",
+        branch: "feat/cleanup-failure",
+        model: {
+          apiKey: "model-secret",
+          baseURL: "https://example.com/v1",
+          id: "model",
+          providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
+        },
+      }),
+    ).rejects.toBe(cleanupFailure);
+
+    const workspace = path.join(workspaceRoot, "bot-1", "owner", "repo");
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    expect((await exec("git", ["-C", workspace, "branch", "--show-current"])).stdout.trim()).toBe(
+      "main",
+    );
+    expect((await exec("git", ["-C", workspace, "rev-parse", "HEAD"])).stdout.trim()).toBe(
+      originalHead,
+    );
+    expect((await exec("git", ["-C", workspace, "status", "--porcelain"])).stdout.trim()).toBe("");
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
+    await expect(
+      exec("git", ["-C", workspace, "show-ref", "--verify", "refs/heads/feat/cleanup-failure"]),
+    ).rejects.toThrow();
+    expect(
+      (await exec("git", ["-C", workspace, "rev-list", "--all", "--count"])).stdout.trim(),
+    ).toBe("1");
+    await expect(
+      readFile(path.join(stagingRoot, "workspace", "README.md"), "utf8"),
+    ).rejects.toThrow();
+  });
+
   it("restores an existing target branch when cancellation follows a successful commit", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-abort-test-"));
     tempDirs.push(root);

@@ -211,6 +211,7 @@ export class GitWorkspaceService {
         signal?.throwIfAborted();
         const checkpoint = await this.createCodeTaskCheckpoint(workspace, options.branch, signal);
         let canonicalTouched = false;
+        let stagingCleaned = false;
         let staged: Awaited<ReturnType<CodingJobStager["stage"]>> | undefined;
         try {
           await this.prepareBranch(workspace, options, signal, () => {
@@ -275,6 +276,8 @@ export class GitWorkspaceService {
             );
           }
 
+          await this.stager.cleanup();
+          stagingCleaned = true;
           signal?.throwIfAborted();
           await this.assertWorkspaceIdentity(checkpoint.identity, signal);
           const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
@@ -303,19 +306,29 @@ export class GitWorkspaceService {
             status: commitSha === startSha ? "no_changes" : "committed",
           };
         } catch (error) {
+          const failures = [error];
           if (canonicalTouched) {
             try {
               await this.restoreCodeTaskCheckpoint(workspace, checkpoint);
             } catch (rollbackError) {
-              throw new AggregateError(
-                [error, rollbackError],
-                "Coding task failed and its Git transaction could not be rolled back",
-              );
+              failures.push(rollbackError);
             }
           }
+          if (staged && !stagingCleaned) {
+            try {
+              await this.stager.cleanup();
+              stagingCleaned = true;
+            } catch (cleanupError) {
+              failures.push(cleanupError);
+            }
+          }
+          if (failures.length > 1) {
+            throw new AggregateError(
+              failures,
+              "Coding task failed; rollback and/or staging cleanup could not be completed",
+            );
+          }
           throw error;
-        } finally {
-          if (staged) await this.stager.cleanup();
         }
       }),
     );
@@ -372,6 +385,7 @@ export class GitWorkspaceService {
         );
         let canonicalTouched = false;
         let worktreeTouched = false;
+        let stagingCleaned = false;
         let checkpoint: RecoveryCheckpoint | undefined;
         try {
           await this.assertWorkspaceIdentity(inspected.identity, signal);
@@ -433,6 +447,13 @@ export class GitWorkspaceService {
             await this.assertWorkspaceIdentity(inspected.identity, signal);
             canonicalTouched = true;
             await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
+            await this.addBoundUntrackedPaths(
+              workspace,
+              staged.path,
+              inspected.identity,
+              inspected.snapshot.untrackedPaths,
+              signal,
+            );
             await this.assertWorkspaceIdentity(inspected.identity, signal);
             const stagedChanges = await this.gitWithWorkTree(
               workspace,
@@ -457,6 +478,8 @@ export class GitWorkspaceService {
             }
           }
 
+          await this.stager.cleanup();
+          stagingCleaned = true;
           signal?.throwIfAborted();
           await this.assertWorkspaceIdentity(inspected.identity, signal);
           canonicalTouched = true;
@@ -501,6 +524,7 @@ export class GitWorkspaceService {
             status: commitSha === expected.headSha ? "no_changes" : "committed",
           };
         } catch (error) {
+          const failures = [error];
           if (canonicalTouched && checkpoint) {
             try {
               await this.restoreRecoveryCheckpoint(
@@ -510,15 +534,24 @@ export class GitWorkspaceService {
                 worktreeTouched,
               );
             } catch (rollbackError) {
-              throw new AggregateError(
-                [error, rollbackError],
-                "Workspace recovery failed and its exact rollback could not be completed",
-              );
+              failures.push(rollbackError);
             }
           }
+          if (!stagingCleaned) {
+            try {
+              await this.stager.cleanup();
+              stagingCleaned = true;
+            } catch (cleanupError) {
+              failures.push(cleanupError);
+            }
+          }
+          if (failures.length > 1) {
+            throw new AggregateError(
+              failures,
+              "Workspace recovery failed; rollback and/or staging cleanup could not be completed",
+            );
+          }
           throw error;
-        } finally {
-          await this.stager.cleanup();
         }
       }),
     );
@@ -727,26 +760,48 @@ export class GitWorkspaceService {
     paths: string[],
     signal?: AbortSignal,
   ): Promise<void> {
-    for (let offset = 0; offset < paths.length; offset += RECOVERY_CLEAN_BATCH_SIZE) {
-      const batch = paths.slice(offset, offset + RECOVERY_CLEAN_BATCH_SIZE);
-      for (const relative of batch) {
-        if (
-          !relative ||
-          path.isAbsolute(relative) ||
-          relative.includes("\0") ||
-          relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
-        ) {
-          throw new Error("Recovery cleanup received an unsafe bound path");
-        }
-      }
+    for (const pathspecs of this.recoveryLiteralPathspecBatches(paths)) {
       await this.assertWorkspaceIdentity(identity, signal);
-      await this.git(
+      await this.git(workspace, ["clean", "-fdx", "--", ...pathspecs], undefined, signal);
+    }
+  }
+
+  private async addBoundUntrackedPaths(
+    workspace: string,
+    stagedWorkspace: string,
+    identity: WorkspaceIdentity,
+    paths: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    for (const pathspecs of this.recoveryLiteralPathspecBatches(paths)) {
+      await this.assertWorkspaceIdentity(identity, signal);
+      await this.gitWithWorkTree(
         workspace,
-        ["clean", "-fdx", "--", ...batch.map((relative) => `:(literal)${relative}`)],
+        stagedWorkspace,
+        ["add", "-f", "-A", "--", ...pathspecs],
         undefined,
         signal,
       );
     }
+  }
+
+  private recoveryLiteralPathspecBatches(paths: string[]): string[][] {
+    const pathspecs = paths.map((relative) => {
+      if (
+        !relative ||
+        path.isAbsolute(relative) ||
+        relative.includes("\0") ||
+        relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
+      ) {
+        throw new Error("Recovery operation received an unsafe bound path");
+      }
+      return `:(literal)${relative}`;
+    });
+    const batches: string[][] = [];
+    for (let offset = 0; offset < pathspecs.length; offset += RECOVERY_CLEAN_BATCH_SIZE) {
+      batches.push(pathspecs.slice(offset, offset + RECOVERY_CLEAN_BATCH_SIZE));
+    }
+    return batches;
   }
 
   private async restoreRecoveryCheckpoint(
