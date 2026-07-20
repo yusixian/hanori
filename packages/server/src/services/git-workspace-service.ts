@@ -767,16 +767,8 @@ export class GitWorkspaceService {
     const stagedRoot = path.resolve(stagedWorkspace);
     const existingPaths: string[] = [];
     for (const relative of paths) {
-      const absolute = this.resolveBoundRecoveryPath(stagedRoot, relative);
-      signal?.throwIfAborted();
-      try {
-        const info = await lstat(absolute);
-        if (info.isFile() || info.isSymbolicLink()) existingPaths.push(relative);
-      } catch (error) {
-        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-          continue;
-        }
-        throw error;
+      if (await this.isForceStageableBoundLeaf(stagedRoot, relative, signal)) {
+        existingPaths.push(relative);
       }
     }
     for (const pathspecs of this.recoveryLiteralPathspecBatches(existingPaths)) {
@@ -789,6 +781,40 @@ export class GitWorkspaceService {
         signal,
       );
     }
+  }
+
+  private async isForceStageableBoundLeaf(
+    root: string,
+    relative: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.resolveBoundRecoveryPath(root, relative);
+    const segments = relative.split("/");
+    let current = path.resolve(root);
+    for (let index = 0; index < segments.length; index++) {
+      current = path.join(current, segments[index]!);
+      signal?.throwIfAborted();
+      let info: Awaited<ReturnType<typeof lstat>>;
+      try {
+        info = await lstat(current);
+      } catch (error) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "code" in error &&
+          (error.code === "ENOENT" || error.code === "ENOTDIR")
+        ) {
+          return false;
+        }
+        throw error;
+      }
+      if (index < segments.length - 1) {
+        if (info.isSymbolicLink() || !info.isDirectory()) return false;
+      } else {
+        return info.isFile() || info.isSymbolicLink();
+      }
+    }
+    return false;
   }
 
   private recoveryLiteralPathspecBatches(paths: string[]): string[][] {

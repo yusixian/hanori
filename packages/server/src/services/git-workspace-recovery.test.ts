@@ -289,6 +289,102 @@ describe("Git workspace recovery", () => {
     await expect(readFile(path.join(workspace, "notes.local"))).rejects.toThrow();
   });
 
+  it("lets normal staging replace a bound path parent with a safe symlink", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await mkdir(path.join(workspace, "notes"));
+    await writeFile(path.join(workspace, "notes", "local.txt"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes"), { recursive: true });
+      await symlink("README.md", path.join(staged, "notes"));
+      return { summary: "replaced notes directory with a symlink", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Replace the notes directory with a safe symlink",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readlink(path.join(workspace, "notes"))).toBe("README.md");
+    expect((await exec("git", ["-C", workspace, "show", `${result.commitSha}:notes`])).stdout).toBe(
+      "README.md",
+    );
+  });
+
+  it("lets normal staging replace a bound path parent with a regular file", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await mkdir(path.join(workspace, "notes"));
+    await writeFile(path.join(workspace, "notes", "local.txt"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes"), { recursive: true });
+      await writeFile(path.join(staged, "notes"), "replacement file\n");
+      return { summary: "replaced notes directory with a file", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Replace the notes directory with a regular file",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "notes"), "utf8")).toBe("replacement file\n");
+    expect((await exec("git", ["-C", workspace, "show", `${result.commitSha}:notes`])).stdout).toBe(
+      "replacement file\n",
+    );
+  });
+
+  it("does not force-stage an ignored replacement for a bound path parent", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await mkdir(path.join(workspace, "notes"));
+    await writeFile(path.join(workspace, "notes", "local.txt"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes"), { recursive: true });
+      await symlink("README.md", path.join(staged, "notes"));
+      await writeFile(path.join(staged, ".gitignore"), ".env\n.cos-pi-cache/\nnotes\n");
+      await writeFile(path.join(staged, "README.md"), "worker update\n");
+      return { summary: "ignored the replacement parent", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Ignore the replacement notes parent",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("worker update\n");
+    await expect(
+      exec("git", ["-C", workspace, "show", `${result.commitSha}:notes`]),
+    ).rejects.toThrow();
+    await expect(readFile(path.join(workspace, "notes", "local.txt"))).rejects.toThrow();
+  });
+
   it("force-stages bound files when an untracked ignore file hides the whole result", async () => {
     const { service, run, workspace, stagingRoot } = await fixture();
     await exec("git", ["-C", workspace, "rm", ".gitignore"]);
