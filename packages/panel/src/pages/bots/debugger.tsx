@@ -10,7 +10,7 @@ import type {
   TelegramRichMessageReceipt,
 } from "@cos-tool-bot/shared";
 import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Send, Square } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { downloadDebugRun } from "./debugger-export";
@@ -80,6 +80,11 @@ export function BotDebuggerPage() {
     id: string;
     platform: BotWithStatus["platform"];
   } | null>(null);
+  const activeBotIdRef = useRef(botId);
+  const previousBotIdRef = useRef(botId);
+  const botLoadRequestRef = useRef(0);
+  const richSendRequestRef = useRef(0);
+  activeBotIdRef.current = botId;
   const statusLabels = useMemo<Record<string, string>>(
     () => ({
       running: t("debugger.statuses.running"),
@@ -105,6 +110,20 @@ export function BotDebuggerPage() {
     [t],
   );
 
+  useEffect(() => {
+    if (previousBotIdRef.current === botId) return;
+    previousBotIdRef.current = botId;
+    botLoadRequestRef.current += 1;
+    richSendRequestRef.current += 1;
+    setRichChatId("");
+    setRichFormat("markdown");
+    setRichContent(t("debugger.richMessage.sampleMarkdown"));
+    setRichBusy(false);
+    setRichError(null);
+    setRichReceipt(null);
+    setLoadedBot(null);
+  }, [botId, t]);
+
   const loadRuns = useCallback(async () => {
     if (!botId) return;
     try {
@@ -119,16 +138,24 @@ export function BotDebuggerPage() {
 
   const loadBot = useCallback(async () => {
     if (!botId) return;
+    const requestedBotId = botId;
+    const requestId = ++botLoadRequestRef.current;
     try {
-      const response = await authFetch(`/api/bots/${botId}`);
+      const response = await authFetch(`/api/bots/${requestedBotId}`);
       const json = (await response.json()) as {
         ok: boolean;
         data?: BotWithStatus;
         error?: string;
       };
       if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadBot"));
-      setLoadedBot({ id: botId, platform: json.data.platform });
+      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+        return;
+      }
+      setLoadedBot({ id: requestedBotId, platform: json.data.platform });
     } catch (cause) {
+      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+        return;
+      }
       setError(cause instanceof Error ? cause.message : t("debugger.errors.loadBot"));
     }
   }, [botId, t]);
@@ -241,11 +268,13 @@ export function BotDebuggerPage() {
 
   const sendRichMessage = async () => {
     if (!botId) return;
+    const requestedBotId = botId;
+    const requestId = ++richSendRequestRef.current;
     setRichBusy(true);
     setRichError(null);
     setRichReceipt(null);
     try {
-      const response = await authFetch(`/api/bots/${botId}/debug/rich-messages`, {
+      const response = await authFetch(`/api/bots/${requestedBotId}/debug/rich-messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -262,11 +291,19 @@ export function BotDebuggerPage() {
       if (!response.ok || !json.ok || !json.data) {
         throw new Error(json.error ?? t("debugger.richMessage.errors.send"));
       }
+      if (activeBotIdRef.current !== requestedBotId || richSendRequestRef.current !== requestId) {
+        return;
+      }
       setRichReceipt(json.data);
     } catch (cause) {
+      if (activeBotIdRef.current !== requestedBotId || richSendRequestRef.current !== requestId) {
+        return;
+      }
       setRichError(cause instanceof Error ? cause.message : t("debugger.richMessage.errors.send"));
     } finally {
-      setRichBusy(false);
+      if (activeBotIdRef.current === requestedBotId && richSendRequestRef.current === requestId) {
+        setRichBusy(false);
+      }
     }
   };
 

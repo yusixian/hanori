@@ -1,6 +1,6 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
 import { BotDebuggerPage } from "./debugger";
@@ -80,6 +80,11 @@ function botDetailResponse(platform: "telegram" | "lark-webhook" = "telegram") {
 
 function isBotDetailRequest(input: RequestInfo | URL) {
   return String(input).endsWith("/api/bots/test-id");
+}
+
+function BotSwitcher() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/bots/next-id/debugger")}>Switch bot</button>;
 }
 
 test("offers message and raw Channel event dry-runs", async () => {
@@ -227,6 +232,97 @@ test("shows Telegram delivery errors as an alert", async () => {
   await page.getByRole("button", { name: "Send real Rich Message" }).click();
 
   await expect.element(page.getByRole("alert")).toHaveTextContent("Bad Request: invalid rich HTML");
+});
+
+test("resets Rich Message state and ignores an old receipt after switching bots", async () => {
+  let resolveRichRequest: ((response: Response) => void) | undefined;
+  const pendingRichRequest = new Promise<Response>((resolve) => {
+    resolveRichRequest = resolve;
+  });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/bots/test-id") || url.endsWith("/api/bots/next-id")) {
+      return botDetailResponse();
+    }
+    if (url.endsWith("/api/bots/test-id/debug/rich-messages") && init?.method === "POST") {
+      return pendingRichRequest;
+    }
+    return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <BotSwitcher />
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "HTML" }).click();
+  await page.getByLabelText("Telegram rich message content").fill("<b>old bot</b>");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+  await page.getByRole("button", { name: "Switch bot" }).click();
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Markdown" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.getByPlaceholder("For example, 123456789 or -1001234567890"))
+    .toHaveValue("");
+  await expect
+    .element(page.getByLabelText("Telegram rich message content"))
+    .toHaveValue(expect.stringContaining("# Rich Message Test"));
+
+  const staleResponse = new Response(
+    JSON.stringify({
+      ok: true,
+      data: { messageId: 79, chatId: 123456789, format: "html" },
+    }),
+    { status: 200 },
+  );
+  const staleJson = vi.spyOn(staleResponse, "json");
+  expect(resolveRichRequest).toBeTypeOf("function");
+  resolveRichRequest?.(staleResponse);
+  await expect.poll(() => staleJson).toHaveBeenCalledOnce();
+
+  expect(document.body.textContent).not.toContain("message_id=79");
+  await expect
+    .element(page.getByRole("button", { name: "Send real Rich Message" }))
+    .not.toHaveTextContent("Sending");
+});
+
+test("preserves a Rich Message draft when the language changes", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      isBotDetailRequest(input)
+        ? botDetailResponse()
+        : new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+    ),
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByLabelText("Telegram rich message content").fill("keep this draft");
+  await i18n.changeLanguage("zh-CN");
+
+  await expect.element(page.getByLabelText("Telegram 富文本内容")).toHaveValue("keep this draft");
+  await expect
+    .element(page.getByPlaceholder("例如 123456789 或 -1001234567890"))
+    .toHaveValue("123456789");
 });
 
 test("never renders Telegram delivery tools for a Lark bot", async () => {

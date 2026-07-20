@@ -13,6 +13,7 @@ test("defaults Rich Messages on and exposes the global setting", async () => {
   render(
     <MessageSplittingSection
       config={{ replyMode: "segment", autoSplitThreshold: 0, splitDelayMs: 800 }}
+      platform="telegram"
       onUpdate={onUpdate}
     />,
   );
@@ -23,4 +24,20 @@ test("defaults Rich Messages on and exposes the global setting", async () => {
 
   expect(onUpdate).toHaveBeenCalledWith({ richMessageEnabled: false });
   await expect.element(page.getByText(/\/richtext on\|off/)).toBeVisible();
+});
+
+test.each([
+  ["Lark", "lark-webhook" as const],
+  ["an unavailable platform", undefined],
+])("hides Telegram Rich Messages for %s", async (_label, platform) => {
+  render(
+    <MessageSplittingSection
+      config={{ replyMode: "stream", autoSplitThreshold: 0, splitDelayMs: 800 }}
+      platform={platform}
+      onUpdate={vi.fn()}
+    />,
+  );
+
+  await expect.element(page.getByText("Reply Mode", { exact: true })).toBeVisible();
+  expect(document.body.textContent).not.toContain("Telegram Native Rich Messages");
 });
