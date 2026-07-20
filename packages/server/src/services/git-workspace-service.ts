@@ -770,8 +770,8 @@ export class GitWorkspaceService {
       const absolute = this.resolveBoundRecoveryPath(stagedRoot, relative);
       signal?.throwIfAborted();
       try {
-        await lstat(absolute);
-        existingPaths.push(relative);
+        const info = await lstat(absolute);
+        if (info.isFile() || info.isSymbolicLink()) existingPaths.push(relative);
       } catch (error) {
         if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
           continue;

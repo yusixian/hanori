@@ -222,6 +222,73 @@ describe("Git workspace recovery", () => {
     ).toBe("updated notes\n");
   });
 
+  it("does not force-stage ignored descendants when a bound file becomes a directory", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "notes.local"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes.local"));
+      await mkdir(path.join(staged, "notes.local"));
+      await writeFile(path.join(staged, "notes.local", "secret.local"), "do not commit\n");
+      await writeFile(path.join(staged, ".gitignore"), ".env\n.cos-pi-cache/\nnotes.local/\n");
+      return { summary: "replaced notes with ignored directory", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Replace notes.local without committing ignored secrets",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    await expect(
+      exec("git", ["-C", workspace, "show", `${result.commitSha}:notes.local/secret.local`]),
+    ).rejects.toThrow();
+    await expect(readFile(path.join(workspace, "notes.local", "secret.local"))).rejects.toThrow();
+    await expect(
+      readFile(path.join(stagingRoot, "workspace", "notes.local", "secret.local")),
+    ).rejects.toThrow();
+  });
+
+  it("skips an empty directory that replaces a bound file while committing tracked changes", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "notes.local"), "original notes\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      await rm(path.join(staged, "notes.local"));
+      await mkdir(path.join(staged, "notes.local"));
+      await writeFile(path.join(staged, "README.md"), "worker update\n");
+      return {
+        summary: "updated README and replaced notes with an empty directory",
+        durationMs: 1,
+      };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Update README and replace notes.local with an empty directory",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("worker update\n");
+    await expect(readFile(path.join(workspace, "notes.local"))).rejects.toThrow();
+  });
+
   it("force-stages bound files when an untracked ignore file hides the whole result", async () => {
     const { service, run, workspace, stagingRoot } = await fixture();
     await exec("git", ["-C", workspace, "rm", ".gitignore"]);
