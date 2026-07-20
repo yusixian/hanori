@@ -137,10 +137,15 @@ export class GitWorkspaceService {
     ),
   ) {}
 
-  async runCodeTask(options: GitWorkspaceTaskOptions): Promise<GitHubCodeTaskResult> {
+  async runCodeTask(
+    options: GitWorkspaceTaskOptions,
+    signal?: AbortSignal,
+  ): Promise<GitHubCodeTaskResult> {
+    signal?.throwIfAborted();
     const workspace = this.workspacePath(options.botId, options.repository);
     return this.stager.runExclusive(() =>
       this.locks.run(workspace, async () => {
+        signal?.throwIfAborted();
         validateGitBranch(options.branch);
         if (options.baseRef) validateGitBranch(options.baseRef);
         await this.ensureWorkspace(options.botId, options.repository, options.token);
@@ -150,14 +155,19 @@ export class GitWorkspaceService {
         const staged = await this.stager.stage(workspace);
         try {
           await this.assertWorkspaceIdentity(canonicalIdentity);
-          const workerResult = await this.worker.run({
-            workspacePath: this.stager.workspaceName,
-            task: options.task,
-            timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
-            model: options.model,
-          });
+          const workerResult = await this.worker.run(
+            {
+              workspacePath: this.stager.workspaceName,
+              task: options.task,
+              timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
+              model: options.model,
+            },
+            signal,
+          );
 
+          signal?.throwIfAborted();
           await this.stager.validateResult(staged);
+          signal?.throwIfAborted();
           await this.assertWorkspaceIdentity(canonicalIdentity);
           const currentBranch = await this.gitWithWorkTree(workspace, staged.path, [
             "branch",
@@ -175,12 +185,14 @@ export class GitWorkspaceService {
             "--porcelain",
           ]);
           if (status) {
+            signal?.throwIfAborted();
             await this.assertWorkspaceIdentity(canonicalIdentity);
             await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"]);
             const commitMessage =
               options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
               "chore: apply Ai-chan coding task";
             await this.assertWorkspaceIdentity(canonicalIdentity);
+            signal?.throwIfAborted();
             await this.gitWithWorkTree(workspace, staged.path, ["commit", "-m", commitMessage]);
           }
 

@@ -1,11 +1,12 @@
 import type {
   GitHubCodeTaskInput,
   GitHubCodeTaskResult,
+  GitHubCodingModelConfig,
   GitHubPushPreview,
   GitHubPushResult,
   GitHubToolsRuntimeConfig,
 } from "@cos-tool-bot/shared";
-import type { Tool } from "ai";
+import type { Tool, ToolExecutionOptions } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
 import { InlineKeyboard } from "grammy";
@@ -32,10 +33,15 @@ export interface GitHubToolsOptions {
   pendingActions: PendingGitHubActionRegistry;
   fetch?: typeof fetch;
   codeCallbacks?: GitHubCodeCallbacks;
+  codingModel?: GitHubCodingModelConfig;
 }
 
 export interface GitHubCodeCallbacks {
-  runTask: (input: GitHubCodeTaskInput) => Promise<GitHubCodeTaskResult>;
+  runTask: (
+    input: GitHubCodeTaskInput,
+    model: GitHubCodingModelConfig,
+    signal?: AbortSignal,
+  ) => Promise<GitHubCodeTaskResult>;
   previewPush: (repository: string, branch: string) => Promise<GitHubPushPreview>;
   pushBranch: (
     repository: string,
@@ -205,7 +211,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   };
 
   if (options.isAdmin) {
-    if (options.config.codingAgentEnabled && options.codeCallbacks) {
+    if (options.config.codingAgentEnabled && options.codeCallbacks && options.codingModel) {
       tools.github_code_task = tool({
         description:
           "让隔离的 Pi coding agent 在白名单仓库创建或继续本地分支，修改代码、运行测试并创建本地 commit。只对管理员开放；不会推送到 GitHub。",
@@ -218,17 +224,25 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             commit_message: z.string().min(1).max(200).optional().describe("本地提交信息"),
           }),
         ),
-        execute: async ({ repository, task, branch, base_ref, commit_message }) => {
+        execute: async (
+          { repository, task, branch, base_ref, commit_message },
+          execution: ToolExecutionOptions,
+        ) => {
           try {
             writeClient(repository);
-            return await options.codeCallbacks!.runTask({
-              repository,
-              task,
-              branch,
-              baseRef: base_ref,
-              commitMessage: commit_message,
-            });
+            return await options.codeCallbacks!.runTask(
+              {
+                repository,
+                task,
+                branch,
+                baseRef: base_ref,
+                commitMessage: commit_message,
+              },
+              options.codingModel!,
+              execution.abortSignal,
+            );
           } catch (error) {
+            if (execution.abortSignal?.aborted) throw error;
             return formatError(error);
           }
         },

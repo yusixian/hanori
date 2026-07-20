@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createCodingWorkerHandler, createPiRuntime, resolveWorkspace } from "./worker.js";
+import {
+  createCodingWorkerHandler,
+  createPiRuntime,
+  type CodingWorkerJob,
+  resolveWorkspace,
+} from "./worker.js";
 
 const tempDirs: string[] = [];
 
@@ -18,7 +23,7 @@ async function workspaceRoot() {
   return root;
 }
 
-function job() {
+function job(): CodingWorkerJob {
   return {
     workspacePath: "workspace",
     task: "Update the README",
@@ -27,7 +32,8 @@ function job() {
       apiKey: "model-secret",
       baseURL: "https://example.com/v1",
       id: "test-model",
-      providerFormat: "openai" as const,
+      providerFormat: "openai",
+      capabilities: ["tool_calling", "code"],
     },
   };
 }
@@ -91,6 +97,7 @@ describe("coding worker boundary", () => {
     expect(runJob).toHaveBeenCalledWith(
       expect.objectContaining({ model: expect.objectContaining({ apiKey: "model-secret" }) }),
       await realpath(path.join(root, "workspace")),
+      expect.any(AbortSignal),
     );
   });
 
@@ -159,6 +166,45 @@ describe("coding worker boundary", () => {
     expect(runJob).not.toHaveBeenCalled();
   });
 
+  it("passes client cancellation to the running one-shot job", async () => {
+    const root = await workspaceRoot();
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const runJob = vi.fn(
+      async (_job: CodingWorkerJob, _workspace: string, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+        throw new Error("unreachable");
+      },
+    );
+    const handler = createCodingWorkerHandler({
+      secret: "worker-secret",
+      workspacesRoot: root,
+      runJob,
+    });
+    const responsePromise = handler(
+      new Request("http://worker/jobs", {
+        method: "POST",
+        headers: { Authorization: "Bearer worker-secret" },
+        body: JSON.stringify(job()),
+        signal: controller.signal,
+      }),
+    );
+    await vi.waitFor(() => expect(runJob).toHaveBeenCalledOnce());
+
+    controller.abort(new Error("client disconnected"));
+    const response = await responsePromise;
+
+    expect(receivedSignal).toBeDefined();
+    if (!receivedSignal) throw new Error("worker did not receive a signal");
+    expect(receivedSignal.aborted).toBe(true);
+    expect((receivedSignal.reason as Error).message).toBe("client disconnected");
+    expect(response.status).toBe(400);
+    expect(response.headers.get("X-Coding-Worker-One-Shot")).toBe("true");
+  });
+
   it("registers the runtime provider without loading repository extensions", async () => {
     const root = await workspaceRoot();
     const workspace = path.join(root, "workspace");
@@ -185,5 +231,27 @@ describe("coding worker boundary", () => {
     expect(resourceLoader.getAgentsFiles().agentsFiles).toEqual([
       expect.objectContaining({ path: path.join(workspace, "AGENTS.md") }),
     ]);
+    expect(model.reasoning).toBe(false);
+    expect(model.input).toEqual(["text"]);
+    expect(model.contextWindow).toBe(32_000);
+    expect(model.maxTokens).toBe(8_192);
+  });
+
+  it("derives vision, context, and disabled reasoning metadata from model capabilities", async () => {
+    const root = await workspaceRoot();
+    const workspace = path.join(root, "workspace");
+    const agentDir = await mkdtemp(path.join(os.tmpdir(), "coding-worker-agent-test-"));
+    tempDirs.push(agentDir);
+    const configuredJob = job();
+    configuredJob.model.capabilities = ["vision", "reasoning", "long_context"];
+    configuredJob.model.thinking = "disabled";
+    configuredJob.model.maxTokens = 12_000;
+
+    const { model } = await createPiRuntime(configuredJob, workspace, agentDir);
+
+    expect(model.reasoning).toBe(false);
+    expect(model.input).toEqual(["text", "image"]);
+    expect(model.contextWindow).toBe(128_000);
+    expect(model.maxTokens).toBe(12_000);
   });
 });

@@ -138,24 +138,30 @@ const codingWorkerClient = new CodingWorkerClient({
   socketPath: env.CODING_WORKER_SOCKET,
   secret: env.CODING_WORKER_SECRET,
 });
-botPool.setGitWorkspaceService(
-  new GitWorkspaceService(
-    env.CODING_WORKSPACES_DIR,
-    env.CODING_GIT_DIR,
-    codingWorkerClient,
-    env.CODING_WORKSPACE_UID,
-    env.CODING_WORKSPACE_GID,
-    undefined,
-    new CodingJobStager(
-      env.CODING_JOB_DIR,
-      {},
-      {
-        uid: env.CODING_WORKSPACE_UID,
-        gid: env.CODING_WORKSPACE_GID,
-      },
+if (codingWorkerClient.configured) {
+  botPool.setGitWorkspaceService(
+    new GitWorkspaceService(
+      env.CODING_WORKSPACES_DIR,
+      env.CODING_GIT_DIR,
+      codingWorkerClient,
+      env.CODING_WORKSPACE_UID,
+      env.CODING_WORKSPACE_GID,
+      undefined,
+      new CodingJobStager(
+        env.CODING_JOB_DIR,
+        {},
+        {
+          uid: env.CODING_WORKSPACE_UID,
+          gid: env.CODING_WORKSPACE_GID,
+        },
+      ),
     ),
-  ),
-);
+  );
+} else {
+  logger.warn(
+    "Pi coding worker is not configured; GitHub code, push, and recovery tools are disabled",
+  );
+}
 botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
 botPool.setMcpClientManager(mcpClientManager);

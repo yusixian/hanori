@@ -1,10 +1,7 @@
-export interface CodingWorkerModel {
-  apiKey: string;
-  baseURL: string;
-  id: string;
-  providerFormat: "openai" | "gemini";
-  maxTokens?: number;
-}
+import type { GitHubCodingModelConfig } from "@cos-tool-bot/shared";
+import { request as httpRequest } from "node:http";
+
+export type CodingWorkerModel = GitHubCodingModelConfig;
 
 export interface CodingWorkerJob {
   workspacePath: string;
@@ -55,10 +52,12 @@ export class CodingWorkerClient {
     return Boolean((this.options.socketPath || this.options.url) && this.options.secret);
   }
 
-  async run(job: CodingWorkerJob): Promise<CodingWorkerResult> {
+  async run(job: CodingWorkerJob, signal?: AbortSignal): Promise<CodingWorkerResult> {
     if (!this.configured) throw new Error("Pi coding worker is not configured");
-    const before = await this.waitForHealthyWorker();
+    signal?.throwIfAborted();
+    const before = await this.waitForHealthyWorker(undefined, signal);
     let response: Response;
+    const timeoutSignal = AbortSignal.timeout(job.timeoutMs + 30_000);
     try {
       response = await this.request("/jobs", {
         method: "POST",
@@ -67,7 +66,7 @@ export class CodingWorkerClient {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(job),
-        signal: AbortSignal.timeout(job.timeoutMs + 30_000),
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
       });
     } catch (error) {
       await this.waitForHealthyWorker(before.bootId);
@@ -75,6 +74,7 @@ export class CodingWorkerClient {
     }
     const payload: unknown = await response.json().catch(() => null);
     await this.waitForHealthyWorker(before.bootId);
+    signal?.throwIfAborted();
     const record =
       payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
     if (!response.ok || record?.ok !== true || !isCodingWorkerResult(record.result)) {
@@ -138,14 +138,19 @@ export class CodingWorkerClient {
     });
   }
 
-  private async waitForHealthyWorker(differentFrom?: string): Promise<WorkerHealth> {
+  private async waitForHealthyWorker(
+    differentFrom?: string,
+    signal?: AbortSignal,
+  ): Promise<WorkerHealth> {
     const timeoutMs = this.options.restartTimeoutMs ?? 60_000;
     const deadline = Date.now() + timeoutMs;
     let lastError: unknown;
     while (Date.now() <= deadline) {
+      signal?.throwIfAborted();
       try {
+        const healthTimeout = AbortSignal.timeout(Math.min(5_000, timeoutMs));
         const response = await this.request("/health", {
-          signal: AbortSignal.timeout(Math.min(5_000, timeoutMs)),
+          signal: signal ? AbortSignal.any([signal, healthTimeout]) : healthTimeout,
         });
         const payload: unknown = await response.json().catch(() => null);
         if (
@@ -171,4 +176,3 @@ export class CodingWorkerClient {
     throw new Error(`Pi coding worker did not restart with a new boot id${detail}`);
   }
 }
-import { request as httpRequest } from "node:http";

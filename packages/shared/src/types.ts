@@ -22,6 +22,17 @@ export interface ModelEntry {
   thinkingBudget?: number;
 }
 
+/** Runtime model configuration passed to the isolated coding worker for one tool call. */
+export interface GitHubCodingModelConfig {
+  apiKey: string;
+  baseURL: string;
+  id: string;
+  providerFormat: "openai" | "gemini";
+  maxTokens?: number;
+  capabilities: ModelCapability[];
+  thinking?: ModelEntry["thinking"];
+}
+
 // Memory system types
 export interface MemoryConfig {
   enabled: boolean;

@@ -4,11 +4,13 @@ import { describe, expect, it, vi } from "vitest";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import { createGitHubTools } from "./github.js";
 
-type ExecutableTool = { execute: (input: unknown) => Promise<unknown> };
+type ExecutableTool = {
+  execute: (input: unknown, options?: { abortSignal?: AbortSignal }) => Promise<unknown>;
+};
 
-async function execute(tool: Tool | undefined, input: unknown) {
+async function execute(tool: Tool | undefined, input: unknown, abortSignal?: AbortSignal) {
   if (!tool) throw new Error("tool missing");
-  return (tool as unknown as ExecutableTool).execute(input);
+  return (tool as unknown as ExecutableTool).execute(input, { abortSignal });
 }
 
 function createApi() {
@@ -231,6 +233,13 @@ describe("GitHub tools permissions", () => {
       api,
       pendingActions: registry,
       codeCallbacks: { runTask, previewPush, pushBranch },
+      codingModel: {
+        apiKey: "model-secret",
+        baseURL: "https://models.example/v1",
+        id: "selected-model",
+        providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
+      },
     });
 
     await execute(tools.github_code_task, {
@@ -240,6 +249,11 @@ describe("GitHub tools permissions", () => {
       commit_message: "docs: update",
     });
     expect(runTask).toHaveBeenCalledOnce();
+    expect(runTask).toHaveBeenCalledWith(
+      expect.objectContaining({ repository: "owner/repo", branch: "feat/ai" }),
+      expect.objectContaining({ id: "selected-model", apiKey: "model-secret" }),
+      undefined,
+    );
 
     const proposal = (await execute(tools.github_push_branch, {
       repository: "owner/repo",
@@ -249,6 +263,53 @@ describe("GitHub tools permissions", () => {
     expect(pushBranch).not.toHaveBeenCalled();
     await registry.take(proposal.action_id)!.execute();
     expect(pushBranch).toHaveBeenCalledWith("owner/repo", "feat/ai", "a".repeat(40));
+    registry.destroy();
+  });
+
+  it("propagates an aborted tool signal and does not turn cancellation into a tool result", async () => {
+    const registry = new PendingGitHubActionRegistry();
+    const controller = new AbortController();
+    const aborted = new Error("stopped");
+    const runTask = vi.fn(async (_input, _model, signal?: AbortSignal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+      throw new Error("unreachable");
+    });
+    const tools = createGitHubTools({
+      config: {
+        enabled: true,
+        publicReadEnabled: true,
+        codingAgentEnabled: true,
+        token: "token",
+        authorName: "Ai-chan",
+        authorEmail: "ai@example.com",
+        repositories: ["owner/repo"],
+      },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      codeCallbacks: { runTask, previewPush: vi.fn(), pushBranch: vi.fn() },
+      codingModel: {
+        apiKey: "model-secret",
+        baseURL: "https://models.example/v1",
+        id: "selected-model",
+        providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
+      },
+    });
+
+    const result = execute(
+      tools.github_code_task,
+      { repository: "owner/repo", task: "Update docs", branch: "feat/ai" },
+      controller.signal,
+    );
+    controller.abort(aborted);
+
+    await expect(result).rejects.toBe(aborted);
+    expect(runTask).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), controller.signal);
     registry.destroy();
   });
 });

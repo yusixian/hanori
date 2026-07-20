@@ -16,6 +16,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  GitHubCodingModelConfig,
   PixAIConfig,
   PixAIGenerationRecord,
   ReplyMode,
@@ -97,6 +98,22 @@ export interface AiProviderRuntime {
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: ModelEntry[];
+}
+
+export function buildGitHubCodingModelConfig(
+  provider: AiProviderRuntime,
+  modelId: string,
+): GitHubCodingModelConfig {
+  const entry = provider.models?.find((model) => model.id === modelId);
+  return {
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+    id: modelId,
+    providerFormat: provider.providerFormat,
+    maxTokens: entry?.maxTokens,
+    capabilities: entry?.capabilities ?? inferCapabilities(modelId),
+    thinking: entry?.thinking,
+  };
 }
 
 export interface AiReplyConfig {
@@ -663,6 +680,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  destroy: () => void;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -1322,6 +1340,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           api: ctx.api,
           pendingActions: pendingGitHubActions,
           codeCallbacks: config.githubCodeCallbacks,
+          codingModel: buildGitHubCodingModelConfig(currentProviderRuntime, currentModel),
         });
       }
 
@@ -1636,6 +1655,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         temperature: modelEntry?.temperature,
         maxOutputTokens: modelEntry?.maxTokens,
         providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
+        experimental_onToolCallStart: () => perStepAbort.pause(),
+        experimental_onToolCallFinish: () => perStepAbort.resume(),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           perStepAbort.reset();
@@ -2144,6 +2165,24 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     };
   }
 
+  let destroyed = false;
+  function destroy(): void {
+    if (destroyed) return;
+    destroyed = true;
+    setAiEnabled(false);
+    clearInterval(cleanupTimer);
+    clearInterval(bufferCleanupTimer);
+    pendingActions.destroy();
+    pendingGitHubActions.destroy();
+    cooldownMap.clear();
+    recentReceivedFiles.clear();
+    recentBotMessageIds.clear();
+    moodState.clear();
+    knownPrivateChats.clear();
+    lastSystemContent.clear();
+    groupBuffers.clear();
+  }
+
   return {
     handler,
     state,
@@ -2176,5 +2215,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    destroy,
   };
 }

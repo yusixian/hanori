@@ -803,23 +803,18 @@ export class BotPool {
           githubToolsConfig.token &&
           this.gitWorkspaceService
             ? {
-                runTask: (input) =>
-                  this.gitWorkspaceService!.runCodeTask({
-                    ...input,
-                    botId,
-                    token: githubToolsConfig.token!,
-                    authorName: githubToolsConfig.authorName,
-                    authorEmail: githubToolsConfig.authorEmail,
-                    model: {
-                      apiKey: activeProvider.apiKey,
-                      baseURL: activeProvider.baseURL,
-                      id: activeProvider.defaultModel,
-                      providerFormat: activeProvider.providerFormat,
-                      maxTokens: activeProvider.models?.find(
-                        (model) => model.id === activeProvider.defaultModel,
-                      )?.maxTokens,
+                runTask: (input, model, signal) =>
+                  this.gitWorkspaceService!.runCodeTask(
+                    {
+                      ...input,
+                      botId,
+                      token: githubToolsConfig.token!,
+                      authorName: githubToolsConfig.authorName,
+                      authorEmail: githubToolsConfig.authorEmail,
+                      model,
                     },
-                  }),
+                    signal,
+                  ),
                 previewPush: (repository, branch) =>
                   this.gitWorkspaceService!.previewPush({
                     botId,

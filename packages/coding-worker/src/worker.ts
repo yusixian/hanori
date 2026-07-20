@@ -13,6 +13,10 @@ export interface CodingWorkerJob {
     id: string;
     providerFormat: "openai" | "gemini";
     maxTokens?: number;
+    capabilities: ReadonlyArray<
+      "vision" | "tool_calling" | "web_search" | "reasoning" | "long_context" | "code"
+    >;
+    thinking?: "enabled" | "disabled";
   };
 }
 
@@ -26,7 +30,11 @@ export interface CodingWorkerOptions {
   workspacesRoot: string;
   workspaceName?: string;
   bootId?: string;
-  runJob?: (job: CodingWorkerJob, workspace: string) => Promise<CodingWorkerResult>;
+  runJob?: (
+    job: CodingWorkerJob,
+    workspace: string,
+    signal?: AbortSignal,
+  ) => Promise<CodingWorkerResult>;
 }
 
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -105,7 +113,8 @@ function validateJob(value: unknown): CodingWorkerJob {
     !model.baseURL ||
     typeof model.id !== "string" ||
     !model.id ||
-    (model.providerFormat !== "openai" && model.providerFormat !== "gemini")
+    (model.providerFormat !== "openai" && model.providerFormat !== "gemini") ||
+    !Array.isArray(model.capabilities)
   ) {
     throw new Error("A valid model configuration is required");
   }
@@ -165,11 +174,12 @@ export async function createPiRuntime(job: CodingWorkerJob, workspace: string, a
         id: job.model.id,
         name: job.model.id,
         api,
-        reasoning: true,
-        input: ["text", "image"],
+        reasoning:
+          job.model.capabilities.includes("reasoning") && job.model.thinking !== "disabled",
+        input: job.model.capabilities.includes("vision") ? ["text", "image"] : ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128_000,
-        maxTokens: job.model.maxTokens ?? 16_384,
+        contextWindow: job.model.capabilities.includes("long_context") ? 128_000 : 32_000,
+        maxTokens: job.model.maxTokens ?? 8_192,
       },
     ],
   });
@@ -192,6 +202,7 @@ export async function createPiRuntime(job: CodingWorkerJob, workspace: string, a
 export async function runPiJob(
   job: CodingWorkerJob,
   workspace: string,
+  signal?: AbortSignal,
 ): Promise<CodingWorkerResult> {
   const startedAt = Date.now();
   const agentDir = await mkdtemp(path.join(os.tmpdir(), "pi-agent-"));
@@ -233,7 +244,7 @@ export async function runPiJob(
         model,
         settingsManager,
         resourceLoader,
-        thinkingLevel: "medium",
+        thinkingLevel: model.reasoning ? "medium" : undefined,
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
         sessionManager: SessionManager.inMemory(workspace),
       });
@@ -243,6 +254,10 @@ export async function runPiJob(
       throw error;
     }
   })();
+  const timeoutController = new AbortController();
+  const jobSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const prompt = [
@@ -256,15 +271,25 @@ export async function runPiJob(
       "Task:",
       job.task,
     ].join("\n");
-    await Promise.race([
-      session.prompt(prompt, { expandPromptTemplates: false, source: "rpc" }),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          void session.abort();
-          reject(new Error(`Pi coding job timed out after ${job.timeoutMs}ms`));
-        }, job.timeoutMs);
-      }),
-    ]);
+    timeout = setTimeout(
+      () => timeoutController.abort(new Error(`Pi coding job timed out after ${job.timeoutMs}ms`)),
+      job.timeoutMs,
+    );
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        void session.abort();
+        reject(jobSignal.reason);
+      };
+      if (jobSignal.aborted) {
+        onAbort();
+        return;
+      }
+      jobSignal.addEventListener("abort", onAbort, { once: true });
+      session
+        .prompt(prompt, { expandPromptTemplates: false, source: "rpc" })
+        .then(resolve, reject)
+        .finally(() => jobSignal.removeEventListener("abort", onAbort));
+    });
     return { summary: assistantText(session.messages), durationMs: Date.now() - startedAt };
   } finally {
     if (timeout) clearTimeout(timeout);
@@ -311,7 +336,7 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
       }
       modelKey = job.model.apiKey;
       const workspace = await resolveWorkspace(options.workspacesRoot, job.workspacePath);
-      const response = json({ ok: true, result: await execute(job, workspace) });
+      const response = json({ ok: true, result: await execute(job, workspace, request.signal) });
       response.headers.set("X-Coding-Worker-One-Shot", "true");
       return response;
     } catch (error) {

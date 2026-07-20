@@ -93,6 +93,7 @@ describe("Git workspace input validation", () => {
         baseURL: "https://example.com/v1",
         id: "model",
         providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
       },
     });
 
@@ -121,6 +122,7 @@ describe("Git workspace input validation", () => {
         baseURL: "https://example.com/v1",
         id: "model",
         providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
       },
     });
     expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "utf8")).toBe(
@@ -179,9 +181,92 @@ describe("Git workspace input validation", () => {
           baseURL: "https://example.com/v1",
           id: "model",
           providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
         },
       }),
     ).rejects.toThrow("uncommitted changes from an earlier coding job");
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not validate or commit a staged result after the tool call is aborted", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-abort-test-"));
+    tempDirs.push(root);
+    const remote = path.join(root, "remote.git");
+    const seed = path.join(root, "seed");
+    await exec("git", ["init", "--bare", remote]);
+    await exec("git", ["init", "-b", "main", seed]);
+    await writeFile(path.join(seed, "README.md"), "before\n");
+    await exec("git", ["-C", seed, "add", "README.md"]);
+    await exec("git", [
+      "-C",
+      seed,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "initial",
+    ]);
+    await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
+    await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
+    await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    const workspaceRoot = path.join(root, "workspaces");
+    const gitRoot = path.join(root, "metadata");
+    const stagingRoot = path.join(root, "coding-job");
+    await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
+    const controller = new AbortController();
+    const reason = new Error("stopped");
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    vi.spyOn(worker, "run").mockImplementation(async (job, signal) => {
+      expect(signal).toBe(controller.signal);
+      await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
+      controller.abort(reason);
+      return { summary: "must not commit", durationMs: 1 };
+    });
+    const service = new GitWorkspaceService(
+      workspaceRoot,
+      gitRoot,
+      worker,
+      process.getuid?.() ?? 1000,
+      process.getgid?.() ?? 1000,
+      () => remote,
+      new CodingJobStager(stagingRoot),
+    );
+
+    await expect(
+      service.runCodeTask(
+        {
+          botId: "bot-1",
+          repository: "owner/repo",
+          token: "github-secret",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          task: "Update README",
+          branch: "feat/aborted",
+          model: {
+            apiKey: "model-secret",
+            baseURL: "https://example.com/v1",
+            id: "model",
+            providerFormat: "openai",
+            capabilities: ["tool_calling", "code"],
+          },
+        },
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+
+    const gitDir = path.join(gitRoot, "bot-1", "owner", "repo.git");
+    const commitCount = await exec("git", [
+      `--git-dir=${gitDir}`,
+      "rev-list",
+      "--count",
+      "feat/aborted",
+    ]);
+    expect(commitCount.stdout.trim()).toBe("1");
+    await expect(
+      readFile(path.join(stagingRoot, "workspace", "README.md"), "utf8"),
+    ).rejects.toThrow();
   });
 });

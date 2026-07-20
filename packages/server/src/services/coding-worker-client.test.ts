@@ -33,6 +33,7 @@ describe("CodingWorkerClient", () => {
             baseURL: "https://example.com/v1",
             id: "model",
             providerFormat: "openai",
+            capabilities: ["tool_calling", "code"],
           },
         }),
       ).resolves.toEqual({ summary: "done", durationMs: 1 });
@@ -68,6 +69,7 @@ describe("CodingWorkerClient", () => {
         baseURL: "https://example.com/v1",
         id: "model",
         providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
       },
     });
 
@@ -99,6 +101,7 @@ describe("CodingWorkerClient", () => {
           baseURL: "https://example.com/v1",
           id: "model",
           providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
         },
       }),
     ).rejects.toThrow("Pi coding worker failed (200): job failed");
@@ -126,6 +129,7 @@ describe("CodingWorkerClient", () => {
           baseURL: "https://example.com/v1",
           id: "model",
           providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
         },
       }),
     ).rejects.toThrow("Pi coding worker failed (200)");
@@ -158,8 +162,52 @@ describe("CodingWorkerClient", () => {
           baseURL: "https://example.com/v1",
           id: "model",
           providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
         },
       }),
     ).rejects.toThrow("did not restart with a new boot id");
+  });
+
+  it("propagates cancellation but still waits for the one-shot worker restart", async () => {
+    const controller = new AbortController();
+    const reason = new Error("stopped");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json({ ok: true, bootId: "boot-1" }))
+      .mockImplementationOnce(
+        (_url, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+              once: true,
+            });
+          }),
+      )
+      .mockResolvedValueOnce(Response.json({ ok: true, bootId: "boot-2" }));
+    const client = new CodingWorkerClient({
+      url: "http://coding-worker:3010",
+      secret: "worker-secret",
+      fetch: fetchMock,
+    });
+
+    const result = client.run(
+      {
+        workspacePath: "workspace",
+        task: "change code",
+        timeoutMs: 60_000,
+        model: {
+          apiKey: "model-secret",
+          baseURL: "https://example.com/v1",
+          id: "model",
+          providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
+        },
+      },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    controller.abort(reason);
+
+    await expect(result).rejects.toBe(reason);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

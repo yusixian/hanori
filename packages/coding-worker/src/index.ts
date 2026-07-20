@@ -24,6 +24,12 @@ const handler = createCodingWorkerHandler({ secret, workspacesRoot });
 if (socketPath) await rm(socketPath, { force: true });
 
 const server = createServer(async (incoming, outgoing) => {
+  const abortController = new AbortController();
+  const abort = () => abortController.abort(new Error("Coding worker client disconnected"));
+  incoming.once("aborted", abort);
+  outgoing.once("close", () => {
+    if (!outgoing.writableFinished) abort();
+  });
   try {
     const headers = new Headers();
     for (const [name, value] of Object.entries(incoming.headers)) {
@@ -37,16 +43,25 @@ const server = createServer(async (incoming, outgoing) => {
         incoming.method === "GET" || incoming.method === "HEAD"
           ? undefined
           : (Readable.toWeb(incoming) as ReadableStream),
+      signal: abortController.signal,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const response = await handler(request);
     const oneShot = response.headers.get("X-Coding-Worker-One-Shot") === "true";
     response.headers.delete("X-Coding-Worker-One-Shot");
     if (oneShot) {
-      outgoing.once("finish", () => {
+      let restarting = false;
+      const restart = () => {
+        if (restarting) return;
+        restarting = true;
         server.close(() => process.exit(0));
         setTimeout(() => process.exit(0), 1_000).unref();
-      });
+      };
+      if (outgoing.destroyed) restart();
+      else {
+        outgoing.once("finish", restart);
+        outgoing.once("close", restart);
+      }
     }
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     if (response.body) Readable.fromWeb(response.body).pipe(outgoing);
