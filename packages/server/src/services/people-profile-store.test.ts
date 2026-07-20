@@ -1,6 +1,18 @@
 import type { Database } from "@cos-tool-bot/database";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PeopleProfileStore } from "./people-profile-store.js";
+
+interface QueryChunk {
+  value?: unknown;
+  queryChunks?: QueryChunk[];
+}
+
+function queryValues(chunks: QueryChunk[]): unknown[] {
+  return chunks.flatMap((chunk) => [
+    ...(chunk.value === undefined ? [] : [chunk.value]),
+    ...(chunk.queryChunks ? queryValues(chunk.queryChunks) : []),
+  ]);
+}
 
 function createConcurrentDb(initialRows: Array<Record<string, unknown>> = []) {
   const rows = initialRows.map((row) => ({ ...row }));
@@ -70,6 +82,25 @@ function createConcurrentDb(initialRows: Array<Record<string, unknown>> = []) {
 }
 
 describe("PeopleProfileStore", () => {
+  it("returns the deleted avatar path while scoping deletion to the bot", async () => {
+    const where = vi.fn((_condition: unknown) => ({
+      returning: async () => [{ avatarPath: "avatars/42-current.jpg" }],
+    }));
+    const db = {
+      delete: () => ({ where }),
+    } as unknown as Database;
+    const store = new PeopleProfileStore(db);
+
+    await expect(store.deleteProfile("00000000-0000-4000-8000-000000000017", 7)).resolves.toEqual({
+      avatarPath: "avatars/42-current.jpg",
+    });
+
+    const condition = where.mock.calls[0]![0] as { queryChunks: QueryChunk[] };
+    expect(queryValues(condition.queryChunks)).toEqual(
+      expect.arrayContaining(["00000000-0000-4000-8000-000000000017", 7]),
+    );
+  });
+
   it("creates one profile when two store instances first observe the same person concurrently", async () => {
     const db = createConcurrentDb();
     const firstStore = new PeopleProfileStore(db);

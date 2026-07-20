@@ -231,9 +231,11 @@ export class PeopleProfileStore {
   }
 
   async deleteProfile(botId: string, profileId: number) {
-    await this.db
+    const [deleted] = await this.db
       .delete(peopleProfiles)
-      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)))
+      .returning({ avatarPath: peopleProfiles.avatarPath });
+    return deleted ?? null;
   }
 
   async updateProfile(

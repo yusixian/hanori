@@ -76,6 +76,14 @@ function emptyToNull(s: string): string | null {
   return s.trim() === "" ? null : s.trim();
 }
 
+function ProfileAvatarFallback({ label }: { label: string }) {
+  return (
+    <div role="img" aria-label={label} className="flex h-full w-full items-center justify-center">
+      <UserRound className="text-muted-foreground h-5 w-5" />
+    </div>
+  );
+}
+
 export function BotProfilesPage() {
   const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
@@ -410,11 +418,20 @@ export function BotProfilesPage() {
                               <Loader2 className="text-muted-foreground h-4 w-4 animate-spin" />
                             </div>
                           }
+                          errorFallback={
+                            <ProfileAvatarFallback
+                              label={t("profiles.avatarAlt", {
+                                name: p.displayName || t("common.unknown"),
+                              })}
+                            />
+                          }
                         />
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center">
-                          <UserRound className="text-muted-foreground h-5 w-5" />
-                        </div>
+                        <ProfileAvatarFallback
+                          label={t("profiles.avatarAlt", {
+                            name: p.displayName || t("common.unknown"),
+                          })}
+                        />
                       )}
                     </div>
                     <CardTitle className="truncate text-sm">

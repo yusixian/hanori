@@ -210,6 +210,25 @@ describe("TelegramProfileObserver", () => {
     expect(await fs.readFile(previousPath)).toEqual(Buffer.from([9]));
   });
 
+  it("removes a downloaded avatar when its profile was deleted in flight", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    const avatarDir = path.join(dataDir, "avatars");
+    const { memory } = createMemory();
+    memory.updateProfileAvatar = vi.fn(async () => null);
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      fetchImpl: async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }),
+    });
+
+    observer.observe(createApi() as never, user);
+
+    await vi.waitFor(() => expect(memory.updateProfileAvatar).toHaveBeenCalledTimes(1));
+    await vi.waitFor(async () => expect(await fs.readdir(avatarDir)).toEqual([]));
+  });
+
   it("removes the previous avatar only after switching persistence to the new file", async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
     tempDirs.push(dataDir);

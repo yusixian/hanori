@@ -15,6 +15,7 @@ import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
@@ -26,7 +27,15 @@ import { resolvePixaiTaskTimeoutMs } from "../services/generation-recovery.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
-import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
+import { getDataDir, resolveAndValidate, resolveAndValidateDir } from "../utils/file-validation.js";
+
+function resolveProfileAvatarPath(botId: string, avatarPath: string) {
+  const dataDir = getDataDir(botId);
+  const avatarDir = resolveAndValidateDir(dataDir, "avatars");
+  const resolved = resolveAndValidate(dataDir, avatarPath);
+  if (!avatarDir || !resolved || !resolved.startsWith(`${avatarDir}${path.sep}`)) return null;
+  return resolved;
+}
 
 const emailForwardFilterSchema = z.object({
   senderPattern: z.string().optional(),
@@ -690,6 +699,8 @@ export function botsRoutes(
       await botPool.stopBot(botId);
       await db.delete(bots).where(eq(bots.id, botId));
       botPool.clearDeletedBotGenerationState(botId);
+      const avatarDir = resolveAndValidateDir(getDataDir(botId), "avatars");
+      if (avatarDir) await fs.rm(avatarDir, { recursive: true, force: true }).catch(() => {});
       return c.json({ ok: true as const });
     })
     .post("/:botId/start", async (c) => {
@@ -1092,7 +1103,11 @@ export function botsRoutes(
       const botId = c.req.param("botId");
       const profileId = Number(c.req.param("profileId"));
       const store = botPool.getProfileStore();
-      await store.deleteProfile(botId, profileId);
+      const deleted = await store.deleteProfile(botId, profileId);
+      if (deleted?.avatarPath) {
+        const resolved = resolveProfileAvatarPath(botId, deleted.avatarPath);
+        if (resolved) await fs.unlink(resolved).catch(() => {});
+      }
       return c.json({ ok: true as const });
     })
     .put(
