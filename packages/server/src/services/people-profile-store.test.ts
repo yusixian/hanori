@@ -22,6 +22,7 @@ function createConcurrentDb(
 ) {
   const rows: Array<Record<string, unknown>> = initialRows.map((row) => ({
     avatarVersion: null,
+    avatarRefreshVersion: 0,
     ...row,
   }));
   let lockTail = Promise.resolve();
@@ -71,7 +72,12 @@ function createConcurrentDb(
             ) {
               throw Object.assign(new Error("duplicate profile"), { code: "23505" });
             }
-            const inserted = { id: rows.length + 1, avatarVersion: null, ...value };
+            const inserted = {
+              id: rows.length + 1,
+              avatarVersion: null,
+              avatarRefreshVersion: 0,
+              ...value,
+            };
             rows.push(inserted);
             return inserted;
           })();
@@ -83,9 +89,24 @@ function createConcurrentDb(
       update: () => ({
         set: (updates: Record<string, unknown>) => ({
           where: () => {
-            Object.assign(rows[0]!, updates);
+            const applied = { ...updates };
+            if (
+              "avatarRefreshVersion" in applied &&
+              typeof applied.avatarRefreshVersion !== "number"
+            ) {
+              applied.avatarRefreshVersion = Number(rows[0]?.avatarRefreshVersion ?? 0) + 1;
+            }
+            Object.assign(rows[0]!, applied);
             return {
-              returning: async () => (rows[0] ? [{ id: rows[0].id }] : []),
+              returning: async () =>
+                rows[0]
+                  ? [
+                      {
+                        id: rows[0].id,
+                        refreshVersion: rows[0].avatarRefreshVersion,
+                      },
+                    ]
+                  : [],
             };
           },
         }),
@@ -141,6 +162,7 @@ describe("PeopleProfileStore", () => {
     expect(migration).toContain("string_agg");
     expect(migration).toContain("json_array_elements_text");
     expect(migration).toContain('"relationship" = "merged"."relationship"');
+    expect(migration).toContain('ADD COLUMN "avatar_refresh_version" bigint DEFAULT 0 NOT NULL');
   });
 
   it("keeps the profile when avatar cleanup fails before deletion", async () => {
@@ -230,13 +252,26 @@ describe("PeopleProfileStore", () => {
     await expect(store.touchProfile(botId, observation)).resolves.toEqual({
       created: true,
       profileId: 1,
-      avatarVersion: null,
     });
     await expect(store.touchProfile(botId, observation)).resolves.toEqual({
       created: false,
       profileId: 1,
-      avatarVersion: null,
     });
+  });
+
+  it("assigns increasing generations before avatar refreshes start", async () => {
+    const { db } = createConcurrentDb([
+      { id: 1, botId: "bot-1", telegramId: 42, avatarRefreshVersion: 0 },
+    ]);
+    const firstStore = new PeopleProfileStore(db);
+    const secondStore = new PeopleProfileStore(db);
+
+    await expect(
+      firstStore.beginProfileAvatarRefresh("bot-1", { telegramId: 42, profileId: 1 }),
+    ).resolves.toBe(1);
+    await expect(
+      secondStore.beginProfileAvatarRefresh("bot-1", { telegramId: 42, profileId: 1 }),
+    ).resolves.toBe(2);
   });
 
   it("does not report an avatar switch when the profile is deleted concurrently", async () => {
@@ -270,39 +305,52 @@ describe("PeopleProfileStore", () => {
       store.updateProfileAvatar("00000000-0000-4000-8000-000000000017", {
         telegramId: 42,
         profileId: 1,
-        expectedAvatarVersion: null,
+        refreshVersion: 1,
         avatarPath: "avatars/42-new.jpg",
         avatarVersion: "new",
       }),
     ).resolves.toBeNull();
   });
 
-  it("rejects a concurrent avatar update that expected the replaced version", async () => {
+  it("only accepts the latest-started avatar refresh generation", async () => {
     const { db } = createConcurrentDb([
-      { id: 1, telegramId: 42, avatarPath: "avatars/42-old.jpg" },
+      {
+        id: 1,
+        botId: "00000000-0000-4000-8000-000000000017",
+        telegramId: 42,
+        avatarPath: "avatars/42-old.jpg",
+      },
     ]);
     const firstStore = new PeopleProfileStore(db);
     const secondStore = new PeopleProfileStore(db);
     const botId = "00000000-0000-4000-8000-000000000017";
 
+    const firstGeneration = await firstStore.beginProfileAvatarRefresh(botId, {
+      telegramId: 42,
+      profileId: 1,
+    });
+    const latestGeneration = await secondStore.beginProfileAvatarRefresh(botId, {
+      telegramId: 42,
+      profileId: 1,
+    });
     const results = await Promise.all([
       firstStore.updateProfileAvatar(botId, {
         telegramId: 42,
         profileId: 1,
-        expectedAvatarVersion: null,
+        refreshVersion: firstGeneration!,
         avatarPath: "avatars/42-first.jpg",
         avatarVersion: "first",
       }),
       secondStore.updateProfileAvatar(botId, {
         telegramId: 42,
         profileId: 1,
-        expectedAvatarVersion: null,
+        refreshVersion: latestGeneration!,
         avatarPath: "avatars/42-second.jpg",
         avatarVersion: "second",
       }),
     ]);
 
-    expect(results).toEqual([{ previousAvatarPath: "avatars/42-old.jpg" }, null]);
+    expect(results).toEqual([null, { previousAvatarPath: "avatars/42-old.jpg" }]);
   });
 
   it("keeps one profile when an AI upsert races the first Telegram observation", async () => {

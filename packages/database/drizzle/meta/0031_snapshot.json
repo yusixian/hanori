@@ -2163,6 +2163,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "avatar_refresh_version": {
+          "name": "avatar_refresh_version",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
         "notes": {
           "name": "notes",
           "type": "text",

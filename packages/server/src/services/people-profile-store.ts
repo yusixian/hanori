@@ -2,6 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import { peopleProfiles } from "@cos-tool-bot/database";
 import type {
   PeopleProfile,
+  PeopleProfileAvatarRefresh,
   PeopleProfileAvatarUpdate,
   PeopleProfileObservation,
 } from "@cos-tool-bot/shared";
@@ -162,7 +163,6 @@ export class PeopleProfileStore {
         return {
           created: false,
           profileId: existing.id,
-          avatarVersion: existing.avatarVersion,
         };
       }
       const [created] = await tx
@@ -180,7 +180,26 @@ export class PeopleProfileStore {
           interests: [],
         })
         .returning({ id: peopleProfiles.id });
-      return { created: true, profileId: created!.id, avatarVersion: null };
+      return { created: true, profileId: created!.id };
+    });
+  }
+
+  async beginProfileAvatarRefresh(botId: string, refresh: PeopleProfileAvatarRefresh) {
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${refresh.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [updated] = await tx
+        .update(peopleProfiles)
+        .set({ avatarRefreshVersion: sql`${peopleProfiles.avatarRefreshVersion} + 1` })
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, refresh.telegramId),
+            eq(peopleProfiles.id, refresh.profileId),
+          ),
+        )
+        .returning({ refreshVersion: peopleProfiles.avatarRefreshVersion });
+      return updated?.refreshVersion ?? null;
     });
   }
 
@@ -199,7 +218,7 @@ export class PeopleProfileStore {
           ),
         );
       if (!existing) return null;
-      if (existing.avatarVersion !== update.expectedAvatarVersion) return null;
+      if (existing.avatarRefreshVersion !== update.refreshVersion) return null;
       const [updated] = await tx
         .update(peopleProfiles)
         .set({ avatarPath: update.avatarPath, avatarVersion: update.avatarVersion })
@@ -208,6 +227,7 @@ export class PeopleProfileStore {
             eq(peopleProfiles.botId, botId),
             eq(peopleProfiles.telegramId, update.telegramId),
             eq(peopleProfiles.id, update.profileId),
+            eq(peopleProfiles.avatarRefreshVersion, update.refreshVersion),
           ),
         )
         .returning({ id: peopleProfiles.id });

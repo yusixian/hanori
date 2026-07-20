@@ -24,6 +24,11 @@ interface PendingObservation {
   observation: PeopleProfileObservation;
 }
 
+interface RefreshThrottle {
+  profileId: number;
+  nextAt: number;
+}
+
 export interface TelegramProfileObserverOptions {
   memory: MemoryCallbacks;
   token: string;
@@ -69,7 +74,7 @@ function largestPhoto(sizes: PhotoSize[] | undefined): PhotoSize | undefined {
 }
 
 export class TelegramProfileObserver {
-  private readonly nextRefreshAt = new Map<number, number>();
+  private readonly nextRefreshAt = new Map<number, RefreshThrottle>();
   private readonly pendingTouches = new Map<number, PendingTouchState>();
   private readonly refreshMs: number;
   private readonly fetchImpl: typeof fetch;
@@ -108,7 +113,6 @@ export class TelegramProfileObserver {
             pending.observation,
             result.created,
             result.profileId,
-            result.avatarVersion,
           );
         } catch (error) {
           this.reportError(error);
@@ -127,15 +131,28 @@ export class TelegramProfileObserver {
     observation: PeopleProfileObservation,
     created: boolean,
     profileId: number,
-    expectedAvatarVersion: string | null,
   ) {
     if (!this.options.dataDir) return;
     const now = this.now();
-    if (!created && (this.nextRefreshAt.get(observation.telegramId) ?? 0) > now) return;
-    this.nextRefreshAt.set(observation.telegramId, now + this.refreshMs);
+    const throttle = this.nextRefreshAt.get(observation.telegramId);
+    if (!created && throttle?.profileId === profileId && throttle.nextAt > now) return;
+    this.nextRefreshAt.set(observation.telegramId, {
+      profileId,
+      nextAt: now + this.refreshMs,
+    });
 
-    void this.refreshAvatar(api, observation, profileId, expectedAvatarVersion).catch((error) => {
-      this.nextRefreshAt.set(observation.telegramId, this.now() + RETRY_REFRESH_MS);
+    void (async () => {
+      const refreshVersion = await this.options.memory.beginProfileAvatarRefresh({
+        telegramId: observation.telegramId,
+        profileId,
+      });
+      if (refreshVersion === null) return;
+      await this.refreshAvatar(api, observation, profileId, refreshVersion);
+    })().catch((error) => {
+      this.nextRefreshAt.set(observation.telegramId, {
+        profileId,
+        nextAt: this.now() + RETRY_REFRESH_MS,
+      });
       this.reportError(error);
     });
   }
@@ -148,7 +165,7 @@ export class TelegramProfileObserver {
     api: ProfilePhotoApi,
     observation: PeopleProfileObservation,
     profileId: number,
-    expectedAvatarVersion: string | null,
+    refreshVersion: number,
   ) {
     const photos = await api.getUserProfilePhotos(observation.telegramId, { limit: 1 });
     const sizes = photos.photos[0];
@@ -157,7 +174,7 @@ export class TelegramProfileObserver {
       const result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         profileId,
-        expectedAvatarVersion,
+        refreshVersion,
         avatarPath: null,
         avatarVersion: null,
       });
@@ -205,7 +222,7 @@ export class TelegramProfileObserver {
       result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         profileId,
-        expectedAvatarVersion,
+        refreshVersion,
         avatarPath: relativePath,
         avatarVersion: photo.file_unique_id,
       });

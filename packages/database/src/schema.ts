@@ -394,6 +394,7 @@ export const peopleProfiles = pgTable(
     isPremium: boolean("is_premium").notNull().default(false),
     avatarPath: text("avatar_path"),
     avatarVersion: text("avatar_version"),
+    avatarRefreshVersion: bigint("avatar_refresh_version", { mode: "number" }).notNull().default(0),
     notes: text("notes"),
     traits: json("traits").$type<string[]>().default([]),
     interests: json("interests").$type<string[]>().default([]),

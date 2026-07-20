@@ -78,9 +78,14 @@ export interface PeopleProfileObservation {
 export interface PeopleProfileAvatarUpdate {
   telegramId: number;
   profileId: number;
-  expectedAvatarVersion: string | null;
+  refreshVersion: number;
   avatarPath: string | null;
   avatarVersion: string | null;
+}
+
+export interface PeopleProfileAvatarRefresh {
+  telegramId: number;
+  profileId: number;
 }
 
 export interface PeopleProfileAvatarUpdateResult {
@@ -90,7 +95,6 @@ export interface PeopleProfileAvatarUpdateResult {
 export interface PeopleProfileTouchResult {
   created: boolean;
   profileId: number;
-  avatarVersion: string | null;
 }
 
 export interface MemorySearchResult {
@@ -120,6 +124,7 @@ export interface MemoryCallbacks {
     limit?: number;
   }): Promise<MemorySearchResult[]>;
   touchProfile(observation: PeopleProfileObservation): Promise<PeopleProfileTouchResult>;
+  beginProfileAvatarRefresh(refresh: PeopleProfileAvatarRefresh): Promise<number | null>;
   updateProfileAvatar(
     update: PeopleProfileAvatarUpdate,
   ): Promise<PeopleProfileAvatarUpdateResult | null>;

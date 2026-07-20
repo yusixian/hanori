@@ -45,7 +45,6 @@ function createMemory() {
   const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => ({
     created: false,
     profileId: 1,
-    avatarVersion: null,
   }));
   const memory = {
     getProfile: vi.fn(),
@@ -53,6 +52,7 @@ function createMemory() {
     searchProfiles: vi.fn(),
     searchHistory: vi.fn(),
     touchProfile,
+    beginProfileAvatarRefresh: vi.fn(async () => 1),
     updateProfileAvatar: vi.fn(),
   } as unknown as MemoryCallbacks;
   return { memory, touchProfile };

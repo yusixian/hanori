@@ -4,6 +4,7 @@ ALTER TABLE "people_profiles" ADD COLUMN "language_code" text;--> statement-brea
 ALTER TABLE "people_profiles" ADD COLUMN "is_premium" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "people_profiles" ADD COLUMN "avatar_path" text;--> statement-breakpoint
 ALTER TABLE "people_profiles" ADD COLUMN "avatar_version" text;--> statement-breakpoint
+ALTER TABLE "people_profiles" ADD COLUMN "avatar_refresh_version" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
 WITH "duplicate_groups" AS (
 	SELECT
 		"bot_id",
