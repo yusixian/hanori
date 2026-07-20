@@ -17,9 +17,9 @@ test("renders observed Telegram identity details and the protected avatar", asyn
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/bots/test-id/profiles/7/avatar")) {
-      return new Response(new Uint8Array([1, 2, 3]), {
+      return new Response('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', {
         status: 200,
-        headers: { "content-type": "image/jpeg" },
+        headers: { "content-type": "image/svg+xml" },
       });
     }
     if (url.includes("/api/bots/test-id/profiles")) {

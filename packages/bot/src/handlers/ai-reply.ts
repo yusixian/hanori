@@ -884,6 +884,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         memory: config.memory,
         token: config.token,
         dataDir: config.dataFiles?.dataDir,
+        onError: (error) =>
+          config.onLog?.({
+            level: "error",
+            message: `Profile avatar refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+          }),
       });
     }
   }

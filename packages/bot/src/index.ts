@@ -482,6 +482,10 @@ export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";
 export {
+  cleanupBotAvatarFiles,
+  cleanupProfileAvatarFiles,
+} from "./services/profile-avatar-files.js";
+export {
   isTerminalPixAIRecoveryError,
   PixAIRecoveryTerminalError,
   PixAITaskTerminalError,

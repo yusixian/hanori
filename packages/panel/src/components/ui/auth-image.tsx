@@ -16,6 +16,7 @@ export function AuthImage({
   fallback,
   errorFallback,
   alt,
+  onError,
   placeholderSize = 96,
   ...props
 }: AuthImageProps) {
@@ -91,5 +92,20 @@ export function AuthImage({
     );
   }
 
-  return <img src={blobUrl} alt={alt} {...props} />;
+  return (
+    <img
+      src={blobUrl}
+      alt={alt}
+      onError={(event) => {
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+        setBlobUrl(null);
+        setError(true);
+        onError?.(event);
+      }}
+      {...props}
+    />
+  );
 }

@@ -104,6 +104,36 @@ describe("TelegramProfileObserver", () => {
     ]);
   });
 
+  it("coalesces blocked observations to the latest identity", async () => {
+    let releaseFirst!: () => void;
+    const firstTouch = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const { memory } = createMemory();
+    const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => {
+      if (touchProfile.mock.calls.length === 1) await firstTouch;
+    });
+    memory.touchProfile = touchProfile;
+    const observer = new TelegramProfileObserver({ memory, token: "secret" });
+
+    observer.observe(createApi() as never, user);
+    await vi.waitFor(() => expect(touchProfile).toHaveBeenCalledTimes(1));
+    observer.observe(createApi() as never, { ...user, first_name: "Stale One" });
+    observer.observe(createApi() as never, { ...user, first_name: "Stale Two" });
+    observer.observe(createApi() as never, { ...user, first_name: "Latest" });
+    releaseFirst();
+
+    await vi.waitFor(() =>
+      expect(
+        touchProfile.mock.calls.some(([observation]) => observation.displayName === "Latest Chan"),
+      ).toBe(true),
+    );
+    expect(touchProfile.mock.calls.map(([observation]) => observation.displayName)).toEqual([
+      "Ai Chan",
+      "Latest Chan",
+    ]);
+  });
+
   it("does not overwrite a newer identity after an avatar download", async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
     tempDirs.push(dataDir);
@@ -229,7 +259,7 @@ describe("TelegramProfileObserver", () => {
     await vi.waitFor(async () => expect(await fs.readdir(avatarDir)).toEqual([]));
   });
 
-  it("removes the previous avatar only after switching persistence to the new file", async () => {
+  it("removes obsolete avatar versions and temp files after switching persistence", async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
     tempDirs.push(dataDir);
     const avatarDir = path.join(dataDir, "avatars");
@@ -237,6 +267,9 @@ describe("TelegramProfileObserver", () => {
     const previousPath = path.join(dataDir, previousRelativePath);
     await fs.mkdir(avatarDir, { recursive: true });
     await fs.writeFile(previousPath, new Uint8Array([9]));
+    await fs.writeFile(path.join(avatarDir, "42-stale.jpg"), new Uint8Array([8]));
+    await fs.writeFile(path.join(avatarDir, "42-stale.jpg.abcd.tmp"), new Uint8Array([7]));
+    await fs.writeFile(path.join(avatarDir, "420-unrelated.jpg"), new Uint8Array([6]));
     const { memory } = createMemory();
     memory.updateProfileAvatar = vi.fn(async () => {
       expect(await fs.readFile(previousPath)).toEqual(Buffer.from([9]));
@@ -253,10 +286,11 @@ describe("TelegramProfileObserver", () => {
 
     await vi.waitFor(async () => {
       const files = await fs.readdir(avatarDir);
-      expect(files).toHaveLength(1);
-      expect(files[0]).not.toBe("42-old.jpg");
+      expect(files.filter((file) => file.startsWith("42-"))).toHaveLength(1);
     });
-    const [currentFile] = await fs.readdir(avatarDir);
+    const files = await fs.readdir(avatarDir);
+    expect(files).toContain("420-unrelated.jpg");
+    const currentFile = files.find((file) => file.startsWith("42-"));
     expect(await fs.readFile(path.join(avatarDir, currentFile!))).toEqual(Buffer.from([1, 2, 3]));
   });
 
@@ -303,5 +337,21 @@ describe("TelegramProfileObserver", () => {
     expect(avatarUpdates[0]).toMatchObject({ avatarPath: null, avatarVersion: null });
     await vi.waitFor(() => expect(fs.stat(previousPath)).rejects.toMatchObject({ code: "ENOENT" }));
     expect(api.getFile).not.toHaveBeenCalled();
+  });
+
+  it("reports avatar cleanup errors that are not missing-file races", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    await fs.writeFile(path.join(dataDir, "avatars"), new Uint8Array([1]));
+    const { memory } = createMemory();
+    const api = createApi();
+    api.getUserProfilePhotos.mockResolvedValue({ total_count: 0, photos: [] });
+    const onError = vi.fn();
+    const observer = new TelegramProfileObserver({ memory, token: "secret", dataDir, onError });
+
+    observer.observe(api as never, user);
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledOnce());
+    expect(onError.mock.calls[0]?.[0]).toMatchObject({ code: "ENOTDIR" });
   });
 });

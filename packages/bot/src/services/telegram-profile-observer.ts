@@ -4,6 +4,7 @@ import type { PhotoSize, User } from "grammy/types";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { cleanupProfileAvatarFiles, removeProfileAvatarFile } from "./profile-avatar-files.js";
 
 const DEFAULT_REFRESH_MS = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS = 5 * 60 * 1000;
@@ -14,6 +15,10 @@ interface ProfilePhotoApi {
   getFile: Api["getFile"];
 }
 
+interface PendingTouchState {
+  latest: PeopleProfileObservation | null;
+}
+
 export interface TelegramProfileObserverOptions {
   memory: MemoryCallbacks;
   token: string;
@@ -21,6 +26,7 @@ export interface TelegramProfileObserverOptions {
   refreshMs?: number;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  onError?: (error: unknown) => void | Promise<void>;
 }
 
 function observationFromUser(user: User): PeopleProfileObservation {
@@ -59,7 +65,7 @@ function largestPhoto(sizes: PhotoSize[] | undefined): PhotoSize | undefined {
 
 export class TelegramProfileObserver {
   private readonly nextRefreshAt = new Map<number, number>();
-  private readonly pendingTouches = new Map<number, Promise<void>>();
+  private readonly pendingTouches = new Map<number, PendingTouchState>();
   private readonly refreshMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -70,33 +76,52 @@ export class TelegramProfileObserver {
     this.now = options.now ?? Date.now;
   }
 
-  private async removeCachedAvatar(relativePath: string | null) {
-    if (!relativePath || !this.options.dataDir) return;
-    const dataDir = path.resolve(this.options.dataDir);
-    const absolutePath = path.resolve(dataDir, relativePath);
-    if (!absolutePath.startsWith(`${dataDir}${path.sep}`)) return;
-    await fs.unlink(absolutePath).catch(() => {});
+  private reportError(error: unknown) {
+    try {
+      void Promise.resolve(this.options.onError?.(error)).catch(() => {});
+    } catch {
+      // Error reporting must not create another unhandled rejection.
+    }
+  }
+
+  private enqueueTouch(observation: PeopleProfileObservation): Promise<void> | null {
+    const existing = this.pendingTouches.get(observation.telegramId);
+    if (existing) {
+      existing.latest = observation;
+      return null;
+    }
+
+    const firstTouch = Promise.resolve().then(() => this.options.memory.touchProfile(observation));
+    const state: PendingTouchState = { latest: null };
+    void (async () => {
+      await firstTouch.catch(() => {});
+      while (state.latest) {
+        const latest = state.latest;
+        state.latest = null;
+        await this.options.memory.touchProfile(latest).catch(() => {});
+      }
+      if (this.pendingTouches.get(observation.telegramId) === state) {
+        this.pendingTouches.delete(observation.telegramId);
+      }
+    })();
+    this.pendingTouches.set(observation.telegramId, state);
+    return firstTouch;
   }
 
   observe(api: ProfilePhotoApi, user: User): void {
     const observation = observationFromUser(user);
-    const previousTouch = this.pendingTouches.get(user.id) ?? Promise.resolve();
-    const basicTouch = previousTouch.then(() => this.options.memory.touchProfile(observation));
-    const settledTouch = basicTouch.catch(() => {});
-    this.pendingTouches.set(user.id, settledTouch);
-    void settledTouch.finally(() => {
-      if (this.pendingTouches.get(user.id) === settledTouch) this.pendingTouches.delete(user.id);
-    });
+    const firstTouch = this.enqueueTouch(observation);
 
-    if (!this.options.dataDir) return;
+    if (!firstTouch || !this.options.dataDir) return;
     const now = this.now();
     if ((this.nextRefreshAt.get(user.id) ?? 0) > now) return;
     this.nextRefreshAt.set(user.id, now + this.refreshMs);
 
-    void basicTouch
+    void firstTouch
       .then(() => this.refreshAvatar(api, observation))
-      .catch(() => {
+      .catch((error) => {
         this.nextRefreshAt.set(user.id, this.now() + RETRY_REFRESH_MS);
+        this.reportError(error);
       });
   }
 
@@ -105,12 +130,12 @@ export class TelegramProfileObserver {
     const sizes = photos.photos[0];
     const photo = largestPhoto(sizes);
     if (!photo) {
-      const result = await this.options.memory.updateProfileAvatar({
+      await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         avatarPath: null,
         avatarVersion: null,
       });
-      await this.removeCachedAvatar(result?.previousAvatarPath ?? null);
+      await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId);
       return;
     }
 
@@ -139,7 +164,11 @@ export class TelegramProfileObserver {
       await fs.writeFile(temporaryPath, buffer, { flag: "wx" });
       await fs.rename(temporaryPath, absolutePath);
     } catch (error) {
-      await fs.unlink(temporaryPath).catch(() => {});
+      try {
+        await removeProfileAvatarFile(this.options.dataDir!, temporaryPath);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "Avatar write and cleanup failed");
+      }
       throw error;
     }
 
@@ -151,15 +180,17 @@ export class TelegramProfileObserver {
         avatarVersion: photo.file_unique_id,
       });
     } catch (error) {
-      await fs.unlink(absolutePath).catch(() => {});
+      try {
+        await removeProfileAvatarFile(this.options.dataDir!, absolutePath);
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "Avatar update and cleanup failed");
+      }
       throw error;
     }
     if (!result) {
-      await fs.unlink(absolutePath).catch(() => {});
+      await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId);
       return;
     }
-    if (result.previousAvatarPath !== relativePath) {
-      await this.removeCachedAvatar(result.previousAvatarPath);
-    }
+    await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId, relativePath);
   }
 }

@@ -29,12 +29,21 @@ afterEach(async () => {
 });
 
 function profileDeleteDb(avatarPath: string | null) {
-  return {
+  const profile = { id: 7, telegramId: 42, avatarPath };
+  const transaction = {
+    execute: async () => undefined,
+    select: () => ({
+      from: () => ({ where: async () => [profile] }),
+    }),
     delete: () => ({
       where: () => ({
         returning: async () => [{ avatarPath }],
       }),
     }),
+  };
+  return {
+    transaction: async (callback: (tx: typeof transaction) => Promise<unknown>) =>
+      callback(transaction),
   } as unknown as Database;
 }
 
@@ -53,6 +62,20 @@ describe("people profile avatar lifecycle", () => {
     const absoluteAvatarPath = path.join(process.cwd(), "data", botId, avatarPath);
     await fs.mkdir(path.dirname(absoluteAvatarPath), { recursive: true });
     await fs.writeFile(absoluteAvatarPath, new Uint8Array([1, 2, 3]));
+    const staleAvatarPath = path.join(process.cwd(), "data", botId, "avatars", "42-stale.jpg");
+    const tempAvatarPath = `${staleAvatarPath}.pending.tmp`;
+    const legacyAvatarPath = path.join(process.cwd(), "data", botId, "avatars", "42.jpg");
+    const unrelatedAvatarPath = path.join(
+      process.cwd(),
+      "data",
+      botId,
+      "avatars",
+      "420-unrelated.jpg",
+    );
+    await fs.writeFile(staleAvatarPath, new Uint8Array([4]));
+    await fs.writeFile(tempAvatarPath, new Uint8Array([5]));
+    await fs.writeFile(legacyAvatarPath, new Uint8Array([5]));
+    await fs.writeFile(unrelatedAvatarPath, new Uint8Array([6]));
     const store = new PeopleProfileStore(profileDeleteDb(avatarPath));
     const botPool = { getProfileStore: () => store } as unknown as BotPool;
     const app = createApp({} as Database, botPool);
@@ -62,6 +85,10 @@ describe("people profile avatar lifecycle", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
     await expect(fs.stat(absoluteAvatarPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(staleAvatarPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(tempAvatarPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.stat(legacyAvatarPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(unrelatedAvatarPath)).resolves.toEqual(Buffer.from([6]));
   });
 
   it("does not unlink an avatar path outside the deleted profile's bot directory", async () => {
@@ -81,6 +108,21 @@ describe("people profile avatar lifecycle", () => {
 
     expect(response.status).toBe(200);
     await expect(fs.readFile(retainedPath)).resolves.toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it("fails profile deletion when its avatar cleanup cannot run", async () => {
+    const botId = `profile-delete-${Date.now()}`;
+    botIds.push(botId);
+    const dataDir = path.join(process.cwd(), "data", botId);
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(path.join(dataDir, "avatars"), new Uint8Array([1]));
+    const store = new PeopleProfileStore(profileDeleteDb("avatars/42-current.jpg"));
+    const botPool = { getProfileStore: () => store } as unknown as BotPool;
+    const app = createApp({} as Database, botPool);
+
+    const response = await app.request(`/bots/${botId}/profiles/7`, { method: "DELETE" });
+
+    expect(response.status).toBe(500);
   });
 
   it("removes only the avatar directory after deleting a bot", async () => {
@@ -111,5 +153,48 @@ describe("people profile avatar lifecycle", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     await expect(fs.stat(path.dirname(avatarPath))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(retainedPath, "utf8")).resolves.toBe("keep me");
+  });
+
+  it("retries avatar cleanup after the bot row is already gone", async () => {
+    const botId = `bot-delete-retry-${Date.now()}`;
+    botIds.push(botId);
+    const avatarPath = path.join(process.cwd(), "data", botId, "avatars", "42-orphan.jpg");
+    await fs.mkdir(path.dirname(avatarPath), { recursive: true });
+    await fs.writeFile(avatarPath, new Uint8Array([1]));
+    const db = {
+      select: () => ({ from: () => ({ where: async () => [] }) }),
+    } as unknown as Database;
+    const app = createApp(db, {} as BotPool);
+
+    const response = await app.request(`/bots/${botId}`, { method: "DELETE" });
+
+    expect(response.status).toBe(404);
+    await expect(fs.stat(path.dirname(avatarPath))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("fails bot deletion when avatar cleanup cannot run", async () => {
+    const botId = `bot-delete-failure-${Date.now()}`;
+    botIds.push(botId);
+    const dataDir = path.join(process.cwd(), "data", botId);
+    const avatarDir = path.join(dataDir, "avatars");
+    await fs.mkdir(avatarDir, { recursive: true });
+    await fs.writeFile(path.join(avatarDir, "42-current.jpg"), new Uint8Array([1]));
+    const removeBot = vi.fn(() => ({ where: async () => undefined }));
+    const db = {
+      select: () => ({ from: () => ({ where: async () => [{ id: botId }] }) }),
+      delete: removeBot,
+    } as unknown as Database;
+    const botPool = {
+      stopBot: vi.fn(async () => undefined),
+      clearDeletedBotGenerationState: vi.fn(),
+    } as unknown as BotPool;
+    const app = createApp(db, botPool);
+
+    await fs.chmod(dataDir, 0o555);
+    const response = await app.request(`/bots/${botId}`, { method: "DELETE" });
+    await fs.chmod(dataDir, 0o755);
+
+    expect(response.status).toBe(500);
+    expect(removeBot).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { assemblePromptPreview } from "@cos-tool-bot/bot";
+import {
+  assemblePromptPreview,
+  cleanupBotAvatarFiles,
+  cleanupProfileAvatarFiles,
+} from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import { DEFAULT_CONVERSATION_CONFIG, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
@@ -15,7 +19,6 @@ import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
@@ -27,15 +30,7 @@ import { resolvePixaiTaskTimeoutMs } from "../services/generation-recovery.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
-import { getDataDir, resolveAndValidate, resolveAndValidateDir } from "../utils/file-validation.js";
-
-function resolveProfileAvatarPath(botId: string, avatarPath: string) {
-  const dataDir = getDataDir(botId);
-  const avatarDir = resolveAndValidateDir(dataDir, "avatars");
-  const resolved = resolveAndValidate(dataDir, avatarPath);
-  if (!avatarDir || !resolved || !resolved.startsWith(`${avatarDir}${path.sep}`)) return null;
-  return resolved;
-}
+import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
 
 const emailForwardFilterSchema = z.object({
   senderPattern: z.string().optional(),
@@ -695,12 +690,16 @@ export function botsRoutes(
     .delete("/:botId", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      const dataDir = getDataDir(botId);
+      if (!bot) {
+        await cleanupBotAvatarFiles(dataDir);
+        return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      }
       await botPool.stopBot(botId);
+      await cleanupBotAvatarFiles(dataDir);
       await db.delete(bots).where(eq(bots.id, botId));
       botPool.clearDeletedBotGenerationState(botId);
-      const avatarDir = resolveAndValidateDir(getDataDir(botId), "avatars");
-      if (avatarDir) await fs.rm(avatarDir, { recursive: true, force: true }).catch(() => {});
+      await cleanupBotAvatarFiles(dataDir);
       return c.json({ ok: true as const });
     })
     .post("/:botId/start", async (c) => {
@@ -1103,11 +1102,9 @@ export function botsRoutes(
       const botId = c.req.param("botId");
       const profileId = Number(c.req.param("profileId"));
       const store = botPool.getProfileStore();
-      const deleted = await store.deleteProfile(botId, profileId);
-      if (deleted?.avatarPath) {
-        const resolved = resolveProfileAvatarPath(botId, deleted.avatarPath);
-        if (resolved) await fs.unlink(resolved).catch(() => {});
-      }
+      await store.deleteProfile(botId, profileId, (profile) =>
+        cleanupProfileAvatarFiles(getDataDir(botId), profile.telegramId),
+      );
       return c.json({ ok: true as const });
     })
     .put(
