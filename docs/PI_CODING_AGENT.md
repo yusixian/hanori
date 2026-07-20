@@ -39,6 +39,10 @@ and repository builds can require substantially more.
   The trusted bot resolves head and base, binds confirmation to the exact remote head SHA, and
   rechecks it before creating or idempotently returning an existing open pull request. Pi never
   receives the GitHub token or creates the pull request itself.
+- Confirmed push, pull-request, and Issue mutations carry the runtime cancellation signal through
+  every Git or GitHub request, combined with a 30-second GitHub HTTP timeout. Cancellation cannot
+  prove that a remote server did not accept an in-flight mutation, so interruption errors explicitly
+  require checking GitHub before retrying.
 - Ordinary members keep only the anonymous public-repository read tools.
 
 ### Interrupted workspace recovery
@@ -56,11 +60,16 @@ Two explicit recovery actions are available when the coding worker and model are
   one-time Telegram confirmation bound to the requesting administrator and chat. On confirmation,
   the server locks and rechecks the exact state, materializes that snapshot in the isolated staging
   slot, lets Pi finish the requested task, and commits the complete result. Worker failure or
-  cancellation leaves the canonical workspace dirty for another recovery attempt, while staging is
-  always cleaned.
+  cancellation leaves the canonical workspace dirty for another recovery attempt. If a failure
+  occurs after the trusted server changes the index, commit, or canonical worktree, it restores the
+  original branch ref, raw index, and worktree from a bounded Git-tree checkpoint before reporting
+  the failure. Staging is always cleaned. Gitlinks/submodules fail closed because they cannot be
+  represented safely by this recovery flow.
 - `github_discard_workspace` uses the same internal inspection and exact-state confirmation. On
-  confirmation, it resets to the captured HEAD and runs `git clean -fd`; tracked and non-ignored
-  untracked changes are removed, while ignored secrets and caches remain.
+  confirmation, it resets to the captured HEAD and removes only the exact non-ignored untracked
+  paths bound by that inspection, using literal pathspecs. It never performs a global clean. If a
+  dirty ignore rule made preserved data visible after reset, discard reports `clean: false` and the
+  remaining path summary instead of deleting the data or claiming the workspace is clean.
 
 Any branch, HEAD, index, content, deletion, symlink target, or executable-bit change after the
 preview makes the confirmation stale and aborts before recovery or discard is applied.

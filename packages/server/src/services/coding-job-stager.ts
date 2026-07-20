@@ -51,6 +51,7 @@ export interface RecoverySnapshot {
   changedPaths: string[];
   fingerprint: string;
   entries: RecoverySnapshotEntry[];
+  untrackedPaths: string[];
 }
 
 const DEFAULT_LIMITS: FileTreeLimits = {
@@ -255,6 +256,19 @@ function changedPathsFromStatus(status: Buffer): string[] {
   return [...changed].sort();
 }
 
+function assertNoGitlinks(index: Buffer): void {
+  for (const record of splitNullRecords(index)) {
+    const separator = record.indexOf("\t");
+    if (separator < 0) throw new Error("Invalid Git index manifest record");
+    const metadata = record.slice(0, separator).split(" ");
+    const relative = record.slice(separator + 1);
+    validateManifestPath(relative);
+    if (metadata[0] === "160000") {
+      throw new Error(`Git submodules are not supported in recovery snapshots: ${relative}`);
+    }
+  }
+}
+
 async function captureRecoverySnapshot(
   sourceWorkspace: string,
   branch: string,
@@ -278,6 +292,7 @@ async function captureRecoverySnapshot(
   ]);
   const trackedPaths = new Set(splitNullRecords(trackedRaw));
   const untrackedPaths = new Set(splitNullRecords(untrackedRaw));
+  assertNoGitlinks(indexRaw);
   for (const relative of trackedPaths) {
     if (untrackedPaths.has(relative)) throw new Error("Git returned a duplicate recovery path");
   }
@@ -345,7 +360,7 @@ async function captureRecoverySnapshot(
   }
 
   const fingerprint = createHash("sha256");
-  updateFingerprintField(fingerprint, "cos-tool-bot/recovery-snapshot/v2");
+  updateFingerprintField(fingerprint, "cos-tool-bot/recovery-snapshot/v3");
   updateFingerprintField(fingerprint, branch);
   updateFingerprintField(fingerprint, headSha);
   updateFingerprintField(fingerprint, indexRaw);
@@ -369,6 +384,7 @@ async function captureRecoverySnapshot(
     changedPaths: changedPathsFromStatus(statusRaw),
     fingerprint: fingerprint.digest("hex"),
     entries,
+    untrackedPaths: [...untrackedPaths].sort(),
   };
 }
 

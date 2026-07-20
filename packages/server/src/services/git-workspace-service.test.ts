@@ -32,6 +32,57 @@ describe("Git workspace input validation", () => {
     expect(() => validateGitBranch("bad@{ref")).toThrow("Invalid Git branch name");
   });
 
+  it("passes cancellation into git push and reports remote mutation ambiguity", async () => {
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    const service = new GitWorkspaceService("/tmp/workspaces", "/tmp/git", worker);
+    type Git = (
+      cwd: string,
+      args: string[],
+      env?: NodeJS.ProcessEnv,
+      signal?: AbortSignal,
+    ) => Promise<string>;
+    type AssertWorkspace = (workspace: string, signal?: AbortSignal) => Promise<unknown>;
+    const internals = service as unknown as {
+      git: Git;
+      assertWorkspace: AssertWorkspace;
+    };
+    vi.spyOn(internals, "assertWorkspace").mockResolvedValue({});
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let pushSignal: AbortSignal | undefined;
+    vi.spyOn(internals, "git").mockImplementation(async (_cwd, args, _env, signal) => {
+      if (args[0] === "rev-parse") return "a".repeat(40);
+      if (args[0] === "status" || args[0] === "remote") return "";
+      if (args[0] === "push") {
+        pushSignal = signal;
+        started();
+        return await new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      }
+      throw new Error(`Unexpected git command: ${args.join(" ")}`);
+    });
+    const controller = new AbortController();
+    const pushing = service.pushBranch(
+      {
+        botId: "bot-1",
+        repository: "owner/repo",
+        branch: "feat/ai",
+        token: "github-secret",
+        expectedCommitSha: "a".repeat(40),
+      },
+      controller.signal,
+    );
+    await didStart;
+
+    controller.abort(new Error("runtime destroyed"));
+
+    await expect(pushing).rejects.toThrow("remote branch may have been updated");
+    expect(pushSignal).toBe(controller.signal);
+  });
+
   it("keeps Git metadata outside Pi's working tree, commits as Ai-chan, and pushes only explicitly", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-test-"));
     tempDirs.push(root);

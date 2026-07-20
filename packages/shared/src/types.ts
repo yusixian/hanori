@@ -555,6 +555,8 @@ export interface GitHubWorkspaceDiscardResult {
   repository: string;
   branch: string;
   headSha: string;
+  clean: boolean;
+  remainingFiles: string[];
   summary: string;
 }
 

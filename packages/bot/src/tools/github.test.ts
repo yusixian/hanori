@@ -623,10 +623,153 @@ describe("GitHub tools permissions", () => {
     })) as { action_id: string };
     expect(previewPush).toHaveBeenCalledOnce();
     expect(pushBranch).not.toHaveBeenCalled();
-    await registry.take(proposal.action_id)!.execute();
-    expect(pushBranch).toHaveBeenCalledWith("owner/repo", "feat/ai", "a".repeat(40));
+    const pushSignal = new AbortController().signal;
+    await registry.take(proposal.action_id)!.execute(pushSignal);
+    expect(pushBranch).toHaveBeenCalledWith("owner/repo", "feat/ai", "a".repeat(40), pushSignal);
     registry.destroy();
   });
+
+  it("aborts the real confirmed push closure when its registry is destroyed", async () => {
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const pushBranch = vi.fn(
+      async (_repository, _branch, _sha, signal?: AbortSignal) =>
+        await new Promise<never>((_resolve, reject) => {
+          started();
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: { ...adminConfig(), codingAgentEnabled: true },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      codeCallbacks: {
+        runTask: vi.fn(),
+        previewPush: vi.fn().mockResolvedValue({
+          repository: "owner/repo",
+          branch: "feat/ai",
+          commitSha: "a".repeat(40),
+        }),
+        pushBranch,
+      },
+      codingModel: {
+        apiKey: "model-secret",
+        baseURL: "https://models.example/v1",
+        id: "selected-model",
+        providerFormat: "openai",
+        capabilities: ["tool_calling", "code"],
+      },
+    });
+    const proposal = (await execute(tools.github_push_branch, {
+      repository: "owner/repo",
+      branch: "feat/ai",
+    })) as { action_id: string };
+    const running = registry.run(registry.take(proposal.action_id)!);
+    await didStart;
+
+    registry.destroy();
+
+    await expect(running).rejects.toThrow("remote mutation may have succeeded");
+    expect(pushBranch.mock.calls[0]![3]?.aborted).toBe(true);
+  });
+
+  it("aborts the real confirmed pull-request closure with safe remote ambiguity", async () => {
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/git/ref/heads/feat/ai")) {
+        return branchResponse("feat/ai", "a".repeat(40));
+      }
+      if (url.includes("/git/ref/heads/main")) return branchResponse("main", "b".repeat(40));
+      if (url.includes("/pulls?") && method === "GET") {
+        return new Response("[]", { status: 200 });
+      }
+      if (url.endsWith("/pulls") && method === "POST") {
+        started();
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock as typeof fetch,
+    });
+    const proposal = (await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Abort safely",
+      draft: false,
+    })) as { action_id: string };
+    const running = registry.run(registry.take(proposal.action_id)!);
+    await didStart;
+
+    registry.destroy();
+
+    await expect(running).rejects.toThrow("remote mutation may have succeeded");
+  });
+
+  it.each([
+    ["create", "github_create_issue", { repository: "owner/repo", title: "Abort safely" }],
+    [
+      "update",
+      "github_update_issue",
+      { repository: "owner/repo", issue_number: 7, state: "closed" },
+    ],
+  ])(
+    "aborts the real confirmed Issue %s closure with safe ambiguity",
+    async (_kind, name, input) => {
+      let started!: () => void;
+      const didStart = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+        started();
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
+        });
+      });
+      const registry = new PendingGitHubActionRegistry();
+      const tools = createGitHubTools({
+        config: adminConfig(),
+        isAdmin: true,
+        userId: 7,
+        chatId: -100,
+        api: createApi(),
+        pendingActions: registry,
+        fetch: fetchMock as typeof fetch,
+      });
+      const proposal = (await execute(tools[name], input)) as { action_id: string };
+      const running = registry.run(registry.take(proposal.action_id)!);
+      await didStart;
+
+      registry.destroy();
+
+      await expect(running).rejects.toThrow("remote mutation may have succeeded");
+    },
+  );
 
   it("keeps recovery fingerprints internal and binds resume and discard to inspected state", async () => {
     const registry = new PendingGitHubActionRegistry();

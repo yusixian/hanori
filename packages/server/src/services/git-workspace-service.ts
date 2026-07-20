@@ -1,11 +1,14 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmod,
   chown,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   stat,
   writeFile,
@@ -37,6 +40,8 @@ const BOT_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_GIT_OUTPUT = 2 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
 const DEFAULT_JOB_TIMEOUT_MS = 4 * 60 * 1000;
+const MAX_RECOVERY_INDEX_BYTES = 64 * 1024 * 1024;
+const RECOVERY_CLEAN_BATCH_SIZE = 100;
 
 export interface GitWorkspaceTaskOptions extends GitHubCodeTaskInput {
   botId: string;
@@ -86,6 +91,12 @@ interface InspectedWorkspace {
   identity: WorkspaceIdentity;
   inspection: GitHubWorkspaceInspection;
   snapshot: RecoverySnapshot;
+}
+
+interface RecoveryCheckpoint {
+  index: Buffer;
+  indexMode: number;
+  treeSha: string;
 }
 
 export function validateRepository(repository: string): void {
@@ -339,7 +350,9 @@ export class GitWorkspaceService {
           inspected.snapshot,
           signal,
         );
-        let indexTouched = false;
+        let canonicalTouched = false;
+        let worktreeTouched = false;
+        let checkpoint: RecoveryCheckpoint | undefined;
         try {
           await this.assertWorkspaceIdentity(inspected.identity, signal);
           const afterStage = await this.inspectWorkspaceLocked(
@@ -348,6 +361,18 @@ export class GitWorkspaceService {
             signal,
           );
           this.assertExpectedInspection(afterStage.inspection, expected);
+          checkpoint = await this.createRecoveryCheckpoint(
+            workspace,
+            staged.path,
+            inspected,
+            signal,
+          );
+          const afterCheckpoint = await this.inspectWorkspaceLocked(
+            workspace,
+            options.repository,
+            signal,
+          );
+          this.assertExpectedInspection(afterCheckpoint.inspection, expected);
           const workerResult = await this.worker.run(
             {
               workspacePath: this.stager.workspaceName,
@@ -385,8 +410,8 @@ export class GitWorkspaceService {
           );
           if (status) {
             signal?.throwIfAborted();
-            indexTouched = true;
             await this.assertWorkspaceIdentity(inspected.identity, signal);
+            canonicalTouched = true;
             await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
             await this.assertWorkspaceIdentity(inspected.identity, signal);
             const stagedChanges = await this.gitWithWorkTree(
@@ -414,11 +439,17 @@ export class GitWorkspaceService {
 
           signal?.throwIfAborted();
           await this.assertWorkspaceIdentity(inspected.identity, signal);
+          canonicalTouched = true;
           const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
           await this.assertWorkspaceIdentity(inspected.identity, signal);
+          worktreeTouched = true;
           await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          await this.git(workspace, ["clean", "-fd"], undefined, signal);
+          await this.cleanRecoveryPaths(
+            workspace,
+            inspected.identity,
+            inspected.snapshot.untrackedPaths,
+            signal,
+          );
           const finalInspection = await this.inspectWorkspaceLocked(
             workspace,
             options.repository,
@@ -450,10 +481,20 @@ export class GitWorkspaceService {
             status: commitSha === expected.headSha ? "no_changes" : "committed",
           };
         } catch (error) {
-          if (indexTouched) {
-            await this.assertWorkspaceIdentity(inspected.identity)
-              .then(() => this.git(workspace, ["reset", "--mixed", expected.headSha]))
-              .catch(() => undefined);
+          if (canonicalTouched && checkpoint) {
+            try {
+              await this.restoreRecoveryCheckpoint(
+                workspace,
+                inspected,
+                checkpoint,
+                worktreeTouched,
+              );
+            } catch (rollbackError) {
+              throw new AggregateError(
+                [error, rollbackError],
+                "Workspace recovery failed and its exact rollback could not be completed",
+              );
+            }
           }
           throw error;
         } finally {
@@ -479,46 +520,65 @@ export class GitWorkspaceService {
       signal?.throwIfAborted();
       await this.assertWorkspaceIdentity(inspected.identity, signal);
       await this.git(workspace, ["reset", "--hard", expected.headSha], undefined, signal);
-      await this.assertWorkspaceIdentity(inspected.identity, signal);
-      await this.git(workspace, ["clean", "-fd"], undefined, signal);
+      await this.cleanRecoveryPaths(
+        workspace,
+        inspected.identity,
+        inspected.snapshot.untrackedPaths,
+        signal,
+      );
       const finalInspection = await this.inspectWorkspaceLocked(
         workspace,
         options.repository,
         signal,
       );
-      if (!finalInspection.inspection.clean) {
-        throw new Error("Workspace still has non-ignored changes after discard");
-      }
+      const clean = finalInspection.inspection.clean;
+      const remainingFiles = finalInspection.inspection.changedFiles;
       return {
         repository: options.repository,
         branch: expected.branch,
         headSha: expected.headSha,
-        summary: `已丢弃 ${options.repository}:${expected.branch} 的未提交改动`,
+        clean,
+        remainingFiles,
+        summary: clean
+          ? `已丢弃 ${options.repository}:${expected.branch} 的未提交改动`
+          : `已丢弃已确认的改动，但为避免删除数据保留了 ${remainingFiles.length} 个当前未忽略路径；workspace 仍为 dirty`,
       };
     });
   }
 
-  async previewPush(options: GitWorkspacePushOptions): Promise<GitHubPushPreview> {
+  async previewPush(
+    options: GitWorkspacePushOptions,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushPreview> {
     const workspace = this.workspacePath(options.botId, options.repository);
     return this.locks.run(workspace, async () => {
       validateGitBranch(options.branch);
-      await this.assertWorkspace(workspace);
-      const status = await this.git(workspace, ["status", "--porcelain"]);
+      await this.assertWorkspace(workspace, signal);
+      const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
       if (status)
         throw new Error("Workspace has uncommitted changes; finish the local commit first");
-      const commitSha = await this.git(workspace, ["rev-parse", `refs/heads/${options.branch}`]);
-      await this.git(workspace, [
-        "remote",
-        "set-url",
-        "origin",
-        this.remoteUrl(options.repository),
-      ]);
-      const remoteOutput = await this.withAuth(options.token, (env) =>
-        this.git(
-          workspace,
-          ["ls-remote", "--heads", "origin", `refs/heads/${options.branch}`],
-          env,
-        ),
+      const commitSha = await this.git(
+        workspace,
+        ["rev-parse", `refs/heads/${options.branch}`],
+        undefined,
+        signal,
+      );
+      await this.git(
+        workspace,
+        ["remote", "set-url", "origin", this.remoteUrl(options.repository)],
+        undefined,
+        signal,
+      );
+      const remoteOutput = await this.withAuth(
+        options.token,
+        (env) =>
+          this.git(
+            workspace,
+            ["ls-remote", "--heads", "origin", `refs/heads/${options.branch}`],
+            env,
+            signal,
+          ),
+        signal,
       );
       const remoteCommitSha = remoteOutput.split(/\s+/)[0] || undefined;
       if (remoteCommitSha === commitSha)
@@ -527,42 +587,188 @@ export class GitWorkspaceService {
     });
   }
 
-  async pushBranch(options: GitWorkspacePushOptions): Promise<GitHubPushResult> {
+  async pushBranch(
+    options: GitWorkspacePushOptions,
+    signal?: AbortSignal,
+  ): Promise<GitHubPushResult> {
     const workspace = this.workspacePath(options.botId, options.repository);
     return this.locks.run(workspace, async () => {
       validateGitBranch(options.branch);
-      await this.assertWorkspace(workspace);
-      const commitSha = await this.git(workspace, ["rev-parse", `refs/heads/${options.branch}`]);
+      await this.assertWorkspace(workspace, signal);
+      const commitSha = await this.git(
+        workspace,
+        ["rev-parse", `refs/heads/${options.branch}`],
+        undefined,
+        signal,
+      );
       if (options.expectedCommitSha && commitSha !== options.expectedCommitSha) {
         throw new Error(
           "The local branch changed after confirmation was requested; request a new push",
         );
       }
-      const status = await this.git(workspace, ["status", "--porcelain"]);
+      const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
       if (status) throw new Error("Workspace has uncommitted changes; refusing to push");
-      await this.git(workspace, [
-        "remote",
-        "set-url",
-        "origin",
-        this.remoteUrl(options.repository),
-      ]);
-      await this.withAuth(options.token, (env) =>
-        this.git(
-          workspace,
-          [
-            "push",
-            "--set-upstream",
-            "origin",
-            `refs/heads/${options.branch}:refs/heads/${options.branch}`,
-          ],
-          env,
-        ),
+      await this.git(
+        workspace,
+        ["remote", "set-url", "origin", this.remoteUrl(options.repository)],
+        undefined,
+        signal,
       );
+      try {
+        await this.withAuth(
+          options.token,
+          (env) =>
+            this.git(
+              workspace,
+              [
+                "push",
+                "--set-upstream",
+                "origin",
+                `refs/heads/${options.branch}:refs/heads/${options.branch}`,
+              ],
+              env,
+              signal,
+            ),
+          signal,
+        );
+      } catch {
+        throw new Error(
+          "Git push did not complete locally after it may have reached GitHub. The remote branch may have been updated; verify GitHub before retrying",
+        );
+      }
       return {
         summary: `已推送 ${options.repository}:${options.branch}（${commitSha.slice(0, 12)}）`,
         url: gitHubBranchUrl(options.repository, options.branch),
       };
     });
+  }
+
+  private async createRecoveryCheckpoint(
+    workspace: string,
+    stagedWorkspace: string,
+    inspected: InspectedWorkspace,
+    signal?: AbortSignal,
+  ): Promise<RecoveryCheckpoint> {
+    validateGitBranch(inspected.inspection.branch);
+    await this.assertWorkspaceIdentity(inspected.identity, signal);
+    const gitDir = this.gitDirForWorkspace(workspace);
+    const indexPath = path.join(gitDir, "index");
+    const indexInfo = await lstat(indexPath);
+    if (
+      indexInfo.isSymbolicLink() ||
+      !indexInfo.isFile() ||
+      indexInfo.size > MAX_RECOVERY_INDEX_BYTES
+    ) {
+      throw new Error("Git index is not a bounded regular file; refusing workspace recovery");
+    }
+    const index = await readFile(indexPath);
+    if (index.length !== indexInfo.size) {
+      throw new Error("Git index changed while creating the recovery checkpoint");
+    }
+    const temporaryIndex = path.join(
+      gitDir,
+      `.cos-recovery-index-${randomBytes(12).toString("hex")}`,
+    );
+    const environment = { GIT_INDEX_FILE: temporaryIndex };
+    try {
+      await this.gitWithWorkTree(
+        workspace,
+        stagedWorkspace,
+        ["read-tree", inspected.inspection.headSha],
+        environment,
+        signal,
+      );
+      await this.gitWithWorkTree(
+        workspace,
+        stagedWorkspace,
+        ["add", "-A", "--", "."],
+        environment,
+        signal,
+      );
+      const treeSha = await this.gitWithWorkTree(
+        workspace,
+        stagedWorkspace,
+        ["write-tree"],
+        environment,
+        signal,
+      );
+      return { index, indexMode: indexInfo.mode & 0o777, treeSha };
+    } finally {
+      await Promise.all([
+        rm(temporaryIndex, { force: true }),
+        rm(`${temporaryIndex}.lock`, { force: true }),
+      ]);
+    }
+  }
+
+  private async cleanRecoveryPaths(
+    workspace: string,
+    identity: WorkspaceIdentity,
+    paths: string[],
+    signal?: AbortSignal,
+  ): Promise<void> {
+    for (let offset = 0; offset < paths.length; offset += RECOVERY_CLEAN_BATCH_SIZE) {
+      const batch = paths.slice(offset, offset + RECOVERY_CLEAN_BATCH_SIZE);
+      for (const relative of batch) {
+        if (
+          !relative ||
+          path.isAbsolute(relative) ||
+          relative.includes("\0") ||
+          relative.split("/").some((segment) => !segment || segment === "." || segment === "..")
+        ) {
+          throw new Error("Recovery cleanup received an unsafe bound path");
+        }
+      }
+      await this.assertWorkspaceIdentity(identity, signal);
+      await this.git(
+        workspace,
+        ["clean", "-fdx", "--", ...batch.map((relative) => `:(literal)${relative}`)],
+        undefined,
+        signal,
+      );
+    }
+  }
+
+  private async restoreRecoveryCheckpoint(
+    workspace: string,
+    inspected: InspectedWorkspace,
+    checkpoint: RecoveryCheckpoint,
+    restoreWorktree: boolean,
+  ): Promise<void> {
+    const branch = inspected.inspection.branch;
+    validateGitBranch(branch);
+    await this.assertWorkspaceIdentity(inspected.identity);
+    await this.git(workspace, ["symbolic-ref", "HEAD", `refs/heads/${branch}`]);
+    await this.assertWorkspaceIdentity(inspected.identity);
+    await this.git(workspace, ["update-ref", `refs/heads/${branch}`, inspected.inspection.headSha]);
+    if (restoreWorktree) {
+      await this.cleanRecoveryPaths(
+        workspace,
+        inspected.identity,
+        inspected.snapshot.untrackedPaths,
+      );
+      await this.assertWorkspaceIdentity(inspected.identity);
+      await this.git(workspace, ["read-tree", "--reset", "-u", checkpoint.treeSha]);
+    }
+
+    const indexPath = path.join(this.gitDirForWorkspace(workspace), "index");
+    const temporaryIndex = `${indexPath}.restore-${randomBytes(12).toString("hex")}`;
+    try {
+      await this.assertWorkspaceIdentity(inspected.identity);
+      await rm(`${indexPath}.lock`, { force: true });
+      await writeFile(temporaryIndex, checkpoint.index, {
+        mode: checkpoint.indexMode,
+        flag: "wx",
+      });
+      await chmod(temporaryIndex, checkpoint.indexMode);
+      await chown(temporaryIndex, this.workspaceUid, this.workspaceGid);
+      await rename(temporaryIndex, indexPath);
+    } finally {
+      await rm(temporaryIndex, { force: true });
+    }
+
+    const restored = await this.inspectWorkspaceLocked(workspace, inspected.inspection.repository);
+    this.assertExpectedInspection(restored.inspection, inspected.inspection);
   }
 
   private async inspectWorkspaceLocked(
@@ -572,6 +778,7 @@ export class GitWorkspaceService {
   ): Promise<InspectedWorkspace> {
     signal?.throwIfAborted();
     const identity = await this.assertWorkspace(workspace, signal);
+    await this.ensureLocalExcludes(workspace, signal);
     const [branch, headSha] = await Promise.all([
       this.git(workspace, ["branch", "--show-current"], undefined, signal),
       this.git(workspace, ["rev-parse", "HEAD"], undefined, signal),
@@ -801,9 +1008,11 @@ export class GitWorkspaceService {
     const excludePath = path.join(this.gitDirForWorkspace(workspace), "info", "exclude");
     const content = await readFile(excludePath, "utf8").catch(() => "");
     signal?.throwIfAborted();
-    if (content.split(/\r?\n/).includes(".cos-pi-cache/")) return;
+    const current = new Set(content.split(/\r?\n/));
+    const missing = [".cos-pi-cache/", ".env"].filter((entry) => !current.has(entry));
+    if (!missing.length) return;
     const separator = content && !content.endsWith("\n") ? "\n" : "";
-    await writeFile(excludePath, `${content}${separator}.cos-pi-cache/\n`, { mode: 0o600 });
+    await writeFile(excludePath, `${content}${separator}${missing.join("\n")}\n`, { mode: 0o600 });
     signal?.throwIfAborted();
     await chown(excludePath, this.workspaceUid, this.workspaceGid);
   }

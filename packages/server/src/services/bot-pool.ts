@@ -815,21 +815,27 @@ export class BotPool {
                     },
                     signal,
                   ),
-                previewPush: (repository, branch) =>
-                  this.gitWorkspaceService!.previewPush({
-                    botId,
-                    repository,
-                    branch,
-                    token: githubToolsConfig.token!,
-                  }),
-                pushBranch: (repository, branch, expectedCommitSha) =>
-                  this.gitWorkspaceService!.pushBranch({
-                    botId,
-                    repository,
-                    branch,
-                    token: githubToolsConfig.token!,
-                    expectedCommitSha,
-                  }),
+                previewPush: (repository, branch, signal) =>
+                  this.gitWorkspaceService!.previewPush(
+                    {
+                      botId,
+                      repository,
+                      branch,
+                      token: githubToolsConfig.token!,
+                    },
+                    signal,
+                  ),
+                pushBranch: (repository, branch, expectedCommitSha, signal) =>
+                  this.gitWorkspaceService!.pushBranch(
+                    {
+                      botId,
+                      repository,
+                      branch,
+                      token: githubToolsConfig.token!,
+                      expectedCommitSha,
+                    },
+                    signal,
+                  ),
                 inspectWorkspace: (repository, signal) =>
                   this.gitWorkspaceService!.inspectWorkspace({ botId, repository }, signal),
                 resumeWorkspace: (input, model, expected, signal) =>

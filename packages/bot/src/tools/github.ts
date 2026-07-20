@@ -47,11 +47,16 @@ export interface GitHubCodeCallbacks {
     model: GitHubCodingModelConfig,
     signal?: AbortSignal,
   ) => Promise<GitHubCodeTaskResult>;
-  previewPush: (repository: string, branch: string) => Promise<GitHubPushPreview>;
+  previewPush: (
+    repository: string,
+    branch: string,
+    signal?: AbortSignal,
+  ) => Promise<GitHubPushPreview>;
   pushBranch: (
     repository: string,
     branch: string,
     expectedCommitSha: string,
+    signal?: AbortSignal,
   ) => Promise<GitHubPushResult>;
   inspectWorkspace?: (
     repository: string,
@@ -113,6 +118,19 @@ function describeRecoveryPaths(paths: string[]): string {
   return summary.length > RECOVERY_PATHS_PREVIEW_CHARS
     ? `${summary.slice(0, RECOVERY_PATHS_PREVIEW_CHARS)}…`
     : summary;
+}
+
+function isRequestInterruption(error: unknown, signal?: AbortSignal): boolean {
+  return (
+    signal?.aborted === true ||
+    (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))
+  );
+}
+
+function ambiguousRemoteMutation(operation: string): Error {
+  return new Error(
+    `${operation} was interrupted after it may have reached GitHub. The remote mutation may have succeeded; verify GitHub before retrying`,
+  );
 }
 
 function pullRequestResult(
@@ -317,15 +335,34 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             branch: z.string().min(1).max(200),
           }),
         ),
-        execute: async ({ repository, branch }) => {
+        execute: async ({ repository, branch }, execution: ToolExecutionOptions) => {
           try {
             writeClient(repository);
-            const preview = await options.codeCallbacks!.previewPush(repository, branch);
+            const preview = await options.codeCallbacks!.previewPush(
+              repository,
+              branch,
+              execution.abortSignal,
+            );
             return await proposeAction(
               `推送 ${repository}:${branch}\n本地 commit：${preview.commitSha}`,
-              () => options.codeCallbacks!.pushBranch(repository, branch, preview.commitSha),
+              async (signal) => {
+                try {
+                  return await options.codeCallbacks!.pushBranch(
+                    repository,
+                    branch,
+                    preview.commitSha,
+                    signal,
+                  );
+                } catch (error) {
+                  if (isRequestInterruption(error, signal)) {
+                    throw ambiguousRemoteMutation("Branch push");
+                  }
+                  throw error;
+                }
+              },
             );
           } catch (error) {
+            if (execution.abortSignal?.aborted) throw error;
             return formatError(error);
           }
         },
@@ -456,12 +493,15 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
           draft: z.boolean().default(false),
         }),
       ),
-      execute: async ({ repository, head, base, title, body, draft }) => {
+      execute: async (
+        { repository, head, base, title, body, draft },
+        execution: ToolExecutionOptions,
+      ) => {
         try {
           const isDraft = draft === true;
           const client = writeClient(repository);
-          const headRef = await client.resolveBranch(repository, head);
-          const baseRef = await client.resolveBranch(repository, base);
+          const headRef = await client.resolveBranch(repository, head, execution.abortSignal);
+          const baseRef = await client.resolveBranch(repository, base, execution.abortSignal);
           const description = [
             `在 ${repository} 创建 Pull Request`,
             `${head} -> ${base}`,
@@ -472,15 +512,15 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             describePullRequestBody(body),
           ].join("\n");
 
-          return await proposeAction(description, async () => {
-            const currentHead = await client.resolveBranch(repository, head);
+          return await proposeAction(description, async (signal) => {
+            const currentHead = await client.resolveBranch(repository, head, signal);
             if (currentHead.sha !== headRef.sha) {
               throw new Error(
                 `Pull request source changed after confirmation preview (${headRef.sha} -> ${currentHead.sha}); request a new preview`,
               );
             }
 
-            const existing = await client.findOpenPullRequest(repository, head, base);
+            const existing = await client.findOpenPullRequest(repository, head, base, signal);
             if (existing) {
               if (existing.head.sha !== headRef.sha) {
                 throw new Error(
@@ -491,20 +531,27 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             }
 
             try {
-              const created = await client.createPullRequest(repository, {
-                title,
-                head,
-                base,
-                body,
-                draft: isDraft,
-                expectedHeadSha: headRef.sha,
-              });
+              const created = await client.createPullRequest(
+                repository,
+                {
+                  title,
+                  head,
+                  base,
+                  body,
+                  draft: isDraft,
+                  expectedHeadSha: headRef.sha,
+                },
+                signal,
+              );
               return pullRequestResult(repository, created, false);
             } catch (error) {
+              if (isRequestInterruption(error, signal)) {
+                throw ambiguousRemoteMutation("Pull request creation");
+              }
               // GitHub cannot atomically combine duplicate lookup, head-SHA binding, and creation.
               // Re-read first so a concurrent creator or a timed-out successful POST is idempotent.
               const raced = await client
-                .findOpenPullRequest(repository, head, base)
+                .findOpenPullRequest(repository, head, base, signal)
                 .catch(() => undefined);
               if (raced?.head.sha === headRef.sha) {
                 return pullRequestResult(repository, raced, true);
@@ -518,6 +565,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             }
           });
         } catch (error) {
+          if (execution.abortSignal?.aborted) throw error;
           return formatError(error);
         }
       },
@@ -538,12 +586,19 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
           const client = writeClient(repository);
           return await proposeAction(
             `在 ${repository} 创建 Issue\n标题：${title}${describeBody(body)}`,
-            async () => {
-              const issue = await client.createIssue(repository, { title, body });
-              return {
-                summary: `已创建 ${repository}#${issue.number}：${issue.title}`,
-                url: issue.html_url,
-              };
+            async (signal) => {
+              try {
+                const issue = await client.createIssue(repository, { title, body }, signal);
+                return {
+                  summary: `已创建 ${repository}#${issue.number}：${issue.title}`,
+                  url: issue.html_url,
+                };
+              } catch (error) {
+                if (isRequestInterruption(error, signal)) {
+                  throw ambiguousRemoteMutation("Issue creation");
+                }
+                throw error;
+              }
             },
           );
         } catch (error) {
@@ -576,17 +631,28 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
             state ? `\n新状态：${state}` : "",
             describeBody(body),
           ].join("");
-          return await proposeAction(`更新 ${repository}#${issue_number}${changes}`, async () => {
-            const issue = await client.updateIssue(repository, issue_number, {
-              title,
-              body,
-              state,
-            });
-            return {
-              summary: `已更新 ${repository}#${issue.number}：${issue.title}`,
-              url: issue.html_url,
-            };
-          });
+          return await proposeAction(
+            `更新 ${repository}#${issue_number}${changes}`,
+            async (signal) => {
+              try {
+                const issue = await client.updateIssue(
+                  repository,
+                  issue_number,
+                  { title, body, state },
+                  signal,
+                );
+                return {
+                  summary: `已更新 ${repository}#${issue.number}：${issue.title}`,
+                  url: issue.html_url,
+                };
+              } catch (error) {
+                if (isRequestInterruption(error, signal)) {
+                  throw ambiguousRemoteMutation("Issue update");
+                }
+                throw error;
+              }
+            },
+          );
         } catch (error) {
           return formatError(error);
         }

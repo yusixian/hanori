@@ -246,6 +246,101 @@ describe("Git workspace recovery", () => {
     expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
   });
 
+  it.each(["add", "commit", "reset"] as const)(
+    "restores the exact branch, index, and worktree after a post-%s failure",
+    async (failurePoint) => {
+      const { service, run, workspace, stagingRoot } = await fixture();
+      await writeFile(path.join(workspace, "README.md"), "staged\n");
+      await exec("git", ["-C", workspace, "add", "README.md"]);
+      await writeFile(path.join(workspace, "README.md"), "unstaged\n");
+      await writeFile(path.join(workspace, "untracked.txt"), "original untracked\n");
+      const inspection = await service.inspectWorkspace(inspectOptions);
+      run.mockImplementation(async (job) => {
+        await writeFile(path.join(stagingRoot, job.workspacePath, "worker.txt"), "worker result\n");
+        return { summary: "worker result", durationMs: 1 };
+      });
+
+      type GitWithWorkTree = (
+        workspacePath: string,
+        workTree: string,
+        args: string[],
+        env?: NodeJS.ProcessEnv,
+        signal?: AbortSignal,
+      ) => Promise<string>;
+      const internals = service as unknown as { gitWithWorkTree: GitWithWorkTree };
+      const original = internals.gitWithWorkTree.bind(service);
+      let injected = false;
+      vi.spyOn(internals, "gitWithWorkTree").mockImplementation(async (...args) => {
+        const result = await original(...args);
+        const command = args[2][0];
+        const isCanonicalAdd = command === "add" && !args[3]?.["GIT_INDEX_FILE"];
+        const matches =
+          (failurePoint === "add" && isCanonicalAdd) ||
+          (failurePoint === "commit" && command === "commit") ||
+          (failurePoint === "reset" && command === "reset" && args[2][1] === "--hard");
+        if (!injected && matches) {
+          injected = true;
+          throw new Error(`injected post-${failurePoint} failure`);
+        }
+        return result;
+      });
+
+      await expect(
+        service.resumeWorkspace(
+          {
+            ...inspectOptions,
+            task: "Resume",
+            authorName: "Ai-chan",
+            authorEmail: "ai-chan@example.com",
+            model,
+          },
+          inspection,
+        ),
+      ).rejects.toThrow(`injected post-${failurePoint} failure`);
+
+      expect(await service.inspectWorkspace(inspectOptions)).toEqual(inspection);
+      expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("unstaged\n");
+      expect(await readFile(path.join(workspace, "untracked.txt"), "utf8")).toBe(
+        "original untracked\n",
+      );
+      await expect(readFile(path.join(workspace, "worker.txt"))).rejects.toThrow();
+    },
+  );
+
+  it("fails and rolls back resume when a result exposes a previously ignored file", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    const dirtyIgnore = ".env\n.cos-pi-cache/\npreserved.secret\n";
+    await writeFile(path.join(workspace, ".gitignore"), dirtyIgnore);
+    await writeFile(path.join(workspace, "preserved.secret"), "do not delete\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      await writeFile(
+        path.join(stagingRoot, job.workspacePath, ".gitignore"),
+        ".env\n.cos-pi-cache/\n",
+      );
+      return { summary: "remove ignore", durationMs: 1 };
+    });
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Remove the ignore rule",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+      ),
+    ).rejects.toThrow("did not become clean");
+
+    expect(await service.inspectWorkspace(inspectOptions)).toEqual(inspection);
+    expect(await readFile(path.join(workspace, ".gitignore"), "utf8")).toBe(dirtyIgnore);
+    expect(await readFile(path.join(workspace, "preserved.secret"), "utf8")).toBe(
+      "do not delete\n",
+    );
+  });
+
   it("rejects a canonical directory swap before adding the recovery result", async () => {
     const { service, run, workspace } = await fixture();
     await writeFile(path.join(workspace, "README.md"), "dirty\n");
@@ -286,7 +381,11 @@ describe("Git workspace recovery", () => {
       ),
     ).rejects.toThrow("identity changed");
     expect(run).toHaveBeenCalledOnce();
-    expect(gitWithWorkTree.mock.calls.some((call) => call[2][0] === "add")).toBe(false);
+    expect(
+      gitWithWorkTree.mock.calls.some(
+        (call) => call[2][0] === "add" && !call[3]?.["GIT_INDEX_FILE"],
+      ),
+    ).toBe(false);
   });
 
   it("rejects stale recovery state before invoking the worker", async () => {
@@ -390,5 +489,47 @@ describe("Git workspace recovery", () => {
     await expect(readFile(path.join(workspace, "untracked.txt"))).rejects.toThrow();
     expect(await readFile(path.join(workspace, ".env"), "utf8")).toContain("IGNORED_SECRET");
     expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache"), "utf8")).toBe("keep\n");
+  });
+
+  it("preserves data made visible by discarding a dirty ignore rule", async () => {
+    const { service, workspace } = await fixture();
+    await writeFile(
+      path.join(workspace, ".gitignore"),
+      ".env\n.cos-pi-cache/\npreserved.secret\nglob1.txt\n",
+    );
+    await writeFile(path.join(workspace, "preserved.secret"), "do not delete\n");
+    await writeFile(path.join(workspace, "glob1.txt"), "ignored pattern match\n");
+    await writeFile(path.join(workspace, "glob[1].txt"), "remove exact literal\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+
+    const result = await service.discardWorkspace(inspectOptions, inspection);
+
+    expect(result.clean).toBe(false);
+    expect(result.remainingFiles).toContain("preserved.secret");
+    expect(result.summary).toContain("workspace 仍为 dirty");
+    expect(await readFile(path.join(workspace, "preserved.secret"), "utf8")).toBe(
+      "do not delete\n",
+    );
+    expect(await readFile(path.join(workspace, "glob1.txt"), "utf8")).toBe(
+      "ignored pattern match\n",
+    );
+    await expect(readFile(path.join(workspace, "glob[1].txt"))).rejects.toThrow();
+  });
+
+  it("rejects gitlinks instead of treating submodule directories as deletions", async () => {
+    const { service, workspace } = await fixture();
+    const head = (await exec("git", ["-C", workspace, "rev-parse", "HEAD"])).stdout.trim();
+    await exec("git", [
+      "-C",
+      workspace,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${head},vendor/submodule`,
+    ]);
+
+    await expect(service.inspectWorkspace(inspectOptions)).rejects.toThrow(
+      "Git submodules are not supported in recovery snapshots: vendor/submodule",
+    );
   });
 });

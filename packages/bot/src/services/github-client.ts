@@ -164,14 +164,15 @@ export class GitHubClient {
     this.fetchImpl = options.fetch ?? fetch;
   }
 
-  async getRepository(repository: string): Promise<GitHubRepository> {
-    return this.request<GitHubRepository>(`/repos/${encodePath(repository)}`);
+  async getRepository(repository: string, signal?: AbortSignal): Promise<GitHubRepository> {
+    return this.request<GitHubRepository>(`/repos/${encodePath(repository)}`, { signal });
   }
 
   async readFile(
     repository: string,
     filePath: string,
     ref?: string,
+    signal?: AbortSignal,
   ): Promise<{
     path: string;
     sha: string;
@@ -181,6 +182,7 @@ export class GitHubClient {
     const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
     const result = await this.request<GitHubContentResponse>(
       `/repos/${encodePath(repository)}/contents/${encodePath(filePath)}${query}`,
+      { signal },
     );
     if (result.type !== "file") throw new GitHubApiError("The requested path is not a file", 400);
     if (result.encoding !== "base64" || !result.content) {
@@ -194,24 +196,40 @@ export class GitHubClient {
     };
   }
 
-  async listTree(repository: string, ref?: string): Promise<GitHubTreeResponse> {
-    const resolvedRef = ref ?? (await this.getRepository(repository)).default_branch;
+  async listTree(
+    repository: string,
+    ref?: string,
+    signal?: AbortSignal,
+  ): Promise<GitHubTreeResponse> {
+    const resolvedRef = ref ?? (await this.getRepository(repository, signal)).default_branch;
     return this.request<GitHubTreeResponse>(
       `/repos/${encodePath(repository)}/git/trees/${encodeURIComponent(resolvedRef)}?recursive=1`,
+      { signal },
     );
   }
 
-  async listIssues(repository: string, state: "open" | "closed" | "all", limit: number) {
+  async listIssues(
+    repository: string,
+    state: "open" | "closed" | "all",
+    limit: number,
+    signal?: AbortSignal,
+  ) {
     const result = await this.request<GitHubIssue[]>(
       `/repos/${encodePath(repository)}/issues?state=${state}&per_page=${limit}`,
+      { signal },
     );
     return result.filter((issue) => !issue.pull_request);
   }
 
-  async createIssue(repository: string, input: { title: string; body?: string }) {
+  async createIssue(
+    repository: string,
+    input: { title: string; body?: string },
+    signal?: AbortSignal,
+  ) {
     return this.request<GitHubIssue>(`/repos/${encodePath(repository)}/issues`, {
       method: "POST",
       body: JSON.stringify(input),
+      signal,
     });
   }
 
@@ -219,17 +237,24 @@ export class GitHubClient {
     repository: string,
     issueNumber: number,
     input: { title?: string; body?: string; state?: "open" | "closed" },
+    signal?: AbortSignal,
   ) {
     return this.request<GitHubIssue>(`/repos/${encodePath(repository)}/issues/${issueNumber}`, {
       method: "PATCH",
       body: JSON.stringify(input),
+      signal,
     });
   }
 
-  async resolveBranch(repository: string, branch: string): Promise<GitHubBranchRef> {
+  async resolveBranch(
+    repository: string,
+    branch: string,
+    signal?: AbortSignal,
+  ): Promise<GitHubBranchRef> {
     assertBranchName(branch);
     const result = await this.request<unknown>(
       `/repos/${encodePath(repository)}/git/ref/heads/${encodePath(branch)}`,
+      { signal },
     );
     const branchRef = result as GitHubRefResponse | null;
     if (
@@ -247,6 +272,7 @@ export class GitHubClient {
     repository: string,
     head: string,
     base: string,
+    signal?: AbortSignal,
   ): Promise<GitHubPullRequest | undefined> {
     assertBranchName(head);
     assertBranchName(base);
@@ -257,7 +283,9 @@ export class GitHubClient {
       base,
       per_page: "100",
     });
-    const pulls = await this.request<unknown>(`/repos/${encodePath(repository)}/pulls?${query}`);
+    const pulls = await this.request<unknown>(`/repos/${encodePath(repository)}/pulls?${query}`, {
+      signal,
+    });
     if (!Array.isArray(pulls)) {
       throw new GitHubApiError("GitHub returned an unexpected pull request list", 502);
     }
@@ -284,6 +312,7 @@ export class GitHubClient {
       draft: boolean;
       expectedHeadSha: string;
     },
+    signal?: AbortSignal,
   ): Promise<GitHubPullRequest> {
     assertBranchName(input.head);
     assertBranchName(input.base);
@@ -296,6 +325,7 @@ export class GitHubClient {
         ...(input.body === undefined ? {} : { body: input.body }),
         draft: input.draft,
       }),
+      signal,
     });
     return validatePullRequest(result, repository, input.head, input.base, input.expectedHeadSha);
   }
@@ -308,10 +338,12 @@ export class GitHubClient {
     if (this.options.token) headers.set("Authorization", `Bearer ${this.options.token}`);
     if (init.body) headers.set("Content-Type", "application/json");
 
+    const timeoutSignal = AbortSignal.timeout(30_000);
+    const signal = init.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
     const response = await this.fetchImpl(`${API_ROOT}${path}`, {
       ...init,
       headers,
-      signal: init.signal ?? AbortSignal.timeout(30_000),
+      signal,
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
