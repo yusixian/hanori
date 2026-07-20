@@ -10,7 +10,52 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+test("keeps the manual profile form when creation conflicts", async () => {
+  const fetchMock = vi.fn(
+    async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url.includes("/api/bots/test-id/profiles") && init?.method === "POST") {
+        return new Response(JSON.stringify({ ok: false, error: "Profile already exists" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("/api/bots/test-id/profiles")) {
+        return new Response(JSON.stringify({ ok: true, total: 0, data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(null, { status: 404 });
+    },
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  vi.spyOn(console, "error").mockImplementation(() => {});
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/profiles"]}>
+      <Routes>
+        <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByRole("heading", { name: "People profiles" })).toBeVisible();
+  await page.getByRole("button", { name: "Add profile" }).click();
+  await page.getByPlaceholder("123456789").fill("42");
+  await page.getByLabelText("Display name").fill("Manual replacement");
+  await page.getByRole("button", { name: "Create" }).click();
+
+  await vi.waitFor(() =>
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true),
+  );
+  await expect.element(page.getByRole("heading", { name: "New profile" })).toBeVisible();
+  await expect.element(page.getByPlaceholder("123456789")).toHaveValue("42");
+  await expect.element(page.getByLabelText("Display name")).toHaveValue("Manual replacement");
 });
 
 test("renders observed Telegram identity details and the protected avatar", async () => {

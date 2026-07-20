@@ -210,7 +210,7 @@ export function BotProfilesPage() {
     try {
       const traits = parseList(createForm.traits);
       const interests = parseList(createForm.interests);
-      await client.api.bots[":botId"].profiles.$post({
+      const response = await client.api.bots[":botId"].profiles.$post({
         param: { botId },
         json: {
           telegramId,
@@ -222,6 +222,9 @@ export function BotProfilesPage() {
           interests: interests.length > 0 ? interests : undefined,
         },
       });
+      if (!response.ok) {
+        throw new Error(`Failed to create profile: HTTP ${response.status}`);
+      }
       setShowCreate(false);
       setCreateForm(emptyCreateForm);
       loadProfiles();

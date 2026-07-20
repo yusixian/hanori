@@ -210,6 +210,24 @@ describe("PeopleProfileStore", () => {
     await expect(firstStore.searchProfiles(botId, "Ai")).resolves.toHaveLength(1);
   });
 
+  it("reports whether an observation created the profile", async () => {
+    const { db } = createConcurrentDb();
+    const store = new PeopleProfileStore(db);
+    const botId = "00000000-0000-4000-8000-000000000017";
+    const observation = {
+      telegramId: 42,
+      username: "sample",
+      displayName: "Ai Chan",
+      firstName: "Ai",
+      lastName: "Chan",
+      languageCode: "zh-hans",
+      isPremium: true,
+    };
+
+    await expect(store.touchProfile(botId, observation)).resolves.toEqual({ created: true });
+    await expect(store.touchProfile(botId, observation)).resolves.toEqual({ created: false });
+  });
+
   it("does not report an avatar switch when the profile is deleted concurrently", async () => {
     const profile = { id: 1, telegramId: 42, avatarPath: "avatars/42-old.jpg" };
     const tx = {
@@ -331,7 +349,7 @@ describe("PeopleProfileStore", () => {
     });
   });
 
-  it("returns the existing profile when create is repeated for the same Telegram user", async () => {
+  it("distinguishes a repeated manual create without overwriting the existing profile", async () => {
     const { db } = createConcurrentDb();
     const store = new PeopleProfileStore(db);
     const botId = "00000000-0000-4000-8000-000000000017";
@@ -347,7 +365,11 @@ describe("PeopleProfileStore", () => {
       notes: "do not overwrite",
     });
 
-    expect(repeated.id).toBe(first.id);
+    expect(first).toMatchObject({ created: true, profile: { displayName: "Original" } });
+    expect(repeated).toMatchObject({
+      created: false,
+      profile: { id: first.profile.id, displayName: "Original" },
+    });
     await expect(store.getProfile(botId, 42)).resolves.toMatchObject({
       displayName: "Original",
       notes: "keep me",

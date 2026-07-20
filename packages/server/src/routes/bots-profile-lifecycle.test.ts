@@ -55,6 +55,33 @@ function createApp(db: Database, botPool: BotPool) {
 }
 
 describe("people profile avatar lifecycle", () => {
+  it("returns conflict when manually creating an existing Telegram profile", async () => {
+    const createProfile = vi.fn(async () => ({
+      created: false as const,
+      profile: { id: 7, telegramId: 42, displayName: "Observed" },
+    }));
+    const botPool = {
+      getProfileStore: () => ({ createProfile }),
+    } as unknown as BotPool;
+    const app = createApp({} as Database, botPool);
+
+    const response = await app.request("/bots/test-bot/profiles", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ telegramId: 42, displayName: "Manual replacement" }),
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      ok: false,
+      error: "Profile already exists",
+    });
+    expect(createProfile).toHaveBeenCalledWith("test-bot", {
+      telegramId: 42,
+      displayName: "Manual replacement",
+    });
+  });
+
   it("removes the cached avatar after deleting a profile", async () => {
     const botId = `profile-delete-${Date.now()}`;
     botIds.push(botId);

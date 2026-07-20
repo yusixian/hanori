@@ -1146,8 +1146,11 @@ export function botsRoutes(
       async (c) => {
         const botId = c.req.param("botId");
         const store = botPool.getProfileStore();
-        const created = await store.createProfile(botId, c.req.valid("json"));
-        return c.json({ ok: true as const, data: created }, 201);
+        const result = await store.createProfile(botId, c.req.valid("json"));
+        if (!result.created) {
+          return c.json({ ok: false as const, error: "Profile already exists" }, 409);
+        }
+        return c.json({ ok: true as const, data: result.profile }, 201);
       },
     )
     .post("/:botId/ai-models", zValidator("json", aiModelsSchema), async (c) => {

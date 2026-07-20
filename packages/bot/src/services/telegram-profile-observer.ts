@@ -4,7 +4,7 @@ import type { PhotoSize, User } from "grammy/types";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { cleanupProfileAvatarFiles, removeProfileAvatarFile } from "./profile-avatar-files.js";
+import { removeProfileAvatarFile } from "./profile-avatar-files.js";
 
 const DEFAULT_REFRESH_MS = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS = 5 * 60 * 1000;
@@ -16,7 +16,12 @@ interface ProfilePhotoApi {
 }
 
 interface PendingTouchState {
-  latest: PeopleProfileObservation | null;
+  latest: PendingObservation | null;
+}
+
+interface PendingObservation {
+  api: ProfilePhotoApi;
+  observation: PeopleProfileObservation;
 }
 
 export interface TelegramProfileObserverOptions {
@@ -84,45 +89,51 @@ export class TelegramProfileObserver {
     }
   }
 
-  private enqueueTouch(observation: PeopleProfileObservation): Promise<void> | null {
+  private enqueueTouch(api: ProfilePhotoApi, observation: PeopleProfileObservation) {
     const existing = this.pendingTouches.get(observation.telegramId);
     if (existing) {
-      existing.latest = observation;
-      return null;
+      existing.latest = { api, observation };
+      return;
     }
 
-    const firstTouch = Promise.resolve().then(() => this.options.memory.touchProfile(observation));
     const state: PendingTouchState = { latest: null };
+    this.pendingTouches.set(observation.telegramId, state);
     void (async () => {
-      await firstTouch.catch(() => {});
-      while (state.latest) {
-        const latest = state.latest;
+      let pending: PendingObservation | null = { api, observation };
+      while (pending) {
+        try {
+          const result = await this.options.memory.touchProfile(pending.observation);
+          this.scheduleAvatarRefresh(pending.api, pending.observation, result.created);
+        } catch (error) {
+          this.reportError(error);
+        }
+        pending = state.latest;
         state.latest = null;
-        await this.options.memory.touchProfile(latest).catch(() => {});
       }
       if (this.pendingTouches.get(observation.telegramId) === state) {
         this.pendingTouches.delete(observation.telegramId);
       }
     })();
-    this.pendingTouches.set(observation.telegramId, state);
-    return firstTouch;
+  }
+
+  private scheduleAvatarRefresh(
+    api: ProfilePhotoApi,
+    observation: PeopleProfileObservation,
+    created: boolean,
+  ) {
+    if (!this.options.dataDir) return;
+    const now = this.now();
+    if (!created && (this.nextRefreshAt.get(observation.telegramId) ?? 0) > now) return;
+    this.nextRefreshAt.set(observation.telegramId, now + this.refreshMs);
+
+    void this.refreshAvatar(api, observation).catch((error) => {
+      this.nextRefreshAt.set(observation.telegramId, this.now() + RETRY_REFRESH_MS);
+      this.reportError(error);
+    });
   }
 
   observe(api: ProfilePhotoApi, user: User): void {
-    const observation = observationFromUser(user);
-    const firstTouch = this.enqueueTouch(observation);
-
-    if (!firstTouch || !this.options.dataDir) return;
-    const now = this.now();
-    if ((this.nextRefreshAt.get(user.id) ?? 0) > now) return;
-    this.nextRefreshAt.set(user.id, now + this.refreshMs);
-
-    void firstTouch
-      .then(() => this.refreshAvatar(api, observation))
-      .catch((error) => {
-        this.nextRefreshAt.set(user.id, this.now() + RETRY_REFRESH_MS);
-        this.reportError(error);
-      });
+    this.enqueueTouch(api, observationFromUser(user));
   }
 
   private async refreshAvatar(api: ProfilePhotoApi, observation: PeopleProfileObservation) {
@@ -130,12 +141,14 @@ export class TelegramProfileObserver {
     const sizes = photos.photos[0];
     const photo = largestPhoto(sizes);
     if (!photo) {
-      await this.options.memory.updateProfileAvatar({
+      const result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         avatarPath: null,
         avatarVersion: null,
       });
-      await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId);
+      if (result?.previousAvatarPath) {
+        await removeProfileAvatarFile(this.options.dataDir!, result.previousAvatarPath);
+      }
       return;
     }
 
@@ -188,9 +201,11 @@ export class TelegramProfileObserver {
       throw error;
     }
     if (!result) {
-      await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId);
+      await removeProfileAvatarFile(this.options.dataDir!, absolutePath);
       return;
     }
-    await cleanupProfileAvatarFiles(this.options.dataDir!, observation.telegramId, relativePath);
+    if (result.previousAvatarPath && result.previousAvatarPath !== relativePath) {
+      await removeProfileAvatarFile(this.options.dataDir!, result.previousAvatarPath);
+    }
   }
 }

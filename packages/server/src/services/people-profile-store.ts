@@ -134,7 +134,7 @@ export class PeopleProfileStore {
   }
 
   async touchProfile(botId: string, observation: PeopleProfileObservation) {
-    await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
       const lockKey = `${botId}:${observation.telegramId}`;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
       const [existing] = await tx
@@ -159,7 +159,7 @@ export class PeopleProfileStore {
             username: observation.username,
           })
           .where(eq(peopleProfiles.id, existing.id));
-        return;
+        return { created: false };
       }
       await tx.insert(peopleProfiles).values({
         botId,
@@ -173,6 +173,7 @@ export class PeopleProfileStore {
         traits: [],
         interests: [],
       });
+      return { created: true };
     });
   }
 
@@ -317,7 +318,7 @@ export class PeopleProfileStore {
         .where(
           and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, data.telegramId)),
         );
-      if (existing) return existing;
+      if (existing) return { created: false as const, profile: existing };
 
       const [created] = await tx
         .insert(peopleProfiles)
@@ -332,7 +333,7 @@ export class PeopleProfileStore {
           relationship: data.relationship,
         })
         .returning();
-      return created!;
+      return { created: true as const, profile: created! };
     });
   }
 }

@@ -85,6 +85,10 @@ export interface PeopleProfileAvatarUpdateResult {
   previousAvatarPath: string | null;
 }
 
+export interface PeopleProfileTouchResult {
+  created: boolean;
+}
+
 export interface MemorySearchResult {
   role: string;
   content: string;
@@ -111,7 +115,7 @@ export interface MemoryCallbacks {
     userId?: number;
     limit?: number;
   }): Promise<MemorySearchResult[]>;
-  touchProfile(observation: PeopleProfileObservation): Promise<void>;
+  touchProfile(observation: PeopleProfileObservation): Promise<PeopleProfileTouchResult>;
   updateProfileAvatar(
     update: PeopleProfileAvatarUpdate,
   ): Promise<PeopleProfileAvatarUpdateResult | null>;
