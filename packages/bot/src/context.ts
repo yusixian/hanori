@@ -18,6 +18,7 @@ export type BotContext = StreamFlavor<WrapperContext>;
 export class WrapperContext extends Context {
   waiting_message?: Message;
   private waitingMessagePromise?: Promise<Message>;
+  private waitingMutationQueue: Promise<void> = Promise.resolve();
   command: CommandEntity;
   isReply: boolean;
   reply_to_message?: Message;
@@ -58,28 +59,43 @@ export class WrapperContext extends Context {
   }
 
   async wait(message: string, auto_delete?: boolean, parse_mode?: ParseMode) {
-    await this.getOrCreateWaiting(message, parse_mode);
-    if (auto_delete) this.autoDelete();
+    await this.enqueueWaitingMutation(async () => {
+      await this.getOrCreateWaiting(message, parse_mode);
+      if (auto_delete) this.autoDelete();
+    });
   }
 
   async resolveWait(message: string, parse_mode?: ParseMode): Promise<number> {
-    const waiting = await this.getOrCreateWaiting(message, parse_mode);
-    if (waiting.created) return waiting.message.message_id;
+    return this.enqueueWaitingMutation(async () => {
+      const waiting = await this.getOrCreateWaiting(message, parse_mode);
+      if (waiting.created) return waiting.message.message_id;
 
-    await this.api.editMessageText(waiting.message.chat.id, waiting.message.message_id, message, {
-      parse_mode,
+      await this.api.editMessageText(waiting.message.chat.id, waiting.message.message_id, message, {
+        parse_mode,
+      });
+      return waiting.message.message_id;
     });
-    return waiting.message.message_id;
   }
 
   async deleteWaiting() {
-    const pending = this.waitingMessagePromise;
-    if (pending) await pending.catch(() => undefined);
-    if (this.waiting_message) {
-      const msgId = this.waiting_message.message_id;
-      this.waiting_message = undefined;
-      await this.deleteMessages([msgId]).catch(() => {});
-    }
+    await this.enqueueWaitingMutation(async () => {
+      const pending = this.waitingMessagePromise;
+      if (pending) await pending.catch(() => undefined);
+      if (this.waiting_message) {
+        const msgId = this.waiting_message.message_id;
+        this.waiting_message = undefined;
+        await this.deleteMessages([msgId]).catch(() => {});
+      }
+    });
+  }
+
+  private enqueueWaitingMutation<T>(mutation: () => Promise<T>): Promise<T> {
+    const queued = (this.waitingMutationQueue ?? Promise.resolve()).then(mutation);
+    this.waitingMutationQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    );
+    return queued;
   }
 
   private async getOrCreateWaiting(

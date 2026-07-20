@@ -1804,6 +1804,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         }
       }
 
+      if (isStreamMode && isPrivate && streamStarted) {
+        await ctx.deleteWaiting();
+      }
+
       throwCapturedStreamError(capturedStreamError, streamStarted);
 
       const durationMs = Date.now() - startTime;
