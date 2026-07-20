@@ -75,53 +75,62 @@ export class PeopleProfileStore {
       relationship?: string;
     },
   ) {
-    const existing = await this.getProfile(botId, data.telegramId);
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${data.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, data.telegramId)),
+        );
 
-    if (existing) {
-      const updates: Partial<typeof peopleProfiles.$inferInsert> = {};
-      if (data.username !== undefined) updates.username = data.username;
-      if (data.displayName !== undefined) updates.displayName = data.displayName;
-      if (data.relationship !== undefined) updates.relationship = data.relationship;
+      if (existing) {
+        const updates: Partial<typeof peopleProfiles.$inferInsert> = {};
+        if (data.username !== undefined) updates.username = data.username;
+        if (data.displayName !== undefined) updates.displayName = data.displayName;
+        if (data.relationship !== undefined) updates.relationship = data.relationship;
 
-      // Notes: append instead of overwrite
-      if (data.notes !== undefined) {
-        updates.notes = existing.notes ? `${existing.notes}\n${data.notes}` : data.notes;
+        // Notes: append instead of overwrite
+        if (data.notes !== undefined) {
+          updates.notes = existing.notes ? `${existing.notes}\n${data.notes}` : data.notes;
+        }
+
+        // Traits/interests: merge and deduplicate
+        if (data.traits !== undefined) {
+          const merged = [...new Set([...(existing.traits ?? []), ...data.traits])];
+          updates.traits = merged;
+        }
+        if (data.interests !== undefined) {
+          const merged = [...new Set([...(existing.interests ?? []), ...data.interests])];
+          updates.interests = merged;
+        }
+
+        updates.lastSeen = new Date();
+
+        const [updated] = await tx
+          .update(peopleProfiles)
+          .set(updates)
+          .where(eq(peopleProfiles.id, existing.id))
+          .returning();
+        return updated!;
       }
 
-      // Traits/interests: merge and deduplicate
-      if (data.traits !== undefined) {
-        const merged = [...new Set([...(existing.traits ?? []), ...data.traits])];
-        updates.traits = merged;
-      }
-      if (data.interests !== undefined) {
-        const merged = [...new Set([...(existing.interests ?? []), ...data.interests])];
-        updates.interests = merged;
-      }
-
-      updates.lastSeen = new Date();
-
-      const [updated] = await this.db
-        .update(peopleProfiles)
-        .set(updates)
-        .where(eq(peopleProfiles.id, existing.id))
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: data.telegramId,
+          username: data.username,
+          displayName: data.displayName,
+          notes: data.notes,
+          traits: data.traits ?? [],
+          interests: data.interests ?? [],
+          relationship: data.relationship,
+        })
         .returning();
-      return updated!;
-    }
-
-    const [created] = await this.db
-      .insert(peopleProfiles)
-      .values({
-        botId,
-        telegramId: data.telegramId,
-        username: data.username,
-        displayName: data.displayName,
-        notes: data.notes,
-        traits: data.traits ?? [],
-        interests: data.interests ?? [],
-        relationship: data.relationship,
-      })
-      .returning();
-    return created!;
+      return created!;
+    });
   }
 
   async touchProfile(botId: string, observation: PeopleProfileObservation) {
@@ -230,12 +239,33 @@ export class PeopleProfileStore {
     };
   }
 
-  async deleteProfile(botId: string, profileId: number) {
-    const [deleted] = await this.db
-      .delete(peopleProfiles)
-      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)))
-      .returning({ avatarPath: peopleProfiles.avatarPath });
-    return deleted ?? null;
+  async deleteProfile(
+    botId: string,
+    profileId: number,
+    beforeDelete?: (profile: typeof peopleProfiles.$inferSelect) => Promise<void>,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+      if (!candidate) return null;
+
+      const lockKey = `${botId}:${candidate.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [profile] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+      if (!profile) return null;
+
+      await beforeDelete?.(profile);
+      const [deleted] = await tx
+        .delete(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)))
+        .returning({ avatarPath: peopleProfiles.avatarPath });
+      return deleted ?? null;
+    });
   }
 
   async updateProfile(
@@ -278,19 +308,31 @@ export class PeopleProfileStore {
       relationship?: string | null;
     },
   ) {
-    const [created] = await this.db
-      .insert(peopleProfiles)
-      .values({
-        botId,
-        telegramId: data.telegramId,
-        displayName: data.displayName,
-        username: data.username,
-        notes: data.notes,
-        traits: data.traits ?? [],
-        interests: data.interests ?? [],
-        relationship: data.relationship,
-      })
-      .returning();
-    return created!;
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${data.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, data.telegramId)),
+        );
+      if (existing) return existing;
+
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: data.telegramId,
+          displayName: data.displayName,
+          username: data.username,
+          notes: data.notes,
+          traits: data.traits ?? [],
+          interests: data.interests ?? [],
+          relationship: data.relationship,
+        })
+        .returning();
+      return created!;
+    });
   }
 }

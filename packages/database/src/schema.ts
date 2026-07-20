@@ -404,7 +404,7 @@ export const peopleProfiles = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [index("people_bot_telegram_idx").on(t.botId, t.telegramId)],
+  (t) => [uniqueIndex("people_bot_telegram_idx").on(t.botId, t.telegramId)],
 );
 
 export const backups = pgTable("backups", {
