@@ -20,11 +20,15 @@ import type {
   ModelEntry,
   PixAIConfig,
   PixAIGenerationRecord,
+  TelegramRichMessageFormat,
+  TelegramRichMessageReceipt,
+  TelegramRichMessageSender,
   TokenUsageRecord,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  DEFAULT_MESSAGE_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
@@ -64,6 +68,10 @@ import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
+import {
+  BotNotRunningError,
+  TelegramRichMessagesUnsupportedError,
+} from "./telegram-rich-message-errors.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
@@ -82,6 +90,12 @@ interface GenerationRecoveryConfig {
   apiKey: string;
   timeoutMs: number;
   preexistingPendingCutoff: Date;
+}
+
+function supportsTelegramRichMessages(
+  manager: IBotManager,
+): manager is IBotManager & TelegramRichMessageSender {
+  return "sendRichMessage" in manager && typeof manager.sendRichMessage === "function";
 }
 
 export class BotPool {
@@ -164,6 +178,22 @@ export class BotPool {
       return;
     }
     await manager.sendHtml(chatId, html);
+  }
+
+  async sendRichMessage(
+    botId: string,
+    chatId: number,
+    format: TelegramRichMessageFormat,
+    content: string,
+  ): Promise<TelegramRichMessageReceipt> {
+    const manager = this.managers.get(botId);
+    if (!manager) {
+      throw new BotNotRunningError(botId);
+    }
+    if (!supportsTelegramRichMessages(manager)) {
+      throw new TelegramRichMessagesUnsupportedError(botId);
+    }
+    return manager.sendRichMessage(chatId, format, content);
   }
 
   getConversationStore(): ConversationStore {
@@ -802,6 +832,32 @@ export class BotPool {
             );
           } catch (err) {
             this.logger.error(err, "Failed to persist pixai config update");
+          }
+        },
+        onMessageConfigUpdate: async (updates) => {
+          try {
+            await this.withAiConfigLock(botId, () =>
+              this.db.transaction(async (tx) => {
+                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+                if (!current?.aiConfig) throw new Error("AI is not configured");
+                await tx
+                  .update(bots)
+                  .set({
+                    aiConfig: {
+                      ...current.aiConfig,
+                      messageConfig: {
+                        ...DEFAULT_MESSAGE_CONFIG,
+                        ...current.aiConfig.messageConfig,
+                        ...updates,
+                      },
+                    },
+                  })
+                  .where(eq(bots.id, botId));
+              }),
+            );
+          } catch (error) {
+            this.logger.error(error, "Failed to persist message config update");
+            throw error;
           }
         },
         onWebToolApiKeyUpdate: async (target, apiKey) => {

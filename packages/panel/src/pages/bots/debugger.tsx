@@ -1,10 +1,16 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
-import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Square } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  BotWithStatus,
+  TelegramRichMessageFormat,
+  TelegramRichMessageReceipt,
+} from "@cos-tool-bot/shared";
+import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Send, Square } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { downloadDebugRun } from "./debugger-export";
@@ -64,6 +70,21 @@ export function BotDebuggerPage() {
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [richChatId, setRichChatId] = useState("");
+  const [richFormat, setRichFormat] = useState<TelegramRichMessageFormat>("markdown");
+  const [richContent, setRichContent] = useState(() => t("debugger.richMessage.sampleMarkdown"));
+  const [richBusy, setRichBusy] = useState(false);
+  const [richError, setRichError] = useState<string | null>(null);
+  const [richReceipt, setRichReceipt] = useState<TelegramRichMessageReceipt | null>(null);
+  const [loadedBot, setLoadedBot] = useState<{
+    id: string;
+    platform: BotWithStatus["platform"];
+  } | null>(null);
+  const activeBotIdRef = useRef(botId);
+  const previousBotIdRef = useRef(botId);
+  const botLoadRequestRef = useRef(0);
+  const richSendRequestRef = useRef(0);
+  activeBotIdRef.current = botId;
   const statusLabels = useMemo<Record<string, string>>(
     () => ({
       running: t("debugger.statuses.running"),
@@ -89,6 +110,20 @@ export function BotDebuggerPage() {
     [t],
   );
 
+  useEffect(() => {
+    if (previousBotIdRef.current === botId) return;
+    previousBotIdRef.current = botId;
+    botLoadRequestRef.current += 1;
+    richSendRequestRef.current += 1;
+    setRichChatId("");
+    setRichFormat("markdown");
+    setRichContent(t("debugger.richMessage.sampleMarkdown"));
+    setRichBusy(false);
+    setRichError(null);
+    setRichReceipt(null);
+    setLoadedBot(null);
+  }, [botId, t]);
+
   const loadRuns = useCallback(async () => {
     if (!botId) return;
     try {
@@ -98,6 +133,30 @@ export function BotDebuggerPage() {
       setRuns(json.data);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("debugger.errors.loadRuns"));
+    }
+  }, [botId, t]);
+
+  const loadBot = useCallback(async () => {
+    if (!botId) return;
+    const requestedBotId = botId;
+    const requestId = ++botLoadRequestRef.current;
+    try {
+      const response = await authFetch(`/api/bots/${requestedBotId}`);
+      const json = (await response.json()) as {
+        ok: boolean;
+        data?: BotWithStatus;
+        error?: string;
+      };
+      if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadBot"));
+      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+        return;
+      }
+      setLoadedBot({ id: requestedBotId, platform: json.data.platform });
+    } catch (cause) {
+      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+        return;
+      }
+      setError(cause instanceof Error ? cause.message : t("debugger.errors.loadBot"));
     }
   }, [botId, t]);
 
@@ -117,8 +176,9 @@ export function BotDebuggerPage() {
   );
 
   useEffect(() => {
+    void loadBot();
     void loadRuns();
-  }, [loadRuns]);
+  }, [loadBot, loadRuns]);
 
   useEffect(() => {
     if (!botId || !selected || selected.status !== "running") return;
@@ -203,6 +263,47 @@ export function BotDebuggerPage() {
       await loadRuns();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : t("debugger.errors.mutate"));
+    }
+  };
+
+  const sendRichMessage = async () => {
+    if (!botId) return;
+    const requestedBotId = botId;
+    const requestId = ++richSendRequestRef.current;
+    setRichBusy(true);
+    setRichError(null);
+    setRichReceipt(null);
+    try {
+      const response = await authFetch(`/api/bots/${requestedBotId}/debug/rich-messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: richChatId,
+          format: richFormat,
+          content: richContent,
+        }),
+      });
+      const json = (await response.json()) as {
+        ok: boolean;
+        data?: TelegramRichMessageReceipt;
+        error?: string;
+      };
+      if (!response.ok || !json.ok || !json.data) {
+        throw new Error(json.error ?? t("debugger.richMessage.errors.send"));
+      }
+      if (activeBotIdRef.current !== requestedBotId || richSendRequestRef.current !== requestId) {
+        return;
+      }
+      setRichReceipt(json.data);
+    } catch (cause) {
+      if (activeBotIdRef.current !== requestedBotId || richSendRequestRef.current !== requestId) {
+        return;
+      }
+      setRichError(cause instanceof Error ? cause.message : t("debugger.richMessage.errors.send"));
+    } finally {
+      if (activeBotIdRef.current === requestedBotId && richSendRequestRef.current === requestId) {
+        setRichBusy(false);
+      }
     }
   };
 
@@ -292,6 +393,90 @@ export function BotDebuggerPage() {
               </Button>
             </CardContent>
           </Card>
+
+          {loadedBot !== null && loadedBot.id === botId && loadedBot.platform === "telegram" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t("debugger.richMessage.title")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-muted-foreground text-sm">
+                  {t("debugger.richMessage.description")}
+                </p>
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {t("debugger.richMessage.warning")}
+                </p>
+                <label className="space-y-1.5">
+                  <span className="text-sm font-medium">{t("debugger.richMessage.chatId")}</span>
+                  <Input
+                    inputMode="numeric"
+                    value={richChatId}
+                    onChange={(event) => setRichChatId(event.target.value)}
+                    placeholder={t("debugger.richMessage.chatIdPlaceholder")}
+                  />
+                </label>
+                <div className="space-y-1.5">
+                  <span className="text-sm font-medium">{t("debugger.richMessage.format")}</span>
+                  <div
+                    role="group"
+                    aria-label={t("debugger.richMessage.format")}
+                    className="flex gap-2"
+                  >
+                    <Button
+                      size="sm"
+                      aria-pressed={richFormat === "markdown"}
+                      variant={richFormat === "markdown" ? "default" : "outline"}
+                      onClick={() => {
+                        setRichFormat("markdown");
+                        setRichContent(t("debugger.richMessage.sampleMarkdown"));
+                      }}
+                    >
+                      Markdown
+                    </Button>
+                    <Button
+                      size="sm"
+                      aria-pressed={richFormat === "html"}
+                      variant={richFormat === "html" ? "default" : "outline"}
+                      onClick={() => {
+                        setRichFormat("html");
+                        setRichContent(t("debugger.richMessage.sampleHtml"));
+                      }}
+                    >
+                      HTML
+                    </Button>
+                  </div>
+                </div>
+                <Textarea
+                  aria-label={t("debugger.richMessage.contentAria")}
+                  className="font-mono text-xs"
+                  rows={12}
+                  value={richContent}
+                  onChange={(event) => setRichContent(event.target.value)}
+                />
+                {richError && (
+                  <p role="alert" className="text-destructive text-sm">
+                    {richError}
+                  </p>
+                )}
+                {richReceipt && (
+                  <p role="status" className="text-sm text-emerald-700">
+                    {t("debugger.richMessage.success", {
+                      messageId: richReceipt.messageId,
+                      chatId: richReceipt.chatId,
+                      format: richReceipt.format,
+                    })}
+                  </p>
+                )}
+                <Button
+                  disabled={richBusy || !richChatId.trim() || !richContent.trim()}
+                  onClick={() => void sendRichMessage()}
+                >
+                  <Send className="size-4" />
+                  {richBusy ? t("debugger.richMessage.sending") : t("debugger.richMessage.send")}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader className="flex-row items-center justify-between">

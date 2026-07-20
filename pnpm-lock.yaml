@@ -52,13 +52,13 @@ importers:
         version: link:../shared
       '@grammyjs/auto-retry':
         specifier: ^2.0.2
-        version: 2.0.2(grammy@1.41.0)
+        version: 2.0.2(grammy@1.45.1)
       '@grammyjs/runner':
         specifier: ^2.0.3
-        version: 2.0.3(grammy@1.41.0)
+        version: 2.0.3(grammy@1.45.1)
       '@grammyjs/stream':
-        specifier: ^1.0.0
-        version: 1.0.0(grammy@1.41.0)
+        specifier: ^1.1.0
+        version: 1.1.0(grammy@1.45.1)
       ai:
         specifier: ^6.0.0
         version: 6.0.108(zod@4.3.6)
@@ -66,8 +66,8 @@ importers:
         specifier: ^3.4.0
         version: 3.4.0
       grammy:
-        specifier: ^1.41.0
-        version: 1.41.0
+        specifier: ^1.45.1
+        version: 1.45.1
       marked:
         specifier: ^17.0.3
         version: 17.0.3
@@ -256,7 +256,7 @@ importers:
         version: link:../shared
       '@grammyjs/runner':
         specifier: ^2.0.3
-        version: 2.0.3(grammy@1.41.0)
+        version: 2.0.3(grammy@1.45.1)
       '@hono/node-server':
         specifier: ^1.14.1
         version: 1.19.9(hono@4.12.1)
@@ -1347,14 +1347,14 @@ packages:
     peerDependencies:
       grammy: ^1.13.1
 
-  '@grammyjs/stream@1.0.0':
-    resolution: {integrity: sha512-2VClaPdVhrl65vluYwhaKZitUac6Avfp6FUoFmaJVxxgTo8yDSYXncbbdISS9SRA3/edn2iI3Od+c/4gctQBRQ==}
+  '@grammyjs/stream@1.1.0':
+    resolution: {integrity: sha512-xaVjR5dg68Ef/my0O0gSB57OxZObdmfTd0WsjkVVP1NjW02RAkR7LNCA0QwZQSO++R5CHPdDcmOrG+JVkJguRQ==}
     engines: {node: '>=22'}
     peerDependencies:
       grammy: ^1.39.0
 
-  '@grammyjs/types@3.25.0':
-    resolution: {integrity: sha512-iN9i5p+8ZOu9OMxWNcguojQfz4K/PDyMPOnL7PPCON+SoA/F8OKMH3uR7CVUkYfdNe0GCz8QOzAWrnqusQYFOg==}
+  '@grammyjs/types@4.0.0':
+    resolution: {integrity: sha512-Z8lDLTvOlo12e5Vnly/vQh3JC9ppaitS1dGZ3w068gNitOd/y8tTSiib+Xm38aBGbtYGmUZwOc6afYrLs2CSTg==}
 
   '@hono/node-server@1.19.9':
     resolution: {integrity: sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw==}
@@ -3798,8 +3798,8 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  grammy@1.41.0:
-    resolution: {integrity: sha512-CAAu74SLT+/QCg40FBhUuYJalVsxxCN3D0c31TzhFBsWWTdXrMXYjGsKngBdfvN6hQ/VzHczluj/ugZVetFNCQ==}
+  grammy@1.45.1:
+    resolution: {integrity: sha512-Y4VL/hqJMZZxwlUr5ZgM68CFu2iIeEkNLR1cY3+Ww68CIvWARDsoXFix7+31rmyC0+7L85ZI+Pq3E5JSG5+nLQ==}
     engines: {node: ^12.20.0 || >=14.13.1}
 
   has-flag@4.0.0:
@@ -6390,24 +6390,24 @@ snapshots:
 
   '@floating-ui/utils@0.2.10': {}
 
-  '@grammyjs/auto-retry@2.0.2(grammy@1.41.0)':
+  '@grammyjs/auto-retry@2.0.2(grammy@1.45.1)':
     dependencies:
       debug: 4.4.3
-      grammy: 1.41.0
+      grammy: 1.45.1
     transitivePeerDependencies:
       - supports-color
 
-  '@grammyjs/runner@2.0.3(grammy@1.41.0)':
+  '@grammyjs/runner@2.0.3(grammy@1.45.1)':
     dependencies:
       abort-controller: 3.0.0
-      grammy: 1.41.0
+      grammy: 1.45.1
 
-  '@grammyjs/stream@1.0.0(grammy@1.41.0)':
+  '@grammyjs/stream@1.1.0(grammy@1.45.1)':
     dependencies:
       abort-controller: 3.0.0
-      grammy: 1.41.0
+      grammy: 1.45.1
 
-  '@grammyjs/types@3.25.0': {}
+  '@grammyjs/types@4.0.0': {}
 
   '@hono/node-server@1.19.9(hono@4.12.1)':
     dependencies:
@@ -8709,9 +8709,9 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  grammy@1.41.0:
+  grammy@1.45.1:
     dependencies:
-      '@grammyjs/types': 3.25.0
+      '@grammyjs/types': 4.0.0
       abort-controller: 3.0.0
       debug: 4.4.3
       node-fetch: 2.7.0

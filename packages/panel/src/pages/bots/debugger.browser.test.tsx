@@ -1,6 +1,6 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
 import { BotDebuggerPage } from "./debugger";
@@ -74,10 +74,27 @@ const failedRun = {
   ],
 };
 
+function botDetailResponse(platform: "telegram" | "lark-webhook" = "telegram") {
+  return new Response(JSON.stringify({ ok: true, data: { platform } }), { status: 200 });
+}
+
+function isBotDetailRequest(input: RequestInfo | URL) {
+  return String(input).endsWith("/api/bots/test-id");
+}
+
+function BotSwitcher() {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate("/bots/next-id/debugger")}>Switch bot</button>;
+}
+
 test("offers message and raw Channel event dry-runs", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 })),
+    vi.fn(async (input: RequestInfo | URL) =>
+      isBotDetailRequest(input)
+        ? botDetailResponse()
+        : new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+    ),
   );
   render(
     <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
@@ -91,6 +108,245 @@ test("offers message and raw Channel event dry-runs", async () => {
   await page.getByRole("button", { name: "Raw Channel Event" }).click();
   await expect.element(page.getByLabelText("Raw channel event")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Run dry-run" })).toBeVisible();
+});
+
+test("strictly sends a custom Telegram Rich Message from the debugger", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (isBotDetailRequest(input)) return botDetailResponse();
+    if (url.endsWith("/debug/rich-messages") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: { messageId: 77, chatId: 123456789, format: "markdown" },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Markdown" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.getByRole("button", { name: "HTML" }))
+    .toHaveAttribute("aria-pressed", "false");
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+
+  await expect
+    .element(page.getByRole("status"))
+    .toHaveTextContent("Sent: message_id=77 · chat_id=123456789 · markdown");
+  const request = fetchMock.mock.calls.find(([input]) =>
+    String(input).endsWith("/debug/rich-messages"),
+  );
+  expect(request?.[1]).toMatchObject({ method: "POST" });
+  expect(JSON.parse(String(request?.[1]?.body))).toMatchObject({
+    chatId: "123456789",
+    format: "markdown",
+  });
+});
+
+test("sends the selected HTML content and exposes the selected format", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (isBotDetailRequest(input)) return botDetailResponse();
+    if (String(input).endsWith("/debug/rich-messages") && init?.method === "POST") {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          data: { messageId: 78, chatId: 123456789, format: "html" },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByRole("button", { name: "HTML" }).click();
+  await expect
+    .element(page.getByRole("button", { name: "HTML" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.getByRole("button", { name: "Markdown" }))
+    .toHaveAttribute("aria-pressed", "false");
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+
+  const request = fetchMock.mock.calls.find(([input]) =>
+    String(input).endsWith("/debug/rich-messages"),
+  );
+  const body = JSON.parse(String(request?.[1]?.body)) as Record<string, unknown>;
+  expect(body).toMatchObject({
+    chatId: "123456789",
+    format: "html",
+  });
+  expect(body["content"]).toContain("<h1>Rich Message Test</h1>");
+});
+
+test("shows Telegram delivery errors as an alert", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (isBotDetailRequest(input)) return botDetailResponse();
+      if (String(input).endsWith("/debug/rich-messages") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ ok: false, error: "Bad Request: invalid rich HTML" }),
+          { status: 400 },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+    }),
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Bad Request: invalid rich HTML");
+});
+
+test("resets Rich Message state and ignores an old receipt after switching bots", async () => {
+  let resolveRichRequest: ((response: Response) => void) | undefined;
+  const pendingRichRequest = new Promise<Response>((resolve) => {
+    resolveRichRequest = resolve;
+  });
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/api/bots/test-id") || url.endsWith("/api/bots/next-id")) {
+      return botDetailResponse();
+    }
+    if (url.endsWith("/api/bots/test-id/debug/rich-messages") && init?.method === "POST") {
+      return pendingRichRequest;
+    }
+    return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <BotSwitcher />
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByRole("button", { name: "HTML" }).click();
+  await page.getByLabelText("Telegram rich message content").fill("<b>old bot</b>");
+  await page.getByRole("button", { name: "Send real Rich Message" }).click();
+  await page.getByRole("button", { name: "Switch bot" }).click();
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Markdown" }))
+    .toHaveAttribute("aria-pressed", "true");
+  await expect
+    .element(page.getByPlaceholder("For example, 123456789 or -1001234567890"))
+    .toHaveValue("");
+  await expect
+    .element(page.getByLabelText("Telegram rich message content"))
+    .toHaveValue(expect.stringContaining("# Rich Message Test"));
+
+  const staleResponse = new Response(
+    JSON.stringify({
+      ok: true,
+      data: { messageId: 79, chatId: 123456789, format: "html" },
+    }),
+    { status: 200 },
+  );
+  const staleJson = vi.spyOn(staleResponse, "json");
+  expect(resolveRichRequest).toBeTypeOf("function");
+  resolveRichRequest?.(staleResponse);
+  await expect.poll(() => staleJson).toHaveBeenCalledOnce();
+
+  expect(document.body.textContent).not.toContain("message_id=79");
+  await expect
+    .element(page.getByRole("button", { name: "Send real Rich Message" }))
+    .not.toHaveTextContent("Sending");
+});
+
+test("preserves a Rich Message draft when the language changes", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      isBotDetailRequest(input)
+        ? botDetailResponse()
+        : new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+    ),
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByText("Telegram Rich Message Test")).toBeVisible();
+  await page.getByPlaceholder("For example, 123456789 or -1001234567890").fill("123456789");
+  await page.getByLabelText("Telegram rich message content").fill("keep this draft");
+  await i18n.changeLanguage("zh-CN");
+
+  await expect.element(page.getByLabelText("Telegram 富文本内容")).toHaveValue("keep this draft");
+  await expect
+    .element(page.getByPlaceholder("例如 123456789 或 -1001234567890"))
+    .toHaveValue("123456789");
+});
+
+test("never renders Telegram delivery tools for a Lark bot", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      isBotDetailRequest(input)
+        ? botDetailResponse("lark-webhook")
+        : new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
+    ),
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(document.body.textContent).not.toContain("Telegram Rich Message Test");
+  await expect.element(page.getByRole("heading", { name: "AI Debugger" })).toBeVisible();
+  await expect.element(page.getByText("No Bot Runs yet.")).toBeVisible();
+  expect(document.body.textContent).not.toContain("Telegram Rich Message Test");
 });
 
 test("keeps a running stream open across transient errors and closes it on completion", async () => {
@@ -109,6 +365,7 @@ test("keeps a running stream open across transient errors and closes it on compl
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (isBotDetailRequest(input)) return botDetailResponse();
       const isDetail = url.endsWith(`/runs/${runningRun.id}`);
       const data = isDetail ? (completed ? succeededRun : runningRun) : [runningRun];
       return new Response(JSON.stringify({ ok: true, data }), { status: 200 });

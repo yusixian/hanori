@@ -11,6 +11,7 @@ import type {
   ImageOcrConfig,
   MemoryConfig,
   MessageConfig,
+  BotWithStatus,
   SummaryConfigStored,
   TimeoutConfig,
   WebToolsConfig,
@@ -142,6 +143,10 @@ export function BotAiSettingsPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
+  const [loadedBot, setLoadedBot] = useState<{
+    id: string;
+    platform: BotWithStatus["platform"];
+  } | null>(null);
 
   const sectionItems: AiSettingsNavItem[] = useMemo(
     () => [
@@ -230,6 +235,26 @@ export function BotAiSettingsPage() {
   useEffect(() => {
     loadConfig();
   }, [loadConfig]);
+
+  useEffect(() => {
+    let active = true;
+    setLoadedBot(null);
+    if (!botId) return () => undefined;
+
+    void (async () => {
+      try {
+        const response = await client.api.bots[":botId"].$get({ param: { botId } });
+        const json = await response.json();
+        if (active && json.ok) setLoadedBot({ id: botId, platform: json.data.platform });
+      } catch {
+        // Keep the platform unknown so Telegram-only settings stay hidden.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [botId]);
 
   useEffect(() => {
     if (!message) return;
@@ -704,7 +729,11 @@ export function BotAiSettingsPage() {
                 title={t("disclosures.messageDelivery.title")}
                 description={t("disclosures.messageDelivery.description")}
               >
-                <MessageSplittingSection config={msgCfg} onUpdate={updateMessageConfig} />
+                <MessageSplittingSection
+                  config={msgCfg}
+                  platform={loadedBot?.id === botId ? loadedBot?.platform : undefined}
+                  onUpdate={updateMessageConfig}
+                />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
                 title={t("disclosures.timeouts.title")}

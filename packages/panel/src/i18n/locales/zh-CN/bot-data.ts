@@ -136,7 +136,7 @@ export const botData = {
     eyebrow: "Bot 运维",
     title: "AI 调试器",
     description: "使用当前 Bot 配置执行模拟运行，检查模型流事件、错误链和可重放的运行记录。",
-    ownerOnly: "仅所有者可用 · 不产生外部副作用",
+    ownerOnly: "仅所有者可用",
     newRun: "新建运行",
     messageMode: "消息",
     rawMode: "原始渠道事件",
@@ -182,6 +182,7 @@ export const botData = {
       error: "错误",
     },
     errors: {
+      loadBot: "加载 Bot 详情失败",
       loadRuns: "加载运行记录失败",
       loadRun: "加载运行详情失败",
       replay: "重放失败",
@@ -189,6 +190,38 @@ export const botData = {
       mutate: "更新运行状态失败",
       invalidJson: "原始渠道事件必须是有效的 JSON",
       unknown: "未知调试器错误",
+    },
+    richMessage: {
+      title: "Telegram 富文本发送测试",
+      description: "直接调用当前运行中 Bot 的 sendRichMessage，验证 Telegram 实际解析与渲染结果。",
+      warning:
+        "这不是模拟运行：点击发送会立即在目标 Telegram 会话中产生一条真实消息。失败不会自动降级。",
+      chatId: "目标 Chat ID",
+      chatIdPlaceholder: "例如 123456789 或 -1001234567890",
+      format: "内容格式",
+      contentAria: "Telegram 富文本内容",
+      sampleMarkdown: `# Rich Message 测试
+
+**粗体**、_斜体_、==高亮== 和 $E = mc^2$
+
+- 列表项一
+- 列表项二
+
+| 项目 | 状态 |
+| --- | --- |
+| Rich Message | 正常 |
+
+<details><summary>展开详情</summary>这是一段折叠内容。</details>`,
+      sampleHtml: `<h1>Rich Message 测试</h1>
+<p><b>粗体</b>、<i>斜体</i>、<mark>高亮</mark> 和 <tg-math>E = mc^2</tg-math></p>
+<ul><li>列表项一</li><li>列表项二</li></ul>
+<details><summary>展开详情</summary><p>这是一段折叠内容。</p></details>`,
+      send: "发送真实富文本",
+      sending: "正在发送…",
+      success: "发送成功：message_id={{messageId}} · chat_id={{chatId}} · {{format}}",
+      errors: {
+        send: "Telegram 富文本发送失败",
+      },
     },
     markdown: {
       title: "AI 调试运行",

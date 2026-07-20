@@ -1,14 +1,18 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import type { MessageConfig, ReplyMode } from "@cos-tool-bot/shared";
+import { Switch } from "@/components/ui/switch";
+import type { BotWithStatus, MessageConfig, ReplyMode } from "@cos-tool-bot/shared";
+import { isRichMessageEnabled } from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function MessageSplittingSection({
   config,
+  platform,
   onUpdate,
 }: {
   config: MessageConfig;
+  platform?: BotWithStatus["platform"];
   onUpdate: (updates: Partial<MessageConfig>) => void;
 }) {
   const { t } = useTranslation("aiSettings");
@@ -19,6 +23,27 @@ export function MessageSplittingSection({
         <CardTitle className="text-base">{t("messageSplitting.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {platform === "telegram" && (
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="space-y-1">
+              <label htmlFor="richMessageEnabled" className="text-sm font-medium">
+                {t("messageSplitting.richMessage")}
+              </label>
+              <p className="text-muted-foreground text-xs">
+                {t("messageSplitting.richMessageDescription")}
+              </p>
+              <p className="text-muted-foreground text-xs">
+                {t("messageSplitting.richMessageCommand")}
+              </p>
+            </div>
+            <Switch
+              id="richMessageEnabled"
+              checked={isRichMessageEnabled(config)}
+              onCheckedChange={(richMessageEnabled) => onUpdate({ richMessageEnabled })}
+            />
+          </div>
+        )}
+
         <div className="space-y-1.5">
           <label className="text-sm font-medium">{t("messageSplitting.replyMode")}</label>
           <Select

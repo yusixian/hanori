@@ -261,6 +261,10 @@ export const aiSettings = {
   },
   messageSplitting: {
     title: "Reply Mode & Message Splitting",
+    richMessage: "Telegram Native Rich Messages",
+    richMessageDescription:
+      "When enabled, private streaming replies always use Rich Messages. Other replies use them only for structured formatting such as headings or lists; plain text, bold, and italic use regular messages.",
+    richMessageCommand: "Bot administrators can also change this with /richtext on|off.",
     replyMode: "Reply Mode",
     streamOption: "Stream (real-time draft animation)",
     segmentOption: "Segment (multi_message tool, human-like)",
