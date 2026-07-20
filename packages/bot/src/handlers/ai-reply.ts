@@ -271,6 +271,16 @@ const VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "send_artwork",
 ]);
 
+async function directlyReplyAndCleanup(
+  ctx: WrapperContext,
+  text: string,
+): Promise<number | undefined> {
+  const sent = await ctx.directlyReply(text).catch(() => undefined);
+  if (!sent) return undefined;
+  await ctx.deleteWaiting().catch(() => {});
+  return sent.message_id;
+}
+
 async function safeReply(ctx: WrapperContext, text: string): Promise<number | undefined> {
   try {
     const html = markdownToTelegramHtml(text);
@@ -279,8 +289,7 @@ async function safeReply(ctx: WrapperContext, text: string): Promise<number | un
     try {
       return await ctx.resolveWait(text);
     } catch {
-      const sent = await ctx.directlyReply(text).catch(() => undefined);
-      return sent?.message_id;
+      return directlyReplyAndCleanup(ctx, text);
     }
   }
 }
@@ -1804,6 +1813,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         }
       }
 
+      if (isStreamMode && isPrivate && streamStarted) {
+        await ctx.deleteWaiting();
+      }
+
       throwCapturedStreamError(capturedStreamError, streamStarted);
 
       const durationMs = Date.now() - startTime;
@@ -2032,7 +2045,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       try {
         await ctx.resolveWait(errorReply);
       } catch {
-        await ctx.directlyReply(errorReply).catch(() => {});
+        await directlyReplyAndCleanup(ctx, errorReply);
       }
     } finally {
       releaseChatLock?.();

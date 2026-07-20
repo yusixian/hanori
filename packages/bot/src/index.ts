@@ -439,7 +439,7 @@ export function createBot(config: BotConfig) {
     logger.warn(`Failed to set commands: ${desc}`);
   });
 
-  bot.catch((err) => {
+  bot.catch(async (err) => {
     const ctx = err.ctx;
     let errorMsg = "处理消息 " + ctx.update.update_id + " 时出错:\n```\n";
 
@@ -454,7 +454,7 @@ export function createBot(config: BotConfig) {
     errorMsg += "\n```";
     logger.error(errorMsg);
     config.onLog?.({ level: "error", message: errorMsg, meta: { updateId: ctx.update.update_id } });
-    ctx.resolveWait(errorMsg, "Markdown");
+    await ctx.resolveWait(errorMsg, "Markdown").catch(() => {});
   });
 
   return bot;

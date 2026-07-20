@@ -91,6 +91,18 @@ describe("AI reply delivery", () => {
     expect(ctx.resolveWait).toHaveBeenCalledWith("<b>Complete</b>", "HTML");
   });
 
+  it("deletes the waiting status after direct fallback delivery succeeds", async () => {
+    const { ctx, directlyReply } = createContext();
+    vi.mocked(ctx.resolveWait).mockRejectedValue(new Error("edit failed"));
+
+    await expect(safeFormattedReply(ctx, "# Complete", false)).resolves.toBe(11);
+
+    expect(ctx.resolveWait).toHaveBeenCalledTimes(2);
+    expect(directlyReply).toHaveBeenCalledWith("# Complete");
+    expect(ctx.deleteWaiting).toHaveBeenCalledOnce();
+    expect(ctx.waiting_message).toBeUndefined();
+  });
+
   it("splits a long Rich fallback using the configured threshold", async () => {
     let nextMessageId = 30;
     const sendRichMessage = vi.fn().mockImplementation(async (_chatId, richMessage) => {

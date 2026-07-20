@@ -29,7 +29,8 @@ function createContext() {
   const api = {
     sendRichMessageDraft: vi.fn().mockResolvedValue(true),
   } as unknown as Api;
-  const ctx = {
+  let ctx!: BotContext;
+  ctx = {
     update: { update_id: 42 },
     message: { message_id: 7, text: "hello" },
     chat: { id: 123, type: "private" },
@@ -42,7 +43,9 @@ function createContext() {
       if (!text.trim()) throw streamError;
       return sentMessage(20, text);
     }),
-    deleteWaiting: vi.fn().mockResolvedValue(undefined),
+    deleteWaiting: vi.fn(async () => {
+      ctx.waiting_message = undefined;
+    }),
     resolveWait: vi.fn(async (text: string) => {
       replies.push(text);
       return 21;
@@ -104,5 +107,33 @@ describe("AI reply streaming", () => {
     expect(onLog).not.toHaveBeenCalledWith(
       expect.objectContaining({ level: "error", message: expect.stringContaining("failed") }),
     );
+  });
+
+  it("cleans a waiting status created after the final streamed chunk", async () => {
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx } = createContext();
+    async function* terminalToolStream() {
+      yield "Complete";
+      ctx.waiting_message = sentMessage(30, "🖼️ 查看作品...");
+    }
+    streamTextMock.mockReturnValue({
+      textStream: terminalToolStream(),
+      text: Promise.resolve("Complete"),
+      steps: Promise.resolve([
+        {
+          toolCalls: [{ toolName: "fetch_artwork_info" }],
+          toolResults: [{ toolName: "fetch_artwork_info" }],
+        },
+      ]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const { handler } = createAiReplyHandler(createConfig(onLog));
+
+    if (typeof handler !== "function") throw new Error("Expected a middleware function");
+    await handler(ctx, vi.fn());
+
+    expect(ctx.waiting_message).toBeUndefined();
+    expect(ctx.deleteWaiting).toHaveBeenCalled();
   });
 });
