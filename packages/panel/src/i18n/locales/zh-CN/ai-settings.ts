@@ -384,7 +384,7 @@ export const aiSettings = {
       "每行一个 owner/repository。只有白名单仓库可使用 Token 读取私有内容或执行管理员写操作。",
     tokenPermissionsTitle: "建议的最小 GitHub 权限",
     tokenPermissions:
-      "仅选择上方仓库；Repository permissions 设置 Metadata: Read、Contents: Read and write、Issues: Read and write。后续需要创建 PR 时再添加 Pull requests: Read and write。",
+      "仅选择上方仓库；Repository permissions 设置 Metadata: Read、Contents: Read and write、Issues: Read and write、Pull requests: Read and write。",
   },
   artworkTools: {
     title: "作品工具",

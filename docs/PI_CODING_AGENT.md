@@ -35,6 +35,10 @@ and repository builds can require substantially more.
 - The trusted server configures Ai-chan's Git author identity, creates the local branch, and creates a
   local commit after Pi finishes. Push is a separate one-time Telegram confirmation bound to the
   initiating administrator, chat, branch, and exact commit SHA.
+- After the branch is pushed, an administrator can separately propose a same-repository pull request.
+  The trusted bot resolves head and base, binds confirmation to the exact remote head SHA, and
+  rechecks it before creating or idempotently returning an existing open pull request. Pi never
+  receives the GitHub token or creates the pull request itself.
 - Ordinary members keep only the anonymous public-repository read tools.
 
 Pi itself does not provide a sandbox. The container boundary is therefore required; do not run the

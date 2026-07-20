@@ -12,7 +12,7 @@ import type { Api } from "grammy";
 import { InlineKeyboard } from "grammy";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { GitHubClient } from "../services/github-client.js";
+import { GitHubApiError, GitHubClient, type GitHubPullRequest } from "../services/github-client.js";
 import type { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import { zodToAiSchema } from "./utils.js";
 
@@ -64,6 +64,26 @@ function describeBody(body: string | undefined): string {
   if (body.length <= CONFIRMATION_BODY_PREVIEW_CHARS) return `\n正文：${preview || "（清空）"}`;
   const digest = createHash("sha256").update(body).digest("hex").slice(0, 12);
   return `\n正文前 ${CONFIRMATION_BODY_PREVIEW_CHARS} 字：${preview}\n（完整正文 ${body.length} 字，SHA-256 ${digest}…）`;
+}
+
+function describePullRequestBody(body: string | undefined): string {
+  const exactBody = body ?? "";
+  const preview = exactBody.slice(0, CONFIRMATION_BODY_PREVIEW_CHARS);
+  const digest = createHash("sha256").update(exactBody).digest("hex");
+  const suffix = exactBody.length > CONFIRMATION_BODY_PREVIEW_CHARS ? "…" : "";
+  const label = body === undefined ? "（未提供）" : preview || "（空）";
+  return `正文预览：${label}${suffix}\n正文 SHA-256：${digest}`;
+}
+
+function pullRequestResult(
+  repository: string,
+  pull: GitHubPullRequest,
+  existing: boolean,
+): { summary: string; url: string } {
+  return {
+    summary: `${existing ? "已存在" : "已创建"} ${repository}#${pull.number}：${pull.title}`,
+    url: pull.html_url,
+  };
 }
 
 export function createGitHubTools(options: GitHubToolsOptions): Record<string, Tool> {
@@ -271,6 +291,86 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
         },
       });
     }
+
+    tools.github_create_pull_request = tool({
+      description:
+        "提议在同一 GitHub 仓库的两个分支间创建 Pull Request。只对管理员开放；创建前会绑定远端 head commit，并要求 Telegram 确认。",
+      inputSchema: zodToAiSchema(
+        z.object({
+          repository: repositorySchema,
+          head: z.string().min(1).max(200).describe("同一仓库内的来源分支"),
+          base: z.string().min(1).max(200).describe("同一仓库内的目标分支"),
+          title: z.string().min(1).max(256),
+          body: z.string().max(65_536).optional(),
+          draft: z.boolean().default(false),
+        }),
+      ),
+      execute: async ({ repository, head, base, title, body, draft }) => {
+        try {
+          const isDraft = draft === true;
+          const client = writeClient(repository);
+          const headRef = await client.resolveBranch(repository, head);
+          const baseRef = await client.resolveBranch(repository, base);
+          const description = [
+            `在 ${repository} 创建 Pull Request`,
+            `${head} -> ${base}`,
+            `标题：${title}`,
+            `草稿：${isDraft ? "是" : "否"}`,
+            `Head SHA：${headRef.sha}`,
+            `Base SHA（仅校验分支存在）：${baseRef.sha}`,
+            describePullRequestBody(body),
+          ].join("\n");
+
+          return await proposeAction(description, async () => {
+            const currentHead = await client.resolveBranch(repository, head);
+            if (currentHead.sha !== headRef.sha) {
+              throw new Error(
+                `Pull request source changed after confirmation preview (${headRef.sha} -> ${currentHead.sha}); request a new preview`,
+              );
+            }
+
+            const existing = await client.findOpenPullRequest(repository, head, base);
+            if (existing) {
+              if (existing.head.sha !== headRef.sha) {
+                throw new Error(
+                  `Pull request source changed while checking existing requests (${headRef.sha} -> ${existing.head.sha}); request a new preview`,
+                );
+              }
+              return pullRequestResult(repository, existing, true);
+            }
+
+            try {
+              const created = await client.createPullRequest(repository, {
+                title,
+                head,
+                base,
+                body,
+                draft: isDraft,
+                expectedHeadSha: headRef.sha,
+              });
+              return pullRequestResult(repository, created, false);
+            } catch (error) {
+              // GitHub cannot atomically combine duplicate lookup, head-SHA binding, and creation.
+              // Re-read first so a concurrent creator or a timed-out successful POST is idempotent.
+              const raced = await client
+                .findOpenPullRequest(repository, head, base)
+                .catch(() => undefined);
+              if (raced?.head.sha === headRef.sha) {
+                return pullRequestResult(repository, raced, true);
+              }
+              if (error instanceof GitHubApiError && error.status === 403) throw error;
+              const safeMessage =
+                error instanceof GitHubApiError ? error.message : "GitHub request failed";
+              throw new Error(
+                `${safeMessage}. No pull request URL was verified; GitHub creation is non-atomic, so check the repository before retrying`,
+              );
+            }
+          });
+        } catch (error) {
+          return formatError(error);
+        }
+      },
+    });
 
     tools.github_create_issue = tool({
       description:

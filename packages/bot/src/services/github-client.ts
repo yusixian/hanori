@@ -17,6 +17,37 @@ export interface GitHubIssue {
   labels?: Array<{ name?: string } | string>;
 }
 
+export interface GitHubBranchRef {
+  ref: string;
+  sha: string;
+}
+
+export interface GitHubPullRequest {
+  number: number;
+  title: string;
+  state: "open" | "closed";
+  html_url: string;
+  draft: boolean;
+  head: {
+    ref: string;
+    sha: string;
+    repo: { full_name: string };
+  };
+  base: {
+    ref: string;
+    sha: string;
+    repo: { full_name: string };
+  };
+}
+
+interface GitHubRefResponse {
+  ref: string;
+  object: {
+    type: string;
+    sha: string;
+  };
+}
+
 interface GitHubContentResponse {
   type: string;
   name: string;
@@ -55,7 +86,7 @@ export interface GitHubClientOptions {
 }
 
 const API_ROOT = "https://api.github.com";
-const MAX_ERROR_LENGTH = 500;
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/i;
 
 function encodePath(value: string): string {
   const segments = value.split("/").filter(Boolean);
@@ -63,6 +94,67 @@ function encodePath(value: string): string {
     throw new GitHubApiError("Invalid GitHub path", 400);
   }
   return segments.map(encodeURIComponent).join("/");
+}
+
+function assertBranchName(branch: string): void {
+  if (
+    !branch ||
+    branch.length > 200 ||
+    !/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(branch) ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.includes("//") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".") ||
+    branch.endsWith(".lock")
+  ) {
+    throw new GitHubApiError("Invalid GitHub branch", 400);
+  }
+  encodePath(branch);
+}
+
+function validatePullRequest(
+  value: unknown,
+  repository: string,
+  head: string,
+  base: string,
+  expectedHeadSha?: string,
+): GitHubPullRequest {
+  if (!value || typeof value !== "object") {
+    throw new GitHubApiError("GitHub returned an unexpected pull request", 502);
+  }
+  const pull = value as GitHubPullRequest;
+  const sameRepository = (name: string | undefined) =>
+    name?.toLowerCase() === repository.toLowerCase();
+  const expectedUrl = `https://github.com/${repository}/pull/${pull.number}`.toLowerCase();
+  if (
+    !Number.isInteger(pull.number) ||
+    pull.number <= 0 ||
+    typeof pull.title !== "string" ||
+    pull.state !== "open" ||
+    typeof pull.draft !== "boolean" ||
+    pull.html_url?.toLowerCase() !== expectedUrl ||
+    pull.head?.ref !== head ||
+    pull.base?.ref !== base ||
+    !sameRepository(pull.head?.repo?.full_name) ||
+    !sameRepository(pull.base?.repo?.full_name) ||
+    !COMMIT_SHA_RE.test(pull.head?.sha ?? "") ||
+    !COMMIT_SHA_RE.test(pull.base?.sha ?? "") ||
+    (expectedHeadSha !== undefined && pull.head.sha !== expectedHeadSha)
+  ) {
+    throw new GitHubApiError("GitHub returned an unexpected pull request", 502);
+  }
+  return pull;
+}
+
+function safeApiError(status: number): string {
+  if (status === 401 || status === 403) {
+    return "GitHub denied the request; verify the token and repository permissions";
+  }
+  if (status === 404) return "GitHub repository or ref was not found";
+  if (status === 422) return "GitHub rejected the pull request details";
+  if (status === 429) return "GitHub rate-limited the request; try again later";
+  return `GitHub API request failed (${status})`;
 }
 
 export class GitHubClient {
@@ -134,6 +226,80 @@ export class GitHubClient {
     });
   }
 
+  async resolveBranch(repository: string, branch: string): Promise<GitHubBranchRef> {
+    assertBranchName(branch);
+    const result = await this.request<unknown>(
+      `/repos/${encodePath(repository)}/git/ref/heads/${encodePath(branch)}`,
+    );
+    const branchRef = result as GitHubRefResponse | null;
+    if (
+      !branchRef ||
+      branchRef.ref !== `refs/heads/${branch}` ||
+      branchRef.object?.type !== "commit" ||
+      !COMMIT_SHA_RE.test(branchRef.object?.sha ?? "")
+    ) {
+      throw new GitHubApiError("GitHub returned an unexpected branch ref", 502);
+    }
+    return { ref: branch, sha: branchRef.object.sha };
+  }
+
+  async findOpenPullRequest(
+    repository: string,
+    head: string,
+    base: string,
+  ): Promise<GitHubPullRequest | undefined> {
+    assertBranchName(head);
+    assertBranchName(base);
+    const [owner] = repository.split("/");
+    const query = new URLSearchParams({
+      state: "open",
+      head: `${owner}:${head}`,
+      base,
+      per_page: "100",
+    });
+    const pulls = await this.request<unknown>(`/repos/${encodePath(repository)}/pulls?${query}`);
+    if (!Array.isArray(pulls)) {
+      throw new GitHubApiError("GitHub returned an unexpected pull request list", 502);
+    }
+    const match = pulls.find((value) => {
+      if (!value || typeof value !== "object") return false;
+      const pull = value as GitHubPullRequest;
+      return (
+        pull.head?.ref === head &&
+        pull.base?.ref === base &&
+        pull.head?.repo?.full_name?.toLowerCase() === repository.toLowerCase() &&
+        pull.base?.repo?.full_name?.toLowerCase() === repository.toLowerCase()
+      );
+    });
+    return match ? validatePullRequest(match, repository, head, base) : undefined;
+  }
+
+  async createPullRequest(
+    repository: string,
+    input: {
+      title: string;
+      head: string;
+      base: string;
+      body?: string;
+      draft: boolean;
+      expectedHeadSha: string;
+    },
+  ): Promise<GitHubPullRequest> {
+    assertBranchName(input.head);
+    assertBranchName(input.base);
+    const result = await this.request<unknown>(`/repos/${encodePath(repository)}/pulls`, {
+      method: "POST",
+      body: JSON.stringify({
+        title: input.title,
+        head: input.head,
+        base: input.base,
+        ...(input.body === undefined ? {} : { body: input.body }),
+        draft: input.draft,
+      }),
+    });
+    return validatePullRequest(result, repository, input.head, input.base, input.expectedHeadSha);
+  }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/vnd.github+json");
@@ -148,18 +314,8 @@ export class GitHubClient {
       signal: init.signal ?? AbortSignal.timeout(30_000),
     });
     if (!response.ok) {
-      const raw = await response.text();
-      let detail = raw;
-      try {
-        const parsed = JSON.parse(raw) as { message?: string };
-        detail = parsed.message ?? raw;
-      } catch {
-        // Use the response text when GitHub did not return JSON.
-      }
-      throw new GitHubApiError(
-        `GitHub API ${response.status}: ${detail.slice(0, MAX_ERROR_LENGTH)}`,
-        response.status,
-      );
+      await response.body?.cancel().catch(() => undefined);
+      throw new GitHubApiError(safeApiError(response.status), response.status);
     }
     return (await response.json()) as T;
   }

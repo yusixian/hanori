@@ -451,6 +451,7 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   github_list_issues: "🐙 查看 Issue...",
   github_code_task: "🛠️ Pi 正在修改和测试代码...",
   github_push_branch: "🔐 准备分支推送确认...",
+  github_create_pull_request: "🔐 准备 Pull Request 创建确认...",
   github_create_issue: "🔐 准备 Issue 创建确认...",
   github_update_issue: "🔐 准备 Issue 更新确认...",
   // Agent tools

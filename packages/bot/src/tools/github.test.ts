@@ -32,6 +32,55 @@ function repoResponse() {
   );
 }
 
+function branchResponse(branch: string, sha: string) {
+  return new Response(
+    JSON.stringify({ ref: `refs/heads/${branch}`, object: { type: "commit", sha } }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+function pullResponse({
+  repository = "owner/repo",
+  head = "feat/ai",
+  headSha = "a".repeat(40),
+  base = "main",
+  baseSha = "b".repeat(40),
+  number = 42,
+  title = "Add feature",
+  draft = false,
+}: Partial<{
+  repository: string;
+  head: string;
+  headSha: string;
+  base: string;
+  baseSha: string;
+  number: number;
+  title: string;
+  draft: boolean;
+}> = {}) {
+  return {
+    number,
+    title,
+    state: "open",
+    html_url: `https://github.com/${repository}/pull/${number}`,
+    draft,
+    head: { ref: head, sha: headSha, repo: { full_name: repository } },
+    base: { ref: base, sha: baseSha, repo: { full_name: repository } },
+  };
+}
+
+function adminConfig(token = "token") {
+  return {
+    enabled: true,
+    publicReadEnabled: true,
+    codingAgentEnabled: false,
+    token,
+    authorName: "Ai-chan",
+    authorEmail: "ai@example.com",
+    repositories: ["owner/repo"],
+  };
+}
+
 describe("GitHub tools permissions", () => {
   it("gives non-admins anonymous public-read tools only", async () => {
     const fetchMock = vi.fn().mockResolvedValue(repoResponse());
@@ -61,6 +110,7 @@ describe("GitHub tools permissions", () => {
 
     expect(tools.github_code_task).toBeUndefined();
     expect(tools.github_push_branch).toBeUndefined();
+    expect(tools.github_create_pull_request).toBeUndefined();
     expect(tools.github_create_issue).toBeUndefined();
     expect(tools.github_update_issue).toBeUndefined();
     await execute(tools.github_repository, { repository: "owner/repo" });
@@ -197,6 +247,293 @@ describe("GitHub tools permissions", () => {
       }),
     ).resolves.toEqual({ error: "Invalid GitHub path" });
     expect(fetchMock).not.toHaveBeenCalled();
+    registry.destroy();
+  });
+
+  it("offers PR creation independently of Pi but rejects missing credentials and allowlist entries", async () => {
+    const registry = new PendingGitHubActionRegistry();
+    const withoutToken = createGitHubTools({
+      config: { ...adminConfig(), token: undefined },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: vi.fn(),
+    });
+    expect(withoutToken.github_create_pull_request).toBeDefined();
+    await expect(
+      execute(withoutToken.github_create_pull_request, {
+        repository: "owner/repo",
+        head: "feat/ai",
+        base: "main",
+        title: "Add feature",
+        draft: false,
+      }),
+    ).resolves.toEqual({ error: "Ai-chan's GitHub token is not configured" });
+
+    const outsideAllowlist = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: vi.fn(),
+    });
+    await expect(
+      execute(outsideAllowlist.github_create_pull_request, {
+        repository: "owner/other",
+        head: "feat/ai",
+        base: "main",
+        title: "Add feature",
+        draft: false,
+      }),
+    ).resolves.toEqual({
+      error: "Repository is not in the administrator-managed GitHub allowlist",
+    });
+    registry.destroy();
+  });
+
+  it("rejects fork-style head syntax before making a request", async () => {
+    const fetchMock = vi.fn();
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock,
+    });
+
+    await expect(
+      execute(tools.github_create_pull_request, {
+        repository: "owner/repo",
+        head: "fork-owner:feat/ai",
+        base: "main",
+        title: "No forks",
+        draft: false,
+      }),
+    ).resolves.toEqual({ error: "Invalid GitHub branch" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    registry.destroy();
+  });
+
+  it("binds PR confirmation to refs and sends the exact payload only after confirmation", async () => {
+    const headSha = "a".repeat(40);
+    const baseSha = "b".repeat(40);
+    const body = "Exact PR body";
+    const requests: Array<{ url: string; method: string; body?: string }> = [];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      requests.push({ url, method, body: typeof init?.body === "string" ? init.body : undefined });
+      if (url.includes("/git/ref/heads/feat/ai")) return branchResponse("feat/ai", headSha);
+      if (url.includes("/git/ref/heads/main")) return branchResponse("main", baseSha);
+      if (url.includes("/pulls?") && method === "GET") {
+        return new Response("[]", { status: 200 });
+      }
+      if (url.endsWith("/pulls") && method === "POST") {
+        return new Response(
+          JSON.stringify(pullResponse({ headSha, baseSha, title: "Add feature", draft: true })),
+          { status: 201 },
+        );
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const api = createApi();
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api,
+      pendingActions: registry,
+      fetch: fetchMock as typeof fetch,
+    });
+
+    const proposal = (await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Add feature",
+      body,
+      draft: true,
+    })) as { action_id: string; description: string };
+
+    expect(proposal.description).toContain("feat/ai -> main");
+    expect(proposal.description).toContain(headSha);
+    expect(proposal.description).toContain(baseSha);
+    expect(proposal.description).toContain("正文 SHA-256：");
+    expect(requests.filter((request) => request.method === "POST")).toHaveLength(0);
+
+    const result = await registry.take(proposal.action_id)!.execute();
+    expect(result).toEqual({
+      summary: "已创建 owner/repo#42：Add feature",
+      url: "https://github.com/owner/repo/pull/42",
+    });
+    const post = requests.find((request) => request.method === "POST");
+    expect(post?.url).toBe("https://api.github.com/repos/owner/repo/pulls");
+    expect(JSON.parse(post!.body!)).toEqual({
+      title: "Add feature",
+      head: "feat/ai",
+      base: "main",
+      body,
+      draft: true,
+    });
+    registry.destroy();
+  });
+
+  it("rejects PR confirmation if the remote head changed", async () => {
+    let headReads = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/feat/ai")) {
+        headReads++;
+        return branchResponse("feat/ai", (headReads === 1 ? "a" : "c").repeat(40));
+      }
+      if (url.includes("/git/ref/heads/main")) return branchResponse("main", "b".repeat(40));
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    });
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock as typeof fetch,
+    });
+    const proposal = (await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Add feature",
+      draft: false,
+    })) as { action_id: string };
+
+    await expect(registry.take(proposal.action_id)!.execute()).rejects.toThrow(
+      "source changed after confirmation preview",
+    );
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    registry.destroy();
+  });
+
+  it("returns an existing same-repository PR without posting a duplicate", async () => {
+    const headSha = "a".repeat(40);
+    const existing = pullResponse({ headSha, number: 17, title: "Existing" });
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/git/ref/heads/feat/ai")) return branchResponse("feat/ai", headSha);
+      if (url.includes("/git/ref/heads/main")) return branchResponse("main", "b".repeat(40));
+      if (url.includes("/pulls?") && (init?.method ?? "GET") === "GET") {
+        return new Response(JSON.stringify([existing]), { status: 200 });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    });
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock as typeof fetch,
+    });
+    const proposal = (await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Add feature",
+      draft: false,
+    })) as { action_id: string };
+
+    await expect(registry.take(proposal.action_id)!.execute()).resolves.toEqual({
+      summary: "已存在 owner/repo#17：Existing",
+      url: "https://github.com/owner/repo/pull/17",
+    });
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+    registry.destroy();
+  });
+
+  it.each([
+    [403, "GitHub denied the request; verify the token and repository permissions"],
+    [422, "GitHub rejected the pull request details"],
+  ])("does not expose GitHub %i response bodies", async (status, expected) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ message: "secret upstream detail token=abc" }), { status }),
+      );
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock,
+    });
+
+    const result = await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Add feature",
+      draft: false,
+    });
+    expect(result).toEqual({ error: expected });
+    expect(JSON.stringify(result)).not.toContain("secret upstream detail");
+    registry.destroy();
+  });
+
+  it("sanitizes an unverified 422 returned by the create POST", async () => {
+    const headSha = "a".repeat(40);
+    let pullReads = 0;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      if (url.includes("/git/ref/heads/feat/ai")) return branchResponse("feat/ai", headSha);
+      if (url.includes("/git/ref/heads/main")) return branchResponse("main", "b".repeat(40));
+      if (url.includes("/pulls?") && method === "GET") {
+        pullReads++;
+        return new Response("[]", { status: 200 });
+      }
+      if (url.endsWith("/pulls") && method === "POST") {
+        return new Response(JSON.stringify({ message: "token=secret body=private" }), {
+          status: 422,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url}`);
+    });
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock as typeof fetch,
+    });
+    const proposal = (await execute(tools.github_create_pull_request, {
+      repository: "owner/repo",
+      head: "feat/ai",
+      base: "main",
+      title: "Add feature",
+      draft: false,
+    })) as { action_id: string };
+
+    await expect(registry.take(proposal.action_id)!.execute()).rejects.toThrow(
+      "GitHub rejected the pull request details. No pull request URL was verified",
+    );
+    expect(pullReads).toBe(2);
     registry.destroy();
   });
 

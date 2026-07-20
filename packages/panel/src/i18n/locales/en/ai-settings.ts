@@ -419,7 +419,7 @@ export const aiSettings = {
       "One owner/repository per line. Only allowlisted repositories may use the token for private reads or administrator writes.",
     tokenPermissionsTitle: "Recommended minimum GitHub permissions",
     tokenPermissions:
-      "Select only the repositories above; set Metadata: Read, Contents: Read and write, and Issues: Read and write. Add Pull requests: Read and write later if PR creation is enabled.",
+      "Select only the repositories above; set Metadata: Read, Contents: Read and write, Issues: Read and write, and Pull requests: Read and write.",
   },
   artworkTools: {
     title: "Artwork Tools",
