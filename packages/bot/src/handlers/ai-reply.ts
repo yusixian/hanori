@@ -1117,16 +1117,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   const handler: Middleware<BotContext> = async (ctx, next) => {
     const msg = ctx.message;
     if (!msg) return next();
-    if (!msg.text && !msg.photo && !msg.document) return next();
 
     // Skip commands
     const entities = msg.entities ?? [];
     if (entities.some((e) => e.type === "bot_command" && e.offset === 0)) {
       return next();
     }
-
-    // Global kill switch — /stop flips this on; AI replies suppressed until /resume
-    if (aiDisabled) return next();
 
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
@@ -1135,12 +1131,36 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     const userId = ctx.from?.id;
     if (!userId) return next();
 
+    const isAdmin = config.adminChatIds.includes(userId);
+    const userName = getDisplayName(ctx.from);
+
+    let effectivePrompt = config.systemPrompt;
+    let triggerResult: TriggerResult = false;
+    let groupConversationEnabled = conversationCfg.enabled;
+    let groupMaxContext = conversationCfg.maxContextMessages;
+    let groupTriggerConfig = config.triggerConfig;
+
+    if (isPrivate) {
+      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) return next();
+    } else {
+      const groupCfg = resolveGroupConfig(config, chatId);
+      if (!groupCfg.enabled) return next();
+      if (!groupCfg.whitelisted && !isAdmin) return next();
+
+      effectivePrompt = groupCfg.systemPrompt;
+      groupConversationEnabled = groupCfg.conversationEnabled;
+      groupMaxContext = groupCfg.maxContextMessages;
+      groupTriggerConfig = groupCfg.triggerConfig;
+    }
+
+    if (ctx.from) profileObserver?.observe(ctx.api, ctx.from);
+
+    const supportsAiContent = !!(msg.text || msg.photo || msg.document);
+    if (!supportsAiContent || aiDisabled) return next();
+
     // Capture API reference and track private chats for event handlers
     botApi = ctx.api;
     if (isPrivate) knownPrivateChats.add(chatId);
-
-    const isAdmin = config.adminChatIds.includes(userId);
-    const userName = getDisplayName(ctx.from);
 
     // Push to ring buffer for group chats (before trigger check)
     if (!isPrivate) {
@@ -1164,26 +1184,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
     }
 
-    let effectivePrompt = config.systemPrompt;
-    let triggerResult: TriggerResult = false;
-    let groupConversationEnabled = conversationCfg.enabled;
-    let groupMaxContext = conversationCfg.maxContextMessages;
-
-    if (isPrivate) {
-      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) return next();
-      triggerResult = "reply"; // Private always triggers
-    } else {
-      const groupCfg = resolveGroupConfig(config, chatId);
-      if (!groupCfg.enabled) return next();
-      if (!groupCfg.whitelisted && !isAdmin) return next();
-
-      triggerResult = checkTrigger(ctx, groupCfg.triggerConfig, chatId, cooldownMap);
-      effectivePrompt = groupCfg.systemPrompt;
-      groupConversationEnabled = groupCfg.conversationEnabled;
-      groupMaxContext = groupCfg.maxContextMessages;
-    }
-
-    if (ctx.from) profileObserver?.observe(ctx.api, ctx.from);
+    triggerResult = isPrivate
+      ? "reply"
+      : checkTrigger(ctx, groupTriggerConfig, chatId, cooldownMap);
     if (!triggerResult) return next();
 
     // Determine if conversation history is enabled

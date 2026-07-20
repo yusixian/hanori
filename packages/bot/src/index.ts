@@ -431,7 +431,7 @@ export function createBot(config: BotConfig) {
       await callbackQueryHandler(ctx);
     });
 
-    bot.on(["message:text", "message:photo", "message:document"], aiHandler);
+    bot.on("message", aiHandler);
   }
 
   bot.api.setMyCommands(commands).catch((err) => {

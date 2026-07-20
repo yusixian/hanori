@@ -1,6 +1,6 @@
 import type { MemoryCallbacks, PeopleProfileObservation } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
-import type { User } from "grammy/types";
+import type { PhotoSize, User } from "grammy/types";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -36,6 +36,25 @@ function observationFromUser(user: User): PeopleProfileObservation {
     languageCode: user.language_code ?? null,
     isPremium: user.is_premium === true,
   };
+}
+
+function largestPhoto(sizes: PhotoSize[] | undefined): PhotoSize | undefined {
+  return sizes
+    ?.filter(({ width, height }) => width > 0 && height > 0)
+    .reduce<PhotoSize | undefined>((largest, candidate) => {
+      if (!largest) return candidate;
+      const areaDifference = candidate.width * candidate.height - largest.width * largest.height;
+      if (areaDifference !== 0) return areaDifference > 0 ? candidate : largest;
+      const sizeDifference = (candidate.file_size ?? 0) - (largest.file_size ?? 0);
+      if (sizeDifference !== 0) return sizeDifference > 0 ? candidate : largest;
+      if (candidate.width !== largest.width)
+        return candidate.width > largest.width ? candidate : largest;
+      if (candidate.height !== largest.height)
+        return candidate.height > largest.height ? candidate : largest;
+      return candidate.file_unique_id.localeCompare(largest.file_unique_id) > 0
+        ? candidate
+        : largest;
+    }, undefined);
 }
 
 export class TelegramProfileObserver {
@@ -84,7 +103,7 @@ export class TelegramProfileObserver {
   private async refreshAvatar(api: ProfilePhotoApi, observation: PeopleProfileObservation) {
     const photos = await api.getUserProfilePhotos(observation.telegramId, { limit: 1 });
     const sizes = photos.photos[0];
-    const photo = sizes?.[sizes.length - 1];
+    const photo = largestPhoto(sizes);
     if (!photo) {
       const result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,

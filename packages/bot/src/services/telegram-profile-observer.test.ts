@@ -139,6 +139,21 @@ describe("TelegramProfileObserver", () => {
     tempDirs.push(dataDir);
     const { memory, avatarUpdates } = createMemory();
     const api = createApi();
+    api.getUserProfilePhotos.mockResolvedValue({
+      total_count: 1,
+      photos: [
+        [
+          { file_id: "medium", file_unique_id: "avatar-medium", width: 640, height: 640 },
+          { file_id: "largest", file_unique_id: "avatar-largest", width: 900, height: 700 },
+          { file_id: "last", file_unique_id: "avatar-last", width: 1280, height: 320 },
+        ],
+      ],
+    });
+    api.getFile.mockResolvedValue({
+      file_id: "largest",
+      file_unique_id: "avatar-largest",
+      file_path: "photos/largest.jpg",
+    });
     const fetchImpl = vi.fn(
       async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
         new Response(new Uint8Array([1, 2, 3]), {
@@ -158,13 +173,14 @@ describe("TelegramProfileObserver", () => {
     await vi.waitFor(() => expect(avatarUpdates).toHaveLength(1));
     expect(avatarUpdates[0]).toMatchObject({
       telegramId: 42,
-      avatarVersion: "avatar-v1",
+      avatarVersion: "avatar-largest",
     });
     expect(avatarUpdates[0]!.avatarPath).toMatch(/^avatars\/42-[^/]+\.jpg$/);
     expect(await fs.readFile(path.join(dataDir, avatarUpdates[0]!.avatarPath!))).toEqual(
       Buffer.from([1, 2, 3]),
     );
-    expect(fetchImpl.mock.calls[0]?.[0]).toContain("/botsecret/photos/avatar.jpg");
+    expect(api.getFile).toHaveBeenCalledWith("largest");
+    expect(fetchImpl.mock.calls[0]?.[0]).toContain("/botsecret/photos/largest.jpg");
   });
 
   it("keeps the previous avatar and removes the downloaded file when persistence fails", async () => {
