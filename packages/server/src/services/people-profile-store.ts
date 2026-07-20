@@ -159,7 +159,11 @@ export class PeopleProfileStore {
             username: observation.username,
           })
           .where(eq(peopleProfiles.id, existing.id));
-        return { created: false, profileId: existing.id };
+        return {
+          created: false,
+          profileId: existing.id,
+          avatarVersion: existing.avatarVersion,
+        };
       }
       const [created] = await tx
         .insert(peopleProfiles)
@@ -176,7 +180,7 @@ export class PeopleProfileStore {
           interests: [],
         })
         .returning({ id: peopleProfiles.id });
-      return { created: true, profileId: created!.id };
+      return { created: true, profileId: created!.id, avatarVersion: null };
     });
   }
 
@@ -195,6 +199,7 @@ export class PeopleProfileStore {
           ),
         );
       if (!existing) return null;
+      if (existing.avatarVersion !== update.expectedAvatarVersion) return null;
       const [updated] = await tx
         .update(peopleProfiles)
         .set({ avatarPath: update.avatarPath, avatarVersion: update.avatarVersion })

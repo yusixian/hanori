@@ -26,7 +26,7 @@ function createMemory() {
     searchHistory: vi.fn(),
     touchProfile: vi.fn(async (observation: PeopleProfileObservation) => {
       observations.push(observation);
-      return { created: false, profileId: 1 };
+      return { created: false, profileId: 1, avatarVersion: null };
     }),
     updateProfileAvatar: vi.fn(async (update: PeopleProfileAvatarUpdate) => {
       avatarUpdates.push(update);
@@ -89,7 +89,7 @@ describe("TelegramProfileObserver", () => {
     const { memory } = createMemory();
     const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => {
       if (touchProfile.mock.calls.length === 1) await firstTouch;
-      return { created: false, profileId: 1 };
+      return { created: false, profileId: 1, avatarVersion: null };
     });
     memory.touchProfile = touchProfile;
     const observer = new TelegramProfileObserver({ memory, token: "secret" });
@@ -114,7 +114,7 @@ describe("TelegramProfileObserver", () => {
     const { memory } = createMemory();
     const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => {
       if (touchProfile.mock.calls.length === 1) await firstTouch;
-      return { created: false, profileId: 1 };
+      return { created: false, profileId: 1, avatarVersion: null };
     });
     memory.touchProfile = touchProfile;
     const observer = new TelegramProfileObserver({ memory, token: "secret" });
@@ -162,10 +162,10 @@ describe("TelegramProfileObserver", () => {
     const latestError = new Error("latest touch failed");
     const touchProfile = vi
       .fn()
-      .mockResolvedValueOnce({ created: false, profileId: 1 })
+      .mockResolvedValueOnce({ created: false, profileId: 1, avatarVersion: null })
       .mockImplementationOnce(async () => {
         await blocked;
-        return { created: false, profileId: 1 };
+        return { created: false, profileId: 1, avatarVersion: null };
       })
       .mockRejectedValueOnce(latestError);
     const { memory, avatarUpdates } = createMemory();
@@ -397,11 +397,11 @@ describe("TelegramProfileObserver", () => {
     const { memory } = createMemory();
     memory.touchProfile = vi
       .fn()
-      .mockResolvedValueOnce({ created: false, profileId: 1 })
+      .mockResolvedValueOnce({ created: false, profileId: 1, avatarVersion: null })
       .mockImplementationOnce(async () => {
         activeProfileId = 2;
         currentAvatarPath = null;
-        return { created: true, profileId: 2 };
+        return { created: true, profileId: 2, avatarVersion: null };
       });
     memory.updateProfileAvatar = vi.fn(async (update) => {
       if (update.profileId !== activeProfileId) return null;
@@ -451,6 +451,79 @@ describe("TelegramProfileObserver", () => {
     expect(currentAvatarPath).toBe(recreatedAvatarPath);
   });
 
+  it("does not let an old photo refresh overwrite a newer photo for the same profile", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    let currentAvatarPath: string | null = null;
+    let currentAvatarVersion: string | null = "initial-avatar";
+    let releaseOldDownload!: (response: Response) => void;
+    const oldDownload = new Promise<Response>((resolve) => {
+      releaseOldDownload = resolve;
+    });
+    const { memory } = createMemory();
+    memory.touchProfile = vi.fn(async () => ({
+      created: false,
+      profileId: 1,
+      avatarVersion: "initial-avatar",
+    }));
+    memory.updateProfileAvatar = vi.fn(async (update) => {
+      if (update.profileId !== 1 || update.expectedAvatarVersion !== currentAvatarVersion) {
+        return null;
+      }
+      const previousAvatarPath = currentAvatarPath;
+      currentAvatarPath = update.avatarPath;
+      currentAvatarVersion = update.avatarVersion;
+      return { previousAvatarPath };
+    });
+    const oldApi = createApi();
+    oldApi.getUserProfilePhotos.mockResolvedValue({
+      total_count: 1,
+      photos: [[{ file_id: "old-photo", file_unique_id: "old-avatar", width: 160, height: 160 }]],
+    });
+    oldApi.getFile.mockResolvedValue({
+      file_id: "old-photo",
+      file_unique_id: "old-avatar",
+      file_path: "photos/old.jpg",
+    });
+    const newerApi = createApi();
+    newerApi.getUserProfilePhotos.mockResolvedValue({
+      total_count: 1,
+      photos: [
+        [{ file_id: "newer-photo", file_unique_id: "newer-avatar", width: 160, height: 160 }],
+      ],
+    });
+    newerApi.getFile.mockResolvedValue({
+      file_id: "newer-photo",
+      file_unique_id: "newer-avatar",
+      file_path: "photos/newer.jpg",
+    });
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      refreshMs: 0,
+      fetchImpl: async (input) =>
+        String(input).endsWith("/photos/old.jpg")
+          ? oldDownload
+          : new Response(new Uint8Array([2]), { status: 200 }),
+      now: () => 100,
+    });
+
+    observer.observe(oldApi as never, user);
+    await vi.waitFor(() => expect(oldApi.getFile).toHaveBeenCalledOnce());
+    observer.observe(newerApi as never, user);
+    await vi.waitFor(() => expect(currentAvatarVersion).toBe("newer-avatar"));
+    const newerAvatarPath = currentAvatarPath!;
+    releaseOldDownload(new Response(new Uint8Array([1]), { status: 200 }));
+
+    await vi.waitFor(() => expect(memory.updateProfileAvatar).toHaveBeenCalledTimes(2));
+    expect(currentAvatarVersion).toBe("newer-avatar");
+    expect(currentAvatarPath).toBe(newerAvatarPath);
+    await expect(fs.readFile(path.join(dataDir, newerAvatarPath))).resolves.toEqual(
+      Buffer.from([2]),
+    );
+  });
+
   it("refreshes an avatar at most once per cache window", async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
     tempDirs.push(dataDir);
@@ -477,8 +550,8 @@ describe("TelegramProfileObserver", () => {
     const { memory, avatarUpdates } = createMemory();
     const touchProfile = vi
       .fn()
-      .mockResolvedValueOnce({ created: false, profileId: 1 })
-      .mockResolvedValueOnce({ created: true, profileId: 2 });
+      .mockResolvedValueOnce({ created: false, profileId: 1, avatarVersion: null })
+      .mockResolvedValueOnce({ created: true, profileId: 2, avatarVersion: null });
     memory.touchProfile = touchProfile;
     const api = createApi();
     const observer = new TelegramProfileObserver({
@@ -563,11 +636,11 @@ describe("TelegramProfileObserver", () => {
     const { memory } = createMemory();
     memory.touchProfile = vi
       .fn()
-      .mockResolvedValueOnce({ created: false, profileId: 1 })
+      .mockResolvedValueOnce({ created: false, profileId: 1, avatarVersion: null })
       .mockImplementationOnce(async () => {
         activeProfileId = 2;
         currentAvatarPath = null;
-        return { created: true, profileId: 2 };
+        return { created: true, profileId: 2, avatarVersion: null };
       });
     memory.updateProfileAvatar = vi.fn(async (update) => {
       if (update.profileId !== activeProfileId) return null;
@@ -606,6 +679,68 @@ describe("TelegramProfileObserver", () => {
     await vi.waitFor(() => expect(memory.updateProfileAvatar).toHaveBeenCalledTimes(2));
     expect(currentAvatarPath).toBe(recreatedAvatarPath);
     await expect(fs.readFile(path.join(dataDir, recreatedAvatarPath))).resolves.toEqual(
+      Buffer.from([2]),
+    );
+  });
+
+  it("does not let an old no-photo refresh clear a newer photo for the same profile", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    let currentAvatarPath: string | null = null;
+    let currentAvatarVersion: string | null = "initial-avatar";
+    let releaseOldPhotos!: (photos: { total_count: number; photos: never[] }) => void;
+    const oldPhotos = new Promise<{ total_count: number; photos: never[] }>((resolve) => {
+      releaseOldPhotos = resolve;
+    });
+    const { memory } = createMemory();
+    memory.touchProfile = vi.fn(async () => ({
+      created: false,
+      profileId: 1,
+      avatarVersion: "initial-avatar",
+    }));
+    memory.updateProfileAvatar = vi.fn(async (update) => {
+      if (update.profileId !== 1 || update.expectedAvatarVersion !== currentAvatarVersion) {
+        return null;
+      }
+      const previousAvatarPath = currentAvatarPath;
+      currentAvatarPath = update.avatarPath;
+      currentAvatarVersion = update.avatarVersion;
+      return { previousAvatarPath };
+    });
+    const oldApi = createApi();
+    oldApi.getUserProfilePhotos.mockImplementation(async () => oldPhotos);
+    const newerApi = createApi();
+    newerApi.getUserProfilePhotos.mockResolvedValue({
+      total_count: 1,
+      photos: [
+        [{ file_id: "newer-photo", file_unique_id: "newer-avatar", width: 160, height: 160 }],
+      ],
+    });
+    newerApi.getFile.mockResolvedValue({
+      file_id: "newer-photo",
+      file_unique_id: "newer-avatar",
+      file_path: "photos/newer.jpg",
+    });
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      refreshMs: 0,
+      fetchImpl: async () => new Response(new Uint8Array([2]), { status: 200 }),
+      now: () => 100,
+    });
+
+    observer.observe(oldApi as never, user);
+    await vi.waitFor(() => expect(oldApi.getUserProfilePhotos).toHaveBeenCalledOnce());
+    observer.observe(newerApi as never, user);
+    await vi.waitFor(() => expect(currentAvatarVersion).toBe("newer-avatar"));
+    const newerAvatarPath = currentAvatarPath!;
+    releaseOldPhotos({ total_count: 0, photos: [] });
+
+    await vi.waitFor(() => expect(memory.updateProfileAvatar).toHaveBeenCalledTimes(2));
+    expect(currentAvatarVersion).toBe("newer-avatar");
+    expect(currentAvatarPath).toBe(newerAvatarPath);
+    await expect(fs.readFile(path.join(dataDir, newerAvatarPath))).resolves.toEqual(
       Buffer.from([2]),
     );
   });

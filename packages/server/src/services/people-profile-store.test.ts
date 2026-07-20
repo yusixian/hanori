@@ -20,7 +20,10 @@ function createConcurrentDb(
   initialRows: Array<Record<string, unknown>> = [],
   options: { pauseFirstInsert?: boolean } = {},
 ) {
-  const rows = initialRows.map((row) => ({ ...row }));
+  const rows: Array<Record<string, unknown>> = initialRows.map((row) => ({
+    avatarVersion: null,
+    ...row,
+  }));
   let lockTail = Promise.resolve();
   let insertedCount = 0;
   let markFirstInsertStarted!: () => void;
@@ -68,7 +71,7 @@ function createConcurrentDb(
             ) {
               throw Object.assign(new Error("duplicate profile"), { code: "23505" });
             }
-            const inserted = { id: rows.length + 1, ...value };
+            const inserted = { id: rows.length + 1, avatarVersion: null, ...value };
             rows.push(inserted);
             return inserted;
           })();
@@ -227,15 +230,22 @@ describe("PeopleProfileStore", () => {
     await expect(store.touchProfile(botId, observation)).resolves.toEqual({
       created: true,
       profileId: 1,
+      avatarVersion: null,
     });
     await expect(store.touchProfile(botId, observation)).resolves.toEqual({
       created: false,
       profileId: 1,
+      avatarVersion: null,
     });
   });
 
   it("does not report an avatar switch when the profile is deleted concurrently", async () => {
-    const profile = { id: 1, telegramId: 42, avatarPath: "avatars/42-old.jpg" };
+    const profile = {
+      id: 1,
+      telegramId: 42,
+      avatarPath: "avatars/42-old.jpg",
+      avatarVersion: null,
+    };
     const tx = {
       execute: async () => undefined,
       select: () => ({
@@ -260,13 +270,14 @@ describe("PeopleProfileStore", () => {
       store.updateProfileAvatar("00000000-0000-4000-8000-000000000017", {
         telegramId: 42,
         profileId: 1,
+        expectedAvatarVersion: null,
         avatarPath: "avatars/42-new.jpg",
         avatarVersion: "new",
       }),
     ).resolves.toBeNull();
   });
 
-  it("returns each replaced avatar path when two store instances update concurrently", async () => {
+  it("rejects a concurrent avatar update that expected the replaced version", async () => {
     const { db } = createConcurrentDb([
       { id: 1, telegramId: 42, avatarPath: "avatars/42-old.jpg" },
     ]);
@@ -278,21 +289,20 @@ describe("PeopleProfileStore", () => {
       firstStore.updateProfileAvatar(botId, {
         telegramId: 42,
         profileId: 1,
+        expectedAvatarVersion: null,
         avatarPath: "avatars/42-first.jpg",
         avatarVersion: "first",
       }),
       secondStore.updateProfileAvatar(botId, {
         telegramId: 42,
         profileId: 1,
+        expectedAvatarVersion: null,
         avatarPath: "avatars/42-second.jpg",
         avatarVersion: "second",
       }),
     ]);
 
-    expect(results).toEqual([
-      { previousAvatarPath: "avatars/42-old.jpg" },
-      { previousAvatarPath: "avatars/42-first.jpg" },
-    ]);
+    expect(results).toEqual([{ previousAvatarPath: "avatars/42-old.jpg" }, null]);
   });
 
   it("keeps one profile when an AI upsert races the first Telegram observation", async () => {

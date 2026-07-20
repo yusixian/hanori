@@ -108,6 +108,7 @@ export class TelegramProfileObserver {
             pending.observation,
             result.created,
             result.profileId,
+            result.avatarVersion,
           );
         } catch (error) {
           this.reportError(error);
@@ -126,13 +127,14 @@ export class TelegramProfileObserver {
     observation: PeopleProfileObservation,
     created: boolean,
     profileId: number,
+    expectedAvatarVersion: string | null,
   ) {
     if (!this.options.dataDir) return;
     const now = this.now();
     if (!created && (this.nextRefreshAt.get(observation.telegramId) ?? 0) > now) return;
     this.nextRefreshAt.set(observation.telegramId, now + this.refreshMs);
 
-    void this.refreshAvatar(api, observation, profileId).catch((error) => {
+    void this.refreshAvatar(api, observation, profileId, expectedAvatarVersion).catch((error) => {
       this.nextRefreshAt.set(observation.telegramId, this.now() + RETRY_REFRESH_MS);
       this.reportError(error);
     });
@@ -146,6 +148,7 @@ export class TelegramProfileObserver {
     api: ProfilePhotoApi,
     observation: PeopleProfileObservation,
     profileId: number,
+    expectedAvatarVersion: string | null,
   ) {
     const photos = await api.getUserProfilePhotos(observation.telegramId, { limit: 1 });
     const sizes = photos.photos[0];
@@ -154,6 +157,7 @@ export class TelegramProfileObserver {
       const result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         profileId,
+        expectedAvatarVersion,
         avatarPath: null,
         avatarVersion: null,
       });
@@ -201,6 +205,7 @@ export class TelegramProfileObserver {
       result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
         profileId,
+        expectedAvatarVersion,
         avatarPath: relativePath,
         avatarVersion: photo.file_unique_id,
       });
