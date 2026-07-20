@@ -11,12 +11,21 @@ and repository builds can require substantially more.
 - The main server owns the GitHub token. It performs authenticated clone, fetch, and push operations
   with a temporary `GIT_ASKPASS` environment and restores the canonical GitHub remote before every
   authenticated operation.
-- Git metadata and remotes live in a separate volume mounted read-only in the worker. Pi can inspect
-  status and diffs but cannot edit `.git` configuration, hooks, or authenticated remotes.
-- Pi receives a workspace path, task, and the selected language-model credential. It never receives
-  the GitHub token.
+- The worker never mounts canonical workspaces or Git metadata. The server copies exactly one clean
+  repository into a fixed single-job staging volume, excluding `.git` and `.cos-pi-cache`, and Pi
+  receives only that staging tree, its task, and the selected language-model credential.
+- Staging rejects absolute or traversing symlinks, special files, excessive file counts, and
+  excessive total bytes. The result is checked again before trusted Git metadata is used to create
+  a commit and reset the canonical clean worktree to that commit.
 - Pi may read, edit, write, and run shell commands only inside a separate container with a read-only
-  root filesystem, no added Linux capabilities, no Docker socket, and a 1 GiB memory limit.
+  root filesystem, no added Linux capabilities, no Docker socket, a PID limit, and a 1 GiB memory
+  limit. The container joins only its own egress bridge and cannot resolve or join the app/database
+  network. It retains arbitrary public egress because model and package endpoints are configurable;
+  treat all source made available to Pi as potentially disclosable to those endpoints.
+- The app and worker communicate over a bearer-authenticated Unix socket. Each worker container
+  handles one accepted job, exits after flushing the response, and is restarted by Compose. The
+  server waits for a different healthy boot ID before accepting the result, so detached processes
+  from the completed job cannot survive into the next broker step.
 - The trusted server configures Ai-chan's Git author identity, creates the local branch, and creates a
   local commit after Pi finishes. Push is a separate one-time Telegram confirmation bound to the
   initiating administrator, chat, branch, and exact commit SHA.
@@ -48,7 +57,7 @@ For local development, run the worker separately with the same secret and worksp
 
 ```bash
 CODING_WORKER_SECRET=dev-secret \
-CODING_WORKSPACES_DIR=./data/code-workspaces \
+CODING_JOB_ROOT=./data/coding-job \
 pnpm dev:coding-worker
 ```
 
@@ -64,7 +73,8 @@ loading the SDK added about 128 MB RSS in a local measurement. Active coding usu
 300–800 MB, while a repository build can approach the configured 1 GiB container limit. Compose
 also limits the worker to 1.5 CPU cores.
 
-Each repository keeps package-manager downloads in an ignored `.cos-pi-cache/` directory inside
-its own workspace, so one repository cannot persist package-manager configuration into another.
-These caches and cloned repositories live in the `codeworkspaces` volume and can grow over time;
-inspect them with `docker system df -v` and prune individual stale workspaces during maintenance.
+Canonical repositories keep ignored `.cos-pi-cache/` directories, which are preserved when the
+server resets a completed commit into the canonical worktree. They are intentionally not copied
+into the worker's single-use staging slot. Canonical clones live only in the app's `codeworkspaces`
+volume; the worker cannot mount or enumerate that volume. Inspect usage with `docker system df -v`
+and prune individual stale workspaces during maintenance.

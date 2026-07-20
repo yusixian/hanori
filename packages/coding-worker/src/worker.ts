@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +24,8 @@ export interface CodingWorkerResult {
 export interface CodingWorkerOptions {
   secret: string;
   workspacesRoot: string;
+  workspaceName?: string;
+  bootId?: string;
   runJob?: (job: CodingWorkerJob, workspace: string) => Promise<CodingWorkerResult>;
 }
 
@@ -278,11 +280,13 @@ export async function runPiJob(
 export function createCodingWorkerHandler(options: CodingWorkerOptions) {
   let busy = false;
   const execute = options.runJob ?? runPiJob;
+  const workspaceName = options.workspaceName ?? "workspace";
+  const bootId = options.bootId ?? randomUUID();
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, busy });
+      return json({ ok: true, busy, bootId });
     }
     if (request.method !== "POST" || url.pathname !== "/jobs")
       return json({ error: "Not found" }, 404);
@@ -302,15 +306,27 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
     try {
       const raw = await readRequestText(request);
       const job = validateJob(JSON.parse(raw));
+      if (job.workspacePath !== workspaceName) {
+        throw new Error("Only the fixed staging workspace is allowed");
+      }
       modelKey = job.model.apiKey;
       const workspace = await resolveWorkspace(options.workspacesRoot, job.workspacePath);
-      return json({ ok: true, result: await execute(job, workspace) });
+      const response = json({ ok: true, result: await execute(job, workspace) });
+      response.headers.set("X-Coding-Worker-One-Shot", "true");
+      return response;
     } catch (error) {
       if (error instanceof RequestTooLargeError) {
-        return json({ error: "Request too large" }, 413);
+        const response = json({ error: "Request too large" }, 413);
+        response.headers.set("X-Coding-Worker-One-Shot", "true");
+        return response;
       }
       const message = error instanceof Error ? error.message : String(error);
-      return json({ error: modelKey ? message.split(modelKey).join("[redacted]") : message }, 400);
+      const response = json(
+        { error: modelKey ? message.split(modelKey).join("[redacted]") : message },
+        400,
+      );
+      response.headers.set("X-Coding-Worker-One-Shot", "true");
+      return response;
     } finally {
       busy = false;
     }

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { readFile, rm } from "node:fs/promises";
+import { chmod, readFile, rm } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createCodingWorkerHandler } from "./worker.js";
 
@@ -17,10 +17,13 @@ delete process.env["CODING_WORKER_SECRET"];
 process.env["GIT_OPTIONAL_LOCKS"] = "0";
 
 const port = Number(process.env["CODING_WORKER_PORT"] ?? "3010");
-const workspacesRoot = process.env["CODING_WORKSPACES_DIR"] ?? "/workspaces";
+const socketPath = process.env["CODING_WORKER_SOCKET"];
+const workspacesRoot = process.env["CODING_JOB_ROOT"] ?? "/job";
 const handler = createCodingWorkerHandler({ secret, workspacesRoot });
 
-createServer(async (incoming, outgoing) => {
+if (socketPath) await rm(socketPath, { force: true });
+
+const server = createServer(async (incoming, outgoing) => {
   try {
     const headers = new Headers();
     for (const [name, value] of Object.entries(incoming.headers)) {
@@ -37,6 +40,14 @@ createServer(async (incoming, outgoing) => {
       duplex: "half",
     } as RequestInit & { duplex: "half" });
     const response = await handler(request);
+    const oneShot = response.headers.get("X-Coding-Worker-One-Shot") === "true";
+    response.headers.delete("X-Coding-Worker-One-Shot");
+    if (oneShot) {
+      outgoing.once("finish", () => {
+        server.close(() => process.exit(0));
+        setTimeout(() => process.exit(0), 1_000).unref();
+      });
+    }
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     if (response.body) Readable.fromWeb(response.body).pipe(outgoing);
     else outgoing.end();
@@ -44,6 +55,15 @@ createServer(async (incoming, outgoing) => {
     outgoing.writeHead(500, { "Content-Type": "application/json" });
     outgoing.end(JSON.stringify({ error: "Internal worker error" }));
   }
-}).listen(port, "0.0.0.0", () => {
-  process.stdout.write(`Coding worker listening on ${port}\n`);
 });
+
+if (socketPath) {
+  server.listen(socketPath, async () => {
+    await chmod(socketPath, 0o660);
+    process.stdout.write(`Coding worker listening on ${socketPath}\n`);
+  });
+} else {
+  server.listen(port, "127.0.0.1", () => {
+    process.stdout.write(`Coding worker listening on ${port}\n`);
+  });
+}

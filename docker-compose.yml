@@ -17,8 +17,10 @@ services:
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
       - BACKUP_DIR=/data/backups
       - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
-      - CODING_WORKER_URL=${CODING_WORKER_URL:-http://coding-worker:3010}
+      - CODING_WORKER_URL=
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
       - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_JOB_DIR=/coding-job
       - CODING_WORKSPACES_DIR=/workspaces
       - CODING_GIT_DIR=/git-metadata
       - CODING_WORKSPACE_UID=1000
@@ -28,6 +30,12 @@ services:
       - botdata:/app/data
       - codeworkspaces:/workspaces
       - codegit:/git-metadata
+      - codingjob:/coding-job
+      - codingcontrol:/coding-control
+    command:
+      - "sh"
+      - "-c"
+      - "chown -R 1000:1000 /coding-job /coding-control && exec node --max-old-space-size=512 packages/server/dist/index.js"
     depends_on:
       db:
         condition: service_healthy
@@ -60,11 +68,11 @@ services:
       target: coding-worker
     environment:
       - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
-      - CODING_WORKER_PORT=3010
-      - CODING_WORKSPACES_DIR=/workspaces
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
+      - CODING_JOB_ROOT=/job
     volumes:
-      - codeworkspaces:/workspaces
-      - codegit:/git-metadata:ro
+      - codingjob:/job
+      - codingcontrol:/coding-control
     read_only: true
     tmpfs:
       - /tmp:size=256m,mode=1777
@@ -72,17 +80,33 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    restart: unless-stopped
+    init: true
+    restart: always
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: 1.5
+    depends_on:
+      app:
+        condition: service_healthy
+    networks:
+      - coding-egress
     deploy:
       resources:
         limits:
           cpus: "1.5"
           memory: 1024M
+          pids: 128
         reservations:
           cpus: "0.1"
           memory: 64M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3010/health"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/coding-control/worker.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -168,3 +192,10 @@ volumes:
   botdata:
   codeworkspaces:
   codegit:
+  codingjob:
+  codingcontrol:
+
+networks:
+  coding-egress:
+    driver: bridge
+    internal: false

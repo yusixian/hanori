@@ -14,13 +14,13 @@ afterEach(async () => {
 async function workspaceRoot() {
   const root = await mkdtemp(path.join(os.tmpdir(), "coding-worker-test-"));
   tempDirs.push(root);
-  await mkdir(path.join(root, "bot", "owner", "repo"), { recursive: true });
+  await mkdir(path.join(root, "workspace"), { recursive: true });
   return root;
 }
 
 function job() {
   return {
-    workspacePath: "bot/owner/repo",
+    workspacePath: "workspace",
     task: "Update the README",
     timeoutMs: 60_000,
     model: {
@@ -33,6 +33,27 @@ function job() {
 }
 
 describe("coding worker boundary", () => {
+  it("reports a stable boot id and marks accepted jobs as one-shot", async () => {
+    const root = await workspaceRoot();
+    const handler = createCodingWorkerHandler({
+      secret: "worker-secret",
+      workspacesRoot: root,
+      bootId: "boot-one",
+      runJob: vi.fn().mockResolvedValue({ summary: "done", durationMs: 1 }),
+    });
+    const health = await handler(new Request("http://worker/health"));
+    expect(await health.json()).toEqual({ ok: true, busy: false, bootId: "boot-one" });
+
+    const response = await handler(
+      new Request("http://worker/jobs", {
+        method: "POST",
+        headers: { Authorization: "Bearer worker-secret" },
+        body: JSON.stringify(job()),
+      }),
+    );
+    expect(response.headers.get("X-Coding-Worker-One-Shot")).toBe("true");
+  });
+
   it("requires the internal bearer secret", async () => {
     const root = await workspaceRoot();
     const runJob = vi.fn();
@@ -69,14 +90,33 @@ describe("coding worker boundary", () => {
     expect(response.status).toBe(200);
     expect(runJob).toHaveBeenCalledWith(
       expect.objectContaining({ model: expect.objectContaining({ apiKey: "model-secret" }) }),
-      await realpath(path.join(root, "bot", "owner", "repo")),
+      await realpath(path.join(root, "workspace")),
     );
   });
 
   it("rejects workspace symlinks", async () => {
     const root = await workspaceRoot();
-    await symlink(path.join(root, "bot", "owner", "repo"), path.join(root, "linked"));
+    await symlink(path.join(root, "workspace"), path.join(root, "linked"));
     await expect(resolveWorkspace(root, "linked")).rejects.toThrow("must not contain symlinks");
+  });
+
+  it("rejects any user-controlled workspace path", async () => {
+    const root = await workspaceRoot();
+    const runJob = vi.fn();
+    const handler = createCodingWorkerHandler({
+      secret: "worker-secret",
+      workspacesRoot: root,
+      runJob,
+    });
+    const response = await handler(
+      new Request("http://worker/jobs", {
+        method: "POST",
+        headers: { Authorization: "Bearer worker-secret" },
+        body: JSON.stringify({ ...job(), workspacePath: "another-repo" }),
+      }),
+    );
+    expect(response.status).toBe(400);
+    expect(runJob).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -121,7 +161,7 @@ describe("coding worker boundary", () => {
 
   it("registers the runtime provider without loading repository extensions", async () => {
     const root = await workspaceRoot();
-    const workspace = path.join(root, "bot", "owner", "repo");
+    const workspace = path.join(root, "workspace");
     const agentDir = await mkdtemp(path.join(os.tmpdir(), "coding-worker-agent-test-"));
     tempDirs.push(agentDir);
     await mkdir(path.join(workspace, ".pi", "extensions"), { recursive: true });

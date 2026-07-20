@@ -71,7 +71,7 @@ CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]
 FROM base AS coding-worker
 ENV NODE_ENV=production
 ENV COREPACK_HOME=/opt/corepack
-RUN corepack prepare pnpm@10.5.2 --activate && apk add --no-cache bash git ripgrep && mkdir -p /workspaces /git-metadata /tmp/pi-agent && chown -R node:node /workspaces /git-metadata /tmp/pi-agent
+RUN corepack prepare pnpm@10.5.2 --activate && apk add --no-cache bash git ripgrep && mkdir -p /job /coding-control /tmp/pi-agent && chown -R node:node /job /coding-control /tmp/pi-agent
 
 COPY --from=worker-runtime-deps /app/node_modules ./node_modules
 COPY --from=worker-runtime-deps /app/packages/coding-worker/node_modules ./packages/coding-worker/node_modules
@@ -79,7 +79,6 @@ COPY --from=builder /app/packages/coding-worker/package.json ./packages/coding-w
 COPY --from=builder /app/packages/coding-worker/dist ./packages/coding-worker/dist
 
 USER node
-EXPOSE 3010
 CMD ["sh", "-c", "umask 077; printf '%s' \"$CODING_WORKER_SECRET\" > /tmp/coding-worker-secret; exec env -u CODING_WORKER_SECRET node --max-old-space-size=768 packages/coding-worker/dist/index.js"]
 
 # Keep the existing default `docker build .` behavior on the main application image.

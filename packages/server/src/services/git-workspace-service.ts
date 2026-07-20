@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import {
-  access,
   chmod,
   chown,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   stat,
   writeFile,
@@ -20,6 +20,12 @@ import type {
 } from "@cos-tool-bot/shared";
 import type { CodingWorkerModel } from "./coding-worker-client.js";
 import { CodingWorkerClient } from "./coding-worker-client.js";
+import {
+  assertDirectoryIdentity,
+  captureDirectoryIdentity,
+  CodingJobStager,
+  type PathIdentity,
+} from "./coding-job-stager.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -50,6 +56,11 @@ interface ExecOptions {
   timeoutMs?: number;
   uid?: number;
   gid?: number;
+}
+
+interface WorkspaceIdentity {
+  workspace: PathIdentity;
+  gitDir: PathIdentity;
 }
 
 export function validateRepository(repository: string): void {
@@ -119,58 +130,89 @@ export class GitWorkspaceService {
     private readonly workspaceUid: number = process.getuid?.() ?? 1000,
     private readonly workspaceGid: number = process.getgid?.() ?? 1000,
     private readonly remoteUrl: (repository: string) => string = gitUrl,
+    private readonly stager: CodingJobStager = new CodingJobStager(
+      process.env["CODING_JOB_DIR"] ?? "./data/coding-job",
+      {},
+      { uid: workspaceUid, gid: workspaceGid },
+    ),
   ) {}
 
   async runCodeTask(options: GitWorkspaceTaskOptions): Promise<GitHubCodeTaskResult> {
     const workspace = this.workspacePath(options.botId, options.repository);
-    return this.locks.run(workspace, async () => {
-      validateGitBranch(options.branch);
-      if (options.baseRef) validateGitBranch(options.baseRef);
-      await this.ensureWorkspace(options.botId, options.repository, options.token);
-      await this.prepareBranch(workspace, options);
-      const startSha = await this.git(workspace, ["rev-parse", "HEAD"]);
-      const relativeWorkspace = path
-        .relative(await this.resolvedRoot(), workspace)
-        .split(path.sep)
-        .join("/");
-      const workerResult = await this.worker.run({
-        workspacePath: relativeWorkspace,
-        task: options.task,
-        timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
-        model: options.model,
-      });
+    return this.stager.runExclusive(() =>
+      this.locks.run(workspace, async () => {
+        validateGitBranch(options.branch);
+        if (options.baseRef) validateGitBranch(options.baseRef);
+        await this.ensureWorkspace(options.botId, options.repository, options.token);
+        await this.prepareBranch(workspace, options);
+        const startSha = await this.git(workspace, ["rev-parse", "HEAD"]);
+        const canonicalIdentity = await this.assertWorkspace(workspace);
+        const staged = await this.stager.stage(workspace);
+        try {
+          await this.assertWorkspaceIdentity(canonicalIdentity);
+          const workerResult = await this.worker.run({
+            workspacePath: this.stager.workspaceName,
+            task: options.task,
+            timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
+            model: options.model,
+          });
 
-      const currentBranch = await this.git(workspace, ["branch", "--show-current"]);
-      if (currentBranch !== options.branch) {
-        throw new Error(`Pi changed the checked-out branch to ${currentBranch || "detached HEAD"}`);
-      }
+          await this.stager.validateResult(staged);
+          await this.assertWorkspaceIdentity(canonicalIdentity);
+          const currentBranch = await this.gitWithWorkTree(workspace, staged.path, [
+            "branch",
+            "--show-current",
+          ]);
+          if (currentBranch !== options.branch) {
+            throw new Error(
+              `Pi changed the checked-out branch to ${currentBranch || "detached HEAD"}`,
+            );
+          }
 
-      const status = await this.git(workspace, ["status", "--porcelain"]);
-      if (status) {
-        await this.git(workspace, ["add", "-A"]);
-        const commitMessage =
-          options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
-          "chore: apply Ai-chan coding task";
-        await this.git(workspace, ["commit", "-m", commitMessage]);
-      }
+          await this.assertWorkspaceIdentity(canonicalIdentity);
+          const status = await this.gitWithWorkTree(workspace, staged.path, [
+            "status",
+            "--porcelain",
+          ]);
+          if (status) {
+            await this.assertWorkspaceIdentity(canonicalIdentity);
+            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"]);
+            const commitMessage =
+              options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
+              "chore: apply Ai-chan coding task";
+            await this.assertWorkspaceIdentity(canonicalIdentity);
+            await this.gitWithWorkTree(workspace, staged.path, ["commit", "-m", commitMessage]);
+          }
 
-      const commitSha = await this.git(workspace, ["rev-parse", "HEAD"]);
-      const changed =
-        commitSha === startSha
-          ? []
-          : (await this.git(workspace, ["diff", "--name-only", `${startSha}..${commitSha}`]))
-              .split("\n")
-              .filter(Boolean)
-              .slice(0, 200);
-      return {
-        repository: options.repository,
-        branch: options.branch,
-        commitSha,
-        changedFiles: changed,
-        summary: workerResult.summary,
-        status: commitSha === startSha ? "no_changes" : "committed",
-      };
-    });
+          await this.assertWorkspaceIdentity(canonicalIdentity);
+          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"]);
+          await this.assertWorkspaceIdentity(canonicalIdentity);
+          await this.git(workspace, ["reset", "--hard", commitSha]);
+          const changed =
+            commitSha === startSha
+              ? []
+              : (await this.git(workspace, ["diff", "--name-only", `${startSha}..${commitSha}`]))
+                  .split("\n")
+                  .filter(Boolean)
+                  .slice(0, 200);
+          return {
+            repository: options.repository,
+            branch: options.branch,
+            commitSha,
+            changedFiles: changed,
+            summary: workerResult.summary,
+            status: commitSha === startSha ? "no_changes" : "committed",
+          };
+        } catch (error) {
+          await this.assertWorkspaceIdentity(canonicalIdentity)
+            .then(() => this.git(workspace, ["reset", "--mixed", "HEAD"]))
+            .catch(() => undefined);
+          throw error;
+        } finally {
+          await this.stager.cleanup();
+        }
+      }),
+    );
   }
 
   async previewPush(options: GitWorkspacePushOptions): Promise<GitHubPushPreview> {
@@ -325,16 +367,41 @@ export class GitWorkspaceService {
 
   private async resolvedRoot(): Promise<string> {
     await mkdir(this.root, { recursive: true });
-    return path.resolve(this.root);
+    return realpath(this.root);
   }
 
-  private async assertWorkspace(workspace: string): Promise<void> {
+  private async resolvedGitRoot(): Promise<string> {
+    await mkdir(this.gitRoot, { recursive: true });
+    return realpath(this.gitRoot);
+  }
+
+  private async assertWorkspace(workspace: string): Promise<WorkspaceIdentity> {
     const root = await this.resolvedRoot();
     const resolved = path.resolve(workspace);
-    if (!resolved.startsWith(`${root}${path.sep}`))
+    const configuredRoot = path.resolve(this.root);
+    if (!resolved.startsWith(`${configuredRoot}${path.sep}`))
       throw new Error("Workspace escapes configured root");
-    await access(resolved);
-    await access(this.gitDirForWorkspace(resolved));
+    const workspaceIdentity = await captureDirectoryIdentity(resolved);
+    if (!workspaceIdentity.path.startsWith(`${root}${path.sep}`)) {
+      throw new Error("Workspace escapes configured root through a symlink");
+    }
+    const gitRoot = await this.resolvedGitRoot();
+    const gitDir = this.gitDirForWorkspace(resolved);
+    const resolvedGitDir = path.resolve(gitDir);
+    const configuredGitRoot = path.resolve(this.gitRoot);
+    if (!resolvedGitDir.startsWith(`${configuredGitRoot}${path.sep}`)) {
+      throw new Error("Git metadata escapes configured root");
+    }
+    const gitDirIdentity = await captureDirectoryIdentity(resolvedGitDir);
+    if (!gitDirIdentity.path.startsWith(`${gitRoot}${path.sep}`)) {
+      throw new Error("Git metadata escapes configured root through a symlink");
+    }
+    return { workspace: workspaceIdentity, gitDir: gitDirIdentity };
+  }
+
+  private async assertWorkspaceIdentity(identity: WorkspaceIdentity): Promise<void> {
+    await assertDirectoryIdentity(identity.workspace);
+    await assertDirectoryIdentity(identity.gitDir);
   }
 
   private async ensureLocalExcludes(workspace: string): Promise<void> {
@@ -347,11 +414,20 @@ export class GitWorkspaceService {
   }
 
   private git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+    return this.gitWithWorkTree(cwd, cwd, args, env);
+  }
+
+  private gitWithWorkTree(
+    canonicalWorkspace: string,
+    workTree: string,
+    args: string[],
+    env?: NodeJS.ProcessEnv,
+  ): Promise<string> {
     return run(
       "git",
       [
-        `--git-dir=${this.gitDirForWorkspace(cwd)}`,
-        `--work-tree=${cwd}`,
+        `--git-dir=${this.gitDirForWorkspace(canonicalWorkspace)}`,
+        `--work-tree=${workTree}`,
         "-c",
         "credential.helper=",
         "-c",
@@ -359,7 +435,7 @@ export class GitWorkspaceService {
         ...args,
       ],
       {
-        cwd,
+        cwd: workTree,
         env: this.gitEnvironment(env),
         uid: this.workspaceUid,
         gid: this.workspaceGid,

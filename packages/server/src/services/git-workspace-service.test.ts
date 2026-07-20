@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodingWorkerClient } from "./coding-worker-client.js";
+import { CodingJobStager } from "./coding-job-stager.js";
 import {
   GitWorkspaceService,
   validateGitBranch,
@@ -57,12 +58,15 @@ describe("Git workspace input validation", () => {
 
     const workspaceRoot = path.join(root, "workspaces");
     const gitRoot = path.join(root, "metadata");
+    const stagingRoot = path.join(root, "coding-job");
     await mkdir(workspaceRoot);
     await mkdir(gitRoot);
+    await mkdir(stagingRoot);
     const worker = new CodingWorkerClient({ url: "", secret: "" });
     const run = vi.spyOn(worker, "run").mockImplementation(async (job) => {
       expect(JSON.stringify(job)).not.toContain("github-secret");
-      await writeFile(path.join(workspaceRoot, job.workspacePath, "README.md"), "after\n");
+      expect(job.workspacePath).toBe("workspace");
+      await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
       return { summary: "updated README", durationMs: 1 };
     });
     const service = new GitWorkspaceService(
@@ -72,6 +76,7 @@ describe("Git workspace input validation", () => {
       process.getuid?.() ?? 1000,
       process.getgid?.() ?? 1000,
       () => remote,
+      new CodingJobStager(stagingRoot),
     );
 
     const result = await service.runCodeTask({
@@ -103,6 +108,24 @@ describe("Git workspace input validation", () => {
     expect(excludeFile).toContain(".cos-pi-cache/");
     await mkdir(path.join(workspace, ".cos-pi-cache"));
     await writeFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "cached\n");
+    await service.runCodeTask({
+      botId: "bot-1",
+      repository: "owner/repo",
+      token: "github-secret",
+      authorName: "Ai-chan",
+      authorEmail: "ai-chan@example.com",
+      task: "Check README",
+      branch: "feat/ai-readme",
+      model: {
+        apiKey: "model-secret",
+        baseURL: "https://example.com/v1",
+        id: "model",
+        providerFormat: "openai",
+      },
+    });
+    expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "utf8")).toBe(
+      "cached\n",
+    );
     const author = await exec("git", [
       `--git-dir=${path.join(gitRoot, "bot-1", "owner", "repo.git")}`,
       "show",
@@ -159,6 +182,6 @@ describe("Git workspace input validation", () => {
         },
       }),
     ).rejects.toThrow("uncommitted changes from an earlier coding job");
-    expect(run).toHaveBeenCalledOnce();
+    expect(run).toHaveBeenCalledTimes(2);
   });
 });
