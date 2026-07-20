@@ -17,6 +17,9 @@ import type {
   GitHubCodeTaskResult,
   GitHubPushPreview,
   GitHubPushResult,
+  GitHubWorkspaceDiscardResult,
+  GitHubWorkspaceInspection,
+  GitHubWorkspaceResumeInput,
 } from "@cos-tool-bot/shared";
 import type { CodingWorkerModel } from "./coding-worker-client.js";
 import { CodingWorkerClient } from "./coding-worker-client.js";
@@ -25,6 +28,7 @@ import {
   captureDirectoryIdentity,
   CodingJobStager,
   type PathIdentity,
+  type RecoverySnapshot,
 } from "./coding-job-stager.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
@@ -50,6 +54,20 @@ export interface GitWorkspacePushOptions {
   expectedCommitSha?: string;
 }
 
+export interface GitWorkspaceInspectOptions {
+  botId: string;
+  repository: string;
+}
+
+export interface GitWorkspaceResumeOptions extends GitHubWorkspaceResumeInput {
+  botId: string;
+  authorName: string;
+  authorEmail: string;
+  model: CodingWorkerModel;
+}
+
+export type GitWorkspaceDiscardOptions = GitWorkspaceInspectOptions;
+
 interface ExecOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
@@ -62,6 +80,12 @@ interface ExecOptions {
 interface WorkspaceIdentity {
   workspace: PathIdentity;
   gitDir: PathIdentity;
+}
+
+interface InspectedWorkspace {
+  identity: WorkspaceIdentity;
+  inspection: GitHubWorkspaceInspection;
+  snapshot: RecoverySnapshot;
 }
 
 export function validateRepository(repository: string): void {
@@ -94,6 +118,15 @@ function gitUrl(repository: string): string {
 
 function gitHubBranchUrl(repository: string, branch: string): string {
   return `https://github.com/${repository}/tree/${branch.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function displayPath(value: string): string {
+  let display = "";
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    display += code <= 0x1f || code === 0x7f ? "�" : character;
+  }
+  return display.slice(0, 500);
 }
 
 async function run(command: string, args: string[], options: ExecOptions): Promise<string> {
@@ -257,6 +290,214 @@ export class GitWorkspaceService {
     );
   }
 
+  async inspectWorkspace(
+    options: GitWorkspaceInspectOptions,
+    signal?: AbortSignal,
+  ): Promise<GitHubWorkspaceInspection> {
+    signal?.throwIfAborted();
+    const workspace = this.workspacePath(options.botId, options.repository);
+    return this.locks.run(workspace, async () => {
+      const inspected = await this.inspectWorkspaceLocked(workspace, options.repository, signal);
+      return inspected.inspection;
+    });
+  }
+
+  async resumeWorkspace(
+    options: GitWorkspaceResumeOptions,
+    expected: GitHubWorkspaceInspection,
+    signal?: AbortSignal,
+  ): Promise<GitHubCodeTaskResult> {
+    signal?.throwIfAborted();
+    const workspace = this.workspacePath(options.botId, options.repository);
+    return this.stager.runExclusive(() =>
+      this.locks.run(workspace, async () => {
+        signal?.throwIfAborted();
+        const inspected = await this.inspectWorkspaceLocked(workspace, options.repository, signal);
+        this.assertExpectedInspection(inspected.inspection, expected);
+        if (inspected.inspection.clean) {
+          throw new Error("Workspace is already clean; there is nothing to resume");
+        }
+        if (!inspected.inspection.branch) {
+          throw new Error("Detached workspace cannot be resumed");
+        }
+        await this.assertWorkspaceIdentity(inspected.identity, signal);
+        await this.git(
+          workspace,
+          ["config", "--local", "user.name", options.authorName],
+          undefined,
+          signal,
+        );
+        await this.assertWorkspaceIdentity(inspected.identity, signal);
+        await this.git(
+          workspace,
+          ["config", "--local", "user.email", options.authorEmail],
+          undefined,
+          signal,
+        );
+        const staged = await this.stager.stageRecoverySnapshot(
+          workspace,
+          inspected.snapshot,
+          signal,
+        );
+        let indexTouched = false;
+        try {
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          const afterStage = await this.inspectWorkspaceLocked(
+            workspace,
+            options.repository,
+            signal,
+          );
+          this.assertExpectedInspection(afterStage.inspection, expected);
+          const workerResult = await this.worker.run(
+            {
+              workspacePath: this.stager.workspaceName,
+              task: options.task,
+              timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
+              model: options.model,
+            },
+            signal,
+          );
+
+          signal?.throwIfAborted();
+          await this.stager.validateResult(staged, signal);
+          const beforeCommit = await this.inspectWorkspaceLocked(
+            workspace,
+            options.repository,
+            signal,
+          );
+          this.assertExpectedInspection(beforeCommit.inspection, expected);
+          const currentBranch = await this.gitWithWorkTree(
+            workspace,
+            staged.path,
+            ["branch", "--show-current"],
+            undefined,
+            signal,
+          );
+          if (currentBranch !== expected.branch) {
+            throw new Error("Workspace branch changed while resuming; request a new inspection");
+          }
+          const status = await this.gitWithWorkTree(
+            workspace,
+            staged.path,
+            ["status", "--porcelain"],
+            undefined,
+            signal,
+          );
+          if (status) {
+            signal?.throwIfAborted();
+            indexTouched = true;
+            await this.assertWorkspaceIdentity(inspected.identity, signal);
+            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
+            await this.assertWorkspaceIdentity(inspected.identity, signal);
+            const stagedChanges = await this.gitWithWorkTree(
+              workspace,
+              staged.path,
+              ["diff", "--cached", "--name-only"],
+              undefined,
+              signal,
+            );
+            if (stagedChanges) {
+              const commitMessage =
+                options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
+                "chore: recover Ai-chan coding workspace";
+              await this.assertWorkspaceIdentity(inspected.identity, signal);
+              signal?.throwIfAborted();
+              await this.gitWithWorkTree(
+                workspace,
+                staged.path,
+                ["commit", "-m", commitMessage],
+                undefined,
+                signal,
+              );
+            }
+          }
+
+          signal?.throwIfAborted();
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
+          await this.assertWorkspaceIdentity(inspected.identity, signal);
+          await this.git(workspace, ["clean", "-fd"], undefined, signal);
+          const finalInspection = await this.inspectWorkspaceLocked(
+            workspace,
+            options.repository,
+            signal,
+          );
+          if (!finalInspection.inspection.clean) {
+            throw new Error("Recovered workspace did not become clean");
+          }
+          const changed =
+            commitSha === expected.headSha
+              ? []
+              : (
+                  await this.git(
+                    workspace,
+                    ["diff", "--name-only", `${expected.headSha}..${commitSha}`],
+                    undefined,
+                    signal,
+                  )
+                )
+                  .split("\n")
+                  .filter(Boolean)
+                  .slice(0, 200);
+          return {
+            repository: options.repository,
+            branch: expected.branch,
+            commitSha,
+            changedFiles: changed,
+            summary: workerResult.summary,
+            status: commitSha === expected.headSha ? "no_changes" : "committed",
+          };
+        } catch (error) {
+          if (indexTouched) {
+            await this.assertWorkspaceIdentity(inspected.identity)
+              .then(() => this.git(workspace, ["reset", "--mixed", expected.headSha]))
+              .catch(() => undefined);
+          }
+          throw error;
+        } finally {
+          await this.stager.cleanup();
+        }
+      }),
+    );
+  }
+
+  async discardWorkspace(
+    options: GitWorkspaceDiscardOptions,
+    expected: GitHubWorkspaceInspection,
+    signal?: AbortSignal,
+  ): Promise<GitHubWorkspaceDiscardResult> {
+    signal?.throwIfAborted();
+    const workspace = this.workspacePath(options.botId, options.repository);
+    return this.locks.run(workspace, async () => {
+      const inspected = await this.inspectWorkspaceLocked(workspace, options.repository, signal);
+      this.assertExpectedInspection(inspected.inspection, expected);
+      if (inspected.inspection.clean) {
+        throw new Error("Workspace is already clean; there is nothing to discard");
+      }
+      signal?.throwIfAborted();
+      await this.assertWorkspaceIdentity(inspected.identity, signal);
+      await this.git(workspace, ["reset", "--hard", expected.headSha], undefined, signal);
+      await this.assertWorkspaceIdentity(inspected.identity, signal);
+      await this.git(workspace, ["clean", "-fd"], undefined, signal);
+      const finalInspection = await this.inspectWorkspaceLocked(
+        workspace,
+        options.repository,
+        signal,
+      );
+      if (!finalInspection.inspection.clean) {
+        throw new Error("Workspace still has non-ignored changes after discard");
+      }
+      return {
+        repository: options.repository,
+        branch: expected.branch,
+        headSha: expected.headSha,
+        summary: `已丢弃 ${options.repository}:${expected.branch} 的未提交改动`,
+      };
+    });
+  }
+
   async previewPush(options: GitWorkspacePushOptions): Promise<GitHubPushPreview> {
     const workspace = this.workspacePath(options.botId, options.repository);
     return this.locks.run(workspace, async () => {
@@ -322,6 +563,48 @@ export class GitWorkspaceService {
         url: gitHubBranchUrl(options.repository, options.branch),
       };
     });
+  }
+
+  private async inspectWorkspaceLocked(
+    workspace: string,
+    repository: string,
+    signal?: AbortSignal,
+  ): Promise<InspectedWorkspace> {
+    signal?.throwIfAborted();
+    const identity = await this.assertWorkspace(workspace, signal);
+    const [branch, headSha] = await Promise.all([
+      this.git(workspace, ["branch", "--show-current"], undefined, signal),
+      this.git(workspace, ["rev-parse", "HEAD"], undefined, signal),
+    ]);
+    const snapshot = await this.stager.captureRecoverySnapshot(workspace, branch, headSha, signal);
+    await this.assertWorkspaceIdentity(identity, signal);
+    return {
+      identity,
+      snapshot,
+      inspection: {
+        repository,
+        branch,
+        headSha,
+        clean: snapshot.clean,
+        changedFiles: snapshot.changedPaths.slice(0, 200).map(displayPath),
+        fingerprint: snapshot.fingerprint,
+      },
+    };
+  }
+
+  private assertExpectedInspection(
+    current: GitHubWorkspaceInspection,
+    expected: GitHubWorkspaceInspection,
+  ): void {
+    if (
+      current.repository !== expected.repository ||
+      current.branch !== expected.branch ||
+      current.headSha !== expected.headSha ||
+      current.clean !== expected.clean ||
+      current.fingerprint !== expected.fingerprint
+    ) {
+      throw new Error("Workspace changed after confirmation preview; request a new inspection");
+    }
   }
 
   private async prepareBranch(

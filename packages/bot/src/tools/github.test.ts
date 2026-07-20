@@ -1,5 +1,7 @@
+import type { GitHubCodingModelConfig } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import type { Api } from "grammy";
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import { createGitHubTools } from "./github.js";
@@ -110,6 +112,9 @@ describe("GitHub tools permissions", () => {
 
     expect(tools.github_code_task).toBeUndefined();
     expect(tools.github_push_branch).toBeUndefined();
+    expect(tools.github_inspect_workspace).toBeUndefined();
+    expect(tools.github_resume_workspace).toBeUndefined();
+    expect(tools.github_discard_workspace).toBeUndefined();
     expect(tools.github_create_pull_request).toBeUndefined();
     expect(tools.github_create_issue).toBeUndefined();
     expect(tools.github_update_issue).toBeUndefined();
@@ -118,6 +123,26 @@ describe("GitHub tools permissions", () => {
     const headers = fetchMock.mock.calls[0]![1].headers as Headers;
     expect(headers.has("Authorization")).toBe(false);
     expect(JSON.stringify(fetchMock.mock.calls)).not.toContain("super-secret-token");
+    registry.destroy();
+  });
+
+  it("does not expose workspace recovery without the coding worker callbacks and model", () => {
+    const registry = new PendingGitHubActionRegistry();
+    const tools = createGitHubTools({
+      config: {
+        ...adminConfig(),
+        codingAgentEnabled: true,
+      },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+    });
+
+    expect(tools.github_inspect_workspace).toBeUndefined();
+    expect(tools.github_resume_workspace).toBeUndefined();
+    expect(tools.github_discard_workspace).toBeUndefined();
     registry.destroy();
   });
 
@@ -600,6 +625,116 @@ describe("GitHub tools permissions", () => {
     expect(pushBranch).not.toHaveBeenCalled();
     await registry.take(proposal.action_id)!.execute();
     expect(pushBranch).toHaveBeenCalledWith("owner/repo", "feat/ai", "a".repeat(40));
+    registry.destroy();
+  });
+
+  it("keeps recovery fingerprints internal and binds resume and discard to inspected state", async () => {
+    const registry = new PendingGitHubActionRegistry();
+    const inspection = {
+      repository: "owner/repo",
+      branch: "feat/recovery",
+      headSha: "a".repeat(40),
+      clean: false,
+      changedFiles: ["README.md", "src/new.ts"],
+      fingerprint: "secret-state-fingerprint",
+    };
+    const inspectWorkspace = vi.fn().mockResolvedValue(inspection);
+    const resumeWorkspace = vi.fn().mockResolvedValue({
+      repository: "owner/repo",
+      branch: "feat/recovery",
+      commitSha: "b".repeat(40),
+      changedFiles: ["README.md", "src/new.ts"],
+      summary: "resumed",
+      status: "committed",
+    });
+    const discardWorkspace = vi.fn().mockResolvedValue({
+      repository: "owner/repo",
+      branch: "feat/recovery",
+      headSha: "a".repeat(40),
+      summary: "discarded",
+    });
+    const model: GitHubCodingModelConfig = {
+      apiKey: "model-secret",
+      baseURL: "https://models.example/v1",
+      id: "selected-model",
+      providerFormat: "openai" as const,
+      capabilities: ["tool_calling", "code"],
+    };
+    const tools = createGitHubTools({
+      config: { ...adminConfig(), codingAgentEnabled: true },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      codeCallbacks: {
+        runTask: vi.fn(),
+        previewPush: vi.fn(),
+        pushBranch: vi.fn(),
+        inspectWorkspace,
+        resumeWorkspace,
+        discardWorkspace,
+      },
+      codingModel: model,
+    });
+
+    const inspected = await execute(tools.github_inspect_workspace, {
+      repository: "owner/repo",
+    });
+    expect(inspected).toEqual(
+      expect.objectContaining({
+        repository: "owner/repo",
+        branch: "feat/recovery",
+        head_sha: "a".repeat(40),
+        clean: false,
+        changed_files: ["README.md", "src/new.ts"],
+      }),
+    );
+    expect(JSON.stringify(inspected)).not.toContain(inspection.fingerprint);
+
+    const recoveryTask = "Finish the interrupted work";
+    const resumeProposal = (await execute(tools.github_resume_workspace, {
+      repository: "owner/repo",
+      task: recoveryTask,
+      commit_message: "fix: finish recovery",
+    })) as { action_id: string; description: string };
+    expect(resumeProposal.description).toContain(`任务预览：${recoveryTask}`);
+    expect(resumeProposal.description).toContain(
+      `任务 SHA-256：${createHash("sha256").update(recoveryTask).digest("hex")}`,
+    );
+    expect(resumeProposal.description).toContain("提交信息：fix: finish recovery");
+    expect(resumeProposal.description).not.toContain(inspection.fingerprint);
+    expect(resumeWorkspace).not.toHaveBeenCalled();
+    const resumeSignal = new AbortController().signal;
+    await registry.take(resumeProposal.action_id)!.execute(resumeSignal);
+    expect(resumeWorkspace).toHaveBeenCalledWith(
+      {
+        repository: "owner/repo",
+        task: recoveryTask,
+        commitMessage: "fix: finish recovery",
+      },
+      model,
+      inspection,
+      resumeSignal,
+    );
+
+    const defaultCommitProposal = (await execute(tools.github_resume_workspace, {
+      repository: "owner/repo",
+      task: "Resume with the default commit message",
+    })) as { action_id: string; description: string };
+    expect(defaultCommitProposal.description).toContain(
+      "提交信息：chore: recover Ai-chan coding workspace",
+    );
+    registry.remove(defaultCommitProposal.action_id);
+
+    const discardProposal = (await execute(tools.github_discard_workspace, {
+      repository: "owner/repo",
+    })) as { action_id: string };
+    expect(discardWorkspace).not.toHaveBeenCalled();
+    const discardSignal = new AbortController().signal;
+    await registry.take(discardProposal.action_id)!.execute(discardSignal);
+    expect(discardWorkspace).toHaveBeenCalledWith("owner/repo", inspection, discardSignal);
+    expect(inspectWorkspace).toHaveBeenCalledTimes(4);
     registry.destroy();
   });
 

@@ -1,0 +1,394 @@
+import { execFile } from "node:child_process";
+import type { GitHubCodingModelConfig, GitHubWorkspaceInspection } from "@cos-tool-bot/shared";
+import { mkdirSync, renameSync } from "node:fs";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CodingJobStager } from "./coding-job-stager.js";
+import { CodingWorkerClient } from "./coding-worker-client.js";
+import { GitWorkspaceService } from "./git-workspace-service.js";
+
+const exec = promisify(execFile);
+const tempDirs: string[] = [];
+const model: GitHubCodingModelConfig = {
+  apiKey: "model-secret",
+  baseURL: "https://example.com/v1",
+  id: "model",
+  providerFormat: "openai" as const,
+  capabilities: ["tool_calling", "code"],
+};
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function fixture() {
+  const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-recovery-test-"));
+  tempDirs.push(root);
+  const remote = path.join(root, "remote.git");
+  const seed = path.join(root, "seed");
+  await exec("git", ["init", "--bare", remote]);
+  await exec("git", ["init", "-b", "main", seed]);
+  await writeFile(path.join(seed, "README.md"), "before\n");
+  await writeFile(path.join(seed, "delete-me.txt"), "tracked\n");
+  await writeFile(path.join(seed, "script.sh"), "#!/bin/sh\nexit 0\n");
+  await chmod(path.join(seed, "script.sh"), 0o755);
+  await writeFile(path.join(seed, ".gitignore"), ".env\n.cos-pi-cache/\n");
+  await exec("git", ["-C", seed, "add", "."]);
+  await exec("git", [
+    "-C",
+    seed,
+    "-c",
+    "user.name=Seed",
+    "-c",
+    "user.email=seed@example.com",
+    "commit",
+    "-m",
+    "initial",
+  ]);
+  await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
+  await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
+  await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+  const workspaceRoot = path.join(root, "workspaces");
+  const gitRoot = path.join(root, "metadata");
+  const stagingRoot = path.join(root, "coding-job");
+  await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
+  const worker = new CodingWorkerClient({ url: "", secret: "" });
+  const run = vi.spyOn(worker, "run").mockResolvedValue({ summary: "bootstrap", durationMs: 1 });
+  const service = new GitWorkspaceService(
+    workspaceRoot,
+    gitRoot,
+    worker,
+    process.getuid?.() ?? 1000,
+    process.getgid?.() ?? 1000,
+    () => remote,
+    new CodingJobStager(stagingRoot),
+  );
+  await service.runCodeTask({
+    botId: "bot-1",
+    repository: "owner/repo",
+    token: "github-secret",
+    authorName: "Ai-chan",
+    authorEmail: "ai-chan@example.com",
+    task: "Bootstrap workspace",
+    branch: "feat/recovery",
+    model,
+  });
+  run.mockClear();
+  return {
+    service,
+    run,
+    workspace: path.join(workspaceRoot, "bot-1", "owner", "repo"),
+    stagingRoot,
+  };
+}
+
+const inspectOptions = { botId: "bot-1", repository: "owner/repo" };
+
+describe("Git workspace recovery", () => {
+  it("inspects clean state and fingerprints branch, HEAD, index, content, and metadata", async () => {
+    const { service, workspace } = await fixture();
+    const clean = await service.inspectWorkspace(inspectOptions);
+    expect(clean).toMatchObject({ branch: "feat/recovery", clean: true, changedFiles: [] });
+
+    await writeFile(path.join(workspace, ".env"), "IGNORED_SECRET_CANARY\n");
+    await mkdir(path.join(workspace, ".cos-pi-cache"));
+    await writeFile(path.join(workspace, ".cos-pi-cache", "cache"), "ignored\n");
+    const withIgnoredFiles = await service.inspectWorkspace(inspectOptions);
+    expect(withIgnoredFiles.fingerprint).toBe(clean.fingerprint);
+    expect(withIgnoredFiles.changedFiles).toEqual([]);
+
+    const fingerprints = new Set<string>([clean.fingerprint]);
+    await writeFile(path.join(workspace, "README.md"), "dirty-one\n");
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await writeFile(path.join(workspace, "README.md"), "dirty-two\n");
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await exec("git", ["-C", workspace, "add", "README.md"]);
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await writeFile(path.join(workspace, "untracked.txt"), "new\n");
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await rm(path.join(workspace, "delete-me.txt"));
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await symlink("README.md", path.join(workspace, "safe-link"));
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await rm(path.join(workspace, "safe-link"));
+    await symlink("script.sh", path.join(workspace, "safe-link"));
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    await chmod(path.join(workspace, "script.sh"), 0o644);
+    fingerprints.add((await service.inspectWorkspace(inspectOptions)).fingerprint);
+    expect(fingerprints).toHaveLength(9);
+
+    await exec("git", ["-C", workspace, "reset", "--hard", "HEAD"]);
+    await exec("git", ["-C", workspace, "clean", "-fd"]);
+    await exec("git", ["-C", workspace, "checkout", "-b", "feat/other"]);
+    const otherBranch = await service.inspectWorkspace(inspectOptions);
+    expect(otherBranch.headSha).toBe(clean.headSha);
+    expect(otherBranch.fingerprint).not.toBe(clean.fingerprint);
+    await exec("git", ["-C", workspace, "commit", "--allow-empty", "-m", "advance"]);
+    const otherHead = await service.inspectWorkspace(inspectOptions);
+    expect(otherHead.headSha).not.toBe(clean.headSha);
+    expect(otherHead.fingerprint).not.toBe(otherBranch.fingerprint);
+  });
+
+  it("resumes the exact dirty snapshot and commits tracked deletions and safe untracked files", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    await rm(path.join(workspace, "delete-me.txt"));
+    await writeFile(path.join(workspace, "untracked.txt"), "untracked\n");
+    await chmod(path.join(workspace, "untracked.txt"), 0o755);
+    await symlink("README.md", path.join(workspace, "safe-link"));
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      expect(await readFile(path.join(staged, "README.md"), "utf8")).toBe("dirty\n");
+      await expect(readFile(path.join(staged, "delete-me.txt"))).rejects.toThrow();
+      expect(await readFile(path.join(staged, "untracked.txt"), "utf8")).toBe("untracked\n");
+      expect((await lstat(path.join(staged, "untracked.txt"))).mode & 0o111).toBe(0o111);
+      expect(await readlink(path.join(staged, "safe-link"))).toBe("README.md");
+      await writeFile(path.join(staged, "worker.txt"), "worker\n");
+      return { summary: "recovered", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Finish recovery",
+        commitMessage: "fix: recover workspace",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect(result.changedFiles).toEqual(
+      expect.arrayContaining([
+        "README.md",
+        "delete-me.txt",
+        "safe-link",
+        "untracked.txt",
+        "worker.txt",
+      ]),
+    );
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    await expect(readFile(path.join(workspace, "delete-me.txt"))).rejects.toThrow();
+    expect(await readFile(path.join(workspace, "worker.txt"), "utf8")).toBe("worker\n");
+  });
+
+  it("recovers a tracked file replaced by a directory of non-ignored files", async () => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await rm(path.join(workspace, "delete-me.txt"));
+    await mkdir(path.join(workspace, "delete-me.txt"));
+    await writeFile(path.join(workspace, "delete-me.txt", "child.txt"), "replacement\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    run.mockImplementation(async (job) => {
+      const staged = path.join(stagingRoot, job.workspacePath);
+      expect(await readFile(path.join(staged, "delete-me.txt", "child.txt"), "utf8")).toBe(
+        "replacement\n",
+      );
+      return { summary: "recovered replacement", durationMs: 1 };
+    });
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Keep the replacement directory",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("committed");
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "delete-me.txt", "child.txt"), "utf8")).toBe(
+      "replacement\n",
+    );
+  });
+
+  it("returns no changes when adding the recovered worktree cancels staged-only changes", async () => {
+    const { service, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "staged change\n");
+    await exec("git", ["-C", workspace, "add", "README.md"]);
+    await writeFile(path.join(workspace, "README.md"), "before\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+
+    const result = await service.resumeWorkspace(
+      {
+        ...inspectOptions,
+        task: "Keep the final worktree content",
+        authorName: "Ai-chan",
+        authorEmail: "ai-chan@example.com",
+        model,
+      },
+      inspection,
+    );
+
+    expect(result.status).toBe("no_changes");
+    expect(result.commitSha).toBe(inspection.headSha);
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
+  });
+
+  it("rejects a canonical directory swap before adding the recovery result", async () => {
+    const { service, run, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    const movedWorkspace = `${workspace}-moved`;
+    type GitWithWorkTree = (
+      workspacePath: string,
+      workTree: string,
+      args: string[],
+      env?: NodeJS.ProcessEnv,
+      signal?: AbortSignal,
+    ) => Promise<string>;
+    const internals = service as unknown as { gitWithWorkTree: GitWithWorkTree };
+    const original = internals.gitWithWorkTree.bind(service);
+    let swapped = false;
+    const gitWithWorkTree = vi
+      .spyOn(internals, "gitWithWorkTree")
+      .mockImplementation(async (...args) => {
+        const result = await original(...args);
+        if (!swapped && args[2][0] === "status") {
+          swapped = true;
+          await rename(workspace, movedWorkspace);
+          await mkdir(workspace);
+        }
+        return result;
+      });
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Resume",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+      ),
+    ).rejects.toThrow("identity changed");
+    expect(run).toHaveBeenCalledOnce();
+    expect(gitWithWorkTree.mock.calls.some((call) => call[2][0] === "add")).toBe(false);
+  });
+
+  it("rejects stale recovery state before invoking the worker", async () => {
+    const { service, run, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "first\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    await writeFile(path.join(workspace, "README.md"), "second\n");
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Resume",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+      ),
+    ).rejects.toThrow("changed after confirmation preview");
+    await expect(service.discardWorkspace(inspectOptions, inspection)).rejects.toThrow(
+      "changed after confirmation preview",
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("rejects a canonical directory swap before discarding changes", async () => {
+    const { service, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    const movedWorkspace = `${workspace}-moved`;
+    type AssertExpectedInspection = (
+      current: GitHubWorkspaceInspection,
+      expected: GitHubWorkspaceInspection,
+    ) => void;
+    const internals = service as unknown as {
+      assertExpectedInspection: AssertExpectedInspection;
+    };
+    const original = internals.assertExpectedInspection.bind(service);
+    let swapped = false;
+    vi.spyOn(internals, "assertExpectedInspection").mockImplementation((...args) => {
+      original(...args);
+      if (!swapped) {
+        swapped = true;
+        renameSync(workspace, movedWorkspace);
+        mkdirSync(workspace);
+      }
+    });
+
+    await expect(service.discardWorkspace(inspectOptions, inspection)).rejects.toThrow(
+      "identity changed",
+    );
+    expect(await readFile(path.join(movedWorkspace, "README.md"), "utf8")).toBe("dirty\n");
+  });
+
+  it.each(["failure", "cancel"])("leaves canonical changes dirty after worker %s", async (kind) => {
+    const { service, run, workspace, stagingRoot } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+    const controller = new AbortController();
+    const reason = new Error(kind);
+    run.mockImplementation(async (_job, signal) => {
+      expect(signal).toBe(controller.signal);
+      if (kind === "cancel") controller.abort(reason);
+      throw reason;
+    });
+
+    await expect(
+      service.resumeWorkspace(
+        {
+          ...inspectOptions,
+          task: "Resume",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          model,
+        },
+        inspection,
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(false);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("dirty\n");
+    await expect(readFile(path.join(stagingRoot, "workspace", "README.md"))).rejects.toThrow();
+  });
+
+  it("discards tracked and untracked changes while preserving ignored files", async () => {
+    const { service, workspace } = await fixture();
+    await writeFile(path.join(workspace, "README.md"), "dirty\n");
+    await rm(path.join(workspace, "delete-me.txt"));
+    await writeFile(path.join(workspace, "untracked.txt"), "remove\n");
+    await writeFile(path.join(workspace, ".env"), "IGNORED_SECRET_CANARY\n");
+    await mkdir(path.join(workspace, ".cos-pi-cache"));
+    await writeFile(path.join(workspace, ".cos-pi-cache", "cache"), "keep\n");
+    const inspection = await service.inspectWorkspace(inspectOptions);
+
+    await service.discardWorkspace(inspectOptions, inspection);
+
+    expect((await service.inspectWorkspace(inspectOptions)).clean).toBe(true);
+    expect(await readFile(path.join(workspace, "README.md"), "utf8")).toBe("before\n");
+    expect(await readFile(path.join(workspace, "delete-me.txt"), "utf8")).toBe("tracked\n");
+    await expect(readFile(path.join(workspace, "untracked.txt"))).rejects.toThrow();
+    expect(await readFile(path.join(workspace, ".env"), "utf8")).toContain("IGNORED_SECRET");
+    expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache"), "utf8")).toBe("keep\n");
+  });
+});

@@ -41,6 +41,30 @@ and repository builds can require substantially more.
   receives the GitHub token or creates the pull request itself.
 - Ordinary members keep only the anonymous public-repository read tools.
 
+### Interrupted workspace recovery
+
+The normal `github_code_task` path still fails closed when its canonical workspace is dirty. An
+administrator can use `github_inspect_workspace` to see the branch, HEAD, and concise changed-path
+summary without exposing ignored `.env` files or caches. The trusted server also computes a private
+state fingerprint over the branch, HEAD, Git index/status, tracked content and deletions, and
+non-ignored untracked files, including executable and symlink metadata. The model cannot provide or
+override that fingerprint.
+
+Two explicit recovery actions are available when the coding worker and model are configured:
+
+- `github_resume_workspace` captures the current dirty state itself and proposes a ten-minute,
+  one-time Telegram confirmation bound to the requesting administrator and chat. On confirmation,
+  the server locks and rechecks the exact state, materializes that snapshot in the isolated staging
+  slot, lets Pi finish the requested task, and commits the complete result. Worker failure or
+  cancellation leaves the canonical workspace dirty for another recovery attempt, while staging is
+  always cleaned.
+- `github_discard_workspace` uses the same internal inspection and exact-state confirmation. On
+  confirmation, it resets to the captured HEAD and runs `git clean -fd`; tracked and non-ignored
+  untracked changes are removed, while ignored secrets and caches remain.
+
+Any branch, HEAD, index, content, deletion, symlink target, or executable-bit change after the
+preview makes the confirmation stale and aborts before recovery or discard is applied.
+
 Pi itself does not provide a sandbox. The container boundary is therefore required; do not run the
 worker directly on a host containing secrets or unrelated workspaces.
 

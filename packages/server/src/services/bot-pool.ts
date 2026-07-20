@@ -830,6 +830,26 @@ export class BotPool {
                     token: githubToolsConfig.token!,
                     expectedCommitSha,
                   }),
+                inspectWorkspace: (repository, signal) =>
+                  this.gitWorkspaceService!.inspectWorkspace({ botId, repository }, signal),
+                resumeWorkspace: (input, model, expected, signal) =>
+                  this.gitWorkspaceService!.resumeWorkspace(
+                    {
+                      ...input,
+                      botId,
+                      authorName: githubToolsConfig.authorName,
+                      authorEmail: githubToolsConfig.authorEmail,
+                      model,
+                    },
+                    expected,
+                    signal,
+                  ),
+                discardWorkspace: (repository, expected, signal) =>
+                  this.gitWorkspaceService!.discardWorkspace(
+                    { botId, repository },
+                    expected,
+                    signal,
+                  ),
               }
             : undefined,
         artworkToolsConfig: aiConfig.artworkToolsConfig,

@@ -536,6 +536,28 @@ export interface GitHubPushResult {
   url?: string;
 }
 
+export interface GitHubWorkspaceInspection {
+  repository: string;
+  branch: string;
+  headSha: string;
+  clean: boolean;
+  changedFiles: string[];
+  fingerprint: string;
+}
+
+export interface GitHubWorkspaceResumeInput {
+  repository: string;
+  task: string;
+  commitMessage?: string;
+}
+
+export interface GitHubWorkspaceDiscardResult {
+  repository: string;
+  branch: string;
+  headSha: string;
+  summary: string;
+}
+
 export interface AiConfigStored {
   enabled: boolean;
   /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */

@@ -5,6 +5,9 @@ import type {
   GitHubPushPreview,
   GitHubPushResult,
   GitHubToolsRuntimeConfig,
+  GitHubWorkspaceDiscardResult,
+  GitHubWorkspaceInspection,
+  GitHubWorkspaceResumeInput,
 } from "@cos-tool-bot/shared";
 import type { Tool, ToolExecutionOptions } from "ai";
 import { tool } from "ai";
@@ -23,6 +26,8 @@ const repositorySchema = z
 const MAX_FILE_CHARS = 100_000;
 const MAX_TREE_ENTRIES = 2_000;
 const CONFIRMATION_BODY_PREVIEW_CHARS = 600;
+const RECOVERY_PATHS_PREVIEW_CHARS = 1_000;
+const RECOVERY_COMMIT_MESSAGE = "chore: recover Ai-chan coding workspace";
 
 export interface GitHubToolsOptions {
   config: GitHubToolsRuntimeConfig;
@@ -48,6 +53,21 @@ export interface GitHubCodeCallbacks {
     branch: string,
     expectedCommitSha: string,
   ) => Promise<GitHubPushResult>;
+  inspectWorkspace?: (
+    repository: string,
+    signal?: AbortSignal,
+  ) => Promise<GitHubWorkspaceInspection>;
+  resumeWorkspace?: (
+    input: GitHubWorkspaceResumeInput,
+    model: GitHubCodingModelConfig,
+    expected: GitHubWorkspaceInspection,
+    signal?: AbortSignal,
+  ) => Promise<GitHubCodeTaskResult>;
+  discardWorkspace?: (
+    repository: string,
+    expected: GitHubWorkspaceInspection,
+    signal?: AbortSignal,
+  ) => Promise<GitHubWorkspaceDiscardResult>;
 }
 
 function normalizedRepositories(config: GitHubToolsRuntimeConfig): Set<string> {
@@ -73,6 +93,26 @@ function describePullRequestBody(body: string | undefined): string {
   const suffix = exactBody.length > CONFIRMATION_BODY_PREVIEW_CHARS ? "…" : "";
   const label = body === undefined ? "（未提供）" : preview || "（空）";
   return `正文预览：${label}${suffix}\n正文 SHA-256：${digest}`;
+}
+
+function describeRecoveryTask(task: string, commitMessage: string | undefined): string {
+  const preview = task.slice(0, CONFIRMATION_BODY_PREVIEW_CHARS);
+  const suffix = task.length > CONFIRMATION_BODY_PREVIEW_CHARS ? "…" : "";
+  const digest = createHash("sha256").update(task).digest("hex");
+  const normalizedCommitMessage =
+    commitMessage?.trim().split("\n")[0]?.slice(0, 200) || RECOVERY_COMMIT_MESSAGE;
+  return [
+    `任务预览：${preview}${suffix}`,
+    `任务 SHA-256：${digest}`,
+    `提交信息：${normalizedCommitMessage}`,
+  ].join("\n");
+}
+
+function describeRecoveryPaths(paths: string[]): string {
+  const summary = paths.slice(0, 20).join("、") || "（无路径摘要）";
+  return summary.length > RECOVERY_PATHS_PREVIEW_CHARS
+    ? `${summary.slice(0, RECOVERY_PATHS_PREVIEW_CHARS)}…`
+    : summary;
 }
 
 function pullRequestResult(
@@ -111,7 +151,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
 
   async function proposeAction(
     description: string,
-    execute: () => Promise<{ summary: string; url?: string }>,
+    execute: (signal?: AbortSignal) => Promise<{ summary: string; url?: string }>,
   ) {
     const pending = options.pendingActions.register({
       chatId: options.chatId,
@@ -290,6 +330,117 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
           }
         },
       });
+
+      if (
+        options.codeCallbacks.inspectWorkspace &&
+        options.codeCallbacks.resumeWorkspace &&
+        options.codeCallbacks.discardWorkspace
+      ) {
+        tools.github_inspect_workspace = tool({
+          description:
+            "只读检查白名单仓库的本地 Pi workspace 是否干净，并列出未提交文件。不会读取或暴露被 Git 忽略的 .env、缓存等内容。只对管理员开放。",
+          inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
+          execute: async ({ repository }, execution: ToolExecutionOptions) => {
+            try {
+              writeClient(repository);
+              const inspection = await options.codeCallbacks!.inspectWorkspace!(
+                repository,
+                execution.abortSignal,
+              );
+              return {
+                repository: inspection.repository,
+                branch: inspection.branch,
+                head_sha: inspection.headSha,
+                clean: inspection.clean,
+                changed_files: inspection.changedFiles,
+                summary: inspection.clean
+                  ? "本地 workspace 干净"
+                  : `本地 workspace 有 ${inspection.changedFiles.length} 个未提交路径`,
+              };
+            } catch (error) {
+              if (execution.abortSignal?.aborted) throw error;
+              return formatError(error);
+            }
+          },
+        });
+
+        tools.github_resume_workspace = tool({
+          description:
+            "提议让 Pi 从白名单仓库当前未提交 workspace 快照继续工作并创建本地 commit。工具会自行检查和绑定完整状态；实际执行前必须由发起管理员点击 Telegram 确认。",
+          inputSchema: zodToAiSchema(
+            z.object({
+              repository: repositorySchema,
+              task: z.string().min(1).max(20_000).describe("继续完成该 workspace 的编码任务"),
+              commit_message: z.string().min(1).max(200).optional().describe("本地提交信息"),
+            }),
+          ),
+          execute: async (
+            { repository, task, commit_message },
+            execution: ToolExecutionOptions,
+          ) => {
+            try {
+              writeClient(repository);
+              const inspection = await options.codeCallbacks!.inspectWorkspace!(
+                repository,
+                execution.abortSignal,
+              );
+              if (inspection.clean) {
+                throw new Error("Workspace is clean; use github_code_task for a new task");
+              }
+              const changed = describeRecoveryPaths(inspection.changedFiles);
+              return await proposeAction(
+                [
+                  `继续 ${repository} 的未提交 workspace`,
+                  `分支：${inspection.branch}`,
+                  `HEAD：${inspection.headSha}`,
+                  `未提交路径：${changed}`,
+                  describeRecoveryTask(task, commit_message),
+                ].join("\n"),
+                (signal) =>
+                  options.codeCallbacks!.resumeWorkspace!(
+                    { repository, task, commitMessage: commit_message },
+                    options.codingModel!,
+                    inspection,
+                    signal,
+                  ),
+              );
+            } catch (error) {
+              if (execution.abortSignal?.aborted) throw error;
+              return formatError(error);
+            }
+          },
+        });
+
+        tools.github_discard_workspace = tool({
+          description:
+            "提议丢弃白名单仓库当前未提交的 tracked 和非忽略 untracked 改动。工具会自行绑定完整状态；被 Git 忽略的 .env 和缓存会保留。实际执行前必须由发起管理员确认。",
+          inputSchema: zodToAiSchema(z.object({ repository: repositorySchema })),
+          execute: async ({ repository }, execution: ToolExecutionOptions) => {
+            try {
+              writeClient(repository);
+              const inspection = await options.codeCallbacks!.inspectWorkspace!(
+                repository,
+                execution.abortSignal,
+              );
+              if (inspection.clean) throw new Error("Workspace is already clean");
+              const changed = describeRecoveryPaths(inspection.changedFiles);
+              return await proposeAction(
+                [
+                  `丢弃 ${repository} 的未提交 workspace 改动`,
+                  `分支：${inspection.branch}`,
+                  `HEAD：${inspection.headSha}`,
+                  `未提交路径：${changed}`,
+                ].join("\n"),
+                (signal) =>
+                  options.codeCallbacks!.discardWorkspace!(repository, inspection, signal),
+              );
+            } catch (error) {
+              if (execution.abortSignal?.aborted) throw error;
+              return formatError(error);
+            }
+          },
+        });
+      }
     }
 
     tools.github_create_pull_request = tool({

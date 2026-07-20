@@ -41,6 +41,10 @@ describe("GitHub confirmation callbacks", () => {
     expect(execute).not.toHaveBeenCalled();
     expect(registry.get(action.id)).toBeDefined();
 
+    await expect(handler(callback(action.id, 7, -200))).resolves.toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(registry.get(action.id)).toBeDefined();
+
     await expect(handler(callback(action.id, 7))).resolves.toBe(true);
     expect(execute).toHaveBeenCalledOnce();
     expect(registry.get(action.id)).toBeUndefined();
@@ -48,5 +52,44 @@ describe("GitHub confirmation callbacks", () => {
     await expect(handler(callback(action.id, 7))).resolves.toBe(true);
     expect(execute).toHaveBeenCalledOnce();
     registry.destroy();
+  });
+
+  it("aborts an active confirmed action when the registry is destroyed", async () => {
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const execute = vi.fn(
+      (signal?: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          started();
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const registry = new PendingGitHubActionRegistry();
+    const action = registry.register({
+      chatId: -100,
+      userId: 7,
+      description: "recover workspace",
+      execute,
+    });
+    const api = {
+      raw: { answerCallbackQuery: vi.fn().mockResolvedValue(true) },
+      editMessageText: vi.fn().mockResolvedValue({ message_id: 22 }),
+    } as unknown as Api;
+    const handler = createGitHubCallbackQueryHandler({
+      api,
+      pendingActions: registry,
+      adminIds: [7],
+    });
+
+    const handling = handler(callback(action.id, 7));
+    await didStart;
+    const signal = execute.mock.calls[0]![0];
+    expect(signal?.aborted).toBe(false);
+    registry.destroy();
+
+    await expect(handling).resolves.toBe(true);
+    expect(signal?.aborted).toBe(true);
   });
 });
