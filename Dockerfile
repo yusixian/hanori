@@ -17,6 +17,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/coding-worker/package.json packages/coding-worker/
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts --filter @cos-tool-bot/coding-worker
 
+# The worker reaches public HTTP(S) only through this DNS-aware policy proxy.
+FROM alpine:3.21 AS coding-egress-proxy
+RUN apk add --no-cache squid
+COPY infrastructure/coding-egress-proxy/squid.conf /etc/squid/squid.conf
+USER squid
+CMD ["squid", "-N", "-f", "/etc/squid/squid.conf"]
+
 # Install dependencies
 FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./

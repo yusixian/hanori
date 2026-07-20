@@ -11,21 +11,27 @@ and repository builds can require substantially more.
 - The main server owns the GitHub token. It performs authenticated clone, fetch, and push operations
   with a temporary `GIT_ASKPASS` environment and restores the canonical GitHub remote before every
   authenticated operation.
-- The worker never mounts canonical workspaces or Git metadata. The server copies exactly one clean
-  repository into a fixed single-job staging volume, excluding `.git` and `.cos-pi-cache`, and Pi
-  receives only that staging tree, its task, and the selected language-model credential.
+- The worker never mounts canonical workspaces or Git metadata. After a fail-closed clean-index
+  check, the server materializes exactly the tracked Git index with `git checkout-index` into a
+  fixed single-job staging volume. Ignored `.env` files, caches, and other untracked legacy
+  artifacts are never staged. Executable bits and safe relative symlinks are preserved.
 - Staging rejects absolute or traversing symlinks, special files, excessive file counts, and
-  excessive total bytes. The result is checked again before trusted Git metadata is used to create
-  a commit and reset the canonical clean worktree to that commit.
+  excessive total bytes before and after Pi runs. The shared `codingjob` volume is also a 1 GiB
+  tmpfs enforced by the container runtime, so writes fail at the mount boundary before they can
+  exhaust the Docker host disk. The result is checked again before trusted Git metadata is used to
+  create a commit and reset the canonical clean worktree to that commit.
 - Pi may read, edit, write, and run shell commands only inside a separate container with a read-only
   root filesystem, no added Linux capabilities, no Docker socket, a PID limit, and a 1 GiB memory
-  limit. The container joins only its own egress bridge and cannot resolve or join the app/database
-  network. It retains arbitrary public egress because model and package endpoints are configurable;
-  treat all source made available to Pi as potentially disclosable to those endpoints.
-- The app and worker communicate over a bearer-authenticated Unix socket. Each worker container
-  handles one accepted job, exits after flushing the response, and is restarted by Compose. The
-  server waits for a different healthy boot ID before accepting the result, so detached processes
-  from the completed job cannot survive into the next broker step.
+  limit. The worker joins only the internal `coding-sandbox` network, which has no external route.
+  Model requests, Node global `fetch`, and proxy-aware shell/package tools use the separate Squid
+  sidecar. Only that sidecar joins `coding-egress`; its DNS-aware ACL denies localhost, private,
+  CGNAT, link-local, multicast, special-purpose, and metadata destinations for HTTP/HTTPS traffic.
+- The app and worker communicate over a mode-0770 tmpfs Unix-socket volume. The worker secret is
+  removed from its environment and never written to that shared volume. Each worker handles one
+  accepted job, exits after flushing the response, and is restarted by Compose. For every health
+  poll the server generates a fresh random challenge and accepts the new boot only when its boot ID
+  and challenge carry a timing-safe verified HMAC. A detached process that replaces the socket can
+  see the challenge but cannot forge or replay the restart proof.
 - The trusted server configures Ai-chan's Git author identity, creates the local branch, and creates a
   local commit after Pi finishes. Push is a separate one-time Telegram confirmation bound to the
   initiating administrator, chat, branch, and exact commit SHA.
@@ -33,6 +39,11 @@ and repository builds can require substantially more.
 
 Pi itself does not provide a sandbox. The container boundary is therefore required; do not run the
 worker directly on a host containing secrets or unrelated workspaces.
+
+The egress proxy is a destination boundary, not a confidentiality filter: it does not decrypt TLS,
+use a domain allowlist, or stop a permitted public model/package endpoint from receiving staged
+source. A package manager that ignores proxy environment variables simply has no direct route and
+fails. Treat every public endpoint and downloaded dependency used by a job as untrusted.
 
 ## Start the worker
 
@@ -58,8 +69,14 @@ For local development, run the worker separately with the same secret and worksp
 ```bash
 CODING_WORKER_SECRET=dev-secret \
 CODING_JOB_ROOT=./data/coding-job \
+HTTP_PROXY=http://127.0.0.1:3128 \
+HTTPS_PROXY=http://127.0.0.1:3128 \
 pnpm dev:coding-worker
 ```
+
+This host-mode command does not reproduce the container network boundary. Use the Compose profile
+for security testing; set `CODING_REQUIRE_PROXY=1` in host mode when fail-closed proxy startup is
+required.
 
 The first version targets Node-based repositories because the worker image includes Node, pnpm,
 Git, Bash, and ripgrep. Other build toolchains can be added to the worker image without expanding
@@ -74,7 +91,15 @@ loading the SDK added about 128 MB RSS in a local measurement. Active coding usu
 also limits the worker to 1.5 CPU cores.
 
 Canonical repositories keep ignored `.cos-pi-cache/` directories, which are preserved when the
-server resets a completed commit into the canonical worktree. They are intentionally not copied
-into the worker's single-use staging slot. Canonical clones live only in the app's `codeworkspaces`
+server resets a completed commit into the canonical worktree. Ignored files are absent from the
+worker's single-use staging slot because staging comes from the tracked index, not the raw
+worktree. Canonical clones live only in the app's `codeworkspaces`
 volume; the worker cannot mount or enumerate that volume. Inspect usage with `docker system df -v`
 and prune individual stale workspaces during maintenance.
+
+The hard staging quota uses the Docker local volume driver's Linux `tmpfs` mount options
+(`size`, `uid`, `gid`, and `mode`). This is supported by Linux Docker Engine and Docker Desktop's
+Linux VM. Deployment intentionally fails while mounting the volume on a runtime that cannot honor
+those options; do not replace it with an unbounded named volume. Verify the rendered policy before
+deployment with `docker compose --profile coding config`, and inspect the live bound with
+`docker compose --profile coding exec app df -h /coding-job`.

@@ -3,20 +3,65 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("coding worker Compose isolation", () => {
-  it("mounts only the staging and control volumes on an exclusive network", async () => {
+  it("mounts only hard-bounded staging/control volumes on an internal network", async () => {
     const compose = await readFile(path.resolve(process.cwd(), "docker-compose.yml"), "utf8");
     const worker = compose.slice(
       compose.indexOf("  coding-worker:"),
       compose.indexOf("  nsfw-api:"),
     );
+    const volumesStart = compose.lastIndexOf("\nvolumes:\n");
+    const networksStart = compose.lastIndexOf("\nnetworks:\n");
+    const volumes = compose.slice(volumesStart, networksStart);
+    const networks = compose.slice(networksStart);
 
     expect(worker).not.toContain("codeworkspaces");
     expect(worker).not.toContain("codegit");
     expect(worker).toContain("codingjob:/job");
     expect(worker).toContain("codingcontrol:/coding-control");
     expect(worker).toContain("CODING_WORKER_SOCKET=/coding-control/worker.sock");
-    expect(worker).toContain("- coding-egress");
+    expect(worker).toContain("CODING_REQUIRE_PROXY=1");
+    expect(worker).toContain("HTTP_PROXY=http://coding-egress-proxy:3128");
+    expect(worker).toContain("- coding-sandbox");
+    expect(worker).not.toContain("- coding-egress");
     expect(worker).toContain("restart: always");
     expect(worker).toContain("pids_limit: 128");
+    expect(volumes).toContain('o: "size=1073741824,uid=1000,gid=1000,mode=0700"');
+    expect(volumes).toContain('o: "size=1048576,uid=1000,gid=1000,mode=0770"');
+    expect(networks).toContain("coding-sandbox:");
+    expect(networks).toContain("internal: true");
+  });
+
+  it("routes the internal worker network through a public-only HTTP proxy", async () => {
+    const compose = await readFile(path.resolve(process.cwd(), "docker-compose.yml"), "utf8");
+    const proxy = compose.slice(
+      compose.indexOf("  coding-egress-proxy:"),
+      compose.indexOf("  coding-worker:"),
+    );
+    expect(proxy).toContain("target: coding-egress-proxy");
+    expect(proxy).toContain("- coding-sandbox");
+    expect(proxy).toContain("- coding-egress");
+
+    const squid = await readFile(
+      path.resolve(process.cwd(), "infrastructure/coding-egress-proxy/squid.conf"),
+      "utf8",
+    );
+    for (const denied of [
+      "10.0.0.0/8",
+      "100.64.0.0/10",
+      "127.0.0.0/8",
+      "169.254.0.0/16",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "224.0.0.0/4",
+      "fc00::/7",
+      "fe80::/10",
+      "ff00::/8",
+    ]) {
+      expect(squid).toContain(`acl blocked_destination dst ${denied}`);
+    }
+    expect(squid).toContain("http_access deny blocked_destination");
+    expect(squid).toContain("http_access deny !Allowed_protocols !CONNECT");
+    expect(squid).toContain("http_access deny !Safe_ports");
+    expect(squid).toContain("http_access deny CONNECT !SSL_ports");
   });
 });

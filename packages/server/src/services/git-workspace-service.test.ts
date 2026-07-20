@@ -40,7 +40,8 @@ describe("Git workspace input validation", () => {
     await exec("git", ["init", "--bare", remote]);
     await exec("git", ["init", "-b", "main", seed]);
     await writeFile(path.join(seed, "README.md"), "before\n");
-    await exec("git", ["-C", seed, "add", "README.md"]);
+    await writeFile(path.join(seed, ".gitignore"), ".env\n.cos-pi-cache/\n");
+    await exec("git", ["-C", seed, "add", "README.md", ".gitignore"]);
     await exec("git", [
       "-C",
       seed,
@@ -66,6 +67,7 @@ describe("Git workspace input validation", () => {
     const run = vi.spyOn(worker, "run").mockImplementation(async (job) => {
       expect(JSON.stringify(job)).not.toContain("github-secret");
       expect(job.workspacePath).toBe("workspace");
+      await expect(readFile(path.join(stagingRoot, job.workspacePath, ".env"))).rejects.toThrow();
       await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
       return { summary: "updated README", durationMs: 1 };
     });
@@ -109,6 +111,7 @@ describe("Git workspace input validation", () => {
     expect(excludeFile).toContain(".cos-pi-cache/");
     await mkdir(path.join(workspace, ".cos-pi-cache"));
     await writeFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "cached\n");
+    await writeFile(path.join(workspace, ".env"), "IGNORED_SECRET_CANARY\n");
     await service.runCodeTask({
       botId: "bot-1",
       repository: "owner/repo",
@@ -128,6 +131,7 @@ describe("Git workspace input validation", () => {
     expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "utf8")).toBe(
       "cached\n",
     );
+    expect(await readFile(path.join(workspace, ".env"), "utf8")).toBe("IGNORED_SECRET_CANARY\n");
     const author = await exec("git", [
       `--git-dir=${path.join(gitRoot, "bot-1", "owner", "repo.git")}`,
       "show",

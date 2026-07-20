@@ -49,6 +49,23 @@ describe("coding worker boundary", () => {
     });
     const health = await handler(new Request("http://worker/health"));
     expect(await health.json()).toEqual({ ok: true, busy: false, bootId: "boot-one" });
+    const challenge = Buffer.alloc(32, 7).toString("base64url");
+    const authenticatedHealth = await handler(
+      new Request(`http://worker/health?challenge=${challenge}`),
+    );
+    const expectedProof = createHmac("sha256", "worker-secret")
+      .update("cos-tool-bot/coding-worker-health/v1\0")
+      .update(challenge)
+      .update("\0")
+      .update("boot-one")
+      .digest("base64url");
+    expect(await authenticatedHealth.json()).toEqual({
+      ok: true,
+      busy: false,
+      bootId: "boot-one",
+      challenge,
+      proof: expectedProof,
+    });
 
     const response = await handler(
       new Request("http://worker/jobs", {
@@ -255,3 +272,4 @@ describe("coding worker boundary", () => {
     expect(model.maxTokens).toBe(12_000);
   });
 });
+import { createHmac } from "node:crypto";

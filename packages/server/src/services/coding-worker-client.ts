@@ -1,4 +1,5 @@
 import type { GitHubCodingModelConfig } from "@cos-tool-bot/shared";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { request as httpRequest } from "node:http";
 
 export type CodingWorkerModel = GitHubCodingModelConfig;
@@ -28,6 +29,43 @@ export interface CodingWorkerClientOptions {
 interface WorkerHealth {
   ok: true;
   bootId: string;
+  challenge: string;
+  proof: string;
+}
+
+function healthProof(secret: string, challenge: string, bootId: string): Buffer {
+  return createHmac("sha256", secret)
+    .update("cos-tool-bot/coding-worker-health/v1\0")
+    .update(challenge)
+    .update("\0")
+    .update(bootId)
+    .digest();
+}
+
+function hasValidHealthProof(
+  value: unknown,
+  secret: string,
+  expectedChallenge: string,
+): value is WorkerHealth {
+  if (!value || typeof value !== "object") return false;
+  const health = value as Partial<WorkerHealth>;
+  if (
+    health.ok !== true ||
+    typeof health.bootId !== "string" ||
+    !health.bootId ||
+    health.challenge !== expectedChallenge ||
+    typeof health.proof !== "string"
+  ) {
+    return false;
+  }
+  let received: Buffer;
+  try {
+    received = Buffer.from(health.proof, "base64url");
+  } catch {
+    return false;
+  }
+  const expected = healthProof(secret, expectedChallenge, health.bootId);
+  return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
 function isCodingWorkerResult(value: unknown): value is CodingWorkerResult {
@@ -148,21 +186,18 @@ export class CodingWorkerClient {
     while (Date.now() <= deadline) {
       signal?.throwIfAborted();
       try {
+        const challenge = randomBytes(32).toString("base64url");
         const healthTimeout = AbortSignal.timeout(Math.min(5_000, timeoutMs));
-        const response = await this.request("/health", {
+        const response = await this.request(`/health?challenge=${challenge}`, {
           signal: signal ? AbortSignal.any([signal, healthTimeout]) : healthTimeout,
         });
         const payload: unknown = await response.json().catch(() => null);
         if (
           response.ok &&
-          payload &&
-          typeof payload === "object" &&
-          (payload as Partial<WorkerHealth>).ok === true &&
-          typeof (payload as Partial<WorkerHealth>).bootId === "string" &&
-          (payload as Partial<WorkerHealth>).bootId &&
-          (payload as Partial<WorkerHealth>).bootId !== differentFrom
+          hasValidHealthProof(payload, this.options.secret, challenge) &&
+          payload.bootId !== differentFrom
         ) {
-          return payload as WorkerHealth;
+          return payload;
         }
       } catch (error) {
         lastError = error;

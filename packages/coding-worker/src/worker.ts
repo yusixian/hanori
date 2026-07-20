@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -42,6 +42,7 @@ const MAX_TASK_CHARS = 20_000;
 const MAX_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_TIMEOUT_MS = 60_000;
 const MAX_SUMMARY_CHARS = 12_000;
+const HEALTH_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 class RequestTooLargeError extends Error {}
 
@@ -53,6 +54,15 @@ function secureEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function createHealthProof(secret: string, challenge: string, bootId: string): string {
+  return createHmac("sha256", secret)
+    .update("cos-tool-bot/coding-worker-health/v1\0")
+    .update(challenge)
+    .update("\0")
+    .update(bootId)
+    .digest("base64url");
 }
 
 async function readRequestText(request: Request): Promise<string> {
@@ -311,7 +321,18 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, busy, bootId });
+      const challenge = url.searchParams.get("challenge");
+      if (!challenge) return json({ ok: true, busy, bootId });
+      if (!HEALTH_CHALLENGE_RE.test(challenge)) {
+        return json({ error: "Invalid health challenge" }, 400);
+      }
+      return json({
+        ok: true,
+        busy,
+        bootId,
+        challenge,
+        proof: createHealthProof(options.secret, challenge, bootId),
+      });
     }
     if (request.method !== "POST" || url.pathname !== "/jobs")
       return json({ error: "Not found" }, 404);

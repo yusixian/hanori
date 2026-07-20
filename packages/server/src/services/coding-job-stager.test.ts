@@ -1,5 +1,16 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -28,31 +39,43 @@ async function fixture() {
   await mkdir(staging);
   await writeFile(path.join(source, "README.md"), "source\n");
   await writeFile(path.join(sibling, "canary"), "must stay private\n");
+  await exec("git", ["init", source]);
+  await exec("git", ["-C", source, "add", "README.md"]);
   return { root, source, sibling, staging };
 }
 
 describe("CodingJobStager", () => {
-  it("copies only one repository without Git metadata, caches, or sibling canaries", async () => {
+  it("materializes only tracked index entries with executable bits and safe symlinks", async () => {
     const { source, sibling, staging } = await fixture();
-    await mkdir(path.join(source, ".git"));
-    await writeFile(path.join(source, ".git", "config"), "secret\n");
+    await writeFile(path.join(source, ".gitignore"), ".env\n.cos-pi-cache/\n");
+    await writeFile(path.join(source, ".env"), "IGNORED_SECRET_CANARY\n");
     await mkdir(path.join(source, ".cos-pi-cache"));
     await writeFile(path.join(source, ".cos-pi-cache", "entry"), "cached\n");
+    await writeFile(path.join(source, "run.sh"), "#!/bin/sh\nexit 0\n");
+    await chmod(path.join(source, "run.sh"), 0o755);
+    await symlink("README.md", path.join(source, "README-link"));
+    await exec("git", ["-C", source, "add", ".gitignore", "run.sh", "README-link"]);
     const stager = new CodingJobStager(staging);
     const job = await stager.stage(source);
 
     expect(await readFile(path.join(job.path, "README.md"), "utf8")).toBe("source\n");
-    await expect(readFile(path.join(job.path, ".git", "config"))).rejects.toThrow();
+    expect((await lstat(path.join(job.path, "run.sh"))).mode & 0o111).toBe(0o111);
+    expect(await readlink(path.join(job.path, "README-link"))).toBe("README.md");
+    await expect(readFile(path.join(job.path, ".env"))).rejects.toThrow();
     await expect(readFile(path.join(job.path, ".cos-pi-cache", "entry"))).rejects.toThrow();
+    await expect(readFile(path.join(job.path, ".git", "config"))).rejects.toThrow();
     expect(await readFile(path.join(sibling, "canary"), "utf8")).toBe("must stay private\n");
   });
 
   it("rejects escaping symlinks and initial file budgets", async () => {
     const { source, staging } = await fixture();
     await symlink("../../outside", path.join(source, "escape"));
-    await expect(new CodingJobStager(staging).stage(source)).rejects.toThrow("Traversing symlink");
+    await exec("git", ["-C", source, "add", "escape"]);
+    await expect(new CodingJobStager(staging).stage(source)).rejects.toThrow("Unsafe symlink");
     await rm(path.join(source, "escape"));
+    await exec("git", ["-C", source, "rm", "--cached", "escape"]);
     await writeFile(path.join(source, "second"), "two\n");
+    await exec("git", ["-C", source, "add", "second"]);
     await expect(new CodingJobStager(staging, { maxFiles: 1 }).stage(source)).rejects.toThrow(
       "file-count limit",
     );

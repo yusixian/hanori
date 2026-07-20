@@ -1,7 +1,10 @@
 import { createServer } from "node:http";
 import { chmod, readFile, rm } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { configureWorkerProxy } from "./network-proxy.js";
 import { createCodingWorkerHandler } from "./worker.js";
+
+configureWorkerProxy();
 
 const secretFile = "/tmp/coding-worker-secret";
 let secret = process.env["CODING_WORKER_SECRET"];
