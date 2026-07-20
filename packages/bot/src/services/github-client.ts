@@ -82,6 +82,7 @@ export class GitHubApiError extends Error {
 
 export interface GitHubClientOptions {
   token?: string;
+  tokenProvider?: () => Promise<string | undefined>;
   fetch?: typeof fetch;
 }
 
@@ -335,7 +336,10 @@ export class GitHubClient {
     headers.set("Accept", "application/vnd.github+json");
     headers.set("User-Agent", "cos-tool-bot");
     headers.set("X-GitHub-Api-Version", "2022-11-28");
-    if (this.options.token) headers.set("Authorization", `Bearer ${this.options.token}`);
+    const token = this.options.tokenProvider
+      ? await this.options.tokenProvider()
+      : this.options.token;
+    if (token) headers.set("Authorization", `Bearer ${token}`);
     if (init.body) headers.set("Content-Type", "application/json");
 
     const timeoutSignal = AbortSignal.timeout(30_000);

@@ -4,7 +4,12 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger as honoLogger } from "hono/logger";
-import { ownerOnly, requireAppAccess, requireRoles } from "./middleware/better-auth.js";
+import {
+  ownerOnly,
+  ownerOrAdmin,
+  requireAppAccess,
+  requireRoles,
+} from "./middleware/better-auth.js";
 import { resolveAllowedOrigins, type AppAuth } from "./auth.js";
 import { authzRoutes } from "./routes/authz.js";
 import { backupRoutes } from "./routes/backup.js";
@@ -21,6 +26,7 @@ import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
+import { botGitHubAppRoutes, githubAppCallbackRoutes } from "./routes/github-app.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ChatSummaryService } from "./services/chat-summary-service.js";
@@ -30,6 +36,7 @@ import type { RssFeedService } from "./services/rss-feed-service.js";
 import type { SummaryConfigService } from "./services/summary-config-service.js";
 import { BotRunService } from "./services/bot-run-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
+import type { GitHubAppCredentialService } from "./services/github-app-credentials.js";
 
 interface AppOptions {
   db: Database;
@@ -44,6 +51,7 @@ interface AppOptions {
   mcpClientManager: McpClientManager;
   summaryService: ChatSummaryService;
   summaryConfigService: SummaryConfigService;
+  githubAppService: GitHubAppCredentialService;
 }
 
 export function createApp(options: AppOptions) {
@@ -60,6 +68,7 @@ export function createApp(options: AppOptions) {
     mcpClientManager,
     summaryService,
     summaryConfigService,
+    githubAppService,
   } = options;
 
   const app = new Hono()
@@ -86,7 +95,10 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/runs/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/debug", requireRoles(ownerOnly))
     .use("/api/bots/:botId/debug/*", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/github-app", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/github-app/*", requireRoles(ownerOrAdmin))
     .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
+    .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db, botPool))
@@ -94,6 +106,9 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))
     .route("/api/bots", botDebugRoutes(botPool))
+    .use("/api/github-app/*", requireAppAccess(auth, db))
+    .use("/api/github-app/*", requireRoles(ownerOrAdmin))
+    .route("/api/github-app", githubAppCallbackRoutes(db, githubAppService, botPool, baseURL))
     .use("/api/logs", requireAppAccess(auth, db))
     .use("/api/logs/*", requireAppAccess(auth, db))
     .route("/api/logs", logRoutes(db))

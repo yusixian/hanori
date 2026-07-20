@@ -31,3 +31,33 @@ describe("GitHubClient cancellation", () => {
     expect(requestSignal?.aborted).toBe(true);
   });
 });
+
+describe("GitHubClient dynamic credentials", () => {
+  it("resolves a fresh token immediately before every API request", async () => {
+    const tokenProvider = vi
+      .fn<() => Promise<string | undefined>>()
+      .mockResolvedValueOnce("installation-token-1")
+      .mockResolvedValueOnce("installation-token-2");
+    const authorizations: string[] = [];
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      authorizations.push(new Headers(init?.headers).get("Authorization") ?? "");
+      return new Response(
+        JSON.stringify({
+          full_name: "owner/repo",
+          private: true,
+          default_branch: "main",
+          html_url: "https://github.com/owner/repo",
+          description: null,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    });
+    const client = new GitHubClient({ tokenProvider, fetch: fetchMock as typeof fetch });
+
+    await client.getRepository("owner/repo");
+    await client.getRepository("owner/repo");
+
+    expect(authorizations).toEqual(["Bearer installation-token-1", "Bearer installation-token-2"]);
+    expect(tokenProvider).toHaveBeenCalledTimes(2);
+  });
+});

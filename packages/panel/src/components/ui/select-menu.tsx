@@ -5,6 +5,7 @@ import { Check, ChevronDown } from "lucide-react";
 export interface SelectMenuOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 export function SelectMenu({
@@ -52,7 +53,8 @@ export function SelectMenu({
               <SelectPrimitive.Item
                 key={option.value}
                 value={option.value}
-                className="focus:bg-accent focus:text-accent-foreground relative flex min-h-9 cursor-default items-center rounded-md py-2 pr-8 pl-3 text-sm outline-none select-none"
+                disabled={option.disabled}
+                className="focus:bg-accent focus:text-accent-foreground relative flex min-h-9 cursor-default items-center rounded-md py-2 pr-8 pl-3 text-sm outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
               >
                 <SelectPrimitive.ItemText>{option.label}</SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className="absolute right-2">

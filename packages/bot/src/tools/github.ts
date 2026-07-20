@@ -147,9 +147,14 @@ function pullRequestResult(
 export function createGitHubTools(options: GitHubToolsOptions): Record<string, Tool> {
   const allowedRepositories = normalizedRepositories(options.config);
   const anonymousClient = new GitHubClient({ fetch: options.fetch });
-  const authenticatedClient = options.config.token
-    ? new GitHubClient({ token: options.config.token, fetch: options.fetch })
-    : undefined;
+  const authenticatedClient =
+    options.config.token || options.config.tokenProvider
+      ? new GitHubClient({
+          token: options.config.token,
+          tokenProvider: options.config.tokenProvider,
+          fetch: options.fetch,
+        })
+      : undefined;
 
   function readClient(repository: string): GitHubClient {
     const allowed = allowedRepositories.has(repository.toLowerCase());

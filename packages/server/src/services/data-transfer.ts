@@ -44,10 +44,11 @@ function sanitizeAiConfig(config: Record<string, unknown>): Record<string, unkno
     rest.embeddingConfig = embRest;
   }
   if (rest.githubToolsConfig && typeof rest.githubToolsConfig === "object") {
-    const { encryptedToken: _githubToken, ...githubRest } = rest.githubToolsConfig as Record<
-      string,
-      unknown
-    >;
+    const {
+      encryptedToken: _githubToken,
+      githubAppInstallation: _githubAppInstallation,
+      ...githubRest
+    } = rest.githubToolsConfig as Record<string, unknown>;
     rest.githubToolsConfig = githubRest;
   }
   return rest;
@@ -213,6 +214,12 @@ export class DataTransferService {
       for (const botData of payload.bots) {
         const oldBotId = botData.id as string;
         const botName = (botData.name as string) ?? "Imported Bot";
+        const importedAiConfig =
+          botData.aiConfig &&
+          typeof botData.aiConfig === "object" &&
+          !Array.isArray(botData.aiConfig)
+            ? sanitizeAiConfig(botData.aiConfig as Record<string, unknown>)
+            : botData.aiConfig;
 
         // Insert new bot with placeholder token
         const placeholderToken = encrypt("__IMPORT_PLACEHOLDER__", this.encryptionKey);
@@ -222,7 +229,7 @@ export class DataTransferService {
             name: botName,
             encryptedToken: placeholderToken,
             adminChatIds: (botData.adminChatIds as number[]) ?? [],
-            aiConfig: botData.aiConfig as typeof schema.bots.$inferInsert.aiConfig,
+            aiConfig: importedAiConfig as typeof schema.bots.$inferInsert.aiConfig,
             isActive: false,
           })
           .returning();

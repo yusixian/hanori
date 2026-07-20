@@ -489,7 +489,13 @@ export interface GitHubToolsConfigStored {
   enabled: boolean;
   publicReadEnabled: boolean;
   codingAgentEnabled: boolean;
+  /** Optional dedicated provider for coding tasks. Omitted to follow the active chat provider. */
+  codingProviderId?: string;
+  /** Optional dedicated model within codingProviderId. Omitted to use that provider's default. */
+  codingModelId?: string;
   encryptedToken?: string;
+  /** GitHub App installation metadata. Installation access tokens are never persisted. */
+  githubAppInstallation?: GitHubAppInstallationStored;
   login?: string;
   authorName: string;
   authorEmail: string;
@@ -497,14 +503,29 @@ export interface GitHubToolsConfigStored {
   repositories: string[];
 }
 
-/** GitHub access returned to the panel. Credentials are represented only by hasToken. */
-export interface GitHubToolsConfigPublic extends Omit<GitHubToolsConfigStored, "encryptedToken"> {
+export interface GitHubAppInstallationStored {
+  installationId: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: "all" | "selected";
+  repositories: string[];
+  permissions: Record<string, string>;
+  connectedAt: string;
+}
+
+/** GitHub access returned to the general AI settings panel. Installation details use admin routes. */
+export interface GitHubToolsConfigPublic extends Omit<
+  GitHubToolsConfigStored,
+  "encryptedToken" | "githubAppInstallation"
+> {
   hasToken: boolean;
 }
 
 /** Decrypted, in-memory-only configuration used by the bot runtime. */
 export interface GitHubToolsRuntimeConfig extends Omit<GitHubToolsConfigStored, "encryptedToken"> {
   token?: string;
+  /** Resolves a short-lived GitHub App installation token immediately before an operation. */
+  tokenProvider?: () => Promise<string | undefined>;
 }
 
 export interface GitHubCodeTaskInput {

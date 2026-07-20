@@ -28,6 +28,11 @@ export const env = {
   AUTH_OWNER_EMAIL: required("AUTH_OWNER_EMAIL"),
   GOOGLE_CLIENT_ID: optional("GOOGLE_CLIENT_ID"),
   GOOGLE_CLIENT_SECRET: optional("GOOGLE_CLIENT_SECRET"),
+  GITHUB_APP_ID: optional("GITHUB_APP_ID"),
+  GITHUB_APP_CLIENT_ID: optional("GITHUB_APP_CLIENT_ID"),
+  GITHUB_APP_CLIENT_SECRET: optional("GITHUB_APP_CLIENT_SECRET"),
+  GITHUB_APP_PRIVATE_KEY: optional("GITHUB_APP_PRIVATE_KEY"),
+  GITHUB_APP_SLUG: optional("GITHUB_APP_SLUG"),
   // Used only once to bootstrap the first owner during migration.
   PANEL_PASSWORD: optional("PANEL_PASSWORD"),
   ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],

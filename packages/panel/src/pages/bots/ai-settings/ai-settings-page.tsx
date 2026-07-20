@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { client } from "@/lib/client";
+import { authFetch, client } from "@/lib/client";
 import type {
   AgentToolsConfig,
   AiConfigPublic,
@@ -147,7 +147,11 @@ export function BotAiSettingsPage() {
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [webSearchApiKey, setWebSearchApiKey] = useState("");
   const [webImageApiKey, setWebImageApiKey] = useState("");
-  const [githubToken, setGitHubToken] = useState("");
+  const [canManageGitHubCredentials, setCanManageGitHubCredentials] = useState(false);
+  const [openGitHubAfterCallback, setOpenGitHubAfterCallback] = useState(
+    () =>
+      searchParams.get("githubApp") === "connected" || searchParams.get("githubApp") === "error",
+  );
   const [previewOpen, setPreviewOpen] = useState(false);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
@@ -207,6 +211,43 @@ export function BotAiSettingsPage() {
     else next.set("section", section);
     setSearchParams(next);
   };
+
+  useEffect(() => {
+    const callbackResult = searchParams.get("githubApp");
+    if (callbackResult !== "connected" && callbackResult !== "error") return;
+
+    setOpenGitHubAfterCallback(true);
+    setMessage({
+      type: callbackResult === "connected" ? "success" : "error",
+      text:
+        callbackResult === "connected"
+          ? t("githubTools.callbackSuccess")
+          : searchParams.get("message") || t("githubTools.callbackError"),
+    });
+    const next = new URLSearchParams(searchParams);
+    next.delete("githubApp");
+    next.delete("message");
+    next.set("section", "tools");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, t]);
+
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const response = await authFetch("/api/authz/me");
+        if (!response.ok) return;
+        const body = (await response.json()) as { data?: { member?: { role?: string } } };
+        const role = body.data?.member?.role;
+        if (active) setCanManageGitHubCredentials(role === "owner" || role === "admin");
+      } catch {
+        // Credential operations remain hidden if the role cannot be verified.
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const loadConfig = useCallback(async () => {
     if (!botId) return;
@@ -328,8 +369,8 @@ export function BotAiSettingsPage() {
                 enabled: config.githubToolsConfig.enabled,
                 publicReadEnabled: config.githubToolsConfig.publicReadEnabled,
                 codingAgentEnabled: config.githubToolsConfig.codingAgentEnabled,
-                token: githubToken || undefined,
-                login: config.githubToolsConfig.login,
+                codingProviderId: config.githubToolsConfig.codingProviderId,
+                codingModelId: config.githubToolsConfig.codingModelId,
                 authorName: config.githubToolsConfig.authorName,
                 authorEmail: config.githubToolsConfig.authorEmail,
                 repositories: config.githubToolsConfig.repositories,
@@ -397,7 +438,6 @@ export function BotAiSettingsPage() {
         setEmbeddingApiKey("");
         setWebSearchApiKey("");
         setWebImageApiKey("");
-        setGitHubToken("");
         setProviderApiKeys({});
         savedDraftRef.current = serializeDraft(
           json.data,
@@ -839,11 +879,15 @@ export function BotAiSettingsPage() {
                 title={t("disclosures.githubTools.title")}
                 description={t("disclosures.githubTools.description")}
                 summary={githubCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                defaultOpen={openGitHubAfterCallback}
               >
                 <GitHubToolsSection
+                  botId={botId!}
+                  canManageCredentials={canManageGitHubCredentials}
+                  authorizationBlocked={isDirty || !config.githubToolsConfig}
+                  providers={config.providers ?? []}
+                  providerApiKeyDrafts={providerApiKeys}
                   config={githubCfg}
-                  token={githubToken}
-                  onTokenChange={setGitHubToken}
                   onUpdate={updateGitHubTools}
                 />
               </SettingsDisclosureRow>

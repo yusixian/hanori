@@ -19,6 +19,7 @@ import { McpClientManager } from "./services/mcp-client-manager.js";
 import { CodingWorkerClient } from "./services/coding-worker-client.js";
 import { CodingJobStager } from "./services/coding-job-stager.js";
 import { GitWorkspaceService } from "./services/git-workspace-service.js";
+import { GitHubAppCredentialService } from "./services/github-app-credentials.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
 import { SummaryConfigService } from "./services/summary-config-service.js";
 import { SummaryRunner } from "./services/summary-runner.js";
@@ -133,6 +134,20 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const githubAppService = new GitHubAppCredentialService({
+  config: {
+    appId: env.GITHUB_APP_ID,
+    clientId: env.GITHUB_APP_CLIENT_ID,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
+    privateKey: env.GITHUB_APP_PRIVATE_KEY,
+    slug: env.GITHUB_APP_SLUG,
+  },
+  stateSecret: env.BETTER_AUTH_SECRET,
+});
+botPool.setGitHubAppCredentialService(githubAppService);
+if (githubAppService.configurationError) {
+  logger.warn(githubAppService.configurationError);
+}
 const codingWorkerClient = new CodingWorkerClient({
   url: env.CODING_WORKER_URL,
   socketPath: env.CODING_WORKER_SOCKET,
@@ -216,6 +231,7 @@ const app = createApp({
   mcpClientManager,
   summaryService,
   summaryConfigService,
+  githubAppService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

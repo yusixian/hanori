@@ -11,11 +11,22 @@ const EMPTY_VALUE = "__select_empty_value__";
 
 function collectOptions(children: ReactNode): SelectMenuOption[] {
   return Children.toArray(children).flatMap((child) => {
-    if (!isValidElement<{ value?: string | number; children?: ReactNode }>(child)) return [];
+    if (
+      !isValidElement<{
+        value?: string | number;
+        children?: ReactNode;
+        disabled?: boolean;
+      }>(child)
+    )
+      return [];
     if (child.type === "option") {
       const value = String(child.props.value ?? "");
       return [
-        { value: value === "" ? EMPTY_VALUE : value, label: String(child.props.children ?? "") },
+        {
+          value: value === "" ? EMPTY_VALUE : value,
+          label: String(child.props.children ?? ""),
+          disabled: child.props.disabled,
+        },
       ];
     }
     return collectOptions(child.props.children);

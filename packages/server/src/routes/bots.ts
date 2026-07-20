@@ -19,14 +19,20 @@ import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import * as fs from "node:fs/promises";
+import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { env } from "../env.js";
+import type { AuthVariables } from "../middleware/better-auth.js";
 import type { BotPool } from "../services/bot-pool.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
 import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "../services/ai-config-web-tools.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { mapProfileToDto } from "../services/people-profile-store.js";
 import { resolvePixaiTaskTimeoutMs } from "../services/generation-recovery.js";
+import {
+  assertGitHubCodingModelSelection,
+  assertGitHubCredentialUpdateAllowed,
+} from "../services/github-credential-policy.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
@@ -192,8 +198,12 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
           enabled: migrated.githubToolsConfig.enabled,
           publicReadEnabled: migrated.githubToolsConfig.publicReadEnabled,
           codingAgentEnabled: migrated.githubToolsConfig.codingAgentEnabled ?? false,
+          codingProviderId: migrated.githubToolsConfig.codingProviderId,
+          codingModelId: migrated.githubToolsConfig.codingModelId,
           hasToken: !!migrated.githubToolsConfig.encryptedToken,
-          login: migrated.githubToolsConfig.login,
+          login:
+            migrated.githubToolsConfig.githubAppInstallation?.accountLogin ??
+            migrated.githubToolsConfig.login,
           authorName: migrated.githubToolsConfig.authorName,
           authorEmail: migrated.githubToolsConfig.authorEmail,
           repositories: migrated.githubToolsConfig.repositories,
@@ -367,6 +377,8 @@ const aiConfigSchema = z
         enabled: z.boolean(),
         publicReadEnabled: z.boolean(),
         codingAgentEnabled: z.boolean().default(false),
+        codingProviderId: z.string().trim().min(1).max(100).optional(),
+        codingModelId: z.string().trim().min(1).max(200).optional(),
         token: z.string().max(512).optional(),
         login: z.string().trim().max(100).optional(),
         authorName: z.string().trim().min(1).max(100),
@@ -529,7 +541,7 @@ export function botsRoutes(
   botPool: BotPool,
   modelCapabilityService: ModelCapabilityService,
 ) {
-  return new Hono()
+  return new Hono<{ Variables: AuthVariables }>()
     .get(
       "/",
       zValidator(
@@ -863,12 +875,12 @@ export function botsRoutes(
         // selection survives the id rewrite.
         let providers: AiProviderEntry[] | undefined;
         let activeProviderId: string | undefined = body.activeProviderId;
+        const providerIdMap = new Map<string, string>();
         if (body.providers !== undefined) {
-          const idMap = new Map<string, string>();
           providers = body.providers.map((p) => {
             const isTemp = !p.id || p.id.startsWith("__new_");
             const finalId = isTemp ? randomUUID() : p.id!;
-            if (p.id) idMap.set(p.id, finalId);
+            if (p.id) providerIdMap.set(p.id, finalId);
             const existing = isTemp ? undefined : existingProvidersById.get(finalId);
             const encryptedApiKey =
               p.apiKey !== undefined && p.apiKey !== ""
@@ -884,8 +896,8 @@ export function botsRoutes(
               models: p.models,
             };
           });
-          if (activeProviderId && idMap.has(activeProviderId)) {
-            activeProviderId = idMap.get(activeProviderId);
+          if (activeProviderId && providerIdMap.has(activeProviderId)) {
+            activeProviderId = providerIdMap.get(activeProviderId);
           }
           if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
             activeProviderId = providers[0]?.id;
@@ -921,21 +933,49 @@ export function botsRoutes(
 
         let githubToolsConfig = bot.aiConfig?.githubToolsConfig;
         if (body.githubToolsConfig) {
+          const requestedCodingProviderId = body.githubToolsConfig.codingProviderId
+            ? (providerIdMap.get(body.githubToolsConfig.codingProviderId) ??
+              body.githubToolsConfig.codingProviderId)
+            : undefined;
+          const effectiveProviders = providers ?? existingMigrated?.providers ?? [];
+          assertGitHubCodingModelSelection(
+            effectiveProviders,
+            requestedCodingProviderId,
+            body.githubToolsConfig.codingModelId,
+          );
+          assertGitHubCredentialUpdateAllowed(
+            c.get("authMember").role,
+            githubToolsConfig,
+            body.githubToolsConfig,
+          );
           const encryptedToken = body.githubToolsConfig.token
             ? encrypt(body.githubToolsConfig.token, env.ENCRYPTION_KEY)
             : githubToolsConfig?.encryptedToken;
           githubToolsConfig = {
+            ...githubToolsConfig,
             enabled: body.githubToolsConfig.enabled,
             publicReadEnabled: body.githubToolsConfig.publicReadEnabled,
             codingAgentEnabled: body.githubToolsConfig.codingAgentEnabled,
+            codingProviderId: requestedCodingProviderId,
+            codingModelId: body.githubToolsConfig.codingModelId,
             encryptedToken,
-            login: body.githubToolsConfig.login || undefined,
+            login:
+              body.githubToolsConfig.login === undefined
+                ? githubToolsConfig?.login
+                : body.githubToolsConfig.login || undefined,
             authorName: body.githubToolsConfig.authorName,
             authorEmail: body.githubToolsConfig.authorEmail,
             repositories: [
               ...new Set(body.githubToolsConfig.repositories.map((repo) => repo.toLowerCase())),
             ],
           };
+        }
+        if (githubToolsConfig) {
+          assertGitHubCodingModelSelection(
+            providers ?? existingMigrated?.providers ?? [],
+            githubToolsConfig.codingProviderId,
+            githubToolsConfig.codingModelId,
+          );
         }
 
         const updatedAiConfig: AiConfigStored = {
@@ -986,13 +1026,18 @@ export function botsRoutes(
 
       if (!aiConfig) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
+      botPool.invalidateGitHubCredentials(botId);
+
       // Restart bot if running so new config takes effect
       const manager = botPool.getManager(botId);
       if (manager) {
         try {
           await botPool.restartBot(botId);
-        } catch {
-          // continue
+        } catch (error) {
+          console.error("Bot restart after AI config save failed", { botId, error });
+          throw new HTTPException(503, {
+            message: "AI 配置已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
+          });
         }
       }
 
