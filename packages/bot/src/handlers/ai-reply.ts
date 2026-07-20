@@ -81,6 +81,7 @@ import { formatSentMessagesHtml, showRichThinkingDraft } from "../utils/stream-r
 import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { describeImages } from "../services/image-ocr.js";
+import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
 import { createMetaPrefixStreamFilter, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 
@@ -875,8 +876,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
   let memoryTools: Record<string, Tool> | undefined;
+  let profileObserver: TelegramProfileObserver | undefined;
   if (memoryCfg.enabled && config.memory) {
     memoryTools = createMemoryTools(config.memory);
+    if (memoryCfg.autoUpdateLastSeen) {
+      profileObserver = new TelegramProfileObserver({
+        memory: config.memory,
+        token: config.token,
+        dataDir: config.dataFiles?.dataDir,
+      });
+    }
   }
 
   // Bot memory tools setup
@@ -1169,12 +1178,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       if (!groupCfg.whitelisted && !isAdmin) return next();
 
       triggerResult = checkTrigger(ctx, groupCfg.triggerConfig, chatId, cooldownMap);
-      if (!triggerResult) return next();
-
       effectivePrompt = groupCfg.systemPrompt;
       groupConversationEnabled = groupCfg.conversationEnabled;
       groupMaxContext = groupCfg.maxContextMessages;
     }
+
+    if (ctx.from) profileObserver?.observe(ctx.api, ctx.from);
+    if (!triggerResult) return next();
 
     // Determine if conversation history is enabled
     const useConversation =

@@ -1,6 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { peopleProfiles } from "@cos-tool-bot/database";
-import type { PeopleProfile } from "@cos-tool-bot/shared";
+import type { PeopleProfile, PeopleProfileObservation } from "@cos-tool-bot/shared";
 import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 
 /** Map a Drizzle profile row to the shared PeopleProfile DTO. */
@@ -8,6 +8,12 @@ export function mapProfileToDto(p: {
   telegramId: number;
   username: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  languageCode: string | null;
+  isPremium: boolean;
+  avatarPath: string | null;
+  avatarVersion: string | null;
   notes: string | null;
   traits: string[] | null;
   interests: string[] | null;
@@ -19,6 +25,12 @@ export function mapProfileToDto(p: {
     telegramId: p.telegramId,
     username: p.username,
     displayName: p.displayName,
+    firstName: p.firstName,
+    lastName: p.lastName,
+    languageCode: p.languageCode,
+    isPremium: p.isPremium,
+    hasAvatar: !!p.avatarPath,
+    avatarVersion: p.avatarVersion,
     notes: p.notes,
     traits: p.traits ?? [],
     interests: p.interests ?? [],
@@ -36,6 +48,14 @@ export class PeopleProfileStore {
       .select()
       .from(peopleProfiles)
       .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, telegramId)));
+    return profile ?? null;
+  }
+
+  async getProfileById(botId: string, profileId: number) {
+    const [profile] = await this.db
+      .select()
+      .from(peopleProfiles)
+      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
     return profile ?? null;
   }
 
@@ -100,19 +120,35 @@ export class PeopleProfileStore {
     return created!;
   }
 
-  async touchProfile(botId: string, telegramId: number, displayName: string, username?: string) {
-    const existing = await this.getProfile(botId, telegramId);
+  async touchProfile(botId: string, observation: PeopleProfileObservation) {
+    const existing = await this.getProfile(botId, observation.telegramId);
     if (existing) {
-      await this.db
-        .update(peopleProfiles)
-        .set({ lastSeen: new Date(), displayName, username: username ?? existing.username })
-        .where(eq(peopleProfiles.id, existing.id));
+      const updates: Partial<typeof peopleProfiles.$inferInsert> = {
+        lastSeen: new Date(),
+        displayName: observation.displayName,
+        firstName: observation.firstName,
+        lastName: observation.lastName,
+        languageCode: observation.languageCode,
+        isPremium: observation.isPremium,
+        username: observation.username,
+      };
+      if (observation.avatarPath !== undefined) updates.avatarPath = observation.avatarPath;
+      if (observation.avatarVersion !== undefined) {
+        updates.avatarVersion = observation.avatarVersion;
+      }
+      await this.db.update(peopleProfiles).set(updates).where(eq(peopleProfiles.id, existing.id));
     } else {
       await this.db.insert(peopleProfiles).values({
         botId,
-        telegramId,
-        displayName,
-        username,
+        telegramId: observation.telegramId,
+        displayName: observation.displayName,
+        username: observation.username,
+        firstName: observation.firstName,
+        lastName: observation.lastName,
+        languageCode: observation.languageCode,
+        isPremium: observation.isPremium,
+        avatarPath: observation.avatarPath,
+        avatarVersion: observation.avatarVersion,
         traits: [],
         interests: [],
       });

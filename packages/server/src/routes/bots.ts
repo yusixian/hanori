@@ -14,6 +14,7 @@ import type {
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import * as fs from "node:fs/promises";
 import { z } from "zod";
 import { env } from "../env.js";
 import type { BotPool } from "../services/bot-pool.js";
@@ -25,6 +26,7 @@ import { resolvePixaiTaskTimeoutMs } from "../services/generation-recovery.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
+import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
 
 const emailForwardFilterSchema = z.object({
   senderPattern: z.string().optional(),
@@ -1063,6 +1065,29 @@ export function botsRoutes(
         return c.json({ ok: true as const, ...result });
       },
     )
+    .get("/:botId/profiles/:profileId/avatar", async (c) => {
+      const botId = c.req.param("botId");
+      const profileId = Number(c.req.param("profileId"));
+      if (!Number.isInteger(profileId) || profileId <= 0) {
+        return c.json({ ok: false as const, error: "Invalid profileId" }, 400);
+      }
+      const profile = await botPool.getProfileStore().getProfileById(botId, profileId);
+      if (!profile?.avatarPath) {
+        return c.json({ ok: false as const, error: "Avatar not found" }, 404);
+      }
+      const resolved = resolveAndValidate(getDataDir(botId), profile.avatarPath);
+      if (!resolved) return c.json({ ok: false as const, error: "Invalid avatar path" }, 403);
+      try {
+        const buffer = await fs.readFile(resolved);
+        return c.body(buffer, 200, {
+          "Content-Type": "image/jpeg",
+          "Cache-Control": "private, max-age=86400",
+          ETag: `"${profile.avatarVersion ?? profile.telegramId}"`,
+        });
+      } catch {
+        return c.json({ ok: false as const, error: "Avatar not found" }, 404);
+      }
+    })
     .delete("/:botId/profiles/:profileId", async (c) => {
       const botId = c.req.param("botId");
       const profileId = Number(c.req.param("profileId"));
