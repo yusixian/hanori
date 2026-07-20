@@ -388,6 +388,13 @@ export const peopleProfiles = pgTable(
     telegramId: bigint("telegram_id", { mode: "number" }).notNull(),
     username: text("username"),
     displayName: text("display_name"),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
+    languageCode: text("language_code"),
+    isPremium: boolean("is_premium").notNull().default(false),
+    avatarPath: text("avatar_path"),
+    avatarVersion: text("avatar_version"),
+    avatarRefreshVersion: bigint("avatar_refresh_version", { mode: "number" }).notNull().default(0),
     notes: text("notes"),
     traits: json("traits").$type<string[]>().default([]),
     interests: json("interests").$type<string[]>().default([]),
@@ -398,7 +405,7 @@ export const peopleProfiles = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [index("people_bot_telegram_idx").on(t.botId, t.telegramId)],
+  (t) => [uniqueIndex("people_bot_telegram_idx").on(t.botId, t.telegramId)],
 );
 
 export const backups = pgTable("backups", {

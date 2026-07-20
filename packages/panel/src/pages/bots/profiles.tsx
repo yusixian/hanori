@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { AuthImage } from "@/components/ui/auth-image";
 import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -16,6 +17,12 @@ interface ProfileItem {
   telegramId: number;
   username: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  languageCode: string | null;
+  isPremium: boolean;
+  hasAvatar: boolean;
+  avatarVersion: string | null;
   notes: string | null;
   traits: string[] | null;
   interests: string[] | null;
@@ -67,6 +74,14 @@ function parseList(s: string): string[] {
 
 function emptyToNull(s: string): string | null {
   return s.trim() === "" ? null : s.trim();
+}
+
+function ProfileAvatarFallback({ label }: { label: string }) {
+  return (
+    <div role="img" aria-label={label} className="flex h-full w-full items-center justify-center">
+      <UserRound className="text-muted-foreground h-5 w-5" />
+    </div>
+  );
 }
 
 export function BotProfilesPage() {
@@ -195,7 +210,7 @@ export function BotProfilesPage() {
     try {
       const traits = parseList(createForm.traits);
       const interests = parseList(createForm.interests);
-      await client.api.bots[":botId"].profiles.$post({
+      const response = await client.api.bots[":botId"].profiles.$post({
         param: { botId },
         json: {
           telegramId,
@@ -207,6 +222,9 @@ export function BotProfilesPage() {
           interests: interests.length > 0 ? interests : undefined,
         },
       });
+      if (!response.ok) {
+        throw new Error(`Failed to create profile: HTTP ${response.status}`);
+      }
       setShowCreate(false);
       setCreateForm(emptyCreateForm);
       loadProfiles();
@@ -389,6 +407,36 @@ export function BotProfilesPage() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-3">
+                    <div className="bg-muted h-10 w-10 shrink-0 overflow-hidden rounded-full">
+                      {p.hasAvatar && botId ? (
+                        <AuthImage
+                          src={`/api/bots/${botId}/profiles/${p.id}/avatar?v=${encodeURIComponent(p.avatarVersion ?? "current")}`}
+                          alt={t("profiles.avatarAlt", {
+                            name: p.displayName || t("common.unknown"),
+                          })}
+                          className="h-full w-full object-cover"
+                          placeholderSize={40}
+                          fallback={
+                            <div className="flex h-full w-full items-center justify-center">
+                              <Loader2 className="text-muted-foreground h-4 w-4 animate-spin" />
+                            </div>
+                          }
+                          errorFallback={
+                            <ProfileAvatarFallback
+                              label={t("profiles.avatarAlt", {
+                                name: p.displayName || t("common.unknown"),
+                              })}
+                            />
+                          }
+                        />
+                      ) : (
+                        <ProfileAvatarFallback
+                          label={t("profiles.avatarAlt", {
+                            name: p.displayName || t("common.unknown"),
+                          })}
+                        />
+                      )}
+                    </div>
                     <CardTitle className="truncate text-sm">
                       {p.displayName || t("common.unknown")}{" "}
                       {p.username && (
@@ -525,6 +573,18 @@ export function BotProfilesPage() {
                   <>
                     {p.relationship && (
                       <p className="text-muted-foreground text-sm">{p.relationship}</p>
+                    )}
+                    {(p.languageCode || p.isPremium) && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {p.languageCode && (
+                          <Badge variant="muted">
+                            {t("profiles.language", { language: p.languageCode })}
+                          </Badge>
+                        )}
+                        {p.isPremium && (
+                          <Badge variant="muted">{t("profiles.telegramPremium")}</Badge>
+                        )}
+                      </div>
                     )}
                     {((p.traits?.length ?? 0) > 0 || (p.interests?.length ?? 0) > 0) && (
                       <div className="flex flex-wrap items-center gap-1.5">

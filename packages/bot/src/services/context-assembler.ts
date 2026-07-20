@@ -692,11 +692,6 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
         // Profile loading remains best-effort.
       }
     }
-    if (memoryConfig.autoUpdateLastSeen && input.userId != null) {
-      void input.memory
-        .touchProfile(input.userId, input.userName, input.userUsername)
-        .catch(() => {});
-    }
   }
 
   if (input.botMemoryTools && input.botMemory && botMemoryConfig.autoInjectMemories) {

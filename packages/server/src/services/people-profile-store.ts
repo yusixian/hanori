@@ -1,6 +1,11 @@
 import type { Database } from "@cos-tool-bot/database";
 import { peopleProfiles } from "@cos-tool-bot/database";
-import type { PeopleProfile } from "@cos-tool-bot/shared";
+import type {
+  PeopleProfile,
+  PeopleProfileAvatarRefresh,
+  PeopleProfileAvatarUpdate,
+  PeopleProfileObservation,
+} from "@cos-tool-bot/shared";
 import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
 
 /** Map a Drizzle profile row to the shared PeopleProfile DTO. */
@@ -8,6 +13,12 @@ export function mapProfileToDto(p: {
   telegramId: number;
   username: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  languageCode: string | null;
+  isPremium: boolean;
+  avatarPath: string | null;
+  avatarVersion: string | null;
   notes: string | null;
   traits: string[] | null;
   interests: string[] | null;
@@ -19,6 +30,12 @@ export function mapProfileToDto(p: {
     telegramId: p.telegramId,
     username: p.username,
     displayName: p.displayName,
+    firstName: p.firstName,
+    lastName: p.lastName,
+    languageCode: p.languageCode,
+    isPremium: p.isPremium,
+    hasAvatar: !!p.avatarPath,
+    avatarVersion: p.avatarVersion,
     notes: p.notes,
     traits: p.traits ?? [],
     interests: p.interests ?? [],
@@ -39,6 +56,14 @@ export class PeopleProfileStore {
     return profile ?? null;
   }
 
+  async getProfileById(botId: string, profileId: number) {
+    const [profile] = await this.db
+      .select()
+      .from(peopleProfiles)
+      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+    return profile ?? null;
+  }
+
   async upsertProfile(
     botId: string,
     data: {
@@ -51,72 +76,163 @@ export class PeopleProfileStore {
       relationship?: string;
     },
   ) {
-    const existing = await this.getProfile(botId, data.telegramId);
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${data.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, data.telegramId)),
+        );
 
-    if (existing) {
-      const updates: Partial<typeof peopleProfiles.$inferInsert> = {};
-      if (data.username !== undefined) updates.username = data.username;
-      if (data.displayName !== undefined) updates.displayName = data.displayName;
-      if (data.relationship !== undefined) updates.relationship = data.relationship;
+      if (existing) {
+        const updates: Partial<typeof peopleProfiles.$inferInsert> = {};
+        if (data.username !== undefined) updates.username = data.username;
+        if (data.displayName !== undefined) updates.displayName = data.displayName;
+        if (data.relationship !== undefined) updates.relationship = data.relationship;
 
-      // Notes: append instead of overwrite
-      if (data.notes !== undefined) {
-        updates.notes = existing.notes ? `${existing.notes}\n${data.notes}` : data.notes;
+        // Notes: append instead of overwrite
+        if (data.notes !== undefined) {
+          updates.notes = existing.notes ? `${existing.notes}\n${data.notes}` : data.notes;
+        }
+
+        // Traits/interests: merge and deduplicate
+        if (data.traits !== undefined) {
+          const merged = [...new Set([...(existing.traits ?? []), ...data.traits])];
+          updates.traits = merged;
+        }
+        if (data.interests !== undefined) {
+          const merged = [...new Set([...(existing.interests ?? []), ...data.interests])];
+          updates.interests = merged;
+        }
+
+        updates.lastSeen = new Date();
+
+        const [updated] = await tx
+          .update(peopleProfiles)
+          .set(updates)
+          .where(eq(peopleProfiles.id, existing.id))
+          .returning();
+        return updated!;
       }
 
-      // Traits/interests: merge and deduplicate
-      if (data.traits !== undefined) {
-        const merged = [...new Set([...(existing.traits ?? []), ...data.traits])];
-        updates.traits = merged;
-      }
-      if (data.interests !== undefined) {
-        const merged = [...new Set([...(existing.interests ?? []), ...data.interests])];
-        updates.interests = merged;
-      }
-
-      updates.lastSeen = new Date();
-
-      const [updated] = await this.db
-        .update(peopleProfiles)
-        .set(updates)
-        .where(eq(peopleProfiles.id, existing.id))
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: data.telegramId,
+          username: data.username,
+          displayName: data.displayName,
+          notes: data.notes,
+          traits: data.traits ?? [],
+          interests: data.interests ?? [],
+          relationship: data.relationship,
+        })
         .returning();
-      return updated!;
-    }
-
-    const [created] = await this.db
-      .insert(peopleProfiles)
-      .values({
-        botId,
-        telegramId: data.telegramId,
-        username: data.username,
-        displayName: data.displayName,
-        notes: data.notes,
-        traits: data.traits ?? [],
-        interests: data.interests ?? [],
-        relationship: data.relationship,
-      })
-      .returning();
-    return created!;
+      return created!;
+    });
   }
 
-  async touchProfile(botId: string, telegramId: number, displayName: string, username?: string) {
-    const existing = await this.getProfile(botId, telegramId);
-    if (existing) {
-      await this.db
+  async touchProfile(botId: string, observation: PeopleProfileObservation) {
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${observation.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, observation.telegramId),
+          ),
+        );
+      if (existing) {
+        await tx
+          .update(peopleProfiles)
+          .set({
+            lastSeen: new Date(),
+            displayName: observation.displayName,
+            firstName: observation.firstName,
+            lastName: observation.lastName,
+            languageCode: observation.languageCode,
+            isPremium: observation.isPremium,
+            username: observation.username,
+          })
+          .where(eq(peopleProfiles.id, existing.id));
+        return {
+          created: false,
+          profileId: existing.id,
+        };
+      }
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: observation.telegramId,
+          displayName: observation.displayName,
+          username: observation.username,
+          firstName: observation.firstName,
+          lastName: observation.lastName,
+          languageCode: observation.languageCode,
+          isPremium: observation.isPremium,
+          traits: [],
+          interests: [],
+        })
+        .returning({ id: peopleProfiles.id });
+      return { created: true, profileId: created!.id };
+    });
+  }
+
+  async beginProfileAvatarRefresh(botId: string, refresh: PeopleProfileAvatarRefresh) {
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${refresh.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [updated] = await tx
         .update(peopleProfiles)
-        .set({ lastSeen: new Date(), displayName, username: username ?? existing.username })
-        .where(eq(peopleProfiles.id, existing.id));
-    } else {
-      await this.db.insert(peopleProfiles).values({
-        botId,
-        telegramId,
-        displayName,
-        username,
-        traits: [],
-        interests: [],
-      });
-    }
+        .set({ avatarRefreshVersion: sql`${peopleProfiles.avatarRefreshVersion} + 1` })
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, refresh.telegramId),
+            eq(peopleProfiles.id, refresh.profileId),
+          ),
+        )
+        .returning({ refreshVersion: peopleProfiles.avatarRefreshVersion });
+      return updated?.refreshVersion ?? null;
+    });
+  }
+
+  async updateProfileAvatar(botId: string, update: PeopleProfileAvatarUpdate) {
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${update.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, update.telegramId),
+            eq(peopleProfiles.id, update.profileId),
+          ),
+        );
+      if (!existing) return null;
+      if (existing.avatarRefreshVersion !== update.refreshVersion) return null;
+      const [updated] = await tx
+        .update(peopleProfiles)
+        .set({ avatarPath: update.avatarPath, avatarVersion: update.avatarVersion })
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, update.telegramId),
+            eq(peopleProfiles.id, update.profileId),
+            eq(peopleProfiles.avatarRefreshVersion, update.refreshVersion),
+          ),
+        )
+        .returning({ id: peopleProfiles.id });
+      return updated ? { previousAvatarPath: existing.avatarPath } : null;
+    });
   }
 
   async searchProfiles(botId: string, query: string) {
@@ -162,10 +278,33 @@ export class PeopleProfileStore {
     };
   }
 
-  async deleteProfile(botId: string, profileId: number) {
-    await this.db
-      .delete(peopleProfiles)
-      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+  async deleteProfile(
+    botId: string,
+    profileId: number,
+    beforeDelete?: (profile: typeof peopleProfiles.$inferSelect) => Promise<void>,
+  ) {
+    return this.db.transaction(async (tx) => {
+      const [candidate] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+      if (!candidate) return null;
+
+      const lockKey = `${botId}:${candidate.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [profile] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)));
+      if (!profile) return null;
+
+      await beforeDelete?.(profile);
+      const [deleted] = await tx
+        .delete(peopleProfiles)
+        .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.id, profileId)))
+        .returning({ avatarPath: peopleProfiles.avatarPath });
+      return deleted ?? null;
+    });
   }
 
   async updateProfile(
@@ -208,19 +347,31 @@ export class PeopleProfileStore {
       relationship?: string | null;
     },
   ) {
-    const [created] = await this.db
-      .insert(peopleProfiles)
-      .values({
-        botId,
-        telegramId: data.telegramId,
-        displayName: data.displayName,
-        username: data.username,
-        notes: data.notes,
-        traits: data.traits ?? [],
-        interests: data.interests ?? [],
-        relationship: data.relationship,
-      })
-      .returning();
-    return created!;
+    return this.db.transaction(async (tx) => {
+      const lockKey = `${botId}:${data.telegramId}`;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+      const [existing] = await tx
+        .select()
+        .from(peopleProfiles)
+        .where(
+          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, data.telegramId)),
+        );
+      if (existing) return { created: false as const, profile: existing };
+
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: data.telegramId,
+          displayName: data.displayName,
+          username: data.username,
+          notes: data.notes,
+          traits: data.traits ?? [],
+          interests: data.interests ?? [],
+          relationship: data.relationship,
+        })
+        .returning();
+      return { created: true as const, profile: created! };
+    });
   }
 }

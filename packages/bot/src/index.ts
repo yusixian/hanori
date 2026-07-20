@@ -431,7 +431,7 @@ export function createBot(config: BotConfig) {
       await callbackQueryHandler(ctx);
     });
 
-    bot.on(["message:text", "message:photo", "message:document"], aiHandler);
+    bot.on("message", aiHandler);
   }
 
   bot.api.setMyCommands(commands).catch((err) => {
@@ -481,6 +481,10 @@ export type { SummaryCallbacks } from "./commands/summary.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";
+export {
+  cleanupBotAvatarFiles,
+  cleanupProfileAvatarFiles,
+} from "./services/profile-avatar-files.js";
 export {
   isTerminalPixAIRecoveryError,
   PixAIRecoveryTerminalError,

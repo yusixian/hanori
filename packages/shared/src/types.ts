@@ -51,12 +51,50 @@ export interface PeopleProfile {
   telegramId: number;
   username: string | null;
   displayName: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  languageCode: string | null;
+  isPremium: boolean;
+  hasAvatar: boolean;
+  avatarVersion: string | null;
   notes: string | null;
   traits: string[];
   interests: string[];
   relationship: string | null;
   firstSeen: string;
   lastSeen: string;
+}
+
+export interface PeopleProfileObservation {
+  telegramId: number;
+  username: string | null;
+  displayName: string;
+  firstName: string;
+  lastName: string | null;
+  languageCode: string | null;
+  isPremium: boolean;
+}
+
+export interface PeopleProfileAvatarUpdate {
+  telegramId: number;
+  profileId: number;
+  refreshVersion: number;
+  avatarPath: string | null;
+  avatarVersion: string | null;
+}
+
+export interface PeopleProfileAvatarRefresh {
+  telegramId: number;
+  profileId: number;
+}
+
+export interface PeopleProfileAvatarUpdateResult {
+  previousAvatarPath: string | null;
+}
+
+export interface PeopleProfileTouchResult {
+  created: boolean;
+  profileId: number;
 }
 
 export interface MemorySearchResult {
@@ -85,7 +123,11 @@ export interface MemoryCallbacks {
     userId?: number;
     limit?: number;
   }): Promise<MemorySearchResult[]>;
-  touchProfile(telegramId: number, displayName: string, username?: string): Promise<void>;
+  touchProfile(observation: PeopleProfileObservation): Promise<PeopleProfileTouchResult>;
+  beginProfileAvatarRefresh(refresh: PeopleProfileAvatarRefresh): Promise<number | null>;
+  updateProfileAvatar(
+    update: PeopleProfileAvatarUpdate,
+  ): Promise<PeopleProfileAvatarUpdateResult | null>;
 }
 
 export interface TimeoutConfig {

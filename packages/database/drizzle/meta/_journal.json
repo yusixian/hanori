@@ -218,6 +218,13 @@
       "when": 1784440385480,
       "tag": "0030_sticky_katie_power",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1784542386690,
+      "tag": "0031_first_terror",
+      "breakpoints": true
     }
   ]
 }

@@ -6,11 +6,20 @@ import { useTranslation } from "react-i18next";
 interface AuthImageProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, "src"> {
   src: string;
   fallback?: React.ReactNode;
+  errorFallback?: React.ReactNode;
   /** Default width/height for loading/error states when no className sizing is provided */
   placeholderSize?: number;
 }
 
-export function AuthImage({ src, fallback, alt, placeholderSize = 96, ...props }: AuthImageProps) {
+export function AuthImage({
+  src,
+  fallback,
+  errorFallback,
+  alt,
+  onError,
+  placeholderSize = 96,
+  ...props
+}: AuthImageProps) {
   const { t } = useTranslation("common");
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -59,12 +68,14 @@ export function AuthImage({ src, fallback, alt, placeholderSize = 96, ...props }
 
   if (error) {
     return (
-      <div
-        className="bg-muted text-muted-foreground flex items-center justify-center text-xs"
-        style={{ width: placeholderSize, height: placeholderSize }}
-      >
-        {t("errors.imageFailed")}
-      </div>
+      errorFallback ?? (
+        <div
+          className="bg-muted text-muted-foreground flex items-center justify-center text-xs"
+          style={{ width: placeholderSize, height: placeholderSize }}
+        >
+          {t("errors.imageFailed")}
+        </div>
+      )
     );
   }
 
@@ -81,5 +92,20 @@ export function AuthImage({ src, fallback, alt, placeholderSize = 96, ...props }
     );
   }
 
-  return <img src={blobUrl} alt={alt} {...props} />;
+  return (
+    <img
+      src={blobUrl}
+      alt={alt}
+      onError={(event) => {
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+        setBlobUrl(null);
+        setError(true);
+        onError?.(event);
+      }}
+      {...props}
+    />
+  );
 }

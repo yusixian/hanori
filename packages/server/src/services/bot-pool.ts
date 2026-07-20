@@ -626,8 +626,9 @@ export class BotPool {
             }
             return cs.searchMessages(botId, { ...params, queryEmbedding });
           },
-          touchProfile: (telegramId, displayName, username) =>
-            ps.touchProfile(botId, telegramId, displayName, username),
+          touchProfile: (observation) => ps.touchProfile(botId, observation),
+          beginProfileAvatarRefresh: (refresh) => ps.beginProfileAvatarRefresh(botId, refresh),
+          updateProfileAvatar: (update) => ps.updateProfileAvatar(botId, update),
         };
       }
 
