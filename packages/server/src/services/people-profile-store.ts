@@ -159,21 +159,24 @@ export class PeopleProfileStore {
             username: observation.username,
           })
           .where(eq(peopleProfiles.id, existing.id));
-        return { created: false };
+        return { created: false, profileId: existing.id };
       }
-      await tx.insert(peopleProfiles).values({
-        botId,
-        telegramId: observation.telegramId,
-        displayName: observation.displayName,
-        username: observation.username,
-        firstName: observation.firstName,
-        lastName: observation.lastName,
-        languageCode: observation.languageCode,
-        isPremium: observation.isPremium,
-        traits: [],
-        interests: [],
-      });
-      return { created: true };
+      const [created] = await tx
+        .insert(peopleProfiles)
+        .values({
+          botId,
+          telegramId: observation.telegramId,
+          displayName: observation.displayName,
+          username: observation.username,
+          firstName: observation.firstName,
+          lastName: observation.lastName,
+          languageCode: observation.languageCode,
+          isPremium: observation.isPremium,
+          traits: [],
+          interests: [],
+        })
+        .returning({ id: peopleProfiles.id });
+      return { created: true, profileId: created!.id };
     });
   }
 
@@ -185,13 +188,23 @@ export class PeopleProfileStore {
         .select()
         .from(peopleProfiles)
         .where(
-          and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, update.telegramId)),
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, update.telegramId),
+            eq(peopleProfiles.id, update.profileId),
+          ),
         );
       if (!existing) return null;
       const [updated] = await tx
         .update(peopleProfiles)
         .set({ avatarPath: update.avatarPath, avatarVersion: update.avatarVersion })
-        .where(eq(peopleProfiles.id, existing.id))
+        .where(
+          and(
+            eq(peopleProfiles.botId, botId),
+            eq(peopleProfiles.telegramId, update.telegramId),
+            eq(peopleProfiles.id, update.profileId),
+          ),
+        )
         .returning({ id: peopleProfiles.id });
       return updated ? { previousAvatarPath: existing.avatarPath } : null;
     });

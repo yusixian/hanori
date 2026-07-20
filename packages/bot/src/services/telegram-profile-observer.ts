@@ -103,7 +103,12 @@ export class TelegramProfileObserver {
       while (pending) {
         try {
           const result = await this.options.memory.touchProfile(pending.observation);
-          this.scheduleAvatarRefresh(pending.api, pending.observation, result.created);
+          this.scheduleAvatarRefresh(
+            pending.api,
+            pending.observation,
+            result.created,
+            result.profileId,
+          );
         } catch (error) {
           this.reportError(error);
         }
@@ -120,13 +125,14 @@ export class TelegramProfileObserver {
     api: ProfilePhotoApi,
     observation: PeopleProfileObservation,
     created: boolean,
+    profileId: number,
   ) {
     if (!this.options.dataDir) return;
     const now = this.now();
     if (!created && (this.nextRefreshAt.get(observation.telegramId) ?? 0) > now) return;
     this.nextRefreshAt.set(observation.telegramId, now + this.refreshMs);
 
-    void this.refreshAvatar(api, observation).catch((error) => {
+    void this.refreshAvatar(api, observation, profileId).catch((error) => {
       this.nextRefreshAt.set(observation.telegramId, this.now() + RETRY_REFRESH_MS);
       this.reportError(error);
     });
@@ -136,13 +142,18 @@ export class TelegramProfileObserver {
     this.enqueueTouch(api, observationFromUser(user));
   }
 
-  private async refreshAvatar(api: ProfilePhotoApi, observation: PeopleProfileObservation) {
+  private async refreshAvatar(
+    api: ProfilePhotoApi,
+    observation: PeopleProfileObservation,
+    profileId: number,
+  ) {
     const photos = await api.getUserProfilePhotos(observation.telegramId, { limit: 1 });
     const sizes = photos.photos[0];
     const photo = largestPhoto(sizes);
     if (!photo) {
       const result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
+        profileId,
         avatarPath: null,
         avatarVersion: null,
       });
@@ -189,6 +200,7 @@ export class TelegramProfileObserver {
     try {
       result = await this.options.memory.updateProfileAvatar({
         telegramId: observation.telegramId,
+        profileId,
         avatarPath: relativePath,
         avatarVersion: photo.file_unique_id,
       });

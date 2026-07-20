@@ -77,6 +77,7 @@ export interface PeopleProfileObservation {
 
 export interface PeopleProfileAvatarUpdate {
   telegramId: number;
+  profileId: number;
   avatarPath: string | null;
   avatarVersion: string | null;
 }
@@ -87,6 +88,7 @@ export interface PeopleProfileAvatarUpdateResult {
 
 export interface PeopleProfileTouchResult {
   created: boolean;
+  profileId: number;
 }
 
 export interface MemorySearchResult {

@@ -42,7 +42,10 @@ afterEach(() => {
 });
 
 function createMemory() {
-  const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => {});
+  const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => ({
+    created: false,
+    profileId: 1,
+  }));
   const memory = {
     getProfile: vi.fn(),
     upsertProfile: vi.fn(),

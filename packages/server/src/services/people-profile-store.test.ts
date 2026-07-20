@@ -224,8 +224,14 @@ describe("PeopleProfileStore", () => {
       isPremium: true,
     };
 
-    await expect(store.touchProfile(botId, observation)).resolves.toEqual({ created: true });
-    await expect(store.touchProfile(botId, observation)).resolves.toEqual({ created: false });
+    await expect(store.touchProfile(botId, observation)).resolves.toEqual({
+      created: true,
+      profileId: 1,
+    });
+    await expect(store.touchProfile(botId, observation)).resolves.toEqual({
+      created: false,
+      profileId: 1,
+    });
   });
 
   it("does not report an avatar switch when the profile is deleted concurrently", async () => {
@@ -253,6 +259,7 @@ describe("PeopleProfileStore", () => {
     await expect(
       store.updateProfileAvatar("00000000-0000-4000-8000-000000000017", {
         telegramId: 42,
+        profileId: 1,
         avatarPath: "avatars/42-new.jpg",
         avatarVersion: "new",
       }),
@@ -270,11 +277,13 @@ describe("PeopleProfileStore", () => {
     const results = await Promise.all([
       firstStore.updateProfileAvatar(botId, {
         telegramId: 42,
+        profileId: 1,
         avatarPath: "avatars/42-first.jpg",
         avatarVersion: "first",
       }),
       secondStore.updateProfileAvatar(botId, {
         telegramId: 42,
+        profileId: 1,
         avatarPath: "avatars/42-second.jpg",
         avatarVersion: "second",
       }),
