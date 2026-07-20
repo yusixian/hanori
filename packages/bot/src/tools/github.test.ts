@@ -38,6 +38,7 @@ describe("GitHub tools permissions", () => {
       config: {
         enabled: true,
         publicReadEnabled: true,
+        codingAgentEnabled: true,
         token: "super-secret-token",
         authorName: "Ai-chan",
         authorEmail: "ai@example.com",
@@ -49,8 +50,15 @@ describe("GitHub tools permissions", () => {
       api: createApi(),
       pendingActions: registry,
       fetch: fetchMock,
+      codeCallbacks: {
+        runTask: vi.fn(),
+        previewPush: vi.fn(),
+        pushBranch: vi.fn(),
+      },
     });
 
+    expect(tools.github_code_task).toBeUndefined();
+    expect(tools.github_push_branch).toBeUndefined();
     expect(tools.github_create_issue).toBeUndefined();
     expect(tools.github_update_issue).toBeUndefined();
     await execute(tools.github_repository, { repository: "owner/repo" });
@@ -68,6 +76,7 @@ describe("GitHub tools permissions", () => {
       config: {
         enabled: true,
         publicReadEnabled: true,
+        codingAgentEnabled: false,
         token: "super-secret-token",
         authorName: "Ai-chan",
         authorEmail: "ai@example.com",
@@ -96,6 +105,7 @@ describe("GitHub tools permissions", () => {
       config: {
         enabled: true,
         publicReadEnabled: true,
+        codingAgentEnabled: false,
         token: "token",
         authorName: "Ai-chan",
         authorEmail: "ai@example.com",
@@ -131,6 +141,7 @@ describe("GitHub tools permissions", () => {
       config: {
         enabled: true,
         publicReadEnabled: true,
+        codingAgentEnabled: false,
         token: "token",
         authorName: "Ai-chan",
         authorEmail: "ai@example.com",
@@ -164,6 +175,7 @@ describe("GitHub tools permissions", () => {
       config: {
         enabled: true,
         publicReadEnabled: true,
+        codingAgentEnabled: false,
         authorName: "Ai-chan",
         authorEmail: "ai@example.com",
         repositories: [],
@@ -183,6 +195,60 @@ describe("GitHub tools permissions", () => {
       }),
     ).resolves.toEqual({ error: "Invalid GitHub path" });
     expect(fetchMock).not.toHaveBeenCalled();
+    registry.destroy();
+  });
+
+  it("runs local coding automatically but queues the exact push for confirmation", async () => {
+    const api = createApi();
+    const registry = new PendingGitHubActionRegistry();
+    const runTask = vi.fn().mockResolvedValue({
+      repository: "owner/repo",
+      branch: "feat/ai",
+      commitSha: "a".repeat(40),
+      changedFiles: ["README.md"],
+      summary: "updated",
+      status: "committed",
+    });
+    const previewPush = vi.fn().mockResolvedValue({
+      repository: "owner/repo",
+      branch: "feat/ai",
+      commitSha: "a".repeat(40),
+    });
+    const pushBranch = vi.fn().mockResolvedValue({ summary: "pushed" });
+    const tools = createGitHubTools({
+      config: {
+        enabled: true,
+        publicReadEnabled: true,
+        codingAgentEnabled: true,
+        token: "token",
+        authorName: "Ai-chan",
+        authorEmail: "ai@example.com",
+        repositories: ["owner/repo"],
+      },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api,
+      pendingActions: registry,
+      codeCallbacks: { runTask, previewPush, pushBranch },
+    });
+
+    await execute(tools.github_code_task, {
+      repository: "owner/repo",
+      task: "Update docs",
+      branch: "feat/ai",
+      commit_message: "docs: update",
+    });
+    expect(runTask).toHaveBeenCalledOnce();
+
+    const proposal = (await execute(tools.github_push_branch, {
+      repository: "owner/repo",
+      branch: "feat/ai",
+    })) as { action_id: string };
+    expect(previewPush).toHaveBeenCalledOnce();
+    expect(pushBranch).not.toHaveBeenCalled();
+    await registry.take(proposal.action_id)!.execute();
+    expect(pushBranch).toHaveBeenCalledWith("owner/repo", "feat/ai", "a".repeat(40));
     registry.destroy();
   });
 });

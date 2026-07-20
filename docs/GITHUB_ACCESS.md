@@ -23,5 +23,9 @@ The bot can use a dedicated GitHub identity without exposing its credential to t
 4. In the bot's AI Settings, enable GitHub tools, enter the account login, commit author name/email,
    token, and the `owner/repository` allowlist.
 
+To let administrators create local branches and commits with Pi, start the optional worker described
+in [PI_CODING_AGENT.md](PI_CODING_AGENT.md) and enable the Pi coding-agent switch. Push remains a
+separate confirmed action.
+
 Leaving the token field empty on later saves preserves the existing encrypted token. Removing a
 repository from the allowlist immediately removes credentialed access after the bot restarts.

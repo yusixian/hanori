@@ -56,6 +56,7 @@ import {
   createMemoryTools,
   createMcpTools,
   createGitHubTools,
+  type GitHubCodeCallbacks,
   type McpToolsOptions,
   createRssTools,
   createTelegramTools,
@@ -129,6 +130,7 @@ export interface AiReplyConfig {
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsRuntimeConfig;
+  githubCodeCallbacks?: GitHubCodeCallbacks;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
@@ -426,6 +428,14 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   fetch_webpage: "📄 看看这个网页...",
   get_current_time: "🕐 获取时间...",
   generate_image: "🎨 画画中...",
+  github_repository: "🐙 查看 GitHub 仓库...",
+  github_read_file: "🐙 读取仓库代码...",
+  github_list_tree: "🐙 查看代码结构...",
+  github_list_issues: "🐙 查看 Issue...",
+  github_code_task: "🛠️ Pi 正在修改和测试代码...",
+  github_push_branch: "🔐 准备分支推送确认...",
+  github_create_issue: "🔐 准备 Issue 创建确认...",
+  github_update_issue: "🔐 准备 Issue 更新确认...",
   // Agent tools
   delegate_task: "🤖 找帮手...",
   // Bot memory tools
@@ -1311,6 +1321,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId,
           api: ctx.api,
           pendingActions: pendingGitHubActions,
+          codeCallbacks: config.githubCodeCallbacks,
         });
       }
 

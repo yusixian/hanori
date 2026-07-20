@@ -477,6 +477,7 @@ export interface AiProviderEntryPublic {
 export interface GitHubToolsConfigStored {
   enabled: boolean;
   publicReadEnabled: boolean;
+  codingAgentEnabled: boolean;
   encryptedToken?: string;
   login?: string;
   authorName: string;
@@ -493,6 +494,35 @@ export interface GitHubToolsConfigPublic extends Omit<GitHubToolsConfigStored, "
 /** Decrypted, in-memory-only configuration used by the bot runtime. */
 export interface GitHubToolsRuntimeConfig extends Omit<GitHubToolsConfigStored, "encryptedToken"> {
   token?: string;
+}
+
+export interface GitHubCodeTaskInput {
+  repository: string;
+  task: string;
+  branch: string;
+  baseRef?: string;
+  commitMessage?: string;
+}
+
+export interface GitHubCodeTaskResult {
+  repository: string;
+  branch: string;
+  commitSha: string;
+  changedFiles: string[];
+  summary: string;
+  status: "committed" | "no_changes";
+}
+
+export interface GitHubPushPreview {
+  repository: string;
+  branch: string;
+  commitSha: string;
+  remoteCommitSha?: string;
+}
+
+export interface GitHubPushResult {
+  summary: string;
+  url?: string;
 }
 
 export interface AiConfigStored {

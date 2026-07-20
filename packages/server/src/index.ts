@@ -16,6 +16,8 @@ import { LogCleaner } from "./services/log-cleaner.js";
 import { BotRunCleaner } from "./services/bot-run-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
+import { CodingWorkerClient } from "./services/coding-worker-client.js";
+import { GitWorkspaceService } from "./services/git-workspace-service.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
 import { SummaryConfigService } from "./services/summary-config-service.js";
 import { SummaryRunner } from "./services/summary-runner.js";
@@ -130,6 +132,19 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const codingWorkerClient = new CodingWorkerClient({
+  url: env.CODING_WORKER_URL,
+  secret: env.CODING_WORKER_SECRET,
+});
+botPool.setGitWorkspaceService(
+  new GitWorkspaceService(
+    env.CODING_WORKSPACES_DIR,
+    env.CODING_GIT_DIR,
+    codingWorkerClient,
+    env.CODING_WORKSPACE_UID,
+    env.CODING_WORKSPACE_GID,
+  ),
+);
 botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
 botPool.setMcpClientManager(mcpClientManager);

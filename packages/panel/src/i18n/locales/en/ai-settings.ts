@@ -405,6 +405,9 @@ export const aiSettings = {
     publicRead: "Allow members to read public repositories",
     publicReadDescription:
       "Member requests never include Ai-chan's token and cannot create branches, commit, push, or change issues.",
+    codingAgent: "Enable Pi coding agent (administrators only)",
+    codingAgentDescription:
+      "Pi modifies and tests code in a separate constrained service. The trusted server creates Ai-chan's local commit; Pi never receives the GitHub token, and pushing still requires Telegram confirmation.",
     login: "GitHub login",
     token: "Fine-grained Personal Access Token",
     tokenPlaceholder: "Enter the token for Ai-chan's account",

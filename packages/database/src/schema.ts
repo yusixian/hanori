@@ -149,6 +149,7 @@ interface AiConfigJson {
   githubToolsConfig?: {
     enabled: boolean;
     publicReadEnabled: boolean;
+    codingAgentEnabled: boolean;
     encryptedToken?: string;
     login?: string;
     authorName: string;

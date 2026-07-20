@@ -68,6 +68,7 @@ import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
+import type { GitWorkspaceService } from "./git-workspace-service.js";
 import {
   BotNotRunningError,
   TelegramRichMessagesUnsupportedError,
@@ -126,6 +127,7 @@ export class BotPool {
   private timerRegistry: TimerRegistry;
   private summaryService?: ChatSummaryService;
   private summaryConfigService?: SummaryConfigService;
+  private gitWorkspaceService?: GitWorkspaceService;
 
   constructor(
     private db: Database,
@@ -161,6 +163,10 @@ export class BotPool {
 
   setSummaryConfigService(svc: SummaryConfigService) {
     this.summaryConfigService = svc;
+  }
+
+  setGitWorkspaceService(service: GitWorkspaceService) {
+    this.gitWorkspaceService = service;
   }
 
   getSummaryService() {
@@ -498,6 +504,7 @@ export class BotPool {
         ? {
             enabled: aiConfig.githubToolsConfig.enabled,
             publicReadEnabled: aiConfig.githubToolsConfig.publicReadEnabled,
+            codingAgentEnabled: aiConfig.githubToolsConfig.codingAgentEnabled ?? false,
             login: aiConfig.githubToolsConfig.login,
             authorName: aiConfig.githubToolsConfig.authorName,
             authorEmail: aiConfig.githubToolsConfig.authorEmail,
@@ -791,6 +798,45 @@ export class BotPool {
         webToolsConfig: aiConfig.webToolsConfig,
         agentToolsConfig: aiConfig.agentToolsConfig,
         githubToolsConfig,
+        githubCodeCallbacks:
+          githubToolsConfig?.codingAgentEnabled &&
+          githubToolsConfig.token &&
+          this.gitWorkspaceService
+            ? {
+                runTask: (input) =>
+                  this.gitWorkspaceService!.runCodeTask({
+                    ...input,
+                    botId,
+                    token: githubToolsConfig.token!,
+                    authorName: githubToolsConfig.authorName,
+                    authorEmail: githubToolsConfig.authorEmail,
+                    model: {
+                      apiKey: activeProvider.apiKey,
+                      baseURL: activeProvider.baseURL,
+                      id: activeProvider.defaultModel,
+                      providerFormat: activeProvider.providerFormat,
+                      maxTokens: activeProvider.models?.find(
+                        (model) => model.id === activeProvider.defaultModel,
+                      )?.maxTokens,
+                    },
+                  }),
+                previewPush: (repository, branch) =>
+                  this.gitWorkspaceService!.previewPush({
+                    botId,
+                    repository,
+                    branch,
+                    token: githubToolsConfig.token!,
+                  }),
+                pushBranch: (repository, branch, expectedCommitSha) =>
+                  this.gitWorkspaceService!.pushBranch({
+                    botId,
+                    repository,
+                    branch,
+                    token: githubToolsConfig.token!,
+                    expectedCommitSha,
+                  }),
+              }
+            : undefined,
         artworkToolsConfig: aiConfig.artworkToolsConfig,
         botMemoryConfig: botMemoryCfg,
         botMemory,

@@ -327,6 +327,7 @@ export function BotAiSettingsPage() {
             ? {
                 enabled: config.githubToolsConfig.enabled,
                 publicReadEnabled: config.githubToolsConfig.publicReadEnabled,
+                codingAgentEnabled: config.githubToolsConfig.codingAgentEnabled,
                 token: githubToken || undefined,
                 login: config.githubToolsConfig.login,
                 authorName: config.githubToolsConfig.authorName,

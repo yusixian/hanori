@@ -44,6 +44,19 @@ export function GitHubToolsSection({
       </div>
       <p className="text-muted-foreground text-xs">{t("githubTools.publicReadDescription")}</p>
 
+      <div className="flex items-center gap-2">
+        <Switch
+          id="githubCodingAgentEnabled"
+          disabled={!config.enabled}
+          checked={config.codingAgentEnabled}
+          onCheckedChange={(codingAgentEnabled) => onUpdate({ codingAgentEnabled })}
+        />
+        <label htmlFor="githubCodingAgentEnabled" className="text-sm font-medium">
+          {t("githubTools.codingAgent")}
+        </label>
+      </div>
+      <p className="text-muted-foreground text-xs">{t("githubTools.codingAgentDescription")}</p>
+
       <div className="grid gap-4 md:grid-cols-2">
         <div className="space-y-1.5">
           <label className="text-sm font-medium">{t("githubTools.login")}</label>

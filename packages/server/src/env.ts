@@ -9,7 +9,9 @@ function optional(name: string, fallback = ""): string {
 }
 
 function optionalInt(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
   return Number.isNaN(value) ? fallback : value;
 }
 
@@ -38,4 +40,10 @@ export const env = {
   BACKUP_DIR: optional("BACKUP_DIR", "./backups"),
   GENERATION_RETENTION_DAYS: optionalInt("GENERATION_RETENTION_DAYS", 30),
   NSFW_API_URL: optional("NSFW_API_URL"),
+  CODING_WORKER_URL: optional("CODING_WORKER_URL"),
+  CODING_WORKER_SECRET: optional("CODING_WORKER_SECRET"),
+  CODING_WORKSPACES_DIR: optional("CODING_WORKSPACES_DIR", "./data/code-workspaces"),
+  CODING_GIT_DIR: optional("CODING_GIT_DIR", "./data/code-git"),
+  CODING_WORKSPACE_UID: optionalInt("CODING_WORKSPACE_UID", process.getuid?.() ?? 1000),
+  CODING_WORKSPACE_GID: optionalInt("CODING_WORKSPACE_GID", process.getgid?.() ?? 1000),
 } as const;

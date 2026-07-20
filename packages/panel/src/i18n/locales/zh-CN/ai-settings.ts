@@ -370,6 +370,9 @@ export const aiSettings = {
     publicRead: "允许普通成员读取公开仓库",
     publicReadDescription:
       "普通成员请求永远不携带助手的 Token，也不能创建分支、提交、推送或修改 Issue。",
+    codingAgent: "启用 Pi 编码 Agent（仅管理员）",
+    codingAgentDescription:
+      "Pi 在独立的受限服务中修改和测试代码；可信主服务再以助手身份创建本地提交。Pi 拿不到 GitHub Token，推送仍需 Telegram 按钮确认。",
     login: "GitHub 用户名",
     token: "Fine-grained Personal Access Token",
     tokenPlaceholder: "输入助手账号的 Token",

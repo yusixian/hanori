@@ -1,4 +1,10 @@
-import type { GitHubToolsRuntimeConfig } from "@cos-tool-bot/shared";
+import type {
+  GitHubCodeTaskInput,
+  GitHubCodeTaskResult,
+  GitHubPushPreview,
+  GitHubPushResult,
+  GitHubToolsRuntimeConfig,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -25,6 +31,17 @@ export interface GitHubToolsOptions {
   api: Api;
   pendingActions: PendingGitHubActionRegistry;
   fetch?: typeof fetch;
+  codeCallbacks?: GitHubCodeCallbacks;
+}
+
+export interface GitHubCodeCallbacks {
+  runTask: (input: GitHubCodeTaskInput) => Promise<GitHubCodeTaskResult>;
+  previewPush: (repository: string, branch: string) => Promise<GitHubPushPreview>;
+  pushBranch: (
+    repository: string,
+    branch: string,
+    expectedCommitSha: string,
+  ) => Promise<GitHubPushResult>;
 }
 
 function normalizedRepositories(config: GitHubToolsRuntimeConfig): Set<string> {
@@ -188,6 +205,59 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
   };
 
   if (options.isAdmin) {
+    if (options.config.codingAgentEnabled && options.codeCallbacks) {
+      tools.github_code_task = tool({
+        description:
+          "让隔离的 Pi coding agent 在白名单仓库创建或继续本地分支，修改代码、运行测试并创建本地 commit。只对管理员开放；不会推送到 GitHub。",
+        inputSchema: zodToAiSchema(
+          z.object({
+            repository: repositorySchema,
+            task: z.string().min(1).max(20_000).describe("清晰、完整的编码任务"),
+            branch: z.string().min(1).max(200).describe("要创建或继续的本地分支"),
+            base_ref: z.string().min(1).max(200).optional().describe("新分支的远端基础分支"),
+            commit_message: z.string().min(1).max(200).optional().describe("本地提交信息"),
+          }),
+        ),
+        execute: async ({ repository, task, branch, base_ref, commit_message }) => {
+          try {
+            writeClient(repository);
+            return await options.codeCallbacks!.runTask({
+              repository,
+              task,
+              branch,
+              baseRef: base_ref,
+              commitMessage: commit_message,
+            });
+          } catch (error) {
+            return formatError(error);
+          }
+        },
+      });
+
+      tools.github_push_branch = tool({
+        description:
+          "提议把 Pi 已创建的本地分支推送到 GitHub。只对管理员开放，实际 push 前必须由发起管理员点击 Telegram 确认按钮。",
+        inputSchema: zodToAiSchema(
+          z.object({
+            repository: repositorySchema,
+            branch: z.string().min(1).max(200),
+          }),
+        ),
+        execute: async ({ repository, branch }) => {
+          try {
+            writeClient(repository);
+            const preview = await options.codeCallbacks!.previewPush(repository, branch);
+            return await proposeAction(
+              `推送 ${repository}:${branch}\n本地 commit：${preview.commitSha}`,
+              () => options.codeCallbacks!.pushBranch(repository, branch, preview.commitSha),
+            );
+          } catch (error) {
+            return formatError(error);
+          }
+        },
+      });
+    }
+
     tools.github_create_issue = tool({
       description:
         "提议创建 GitHub Issue。只对管理员开放，实际创建前必须由发起管理员点击 Telegram 确认按钮。",

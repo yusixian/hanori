@@ -191,6 +191,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
       ? {
           enabled: migrated.githubToolsConfig.enabled,
           publicReadEnabled: migrated.githubToolsConfig.publicReadEnabled,
+          codingAgentEnabled: migrated.githubToolsConfig.codingAgentEnabled ?? false,
           hasToken: !!migrated.githubToolsConfig.encryptedToken,
           login: migrated.githubToolsConfig.login,
           authorName: migrated.githubToolsConfig.authorName,
@@ -365,6 +366,7 @@ const aiConfigSchema = z
       .object({
         enabled: z.boolean(),
         publicReadEnabled: z.boolean(),
+        codingAgentEnabled: z.boolean().default(false),
         token: z.string().max(512).optional(),
         login: z.string().trim().max(100).optional(),
         authorName: z.string().trim().min(1).max(100),
@@ -925,6 +927,7 @@ export function botsRoutes(
           githubToolsConfig = {
             enabled: body.githubToolsConfig.enabled,
             publicReadEnabled: body.githubToolsConfig.publicReadEnabled,
+            codingAgentEnabled: body.githubToolsConfig.codingAgentEnabled,
             encryptedToken,
             login: body.githubToolsConfig.login || undefined,
             authorName: body.githubToolsConfig.authorName,

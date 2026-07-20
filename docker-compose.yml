@@ -17,9 +17,17 @@ services:
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
       - BACKUP_DIR=/data/backups
       - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
+      - CODING_WORKER_URL=${CODING_WORKER_URL:-http://coding-worker:3010}
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_WORKSPACES_DIR=/workspaces
+      - CODING_GIT_DIR=/git-metadata
+      - CODING_WORKSPACE_UID=1000
+      - CODING_WORKSPACE_GID=1000
     volumes:
       - backups:/data/backups
       - botdata:/app/data
+      - codeworkspaces:/workspaces
+      - codegit:/git-metadata
     depends_on:
       db:
         condition: service_healthy
@@ -44,6 +52,47 @@ services:
         max-size: "10m"
         max-file: "3"
     stop_grace_period: 15s
+
+  coding-worker:
+    profiles: ["coding"]
+    build:
+      context: .
+      target: coding-worker
+    environment:
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_WORKER_PORT=3010
+      - CODING_WORKSPACES_DIR=/workspaces
+    volumes:
+      - codeworkspaces:/workspaces
+      - codegit:/git-metadata:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3010/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s
 
   nsfw-api:
     image: ghcr.io/arnidan/nsfw-api:latest
@@ -117,3 +166,5 @@ volumes:
   pgdata:
   backups:
   botdata:
+  codeworkspaces:
+  codegit:
