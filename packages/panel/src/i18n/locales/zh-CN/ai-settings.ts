@@ -109,6 +109,10 @@ export const aiSettings = {
       title: "联网工具",
       description: "在线搜索、浏览和调研信息。",
     },
+    githubTools: {
+      title: "GitHub 身份与代码访问",
+      description: "配置助手的独立身份、仓库白名单和确认权限。",
+    },
     agentTools: {
       title: "Agent 工具",
       description: "将复杂工作委派给子 Agent。",
@@ -149,7 +153,7 @@ export const aiSettings = {
     tools: "工具",
     enabledCount: "已启用 {{count}} 项",
     memoryDetail: "记忆、向量嵌入与摘要",
-    toolsDetail: "联网、Agent、作品、MCP 与 OCR",
+    toolsDetail: "联网、GitHub、Agent、作品、MCP 与 OCR",
   },
   providers: {
     title: "AI 服务商",
@@ -358,6 +362,26 @@ export const aiSettings = {
     modelDescription: "子 Agent 可选模型。留空则使用与主 AI 相同的模型。",
     maxSteps: "子 Agent 最大步骤数",
     maxStepsDescription: "每个子 Agent 的最大工具调用轮数（1–15）",
+  },
+  githubTools: {
+    enable: "启用 GitHub 工具",
+    securityDescription:
+      "凭据只在服务端解密，永远不会交给模型。只有 Bot 管理员可使用身份凭据；其他成员最多只能匿名读取公开仓库。",
+    publicRead: "允许普通成员读取公开仓库",
+    publicReadDescription:
+      "普通成员请求永远不携带助手的 Token，也不能创建分支、提交、推送或修改 Issue。",
+    login: "GitHub 用户名",
+    token: "Fine-grained Personal Access Token",
+    tokenPlaceholder: "输入助手账号的 Token",
+    keepTokenPlaceholder: "已配置；留空以保留",
+    authorName: "Git 提交作者名称",
+    authorEmail: "Git 提交作者邮箱",
+    repositories: "管理员仓库白名单",
+    repositoriesDescription:
+      "每行一个 owner/repository。只有白名单仓库可使用 Token 读取私有内容或执行管理员写操作。",
+    tokenPermissionsTitle: "建议的最小 GitHub 权限",
+    tokenPermissions:
+      "仅选择上方仓库；Repository permissions 设置 Metadata: Read、Contents: Read and write、Issues: Read and write。后续需要创建 PR 时再添加 Pull requests: Read and write。",
   },
   artworkTools: {
     title: "作品工具",

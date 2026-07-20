@@ -10,6 +10,7 @@ import type {
   ConversationCallbacks,
   ConversationConfig,
   ConversationRole,
+  GitHubToolsRuntimeConfig,
   ImageOcrConfig,
   MemoryCallbacks,
   MemoryConfig,
@@ -42,6 +43,7 @@ import type { BotContext, WrapperContext } from "../context.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { GroupContextPersistenceTracker } from "../services/group-context-persistence-tracker.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
+import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
 import { acquireChatLock } from "../services/chat-lock.js";
@@ -53,6 +55,7 @@ import {
   createBotMemoryTools,
   createMemoryTools,
   createMcpTools,
+  createGitHubTools,
   type McpToolsOptions,
   createRssTools,
   createTelegramTools,
@@ -124,6 +127,7 @@ export interface AiReplyConfig {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
+  githubToolsConfig?: GitHubToolsRuntimeConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
@@ -597,6 +601,7 @@ export interface BotRuntimeState {
   getAllMoods(): ReadonlyMap<number, MoodInfo>;
   getActiveGroupCount(): number;
   getPendingActions(): PendingActionRegistry;
+  getPendingGitHubActions(): PendingGitHubActionRegistry;
   getContinueChatConfig(chatId?: number): ContinueChatConfig;
   isPrivateChat(chatId: number): boolean;
 }
@@ -906,6 +911,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
   // Pending actions registry for interactive tools
   const pendingActions = new PendingActionRegistry();
+  const pendingGitHubActions = new PendingGitHubActionRegistry();
 
   // Track known private chats
   const knownPrivateChats = new Set<number>();
@@ -1092,6 +1098,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     getAllMoods: () => moodState,
     getActiveGroupCount: () => groupBuffers.size,
     getPendingActions: () => pendingActions,
+    getPendingGitHubActions: () => pendingGitHubActions,
     getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
@@ -1262,6 +1269,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           webToolsConfig: config.webToolsConfig,
           onLog: config.onLog,
           timeoutConfig: config.timeoutConfig,
+        });
+      }
+
+      let githubTools: Record<string, Tool> = {};
+      if (
+        config.githubToolsConfig?.enabled &&
+        (isAdmin || config.githubToolsConfig.publicReadEnabled)
+      ) {
+        githubTools = createGitHubTools({
+          config: config.githubToolsConfig,
+          isAdmin,
+          userId,
+          chatId,
+          api: ctx.api,
+          pendingActions: pendingGitHubActions,
         });
       }
 
@@ -1451,6 +1473,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         ...behaviorTools,
         ...webTools,
         ...agentTools,
+        ...githubTools,
         ...artworkTools,
         ...fileTools,
       };
@@ -1467,7 +1490,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // MCP tools (external MCP server tools, resolved dynamically per request)
       if (config.mcpTools) {
-        const mcpTools = createMcpTools(config.mcpTools);
+        const mcpTools = createMcpTools(config.mcpTools, { includeAdminTools: isAdmin });
         const mcpToolKeys = Object.keys(mcpTools);
         if (mcpToolKeys.length > 0) {
           Object.assign(allTools, mcpTools);
@@ -1513,6 +1536,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const baseMaxSteps = memoryCfg.maxSteps || 3;
       const hasAdvancedTools =
         config.agentToolsConfig?.enabled ||
+        config.githubToolsConfig?.enabled ||
         config.webToolsConfig?.enabled ||
         config.artworkToolsConfig?.enabled;
       const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);

@@ -181,6 +181,17 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     stickerPacks: migrated.stickerPacks,
     webToolsConfig: toWebToolsConfigPublic(migrated.webToolsConfig),
     agentToolsConfig: migrated.agentToolsConfig,
+    githubToolsConfig: migrated.githubToolsConfig
+      ? {
+          enabled: migrated.githubToolsConfig.enabled,
+          publicReadEnabled: migrated.githubToolsConfig.publicReadEnabled,
+          hasToken: !!migrated.githubToolsConfig.encryptedToken,
+          login: migrated.githubToolsConfig.login,
+          authorName: migrated.githubToolsConfig.authorName,
+          authorEmail: migrated.githubToolsConfig.authorEmail,
+          repositories: migrated.githubToolsConfig.repositories,
+        }
+      : undefined,
     artworkToolsConfig: migrated.artworkToolsConfig,
     botMemoryConfig: migrated.botMemoryConfig,
     messageConfig: migrated.messageConfig,
@@ -342,6 +353,17 @@ const aiConfigSchema = z
             }),
           )
           .optional(),
+      })
+      .optional(),
+    githubToolsConfig: z
+      .object({
+        enabled: z.boolean(),
+        publicReadEnabled: z.boolean(),
+        token: z.string().max(512).optional(),
+        login: z.string().trim().max(100).optional(),
+        authorName: z.string().trim().min(1).max(100),
+        authorEmail: z.string().trim().email().max(254),
+        repositories: z.array(z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).max(100),
       })
       .optional(),
     artworkToolsConfig: z
@@ -883,6 +905,24 @@ export function botsRoutes(
           };
         }
 
+        let githubToolsConfig = bot.aiConfig?.githubToolsConfig;
+        if (body.githubToolsConfig) {
+          const encryptedToken = body.githubToolsConfig.token
+            ? encrypt(body.githubToolsConfig.token, env.ENCRYPTION_KEY)
+            : githubToolsConfig?.encryptedToken;
+          githubToolsConfig = {
+            enabled: body.githubToolsConfig.enabled,
+            publicReadEnabled: body.githubToolsConfig.publicReadEnabled,
+            encryptedToken,
+            login: body.githubToolsConfig.login || undefined,
+            authorName: body.githubToolsConfig.authorName,
+            authorEmail: body.githubToolsConfig.authorEmail,
+            repositories: [
+              ...new Set(body.githubToolsConfig.repositories.map((repo) => repo.toLowerCase())),
+            ],
+          };
+        }
+
         const updatedAiConfig: AiConfigStored = {
           enabled: body.enabled,
           encryptedApiKey,
@@ -904,6 +944,7 @@ export function botsRoutes(
             body.webToolsConfig,
           ),
           agentToolsConfig: body.agentToolsConfig,
+          githubToolsConfig,
           artworkToolsConfig: body.artworkToolsConfig,
           botMemoryConfig: body.botMemoryConfig,
           messageConfig: body.messageConfig,

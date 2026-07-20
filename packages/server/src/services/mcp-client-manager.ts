@@ -16,6 +16,7 @@ interface McpClientEntry {
   connected: boolean;
   lastConnectedAt: string | null;
   error: string | null;
+  adminOnly: boolean;
   retryTimeout: ReturnType<typeof setTimeout> | null;
   retryCount: number;
 }
@@ -26,6 +27,7 @@ interface McpToolEntry {
   description: string;
   inputSchema: Record<string, unknown>;
   prefix?: string;
+  adminOnly?: boolean;
 }
 
 const MAX_RETRIES = 10;
@@ -101,6 +103,21 @@ export class McpClientManager {
       connected: false,
       lastConnectedAt: null,
       error: null,
+      adminOnly:
+        server.presetId === "github" ||
+        (() => {
+          try {
+            const hostname = new URL(server.url).hostname.toLowerCase();
+            return (
+              hostname === "github.com" ||
+              hostname.endsWith(".github.com") ||
+              hostname === "githubcopilot.com" ||
+              hostname.endsWith(".githubcopilot.com")
+            );
+          } catch {
+            return false;
+          }
+        })(),
       retryTimeout: null,
       retryCount: 0,
     };
@@ -188,6 +205,7 @@ export class McpClientManager {
           description: tool.description,
           inputSchema: tool.inputSchema,
           prefix: entry.toolNamePrefix ?? undefined,
+          adminOnly: entry.adminOnly,
         });
       }
     }

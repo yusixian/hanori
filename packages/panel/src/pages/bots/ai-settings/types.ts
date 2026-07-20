@@ -4,6 +4,7 @@ import type {
   AiTriggerConfig,
   ModelCapability,
   WebToolsConfigPublic,
+  GitHubToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 
 export interface ModelOption {
@@ -35,6 +36,15 @@ export const DEFAULT_WEB_TOOLS: WebToolsConfigPublic = {
 
 export const DEFAULT_AGENT_TOOLS: AgentToolsConfig = {
   enabled: false,
+};
+
+export const DEFAULT_GITHUB_TOOLS: GitHubToolsConfigPublic = {
+  enabled: false,
+  publicReadEnabled: true,
+  hasToken: false,
+  authorName: "Ai-chan",
+  authorEmail: "ai-chan@users.noreply.github.com",
+  repositories: [],
 };
 
 export const DEFAULT_CONFIG: AiConfigPublic = {
