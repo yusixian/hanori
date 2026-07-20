@@ -2,7 +2,6 @@ import { timingSafeEqual } from "node:crypto";
 import { mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { Model } from "@earendil-works/pi-ai";
 
 export interface CodingWorkerJob {
   workspacePath: string;
@@ -34,6 +33,8 @@ const MAX_TIMEOUT_MS = 30 * 60 * 1000;
 const MIN_TIMEOUT_MS = 60_000;
 const MAX_SUMMARY_CHARS = 12_000;
 
+class RequestTooLargeError extends Error {}
+
 function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
 }
@@ -42,6 +43,31 @@ function secureEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left);
   const rightBuffer = Buffer.from(right);
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+async function readRequestText(request: Request): Promise<string> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return text + decoder.decode();
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_REQUEST_BYTES) throw new RequestTooLargeError();
+      text += decoder.decode(value, { stream: true });
+    }
+  } catch (error) {
+    if (error instanceof RequestTooLargeError) {
+      await reader.cancel().catch(() => undefined);
+    }
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function validateJob(value: unknown): CodingWorkerJob {
@@ -118,6 +144,49 @@ function assistantText(messages: readonly unknown[]): string {
   return "Pi completed without a textual summary.";
 }
 
+export async function createPiRuntime(job: CodingWorkerJob, workspace: string, agentDir: string) {
+  const { DefaultResourceLoader, ModelRuntime, SettingsManager } =
+    await import("@earendil-works/pi-coding-agent");
+  const provider = "cos-tool-bot-runtime";
+  const api = job.model.providerFormat === "gemini" ? "google-generative-ai" : "openai-completions";
+  const modelRuntime = await ModelRuntime.create({
+    authPath: path.join(agentDir, "auth.json"),
+    modelsPath: path.join(agentDir, "models.json"),
+    allowModelNetwork: false,
+  });
+  modelRuntime.registerProvider(provider, {
+    name: "Cos Tool Bot Runtime",
+    baseUrl: job.model.baseURL,
+    api,
+    models: [
+      {
+        id: job.model.id,
+        name: job.model.id,
+        api,
+        reasoning: true,
+        input: ["text", "image"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 128_000,
+        maxTokens: job.model.maxTokens ?? 16_384,
+      },
+    ],
+  });
+  await modelRuntime.setRuntimeApiKey(provider, job.model.apiKey);
+  const model = modelRuntime.getModel(provider, job.model.id);
+  if (!model) throw new Error(`Failed to register Pi model ${provider}/${job.model.id}`);
+
+  const settingsManager = SettingsManager.create(workspace, agentDir, { projectTrusted: false });
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: workspace,
+    agentDir,
+    settingsManager,
+    noExtensions: true,
+  });
+  await resourceLoader.reload();
+
+  return { modelRuntime, model, settingsManager, resourceLoader };
+}
+
 export async function runPiJob(
   job: CodingWorkerJob,
   workspace: string,
@@ -148,31 +217,20 @@ export async function runPiJob(
   };
   const { session } = await (async () => {
     try {
-      const { createAgentSession, ModelRuntime, SessionManager } =
+      const { createAgentSession, SessionManager } =
         await import("@earendil-works/pi-coding-agent");
-      const provider = "cos-tool-bot-runtime";
-      const modelRuntime = await ModelRuntime.create({
-        authPath: path.join(agentDir, "auth.json"),
-        modelsPath: path.join(agentDir, "models.json"),
-      });
-      modelRuntime.setRuntimeApiKey(provider, job.model.apiKey);
-      const model: Model<"openai-completions" | "google-generative-ai"> = {
-        id: job.model.id,
-        name: job.model.id,
-        provider,
-        api: job.model.providerFormat === "gemini" ? "google-generative-ai" : "openai-completions",
-        baseUrl: job.model.baseURL,
-        reasoning: true,
-        input: ["text", "image"],
-        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-        contextWindow: 128_000,
-        maxTokens: job.model.maxTokens ?? 16_384,
-      };
+      const { modelRuntime, model, settingsManager, resourceLoader } = await createPiRuntime(
+        job,
+        workspace,
+        agentDir,
+      );
       return await createAgentSession({
         cwd: workspace,
         agentDir,
         modelRuntime,
         model,
+        settingsManager,
+        resourceLoader,
         thinkingLevel: "medium",
         tools: ["read", "bash", "edit", "write", "grep", "find", "ls"],
         sessionManager: SessionManager.inMemory(workspace),
@@ -242,14 +300,15 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
     busy = true;
     let modelKey: string | undefined;
     try {
-      const raw = await request.text();
-      if (Buffer.byteLength(raw) > MAX_REQUEST_BYTES)
-        return json({ error: "Request too large" }, 413);
+      const raw = await readRequestText(request);
       const job = validateJob(JSON.parse(raw));
       modelKey = job.model.apiKey;
       const workspace = await resolveWorkspace(options.workspacesRoot, job.workspacePath);
       return json({ ok: true, result: await execute(job, workspace) });
     } catch (error) {
+      if (error instanceof RequestTooLargeError) {
+        return json({ error: "Request too large" }, 413);
+      }
       const message = error instanceof Error ? error.message : String(error);
       return json({ error: modelKey ? message.split(modelKey).join("[redacted]") : message }, 400);
     } finally {

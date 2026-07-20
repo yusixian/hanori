@@ -24,6 +24,17 @@ export interface CodingWorkerClientOptions {
   fetch?: typeof fetch;
 }
 
+function isCodingWorkerResult(value: unknown): value is CodingWorkerResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<CodingWorkerResult>;
+  return (
+    typeof result.summary === "string" &&
+    typeof result.durationMs === "number" &&
+    Number.isFinite(result.durationMs) &&
+    result.durationMs >= 0
+  );
+}
+
 export class CodingWorkerClient {
   private readonly fetchImpl: typeof fetch;
 
@@ -46,17 +57,16 @@ export class CodingWorkerClient {
       body: JSON.stringify(job),
       signal: AbortSignal.timeout(job.timeoutMs + 30_000),
     });
-    const payload = (await response.json().catch(() => null)) as
-      | { ok: true; result: CodingWorkerResult }
-      | { error?: string }
-      | null;
-    if (!response.ok || !payload || !("ok" in payload)) {
-      const detail = payload && "error" in payload ? payload.error : undefined;
+    const payload: unknown = await response.json().catch(() => null);
+    const record =
+      payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+    if (!response.ok || record?.ok !== true || !isCodingWorkerResult(record.result)) {
+      const detail = typeof record?.error === "string" ? record.error : undefined;
       const safeDetail = detail?.split(job.model.apiKey).join("[redacted]");
       throw new Error(
         `Pi coding worker failed (${response.status})${safeDetail ? `: ${safeDetail}` : ""}`,
       );
     }
-    return payload.result;
+    return record.result;
   }
 }
