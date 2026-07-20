@@ -22,7 +22,12 @@ process.env["GIT_OPTIONAL_LOCKS"] = "0";
 const port = Number(process.env["CODING_WORKER_PORT"] ?? "3010");
 const socketPath = process.env["CODING_WORKER_SOCKET"];
 const workspacesRoot = process.env["CODING_JOB_ROOT"] ?? "/job";
-const handler = createCodingWorkerHandler({ secret, workspacesRoot });
+const acceptedRequests = new WeakMap<Request, () => void>();
+const handler = createCodingWorkerHandler({
+  secret,
+  workspacesRoot,
+  onJobAccepted: (request) => acceptedRequests.get(request)?.(),
+});
 
 if (socketPath) await rm(socketPath, { force: true });
 
@@ -49,7 +54,8 @@ const server = createServer(async (incoming, outgoing) => {
       signal: abortController.signal,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
-    const response = await handler(request);
+    acceptedRequests.set(request, () => outgoing.writeProcessing());
+    const response = await handler(request).finally(() => acceptedRequests.delete(request));
     const oneShot = response.headers.get("X-Coding-Worker-One-Shot") === "true";
     response.headers.delete("X-Coding-Worker-One-Shot");
     if (oneShot) {

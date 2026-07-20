@@ -41,11 +41,13 @@ function job(): CodingWorkerJob {
 describe("coding worker boundary", () => {
   it("reports a stable boot id and marks accepted jobs as one-shot", async () => {
     const root = await workspaceRoot();
+    const onJobAccepted = vi.fn();
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
       bootId: "boot-one",
       runJob: vi.fn().mockResolvedValue({ summary: "done", durationMs: 1 }),
+      onJobAccepted,
     });
     const health = await handler(new Request("http://worker/health"));
     expect(await health.json()).toEqual({ ok: true, busy: false, bootId: "boot-one" });
@@ -75,15 +77,18 @@ describe("coding worker boundary", () => {
       }),
     );
     expect(response.headers.get("X-Coding-Worker-One-Shot")).toBe("true");
+    expect(onJobAccepted).toHaveBeenCalledOnce();
   });
 
   it("requires the internal bearer secret", async () => {
     const root = await workspaceRoot();
     const runJob = vi.fn();
+    const onJobAccepted = vi.fn();
     const handler = createCodingWorkerHandler({
       secret: "worker-secret",
       workspacesRoot: root,
       runJob,
+      onJobAccepted,
     });
 
     const response = await handler(
@@ -92,6 +97,7 @@ describe("coding worker boundary", () => {
 
     expect(response.status).toBe(401);
     expect(runJob).not.toHaveBeenCalled();
+    expect(onJobAccepted).not.toHaveBeenCalled();
   });
 
   it("resolves a canonical workspace and passes the model key only to the job runner", async () => {

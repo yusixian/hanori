@@ -39,6 +39,7 @@ function createManager(): BotManager {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.createBot.mockImplementation(() => ({ api: {} }));
+  mocks.disposeBot.mockImplementation(() => {});
   mocks.run.mockImplementation(() => ({
     stop: vi.fn(async () => {}),
     task: vi.fn(() => undefined),
@@ -58,6 +59,39 @@ describe("BotManager runtime disposal", () => {
 
     expect(mocks.disposeBot).toHaveBeenNthCalledWith(1, firstBot);
     expect(mocks.disposeBot).toHaveBeenNthCalledWith(2, secondBot);
+    expect(manager.status).toBe("stopped");
+  });
+
+  it("aborts an active job before waiting for the runner to stop", async () => {
+    const manager = createManager();
+    const activeJob = new AbortController();
+    mocks.disposeBot.mockImplementationOnce(() => activeJob.abort(new Error("bot disposed")));
+    const stop = vi.fn(async () => {
+      expect(activeJob.signal.aborted).toBe(true);
+    });
+    mocks.run.mockImplementationOnce(() => ({ stop, task: vi.fn(() => undefined) }));
+    await manager.start();
+
+    await manager.stop();
+
+    expect(mocks.disposeBot).toHaveBeenCalledOnce();
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps runtime state disposed when runner shutdown fails", async () => {
+    const manager = createManager();
+    const stopError = new Error("runner stop failed");
+    mocks.run.mockImplementationOnce(() => ({
+      stop: vi.fn(async () => {
+        throw stopError;
+      }),
+      task: vi.fn(() => undefined),
+    }));
+    await manager.start();
+
+    await expect(manager.stop()).rejects.toBe(stopError);
+
+    expect(mocks.disposeBot).toHaveBeenCalledOnce();
     expect(manager.status).toBe("stopped");
   });
 

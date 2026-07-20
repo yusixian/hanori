@@ -56,13 +56,17 @@ async function validateTree(
   root: string,
   limits: FileTreeLimits,
   phase: "workspace" | "result",
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const label = phase === "workspace" ? "Coding workspace" : "Coding result";
   let files = 0;
   let bytes = 0;
   const visit = async (relative: string): Promise<void> => {
+    signal?.throwIfAborted();
     const entries = await opendir(path.join(root, relative));
     for await (const entry of entries) {
+      signal?.throwIfAborted();
       files += 1;
       if (files > limits.maxFiles) throw new Error(`${label} exceeds the file-count limit`);
       const childRelative = path.join(relative, entry.name);
@@ -89,7 +93,9 @@ async function checkoutTrackedTree(
   sourceWorkspace: string,
   destination: string,
   owner?: { uid: number; gid: number },
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const environment: NodeJS.ProcessEnv = {
     HOME: os.tmpdir(),
     PATH: process.env["PATH"],
@@ -98,30 +104,38 @@ async function checkoutTrackedTree(
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_OPTIONAL_LOCKS: "0",
   };
-  await exec(
-    "git",
-    [
-      "-C",
-      sourceWorkspace,
-      "-c",
-      "credential.helper=",
-      "-c",
-      "core.hooksPath=/dev/null",
-      "checkout-index",
-      "--all",
-      "--force",
-      `--prefix=${destination}${path.sep}`,
-    ],
-    {
-      env: environment,
-      ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
-    },
-  );
+  try {
+    await exec(
+      "git",
+      [
+        "-C",
+        sourceWorkspace,
+        "-c",
+        "credential.helper=",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "checkout-index",
+        "--all",
+        "--force",
+        `--prefix=${destination}${path.sep}`,
+      ],
+      {
+        env: environment,
+        signal,
+        ...(owner ? { uid: owner.uid, gid: owner.gid } : {}),
+      },
+    );
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    throw error;
+  }
 }
 
-async function clearDirectory(root: string): Promise<void> {
+async function clearDirectory(root: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   const entries = await opendir(root);
   for await (const entry of entries) {
+    signal?.throwIfAborted();
     await rm(path.join(root, entry.name), { recursive: true, force: true });
   }
 }
@@ -142,16 +156,21 @@ export class CodingJobStager {
     return globalStagingLock.run(GLOBAL_SLOT, operation);
   }
 
-  async stage(sourceWorkspace: string): Promise<StagedWorkspace> {
+  async stage(sourceWorkspace: string, signal?: AbortSignal): Promise<StagedWorkspace> {
+    signal?.throwIfAborted();
     await mkdir(this.root, { recursive: true });
+    signal?.throwIfAborted();
     const rootIdentity = await captureDirectoryIdentity(this.root);
     const workspace = path.join(rootIdentity.path, this.workspaceName);
-    await clearDirectory(rootIdentity.path);
-    await mkdir(workspace, { mode: 0o700 });
-    if (this.owner) await chown(workspace, this.owner.uid, this.owner.gid);
     try {
-      await checkoutTrackedTree(path.resolve(sourceWorkspace), workspace, this.owner);
-      await validateTree(workspace, this.limits, "workspace");
+      await clearDirectory(rootIdentity.path, signal);
+      signal?.throwIfAborted();
+      await mkdir(workspace, { mode: 0o700 });
+      if (this.owner) await chown(workspace, this.owner.uid, this.owner.gid);
+      signal?.throwIfAborted();
+      await checkoutTrackedTree(path.resolve(sourceWorkspace), workspace, this.owner, signal);
+      await validateTree(workspace, this.limits, "workspace", signal);
+      signal?.throwIfAborted();
       return {
         path: workspace,
         identity: await captureDirectoryIdentity(workspace),
@@ -163,16 +182,19 @@ export class CodingJobStager {
     }
   }
 
-  async validateResult(staged: StagedWorkspace): Promise<void> {
+  async validateResult(staged: StagedWorkspace, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     await assertDirectoryIdentity(staged.rootIdentity);
+    signal?.throwIfAborted();
     await assertDirectoryIdentity(staged.identity);
     const rootEntries = await opendir(staged.rootIdentity.path);
     for await (const entry of rootEntries) {
+      signal?.throwIfAborted();
       if (entry.name !== this.workspaceName) {
         throw new Error(`Unexpected entry outside coding workspace: ${entry.name}`);
       }
     }
-    await validateTree(staged.path, this.limits, "result");
+    await validateTree(staged.path, this.limits, "result", signal);
   }
 
   async cleanup(): Promise<void> {

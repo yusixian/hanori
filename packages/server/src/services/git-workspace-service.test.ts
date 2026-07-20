@@ -192,7 +192,7 @@ describe("Git workspace input validation", () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it("does not validate or commit a staged result after the tool call is aborted", async () => {
+  it("does not create a commit when cancellation reaches the commit boundary", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-abort-test-"));
     tempDirs.push(root);
     const remote = path.join(root, "remote.git");
@@ -226,7 +226,6 @@ describe("Git workspace input validation", () => {
     vi.spyOn(worker, "run").mockImplementation(async (job, signal) => {
       expect(signal).toBe(controller.signal);
       await writeFile(path.join(stagingRoot, job.workspacePath, "README.md"), "after\n");
-      controller.abort(reason);
       return { summary: "must not commit", durationMs: 1 };
     });
     const service = new GitWorkspaceService(
@@ -237,6 +236,22 @@ describe("Git workspace input validation", () => {
       process.getgid?.() ?? 1000,
       () => remote,
       new CodingJobStager(stagingRoot),
+    );
+    const internals = service as unknown as {
+      gitWithWorkTree: (
+        canonicalWorkspace: string,
+        workTree: string,
+        args: string[],
+        env?: NodeJS.ProcessEnv,
+        signal?: AbortSignal,
+      ) => Promise<string>;
+    };
+    const gitWithWorkTree = internals.gitWithWorkTree.bind(service);
+    vi.spyOn(internals, "gitWithWorkTree").mockImplementation(
+      (canonicalWorkspace, workTree, args, env, signal) => {
+        if (args[0] === "commit") controller.abort(reason);
+        return gitWithWorkTree(canonicalWorkspace, workTree, args, env, signal);
+      },
     );
 
     await expect(
@@ -272,5 +287,94 @@ describe("Git workspace input validation", () => {
     await expect(
       readFile(path.join(stagingRoot, "workspace", "README.md"), "utf8"),
     ).rejects.toThrow();
+  });
+
+  it("does not create a branch when cancellation reaches checkout", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-branch-abort-test-"));
+    tempDirs.push(root);
+    const remote = path.join(root, "remote.git");
+    const seed = path.join(root, "seed");
+    await exec("git", ["init", "--bare", remote]);
+    await exec("git", ["init", "-b", "main", seed]);
+    await writeFile(path.join(seed, "README.md"), "before\n");
+    await exec("git", ["-C", seed, "add", "README.md"]);
+    await exec("git", [
+      "-C",
+      seed,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "initial",
+    ]);
+    await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
+    await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
+    await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+
+    const workspaceRoot = path.join(root, "workspaces");
+    const gitRoot = path.join(root, "metadata");
+    const stagingRoot = path.join(root, "coding-job");
+    await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
+    const controller = new AbortController();
+    const reason = new Error("stopped before branch creation");
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    const runWorker = vi.spyOn(worker, "run");
+    const service = new GitWorkspaceService(
+      workspaceRoot,
+      gitRoot,
+      worker,
+      process.getuid?.() ?? 1000,
+      process.getgid?.() ?? 1000,
+      () => remote,
+      new CodingJobStager(stagingRoot),
+    );
+    const internals = service as unknown as {
+      git: (
+        cwd: string,
+        args: string[],
+        env?: NodeJS.ProcessEnv,
+        signal?: AbortSignal,
+      ) => Promise<string>;
+    };
+    const git = internals.git.bind(service);
+    vi.spyOn(internals, "git").mockImplementation((cwd, args, env, signal) => {
+      if (args[0] === "checkout" && args[1] === "-b") controller.abort(reason);
+      return git(cwd, args, env, signal);
+    });
+
+    await expect(
+      service.runCodeTask(
+        {
+          botId: "bot-1",
+          repository: "owner/repo",
+          token: "github-secret",
+          authorName: "Ai-chan",
+          authorEmail: "ai-chan@example.com",
+          task: "Update README",
+          branch: "feat/must-not-exist",
+          model: {
+            apiKey: "model-secret",
+            baseURL: "https://example.com/v1",
+            id: "model",
+            providerFormat: "openai",
+            capabilities: ["tool_calling", "code"],
+          },
+        },
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+
+    const gitDir = path.join(gitRoot, "bot-1", "owner", "repo.git");
+    await expect(
+      exec("git", [
+        `--git-dir=${gitDir}`,
+        "show-ref",
+        "--verify",
+        "refs/heads/feat/must-not-exist",
+      ]),
+    ).rejects.toThrow();
+    expect(runWorker).not.toHaveBeenCalled();
   });
 });

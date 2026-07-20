@@ -125,16 +125,15 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     }
 
     const bot = this.bot;
+    const runnerHandle = this.runnerHandle;
     this._status = "stopped";
     this.startedAt = null;
+    this.runnerHandle = null;
+    if (this.bot === bot) this.bot = null;
     try {
-      if (this.runnerHandle) {
-        await this.runnerHandle.stop();
-        this.runnerHandle = null;
-      }
-    } finally {
       disposeBot(bot);
-      if (this.bot === bot) this.bot = null;
+    } finally {
+      await runnerHandle?.stop();
     }
     await this.dbLogger.info("Bot stopped");
   }

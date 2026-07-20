@@ -35,6 +35,7 @@ export interface CodingWorkerOptions {
     workspace: string,
     signal?: AbortSignal,
   ) => Promise<CodingWorkerResult>;
+  onJobAccepted?: (request: Request) => void;
 }
 
 const MAX_REQUEST_BYTES = 256 * 1024;
@@ -357,6 +358,7 @@ export function createCodingWorkerHandler(options: CodingWorkerOptions) {
       }
       modelKey = job.model.apiKey;
       const workspace = await resolveWorkspace(options.workspacesRoot, job.workspacePath);
+      options.onJobAccepted?.(request);
       const response = json({ ok: true, result: await execute(job, workspace, request.signal) });
       response.headers.set("X-Coding-Worker-One-Shot", "true");
       return response;

@@ -56,6 +56,7 @@ interface ExecOptions {
   timeoutMs?: number;
   uid?: number;
   gid?: number;
+  signal?: AbortSignal;
 }
 
 interface WorkspaceIdentity {
@@ -96,6 +97,7 @@ function gitHubBranchUrl(repository: string, branch: string): string {
 }
 
 async function run(command: string, args: string[], options: ExecOptions): Promise<string> {
+  options.signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     execFile(
       command,
@@ -108,8 +110,13 @@ async function run(command: string, args: string[], options: ExecOptions): Promi
         encoding: "utf8",
         uid: options.uid,
         gid: options.gid,
+        signal: options.signal,
       },
       (error, stdout, stderr) => {
+        if (options.signal?.aborted) {
+          reject(options.signal.reason);
+          return;
+        }
         if (error) {
           reject(new Error((stderr || error.message || `${command} failed`).trim()));
           return;
@@ -148,13 +155,15 @@ export class GitWorkspaceService {
         signal?.throwIfAborted();
         validateGitBranch(options.branch);
         if (options.baseRef) validateGitBranch(options.baseRef);
-        await this.ensureWorkspace(options.botId, options.repository, options.token);
-        await this.prepareBranch(workspace, options);
-        const startSha = await this.git(workspace, ["rev-parse", "HEAD"]);
-        const canonicalIdentity = await this.assertWorkspace(workspace);
-        const staged = await this.stager.stage(workspace);
+        await this.ensureWorkspace(options.botId, options.repository, options.token, signal);
+        signal?.throwIfAborted();
+        await this.prepareBranch(workspace, options, signal);
+        signal?.throwIfAborted();
+        const startSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+        const canonicalIdentity = await this.assertWorkspace(workspace, signal);
+        const staged = await this.stager.stage(workspace, signal);
         try {
-          await this.assertWorkspaceIdentity(canonicalIdentity);
+          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
           const workerResult = await this.worker.run(
             {
               workspacePath: this.stager.workspaceName,
@@ -166,44 +175,65 @@ export class GitWorkspaceService {
           );
 
           signal?.throwIfAborted();
-          await this.stager.validateResult(staged);
+          await this.stager.validateResult(staged, signal);
           signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(canonicalIdentity);
-          const currentBranch = await this.gitWithWorkTree(workspace, staged.path, [
-            "branch",
-            "--show-current",
-          ]);
+          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          const currentBranch = await this.gitWithWorkTree(
+            workspace,
+            staged.path,
+            ["branch", "--show-current"],
+            undefined,
+            signal,
+          );
           if (currentBranch !== options.branch) {
             throw new Error(
               `Pi changed the checked-out branch to ${currentBranch || "detached HEAD"}`,
             );
           }
 
-          await this.assertWorkspaceIdentity(canonicalIdentity);
-          const status = await this.gitWithWorkTree(workspace, staged.path, [
-            "status",
-            "--porcelain",
-          ]);
+          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          const status = await this.gitWithWorkTree(
+            workspace,
+            staged.path,
+            ["status", "--porcelain"],
+            undefined,
+            signal,
+          );
           if (status) {
             signal?.throwIfAborted();
-            await this.assertWorkspaceIdentity(canonicalIdentity);
-            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"]);
+            await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+            signal?.throwIfAborted();
+            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
             const commitMessage =
               options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
               "chore: apply Ai-chan coding task";
-            await this.assertWorkspaceIdentity(canonicalIdentity);
+            await this.assertWorkspaceIdentity(canonicalIdentity, signal);
             signal?.throwIfAborted();
-            await this.gitWithWorkTree(workspace, staged.path, ["commit", "-m", commitMessage]);
+            await this.gitWithWorkTree(
+              workspace,
+              staged.path,
+              ["commit", "-m", commitMessage],
+              undefined,
+              signal,
+            );
           }
 
-          await this.assertWorkspaceIdentity(canonicalIdentity);
-          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"]);
-          await this.assertWorkspaceIdentity(canonicalIdentity);
-          await this.git(workspace, ["reset", "--hard", commitSha]);
+          signal?.throwIfAborted();
+          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+          await this.assertWorkspaceIdentity(canonicalIdentity, signal);
+          await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
           const changed =
             commitSha === startSha
               ? []
-              : (await this.git(workspace, ["diff", "--name-only", `${startSha}..${commitSha}`]))
+              : (
+                  await this.git(
+                    workspace,
+                    ["diff", "--name-only", `${startSha}..${commitSha}`],
+                    undefined,
+                    signal,
+                  )
+                )
                   .split("\n")
                   .filter(Boolean)
                   .slice(0, 200);
@@ -294,17 +324,37 @@ export class GitWorkspaceService {
     });
   }
 
-  private async prepareBranch(workspace: string, options: GitWorkspaceTaskOptions): Promise<void> {
-    await this.git(workspace, ["check-ref-format", "--branch", options.branch]);
-    await this.git(workspace, ["config", "--local", "user.name", options.authorName]);
-    await this.git(workspace, ["config", "--local", "user.email", options.authorEmail]);
-    const currentBranch = await this.git(workspace, ["branch", "--show-current"]);
-    const status = await this.git(workspace, ["status", "--porcelain"]);
-    const branchExists = await this.gitSucceeds(workspace, [
-      "show-ref",
-      "--verify",
-      `refs/heads/${options.branch}`,
-    ]);
+  private async prepareBranch(
+    workspace: string,
+    options: GitWorkspaceTaskOptions,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    await this.git(workspace, ["check-ref-format", "--branch", options.branch], undefined, signal);
+    await this.git(
+      workspace,
+      ["config", "--local", "user.name", options.authorName],
+      undefined,
+      signal,
+    );
+    await this.git(
+      workspace,
+      ["config", "--local", "user.email", options.authorEmail],
+      undefined,
+      signal,
+    );
+    const currentBranch = await this.git(
+      workspace,
+      ["branch", "--show-current"],
+      undefined,
+      signal,
+    );
+    const status = await this.git(workspace, ["status", "--porcelain"], undefined, signal);
+    const branchExists = await this.gitSucceeds(
+      workspace,
+      ["show-ref", "--verify", `refs/heads/${options.branch}`],
+      signal,
+    );
     if (status) {
       throw new Error(
         "Workspace has uncommitted changes from an earlier coding job; resolve them before continuing",
@@ -312,24 +362,33 @@ export class GitWorkspaceService {
     }
     if (branchExists) {
       if (currentBranch !== options.branch) {
-        await this.git(workspace, ["checkout", options.branch]);
+        signal?.throwIfAborted();
+        await this.git(workspace, ["checkout", options.branch], undefined, signal);
       }
       return;
     }
     const base = options.baseRef
       ? `refs/remotes/origin/${options.baseRef}`
-      : await this.git(workspace, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
-    await this.git(workspace, ["rev-parse", "--verify", `${base}^{commit}`]);
-    await this.git(workspace, ["checkout", "-b", options.branch, base]);
+      : await this.git(workspace, ["symbolic-ref", "refs/remotes/origin/HEAD"], undefined, signal);
+    await this.git(workspace, ["rev-parse", "--verify", `${base}^{commit}`], undefined, signal);
+    signal?.throwIfAborted();
+    await this.git(workspace, ["checkout", "-b", options.branch, base], undefined, signal);
   }
 
-  private async ensureWorkspace(botId: string, repository: string, token: string): Promise<string> {
+  private async ensureWorkspace(
+    botId: string,
+    repository: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    signal?.throwIfAborted();
     const workspace = this.workspacePath(botId, repository);
     const parent = path.dirname(workspace);
     const gitDir = this.gitDirForWorkspace(workspace);
     const gitParent = path.dirname(gitDir);
     await mkdir(parent, { recursive: true });
     await mkdir(gitParent, { recursive: true });
+    signal?.throwIfAborted();
     await chown(parent, this.workspaceUid, this.workspaceGid);
     await chown(gitParent, this.workspaceUid, this.workspaceGid);
     let exists = true;
@@ -339,35 +398,57 @@ export class GitWorkspaceService {
       exists = false;
     }
     if (!exists) {
-      await this.withAuth(token, (env) =>
-        run(
-          "git",
-          [
-            "-c",
-            "credential.helper=",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "clone",
-            "--origin",
-            "origin",
-            "--separate-git-dir",
-            gitDir,
-            this.remoteUrl(repository),
-            workspace,
-          ],
-          {
-            cwd: parent,
-            env,
-            uid: this.workspaceUid,
-            gid: this.workspaceGid,
-          },
-        ),
-      );
+      signal?.throwIfAborted();
+      try {
+        await this.withAuth(
+          token,
+          (env) =>
+            run(
+              "git",
+              [
+                "-c",
+                "credential.helper=",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "clone",
+                "--origin",
+                "origin",
+                "--separate-git-dir",
+                gitDir,
+                this.remoteUrl(repository),
+                workspace,
+              ],
+              {
+                cwd: parent,
+                env,
+                uid: this.workspaceUid,
+                gid: this.workspaceGid,
+                signal,
+              },
+            ),
+          signal,
+        );
+      } catch (error) {
+        await Promise.all([
+          rm(workspace, { recursive: true, force: true }),
+          rm(gitDir, { recursive: true, force: true }),
+        ]);
+        throw error;
+      }
     }
-    await this.assertWorkspace(workspace);
-    await this.ensureLocalExcludes(workspace);
-    await this.git(workspace, ["remote", "set-url", "origin", this.remoteUrl(repository)]);
-    await this.withAuth(token, (env) => this.git(workspace, ["fetch", "--prune", "origin"], env));
+    await this.assertWorkspace(workspace, signal);
+    await this.ensureLocalExcludes(workspace, signal);
+    await this.git(
+      workspace,
+      ["remote", "set-url", "origin", this.remoteUrl(repository)],
+      undefined,
+      signal,
+    );
+    await this.withAuth(
+      token,
+      (env) => this.git(workspace, ["fetch", "--prune", "origin"], env, signal),
+      signal,
+    );
     return workspace;
   }
 
@@ -377,27 +458,36 @@ export class GitWorkspaceService {
     return path.join(this.root, botId, ...repository.toLowerCase().split("/"));
   }
 
-  private async resolvedRoot(): Promise<string> {
+  private async resolvedRoot(signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     await mkdir(this.root, { recursive: true });
+    signal?.throwIfAborted();
     return realpath(this.root);
   }
 
-  private async resolvedGitRoot(): Promise<string> {
+  private async resolvedGitRoot(signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     await mkdir(this.gitRoot, { recursive: true });
+    signal?.throwIfAborted();
     return realpath(this.gitRoot);
   }
 
-  private async assertWorkspace(workspace: string): Promise<WorkspaceIdentity> {
-    const root = await this.resolvedRoot();
+  private async assertWorkspace(
+    workspace: string,
+    signal?: AbortSignal,
+  ): Promise<WorkspaceIdentity> {
+    signal?.throwIfAborted();
+    const root = await this.resolvedRoot(signal);
     const resolved = path.resolve(workspace);
     const configuredRoot = path.resolve(this.root);
     if (!resolved.startsWith(`${configuredRoot}${path.sep}`))
       throw new Error("Workspace escapes configured root");
     const workspaceIdentity = await captureDirectoryIdentity(resolved);
+    signal?.throwIfAborted();
     if (!workspaceIdentity.path.startsWith(`${root}${path.sep}`)) {
       throw new Error("Workspace escapes configured root through a symlink");
     }
-    const gitRoot = await this.resolvedGitRoot();
+    const gitRoot = await this.resolvedGitRoot(signal);
     const gitDir = this.gitDirForWorkspace(resolved);
     const resolvedGitDir = path.resolve(gitDir);
     const configuredGitRoot = path.resolve(this.gitRoot);
@@ -405,28 +495,43 @@ export class GitWorkspaceService {
       throw new Error("Git metadata escapes configured root");
     }
     const gitDirIdentity = await captureDirectoryIdentity(resolvedGitDir);
+    signal?.throwIfAborted();
     if (!gitDirIdentity.path.startsWith(`${gitRoot}${path.sep}`)) {
       throw new Error("Git metadata escapes configured root through a symlink");
     }
     return { workspace: workspaceIdentity, gitDir: gitDirIdentity };
   }
 
-  private async assertWorkspaceIdentity(identity: WorkspaceIdentity): Promise<void> {
+  private async assertWorkspaceIdentity(
+    identity: WorkspaceIdentity,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
     await assertDirectoryIdentity(identity.workspace);
+    signal?.throwIfAborted();
     await assertDirectoryIdentity(identity.gitDir);
+    signal?.throwIfAborted();
   }
 
-  private async ensureLocalExcludes(workspace: string): Promise<void> {
+  private async ensureLocalExcludes(workspace: string, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const excludePath = path.join(this.gitDirForWorkspace(workspace), "info", "exclude");
     const content = await readFile(excludePath, "utf8").catch(() => "");
+    signal?.throwIfAborted();
     if (content.split(/\r?\n/).includes(".cos-pi-cache/")) return;
     const separator = content && !content.endsWith("\n") ? "\n" : "";
     await writeFile(excludePath, `${content}${separator}.cos-pi-cache/\n`, { mode: 0o600 });
+    signal?.throwIfAborted();
     await chown(excludePath, this.workspaceUid, this.workspaceGid);
   }
 
-  private git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
-    return this.gitWithWorkTree(cwd, cwd, args, env);
+  private git(
+    cwd: string,
+    args: string[],
+    env?: NodeJS.ProcessEnv,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    return this.gitWithWorkTree(cwd, cwd, args, env, signal);
   }
 
   private gitWithWorkTree(
@@ -434,7 +539,9 @@ export class GitWorkspaceService {
     workTree: string,
     args: string[],
     env?: NodeJS.ProcessEnv,
+    signal?: AbortSignal,
   ): Promise<string> {
+    signal?.throwIfAborted();
     return run(
       "git",
       [
@@ -451,15 +558,17 @@ export class GitWorkspaceService {
         env: this.gitEnvironment(env),
         uid: this.workspaceUid,
         gid: this.workspaceGid,
+        signal,
       },
     );
   }
 
-  private async gitSucceeds(cwd: string, args: string[]): Promise<boolean> {
+  private async gitSucceeds(cwd: string, args: string[], signal?: AbortSignal): Promise<boolean> {
     try {
-      await this.git(cwd, args);
+      await this.git(cwd, args, undefined, signal);
       return true;
     } catch {
+      signal?.throwIfAborted();
       return false;
     }
   }
@@ -467,7 +576,9 @@ export class GitWorkspaceService {
   private async withAuth<T>(
     token: string,
     operation: (env: NodeJS.ProcessEnv) => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
+    signal?.throwIfAborted();
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "cos-git-auth-"));
     const askPass = path.join(tempDir, "askpass.sh");
     await writeFile(
@@ -477,6 +588,7 @@ export class GitWorkspaceService {
     await chmod(askPass, 0o700);
     await chown(tempDir, this.workspaceUid, this.workspaceGid);
     await chown(askPass, this.workspaceUid, this.workspaceGid);
+    signal?.throwIfAborted();
     try {
       return await operation(
         this.gitEnvironment({
@@ -486,6 +598,7 @@ export class GitWorkspaceService {
         }),
       );
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(message.split(token).join("[redacted]"));
     } finally {

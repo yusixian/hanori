@@ -105,4 +105,16 @@ describe("CodingJobStager", () => {
     await mkdir(source);
     await expect(assertDirectoryIdentity(identity)).rejects.toThrow("identity changed");
   });
+
+  it("does not start checkout or validation with an aborted signal", async () => {
+    const { source, staging } = await fixture();
+    const controller = new AbortController();
+    const reason = new Error("stopped before staging");
+    controller.abort(reason);
+
+    await expect(new CodingJobStager(staging).stage(source, controller.signal)).rejects.toBe(
+      reason,
+    );
+    await expect(readFile(path.join(staging, "workspace", "README.md"))).rejects.toThrow();
+  });
 });

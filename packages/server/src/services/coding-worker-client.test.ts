@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, unlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -22,6 +22,35 @@ function signedHealth(url: string, bootId: string, secret = WORKER_SECRET): Resp
 }
 
 describe("CodingWorkerClient", () => {
+  it("rejects an already-aborted Unix-socket run before opening the socket", async () => {
+    const reason = new Error("stopped before request");
+    const controller = new AbortController();
+    controller.abort(reason);
+    const client = new CodingWorkerClient({
+      url: "",
+      socketPath: "/path/that/must/not/be-opened.sock",
+      secret: WORKER_SECRET,
+    });
+
+    await expect(
+      client.run(
+        {
+          workspacePath: "workspace",
+          task: "change code",
+          timeoutMs: 60_000,
+          model: {
+            apiKey: "model-secret",
+            baseURL: "https://example.com/v1",
+            id: "model",
+            providerFormat: "openai",
+            capabilities: ["tool_calling", "code"],
+          },
+        },
+        controller.signal,
+      ),
+    ).rejects.toBe(reason);
+  });
+
   it("uses the Unix socket transport and observes the next boot id", async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), "coding-worker-client-test-"));
     const socketPath = path.join(directory, "worker.sock");
@@ -35,6 +64,7 @@ describe("CodingWorkerClient", () => {
         return;
       }
       expect(request.headers.authorization).toBe("Bearer worker-secret");
+      response.writeProcessing();
       response.end(JSON.stringify({ ok: true, result: { summary: "done", durationMs: 1 } }));
     });
     await new Promise<void>((resolve) => server.listen(socketPath, resolve));
@@ -226,6 +256,107 @@ describe("CodingWorkerClient", () => {
 
     await expect(result).rejects.toBe(reason);
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not mask cancellation when the accepted worker fails to restart", async () => {
+    const controller = new AbortController();
+    const reason = new Error("stopped");
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce((url: string) => signedHealth(url, "boot-1"))
+      .mockImplementationOnce(
+        (_url, init: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+              once: true,
+            });
+          }),
+      )
+      .mockImplementation((url: string) => signedHealth(url, "boot-1"));
+    const client = new CodingWorkerClient({
+      url: "http://coding-worker:3010",
+      secret: WORKER_SECRET,
+      fetch: fetchMock,
+      restartTimeoutMs: 1,
+      pollIntervalMs: 1,
+      sleep: async () => {},
+    });
+
+    const result = client.run(
+      {
+        workspacePath: "workspace",
+        task: "change code",
+        timeoutMs: 60_000,
+        model: {
+          apiKey: "model-secret",
+          baseURL: "https://example.com/v1",
+          id: "model",
+          providerFormat: "openai",
+          capabilities: ["tool_calling", "code"],
+        },
+      },
+      controller.signal,
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    controller.abort(reason);
+
+    await expect(result).rejects.toBe(reason);
+  });
+
+  it("does not wait for a restart when a Unix-socket job was never accepted", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "coding-worker-not-accepted-test-"));
+    const socketPath = path.join(directory, "worker.sock");
+    const sleep = vi.fn(async () => {
+      throw new Error("unexpected restart wait");
+    });
+    const server = createServer((request, response) => {
+      if (!request.url?.startsWith("/health?challenge=")) {
+        response.writeHead(500).end();
+        return;
+      }
+      const signed = signedHealth(request.url, "boot-1");
+      void signed.json().then(async (body) => {
+        await unlink(socketPath);
+        response.setHeader("Content-Type", "application/json");
+        response.setHeader("Connection", "close");
+        response.end(JSON.stringify(body));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+    try {
+      const client = new CodingWorkerClient({
+        url: "",
+        socketPath,
+        secret: WORKER_SECRET,
+        restartTimeoutMs: 1_000,
+        pollIntervalMs: 1,
+        sleep,
+      });
+
+      const error = await client
+        .run({
+          workspacePath: "workspace",
+          task: "change code",
+          timeoutMs: 60_000,
+          model: {
+            apiKey: "model-secret",
+            baseURL: "https://example.com/v1",
+            id: "model",
+            providerFormat: "openai",
+            capabilities: ["tool_calling", "code"],
+          },
+        })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).not.toContain("unexpected restart wait");
+      expect((error as Error).message).not.toContain("did not restart with a new boot id");
+      expect(sleep).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

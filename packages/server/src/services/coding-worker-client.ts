@@ -95,23 +95,44 @@ export class CodingWorkerClient {
     signal?.throwIfAborted();
     const before = await this.waitForHealthyWorker(undefined, signal);
     let response: Response;
+    let accepted = false;
     const timeoutSignal = AbortSignal.timeout(job.timeoutMs + 30_000);
+    const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     try {
-      response = await this.request("/jobs", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.options.secret}`,
-          "Content-Type": "application/json",
+      response = await this.request(
+        "/jobs",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${this.options.secret}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(job),
+          signal: requestSignal,
         },
-        body: JSON.stringify(job),
-        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-      });
+        () => {
+          accepted = true;
+        },
+      );
     } catch (error) {
-      await this.waitForHealthyWorker(before.bootId);
-      throw error;
+      const originalError = signal?.aborted ? signal.reason : error;
+      if (accepted) {
+        try {
+          await this.waitForHealthyWorker(before.bootId);
+        } catch (restartError) {
+          if (!requestSignal.aborted) throw restartError;
+        }
+      }
+      throw originalError;
     }
     const payload: unknown = await response.json().catch(() => null);
-    await this.waitForHealthyWorker(before.bootId);
+    if (accepted) {
+      try {
+        await this.waitForHealthyWorker(before.bootId);
+      } catch (restartError) {
+        if (!requestSignal.aborted) throw restartError;
+      }
+    }
     signal?.throwIfAborted();
     const record =
       payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
@@ -125,8 +146,14 @@ export class CodingWorkerClient {
     return record.result;
   }
 
-  private async request(pathname: string, init: RequestInit = {}): Promise<Response> {
+  private async request(
+    pathname: string,
+    init: RequestInit = {},
+    onAccepted?: () => void,
+  ): Promise<Response> {
+    init.signal?.throwIfAborted();
     if (!this.options.socketPath) {
+      onAccepted?.();
       return this.fetchImpl(`${this.options.url.replace(/\/+$/, "")}${pathname}`, init);
     }
     return new Promise((resolve, reject) => {
@@ -139,7 +166,20 @@ export class CodingWorkerClient {
         method: init.method ?? "GET",
         headers: Object.fromEntries(headers),
       });
-      const onAbort = () => request.destroy(init.signal?.reason as Error | undefined);
+      let accepted = false;
+      const markAccepted = () => {
+        if (accepted) return;
+        accepted = true;
+        onAccepted?.();
+      };
+      request.on("information", (information) => {
+        if (information.statusCode === 102) markAccepted();
+      });
+      const onAbort = () => {
+        const reason = init.signal?.reason;
+        reject(reason);
+        request.destroy(reason instanceof Error ? reason : undefined);
+      };
       init.signal?.addEventListener("abort", onAbort, { once: true });
       request.on("response", (incoming) => {
         const chunks: Buffer[] = [];
@@ -200,14 +240,25 @@ export class CodingWorkerClient {
           return payload;
         }
       } catch (error) {
+        if (signal?.aborted) signal.throwIfAborted();
         lastError = error;
       }
-      await (
-        this.options.sleep ??
-        ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
-      )(this.options.pollIntervalMs ?? 250);
+      await this.sleep(this.options.pollIntervalMs ?? 250, signal);
     }
     const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
     throw new Error(`Pi coding worker did not restart with a new boot id${detail}`);
+  }
+
+  private async sleep(milliseconds: number, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    const pending = (
+      this.options.sleep ?? ((delay) => new Promise((resolve) => setTimeout(resolve, delay)))
+    )(milliseconds);
+    if (!signal) return pending;
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      pending.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
   }
 }
