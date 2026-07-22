@@ -14,6 +14,7 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 const INSTALLATION_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const INSTALLATION_HEALTH_TTL_MS = 60 * 1000;
 const MAX_PENDING_AUTH_STATES = 1_024;
+const MAX_INSTALLATION_PAGES = 100;
 const MAX_REPOSITORY_PAGES = 100;
 
 export const GITHUB_APP_ENV_NAMES = [
@@ -361,30 +362,14 @@ export class GitHubAppCredentialService {
     }
 
     const targetId = requestedInstallationId ?? currentInstallationId;
-    let appInstallations: InstallationResponse[] = [];
-    let selected: InstallationResponse | undefined;
-    if (targetId) {
-      try {
-        selected = await this.request<InstallationResponse>(
-          `/user/installations/${targetId}`,
-          oauth.access_token,
-        );
-      } catch {
-        throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");
-      }
-      if (String(selected.app_id) !== config.appId) {
-        throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");
-      }
-    } else {
-      const installations = await this.request<UserInstallationsResponse>(
-        "/user/installations?per_page=100",
-        oauth.access_token,
-      );
-      appInstallations = installations.installations.filter(
-        (installation) => String(installation.app_id) === config.appId,
-      );
-      selected = appInstallations.length === 1 ? appInstallations[0] : undefined;
-    }
+    const appInstallations = (await this.listUserInstallations(oauth.access_token)).filter(
+      (installation) => String(installation.app_id) === config.appId,
+    );
+    const selected = targetId
+      ? appInstallations.find((installation) => installation.id === targetId)
+      : appInstallations.length === 1
+        ? appInstallations[0]
+        : undefined;
     if (!selected) {
       if (targetId) {
         throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");
@@ -462,6 +447,32 @@ export class GitHubAppCredentialService {
     signer.update(unsigned);
     signer.end();
     return `${unsigned}.${signer.sign(config.privateKey).toString("base64url")}`;
+  }
+
+  private async listUserInstallations(userToken: string): Promise<InstallationResponse[]> {
+    const installations: InstallationResponse[] = [];
+    let totalCount = 0;
+    let complete = false;
+    for (let page = 1; page <= MAX_INSTALLATION_PAGES; page += 1) {
+      const pageQuery = page === 1 ? "" : `&page=${page}`;
+      const result = await this.request<UserInstallationsResponse>(
+        `/user/installations?per_page=100${pageQuery}`,
+        userToken,
+      );
+      installations.push(...result.installations);
+      totalCount = result.total_count;
+      if (installations.length >= totalCount) {
+        complete = true;
+        break;
+      }
+      if (result.installations.length === 0) break;
+    }
+    if (!complete && installations.length < totalCount) {
+      throw new GitHubAppFlowError(
+        `GitHub App installation 超过 ${MAX_INSTALLATION_PAGES * 100} 个，无法安全完成授权`,
+      );
+    }
+    return installations;
   }
 
   private async refreshInstallationToken(installationId: number): Promise<string> {
