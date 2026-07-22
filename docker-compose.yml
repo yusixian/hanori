@@ -12,14 +12,31 @@ services:
       - PANEL_PASSWORD=${PANEL_PASSWORD}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
+      - GITHUB_APP_ID=${GITHUB_APP_ID:-}
+      - GITHUB_APP_CLIENT_ID=${GITHUB_APP_CLIENT_ID:-}
+      - GITHUB_APP_CLIENT_SECRET=${GITHUB_APP_CLIENT_SECRET:-}
+      - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY:-}
+      - GITHUB_APP_SLUG=${GITHUB_APP_SLUG:-}
       - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
       - BACKUP_DIR=/data/backups
       - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
+      - CODING_WORKER_URL=
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_JOB_DIR=/coding-job
+      - CODING_WORKSPACES_DIR=/workspaces
+      - CODING_GIT_DIR=/git-metadata
+      - CODING_WORKSPACE_UID=1000
+      - CODING_WORKSPACE_GID=1000
     volumes:
       - backups:/data/backups
       - botdata:/app/data
+      - codeworkspaces:/workspaces
+      - codegit:/git-metadata
+      - codingjob:/coding-job
+      - codingcontrol:/coding-control
     depends_on:
       db:
         condition: service_healthy
@@ -44,6 +61,113 @@ services:
         max-size: "10m"
         max-file: "3"
     stop_grace_period: 15s
+
+  coding-egress-proxy:
+    profiles: ["coding"]
+    build:
+      context: .
+      target: coding-egress-proxy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    networks:
+      - coding-sandbox
+      - coding-egress
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "printf 'GET http://127.0.0.1/ HTTP/1.0\\r\\n\\r\\n' | nc -w 2 127.0.0.1 3128 | grep -q '^HTTP/'",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  coding-worker:
+    profiles: ["coding"]
+    build:
+      context: .
+      target: coding-worker
+    environment:
+      - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
+      - CODING_WORKER_SOCKET=/coding-control/worker.sock
+      - CODING_JOB_ROOT=/job
+      - CODING_REQUIRE_PROXY=1
+      - HTTP_PROXY=http://coding-egress-proxy:3128
+      - HTTPS_PROXY=http://coding-egress-proxy:3128
+      - ALL_PROXY=http://coding-egress-proxy:3128
+      - NO_PROXY=
+      - http_proxy=http://coding-egress-proxy:3128
+      - https_proxy=http://coding-egress-proxy:3128
+      - all_proxy=http://coding-egress-proxy:3128
+      - no_proxy=
+      - npm_config_proxy=http://coding-egress-proxy:3128
+      - npm_config_https_proxy=http://coding-egress-proxy:3128
+    volumes:
+      - codingjob:/job
+      - codingcontrol:/coding-control
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: always
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: 1.5
+    depends_on:
+      app:
+        condition: service_healthy
+      coding-egress-proxy:
+        condition: service_healthy
+    networks:
+      - coding-sandbox
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1024M
+          pids: 128
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('node:http').get({socketPath:'/coding-control/worker.sock',path:'/health'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 20s
 
   nsfw-api:
     image: ghcr.io/arnidan/nsfw-api:latest
@@ -117,3 +241,25 @@ volumes:
   pgdata:
   backups:
   botdata:
+  codeworkspaces:
+  codegit:
+  codingjob:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1073741824,uid=0,gid=0,mode=0711"
+  codingcontrol:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=1048576,uid=0,gid=1000,mode=0770"
+
+networks:
+  coding-sandbox:
+    driver: bridge
+    internal: true
+  coding-egress:
+    driver: bridge
+    internal: false

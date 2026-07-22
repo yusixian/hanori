@@ -41,6 +41,7 @@ export const DEFAULT_AGENT_TOOLS: AgentToolsConfig = {
 export const DEFAULT_GITHUB_TOOLS: GitHubToolsConfigPublic = {
   enabled: false,
   publicReadEnabled: true,
+  codingAgentEnabled: false,
   hasToken: false,
   authorName: "Ai-chan",
   authorEmail: "ai-chan@users.noreply.github.com",

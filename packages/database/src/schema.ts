@@ -149,7 +149,19 @@ interface AiConfigJson {
   githubToolsConfig?: {
     enabled: boolean;
     publicReadEnabled: boolean;
+    codingAgentEnabled: boolean;
+    codingProviderId?: string;
+    codingModelId?: string;
     encryptedToken?: string;
+    githubAppInstallation?: {
+      installationId: number;
+      accountLogin: string;
+      accountType: string;
+      repositorySelection: "all" | "selected";
+      repositories: string[];
+      permissions: Record<string, string>;
+      connectedAt: string;
+    };
     login?: string;
     authorName: string;
     authorEmail: string;

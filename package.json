@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"pnpm --filter @cos-tool-bot/server dev\" \"pnpm --filter @cos-tool-bot/panel dev\"",
+    "dev:coding-worker": "pnpm --filter @cos-tool-bot/coding-worker dev",
     "dev:db": "docker compose -p cos-bot-dev -f docker-compose.dev.yml up -d",
     "build": "pnpm -r build",
     "db:generate": "pnpm --filter @cos-tool-bot/database generate",
@@ -50,7 +51,7 @@
     ]
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
   },
   "packageManager": "pnpm@10.5.2",
   "pnpm": {

@@ -401,22 +401,68 @@ export const aiSettings = {
   githubTools: {
     enable: "Enable GitHub tools",
     securityDescription:
-      "Credentials are decrypted only in the server and are never given to the model. Only bot administrators can use the configured identity; other members can at most read public repositories anonymously.",
+      "Short-lived GitHub App credentials are generated only by the server and are never given to the model or Pi. Only bot administrators can use the authorized identity; other members can at most read public repositories anonymously.",
+    appConnectionTitle: "GitHub App authorization",
+    appConnectionDescription:
+      "A panel administrator connects GitHub, then controls the accessible account and repositories on GitHub.",
+    connectGitHub: "Connect GitHub",
+    modifyAuthorization: "Modify authorization",
+    disconnect: "Disconnect",
+    disconnectConfirm:
+      "Disconnect the GitHub App from this bot? Private repository access and write operations will stop immediately.",
+    disconnectError: "Failed to disconnect GitHub",
+    authorizeError: "Could not start GitHub authorization",
+    saveBeforeAuthorization: "Save the current AI settings before connecting or changing GitHub.",
+    statusLoadError: "Failed to load GitHub App status",
+    loadingStatus: "Checking the GitHub App connection…",
+    appUnavailableTitle: "GitHub App is not configured on the server",
+    appUnavailableDescription:
+      "Set GITHUB_APP_ID, GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, GITHUB_APP_PRIVATE_KEY, and GITHUB_APP_SLUG on the server, then redeploy.",
+    notConnectedTitle: "GitHub is not connected",
+    notConnectedBadge: "Not connected",
+    notConnectedDescription:
+      "After connecting, GitHub lets you choose a personal or organization account and the repositories this bot may access.",
+    connectedBadge: "Connected",
+    legacyPatNotice:
+      "A legacy PAT is configured. Complete the GitHub App flow to move to short-lived credentials.",
+    repositorySelection: "GitHub installation scope: {{selection}}",
+    repositorySelectionAll: "All repositories",
+    repositorySelectionSelected: "Selected repositories",
+    installationId: "Installation #{{id}}",
+    authorizedRepositories: "Repositories authorized by GitHub",
+    noAuthorizedRepositories: "GitHub currently reports no accessible repositories.",
+    authorizedPermissions: "Installation permissions",
+    permissionsUnavailable: "The server did not return permission details.",
+    callbackSuccess: "GitHub App connected",
+    callbackError: "GitHub authorization failed. Please try again.",
     publicRead: "Allow members to read public repositories",
     publicReadDescription:
       "Member requests never include Ai-chan's token and cannot create branches, commit, push, or change issues.",
-    login: "GitHub login",
-    token: "Fine-grained Personal Access Token",
-    tokenPlaceholder: "Enter the token for Ai-chan's account",
-    keepTokenPlaceholder: "Configured; leave empty to keep",
+    codingAgent: "Enable Pi coding agent (administrators only)",
+    codingAgentDescription:
+      "Pi modifies and tests code in a separate constrained service. The trusted server creates Ai-chan's local commit; Pi never receives the GitHub token, and pushing still requires Telegram confirmation.",
+    codingProvider: "Coding provider",
+    codingModel: "Coding model",
+    followChatProvider: "Follow the current chat provider",
+    followChatModel: "Follow the current chat model",
+    providerDefaultModel: "Provider default ({{model}})",
+    codingModelDescription:
+      "Optionally use a separate provider and model for coding tasks. Leaving the provider unset keeps the existing behavior and follows the model selected for the current chat.",
+    unavailableProvider: "Unavailable provider ({{id}})",
+    unavailableModel: "Unavailable model ({{id}})",
+    providerMissingApiKey: "{{provider}} (API key required)",
+    codingProviderMissingApiKey:
+      "This coding provider has no API key. Add one in Providers or select another provider.",
+    codingSelectionInvalid:
+      "The saved coding provider is no longer available. Select another provider or follow the chat model before saving.",
     authorName: "Git commit author name",
     authorEmail: "Git commit author email",
-    repositories: "Administrator repository allowlist",
+    repositories: "Bot repository allowlist",
     repositoriesDescription:
-      "One owner/repository per line. Only allowlisted repositories may use the token for private reads or administrator writes.",
-    tokenPermissionsTitle: "Recommended minimum GitHub permissions",
-    tokenPermissions:
-      "Select only the repositories above; set Metadata: Read, Contents: Read and write, and Issues: Read and write. Add Pull requests: Read and write later if PR creation is enabled.",
+      "One owner/repository per line. This is a narrower boundary inside the GitHub installation: private reads and administrator writes require both GitHub authorization and this allowlist.",
+    installationScopeTitle: "Two repository boundaries",
+    installationScope:
+      "The GitHub App installation is the outer limit, and the bot allowlist is the inner limit. Changing the GitHub authorization never expands this bot's allowlist automatically.",
   },
   artworkTools: {
     title: "Artwork Tools",

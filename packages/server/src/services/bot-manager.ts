@@ -5,7 +5,7 @@ import type {
   SummaryCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
-import { createBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
+import { createBot, disposeBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import type {
   BotStatus,
@@ -82,7 +82,8 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       return;
     }
 
-    this.bot = createBot(this.botConfig);
+    const bot = createBot(this.botConfig);
+    this.bot = bot;
     this._status = "running";
     this.startedAt = Date.now();
 
@@ -90,11 +91,13 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     // is sequential, which means a stuck AI reply would block /stop and every
     // other command for up to aiReplyMs (5 min).
     try {
-      const handle = run(this.bot);
+      const handle = run(bot);
       this.runnerHandle = handle;
       await this.dbLogger.info("Bot started");
 
       handle.task()?.catch((err) => {
+        disposeBot(bot);
+        if (this.bot !== bot) return;
         this._status = "stopped";
         this.startedAt = null;
         this.bot = null;
@@ -104,6 +107,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
           .catch(() => {});
       });
     } catch (err) {
+      disposeBot(bot);
       this._status = "stopped";
       this.startedAt = null;
       this.bot = null;
@@ -120,13 +124,17 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       return;
     }
 
+    const bot = this.bot;
+    const runnerHandle = this.runnerHandle;
     this._status = "stopped";
     this.startedAt = null;
-    if (this.runnerHandle) {
-      await this.runnerHandle.stop();
-      this.runnerHandle = null;
+    this.runnerHandle = null;
+    if (this.bot === bot) this.bot = null;
+    try {
+      disposeBot(bot);
+    } finally {
+      await runnerHandle?.stop();
     }
-    this.bot = null;
     await this.dbLogger.info("Bot stopped");
   }
 

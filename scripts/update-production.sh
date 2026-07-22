@@ -16,6 +16,11 @@ usage() {
 
 可选环境变量：
   COS_BOT_BACKUP_DIR=/path/to/backups      修改数据库备份目录
+
+.env 可选功能：
+  COMPOSE_PROFILES=coding                  部署 Pi worker 与出口代理
+  CODING_WORKER_SECRET=<随机值>             启用 coding profile 时必须填写
+  GITHUB_APP_*                             五项必须全填或全空
 EOF
 }
 
@@ -26,6 +31,116 @@ fail() {
 
 step() {
   printf '\n[%s/7] %s\n' "$1" "$2"
+}
+
+compose_environment() {
+  local output
+  output="$("${COMPOSE[@]}" config --environment)" || fail "无法读取 Docker Compose 环境变量。"
+  printf '%s' "$output"
+}
+
+environment_value() {
+  local environment="$1"
+  local name="$2"
+  local line
+
+  line="$(printf '%s\n' "$environment" | grep -m 1 -E "^${name}=" || true)"
+  if [[ -n "$line" ]]; then
+    printf '%s' "${line#*=}"
+  fi
+  return 0
+}
+
+validate_optional_github_app() {
+  local environment="$1"
+  local configured=0
+  local name value
+  local -a variables=(
+    GITHUB_APP_ID
+    GITHUB_APP_CLIENT_ID
+    GITHUB_APP_CLIENT_SECRET
+    GITHUB_APP_PRIVATE_KEY
+    GITHUB_APP_SLUG
+  )
+  local -a missing=()
+
+  for name in "${variables[@]}"; do
+    value="$(environment_value "$environment" "$name")"
+    if [[ -n "$value" ]]; then
+      configured=$((configured + 1))
+    else
+      missing+=("$name")
+    fi
+  done
+
+  if [[ "$configured" -eq 0 ]]; then
+    printf '提示：GitHub App 尚未配置，管理面板中的 GitHub 授权功能将不可用。\n'
+    return
+  fi
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    fail "GitHub App 只配置了一部分。请补齐这些变量后重试：${missing[*]}（变量值不会显示）"
+  fi
+
+  printf 'GitHub App 的五项环境变量已完整配置（变量值不会显示）。\n'
+}
+
+detect_coding_profile() {
+  local environment="$1"
+  local services secret
+
+  services="$("${COMPOSE[@]}" config --services)" || fail "无法读取 Docker Compose 服务列表。"
+  secret="$(environment_value "$environment" CODING_WORKER_SECRET)"
+  if ! grep -qx 'coding-worker' <<<"$services"; then
+    [[ -z "$secret" ]] ||
+      fail "CODING_WORKER_SECRET 已填写，但 coding profile 未启用。请在 .env 设置 COMPOSE_PROFILES=coding，或清空该 secret。"
+    CODING_PROFILE_ENABLED=0
+    printf 'Pi coding profile 未启用；本次只部署主应用。\n'
+    return
+  fi
+
+  [[ -n "$secret" ]] ||
+    fail "已启用 coding profile，但 CODING_WORKER_SECRET 为空。请先执行 openssl rand -hex 32 并写入 .env。"
+
+  CODING_PROFILE_ENABLED=1
+  printf 'Pi coding profile 已启用；将同时部署 worker 和出口代理。\n'
+}
+
+coding_service_container_ids() {
+  local service="$1"
+  docker ps -aq \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --filter "label=com.docker.compose.service=$service"
+}
+
+verify_coding_services_removed() {
+  local service ids
+  local -a remaining=()
+
+  for service in coding-worker coding-egress-proxy; do
+    ids="$(coding_service_container_ids "$service")" ||
+      fail "无法检查已禁用的 $service 容器。"
+    [[ -z "$ids" ]] || remaining+=("$service")
+  done
+
+  [[ "${#remaining[@]}" -eq 0 ]] ||
+    fail "coding profile 已禁用，但这些容器仍然存在：${remaining[*]}"
+}
+
+remove_disabled_coding_services() {
+  local service ids
+
+  for service in coding-worker coding-egress-proxy; do
+    ids="$(coding_service_container_ids "$service")" ||
+      fail "无法检查待清理的 $service 容器。"
+    [[ -n "$ids" ]] || continue
+
+    "${COMPOSE[@]}" stop "$service" || fail "停止已禁用的 $service 失败。"
+    "${COMPOSE[@]}" rm -f "$service" || fail "删除已禁用的 $service 失败。"
+  done
+
+  verify_coding_services_removed
+  printf '已确认禁用的 Pi worker 和出口代理容器均不存在。\n'
 }
 
 case "${1:-}" in
@@ -94,6 +209,10 @@ fi
 
 COMPOSE=(docker compose -p "$PROJECT_NAME")
 "${COMPOSE[@]}" config --quiet
+COMPOSE_ENVIRONMENT="$(compose_environment)"
+validate_optional_github_app "$COMPOSE_ENVIRONMENT"
+CODING_PROFILE_ENABLED=0
+detect_coding_profile "$COMPOSE_ENVIRONMENT"
 "${COMPOSE[@]}" exec -T db pg_isready -U bot -d cos_tool_bot >/dev/null 2>&1 ||
   fail "生产数据库没有运行。请先执行 docker compose -p $PROJECT_NAME ps。"
 
@@ -139,14 +258,26 @@ git diff --quiet "$CHANGE_BASE" "$TARGET_COMMIT" -- docker-compose.yml || INFRA_
 
 step 4 "检查新版本配置"
 "${COMPOSE[@]}" config --quiet
+COMPOSE_ENVIRONMENT="$(compose_environment)"
+validate_optional_github_app "$COMPOSE_ENVIRONMENT"
+detect_coding_profile "$COMPOSE_ENVIRONMENT"
 
-step 5 "构建应用镜像"
-"${COMPOSE[@]}" build app
+step 5 "构建应用与已启用的附加服务"
+BUILD_SERVICES=(app)
+if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
+  BUILD_SERVICES+=(coding-egress-proxy coding-worker)
+fi
+"${COMPOSE[@]}" build "${BUILD_SERVICES[@]}"
 
 step 6 "启动新版本"
+if [[ "$CODING_PROFILE_ENABLED" -eq 0 ]]; then
+  remove_disabled_coding_services
+fi
 if [[ "$INFRA_CHANGED" -eq 1 ]]; then
   printf '首次运行脚本或检测到 docker-compose.yml 有变化，将应用完整 Compose 配置。\n'
   "${COMPOSE[@]}" up -d
+elif [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
+  "${COMPOSE[@]}" up -d app coding-egress-proxy coding-worker
 else
   "${COMPOSE[@]}" up -d --no-deps app
 fi
@@ -169,7 +300,32 @@ if [[ "$HEALTHY" -ne 1 ]]; then
   fail "新版本在 120 秒内没有通过健康检查。数据库备份位于 $BACKUP_PATH"
 fi
 
-"${COMPOSE[@]}" ps app db
+if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
+  CODING_HEALTHY=0
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    WORKER_ID="$("${COMPOSE[@]}" ps -q coding-worker)"
+    PROXY_ID="$("${COMPOSE[@]}" ps -q coding-egress-proxy)"
+    if [[ -n "$WORKER_ID" && -n "$PROXY_ID" ]] &&
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$WORKER_ID" 2>/dev/null)" == "healthy" ]] &&
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$PROXY_ID" 2>/dev/null)" == "healthy" ]]; then
+      CODING_HEALTHY=1
+      break
+    fi
+    printf '.'
+    sleep 2
+  done
+  printf '\n'
+
+  if [[ "$CODING_HEALTHY" -ne 1 ]]; then
+    "${COMPOSE[@]}" logs --tail=120 coding-worker coding-egress-proxy >&2 || true
+    fail "Pi coding worker 或出口代理在 120 秒内没有通过健康检查。"
+  fi
+
+  "${COMPOSE[@]}" ps app db coding-worker coding-egress-proxy
+else
+  verify_coding_services_removed
+  "${COMPOSE[@]}" ps app db
+fi
 MARKER_TMP="$DEPLOYED_MARKER.tmp"
 printf '%s\n' "$TARGET_COMMIT" >"$MARKER_TMP"
 mv "$MARKER_TMP" "$DEPLOYED_MARKER"

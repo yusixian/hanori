@@ -9,7 +9,9 @@ function optional(name: string, fallback = ""): string {
 }
 
 function optionalInt(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const value = Number(raw);
   return Number.isNaN(value) ? fallback : value;
 }
 
@@ -26,6 +28,11 @@ export const env = {
   AUTH_OWNER_EMAIL: required("AUTH_OWNER_EMAIL"),
   GOOGLE_CLIENT_ID: optional("GOOGLE_CLIENT_ID"),
   GOOGLE_CLIENT_SECRET: optional("GOOGLE_CLIENT_SECRET"),
+  GITHUB_APP_ID: optional("GITHUB_APP_ID"),
+  GITHUB_APP_CLIENT_ID: optional("GITHUB_APP_CLIENT_ID"),
+  GITHUB_APP_CLIENT_SECRET: optional("GITHUB_APP_CLIENT_SECRET"),
+  GITHUB_APP_PRIVATE_KEY: optional("GITHUB_APP_PRIVATE_KEY"),
+  GITHUB_APP_SLUG: optional("GITHUB_APP_SLUG"),
   // Used only once to bootstrap the first owner during migration.
   PANEL_PASSWORD: optional("PANEL_PASSWORD"),
   ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],
@@ -38,4 +45,12 @@ export const env = {
   BACKUP_DIR: optional("BACKUP_DIR", "./backups"),
   GENERATION_RETENTION_DAYS: optionalInt("GENERATION_RETENTION_DAYS", 30),
   NSFW_API_URL: optional("NSFW_API_URL"),
+  CODING_WORKER_URL: optional("CODING_WORKER_URL"),
+  CODING_WORKER_SOCKET: optional("CODING_WORKER_SOCKET"),
+  CODING_WORKER_SECRET: optional("CODING_WORKER_SECRET"),
+  CODING_JOB_DIR: optional("CODING_JOB_DIR", "./data/coding-job"),
+  CODING_WORKSPACES_DIR: optional("CODING_WORKSPACES_DIR", "./data/code-workspaces"),
+  CODING_GIT_DIR: optional("CODING_GIT_DIR", "./data/code-git"),
+  CODING_WORKSPACE_UID: optionalInt("CODING_WORKSPACE_UID", process.getuid?.() ?? 1000),
+  CODING_WORKSPACE_GID: optionalInt("CODING_WORKSPACE_GID", process.getgid?.() ?? 1000),
 } as const;

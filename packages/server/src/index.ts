@@ -16,6 +16,10 @@ import { LogCleaner } from "./services/log-cleaner.js";
 import { BotRunCleaner } from "./services/bot-run-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
+import { CodingWorkerClient } from "./services/coding-worker-client.js";
+import { CodingJobStager } from "./services/coding-job-stager.js";
+import { GitWorkspaceService } from "./services/git-workspace-service.js";
+import { GitHubAppCredentialService } from "./services/github-app-credentials.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
 import { SummaryConfigService } from "./services/summary-config-service.js";
 import { SummaryRunner } from "./services/summary-runner.js";
@@ -130,6 +134,49 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const githubAppService = new GitHubAppCredentialService({
+  config: {
+    appId: env.GITHUB_APP_ID,
+    clientId: env.GITHUB_APP_CLIENT_ID,
+    clientSecret: env.GITHUB_APP_CLIENT_SECRET,
+    privateKey: env.GITHUB_APP_PRIVATE_KEY,
+    slug: env.GITHUB_APP_SLUG,
+  },
+  stateSecret: env.BETTER_AUTH_SECRET,
+});
+botPool.setGitHubAppCredentialService(githubAppService);
+if (githubAppService.configurationError) {
+  logger.warn(githubAppService.configurationError);
+}
+const codingWorkerClient = new CodingWorkerClient({
+  url: env.CODING_WORKER_URL,
+  socketPath: env.CODING_WORKER_SOCKET,
+  secret: env.CODING_WORKER_SECRET,
+});
+if (codingWorkerClient.configured) {
+  botPool.setGitWorkspaceService(
+    new GitWorkspaceService(
+      env.CODING_WORKSPACES_DIR,
+      env.CODING_GIT_DIR,
+      codingWorkerClient,
+      env.CODING_WORKSPACE_UID,
+      env.CODING_WORKSPACE_GID,
+      undefined,
+      new CodingJobStager(
+        env.CODING_JOB_DIR,
+        {},
+        {
+          uid: env.CODING_WORKSPACE_UID,
+          gid: env.CODING_WORKSPACE_GID,
+        },
+      ),
+    ),
+  );
+} else {
+  logger.warn(
+    "Pi coding worker is not configured; GitHub code, push, and recovery tools are disabled",
+  );
+}
 botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
 botPool.setMcpClientManager(mcpClientManager);
@@ -184,6 +231,7 @@ const app = createApp({
   mcpClientManager,
   summaryService,
   summaryConfigService,
+  githubAppService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

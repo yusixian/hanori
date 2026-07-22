@@ -16,6 +16,7 @@ import type {
   MemoryConfig,
   MessageConfig,
   ModelEntry,
+  GitHubCodingModelConfig,
   PixAIConfig,
   PixAIGenerationRecord,
   ReplyMode,
@@ -56,6 +57,7 @@ import {
   createMemoryTools,
   createMcpTools,
   createGitHubTools,
+  type GitHubCodeCallbacks,
   type McpToolsOptions,
   createRssTools,
   createTelegramTools,
@@ -98,6 +100,47 @@ export interface AiProviderRuntime {
   models?: ModelEntry[];
 }
 
+export function buildGitHubCodingModelConfig(
+  provider: AiProviderRuntime,
+  modelId: string,
+): GitHubCodingModelConfig {
+  const entry = provider.models?.find((model) => model.id === modelId);
+  return {
+    apiKey: provider.apiKey,
+    baseURL: provider.baseURL,
+    id: modelId,
+    providerFormat: provider.providerFormat,
+    maxTokens: entry?.maxTokens,
+    capabilities: entry?.capabilities ?? inferCapabilities(modelId),
+    thinking: entry?.thinking,
+  };
+}
+
+export function resolveGitHubCodingModelConfig(
+  config: Pick<GitHubToolsRuntimeConfig, "codingProviderId" | "codingModelId">,
+  providers: AiProviderRuntime[] | undefined,
+  fallbackProvider: AiProviderRuntime,
+  fallbackModelId: string,
+): GitHubCodingModelConfig | undefined {
+  if (!config.codingProviderId && !config.codingModelId) {
+    return buildGitHubCodingModelConfig(fallbackProvider, fallbackModelId);
+  }
+  if (!config.codingProviderId) return undefined;
+
+  const provider = providers?.find((candidate) => candidate.id === config.codingProviderId);
+  if (!provider) return undefined;
+
+  const modelId = config.codingModelId ?? provider.defaultModel;
+  if (
+    !modelId ||
+    (modelId !== provider.defaultModel &&
+      !provider.models?.some((candidate) => candidate.id === modelId))
+  ) {
+    return undefined;
+  }
+  return buildGitHubCodingModelConfig(provider, modelId);
+}
+
 export interface AiReplyConfig {
   botId: string;
   /** @deprecated active provider's apiKey — superseded by providers[] when present */
@@ -129,6 +172,7 @@ export interface AiReplyConfig {
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsRuntimeConfig;
+  githubCodeCallbacks?: GitHubCodeCallbacks;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
@@ -426,6 +470,18 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   fetch_webpage: "📄 看看这个网页...",
   get_current_time: "🕐 获取时间...",
   generate_image: "🎨 画画中...",
+  github_repository: "🐙 查看 GitHub 仓库...",
+  github_read_file: "🐙 读取仓库代码...",
+  github_list_tree: "🐙 查看代码结构...",
+  github_list_issues: "🐙 查看 Issue...",
+  github_code_task: "🛠️ Pi 正在修改和测试代码...",
+  github_inspect_workspace: "🔎 检查本地 coding workspace...",
+  github_resume_workspace: "🔐 准备 workspace 恢复确认...",
+  github_discard_workspace: "🔐 准备 workspace 丢弃确认...",
+  github_push_branch: "🔐 准备分支推送确认...",
+  github_create_pull_request: "🔐 准备 Pull Request 创建确认...",
+  github_create_issue: "🔐 准备 Issue 创建确认...",
+  github_update_issue: "🔐 准备 Issue 更新确认...",
   // Agent tools
   delegate_task: "🤖 找帮手...",
   // Bot memory tools
@@ -653,6 +709,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  destroy: () => void;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -1311,6 +1368,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId,
           api: ctx.api,
           pendingActions: pendingGitHubActions,
+          codeCallbacks: config.githubCodeCallbacks,
+          codingModel: resolveGitHubCodingModelConfig(
+            config.githubToolsConfig,
+            config.providers,
+            currentProviderRuntime,
+            currentModel,
+          ),
         });
       }
 
@@ -1625,6 +1689,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         temperature: modelEntry?.temperature,
         maxOutputTokens: modelEntry?.maxTokens,
         providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
+        experimental_onToolCallStart: () => perStepAbort.pause(),
+        experimental_onToolCallFinish: () => perStepAbort.resume(),
         onStepFinish: ({ toolCalls, toolResults }) => {
           stepCounter++;
           perStepAbort.reset();
@@ -2133,6 +2199,24 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     };
   }
 
+  let destroyed = false;
+  function destroy(): void {
+    if (destroyed) return;
+    destroyed = true;
+    setAiEnabled(false);
+    clearInterval(cleanupTimer);
+    clearInterval(bufferCleanupTimer);
+    pendingActions.destroy();
+    pendingGitHubActions.destroy();
+    cooldownMap.clear();
+    recentReceivedFiles.clear();
+    recentBotMessageIds.clear();
+    moodState.clear();
+    knownPrivateChats.clear();
+    lastSystemContent.clear();
+    groupBuffers.clear();
+  }
+
   return {
     handler,
     state,
@@ -2165,5 +2249,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    destroy,
   };
 }

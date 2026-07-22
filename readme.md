@@ -24,7 +24,7 @@ pnpm build            # 构建所有包
 pnpm lint             # oxlint 代码检查
 ```
 
-首次部署或更新服务器，请阅读 [Docker 部署指南](docs/DEPLOYMENT.md)。认证迁移、Google OAuth 和完整环境变量说明见 [配置与初始化指南](docs/SETUP.md)。
+首次部署或更新服务器，请阅读 [Docker 部署指南](docs/DEPLOYMENT.md)。管理员通过面板连接 GitHub 前，请阅读 [GitHub App 配置指南](docs/GITHUB_APP.md)。认证迁移、Google OAuth 和完整环境变量说明见 [配置与初始化指南](docs/SETUP.md)。
 
 ## CI / Self-hosted Runner
 
@@ -53,12 +53,19 @@ AUTH_OWNER_EMAIL=      # 首次启动时创建 owner 的邮箱
 PANEL_PASSWORD=        # 仅用于首次迁移时创建 owner，完成后可删除
 GOOGLE_CLIENT_ID=      # (可选) Google OAuth Client ID
 GOOGLE_CLIENT_SECRET=  # (可选) Google OAuth Client Secret
+GITHUB_APP_ID=         # (可选) GitHub App ID；GitHub App 五项必须全填或全空
+GITHUB_APP_CLIENT_ID=  # (可选) GitHub App Client ID
+GITHUB_APP_CLIENT_SECRET= # (可选) GitHub App Client Secret
+GITHUB_APP_PRIVATE_KEY=   # (可选) 单行、使用字面 \n 分隔的 PEM 私钥
+GITHUB_APP_SLUG=       # (可选) github.com/apps/ 后面的 slug
 ENCRYPTION_KEY=        # Bot Token 加密密钥
 BOT_TOKEN=             # (可选) Telegram Bot Token，仅首次迁移用
 ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 ```
 
 生产环境必须设置 `BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` 和 `AUTH_OWNER_EMAIL`；`PANEL_PASSWORD` 只用于首次创建 owner，首次启动成功后即可删除。
+
+GitHub App 的创建、Callback URL、仓库权限和私钥安全写入方式见 [GitHub App 配置指南](docs/GITHUB_APP.md)。生产环境的隔离 Pi worker 通过 `.env` 中的 `COMPOSE_PROFILES=coding` 启用，并要求同时配置 `CODING_WORKER_SECRET`；不需要编码功能的老部署可以保持两项为空。
 
 ## 部署
 

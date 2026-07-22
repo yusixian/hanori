@@ -68,6 +68,12 @@ import type { RssFeedService } from "./rss-feed-service.js";
 import type { TimerRegistry } from "./timer-registry.js";
 import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
+import type { GitWorkspaceService } from "./git-workspace-service.js";
+import type { GitHubAppCredentialService } from "./github-app-credentials.js";
+import {
+  clampGitHubRepositories,
+  GitHubCredentialGenerationGate,
+} from "./github-credential-policy.js";
 import {
   BotNotRunningError,
   TelegramRichMessagesUnsupportedError,
@@ -126,6 +132,9 @@ export class BotPool {
   private timerRegistry: TimerRegistry;
   private summaryService?: ChatSummaryService;
   private summaryConfigService?: SummaryConfigService;
+  private gitWorkspaceService?: GitWorkspaceService;
+  private githubAppCredentialService?: GitHubAppCredentialService;
+  private githubCredentialGenerations = new GitHubCredentialGenerationGate();
 
   constructor(
     private db: Database,
@@ -161,6 +170,18 @@ export class BotPool {
 
   setSummaryConfigService(svc: SummaryConfigService) {
     this.summaryConfigService = svc;
+  }
+
+  setGitWorkspaceService(service: GitWorkspaceService) {
+    this.gitWorkspaceService = service;
+  }
+
+  setGitHubAppCredentialService(service: GitHubAppCredentialService) {
+    this.githubAppCredentialService = service;
+  }
+
+  invalidateGitHubCredentials(botId: string): void {
+    this.githubCredentialGenerations.invalidate(botId);
   }
 
   getSummaryService() {
@@ -494,27 +515,46 @@ export class BotPool {
       providersRuntime[0];
     if (aiConfig?.enabled && activeProvider) {
       const apiKey = activeProvider.apiKey;
-      const githubToolsConfig = aiConfig.githubToolsConfig
+      const storedGitHubConfig = aiConfig.githubToolsConfig;
+      const installation = storedGitHubConfig?.githubAppInstallation;
+      const legacyGitHubToken = storedGitHubConfig?.encryptedToken
+        ? (tryDecrypt(storedGitHubConfig.encryptedToken, env.ENCRYPTION_KEY) ?? undefined)
+        : undefined;
+      const githubCredentialResolver =
+        installation && this.githubAppCredentialService?.available
+          ? () => this.githubAppCredentialService!.getInstallationToken(installation.installationId)
+          : legacyGitHubToken
+            ? async () => legacyGitHubToken
+            : undefined;
+      const githubToolsConfig = storedGitHubConfig
         ? {
-            enabled: aiConfig.githubToolsConfig.enabled,
-            publicReadEnabled: aiConfig.githubToolsConfig.publicReadEnabled,
-            login: aiConfig.githubToolsConfig.login,
-            authorName: aiConfig.githubToolsConfig.authorName,
-            authorEmail: aiConfig.githubToolsConfig.authorEmail,
-            repositories: aiConfig.githubToolsConfig.repositories,
-            token: aiConfig.githubToolsConfig.encryptedToken
-              ? (tryDecrypt(aiConfig.githubToolsConfig.encryptedToken, env.ENCRYPTION_KEY) ??
-                undefined)
+            enabled: storedGitHubConfig.enabled,
+            publicReadEnabled: storedGitHubConfig.publicReadEnabled,
+            codingAgentEnabled: storedGitHubConfig.codingAgentEnabled ?? false,
+            codingProviderId: storedGitHubConfig.codingProviderId,
+            codingModelId: storedGitHubConfig.codingModelId,
+            githubAppInstallation: installation,
+            login: installation?.accountLogin ?? storedGitHubConfig.login,
+            authorName: storedGitHubConfig.authorName,
+            authorEmail: storedGitHubConfig.authorEmail,
+            repositories: clampGitHubRepositories(storedGitHubConfig.repositories, installation),
+            tokenProvider: githubCredentialResolver
+              ? this.githubCredentialGenerations.capture(botId, githubCredentialResolver)
               : undefined,
           }
         : undefined;
-      if (
-        aiConfig.githubToolsConfig?.encryptedToken &&
-        githubToolsConfig &&
-        !githubToolsConfig.token
-      ) {
+      if (storedGitHubConfig?.encryptedToken && !legacyGitHubToken) {
         dbLogger.warn(
           "GitHub credential cannot be decrypted; private repository and write access disabled.",
+        );
+      }
+      if (
+        storedGitHubConfig &&
+        githubToolsConfig &&
+        githubToolsConfig.repositories.length !== storedGitHubConfig.repositories.length
+      ) {
+        dbLogger.warn(
+          "GitHub repository allowlist contained entries outside the installation snapshot; runtime access was clamped.",
         );
       }
       if (skippedNoKey.length > 0) {
@@ -791,6 +831,75 @@ export class BotPool {
         webToolsConfig: aiConfig.webToolsConfig,
         agentToolsConfig: aiConfig.agentToolsConfig,
         githubToolsConfig,
+        githubCodeCallbacks:
+          githubToolsConfig?.codingAgentEnabled &&
+          githubToolsConfig.tokenProvider &&
+          this.gitWorkspaceService
+            ? {
+                runTask: async (input, model, signal) => {
+                  const token = await githubToolsConfig.tokenProvider!();
+                  if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+                  return this.gitWorkspaceService!.runCodeTask(
+                    {
+                      ...input,
+                      botId,
+                      token,
+                      authorName: githubToolsConfig.authorName,
+                      authorEmail: githubToolsConfig.authorEmail,
+                      model,
+                    },
+                    signal,
+                  );
+                },
+                previewPush: async (repository, branch, signal) => {
+                  const token = await githubToolsConfig.tokenProvider!();
+                  if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+                  return this.gitWorkspaceService!.previewPush(
+                    {
+                      botId,
+                      repository,
+                      branch,
+                      token,
+                    },
+                    signal,
+                  );
+                },
+                pushBranch: async (repository, branch, expectedCommitSha, signal) => {
+                  const token = await githubToolsConfig.tokenProvider!();
+                  if (!token) throw new Error("Ai-chan's GitHub credential is not configured");
+                  return this.gitWorkspaceService!.pushBranch(
+                    {
+                      botId,
+                      repository,
+                      branch,
+                      token,
+                      expectedCommitSha,
+                    },
+                    signal,
+                  );
+                },
+                inspectWorkspace: (repository, signal) =>
+                  this.gitWorkspaceService!.inspectWorkspace({ botId, repository }, signal),
+                resumeWorkspace: (input, model, expected, signal) =>
+                  this.gitWorkspaceService!.resumeWorkspace(
+                    {
+                      ...input,
+                      botId,
+                      authorName: githubToolsConfig.authorName,
+                      authorEmail: githubToolsConfig.authorEmail,
+                      model,
+                    },
+                    expected,
+                    signal,
+                  ),
+                discardWorkspace: (repository, expected, signal) =>
+                  this.gitWorkspaceService!.discardWorkspace(
+                    { botId, repository },
+                    expected,
+                    signal,
+                  ),
+              }
+            : undefined,
         artworkToolsConfig: aiConfig.artworkToolsConfig,
         botMemoryConfig: botMemoryCfg,
         botMemory,
@@ -1121,7 +1230,7 @@ export class BotPool {
         ? {
             botId,
             adminChatIds: bot.adminChatIds ?? [],
-            triggerManual: (opts: Parameters<typeof this.summaryService.triggerManual>[0]) =>
+            triggerManual: (opts: Parameters<ChatSummaryService["triggerManual"]>[0]) =>
               this.summaryService!.triggerManual(opts),
             getAccessMode: async (chatId: number) => {
               const cfg = await this.summaryConfigService!.getByChat(botId, chatId);

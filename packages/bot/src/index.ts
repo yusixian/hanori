@@ -87,6 +87,15 @@ export interface BotConfig {
   summary?: SummaryCallbacks;
 }
 
+const botDisposers = new WeakMap<object, () => void>();
+
+export function disposeBot(bot: object): void {
+  const dispose = botDisposers.get(bot);
+  if (!dispose) return;
+  botDisposers.delete(bot);
+  dispose();
+}
+
 export function createBot(config: BotConfig) {
   const { token, adminChatIds, logger } = config;
 
@@ -155,6 +164,7 @@ export function createBot(config: BotConfig) {
     | ReturnType<typeof createAiReplyHandler>["canUseImageGeneration"]
     | undefined;
   let aiSetAiEnabled: ReturnType<typeof createAiReplyHandler>["setAiEnabled"] | undefined;
+  let disposeAiRuntime: (() => void) | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -203,6 +213,7 @@ export function createBot(config: BotConfig) {
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
     aiSetAiEnabled = result.setAiEnabled;
+    disposeAiRuntime = result.destroy;
 
     // Register bot handlers with server for timer recovery and external cancel
     if (config.timerCallbacks?.onBotReady) {
@@ -467,6 +478,7 @@ export function createBot(config: BotConfig) {
     await ctx.resolveWait(errorMsg, "Markdown").catch(() => {});
   });
 
+  botDisposers.set(bot, () => disposeAiRuntime?.());
   return bot;
 }
 

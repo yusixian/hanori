@@ -5,6 +5,7 @@
     { "path": "packages/database" },
     { "path": "packages/bot" },
     { "path": "packages/server" },
-    { "path": "packages/panel" }
+    { "path": "packages/panel" },
+    { "path": "packages/coding-worker" }
   ]
 }

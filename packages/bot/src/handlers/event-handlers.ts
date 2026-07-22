@@ -228,7 +228,7 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
       text: "正在执行 GitHub 操作",
     });
     try {
-      const result = await action.execute();
+      const result = await options.pendingActions.run(action);
       const url = result.url ? `\n${result.url}` : "";
       if (ctx.callbackQuery.message) {
         await options.api

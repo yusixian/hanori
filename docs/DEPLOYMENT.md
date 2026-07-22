@@ -89,6 +89,15 @@ BOT_TOKEN=
 ADMIN_CHAT_IDS=[]
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
+GITHUB_APP_ID=
+GITHUB_APP_CLIENT_ID=
+GITHUB_APP_CLIENT_SECRET=
+GITHUB_APP_PRIVATE_KEY=
+GITHUB_APP_SLUG=
+
+# 默认不部署 Pi coding worker
+COMPOSE_PROFILES=
+CODING_WORKER_SECRET=
 ```
 
 注意：
@@ -99,6 +108,36 @@ GOOGLE_CLIENT_SECRET=
 - `.env` 包含密码，不能发到群聊、不能提交到 Git。
 
 在 nano 中按 `Ctrl+O`、回车保存，再按 `Ctrl+X` 退出。
+
+#### 可选：启用 GitHub 管理面板授权
+
+如果希望 `owner` 和 `admin` 能在管理面板连接 GitHub，请先创建 GitHub App，再一次性填写五个 `GITHUB_APP_*` 变量。私钥不能直接按多行粘贴进 `.env`，完整步骤和安全转换命令见 [GitHub App 配置指南](GITHUB_APP.md)。
+
+五项全部为空时，应用仍可正常部署，只是 GitHub 授权功能不可用；只填写一部分时，更新脚本会在部署前停止，而且不会显示任何 secret。
+
+#### 可选：启用 Pi coding worker
+
+老部署不需要 coding 功能时，保持下面两项为空即可：
+
+```env
+COMPOSE_PROFILES=
+CODING_WORKER_SECRET=
+```
+
+需要让 Bot 执行隔离的编码任务时，先生成内部通信 secret：
+
+```bash
+openssl rand -hex 32
+```
+
+把输出填入 `.env`，并持久启用 `coding` profile：
+
+```env
+COMPOSE_PROFILES=coding
+CODING_WORKER_SECRET=填写刚生成的随机值
+```
+
+两项必须一起配置。`COMPOSE_PROFILES=coding` 会让 Docker Compose 和更新脚本同时管理 `coding-worker` 与 `coding-egress-proxy`；只填 secret 或只启用 profile 都会被脚本拒绝。这个 secret 只用于 app 与隔离 worker 的内部认证，不是模型 API Key。
 
 ### 4. 启动服务
 
@@ -117,6 +156,7 @@ curl -fsS http://127.0.0.1:9600/api/health && echo
 正常情况：
 
 - `app` 和 `db` 显示 `healthy`。
+- 启用 `COMPOSE_PROFILES=coding` 时，`coding-worker` 和 `coding-egress-proxy` 也显示 `healthy`。
 - 日志出现 `Database migrated`、`Authentication initialized` 和 `Server running`。
 - 健康检查返回 `{"ok":true}`。
 
@@ -160,9 +200,9 @@ cd ~/code/cos-tool-bot
 2. 获取 `origin/main` 的最新代码。
 3. 用 `pg_dump` 备份数据库，并用 `pg_restore` 验证备份。
 4. 快进更新本地 `main`。
-5. 构建新的 app 镜像。
-6. 启动 app，由应用自动执行数据库迁移。
-7. 等待健康检查，并显示最终状态。
+5. 构建新的 app 镜像；启用 coding profile 时也构建 worker 和出口代理。
+6. 重新创建启用的服务，由应用自动执行数据库迁移。
+7. 等待 app 健康检查；启用 coding profile 时也检查 worker 和出口代理。
 
 脚本会记住最后一次通过健康检查的 commit。没有新代码且上次部署成功时，它不会重复部署；如果构建或启动中途失败，修好问题后直接再次执行同一个命令即可继续。
 
@@ -171,6 +211,8 @@ cd ~/code/cos-tool-bot
 ```bash
 ./scripts/update-production.sh --force
 ```
+
+这也适用于第一次启用或关闭 coding profile，以及首次配置 GitHub App。关闭 coding 时，需要同时清空 `COMPOSE_PROFILES` 和 `CODING_WORKER_SECRET`；脚本会停止并移除旧的 worker 与出口代理容器，但不会删除数据库和代码工作区 volume。
 
 数据库备份默认保存在：
 
@@ -222,3 +264,4 @@ docker compose -p cos-bot-prod logs --tail=300 app
 然后根据日志排查，或把输出交给维护者。数据库备份位于 `~/cos-tool-bot-backups/`。
 
 更完整的环境变量、Google 登录和旧认证迁移说明见 [配置与初始化指南](SETUP.md)。
+GitHub 管理面板授权的完整步骤见 [GitHub App 配置指南](GITHUB_APP.md)。

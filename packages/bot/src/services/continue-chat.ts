@@ -340,6 +340,8 @@ async function doContinueChat(
       temperature: config.temperature,
       maxOutputTokens: config.maxTokens,
       providerOptions: config.providerOptions,
+      experimental_onToolCallStart: () => perStepAbort.pause(),
+      experimental_onToolCallFinish: () => perStepAbort.resume(),
       onStepFinish: ({ toolCalls }) => {
         perStepAbort.reset();
         if (!isStreamMode && toolCalls?.some((tc) => tc.toolName === "multi_message")) {

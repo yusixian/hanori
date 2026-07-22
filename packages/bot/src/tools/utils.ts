@@ -172,6 +172,8 @@ export function wrapToolsWithCache(
 export interface PerStepAbort {
   signal: AbortSignal;
   reset: () => void;
+  pause: () => void;
+  resume: () => void;
   cleanup: () => void;
 }
 
@@ -183,24 +185,47 @@ export interface PerStepAbort {
  */
 export function createPerStepAbort(perStepMs: number, overallSignal: AbortSignal): PerStepAbort {
   const stepController = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined = setTimeout(
-    () => stepController.abort(new Error(`Per-step timeout: ${perStepMs}ms exceeded`)),
-    perStepMs,
-  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let pauseDepth = 0;
 
-  const signal = AbortSignal.any([overallSignal, stepController.signal]);
-
-  const reset = () => {
-    clearTimeout(timer);
+  const schedule = () => {
+    if (pauseDepth > 0 || stepController.signal.aborted) return;
     timer = setTimeout(
       () => stepController.abort(new Error(`Per-step timeout: ${perStepMs}ms exceeded`)),
       perStepMs,
     );
   };
 
-  const cleanup = () => clearTimeout(timer);
+  schedule();
 
-  return { signal, reset, cleanup };
+  const signal = AbortSignal.any([overallSignal, stepController.signal]);
+
+  const reset = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    schedule();
+  };
+
+  const pause = () => {
+    pauseDepth++;
+    if (pauseDepth === 1) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+  };
+
+  const resume = () => {
+    if (pauseDepth === 0) return;
+    pauseDepth--;
+    if (pauseDepth === 0) schedule();
+  };
+
+  const cleanup = () => {
+    clearTimeout(timer);
+    timer = undefined;
+  };
+
+  return { signal, reset, pause, resume, cleanup };
 }
 
 /**

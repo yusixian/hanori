@@ -1,21 +1,305 @@
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { GitHubToolsConfigPublic } from "@cos-tool-bot/shared";
+import { authFetch } from "@/lib/client";
+import type { AiProviderEntryPublic, GitHubToolsConfigPublic } from "@cos-tool-bot/shared";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ExternalLink,
+  GitBranch,
+  Loader2,
+  ServerCog,
+  Unplug,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+export type GitHubAppInstallation = {
+  installationId: number;
+  accountLogin: string;
+  accountType: string;
+  repositorySelection: "all" | "selected";
+  repositories: string[];
+  permissions?: Record<string, string>;
+};
+
+export type GitHubAppStatus = {
+  available: boolean;
+  configurationError?: string;
+  connectionError?: string;
+  connected: boolean;
+  legacyPat: boolean;
+  installation?: GitHubAppInstallation;
+};
+
+type ApiSuccess<T> = { ok: true; data: T };
+
+async function readError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as {
+      error?: string | { message?: string };
+      message?: string;
+    };
+    if (typeof body.error === "string") return body.error;
+    return body.error?.message ?? body.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function InstallationStatus({ status }: { status: GitHubAppStatus }) {
+  const { t } = useTranslation("aiSettings");
+  const installation = status.installation;
+
+  if (!status.available) {
+    return (
+      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+        <div className="flex items-start gap-3">
+          <ServerCog className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">{t("githubTools.appUnavailableTitle")}</p>
+            <p className="mt-1 text-xs leading-5">{t("githubTools.appUnavailableDescription")}</p>
+            {status.configurationError && (
+              <p className="mt-2 font-mono text-xs break-words">{status.configurationError}</p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!status.connected || !installation) {
+    return (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <div className="flex items-start gap-3">
+          <GitBranch className="mt-0.5 size-5 shrink-0 text-slate-600" aria-hidden="true" />
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-sm font-semibold">{t("githubTools.notConnectedTitle")}</p>
+              <Badge variant="muted">{t("githubTools.notConnectedBadge")}</Badge>
+            </div>
+            <p className="text-muted-foreground mt-1 text-xs leading-5">
+              {t("githubTools.notConnectedDescription")}
+            </p>
+            {status.legacyPat && (
+              <p className="mt-2 text-xs font-medium text-amber-700">
+                {t("githubTools.legacyPatNotice")}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const permissionEntries = Object.entries(installation.permissions ?? {});
+
+  return (
+    <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-700" aria-hidden="true" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="truncate text-sm font-semibold">{installation.accountLogin}</p>
+              <Badge className="border-emerald-200 bg-white text-emerald-800">
+                {t("githubTools.connectedBadge")}
+              </Badge>
+              <Badge variant="muted">{installation.accountType}</Badge>
+            </div>
+            <p className="text-muted-foreground mt-1 text-xs">
+              {t("githubTools.repositorySelection", {
+                selection:
+                  installation.repositorySelection === "all"
+                    ? t("githubTools.repositorySelectionAll")
+                    : t("githubTools.repositorySelectionSelected"),
+              })}
+            </p>
+          </div>
+        </div>
+        <span className="font-mono text-[11px] text-slate-500">
+          {t("githubTools.installationId", { id: installation.installationId })}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-800">
+            {t("githubTools.authorizedRepositories")}
+          </p>
+          {installation.repositories.length > 0 ? (
+            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-slate-700">
+              {installation.repositories.map((repository) => (
+                <li key={repository} className="font-mono break-all">
+                  {repository}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground mt-2 text-xs">
+              {t("githubTools.noAuthorizedRepositories")}
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-slate-800">
+            {t("githubTools.authorizedPermissions")}
+          </p>
+          {permissionEntries.length > 0 ? (
+            <ul className="mt-2 flex flex-wrap gap-1.5">
+              {permissionEntries.map(([permission, level]) => (
+                <li key={permission}>
+                  <Badge variant="muted">
+                    {permission}: {level}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-muted-foreground mt-2 text-xs">
+              {t("githubTools.permissionsUnavailable")}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function GitHubToolsSection({
+  botId,
+  canManageCredentials,
+  authorizationBlocked,
+  providers,
+  providerApiKeyDrafts = {},
   config,
-  token,
-  onTokenChange,
   onUpdate,
 }: {
+  botId: string;
+  canManageCredentials: boolean;
+  authorizationBlocked: boolean;
+  providers: AiProviderEntryPublic[];
+  providerApiKeyDrafts?: Readonly<Record<string, string>>;
   config: GitHubToolsConfigPublic;
-  token: string;
-  onTokenChange: (token: string) => void;
   onUpdate: (updates: Partial<GitHubToolsConfigPublic>) => void;
 }) {
   const { t } = useTranslation("aiSettings");
+  const [appStatus, setAppStatus] = useState<GitHubAppStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(canManageCredentials);
+  const [operation, setOperation] = useState<"authorize" | "disconnect" | null>(null);
+  const [connectionError, setConnectionError] = useState("");
+  const statusRequestSequence = useRef(0);
+  const codingProvider = providers.find((provider) => provider.id === config.codingProviderId);
+  const providerHasApiKey = (provider: AiProviderEntryPublic) =>
+    provider.hasApiKey || !!providerApiKeyDrafts[provider.id]?.trim();
+  const codingProviderHasApiKey = codingProvider ? providerHasApiKey(codingProvider) : false;
+  const codingModels = codingProvider
+    ? [
+        codingProvider.defaultModel,
+        ...(codingProvider.models?.map((model) => model.id) ?? []),
+      ].filter((modelId, index, modelIds) => modelId && modelIds.indexOf(modelId) === index)
+    : [];
+  const codingModelIsStale = !!config.codingModelId && !codingModels.includes(config.codingModelId);
+
+  const loadAppStatus = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestSequence = ++statusRequestSequence.current;
+      const isCurrent = () =>
+        requestSequence === statusRequestSequence.current && signal?.aborted !== true;
+      if (!canManageCredentials) {
+        setAppStatus(null);
+        setStatusLoading(false);
+        setConnectionError("");
+        return;
+      }
+      setStatusLoading(true);
+      setConnectionError("");
+      try {
+        const response = await authFetch(`/api/bots/${encodeURIComponent(botId)}/github-app`, {
+          signal,
+        });
+        if (!isCurrent()) return;
+        if (!response.ok) {
+          const message = await readError(response, t("githubTools.statusLoadError"));
+          if (isCurrent()) setConnectionError(message);
+          return;
+        }
+        const body = (await response.json()) as ApiSuccess<GitHubAppStatus>;
+        if (!isCurrent()) return;
+        setAppStatus(body.data);
+      } catch (error) {
+        if (!isCurrent() || (error instanceof DOMException && error.name === "AbortError")) return;
+        setConnectionError(t("githubTools.statusLoadError"));
+      } finally {
+        if (isCurrent()) setStatusLoading(false);
+      }
+    },
+    [botId, canManageCredentials, t],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadAppStatus(controller.signal);
+    return () => {
+      controller.abort();
+      statusRequestSequence.current += 1;
+    };
+  }, [loadAppStatus]);
+
+  const authorize = async () => {
+    setOperation("authorize");
+    setConnectionError("");
+    try {
+      const response = await authFetch(
+        `/api/bots/${encodeURIComponent(botId)}/github-app/authorize`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        setConnectionError(await readError(response, t("githubTools.authorizeError")));
+        return;
+      }
+      const body = (await response.json()) as ApiSuccess<{
+        url?: string;
+        authorizationUrl?: string;
+      }>;
+      const authorizationUrl = body.data.url ?? body.data.authorizationUrl;
+      if (!authorizationUrl) {
+        setConnectionError(t("githubTools.authorizeError"));
+        return;
+      }
+      window.location.assign(authorizationUrl);
+    } catch {
+      setConnectionError(t("githubTools.authorizeError"));
+    } finally {
+      setOperation(null);
+    }
+  };
+
+  const visibleConnectionError = connectionError || appStatus?.connectionError;
+
+  const disconnect = async () => {
+    if (!window.confirm(t("githubTools.disconnectConfirm"))) return;
+    setOperation("disconnect");
+    setConnectionError("");
+    try {
+      const response = await authFetch(`/api/bots/${encodeURIComponent(botId)}/github-app`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        setConnectionError(await readError(response, t("githubTools.disconnectError")));
+        return;
+      }
+      await loadAppStatus();
+    } catch {
+      setConnectionError(t("githubTools.disconnectError"));
+    } finally {
+      setOperation(null);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -31,6 +315,84 @@ export function GitHubToolsSection({
       </div>
       <p className="text-muted-foreground text-xs">{t("githubTools.securityDescription")}</p>
 
+      {canManageCredentials && (
+        <section aria-labelledby="github-app-connection-title" className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 id="github-app-connection-title" className="text-sm font-semibold">
+                {t("githubTools.appConnectionTitle")}
+              </h3>
+              <p className="text-muted-foreground mt-1 text-xs">
+                {t("githubTools.appConnectionDescription")}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={
+                  statusLoading ||
+                  operation !== null ||
+                  !appStatus?.available ||
+                  authorizationBlocked
+                }
+                onClick={() => void authorize()}
+              >
+                {operation === "authorize" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  <ExternalLink className="size-4" aria-hidden="true" />
+                )}
+                {appStatus?.connected
+                  ? t("githubTools.modifyAuthorization")
+                  : t("githubTools.connectGitHub")}
+              </Button>
+              {appStatus?.connected && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={operation !== null}
+                  onClick={() => void disconnect()}
+                >
+                  {operation === "disconnect" ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Unplug className="size-4" aria-hidden="true" />
+                  )}
+                  {t("githubTools.disconnect")}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {authorizationBlocked && appStatus?.available && (
+            <p className="text-xs font-medium text-amber-700">
+              {t("githubTools.saveBeforeAuthorization")}
+            </p>
+          )}
+
+          {statusLoading ? (
+            <div className="text-muted-foreground flex items-center gap-2 rounded-lg border p-4 text-xs">
+              <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+              {t("githubTools.loadingStatus")}
+            </div>
+          ) : appStatus ? (
+            <InstallationStatus status={appStatus} />
+          ) : null}
+
+          {visibleConnectionError && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"
+            >
+              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+              <span>{visibleConnectionError}</span>
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="flex items-center gap-2">
         <Switch
           id="githubPublicReadEnabled"
@@ -44,31 +406,100 @@ export function GitHubToolsSection({
       </div>
       <p className="text-muted-foreground text-xs">{t("githubTools.publicReadDescription")}</p>
 
+      <div className="flex items-center gap-2">
+        <Switch
+          id="githubCodingAgentEnabled"
+          disabled={!config.enabled}
+          checked={config.codingAgentEnabled}
+          onCheckedChange={(codingAgentEnabled) => onUpdate({ codingAgentEnabled })}
+        />
+        <label htmlFor="githubCodingAgentEnabled" className="text-sm font-medium">
+          {t("githubTools.codingAgent")}
+        </label>
+      </div>
+      <p className="text-muted-foreground text-xs">{t("githubTools.codingAgentDescription")}</p>
+
+      {config.codingAgentEnabled && (
+        <div className="space-y-2 rounded-md border p-3">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <label htmlFor="githubCodingProvider" className="text-sm font-medium">
+                {t("githubTools.codingProvider")}
+              </label>
+              <Select
+                id="githubCodingProvider"
+                disabled={!config.enabled}
+                value={config.codingProviderId ?? ""}
+                onChange={(event) => {
+                  const codingProviderId = event.target.value || undefined;
+                  onUpdate({ codingProviderId, codingModelId: undefined });
+                }}
+              >
+                <option value="">{t("githubTools.followChatProvider")}</option>
+                {config.codingProviderId && !codingProvider && (
+                  <option value={config.codingProviderId}>
+                    {t("githubTools.unavailableProvider", { id: config.codingProviderId })}
+                  </option>
+                )}
+                {providers.map((provider) => (
+                  <option
+                    key={provider.id}
+                    value={provider.id}
+                    disabled={!providerHasApiKey(provider)}
+                  >
+                    {providerHasApiKey(provider)
+                      ? provider.label
+                      : t("githubTools.providerMissingApiKey", { provider: provider.label })}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="githubCodingModel" className="text-sm font-medium">
+                {t("githubTools.codingModel")}
+              </label>
+              <Select
+                id="githubCodingModel"
+                disabled={!config.enabled || !codingProvider || !codingProviderHasApiKey}
+                value={config.codingModelId ?? ""}
+                onChange={(event) => onUpdate({ codingModelId: event.target.value || undefined })}
+              >
+                <option value="">
+                  {codingProvider
+                    ? t("githubTools.providerDefaultModel", {
+                        model: codingProvider.defaultModel,
+                      })
+                    : t("githubTools.followChatModel")}
+                </option>
+                {codingModelIsStale && (
+                  <option value={config.codingModelId}>
+                    {t("githubTools.unavailableModel", { id: config.codingModelId })}
+                  </option>
+                )}
+                {codingModels.map((modelId) => (
+                  <option key={modelId} value={modelId}>
+                    {codingProvider?.models?.find((model) => model.id === modelId)?.label ??
+                      modelId}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+          <p className="text-muted-foreground text-xs">{t("githubTools.codingModelDescription")}</p>
+          {config.codingProviderId && !codingProvider && (
+            <p className="text-xs font-medium text-red-700">
+              {t("githubTools.codingSelectionInvalid")}
+            </p>
+          )}
+          {codingProvider && !codingProviderHasApiKey && (
+            <p className="text-xs font-medium text-red-700">
+              {t("githubTools.codingProviderMissingApiKey")}
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">{t("githubTools.login")}</label>
-          <Input
-            disabled={!config.enabled}
-            value={config.login ?? ""}
-            onChange={(event) => onUpdate({ login: event.target.value || undefined })}
-            placeholder="ai-chan"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium">{t("githubTools.token")}</label>
-          <Input
-            type="password"
-            autoComplete="new-password"
-            disabled={!config.enabled}
-            value={token}
-            onChange={(event) => onTokenChange(event.target.value)}
-            placeholder={
-              config.hasToken
-                ? t("githubTools.keepTokenPlaceholder")
-                : t("githubTools.tokenPlaceholder")
-            }
-          />
-        </div>
         <div className="space-y-1.5">
           <label className="text-sm font-medium">{t("githubTools.authorName")}</label>
           <Input
@@ -110,8 +541,8 @@ export function GitHubToolsSection({
       </div>
 
       <div className="bg-muted/40 rounded-md border p-3 text-xs">
-        <p className="font-medium">{t("githubTools.tokenPermissionsTitle")}</p>
-        <p className="text-muted-foreground mt-1">{t("githubTools.tokenPermissions")}</p>
+        <p className="font-medium">{t("githubTools.installationScopeTitle")}</p>
+        <p className="text-muted-foreground mt-1">{t("githubTools.installationScope")}</p>
       </div>
     </div>
   );
