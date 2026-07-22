@@ -251,6 +251,66 @@ describe("GitHubAppCredentialService authorization", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("finds the selected installation beyond the first user installation page", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/login/oauth/access_token")) {
+        return jsonResponse({ access_token: "user-token" });
+      }
+      if (url.endsWith("/user/installations?per_page=100")) {
+        return jsonResponse({
+          total_count: 2,
+          installations: [
+            {
+              id: 1,
+              app_id: 12345,
+              account: { login: "FirstOrg", type: "Organization" },
+              repository_selection: "selected",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/user/installations?per_page=100&page=2")) {
+        return jsonResponse({
+          total_count: 2,
+          installations: [
+            {
+              id: 77,
+              app_id: 12345,
+              account: { login: "CosOrg", type: "Organization" },
+              repository_selection: "selected",
+            },
+          ],
+        });
+      }
+      if (url.endsWith("/app/installations/77")) {
+        return jsonResponse({
+          id: 77,
+          app_id: 12345,
+          account: { login: "CosOrg", type: "Organization" },
+          repository_selection: "selected",
+        });
+      }
+      if (url.includes("/user/installations/77/repositories")) {
+        return jsonResponse({ total_count: 0, repositories: [] });
+      }
+      return jsonResponse({ message: "Not Found" }, 404);
+    });
+    const service = new GitHubAppCredentialService({
+      config,
+      stateSecret: "state-secret",
+      fetch: fetchMock,
+    });
+
+    await expect(service.exchangeAndVerifyInstallation("code", 77)).resolves.toMatchObject({
+      installationId: 77,
+      accountLogin: "CosOrg",
+    });
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "https://api.github.com/user/installations?per_page=100&page=2",
+    );
+  });
+
   it("fails closed when the repository page cap is reached before the snapshot is complete", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
       const url = String(input);
