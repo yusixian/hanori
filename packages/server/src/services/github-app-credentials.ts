@@ -361,30 +361,18 @@ export class GitHubAppCredentialService {
     }
 
     const targetId = requestedInstallationId ?? currentInstallationId;
-    let appInstallations: InstallationResponse[] = [];
-    let selected: InstallationResponse | undefined;
-    if (targetId) {
-      try {
-        selected = await this.request<InstallationResponse>(
-          `/user/installations/${targetId}`,
-          oauth.access_token,
-        );
-      } catch {
-        throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");
-      }
-      if (String(selected.app_id) !== config.appId) {
-        throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");
-      }
-    } else {
-      const installations = await this.request<UserInstallationsResponse>(
-        "/user/installations?per_page=100",
-        oauth.access_token,
-      );
-      appInstallations = installations.installations.filter(
-        (installation) => String(installation.app_id) === config.appId,
-      );
-      selected = appInstallations.length === 1 ? appInstallations[0] : undefined;
-    }
+    const installations = await this.request<UserInstallationsResponse>(
+      "/user/installations?per_page=100",
+      oauth.access_token,
+    );
+    const appInstallations = installations.installations.filter(
+      (installation) => String(installation.app_id) === config.appId,
+    );
+    const selected = targetId
+      ? appInstallations.find((installation) => installation.id === targetId)
+      : appInstallations.length === 1
+        ? appInstallations[0]
+        : undefined;
     if (!selected) {
       if (targetId) {
         throw new GitHubAppFlowError("当前 GitHub 用户无权访问所选 App installation");

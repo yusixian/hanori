@@ -183,10 +183,15 @@ describe("GitHubAppCredentialService authorization", () => {
       .mockResolvedValueOnce(jsonResponse({ access_token: "user-token" }))
       .mockResolvedValueOnce(
         jsonResponse({
-          id: 77,
-          app_id: 12345,
-          account: { login: "CosOrg", type: "Organization" },
-          repository_selection: "selected",
+          total_count: 1,
+          installations: [
+            {
+              id: 77,
+              app_id: 12345,
+              account: { login: "CosOrg", type: "Organization" },
+              repository_selection: "selected",
+            },
+          ],
         }),
       )
       .mockResolvedValueOnce(
@@ -224,6 +229,9 @@ describe("GitHubAppCredentialService authorization", () => {
       client_secret: config.clientSecret,
       code: "code",
     });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "https://api.github.com/user/installations?per_page=100",
+    );
     const authorizationUrl = service.createAuthorizationUrl("bot-1", "user-1");
     expect(authorizationUrl).not.toContain(config.clientSecret);
     expect(authorizationUrl).not.toContain("user-token");
@@ -233,7 +241,7 @@ describe("GitHubAppCredentialService authorization", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: "user-token" }))
-      .mockResolvedValueOnce(jsonResponse({ message: "Not Found" }, 404));
+      .mockResolvedValueOnce(jsonResponse({ total_count: 0, installations: [] }));
     const service = new GitHubAppCredentialService({
       config,
       stateSecret: "state-secret",
@@ -249,12 +257,17 @@ describe("GitHubAppCredentialService authorization", () => {
       if (url.endsWith("/login/oauth/access_token")) {
         return jsonResponse({ access_token: "user-token" });
       }
-      if (url.endsWith("/user/installations/77")) {
+      if (url.endsWith("/user/installations?per_page=100")) {
         return jsonResponse({
-          id: 77,
-          app_id: 12345,
-          account: { login: "CosOrg", type: "Organization" },
-          repository_selection: "selected",
+          total_count: 1,
+          installations: [
+            {
+              id: 77,
+              app_id: 12345,
+              account: { login: "CosOrg", type: "Organization" },
+              repository_selection: "selected",
+            },
+          ],
         });
       }
       if (url.endsWith("/app/installations/77")) {
