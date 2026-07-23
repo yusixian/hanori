@@ -35,7 +35,12 @@ import {
 } from "../services/github-credential-policy.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
-import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
+import {
+  DEFAULT_MODEL_DISCOVERY_PATH,
+  getActiveProvider,
+  migrateAiConfig,
+  normalizeAiProvider,
+} from "../utils/ai-config-migrate.js";
 import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
 
 const emailForwardFilterSchema = z.object({
@@ -171,6 +176,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     label: p.label,
     hasApiKey: !!p.encryptedApiKey,
     baseURL: p.baseURL,
+    modelDiscoveryPath: p.modelDiscoveryPath,
     providerFormat: p.providerFormat,
     defaultModel: p.defaultModel,
     models: p.models,
@@ -237,6 +243,13 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     imageOcrConfig: migrated.imageOcrConfig,
   };
 }
+
+const modelDiscoveryPathSchema = z
+  .string()
+  .trim()
+  .refine((path) => path === "" || isValidModelDiscoveryPath(path), {
+    message: "Model discovery path must be empty or begin with a single slash",
+  });
 
 const aiConfigSchema = z
   .object({
@@ -488,12 +501,13 @@ const aiConfigSchema = z
           label: z.string().min(1).max(100),
           apiKey: z.string().optional(),
           baseURL: z.string().min(1),
+          modelDiscoveryPath: modelDiscoveryPathSchema.optional(),
           providerFormat: z.enum(["openai", "gemini"]),
-          defaultModel: z.string(),
+          defaultModel: z.string().trim(),
           models: z
             .array(
               z.object({
-                id: z.string(),
+                id: z.string().trim().min(1),
                 label: z.string().optional(),
                 capabilities: z
                   .array(
@@ -509,6 +523,8 @@ const aiConfigSchema = z
                   .optional(),
                 temperature: z.number().min(0).max(2).optional(),
                 maxTokens: z.number().positive().optional(),
+                thinking: z.enum(["enabled", "disabled"]).optional(),
+                thinkingBudget: z.number().int().optional(),
               }),
             )
             .optional(),
@@ -519,8 +535,26 @@ const aiConfigSchema = z
   })
   .refine(
     (data) => {
+      const providerIds = (data.providers ?? [])
+        .map((provider) => provider.id)
+        .filter((id): id is string => id !== undefined);
+      return new Set(providerIds).size === providerIds.length;
+    },
+    {
+      message: "Provider IDs must be unique",
+      path: ["providers"],
+    },
+  )
+  .refine(
+    (data) => {
       if (!data.enabled) return true;
-      if (data.providers && data.providers.length > 0) return true;
+      if (data.providers && data.providers.length > 0) {
+        return data.providers.every(
+          (provider) =>
+            provider.defaultModel.trim().length > 0 ||
+            provider.models?.some((model) => model.id.trim().length > 0),
+        );
+      }
       if (data.baseURL.length === 0) return false;
       // model can be empty if models array is non-empty (first model used as default)
       if (data.model.length === 0 && (!data.models || data.models.length === 0)) return false;
@@ -532,9 +566,110 @@ const aiConfigSchema = z
   );
 
 const aiModelsSchema = z.object({
+  providerId: z.string().min(1),
   baseURL: z.string().url().optional(),
   apiKey: z.string().optional(),
+  modelDiscoveryPath: modelDiscoveryPathSchema.optional(),
 });
+
+const aiModelsResponseSchema = z.object({
+  data: z
+    .array(
+      z.object({
+        id: z.string().trim().min(1),
+        owned_by: z.string().optional(),
+      }),
+    )
+    .max(5_000),
+});
+
+const MODEL_DISCOVERY_TIMEOUT_MS = 15_000;
+const MAX_UPSTREAM_ERROR_LENGTH = 500;
+const MAX_UPSTREAM_ERROR_BYTES = 16 * 1024;
+const MAX_MODEL_DISCOVERY_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+function normalizeBaseURLForComparison(baseURL: string): string {
+  return baseURL.trim().replace(/\/+$/, "");
+}
+
+function containsControlCharacter(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f;
+  });
+}
+
+function isValidModelDiscoveryPath(path: string): boolean {
+  return (
+    path.startsWith("/") &&
+    !path.startsWith("//") &&
+    !path.includes("\\") &&
+    !containsControlCharacter(path)
+  );
+}
+
+function resolveModelDiscoveryURL(baseURL: string, path: string): string | null {
+  if (!isValidModelDiscoveryPath(path)) return null;
+
+  try {
+    const normalizedBaseURL = normalizeBaseURLForComparison(baseURL);
+    const parsedBaseURL = new URL(normalizedBaseURL);
+    if (parsedBaseURL.protocol !== "http:" && parsedBaseURL.protocol !== "https:") return null;
+    const resolved = new URL(`${normalizedBaseURL}${path}`);
+    return resolved.origin === parsedBaseURL.origin ? resolved.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeDiscoveryError(detail: string, apiKey: string): string {
+  const redacted = detail.replaceAll(apiKey, "[REDACTED]").replace(/\s+/g, " ").trim();
+  if (!redacted) return "";
+  return redacted.length > MAX_UPSTREAM_ERROR_LENGTH
+    ? `${redacted.slice(0, MAX_UPSTREAM_ERROR_LENGTH)}…`
+    : redacted;
+}
+
+async function readResponseTextLimited(response: Response, maxBytes: number): Promise<string> {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+    throw new Error(`Upstream response exceeds the ${maxBytes}-byte limit`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    totalBytes += value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new Error(`Upstream response exceeds the ${maxBytes}-byte limit`);
+    }
+    chunks.push(value);
+  }
+
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(combined);
+}
+
+async function readSafeUpstreamError(response: Response, apiKey: string): Promise<string> {
+  try {
+    return sanitizeDiscoveryError(
+      await readResponseTextLimited(response, MAX_UPSTREAM_ERROR_BYTES),
+      apiKey,
+    );
+  } catch (error) {
+    return error instanceof Error ? error.message : "Unable to read upstream error response";
+  }
+}
 
 export function botsRoutes(
   db: Database,
@@ -882,19 +1017,29 @@ export function botsRoutes(
             const finalId = isTemp ? randomUUID() : p.id!;
             if (p.id) providerIdMap.set(p.id, finalId);
             const existing = isTemp ? undefined : existingProvidersById.get(finalId);
-            const encryptedApiKey =
-              p.apiKey !== undefined && p.apiKey !== ""
-                ? encrypt(p.apiKey, env.ENCRYPTION_KEY)
-                : (existing?.encryptedApiKey ?? null);
-            return {
+            const suppliedApiKey = p.apiKey?.trim();
+            const changedBaseURL =
+              existing !== undefined &&
+              normalizeBaseURLForComparison(existing.baseURL) !==
+                normalizeBaseURLForComparison(p.baseURL);
+            if (existing?.encryptedApiKey && changedBaseURL && !suppliedApiKey) {
+              throw new HTTPException(400, {
+                message: `Provider "${p.label}" requires a new API key when its base URL changes`,
+              });
+            }
+            const encryptedApiKey = suppliedApiKey
+              ? encrypt(suppliedApiKey, env.ENCRYPTION_KEY)
+              : (existing?.encryptedApiKey ?? null);
+            return normalizeAiProvider({
               id: finalId,
               label: p.label,
               encryptedApiKey,
               baseURL: p.baseURL,
+              modelDiscoveryPath: p.modelDiscoveryPath,
               providerFormat: p.providerFormat,
               defaultModel: p.defaultModel,
               models: p.models,
-            };
+            });
           });
           if (activeProviderId && providerIdMap.has(activeProviderId)) {
             activeProviderId = providerIdMap.get(activeProviderId);
@@ -977,6 +1122,15 @@ export function botsRoutes(
             githubToolsConfig.codingModelId,
           );
         }
+        const imageOcrConfig = body.imageOcrConfig
+          ? {
+              ...body.imageOcrConfig,
+              providerId: body.imageOcrConfig.providerId
+                ? (providerIdMap.get(body.imageOcrConfig.providerId) ??
+                  body.imageOcrConfig.providerId)
+                : undefined,
+            }
+          : bot.aiConfig?.imageOcrConfig;
 
         const updatedAiConfig: AiConfigStored = {
           enabled: body.enabled,
@@ -1017,7 +1171,7 @@ export function botsRoutes(
           privateChatWhitelist: body.privateChatWhitelist,
           mcpServerIds: body.mcpServerIds,
           summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
-          imageOcrConfig: body.imageOcrConfig ?? bot.aiConfig?.imageOcrConfig,
+          imageOcrConfig,
         };
 
         await db.update(bots).set({ aiConfig: updatedAiConfig }).where(eq(bots.id, botId));
@@ -1245,22 +1399,40 @@ export function botsRoutes(
     .post("/:botId/ai-models", zValidator("json", aiModelsSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
+      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      let apiKey = body.apiKey;
+      const migrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
+      const storedProvider = migrated?.providers?.find(
+        (provider) => provider.id === body.providerId,
+      );
+      const draftApiKey = body.apiKey?.trim() || undefined;
+
+      let apiKey = draftApiKey;
       let baseURL = body.baseURL;
+      let modelDiscoveryPath = body.modelDiscoveryPath;
 
-      // Fall back to stored values (active provider first, then legacy top-level)
-      if (!apiKey || !baseURL) {
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-        if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      if (storedProvider) {
+        baseURL ??= storedProvider.baseURL;
+        modelDiscoveryPath ??= storedProvider.modelDiscoveryPath ?? DEFAULT_MODEL_DISCOVERY_PATH;
 
-        const migrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
-        const active = migrated ? getActiveProvider(migrated) : null;
-        if (!baseURL) baseURL = active?.baseURL ?? migrated?.baseURL;
-        const encryptedKey = active?.encryptedApiKey ?? migrated?.encryptedApiKey ?? null;
-        if (!apiKey && encryptedKey) {
+        const changedBaseURL =
+          body.baseURL !== undefined &&
+          normalizeBaseURLForComparison(body.baseURL) !==
+            normalizeBaseURLForComparison(storedProvider.baseURL);
+        if (changedBaseURL && !draftApiKey) {
+          return c.json(
+            {
+              ok: false as const,
+              error: "An API key is required when testing a changed base URL",
+            },
+            400,
+          );
+        }
+
+        if (!apiKey && storedProvider.encryptedApiKey) {
           try {
-            apiKey = decrypt(encryptedKey, env.ENCRYPTION_KEY);
+            apiKey = decrypt(storedProvider.encryptedApiKey, env.ENCRYPTION_KEY);
           } catch {
             return c.json(
               {
@@ -1271,6 +1443,15 @@ export function botsRoutes(
             );
           }
         }
+      } else if (!baseURL || !apiKey || modelDiscoveryPath === undefined) {
+        return c.json(
+          {
+            ok: false as const,
+            error:
+              "Unknown providers require a complete draft with base URL, API key, and discovery path",
+          },
+          400,
+        );
       }
 
       if (!baseURL) {
@@ -1279,25 +1460,98 @@ export function botsRoutes(
       if (!apiKey) {
         return c.json({ ok: false as const, error: "No API key configured" }, 400);
       }
+      if (!modelDiscoveryPath) {
+        return c.json({ ok: false as const, error: "Model discovery is disabled" }, 400);
+      }
+      const discoveryURL = resolveModelDiscoveryURL(baseURL, modelDiscoveryPath);
+      if (!discoveryURL) {
+        return c.json(
+          {
+            ok: false as const,
+            error: "Model discovery path must be a relative path beginning with a single slash",
+          },
+          400,
+        );
+      }
 
       try {
-        const res = await fetch(`${baseURL.replace(/\/+$/, "")}/models`, {
+        const res = await fetch(discoveryURL, {
           headers: { Authorization: `Bearer ${apiKey}` },
+          redirect: "error",
+          signal: AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const { data: models } = (await res.json()) as {
-          data: Array<{ id: string; owned_by: string }>;
-        };
+        if (!res.ok) {
+          const upstreamDetail = await readSafeUpstreamError(res, apiKey);
+          return c.json(
+            {
+              ok: false as const,
+              error: `Model discovery failed with HTTP ${res.status}${
+                upstreamDetail ? `: ${upstreamDetail}` : ""
+              }`,
+            },
+            502,
+          );
+        }
+        let payload: unknown;
+        try {
+          payload = JSON.parse(
+            await readResponseTextLimited(res, MAX_MODEL_DISCOVERY_RESPONSE_BYTES),
+          );
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            (error.name === "TimeoutError" || error.name === "AbortError")
+          ) {
+            throw error;
+          }
+          const detail = error instanceof Error ? error.message : String(error);
+          return c.json(
+            {
+              ok: false as const,
+              error: `Model discovery returned an invalid response: ${detail}`,
+            },
+            502,
+          );
+        }
+        const parsed = aiModelsResponseSchema.safeParse(payload);
+        if (!parsed.success) {
+          return c.json(
+            {
+              ok: false as const,
+              error: "Model discovery returned an invalid response",
+            },
+            502,
+          );
+        }
+        const seenModelIds = new Set<string>();
         return c.json({
           ok: true as const,
-          data: models.map((m) => ({
-            id: m.id,
-            owned_by: m.owned_by,
-            capabilities: modelCapabilityService.inferCapabilities(m.id),
-          })),
+          data: parsed.data.data.flatMap((model) => {
+            if (seenModelIds.has(model.id)) return [];
+            seenModelIds.add(model.id);
+            return [
+              {
+                id: model.id,
+                owned_by: model.owned_by,
+                capabilities: modelCapabilityService.inferCapabilities(model.id),
+              },
+            ];
+          }),
         });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+          return c.json(
+            {
+              ok: false as const,
+              error: `Model discovery timed out after ${MODEL_DISCOVERY_TIMEOUT_MS / 1000} seconds`,
+            },
+            504,
+          );
+        }
+        const msg = sanitizeDiscoveryError(
+          err instanceof Error ? err.message : String(err),
+          apiKey,
+        );
         return c.json({ ok: false as const, error: `Failed to fetch models: ${msg}` }, 502);
       }
     })

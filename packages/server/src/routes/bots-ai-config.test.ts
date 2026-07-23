@@ -55,10 +55,13 @@ function ownerContext() {
   };
 }
 
-function routeDatabase(onSave?: (aiConfig: unknown) => void): Database {
+function routeDatabase(
+  onSave?: (aiConfig: unknown) => void,
+  aiConfig: unknown = existingAiConfig,
+): Database {
   return {
     select: () => ({
-      from: () => ({ where: async () => [{ aiConfig: existingAiConfig }] }),
+      from: () => ({ where: async () => [{ aiConfig }] }),
     }),
     update: () => ({
       set: (value: { aiConfig: unknown }) => {
@@ -79,6 +82,14 @@ function routeApp(db: Database, botPool: BotPool) {
     })
     .use("*", ownerContext())
     .route("/api/bots", botsRoutes(db, botPool, {} as ModelCapabilityService));
+}
+
+function savingBotPool(): BotPool {
+  return {
+    withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+    invalidateGitHubCredentials: vi.fn(),
+    getManager: () => undefined,
+  } as unknown as BotPool;
 }
 
 describe("AI config GitHub coding provider contract", () => {
@@ -213,5 +224,451 @@ describe("AI config GitHub coding provider contract", () => {
     expect(providers[0]?.id).not.toBe("__new_coding");
     expect(providers[0]?.encryptedApiKey).toBeTruthy();
     expect(github.codingProviderId).toBe(providers[0]?.id);
+  });
+});
+
+describe("AI provider model configuration", () => {
+  it("returns the provider discovery path and preserves model thinking settings", async () => {
+    const response = await routeApp(
+      routeDatabase(undefined, {
+        ...existingAiConfig,
+        providers: [
+          {
+            id: "provider-1",
+            label: "Provider",
+            encryptedApiKey: null,
+            baseURL: "https://provider.example/v1",
+            modelDiscoveryPath: "/catalog/models",
+            providerFormat: "openai",
+            defaultModel: "reasoning-model",
+            models: [
+              {
+                id: "reasoning-model",
+                thinking: "enabled",
+                thinkingBudget: 256,
+              },
+            ],
+          },
+        ],
+        activeProviderId: "provider-1",
+      }),
+      {} as BotPool,
+    ).request("/api/bots/bot-1/ai-config");
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: {
+        providers: Array<{
+          modelDiscoveryPath?: string;
+          models?: Array<{ thinking?: string; thinkingBudget?: number }>;
+        }>;
+      };
+    };
+    expect(body.data.providers[0]).toMatchObject({
+      modelDiscoveryPath: "/catalog/models",
+      models: [{ thinking: "enabled", thinkingBudget: 256 }],
+    });
+  });
+
+  it("round-trips discovery and thinking settings through the provider save schema", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const botPool = {
+      withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+      invalidateGitHubCredentials: vi.fn(),
+      getManager: () => undefined,
+    } as unknown as BotPool;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      botPool,
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "__new_provider",
+            label: "Provider",
+            baseURL: "https://provider.example/v1",
+            modelDiscoveryPath: "/catalog/models",
+            providerFormat: "openai",
+            defaultModel: "reasoning-model",
+            models: [
+              {
+                id: "reasoning-model",
+                thinking: "enabled",
+                thinkingBudget: 512,
+              },
+            ],
+          },
+        ],
+        activeProviderId: "__new_provider",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.providers).toEqual([
+      expect.objectContaining({
+        modelDiscoveryPath: "/catalog/models",
+        models: [
+          {
+            id: "reasoning-model",
+            thinking: "enabled",
+            thinkingBudget: 512,
+          },
+        ],
+      }),
+    ]);
+  });
+
+  it("rejects enabling AI when any saved provider has no resolvable default model", async () => {
+    const save = vi.fn();
+    const botPool = {
+      withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+    } as unknown as BotPool;
+    const response = await routeApp(routeDatabase(save), botPool).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          enabled: true,
+          providers: [
+            {
+              id: "__new_ready",
+              label: "Ready",
+              baseURL: "https://ready.example/v1",
+              providerFormat: "openai",
+              defaultModel: "ready-model",
+            },
+            {
+              id: "__new_draft",
+              label: "Draft",
+              baseURL: "https://draft.example/v1",
+              providerFormat: "openai",
+              defaultModel: "",
+              models: [],
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("resolves the first catalog entry as the provider default model when saving", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const botPool = {
+      withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+      invalidateGitHubCredentials: vi.fn(),
+      getManager: () => undefined,
+    } as unknown as BotPool;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      botPool,
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        enabled: true,
+        providers: [
+          {
+            id: "__new_provider",
+            label: "Provider",
+            baseURL: "https://provider.example/v1",
+            providerFormat: "openai",
+            defaultModel: "",
+            models: [{ id: "catalog-default" }],
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.providers).toEqual([
+      expect.objectContaining({ defaultModel: "catalog-default" }),
+    ]);
+  });
+
+  it.each(["https://evil.example/models", "//evil.example/models", "/\\evil"])(
+    "rejects an unsafe provider discovery path %j before saving",
+    async (modelDiscoveryPath) => {
+      const save = vi.fn();
+      const response = await routeApp(routeDatabase(save), {} as BotPool).request(
+        "/api/bots/bot-1/ai-config",
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...requestBody(),
+            providers: [
+              {
+                id: "__new_provider",
+                label: "Provider",
+                baseURL: "https://provider.example/v1",
+                modelDiscoveryPath,
+                providerFormat: "openai",
+                defaultModel: "model",
+              },
+            ],
+          }),
+        },
+      );
+
+      expect(response.status).toBe(400);
+      expect(save).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows an empty discovery path to disable fetching", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const botPool = {
+      withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+      invalidateGitHubCredentials: vi.fn(),
+      getManager: () => undefined,
+    } as unknown as BotPool;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      botPool,
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "__new_provider",
+            label: "Provider",
+            baseURL: "https://provider.example/v1",
+            modelDiscoveryPath: "",
+            providerFormat: "gemini",
+            defaultModel: "gemini-model",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.providers).toEqual([expect.objectContaining({ modelDiscoveryPath: "" })]);
+  });
+
+  it("requires a new API key before saving a changed base URL", async () => {
+    const save = vi.fn();
+    const response = await routeApp(
+      routeDatabase(save, {
+        ...existingAiConfig,
+        providers: [
+          {
+            id: "provider-1",
+            label: "Provider",
+            encryptedApiKey: "encrypted-existing-key",
+            baseURL: "https://old.example/v1",
+            providerFormat: "openai",
+            defaultModel: "model",
+          },
+        ],
+        activeProviderId: "provider-1",
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "provider-1",
+            label: "Provider",
+            baseURL: "https://new.example/v1",
+            providerFormat: "openai",
+            defaultModel: "model",
+          },
+        ],
+        activeProviderId: "provider-1",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toContain("requires a new API key");
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("allows a keyless draft provider to change its base URL", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase(
+        (aiConfig) => {
+          savedAiConfig = aiConfig as Record<string, unknown>;
+        },
+        {
+          ...existingAiConfig,
+          providers: [
+            {
+              id: "provider-1",
+              label: "Draft",
+              encryptedApiKey: null,
+              baseURL: "https://old.example/v1",
+              providerFormat: "openai",
+              defaultModel: "",
+              models: [],
+            },
+          ],
+          activeProviderId: "provider-1",
+        },
+      ),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "provider-1",
+            label: "Draft",
+            baseURL: "https://new.example/v1",
+            providerFormat: "openai",
+            defaultModel: "",
+            models: [],
+          },
+        ],
+        activeProviderId: "provider-1",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.providers).toEqual([
+      expect.objectContaining({
+        id: "provider-1",
+        baseURL: "https://new.example/v1",
+        encryptedApiKey: null,
+      }),
+    ]);
+  });
+
+  it("rejects duplicate provider IDs before saving", async () => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          providers: [
+            {
+              id: "duplicate",
+              label: "One",
+              baseURL: "https://one.example/v1",
+              providerFormat: "openai",
+              defaultModel: "one",
+            },
+            {
+              id: "duplicate",
+              label: "Two",
+              baseURL: "https://two.example/v1",
+              providerFormat: "openai",
+              defaultModel: "two",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("trims and de-duplicates a saved provider catalog", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "__new_provider",
+            label: "Provider",
+            baseURL: "https://provider.example/v1",
+            modelDiscoveryPath: "  /catalog/models  ",
+            providerFormat: "openai",
+            defaultModel: "  first-model  ",
+            models: [
+              { id: "  first-model  ", thinking: "enabled", thinkingBudget: 64 },
+              { id: "first-model", label: "duplicate" },
+              { id: "second-model" },
+            ],
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.providers).toEqual([
+      expect.objectContaining({
+        defaultModel: "first-model",
+        modelDiscoveryPath: "/catalog/models",
+        models: [
+          { id: "first-model", thinking: "enabled", thinkingBudget: 64 },
+          { id: "second-model" },
+        ],
+      }),
+    ]);
+  });
+
+  it("remaps image OCR references from a temporary provider ID", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "__new_ocr",
+            label: "OCR",
+            baseURL: "https://ocr.example/v1",
+            providerFormat: "openai",
+            defaultModel: "vision-model",
+          },
+        ],
+        activeProviderId: "__new_ocr",
+        imageOcrConfig: {
+          enabled: true,
+          providerId: "__new_ocr",
+          modelId: "vision-model",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const providers = savedAiConfig?.providers as Array<{ id: string }>;
+    expect(savedAiConfig?.imageOcrConfig).toEqual({
+      enabled: true,
+      providerId: providers[0]?.id,
+      modelId: "vision-model",
+    });
+    expect(providers[0]?.id).not.toBe("__new_ocr");
   });
 });

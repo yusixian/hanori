@@ -4,26 +4,57 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { client } from "@/lib/client";
 import type { ModelEntry } from "@cos-tool-bot/shared";
-import { Check, ChevronDown, ChevronRight, Loader2, Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Plus,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ModelRow } from "../components/model-row";
 import type { ModelOption } from "../types";
 import { CAPABILITY_BADGES } from "../types";
 import { groupFetchedModels, groupModelsByProvider } from "../utils";
 import { useTranslation } from "react-i18next";
 
+function formatApiError(error: unknown, fallback: string) {
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object" && "issues" in error && Array.isArray(error.issues)) {
+    const detail = error.issues
+      .map((issue) => {
+        if (!issue || typeof issue !== "object") return "";
+        const path =
+          "path" in issue && Array.isArray(issue.path) ? issue.path.map(String).join(".") : "";
+        const message = "message" in issue ? String(issue.message) : "";
+        return path && message ? `${path}: ${message}` : message;
+      })
+      .filter(Boolean)
+      .join("; ");
+    if (detail) return detail;
+  }
+  return fallback;
+}
+
 export function ModelsSection({
   botId,
   models,
   activeModel,
   modelCommandAccess,
+  providerId,
+  providerLabel,
   baseURL,
   apiKey,
+  modelDiscoveryPath,
   onModelsChange,
   onActiveModelChange,
+  onModelRename,
   onModelCommandAccessChange,
   onError,
 }: {
@@ -31,10 +62,14 @@ export function ModelsSection({
   models: ModelEntry[];
   activeModel: string;
   modelCommandAccess: "admin" | "all";
+  providerId: string;
+  providerLabel: string;
   baseURL: string;
   apiKey: string;
+  modelDiscoveryPath: string;
   onModelsChange: (models: ModelEntry[]) => void;
   onActiveModelChange: (modelId: string) => void;
+  onModelRename: (currentId: string, nextId: string) => void;
   onModelCommandAccessChange: (access: "admin" | "all") => void;
   onError: (text: string) => void;
 }) {
@@ -44,7 +79,36 @@ export function ModelsSection({
   const [selectedFetchedModels, setSelectedFetchedModels] = useState<Set<string>>(new Set());
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [collapsedProviders, setCollapsedProviders] = useState<Set<string>>(new Set());
+  const [manualModelIds, setManualModelIds] = useState("");
+  const [manualAddResult, setManualAddResult] = useState("");
+  const fetchControllerRef = useRef<AbortController | null>(null);
+  const fetchSequenceRef = useRef(0);
   const { t } = useTranslation("aiSettings");
+
+  useEffect(() => {
+    fetchControllerRef.current?.abort();
+    fetchControllerRef.current = null;
+    fetchSequenceRef.current += 1;
+    setFetchedModels([]);
+    setShowFetchedModels(false);
+    setSelectedFetchedModels(new Set());
+    setModelSearchQuery("");
+    setCollapsedProviders(new Set());
+    setFetchingModels(false);
+    setManualAddResult("");
+  }, [apiKey, baseURL, botId, modelDiscoveryPath, providerId]);
+
+  useEffect(() => {
+    setManualModelIds("");
+  }, [botId, providerId]);
+
+  useEffect(
+    () => () => {
+      fetchControllerRef.current?.abort();
+      fetchSequenceRef.current += 1;
+    },
+    [],
+  );
 
   const filteredFetchedModels = useMemo(() => {
     if (!modelSearchQuery.trim()) return fetchedModels;
@@ -52,7 +116,7 @@ export function ModelsSection({
     return fetchedModels.filter(
       (m) =>
         m.id.toLowerCase().includes(q) ||
-        m.owned_by.toLowerCase().includes(q) ||
+        (m.owned_by ?? "").toLowerCase().includes(q) ||
         m.capabilities.some((c) =>
           CAPABILITY_BADGES[c]
             ? t(CAPABILITY_BADGES[c].labelKey).toLowerCase().includes(q)
@@ -62,28 +126,82 @@ export function ModelsSection({
   }, [fetchedModels, modelSearchQuery, t]);
 
   const handleFetchModels = async () => {
+    const controller = new AbortController();
+    fetchControllerRef.current?.abort();
+    fetchControllerRef.current = controller;
+    const sequence = ++fetchSequenceRef.current;
     setFetchingModels(true);
     try {
-      const res = await client.api.bots[":botId"]["ai-models"].$post({
-        param: { botId },
-        json: {
-          baseURL: baseURL || undefined,
-          apiKey: apiKey || undefined,
+      const res = await client.api.bots[":botId"]["ai-models"].$post(
+        {
+          param: { botId },
+          json: {
+            providerId,
+            baseURL: baseURL || undefined,
+            apiKey: apiKey || undefined,
+            modelDiscoveryPath,
+          },
         },
-      });
+        { init: { signal: controller.signal } },
+      );
       const json = await res.json();
+      if (sequence !== fetchSequenceRef.current || controller.signal.aborted) return;
       if (json.ok) {
-        setFetchedModels(json.data);
+        const uniqueModels = new Map<string, ModelOption>();
+        for (const model of json.data) {
+          if (!uniqueModels.has(model.id)) {
+            uniqueModels.set(model.id, { ...model, owned_by: model.owned_by ?? "" });
+          }
+        }
+        setFetchedModels([...uniqueModels.values()]);
         setShowFetchedModels(true);
         setSelectedFetchedModels(new Set());
       } else {
-        onError("error" in json ? String(json.error) : t("models.fetchError"));
+        onError(
+          "error" in json
+            ? formatApiError(json.error, t("models.fetchError"))
+            : t("models.fetchError"),
+        );
       }
-    } catch {
+    } catch (error) {
+      if (
+        sequence !== fetchSequenceRef.current ||
+        controller.signal.aborted ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return;
+      }
       onError(t("models.fetchError"));
     } finally {
-      setFetchingModels(false);
+      if (sequence === fetchSequenceRef.current) {
+        fetchControllerRef.current = null;
+        setFetchingModels(false);
+      }
     }
+  };
+
+  const addManualModels = () => {
+    const parsed = manualModelIds
+      .split(/[,\n]/)
+      .map((modelId) => modelId.trim())
+      .filter(Boolean);
+    const uniqueIds = [...new Set(parsed)];
+    const existingIds = new Set(models.map((model) => model.id));
+    const idsToAdd = uniqueIds.filter((modelId) => !existingIds.has(modelId));
+    const nextModels = [...models, ...idsToAdd.map((id) => ({ id }))];
+    const skipped = parsed.length - idsToAdd.length;
+
+    if (idsToAdd.length > 0) {
+      onModelsChange(nextModels);
+      if (!activeModel) onActiveModelChange(idsToAdd[0]!);
+    }
+    setManualAddResult(
+      t("models.manualAddResult", {
+        added: idsToAdd.length,
+        skipped,
+      }),
+    );
+    if (idsToAdd.length > 0) setManualModelIds("");
   };
 
   const addSelectedModels = () => {
@@ -92,10 +210,12 @@ export function ModelsSection({
     for (const fm of fetchedModels) {
       if (selectedFetchedModels.has(fm.id) && !existing.has(fm.id)) {
         toAdd.push({ id: fm.id, capabilities: fm.capabilities });
+        existing.add(fm.id);
       }
     }
     if (toAdd.length > 0) {
       onModelsChange([...models, ...toAdd]);
+      if (!activeModel) onActiveModelChange(toAdd[0]!.id);
     }
     setShowFetchedModels(false);
     setSelectedFetchedModels(new Set());
@@ -104,7 +224,26 @@ export function ModelsSection({
   };
 
   const removeModel = (modelId: string) => {
+    if (modelId === activeModel) {
+      onError(t("models.defaultCannotRemove"));
+      return;
+    }
     onModelsChange(models.filter((m) => m.id !== modelId));
+  };
+
+  const renameModel = (modelId: string, nextId: string) => {
+    const normalizedId = nextId.trim();
+    if (!normalizedId) {
+      onError(t("models.modelIdRequired"));
+      return false;
+    }
+    if (normalizedId === modelId) return true;
+    if (models.some((model) => model.id === normalizedId)) {
+      onError(t("models.modelIdConflict", { model: normalizedId }));
+      return false;
+    }
+    onModelRename(modelId, normalizedId);
+    return true;
   };
 
   const updateModelEntry = (modelId: string, updates: Partial<ModelEntry>) => {
@@ -114,14 +253,62 @@ export function ModelsSection({
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">{t("models.title")}</CardTitle>
-          <Button variant="outline" size="sm" onClick={handleFetchModels} disabled={fetchingModels}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <SlidersHorizontal className="size-4 text-blue-600" />
+              {t("models.managingTitle", { provider: providerLabel })}
+            </CardTitle>
+            <p className="text-muted-foreground mt-1 text-xs">{t("models.managingDescription")}</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleFetchModels}
+            disabled={fetchingModels || !modelDiscoveryPath.trim()}
+            title={!modelDiscoveryPath.trim() ? t("models.fetchDisabledNoPath") : undefined}
+          >
             {fetchingModels ? <Loader2 className="h-4 w-4 animate-spin" /> : t("models.fetch")}
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+          <div>
+            <p className="text-sm font-medium text-slate-900">{t("models.manualAdd")}</p>
+            <p className="text-muted-foreground mt-0.5 text-xs">
+              {t("models.manualAddDescription")}
+            </p>
+          </div>
+          <div className="flex items-end gap-2">
+            <Textarea
+              value={manualModelIds}
+              onChange={(event) => {
+                setManualModelIds(event.target.value);
+                setManualAddResult("");
+              }}
+              aria-label={t("models.manualAddInput")}
+              placeholder={t("models.manualAddPlaceholder")}
+              rows={2}
+              className="min-h-16 resize-y bg-white font-mono text-xs"
+            />
+            <Button
+              type="button"
+              size="sm"
+              onClick={addManualModels}
+              disabled={!manualModelIds.trim()}
+            >
+              <Plus className="size-4" />
+              {t("common.add")}
+            </Button>
+          </div>
+          {manualAddResult && (
+            <p className="text-muted-foreground text-xs" role="status">
+              {manualAddResult}
+            </p>
+          )}
+        </div>
+
         {/* Configured models list */}
         {models.length > 0 ? (
           <RadioGroup value={activeModel} onValueChange={onActiveModelChange} className="space-y-2">
@@ -141,13 +328,14 @@ export function ModelsSection({
                     }
                     onRemove={() => removeModel(m.id)}
                     onUpdate={(updates) => updateModelEntry(m.id, updates)}
+                    onRename={(nextId) => renameModel(m.id, nextId)}
                   />
                 ))}
               </div>
             ))}
           </RadioGroup>
         ) : (
-          <p className="text-muted-foreground text-sm">{t("models.empty")}</p>
+          <p className="text-muted-foreground text-sm">{t("models.emptyManual")}</p>
         )}
 
         {/* Fetched models panel */}

@@ -7,6 +7,7 @@ import { inferCapabilities } from "@cos-tool-bot/shared";
 import { Minus, Settings } from "lucide-react";
 import { CAPABILITY_BADGES } from "../types";
 import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export function ModelRow({
@@ -15,15 +16,22 @@ export function ModelRow({
   radioControl,
   onRemove,
   onUpdate,
+  onRename,
 }: {
   entry: ModelEntry;
   isActive: boolean;
   radioControl: ReactNode;
   onRemove: () => void;
   onUpdate: (updates: Partial<ModelEntry>) => void;
+  onRename: (nextId: string) => boolean;
 }) {
   const capabilities = entry.capabilities ?? inferCapabilities(entry.id);
   const { t } = useTranslation("aiSettings");
+  const [modelIdDraft, setModelIdDraft] = useState(entry.id);
+
+  useEffect(() => {
+    setModelIdDraft(entry.id);
+  }, [entry.id]);
 
   return (
     <div
@@ -58,6 +66,27 @@ export function ModelRow({
       >
         <div className="space-y-3">
           <p className="text-xs font-medium">{t("modelRow.title")}</p>
+          <div className="space-y-1.5">
+            <label className="text-xs">{t("modelRow.modelId")}</label>
+            <div className="flex gap-2">
+              <Input
+                value={modelIdDraft}
+                onChange={(event) => setModelIdDraft(event.target.value)}
+                aria-label={t("modelRow.modelId")}
+                className="h-7 font-mono text-xs"
+              />
+              <button
+                type="button"
+                className="border-input bg-background hover:bg-accent h-7 shrink-0 rounded-md border px-2 text-xs font-medium"
+                onClick={() => {
+                  if (!onRename(modelIdDraft)) setModelIdDraft(entry.id);
+                }}
+                disabled={modelIdDraft.trim() === entry.id}
+              >
+                {t("common.save")}
+              </button>
+            </div>
+          </div>
           <div className="space-y-1.5">
             <label className="text-xs">{t("modelRow.label")}</label>
             <Input
@@ -166,10 +195,13 @@ export function ModelRow({
       <button
         type="button"
         className="text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg hover:bg-red-50 hover:text-red-500 focus-visible:ring-2"
-        onClick={() =>
-          window.confirm(t("modelRow.removeConfirm", { model: entry.id })) && onRemove()
-        }
+        onClick={() => {
+          if (isActive || window.confirm(t("modelRow.removeConfirm", { model: entry.id }))) {
+            onRemove();
+          }
+        }}
         aria-label={t("modelRow.removeAria", { model: entry.id })}
+        title={isActive ? t("models.defaultCannotRemove") : undefined}
       >
         <Minus className="h-3.5 w-3.5" />
       </button>

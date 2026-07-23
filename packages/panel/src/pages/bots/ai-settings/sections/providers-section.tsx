@@ -1,9 +1,18 @@
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import type { AiProviderEntryPublic } from "@cos-tool-bot/shared";
-import { Check, ChevronDown, KeyRound, Plus, Server, Trash2 } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  KeyRound,
+  Plus,
+  Server,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -13,45 +22,76 @@ export interface ProviderFormDraft {
   baseURL: string;
   providerFormat: "openai" | "gemini";
   defaultModel: string;
+  modelDiscoveryPath: string;
   apiKey: string;
   hasApiKey: boolean;
+}
+
+function defaultDiscoveryPath(format: "openai" | "gemini") {
+  return format === "openai" ? "/models" : "";
 }
 
 export function ProvidersSection({
   providers,
   activeProviderId,
+  managedProviderId,
   draftApiKeys,
   onProvidersChange,
   onActiveProviderChange,
+  onManagedProviderChange,
   onDraftApiKeyChange,
 }: {
   providers: AiProviderEntryPublic[];
   activeProviderId?: string;
+  managedProviderId?: string;
   /** Map: provider id (or "__new_<tempId>") → plaintext key in-progress (never persisted on display). */
   draftApiKeys: Record<string, string>;
   onProvidersChange: (providers: AiProviderEntryPublic[]) => void;
   onActiveProviderChange: (id: string) => void;
+  onManagedProviderChange: (id: string) => void;
   onDraftApiKeyChange: (providerKey: string, apiKey: string) => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [newDraft, setNewDraft] = useState<ProviderFormDraft>(emptyDraft());
-  const [expandedId, setExpandedId] = useState<string | null>(activeProviderId ?? null);
+  const [expandedId, setExpandedId] = useState<string | null>(
+    managedProviderId ?? activeProviderId ?? null,
+  );
   const { t } = useTranslation("aiSettings");
 
   const updateProvider = (id: string, updates: Partial<AiProviderEntryPublic>) => {
     onProvidersChange(providers.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
+  const updateProviderFormat = (
+    provider: AiProviderEntryPublic,
+    providerFormat: "openai" | "gemini",
+  ) => {
+    const updates: Partial<AiProviderEntryPublic> = { providerFormat };
+    const currentPath =
+      provider.modelDiscoveryPath ?? defaultDiscoveryPath(provider.providerFormat);
+    if (currentPath === defaultDiscoveryPath(provider.providerFormat)) {
+      updates.modelDiscoveryPath = defaultDiscoveryPath(providerFormat);
+    }
+    updateProvider(provider.id, updates);
+  };
+
   const removeProvider = (id: string) => {
     if (id === activeProviderId) return;
     const provider = providers.find((entry) => entry.id === id);
     if (!window.confirm(t("providers.deleteConfirm", { provider: provider?.label ?? id }))) return;
-    onProvidersChange(providers.filter((p) => p.id !== id));
+    const nextProviders = providers.filter((p) => p.id !== id);
+    onProvidersChange(nextProviders);
     onDraftApiKeyChange(id, "");
+    if (id === managedProviderId) {
+      const nextManagedId =
+        nextProviders.find((entry) => entry.id === activeProviderId)?.id ?? nextProviders[0]?.id;
+      if (nextManagedId) onManagedProviderChange(nextManagedId);
+      setExpandedId(nextManagedId ?? null);
+    }
   };
 
   const addProvider = () => {
-    if (!newDraft.label.trim() || !newDraft.baseURL.trim() || !newDraft.defaultModel.trim()) return;
+    if (!newDraft.label.trim() || !newDraft.baseURL.trim()) return;
     // Use a temp id; backend assigns real uuid on save.
     const tempId = `__new_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const entry: AiProviderEntryPublic = {
@@ -60,12 +100,15 @@ export function ProvidersSection({
       baseURL: newDraft.baseURL.trim(),
       providerFormat: newDraft.providerFormat,
       defaultModel: newDraft.defaultModel.trim(),
+      modelDiscoveryPath: newDraft.modelDiscoveryPath.trim(),
       hasApiKey: false,
+      models: newDraft.defaultModel.trim() ? [{ id: newDraft.defaultModel.trim() }] : [],
     };
     onProvidersChange([...providers, entry]);
     if (newDraft.apiKey) onDraftApiKeyChange(tempId, newDraft.apiKey);
-    // If no active yet, make this one active
+    // The first provider is both the runtime default and the current management target.
     if (!activeProviderId) onActiveProviderChange(tempId);
+    onManagedProviderChange(tempId);
     setAdding(false);
     setExpandedId(tempId);
     setNewDraft(emptyDraft());
@@ -96,7 +139,10 @@ export function ProvidersSection({
               <button
                 type="button"
                 className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
-                onClick={() => setExpandedId((id) => (id === p.id ? null : p.id))}
+                onClick={() => {
+                  onManagedProviderChange(p.id);
+                  setExpandedId((id) => (id === p.id ? null : p.id));
+                }}
                 aria-expanded={expandedId === p.id}
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-600/10 ring-inset">
@@ -110,6 +156,15 @@ export function ProvidersSection({
                         <Check className="size-3" /> {t("common.default")}
                       </span>
                     )}
+                    {p.id === managedProviderId && (
+                      <Badge
+                        variant="muted"
+                        className="shrink-0 gap-1 border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700"
+                      >
+                        <SlidersHorizontal className="size-3" />
+                        {t("providers.managed")}
+                      </Badge>
+                    )}
                   </span>
                   <span className="text-muted-foreground mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 text-xs">
                     <span>
@@ -117,8 +172,12 @@ export function ProvidersSection({
                         ? t("providers.openAiCompatible")
                         : t("providers.geminiNative")}
                     </span>
-                    <span aria-hidden="true">·</span>
-                    <span className="truncate font-mono">{p.defaultModel}</span>
+                    {p.defaultModel && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="truncate font-mono">{p.defaultModel}</span>
+                      </>
+                    )}
                     <span aria-hidden="true">·</span>
                     <span className="hidden max-w-64 truncate sm:inline">{p.baseURL}</span>
                   </span>
@@ -149,9 +208,7 @@ export function ProvidersSection({
                       className="border-input flex h-9 w-full rounded-md border bg-white px-2 text-sm"
                       value={p.providerFormat}
                       onValueChange={(value) =>
-                        updateProvider(p.id, {
-                          providerFormat: value as "openai" | "gemini",
-                        })
+                        updateProviderFormat(p, value as "openai" | "gemini")
                       }
                       ariaLabel={t("providers.format")}
                       options={[
@@ -181,6 +238,21 @@ export function ProvidersSection({
                       placeholder="gpt-4o"
                       className="h-9 text-sm"
                     />
+                  </div>
+                  <div className="space-y-1 lg:col-span-2">
+                    <label className="text-muted-foreground text-xs font-medium">
+                      {t("providers.discoveryPath")}
+                    </label>
+                    <Input
+                      value={p.modelDiscoveryPath ?? defaultDiscoveryPath(p.providerFormat)}
+                      aria-label={t("providers.discoveryPath")}
+                      onChange={(e) => updateProvider(p.id, { modelDiscoveryPath: e.target.value })}
+                      placeholder="/models"
+                      className="h-9 font-mono text-sm"
+                    />
+                    <p className="text-muted-foreground text-xs">
+                      {t("providers.discoveryPathHelp")}
+                    </p>
                   </div>
                   <div className="space-y-1 lg:col-span-2">
                     <label className="text-muted-foreground flex items-center gap-1 text-xs font-medium">
@@ -248,12 +320,18 @@ export function ProvidersSection({
                 <SelectMenu
                   className="border-input flex h-8 w-full rounded-md border bg-transparent px-2 text-sm"
                   value={newDraft.providerFormat}
-                  onValueChange={(value) =>
+                  onValueChange={(value) => {
+                    const providerFormat = value as "openai" | "gemini";
+                    const currentPathIsDefault =
+                      newDraft.modelDiscoveryPath === defaultDiscoveryPath(newDraft.providerFormat);
                     setNewDraft({
                       ...newDraft,
-                      providerFormat: value as "openai" | "gemini",
-                    })
-                  }
+                      providerFormat,
+                      modelDiscoveryPath: currentPathIsDefault
+                        ? defaultDiscoveryPath(providerFormat)
+                        : newDraft.modelDiscoveryPath,
+                    });
+                  }}
                   ariaLabel={t("providers.format")}
                   options={[
                     { value: "openai", label: t("providers.openAiCompatible") },
@@ -282,6 +360,19 @@ export function ProvidersSection({
                 />
               </div>
               <div className="space-y-1 lg:col-span-2">
+                <label className="text-muted-foreground text-xs">
+                  {t("providers.discoveryPath")}
+                </label>
+                <Input
+                  value={newDraft.modelDiscoveryPath}
+                  aria-label={t("providers.discoveryPath")}
+                  onChange={(e) => setNewDraft({ ...newDraft, modelDiscoveryPath: e.target.value })}
+                  placeholder="/models"
+                  className="h-8 font-mono text-sm"
+                />
+                <p className="text-muted-foreground text-xs">{t("providers.discoveryPathHelp")}</p>
+              </div>
+              <div className="space-y-1 lg:col-span-2">
                 <label className="text-muted-foreground text-xs">{t("common.apiKey")}</label>
                 <Input
                   type="password"
@@ -299,11 +390,7 @@ export function ProvidersSection({
               <Button
                 size="sm"
                 onClick={addProvider}
-                disabled={
-                  !newDraft.label.trim() ||
-                  !newDraft.baseURL.trim() ||
-                  !newDraft.defaultModel.trim()
-                }
+                disabled={!newDraft.label.trim() || !newDraft.baseURL.trim()}
               >
                 {t("common.add")}
               </Button>
@@ -321,6 +408,7 @@ function emptyDraft(): ProviderFormDraft {
     baseURL: "https://api.openai.com/v1/",
     providerFormat: "openai",
     defaultModel: "",
+    modelDiscoveryPath: "/models",
     apiKey: "",
     hasApiKey: false,
   };

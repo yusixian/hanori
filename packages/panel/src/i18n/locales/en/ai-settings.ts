@@ -164,6 +164,10 @@ export const aiSettings = {
     geminiNative: "Gemini Native",
     format: "Provider Format",
     defaultModel: "Default Model",
+    managed: "Managing",
+    discoveryPath: "Model discovery path",
+    discoveryPathHelp:
+      "Relative path for model discovery. Leave empty when this provider does not expose a model list.",
     keepKeyPlaceholder: "(leave empty to keep)",
     chatOverrideHelp: "Chat-level /provider overrides this default.",
     setDefault: "Set as default",
@@ -174,10 +178,24 @@ export const aiSettings = {
   },
   models: {
     title: "Models",
+    managingTitle: "Models for {{provider}}",
+    managingDescription:
+      "Changes here affect this provider only. This is independent of the default provider.",
     fetch: "Fetch Models",
     fetchError: "Failed to fetch models",
+    fetchDisabledNoPath: "Set a model discovery path before fetching.",
     setDefaultAria: "Set {{model}} as default",
     empty: 'No models configured. Click "Fetch Models" to discover available models.',
+    emptyManual: "No models configured. Add model IDs manually or fetch them from the provider.",
+    manualAdd: "Add model IDs",
+    manualAddDescription:
+      "Paste one or more model IDs, separated by commas or new lines. IDs are case-sensitive.",
+    manualAddInput: "Model IDs to add",
+    manualAddPlaceholder: "gpt-4.1\nprovider/custom-model",
+    manualAddResult: "Added {{added}} model(s); skipped {{skipped}} duplicate(s).",
+    defaultCannotRemove: "Choose another default model before removing this one.",
+    modelIdRequired: "Model ID cannot be empty.",
+    modelIdConflict: "A model with ID “{{model}}” already exists for this provider.",
     available: "Available Models ({{count}})",
     selectAll: "Select all",
     deselectAll: "Deselect all",
@@ -198,6 +216,7 @@ export const aiSettings = {
   modelRow: {
     configureAria: "Configure {{model}}",
     title: "Model Settings",
+    modelId: "Model ID",
     label: "Label",
     displayNamePlaceholder: "Display name",
     temperature: "Temperature",
