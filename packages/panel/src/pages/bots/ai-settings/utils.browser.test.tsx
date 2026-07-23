@@ -1,0 +1,147 @@
+import type { AiConfigPublic, ImageOcrConfig, SummaryConfigStored } from "@cos-tool-bot/shared";
+import { expect, test } from "vitest";
+import { renameProviderModelReferences, resolveManagedProviderIdAfterSave } from "./utils";
+
+const summaryConfig: SummaryConfigStored = {
+  enabled: true,
+  defaultWindowHours: 24,
+  defaultMaxMessages: 2000,
+  defaultCooldownSeconds: 300,
+  modelId: "old-model",
+};
+
+function config(activeProviderId = "provider-a"): AiConfigPublic {
+  return {
+    enabled: true,
+    hasApiKey: true,
+    baseURL: "https://a.example/v1",
+    model: "old-model",
+    providers: [
+      {
+        id: "provider-a",
+        label: "Provider A",
+        hasApiKey: true,
+        baseURL: "https://a.example/v1",
+        providerFormat: "openai",
+        defaultModel: "old-model",
+        models: [{ id: "old-model" }, { id: "other-model" }],
+      },
+      {
+        id: "provider-b",
+        label: "Provider B",
+        hasApiKey: true,
+        baseURL: "https://b.example/v1",
+        providerFormat: "openai",
+        defaultModel: "old-model",
+        models: [{ id: "old-model" }],
+      },
+    ],
+    activeProviderId,
+    systemPrompt: "",
+    triggerConfig: {
+      replyToBot: true,
+      mentionBot: true,
+      triggerWords: [],
+      randomReplyPercent: 0,
+      randomReplyCooldown: 60,
+    },
+    groupOverrides: {},
+    githubToolsConfig: {
+      enabled: true,
+      publicReadEnabled: true,
+      codingAgentEnabled: true,
+      codingProviderId: "provider-a",
+      codingModelId: "old-model",
+      hasToken: false,
+      authorName: "AI",
+      authorEmail: "ai@example.com",
+      repositories: [],
+    },
+    agentToolsConfig: {
+      enabled: true,
+      subAgentModel: "old-model",
+    },
+  };
+}
+
+test("renames the provider model, default, and explicitly owned references", () => {
+  const imageOcrConfig: ImageOcrConfig = {
+    enabled: true,
+    providerId: "provider-a",
+    modelId: "old-model",
+  };
+  const renamed = renameProviderModelReferences({
+    config: config(),
+    summaryConfig,
+    imageOcrConfig,
+    providerId: "provider-a",
+    currentId: "old-model",
+    nextId: "new-model",
+  });
+
+  expect(renamed.config.providers[0]).toMatchObject({
+    defaultModel: "new-model",
+    models: [{ id: "new-model" }, { id: "other-model" }],
+  });
+  expect(renamed.config.providers[1]?.defaultModel).toBe("old-model");
+  expect(renamed.config.githubToolsConfig?.codingModelId).toBe("new-model");
+  expect(renamed.config.agentToolsConfig?.subAgentModel).toBe("new-model");
+  expect(renamed.summaryConfig.modelId).toBe("new-model");
+  expect(renamed.imageOcrConfig.modelId).toBe("new-model");
+});
+
+test("does not rename ambiguous global references for a non-active provider", () => {
+  const currentConfig = config("provider-b");
+  currentConfig.githubToolsConfig = {
+    ...currentConfig.githubToolsConfig!,
+    codingProviderId: "provider-b",
+  };
+  const imageOcrConfig: ImageOcrConfig = {
+    enabled: true,
+    providerId: "provider-b",
+    modelId: "old-model",
+  };
+  const renamed = renameProviderModelReferences({
+    config: currentConfig,
+    summaryConfig,
+    imageOcrConfig,
+    providerId: "provider-a",
+    currentId: "old-model",
+    nextId: "new-model",
+  });
+
+  expect(renamed.config.providers[0]?.defaultModel).toBe("new-model");
+  expect(renamed.config.githubToolsConfig?.codingModelId).toBe("old-model");
+  expect(renamed.config.agentToolsConfig?.subAgentModel).toBe("old-model");
+  expect(renamed.summaryConfig.modelId).toBe("old-model");
+  expect(renamed.imageOcrConfig.modelId).toBe("old-model");
+});
+
+test("remaps the managed provider by save order even when provider metadata is identical", () => {
+  const savedProviders = config().providers.map((provider, index) => ({
+    ...provider,
+    id: `saved-${index}`,
+    label: "Duplicate",
+    baseURL: "https://same.example/v1",
+  }));
+
+  expect(
+    resolveManagedProviderIdAfterSave({
+      currentProviderId: "__new_second",
+      draftProviderIds: ["__new_first", "__new_second"],
+      savedProviders,
+      activeProviderId: "saved-0",
+    }),
+  ).toBe("saved-1");
+});
+
+test("keeps a managed provider selected when it was already persisted", () => {
+  expect(
+    resolveManagedProviderIdAfterSave({
+      currentProviderId: "provider-b",
+      draftProviderIds: ["provider-a", "provider-b"],
+      savedProviders: config().providers,
+      activeProviderId: "provider-a",
+    }),
+  ).toBe("provider-b");
+});

@@ -469,6 +469,8 @@ export interface AiProviderEntry {
   label: string;
   encryptedApiKey: string | null;
   baseURL: string;
+  /** Relative model discovery path. Undefined preserves the legacy `/models` behavior. */
+  modelDiscoveryPath?: string;
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: ModelEntry[];
@@ -479,6 +481,8 @@ export interface AiProviderEntryPublic {
   label: string;
   hasApiKey: boolean;
   baseURL: string;
+  /** Relative model discovery path. Undefined preserves the legacy `/models` behavior. */
+  modelDiscoveryPath?: string;
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: ModelEntry[];

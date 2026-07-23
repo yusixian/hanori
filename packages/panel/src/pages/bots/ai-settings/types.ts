@@ -9,7 +9,7 @@ import type {
 
 export interface ModelOption {
   id: string;
-  owned_by: string;
+  owned_by?: string;
   capabilities: ModelCapability[];
 }
 

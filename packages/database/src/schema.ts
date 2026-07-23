@@ -28,6 +28,7 @@ interface AiProviderEntryJson {
   label: string;
   encryptedApiKey: string | null;
   baseURL: string;
+  modelDiscoveryPath?: string;
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: Array<{
@@ -38,6 +39,8 @@ interface AiProviderEntryJson {
     >;
     temperature?: number;
     maxTokens?: number;
+    thinking?: "enabled" | "disabled";
+    thinkingBudget?: number;
   }>;
 }
 

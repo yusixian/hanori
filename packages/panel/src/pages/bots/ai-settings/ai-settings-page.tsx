@@ -76,6 +76,7 @@ import {
 import type { StatusMessage } from "./types";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { renameProviderModelReferences, resolveManagedProviderIdAfterSave } from "./utils";
 
 const DEFAULT_SUMMARY_CONFIG: SummaryConfigStored = {
   enabled: false,
@@ -135,6 +136,7 @@ export function BotAiSettingsPage() {
   const { t, i18n } = useTranslation("aiSettings");
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
+  const [managedProviderId, setManagedProviderId] = useState<string>();
   const savedDraftRef = useRef("");
   // Draft per-provider api keys: keyed by provider id (or temp "__new_..." id until saved).
   // Cleared on save. Preserve-when-empty: empty string ⇒ keep existing encrypted key.
@@ -260,6 +262,11 @@ export function BotAiSettingsPage() {
         const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
         const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
         setConfig(json.data);
+        setManagedProviderId((current) =>
+          json.data.providers.some((provider) => provider.id === current)
+            ? current
+            : (json.data.activeProviderId ?? json.data.providers[0]?.id),
+        );
         setWebSearchApiKey("");
         setWebImageApiKey("");
         setTriggerWordsText(triggerText);
@@ -333,6 +340,7 @@ export function BotAiSettingsPage() {
     if (!botId) return;
     setSaving(true);
     setMessage(null);
+    const providerIdsBeforeSave = config.providers.map((provider) => provider.id);
     try {
       const activeProvider =
         config.providers?.find((provider) => provider.id === config.activeProviderId) ??
@@ -404,6 +412,7 @@ export function BotAiSettingsPage() {
             baseURL: p.baseURL,
             providerFormat: p.providerFormat,
             defaultModel: p.defaultModel,
+            modelDiscoveryPath: p.modelDiscoveryPath,
             apiKey: providerApiKeys[p.id] || undefined,
             models: p.models,
           })),
@@ -439,6 +448,14 @@ export function BotAiSettingsPage() {
         setWebSearchApiKey("");
         setWebImageApiKey("");
         setProviderApiKeys({});
+        setManagedProviderId((current) =>
+          resolveManagedProviderIdAfterSave({
+            currentProviderId: current,
+            draftProviderIds: providerIdsBeforeSave,
+            savedProviders: json.data.providers,
+            activeProviderId: json.data.activeProviderId,
+          }),
+        );
         savedDraftRef.current = serializeDraft(
           json.data,
           triggerText,
@@ -623,17 +640,33 @@ export function BotAiSettingsPage() {
     });
   };
 
-  const activeProvider =
+  const managedProvider =
+    config.providers?.find((provider) => provider.id === managedProviderId) ??
     config.providers?.find((provider) => provider.id === config.activeProviderId) ??
     config.providers?.[0];
-  const updateActiveProvider = (updates: Partial<NonNullable<typeof activeProvider>>) => {
-    if (!activeProvider) return;
+  const updateManagedProvider = (updates: Partial<NonNullable<typeof managedProvider>>) => {
+    if (!managedProvider) return;
     setConfig((prev) => ({
       ...prev,
       providers: prev.providers.map((provider) =>
-        provider.id === activeProvider.id ? { ...provider, ...updates } : provider,
+        provider.id === managedProvider.id ? { ...provider, ...updates } : provider,
       ),
     }));
+  };
+
+  const renameManagedProviderModel = (currentId: string, nextId: string) => {
+    if (!managedProvider) return;
+    const renamed = renameProviderModelReferences({
+      config,
+      summaryConfig,
+      imageOcrConfig,
+      providerId: managedProvider.id,
+      currentId,
+      nextId,
+    });
+    setConfig(renamed.config);
+    setSummaryConfig(renamed.summaryConfig);
+    setImageOcrConfig(renamed.imageOcrConfig);
   };
 
   if (loading) {
@@ -726,11 +759,13 @@ export function BotAiSettingsPage() {
               <ProvidersSection
                 providers={config.providers ?? []}
                 activeProviderId={config.activeProviderId}
+                managedProviderId={managedProvider?.id}
                 draftApiKeys={providerApiKeys}
                 onProvidersChange={(providers) => setConfig((prev) => ({ ...prev, providers }))}
                 onActiveProviderChange={(activeProviderId) =>
                   setConfig((prev) => ({ ...prev, activeProviderId }))
                 }
+                onManagedProviderChange={setManagedProviderId}
                 onDraftApiKeyChange={(id, key) =>
                   setProviderApiKeys((prev) => {
                     if (!key) {
@@ -742,16 +777,23 @@ export function BotAiSettingsPage() {
                 }
               />
 
-              {activeProvider && (
+              {managedProvider && (
                 <ModelsSection
                   botId={botId!}
-                  models={activeProvider.models ?? []}
-                  activeModel={activeProvider.defaultModel}
+                  models={managedProvider.models ?? []}
+                  activeModel={managedProvider.defaultModel}
                   modelCommandAccess={config.modelCommandAccess ?? "admin"}
-                  baseURL={activeProvider.baseURL}
-                  apiKey={providerApiKeys[activeProvider.id] ?? ""}
-                  onModelsChange={(models) => updateActiveProvider({ models })}
-                  onActiveModelChange={(defaultModel) => updateActiveProvider({ defaultModel })}
+                  providerId={managedProvider.id}
+                  providerLabel={managedProvider.label}
+                  baseURL={managedProvider.baseURL}
+                  apiKey={providerApiKeys[managedProvider.id] ?? ""}
+                  modelDiscoveryPath={
+                    managedProvider.modelDiscoveryPath ??
+                    (managedProvider.providerFormat === "openai" ? "/models" : "")
+                  }
+                  onModelsChange={(models) => updateManagedProvider({ models })}
+                  onActiveModelChange={(defaultModel) => updateManagedProvider({ defaultModel })}
+                  onModelRename={renameManagedProviderModel}
                   onModelCommandAccessChange={(modelCommandAccess) =>
                     setConfig((prev) => ({ ...prev, modelCommandAccess }))
                   }
