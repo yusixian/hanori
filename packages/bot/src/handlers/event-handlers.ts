@@ -61,6 +61,7 @@ export function createPollAnswerHandler(options: PollAnswerHandlerOptions) {
         await continueChat(api, getContinueChatConfig(poll.chatId), {
           chatId: poll.chatId,
           eventDescription,
+          userId: poll.ownerUserId ?? userId,
         });
       } catch {
         // logged inside continueChat

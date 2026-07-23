@@ -109,6 +109,7 @@ export interface ContinueChatEvent {
   userId?: number;
   userName?: string;
   timerDepth?: number;
+  memoryless?: boolean;
 }
 
 export async function continueChat(
@@ -116,11 +117,29 @@ export async function continueChat(
   config: ContinueChatConfig,
   event: ContinueChatEvent,
 ): Promise<void> {
+  const executionConfig = event.memoryless
+    ? {
+        ...config,
+        memory: undefined,
+        memoryConfig: { ...DEFAULT_MEMORY_CONFIG, enabled: false },
+        botMemory: undefined,
+        botMemoryConfig: { ...DEFAULT_BOT_MEMORY_CONFIG, enabled: false },
+        moodState: new Map<number, MoodInfo>(),
+      }
+    : config;
   const run = () =>
     // Shared per-chat lock: mutually exclusive with the main AI-reply handler's streamText.
-    withChatLock(event.chatId, () => doContinueChat(api, config, event));
+    withChatLock(event.chatId, () => doContinueChat(api, executionConfig, event));
   const eventUserId = event.userId;
   const privacy = config.privacy;
+  if (eventUserId === undefined && privacy && event.chatId > 0) {
+    config.onLog?.({
+      level: "warn",
+      message: "Ownerless private continuation skipped because privacy cannot be evaluated",
+      meta: { chatId: event.chatId },
+    });
+    return;
+  }
   if (eventUserId === undefined || !privacy) {
     await run();
     return;
@@ -131,7 +150,7 @@ export async function continueChat(
     if (privacyMode === "off") {
       config.onLog?.({
         level: "info",
-        message: "Timer continueChat skipped because personalization is off",
+        message: "Personalized continuation skipped because personalization is off",
         meta: { chatId: event.chatId, userId: eventUserId },
       });
       return;
@@ -232,6 +251,7 @@ async function doContinueChat(
             eventDescription,
             userId: event.userId,
             timerDepth: timerDepth + 1,
+            memoryless: event.memoryless,
           }).catch((err) => {
             config.onLog?.({
               level: "error",
@@ -245,6 +265,7 @@ async function doContinueChat(
     const telegramTools = createTelegramTools({
       api,
       chatId,
+      userId: event.userId,
       recentBotMessageIds: chatBotMsgIds,
       pendingActions: config.pendingActions,
       onTimerFired: wrappedOnTimerFired,

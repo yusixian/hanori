@@ -54,7 +54,13 @@ export type AiReplyBotConfig = Omit<
 >;
 
 export interface BotTimerHandlers {
-  fireTimer: (chatId: number, timerId: string, reason: string, userId?: number) => void;
+  fireTimer: (
+    chatId: number,
+    timerId: string,
+    reason: string,
+    userId?: number,
+    memoryless?: boolean,
+  ) => void;
   cancelPendingTimer: (timerId: string) => void;
 }
 

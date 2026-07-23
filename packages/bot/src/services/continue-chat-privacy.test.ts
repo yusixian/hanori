@@ -25,7 +25,28 @@ describe("continueChat privacy", () => {
     expect(getMode).toHaveBeenCalledWith(42);
     expect(onLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "Timer continueChat skipped because personalization is off",
+        message: "Personalized continuation skipped because personalization is off",
+      }),
+    );
+  });
+
+  it("fails closed for an ownerless private continuation", async () => {
+    const privacy = {
+      getMode: vi.fn(),
+      runExclusive: vi.fn(),
+    } as unknown as UserPrivacyCallbacks;
+    const onLog = vi.fn();
+
+    await continueChat({} as Api, { privacy, onLog } as unknown as ContinueChatConfig, {
+      chatId: 42,
+      eventDescription: "legacy event",
+    });
+
+    expect(privacy.getMode).not.toHaveBeenCalled();
+    expect(privacy.runExclusive).not.toHaveBeenCalled();
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Ownerless private continuation skipped because privacy cannot be evaluated",
       }),
     );
   });

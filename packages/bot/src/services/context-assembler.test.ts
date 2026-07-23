@@ -177,7 +177,7 @@ describe("prompt bundle", () => {
 
   it("injects only the current user's recent cross-chat statements without chat metadata", async () => {
     const conversation = createConversation();
-    vi.mocked(conversation.getRecentUserMessagesAcrossChats).mockResolvedValue([
+    vi.mocked(conversation.getRecentUserMessagesAcrossChats!).mockResolvedValue([
       { id: 10, content: "I prefer tea", createdAt: "2026-07-20T00:00:00.000Z" },
       {
         id: 11,
@@ -212,10 +212,13 @@ describe("prompt bundle", () => {
         isPrivate: false,
         conversation,
         groupHistoryMaxTokens: 12_000,
+        historyExcludeSourceKey: "telegram:7:user",
       }),
     );
 
-    expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000);
+    expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
+      excludeSourceKey: "telegram:7:user",
+    });
   });
 
   it("attempts compression and reloads history before degrading an over-budget group prompt", async () => {

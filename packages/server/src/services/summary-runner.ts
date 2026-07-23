@@ -33,24 +33,51 @@ type SummarySourceMessage = {
   meta: unknown;
 };
 
+function truncateSummaryInput(content: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  if (countTokens(content) <= tokenBudget) return content;
+
+  let low = 0;
+  let high = content.length;
+  let best = "";
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = `${content.slice(0, midpoint)}…`;
+    if (countTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+  return best;
+}
+
 export function chunkSummaryMessages(
   messages: SummarySourceMessage[],
   chatId: number,
   tokenBudget = SUMMARY_INPUT_TOKEN_BUDGET,
 ): string[] {
   const chunks: string[] = [];
-  let current: SummarySourceMessage[] = [];
+  const separator = "\n";
+  const separatorTokens = countTokens(separator);
+  let current: string[] = [];
+  let currentTokens = 0;
   for (const message of messages) {
-    const candidate = [...current, message];
-    const formatted = formatMessages(candidate, chatId);
-    if (current.length > 0 && countTokens(formatted) > tokenBudget) {
-      chunks.push(formatMessages(current, chatId));
-      current = [message];
-    } else {
-      current = candidate;
+    const formatted = truncateSummaryInput(formatMessages([message], chatId), tokenBudget);
+    const messageTokens = countTokens(formatted);
+    const candidateTokens =
+      currentTokens + (current.length > 0 ? separatorTokens : 0) + messageTokens;
+    if (current.length > 0 && candidateTokens > tokenBudget) {
+      chunks.push(current.join(separator));
+      current = [];
+      currentTokens = 0;
     }
+    if (current.length > 0) currentTokens += separatorTokens;
+    current.push(formatted);
+    currentTokens += messageTokens;
   }
-  if (current.length > 0) chunks.push(formatMessages(current, chatId));
+  if (current.length > 0) chunks.push(current.join(separator));
   return chunks;
 }
 

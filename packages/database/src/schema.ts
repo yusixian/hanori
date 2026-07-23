@@ -397,6 +397,7 @@ export const conversationCompactionState = pgTable(
     activeSummaryId: integer("active_summary_id")
       .references(() => conversationSummaries.id, { onDelete: "no action" })
       .notNull(),
+    rawHistoryIntact: boolean("raw_history_intact").default(true).notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date())

@@ -34,7 +34,7 @@ describe("selectHistoryWithinTokenBudget", () => {
     expect(selected.trace.latestMessageId).toBe(21);
   });
 
-  it("uses a compacted summary plus the newest raw tail when history exceeds the budget", () => {
+  it("marks a compacted summary as degraded when the raw tail is also truncated", () => {
     const largeRows = rows.map((row) => ({ ...row, content: row.content.repeat(100) }));
     const selected = selectHistoryWithinTokenBudget(
       largeRows,
@@ -44,10 +44,61 @@ describe("selectHistoryWithinTokenBudget", () => {
 
     expect(selected.trace.completeRawHistory).toBe(false);
     expect(selected.trace.usedSummary).toBe(true);
-    expect(selected.trace.degraded).toBe(false);
+    expect(selected.trace.degraded).toBe(true);
     expect(selected.messages.at(-1)?.id).toBe(21);
     expect(selected.messages.every((message) => message.id > 10)).toBe(true);
     expect(selected.trace.usedTokens).toBeLessThanOrEqual(300);
+  });
+
+  it("uses a summary without degradation when it covers all omitted rows", () => {
+    const largeRows = rows.map((row) => ({ ...row, content: row.content.repeat(100) }));
+    const selected = selectHistoryWithinTokenBudget(
+      largeRows,
+      { cursorId: 20, content: "Earlier history summary ".repeat(100) },
+      300,
+    );
+
+    expect(selected.trace.completeRawHistory).toBe(false);
+    expect(selected.trace.usedSummary).toBe(true);
+    expect(selected.trace.degraded).toBe(false);
+    expect(selected.messages.map((message) => message.id)).toEqual([21]);
+  });
+
+  it("does not let a partial scan hide the gap before the newest tail", () => {
+    const newestRows = Array.from({ length: 200 }, (_, index) => ({
+      id: 801 + index,
+      role: "user",
+      content: `message ${801 + index} ${"long ".repeat(80)}`,
+      userName: "User",
+      createdAt: new Date(1_700_000_000_000 + index),
+    }));
+    const selected = selectHistoryWithinTokenBudget(
+      newestRows,
+      { cursorId: 200, content: "Summary through message 200" },
+      500,
+      { scannedAllHistory: false, scannedThroughActiveCursor: false },
+    );
+
+    expect(selected.trace.usedSummary).toBe(true);
+    expect(selected.trace.degraded).toBe(true);
+  });
+
+  it("keeps using the summary after raw history has been pruned even if retained rows fit", () => {
+    const selected = selectHistoryWithinTokenBudget(
+      rows.slice(10),
+      {
+        cursorId: 10,
+        content: "Summary through message 10",
+        rawHistoryIntact: false,
+      },
+      12_000,
+    );
+
+    expect(selected.summary).toContain("Summary through message 10");
+    expect(selected.trace.completeRawHistory).toBe(false);
+    expect(selected.trace.usedSummary).toBe(true);
+    expect(selected.trace.degraded).toBe(true);
+    expect(selected.trace.compressionRecommended).toBe(false);
   });
 });
 
@@ -424,7 +475,7 @@ function createCleanupDb(params: {
   cutoffDate: Date;
   summaries: Array<{ id: number; botId: string; createdAt: Date }>;
   activeStates: Array<{ botId: string; chatId: number; summaryId: number }>;
-  messages: Array<{ id: number; botId: string; createdAt: Date }>;
+  messages: Array<{ id: number; botId: string; chatId: number; createdAt: Date }>;
 }) {
   const state = {
     summaries: params.summaries.map((row) => ({ ...row })),
@@ -433,6 +484,20 @@ function createCleanupDb(params: {
   };
 
   const tx = {
+    selectDistinct: () => {
+      const query = {
+        from: () => query,
+        where: async () =>
+          [
+            ...new Set(
+              state.messages
+                .filter((row) => row.botId === params.botId && row.createdAt < params.cutoffDate)
+                .map((row) => row.chatId),
+            ),
+          ].map((chatId) => ({ chatId })),
+      };
+      return query;
+    },
     select: () => {
       const query = {
         from: () => query,
@@ -478,6 +543,11 @@ function createCleanupDb(params: {
         }
       },
     }),
+    update: () => ({
+      set: () => ({
+        where: async () => undefined,
+      }),
+    }),
   };
   const db = {
     transaction: (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
@@ -507,9 +577,9 @@ describe("ConversationStore.cleanup", () => {
         { botId: otherBotId, chatId: 3, summaryId: 4 },
       ],
       messages: [
-        { id: 1, botId: baseParams.botId, createdAt: old },
-        { id: 2, botId: baseParams.botId, createdAt: fresh },
-        { id: 3, botId: otherBotId, createdAt: old },
+        { id: 1, botId: baseParams.botId, chatId: 1, createdAt: old },
+        { id: 2, botId: baseParams.botId, chatId: 2, createdAt: fresh },
+        { id: 3, botId: otherBotId, chatId: 3, createdAt: old },
       ],
     });
     const store = new ConversationStore(db);
@@ -524,7 +594,7 @@ describe("ConversationStore.cleanup", () => {
 });
 
 function createHistoryLimitDb(messageIds: number[]) {
-  const state = { messageIds: [...messageIds] };
+  const state = { messageIds: [...messageIds], rawHistoryIntact: true };
   let selectedForDeletion: number[] = [];
   const tx = {
     execute: async () => undefined,
@@ -568,6 +638,15 @@ function createHistoryLimitDb(messageIds: number[]) {
         },
       }),
     }),
+    update: () => ({
+      set: (values: { rawHistoryIntact?: boolean }) => ({
+        where: async () => {
+          if (values.rawHistoryIntact !== undefined) {
+            state.rawHistoryIntact = values.rawHistoryIntact;
+          }
+        },
+      }),
+    }),
   };
   const db = {
     transaction: (callback: (transaction: typeof tx) => Promise<unknown>) => callback(tx),
@@ -608,6 +687,7 @@ describe("ConversationStore.enforceHistoryLimit", () => {
       warning: true,
     });
     expect(state.messageIds).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(state.rawHistoryIntact).toBe(false);
   });
 
   it("absorbs a batch overshoot and still returns to the configured warning threshold", async () => {

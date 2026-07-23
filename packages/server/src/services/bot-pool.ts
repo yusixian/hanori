@@ -30,6 +30,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  DEFAULT_TIMEOUT_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
@@ -506,6 +507,7 @@ export class BotPool {
     const runtimeTimeoutConfig = aiConfig?.timeoutConfig
       ? { ...aiConfig.timeoutConfig, pixaiTaskMs: pixaiTaskTimeoutMs }
       : undefined;
+    const auxiliaryTimeoutMs = runtimeTimeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs;
     // Decrypt all providers up front — kept in-memory for bot lifetime.
     // Track skip reasons separately so operators can distinguish "no key configured"
     // from "encryption key mismatch" when diagnosing.
@@ -623,6 +625,7 @@ export class BotPool {
               model: activeProvider.defaultModel,
               providerFormat: activeProvider.providerFormat,
               logger: this.logger,
+              abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
             }),
         });
       const ensureChatCompression = (chatId: number) =>
@@ -638,6 +641,7 @@ export class BotPool {
           logger: this.logger,
           force: true,
           keepRecent: 1,
+          abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
         });
       runInitialHistoryGovernance = async () => {
         if (conversationCfg.maxRawMessagesPerChat <= 0) return;
@@ -672,8 +676,8 @@ export class BotPool {
       }
 
       conversation = {
-        getHistory: (chatId, limit, tokenBudget) =>
-          store.getHistory(botId, chatId, limit, tokenBudget),
+        getHistory: (chatId, limit, tokenBudget, options) =>
+          store.getHistory(botId, chatId, limit, tokenBudget, options),
         getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit) =>
           store.getRecentUserMessagesAcrossChats(botId, userId, excludeChatId, limit),
         addMessage: (p) => store.addMessage({ botId, ...p }),
@@ -689,6 +693,7 @@ export class BotPool {
               try {
                 const embeddings = await embeddingService.generateEmbeddings(
                   toEmbed.map((message) => message.content),
+                  AbortSignal.timeout(auxiliaryTimeoutMs),
                 );
                 for (let i = 0; i < embeddings.length; i++) {
                   const emb = embeddings[i];
@@ -706,7 +711,7 @@ export class BotPool {
           const persisted = await store.upsertUserMessage({ botId, ...message });
           if (embeddingService && persisted?.content) {
             embeddingService
-              .generateEmbedding(persisted.content)
+              .generateEmbedding(persisted.content, AbortSignal.timeout(auxiliaryTimeoutMs))
               .then((embedding) => {
                 if (embedding) return store.updateEmbedding(persisted.id, embedding);
               })
@@ -748,7 +753,10 @@ export class BotPool {
           searchHistory: async (params) => {
             let queryEmbedding: number[] | undefined;
             if (embeddingService && params.query) {
-              const emb = await embeddingService.generateEmbedding(params.query);
+              const emb = await embeddingService.generateEmbedding(
+                params.query,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) queryEmbedding = emb;
             }
             return cs.searchMessages(botId, { ...params, queryEmbedding });
@@ -775,7 +783,10 @@ export class BotPool {
             // Sync embedding generation for bot memories (for dedup)
             let embedding: number[] | undefined;
             if (es) {
-              const emb = await es.generateEmbedding(params.content);
+              const emb = await es.generateEmbedding(
+                params.content,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) {
                 embedding = emb;
                 // Dedup check (scoped by telegramId)
@@ -795,7 +806,10 @@ export class BotPool {
           recallMemories: async (params) => {
             let queryEmbedding: number[] | undefined;
             if (es && params.query) {
-              const emb = await es.generateEmbedding(params.query);
+              const emb = await es.generateEmbedding(
+                params.query,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) queryEmbedding = emb;
             }
             return ms.recallMemories(botId, { ...params, queryEmbedding });
@@ -1802,7 +1816,12 @@ export class BotPool {
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       // Reuse fireTimer path — it calls continueChat with the event description
-      handlers.fireTimer(chatId, `rss_digest_${Date.now()}`, eventDescription);
+      handlers.fireTimer(
+        chatId,
+        `rss_digest_${Date.now()}`,
+        eventDescription,
+        chatId > 0 ? chatId : undefined,
+      );
       this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
       return true;
     }
@@ -1823,24 +1842,23 @@ export class BotPool {
       return;
     }
 
-    // Mark as fired in registry
-    this.timerRegistry.markFired(timerId).catch((err) => {
-      this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
-    });
-
     // Fire via bot's continueChat
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       const reason = (meta?.reason as string) ?? "Recovered timer";
-      const userId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
-      if (userId === undefined) {
+      const storedUserId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
+      const userId = storedUserId ?? (chatId > 0 ? chatId : undefined);
+      const memoryless = userId === undefined;
+      handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
+      this.timerRegistry.markFired(timerId).catch((err) => {
+        this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
+      });
+      if (storedUserId === undefined) {
         this.logger.warn(
-          { timerId, botId, chatId },
-          "Recovered user timer has no owner and will not trigger continueChat",
+          { timerId, botId, chatId, inferredUserId: userId, memoryless },
+          "Recovered legacy timer without owner using compatibility mode",
         );
-        return;
       }
-      handlers.fireTimer(chatId, timerId, reason, userId);
       this.logger.info({ timerId, botId, chatId }, "Recovered timer fired via bot continueChat");
     } else {
       this.logger.warn(

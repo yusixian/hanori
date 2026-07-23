@@ -18,10 +18,12 @@ import {
   gt,
   ilike,
   inArray,
+  isNull,
   isNotNull,
   lt,
   lte,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { escapeLike, rrfMerge } from "../utils/search.js";
@@ -50,7 +52,7 @@ interface ConversationMessageInput {
   chatId: number;
   role: ConversationRole;
   content: string;
-  userAuthoredContent?: string;
+  userAuthoredContent?: string | null;
   userId?: number;
   userName?: string;
   sourceKey?: string;
@@ -157,14 +159,31 @@ export function selectHistoryWithinTokenBudget(
     userName: string | null;
     createdAt: Date;
   }>,
-  active: { cursorId: number; content: string } | undefined,
+  active:
+    | {
+        cursorId: number;
+        content: string;
+        rawHistoryIntact?: boolean;
+      }
+    | undefined,
   configuredTokens: number,
+  scanState: {
+    scannedAllHistory: boolean;
+    scannedThroughActiveCursor: boolean;
+  } = {
+    scannedAllHistory: true,
+    scannedThroughActiveCursor: true,
+  },
 ) {
   const completeTokens = rows.reduce(
     (total, message) => total + estimateHistoryMessageTokens(message),
     0,
   );
-  if (completeTokens <= configuredTokens) {
+  if (
+    completeTokens <= configuredTokens &&
+    scanState.scannedAllHistory &&
+    (active?.rawHistoryIntact ?? true)
+  ) {
     const trace: ConversationHistoryBudgetTrace = {
       configuredTokens,
       usedTokens: completeTokens,
@@ -202,6 +221,10 @@ export function selectHistoryWithinTokenBudget(
     tailTokens += messageTokens;
   }
   const messages = reversed.reverse();
+  const hasRecoverableGap = active
+    ? !scanState.scannedThroughActiveCursor || messages.length < tailCandidates.length
+    : true;
+  const hasPrunedGap = active?.rawHistoryIntact === false;
   const trace: ConversationHistoryBudgetTrace = {
     configuredTokens,
     usedTokens: summaryTokens + tailTokens,
@@ -210,7 +233,8 @@ export function selectHistoryWithinTokenBudget(
     rawMessageCount: messages.length,
     earliestMessageId: messages[0]?.id ?? null,
     latestMessageId: messages.at(-1)?.id ?? null,
-    degraded: !summary,
+    degraded: !summary || hasRecoverableGap || hasPrunedGap,
+    compressionRecommended: !summary || hasRecoverableGap,
   };
   return { summary, messages, trace };
 }
@@ -235,7 +259,7 @@ export class ConversationStore {
           chatId: m.chatId,
           role: m.role,
           content: m.content,
-          userAuthoredContent: m.userAuthoredContent,
+          userAuthoredContent: m.userAuthoredContent ?? null,
           userId: m.userId,
           userName: m.userName,
           sourceKey: m.sourceKey,
@@ -261,7 +285,7 @@ export class ConversationStore {
         chatId: normalized.chatId,
         role: "user",
         content: normalized.content,
-        userAuthoredContent: normalized.userAuthoredContent,
+        userAuthoredContent: normalized.userAuthoredContent ?? null,
         userId: normalized.userId,
         userName: normalized.userName,
         sourceKey: normalized.sourceKey,
@@ -275,7 +299,7 @@ export class ConversationStore {
         ],
         set: {
           content: normalized.content,
-          userAuthoredContent: normalized.userAuthoredContent,
+          userAuthoredContent: normalized.userAuthoredContent ?? null,
           userId: normalized.userId,
           userName: normalized.userName,
           meta: normalized.meta,
@@ -289,9 +313,16 @@ export class ConversationStore {
     return row ?? null;
   }
 
-  async getHistory(botId: string, chatId: number, limit: number, tokenBudget?: number) {
+  async getHistory(
+    botId: string,
+    chatId: number,
+    limit: number,
+    tokenBudget?: number,
+    options?: { excludeSourceKey?: string },
+  ) {
     const active = await this.getActiveCompaction(botId, chatId);
     const cursorId = active?.cursorId ?? 0;
+    const excludeSourceKey = options?.excludeSourceKey;
 
     if (tokenBudget !== undefined) {
       const newestFirst: Array<{
@@ -303,12 +334,21 @@ export class ConversationStore {
       }> = [];
       let beforeId: number | undefined;
       let scannedTokens = 0;
+      let scannedAllHistory = false;
       while (scannedTokens <= tokenBudget) {
         const conditions = [
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
         ];
+        if (excludeSourceKey) {
+          conditions.push(
+            or(
+              isNull(conversationMessages.sourceKey),
+              ne(conversationMessages.sourceKey, excludeSourceKey),
+            )!,
+          );
+        }
         if (beforeId !== undefined) conditions.push(lt(conversationMessages.id, beforeId));
         const batch = await this.db
           .select({
@@ -322,20 +362,35 @@ export class ConversationStore {
           .where(and(...conditions))
           .orderBy(desc(conversationMessages.id))
           .limit(HISTORY_PROMPT_SCAN_BATCH_SIZE);
-        if (batch.length === 0) break;
+        if (batch.length === 0) {
+          scannedAllHistory = true;
+          break;
+        }
         newestFirst.push(...batch);
         scannedTokens += batch.reduce(
           (total, message) => total + estimateHistoryMessageTokens(message),
           0,
         );
-        if (batch.length < HISTORY_PROMPT_SCAN_BATCH_SIZE) break;
+        if (batch.length < HISTORY_PROMPT_SCAN_BATCH_SIZE) {
+          scannedAllHistory = true;
+          break;
+        }
         beforeId = batch.at(-1)!.id;
       }
       const rows = newestFirst.reverse();
+      const scannedThroughActiveCursor =
+        !active || scannedAllHistory || rows.some((message) => message.id <= active.cursorId);
       const selected = selectHistoryWithinTokenBudget(
         rows,
-        active ? { cursorId: active.cursorId, content: active.content } : undefined,
+        active
+          ? {
+              cursorId: active.cursorId,
+              content: active.content,
+              rawHistoryIntact: active.rawHistoryIntact,
+            }
+          : undefined,
         tokenBudget,
+        { scannedAllHistory, scannedThroughActiveCursor },
       );
       return {
         summary: selected.summary,
@@ -362,6 +417,12 @@ export class ConversationStore {
           eq(conversationMessages.chatId, chatId),
           gt(conversationMessages.id, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
+          excludeSourceKey
+            ? or(
+                isNull(conversationMessages.sourceKey),
+                ne(conversationMessages.sourceKey, excludeSourceKey),
+              )
+            : undefined,
         ),
       )
       .orderBy(desc(conversationMessages.id))
@@ -413,6 +474,7 @@ export class ConversationStore {
         summaryId: conversationSummaries.id,
         cursorId: conversationSummaries.summarizedUpToId,
         content: conversationSummaries.content,
+        rawHistoryIntact: conversationCompactionState.rawHistoryIntact,
       })
       .from(conversationCompactionState)
       .innerJoin(
@@ -1099,6 +1161,17 @@ export class ConversationStore {
             )
             .returning({ id: conversationMessages.id });
           prunedCount += deleted.length;
+          if (deleted.length > 0) {
+            await tx
+              .update(conversationCompactionState)
+              .set({ rawHistoryIntact: false, updatedAt: new Date() })
+              .where(
+                and(
+                  eq(conversationCompactionState.botId, botId),
+                  eq(conversationCompactionState.chatId, chatId),
+                ),
+              );
+          }
           remaining -= deleted.length;
           if (deleted.length === 0) break;
         }
@@ -1119,6 +1192,15 @@ export class ConversationStore {
     if (retentionDays <= 0) return;
     const cutoffDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     await this.db.transaction(async (tx) => {
+      const affectedChats = await tx
+        .selectDistinct({ chatId: conversationMessages.chatId })
+        .from(conversationMessages)
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            lt(conversationMessages.createdAt, cutoffDate),
+          ),
+        );
       await tx
         .delete(conversationMessages)
         .where(
@@ -1127,6 +1209,20 @@ export class ConversationStore {
             lt(conversationMessages.createdAt, cutoffDate),
           ),
         );
+      if (affectedChats.length > 0) {
+        await tx
+          .update(conversationCompactionState)
+          .set({ rawHistoryIntact: false, updatedAt: new Date() })
+          .where(
+            and(
+              eq(conversationCompactionState.botId, botId),
+              inArray(
+                conversationCompactionState.chatId,
+                affectedChats.map((row) => row.chatId),
+              ),
+            ),
+          );
+      }
 
       const expiredActiveStates = await tx
         .select({ summaryId: conversationCompactionState.activeSummaryId })

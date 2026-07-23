@@ -541,7 +541,10 @@ function resolveGroupConfig(
   maxContextMessages: number;
   groupHistoryMaxTokens: number;
 } {
-  const conversationCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+  const conversationCfg = {
+    ...DEFAULT_CONVERSATION_CONFIG,
+    ...config.conversationConfig,
+  };
   const override = config.groupOverrides[String(chatId)];
   if (!override) {
     return {
@@ -551,7 +554,8 @@ function resolveGroupConfig(
       triggerConfig: config.triggerConfig,
       conversationEnabled: conversationCfg.enabled,
       maxContextMessages: conversationCfg.maxContextMessages,
-      groupHistoryMaxTokens: conversationCfg.groupHistoryMaxTokens,
+      groupHistoryMaxTokens:
+        conversationCfg.groupHistoryMaxTokens ?? DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
     };
   }
   return {
@@ -561,7 +565,10 @@ function resolveGroupConfig(
     triggerConfig: { ...config.triggerConfig, ...override.triggerConfig },
     conversationEnabled: override.conversationEnabled ?? conversationCfg.enabled,
     maxContextMessages: override.maxContextMessages ?? conversationCfg.maxContextMessages,
-    groupHistoryMaxTokens: override.groupHistoryMaxTokens ?? conversationCfg.groupHistoryMaxTokens,
+    groupHistoryMaxTokens:
+      override.groupHistoryMaxTokens ??
+      conversationCfg.groupHistoryMaxTokens ??
+      DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
   };
 }
 
@@ -723,7 +730,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     chatId: number,
     userId?: number,
   ) => Promise<DirectGenerateResult>;
-  fireTimerEvent: (chatId: number, timerId: string, reason: string, userId?: number) => void;
+  fireTimerEvent: (
+    chatId: number,
+    timerId: string,
+    reason: string,
+    userId?: number,
+    memoryless?: boolean,
+  ) => void;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
   waitForUserProfileUpdates: (userId: number) => Promise<void>;
@@ -1028,6 +1041,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     timerId: string,
     reason: string,
     timerUserId?: number,
+    memoryless?: boolean,
   ) => {
     if (!botApi) return;
     const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
@@ -1036,6 +1050,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       eventDescription,
       userId: timerUserId,
       timerDepth: 1,
+      memoryless,
     }).catch((err) => {
       config.onLog?.({
         level: "error",
@@ -1159,7 +1174,10 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   let stickerCachePromise: Promise<void> | null = null;
 
   // Group chat ring buffers
-  const conversationCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
+  const conversationCfg = {
+    ...DEFAULT_CONVERSATION_CONFIG,
+    ...config.conversationConfig,
+  };
   const groupBuffers = new Map<
     number,
     { buffer: RingBuffer<BufferedMessage>; lastActive: number }
@@ -1285,15 +1303,20 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
     if (shouldPersistPublicGroupMessage) {
       try {
-        await config.conversation!.upsertUserMessage({
+        const message = {
           chatId,
           content: bufferedGroupText,
-          userAuthoredContent: bufferedGroupText,
+          userAuthoredContent: personalizationEnabled ? bufferedGroupText : undefined,
           userId,
           userName,
           sourceKey: `telegram:${msg.message_id}:user`,
           meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
-        });
+        };
+        if (config.conversation!.upsertUserMessage) {
+          await config.conversation!.upsertUserMessage(message);
+        } else {
+          await config.conversation!.addMessage({ ...message, role: "user" });
+        }
       } catch (err) {
         config.onLog?.({
           level: "error",
@@ -1310,9 +1333,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     }
 
     const readConversation =
-      personalizationEnabled &&
       config.conversation &&
-      (isPrivate ? conversationCfg.enabled : groupConversationEnabled);
+      (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
     const persistConversation =
       config.conversation &&
       (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
@@ -1369,6 +1391,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       const telegramTools = createTelegramTools({
         api: ctx.api,
         chatId,
+        userId,
         recentBotMessageIds: chatBotMsgIds,
         pendingActions,
         onTimerFired: (timerChatId, timerId, reason) =>
@@ -1569,16 +1592,22 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       if (!isPrivate && persistConversation) {
         try {
-          await config.conversation!.upsertUserMessage({
+          const message = {
             chatId,
             content: rawContent || bufferedGroupText || messageText,
-            userAuthoredContent: userAuthoredContent || bufferedGroupText || messageText,
+            userAuthoredContent: personalizationEnabled
+              ? userAuthoredContent || bufferedGroupText || messageText
+              : undefined,
             userId,
             userName,
             sourceKey: `telegram:${msg.message_id}:user`,
             meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
-          });
-          void config.conversation!.triggerCompression(chatId);
+          };
+          if (config.conversation!.upsertUserMessage) {
+            await config.conversation!.upsertUserMessage(message);
+          } else {
+            await config.conversation!.addMessage({ ...message, role: "user" });
+          }
         } catch (err) {
           config.onLog?.({
             level: "error",
@@ -1604,6 +1633,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         historyFormat: conversationCfg.historyFormat,
         maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
         groupHistoryMaxTokens: isPrivate ? undefined : groupHistoryMaxTokens,
+        historyExcludeSourceKey: isPrivate ? undefined : `telegram:${msg.message_id}:user`,
         ringBufferContext: ringBufferContext || undefined,
         memoryConfig: config.memoryConfig,
         memory: personalizationEnabled ? config.memory : undefined,
@@ -2179,7 +2209,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         try {
           await config.conversation!.addMessages(toSave);
           if (isPrivate) await config.conversation!.triggerCompression(chatId);
-          else void config.conversation!.triggerCompression(chatId);
         } catch (err) {
           config.onLog?.({
             level: "error",
@@ -2215,6 +2244,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         await directlyReplyAndCleanup(ctx, errorReply);
       }
     } finally {
+      if (!isPrivate && persistConversation) {
+        void config.conversation!.triggerCompression(chatId);
+      }
       releaseChatLock?.();
       if (manualAbort) activeAbortControllers.delete(manualAbort);
     }

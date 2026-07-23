@@ -103,11 +103,13 @@ describe("compressConversation", () => {
 
   it("commits a cursor snapshot with message ids and roles in the prompt", async () => {
     const store = createStore();
+    const controller = new AbortController();
 
-    await compressConversation(createOptions(store));
+    await compressConversation({ ...createOptions(store), abortSignal: controller.signal });
 
     const request = vi.mocked(generateText).mock.calls[0]![0];
     expect(request.maxOutputTokens).toBe(2_048);
+    expect(request.abortSignal).toBe(controller.signal);
     expect(request.messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

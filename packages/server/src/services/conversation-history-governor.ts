@@ -12,15 +12,63 @@ export interface ConversationHistoryGovernanceOptions {
   summarize: () => Promise<void>;
 }
 
+interface GovernanceFlightState {
+  pending: boolean;
+  options: ConversationHistoryGovernanceOptions;
+}
+
+interface GovernanceFlight {
+  state: GovernanceFlightState;
+  promise: Promise<HistoryLimitResult>;
+}
+
 export class ConversationHistoryGovernor {
   private warnedChats = new Set<string>();
+  private flights = new Map<string, GovernanceFlight>();
 
   constructor(
     private store: ConversationStore,
     private logger: Pick<Logger, "warn">,
   ) {}
 
-  async run(options: ConversationHistoryGovernanceOptions): Promise<HistoryLimitResult> {
+  run(options: ConversationHistoryGovernanceOptions): Promise<HistoryLimitResult> {
+    const key = `${options.botId}:${options.chatId}`;
+    const existing = this.flights.get(key);
+    if (existing) {
+      existing.state.pending = true;
+      existing.state.options = options;
+      return existing.promise;
+    }
+
+    const state: GovernanceFlightState = {
+      pending: false,
+      options,
+    };
+    const flight: GovernanceFlight = {
+      state,
+      promise: this.runFlight(state).finally(() => {
+        if (this.flights.get(key) === flight) this.flights.delete(key);
+      }),
+    };
+    this.flights.set(key, flight);
+    return flight.promise;
+  }
+
+  private async runFlight(state: GovernanceFlightState): Promise<HistoryLimitResult> {
+    while (true) {
+      state.pending = false;
+      try {
+        const result = await this.runOnce(state.options);
+        if (!state.pending) return result;
+      } catch (error) {
+        if (!state.pending) throw error;
+      }
+    }
+  }
+
+  private async runOnce(
+    options: ConversationHistoryGovernanceOptions,
+  ): Promise<HistoryLimitResult> {
     const countBefore =
       options.maxRawMessagesPerChat > 0
         ? await this.store.getMessageCount(options.botId, options.chatId)

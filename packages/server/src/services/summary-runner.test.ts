@@ -34,6 +34,23 @@ describe("summary source selection", () => {
     expect(chunks.join("\n")).toContain("message-39");
   });
 
+  it("bounds a single oversized formatted message", () => {
+    const chunks = chunkSummaryMessages(
+      [
+        {
+          userName: "User",
+          content: "very long content ".repeat(2_000),
+          meta: null,
+        },
+      ],
+      -100,
+      100,
+    );
+
+    expect(chunks).toHaveLength(1);
+    expect(countTokens(chunks[0]!)).toBeLessThanOrEqual(100);
+  });
+
   it("keeps the production input budget bounded", () => {
     expect(SUMMARY_INPUT_TOKEN_BUDGET).toBe(24_000);
   });

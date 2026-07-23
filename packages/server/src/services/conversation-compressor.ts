@@ -90,6 +90,7 @@ interface CompressOptions {
   logger: Logger;
   force?: boolean;
   keepRecent?: number;
+  abortSignal?: AbortSignal;
 }
 
 export function compressConversation(options: CompressOptions): Promise<void> {
@@ -159,6 +160,7 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
       model,
       providerFormat,
       options.keepRecent ?? (options.force ? 1 : cfg.maxContextMessages),
+      options.abortSignal,
     );
     if (!compressed) {
       logger.warn(
@@ -186,6 +188,7 @@ async function compressWithLLM(
   model: string,
   providerFormat?: "openai" | "gemini",
   keepRecent = cfg.maxContextMessages,
+  abortSignal?: AbortSignal,
 ) {
   const candidate = await store.getCompactionCandidate(botId, chatId, keepRecent);
   if (!candidate) return true;
@@ -214,6 +217,7 @@ async function compressWithLLM(
       { role: "user", content: contextText },
     ],
     maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+    abortSignal,
   });
 
   const summaryText = result.text?.trim();

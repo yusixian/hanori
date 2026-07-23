@@ -166,6 +166,9 @@ describe("AI reply group capture and privacy", () => {
 
     await runtime.handler(ctx, vi.fn());
 
+    expect(history.getHistory).toHaveBeenCalledWith(-100, expect.any(Number), expect.any(Number), {
+      excludeSourceKey: "telegram:7:user",
+    });
     expect(history.upsertUserMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
         content: expect.stringContaining("another user's secret"),
@@ -183,7 +186,50 @@ describe("AI reply group capture and privacy", () => {
     await runtime.handler(context("sample should not passively reply"), next);
 
     expect(history.upsertUserMessage).toHaveBeenCalledOnce();
+    expect(history.upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "sample should not passively reply",
+        userAuthoredContent: undefined,
+      }),
+    );
     expect(next).toHaveBeenCalled();
+    runtime.destroy();
+  });
+
+  it("still reads public group history for an explicit off-mode request", async () => {
+    async function* textStream() {
+      yield "public answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("public answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("off")));
+    const ctx = Object.assign(context("@sample_bot public follow-up"), {
+      message: {
+        message_id: 7,
+        text: "@sample_bot public follow-up",
+        entities: [{ type: "mention", offset: 0, length: 11 }],
+      },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    });
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(history.getHistory).toHaveBeenCalledWith(-100, expect.any(Number), expect.any(Number), {
+      excludeSourceKey: "telegram:7:user",
+    });
+    expect(history.getRecentUserMessagesAcrossChats).not.toHaveBeenCalled();
+    expect(history.upsertUserMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userAuthoredContent: undefined }),
+    );
     runtime.destroy();
   });
 

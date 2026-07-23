@@ -60,4 +60,26 @@ describe("EmbeddingService", () => {
     expect(warn).toHaveBeenCalledWith("Embedding generation failed, degrading gracefully");
     expect(JSON.stringify(warn.mock.calls)).not.toContain("private query");
   });
+
+  it("passes the caller's abort signal to batch embedding requests", async () => {
+    mocks.embedMany.mockResolvedValue({ embeddings: [[0.1, 0.2]] });
+    const service = new EmbeddingService({
+      apiKey: "test-key",
+      baseURL: "https://example.invalid/v1",
+      model: "embedding-model",
+      dimensions: 2,
+    });
+    const controller = new AbortController();
+
+    await expect(service.generateEmbeddings(["private batch"], controller.signal)).resolves.toEqual(
+      [[0.1, 0.2]],
+    );
+
+    expect(mocks.embedMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        values: ["private batch"],
+        abortSignal: controller.signal,
+      }),
+    );
+  });
 });

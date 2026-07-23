@@ -246,6 +246,7 @@ export interface ConversationHistoryBudgetTrace {
   earliestMessageId: number | null;
   latestMessageId: number | null;
   degraded: boolean;
+  compressionRecommended?: boolean;
   compressionAttempted?: boolean;
 }
 
@@ -260,6 +261,7 @@ export interface ConversationCallbacks {
     chatId: number,
     limit: number,
     tokenBudget?: number,
+    options?: { excludeSourceKey?: string },
   ): Promise<{
     summary: string | null;
     messages: Array<{
@@ -271,7 +273,7 @@ export interface ConversationCallbacks {
     }>;
     budgetTrace?: ConversationHistoryBudgetTrace;
   }>;
-  getRecentUserMessagesAcrossChats(
+  getRecentUserMessagesAcrossChats?(
     userId: number,
     excludeChatId: number,
     limit: number,
@@ -298,17 +300,17 @@ export interface ConversationCallbacks {
       meta?: Record<string, unknown>;
     }>,
   ): Promise<void>;
-  upsertUserMessage(params: {
+  upsertUserMessage?(params: {
     chatId: number;
     content: string;
-    userAuthoredContent: string;
+    userAuthoredContent?: string;
     userId: number;
     userName?: string;
     sourceKey: string;
     meta?: Record<string, unknown>;
   }): Promise<void>;
   ensureCompression?(chatId: number): Promise<void>;
-  triggerCompression(chatId: number): Promise<void>;
+  triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;
 }
 

@@ -80,6 +80,7 @@ export interface ContextAssemblyInput {
   historyFormat?: "prompt" | "messages";
   maxContextMessages: number;
   groupHistoryMaxTokens?: number;
+  historyExcludeSourceKey?: string;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -662,10 +663,13 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       input.chatId,
       input.maxContextMessages,
       input.isPrivate ? undefined : input.groupHistoryMaxTokens,
+      input.historyExcludeSourceKey
+        ? { excludeSourceKey: input.historyExcludeSourceKey }
+        : undefined,
     );
     if (
       !input.isPrivate &&
-      history.budgetTrace?.degraded &&
+      (history.budgetTrace?.compressionRecommended ?? history.budgetTrace?.degraded) &&
       input.conversation!.ensureCompression
     ) {
       try {
@@ -674,6 +678,9 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
           input.chatId,
           input.maxContextMessages,
           input.groupHistoryMaxTokens,
+          input.historyExcludeSourceKey
+            ? { excludeSourceKey: input.historyExcludeSourceKey }
+            : undefined,
         );
       } catch {
         // The raw tail remains usable. The trace below marks this prompt as degraded.
@@ -696,7 +703,11 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     }
   }
 
-  if (input.includeCrossChatUserHistory && input.conversation && input.userId !== undefined) {
+  if (
+    input.includeCrossChatUserHistory &&
+    input.conversation?.getRecentUserMessagesAcrossChats &&
+    input.userId !== undefined
+  ) {
     try {
       const recent = await input.conversation.getRecentUserMessagesAcrossChats(
         input.userId,
