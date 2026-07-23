@@ -262,6 +262,9 @@ export const aiSettings = {
       "Prompt: pack history into the system prompt for best compatibility. Messages: standard multi-turn format, only for models with native multi-turn support.",
     maxContext: "Max Context Messages",
     maxContextDescription: "Messages sent to LLM (1–100)",
+    groupHistoryMaxTokens: "Group History Token Budget",
+    groupHistoryMaxTokensDescription:
+      "Default 12000, range 2000–64000. Complete raw group history is included when it fits; verify the active model's context size before increasing it.",
     retentionDays: "Retention Days",
     retentionDescription: "0 = no age limit; the message-count limit still applies",
     maxRawMessagesPerChat: "Raw Message Limit per Chat",
@@ -273,7 +276,11 @@ export const aiSettings = {
     includeGroupContext: "Include Group Context",
     allTriggers: "All Triggers",
     randomOnly: "Random Reply Only",
-    includeGroupContextDescription: "When to include recent group messages in LLM context",
+    includeGroupContextDescription:
+      "Only used when group conversation history is disabled; controls temporary injection from the in-memory buffer.",
+    groupPersistence: "Group Message Persistence",
+    groupPersistenceDescription:
+      "When group conversation history is enabled, supported group messages are always saved even if they do not trigger an AI reply.",
     saveGroupContext: "Save Group Context",
     saveGroupContextDescription: "When to persist group context to the database",
     compressionSettings: "Compression Settings",
@@ -557,6 +564,9 @@ export const aiSettings = {
     conversationOverrides: "Conversation Overrides",
     enableConversationHistory: "Enable conversation history",
     maxContextMessages: "Max Context Messages",
+    groupHistoryMaxTokens: "Group History Token Budget",
+    groupHistoryMaxTokensWarning:
+      "This budget exceeds the default. Confirm that the active model has enough context capacity.",
     followGlobal: "Follow global",
     toolsOverrides: "Tools Overrides",
     enableImageGeneration: "Enable image generation for all users",

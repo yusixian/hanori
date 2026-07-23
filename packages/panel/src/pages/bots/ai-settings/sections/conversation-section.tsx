@@ -74,6 +74,23 @@ export function ConversationSection({
               </p>
             </div>
             <div className="space-y-1.5">
+              <label className="text-sm font-medium">
+                {t("conversation.groupHistoryMaxTokens")}
+              </label>
+              <Input
+                type="number"
+                min={2_000}
+                max={64_000}
+                step={1_000}
+                disabled={!config.enabled}
+                value={config.groupHistoryMaxTokens}
+                onChange={(e) => onUpdate({ groupHistoryMaxTokens: Number(e.target.value) })}
+              />
+              <p className="text-muted-foreground text-xs">
+                {t("conversation.groupHistoryMaxTokensDescription")}
+              </p>
+            </div>
+            <div className="space-y-1.5">
               <label className="text-sm font-medium">{t("conversation.retentionDays")}</label>
               <Input
                 type="number"
@@ -149,25 +166,9 @@ export function ConversationSection({
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("conversation.saveGroupContext")}</label>
-              <SelectMenu
-                className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
-                disabled={!config.enabled}
-                value={config.saveGroupContext}
-                onValueChange={(value) =>
-                  onUpdate({
-                    saveGroupContext: value as ConversationConfig["saveGroupContext"],
-                  })
-                }
-                ariaLabel={t("conversation.saveGroupContext")}
-                options={[
-                  { value: "random_only", label: t("conversation.randomOnly") },
-                  { value: "all", label: t("conversation.allTriggers") },
-                  { value: "none", label: t("common.never") },
-                ]}
-              />
+              <label className="text-sm font-medium">{t("conversation.groupPersistence")}</label>
               <p className="text-muted-foreground text-xs">
-                {t("conversation.saveGroupContextDescription")}
+                {t("conversation.groupPersistenceDescription")}
               </p>
             </div>
           </div>

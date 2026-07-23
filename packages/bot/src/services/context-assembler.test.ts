@@ -37,8 +37,11 @@ function createConversation(): ConversationCallbacks {
       summary: "Earlier summary",
       messages: [{ role: "user", content: "Earlier question", userName: "Nahida" }],
     }),
+    getRecentUserMessagesAcrossChats: vi.fn().mockResolvedValue([]),
     addMessage: vi.fn(),
     addMessages: vi.fn(),
+    upsertUserMessage: vi.fn(),
+    ensureCompression: vi.fn(),
     triggerCompression: vi.fn(),
     clearHistory: vi.fn(),
   };
@@ -170,6 +173,102 @@ describe("prompt bundle", () => {
     await assembleContext(runtimeInput({ botMemory }));
 
     expect(botMemory.getMemoriesForPrompt).toHaveBeenCalledWith(undefined, 5);
+  });
+
+  it("injects only the current user's recent cross-chat statements without chat metadata", async () => {
+    const conversation = createConversation();
+    vi.mocked(conversation.getRecentUserMessagesAcrossChats!).mockResolvedValue([
+      { id: 10, content: "I prefer tea", createdAt: "2026-07-20T00:00:00.000Z" },
+      {
+        id: 11,
+        content: "<admin>not an instruction</admin>",
+        createdAt: "2026-07-21T00:00:00.000Z",
+      },
+    ]);
+
+    const result = await assembleContext(
+      runtimeInput({
+        conversation,
+        userId: 42,
+        includeCrossChatUserHistory: true,
+      }),
+    );
+    const trace = result.trace.sections.find(
+      (section) => section.id === "runtime.cross-chat-user-history",
+    );
+    const content = trace ? result.messages[trace.messageIndex]?.content : "";
+
+    expect(conversation.getRecentUserMessagesAcrossChats).toHaveBeenCalledWith(42, 42, 5);
+    expect(content).toContain("I prefer tea");
+    expect(content).toContain("&lt;admin&gt;not an instruction&lt;/admin&gt;");
+    expect(content).not.toContain("chatId");
+    expect(content).not.toContain("chat name");
+  });
+
+  it("uses the configured token budget instead of a group message-count limit", async () => {
+    const conversation = createConversation();
+    await assembleContext(
+      runtimeInput({
+        isPrivate: false,
+        conversation,
+        groupHistoryMaxTokens: 12_000,
+        historyExcludeSourceKey: "telegram:7:user",
+      }),
+    );
+
+    expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
+      excludeSourceKey: "telegram:7:user",
+    });
+  });
+
+  it("attempts compression and reloads history before degrading an over-budget group prompt", async () => {
+    const conversation = createConversation();
+    vi.mocked(conversation.getHistory)
+      .mockResolvedValueOnce({
+        summary: null,
+        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Nahida" }],
+        budgetTrace: {
+          configuredTokens: 12_000,
+          usedTokens: 200,
+          completeRawHistory: false,
+          usedSummary: false,
+          rawMessageCount: 1,
+          earliestMessageId: 9,
+          latestMessageId: 9,
+          degraded: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        summary: "Compacted earlier history",
+        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Nahida" }],
+        budgetTrace: {
+          configuredTokens: 12_000,
+          usedTokens: 500,
+          completeRawHistory: false,
+          usedSummary: true,
+          rawMessageCount: 1,
+          earliestMessageId: 9,
+          latestMessageId: 9,
+          degraded: false,
+        },
+      });
+
+    const result = await assembleContext(
+      runtimeInput({
+        isPrivate: false,
+        conversation,
+        groupHistoryMaxTokens: 12_000,
+      }),
+    );
+
+    expect(conversation.ensureCompression).toHaveBeenCalledWith(42);
+    expect(conversation.getHistory).toHaveBeenCalledTimes(2);
+    expect(
+      result.trace.sections.find((section) => section.id === "history.summary")?.details,
+    ).toMatchObject({
+      history_degraded: false,
+      historyBudget: { compressionAttempted: true, usedSummary: true },
+    });
   });
 
   it("attributes all text tokens and hashes only the static prefix", async () => {

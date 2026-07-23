@@ -1,7 +1,9 @@
 import type { EmailForwardConfig, LarkWebhookConfig } from "@cos-tool-bot/shared";
+import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   json,
@@ -79,11 +81,13 @@ interface AiConfigJson {
       }>;
       conversationEnabled?: boolean;
       maxContextMessages?: number;
+      groupHistoryMaxTokens?: number;
     }
   >;
   conversationConfig?: {
     enabled: boolean;
     maxContextMessages: number;
+    groupHistoryMaxTokens: number;
     historyFormat?: "prompt" | "messages";
     groupBufferSize: number;
     groupContextMode: "all" | "random_only" | "none";
@@ -349,6 +353,7 @@ export const conversationMessages = pgTable(
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
     role: text("role").notNull(), // 'user' | 'assistant' | 'context' | 'system' | 'tool_call' | 'tool_result'
     content: text("content").notNull(),
+    userAuthoredContent: text("user_authored_content"),
     userId: bigint("user_id", { mode: "number" }),
     userName: text("user_name"),
     sourceKey: text("source_key"),
@@ -358,6 +363,7 @@ export const conversationMessages = pgTable(
   },
   (t) => [
     index("conv_msg_bot_chat_idx").on(t.botId, t.chatId, t.id),
+    index("conv_msg_bot_user_role_created_idx").on(t.botId, t.userId, t.role, t.createdAt, t.id),
     uniqueIndex("conv_msg_bot_chat_source_uniq").on(t.botId, t.chatId, t.sourceKey),
     index("conv_msg_created_idx").on(t.createdAt),
     index("conv_msg_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
@@ -391,6 +397,7 @@ export const conversationCompactionState = pgTable(
     activeSummaryId: integer("active_summary_id")
       .references(() => conversationSummaries.id, { onDelete: "no action" })
       .notNull(),
+    rawHistoryIntact: boolean("raw_history_intact").default(true).notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => new Date())
@@ -399,6 +406,27 @@ export const conversationCompactionState = pgTable(
   (t) => [
     primaryKey({ columns: [t.botId, t.chatId] }),
     index("conv_compaction_active_summary_idx").on(t.activeSummaryId),
+  ],
+);
+
+export const userPrivacySettings = pgTable(
+  "user_privacy_settings",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    mode: text("mode").notNull().default("normal"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.userId] }),
+    index("user_privacy_bot_mode_idx").on(t.botId, t.mode),
+    check("user_privacy_mode_check", sql`${t.mode} in ('normal', 'isolated', 'off')`),
   ],
 );
 

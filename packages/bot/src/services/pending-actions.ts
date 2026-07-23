@@ -2,6 +2,7 @@ export interface PendingPoll {
   type: "poll";
   pollId: string;
   chatId: number;
+  ownerUserId?: number;
   messageId: number;
   question: string;
   options: string[];
@@ -62,11 +63,13 @@ export class PendingActionRegistry {
     messageId: number,
     question: string,
     options: string[],
+    ownerUserId?: number,
   ): PendingPoll {
     const pending: PendingPoll = {
       type: "poll",
       pollId,
       chatId,
+      ownerUserId,
       messageId,
       question,
       options,

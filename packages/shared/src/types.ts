@@ -194,15 +194,18 @@ export interface AiGroupOverride {
   triggerConfig?: Partial<AiTriggerConfig>;
   conversationEnabled?: boolean;
   maxContextMessages?: number;
+  groupHistoryMaxTokens?: number;
   imageGenerationEnabled?: boolean;
 }
 
 export interface ConversationConfig {
   enabled: boolean;
   maxContextMessages: number;
+  groupHistoryMaxTokens: number;
   historyFormat?: "prompt" | "messages";
   groupBufferSize: number;
   groupContextMode: "all" | "random_only" | "none";
+  /** @deprecated Group messages are now persisted individually whenever group history is enabled. */
   saveGroupContext: "random_only" | "all" | "none";
   autoSummarize: boolean;
   summarizeThreshold: number;
@@ -213,6 +216,7 @@ export interface ConversationConfig {
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
   enabled: true,
   maxContextMessages: 20,
+  groupHistoryMaxTokens: 12_000,
   historyFormat: "prompt",
   groupBufferSize: 50,
   groupContextMode: "all",
@@ -231,18 +235,54 @@ export type ConversationRole =
   | "tool_call"
   | "tool_result";
 
+export type UserPrivacyMode = "normal" | "isolated" | "off";
+
+export interface ConversationHistoryBudgetTrace {
+  configuredTokens: number;
+  usedTokens: number;
+  completeRawHistory: boolean;
+  usedSummary: boolean;
+  rawMessageCount: number;
+  earliestMessageId: number | null;
+  latestMessageId: number | null;
+  degraded: boolean;
+  compressionRecommended?: boolean;
+  compressionAttempted?: boolean;
+}
+
+export interface RecentCrossChatUserMessage {
+  id: number;
+  content: string;
+  createdAt: string;
+}
+
 export interface ConversationCallbacks {
   getHistory(
     chatId: number,
     limit: number,
+    tokenBudget?: number,
+    options?: { excludeSourceKey?: string },
   ): Promise<{
     summary: string | null;
-    messages: Array<{ role: string; content: string; userName: string | null }>;
+    messages: Array<{
+      id?: number;
+      role: string;
+      content: string;
+      userName: string | null;
+      createdAt?: string;
+    }>;
+    budgetTrace?: ConversationHistoryBudgetTrace;
   }>;
+  getRecentUserMessagesAcrossChats?(
+    userId: number,
+    excludeChatId: number,
+    limit: number,
+  ): Promise<RecentCrossChatUserMessage[]>;
   addMessage(params: {
     chatId: number;
     role: ConversationRole;
     content: string;
+    userAuthoredContent?: string;
     userId?: number;
     userName?: string;
     sourceKey?: string;
@@ -253,14 +293,42 @@ export interface ConversationCallbacks {
       chatId: number;
       role: ConversationRole;
       content: string;
+      userAuthoredContent?: string;
       userId?: number;
       userName?: string;
       sourceKey?: string;
       meta?: Record<string, unknown>;
     }>,
   ): Promise<void>;
-  triggerCompression(chatId: number): void;
+  upsertUserMessage?(params: {
+    chatId: number;
+    content: string;
+    userAuthoredContent?: string;
+    userId: number;
+    userName?: string;
+    sourceKey: string;
+    meta?: Record<string, unknown>;
+  }): Promise<void>;
+  ensureCompression?(chatId: number): Promise<void>;
+  triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;
+}
+
+export interface UserPrivacyForgetResult {
+  conversationMessages: number;
+  profiles: number;
+  personalMemories: number;
+}
+
+export interface UserPrivacyCallbacks {
+  getMode(userId: number): Promise<UserPrivacyMode>;
+  /**
+   * Serializes personalization work for one Telegram user across chats.
+   * Callers must use this around reads, writes, and privacy mutations.
+   */
+  runExclusive<T>(userId: number, operation: () => Promise<T>): Promise<T>;
+  setMode(userId: number, mode: UserPrivacyMode): Promise<void>;
+  forget(userId: number): Promise<UserPrivacyForgetResult>;
 }
 
 export interface PixAIRateLimitConfig {

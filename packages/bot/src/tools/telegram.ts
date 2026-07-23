@@ -22,6 +22,7 @@ export interface ReceivedFile {
 export interface TelegramToolsOptions {
   api: Api;
   chatId: number;
+  userId?: number;
   recentBotMessageIds: number[];
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
@@ -203,6 +204,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
               sent.message_id,
               question,
               poll_options,
+              options.userId,
             );
           }
 

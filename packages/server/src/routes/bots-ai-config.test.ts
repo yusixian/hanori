@@ -93,6 +93,39 @@ function savingBotPool(): BotPool {
 }
 
 describe("AI config GitHub coding provider contract", () => {
+  it("fills the group history budget for legacy conversation config saves", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        conversationConfig: {
+          enabled: true,
+          maxContextMessages: 20,
+          historyFormat: "prompt",
+          groupBufferSize: 50,
+          groupContextMode: "all",
+          saveGroupContext: "random_only",
+          autoSummarize: true,
+          summarizeThreshold: 30,
+          retentionDays: 30,
+          maxRawMessagesPerChat: 50_000,
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["conversationConfig"]).toMatchObject({
+      groupHistoryMaxTokens: 12_000,
+    });
+  });
+
   it("returns a non-2xx response and logs when the saved config cannot restart the bot", async () => {
     let saved = false;
     const restartError = new Error("restart-secret-detail");

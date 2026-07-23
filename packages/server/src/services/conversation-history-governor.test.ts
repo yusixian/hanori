@@ -175,4 +175,87 @@ describe("ConversationHistoryGovernor", () => {
     expect(completed).toBe(true);
     expect(store.enforceHistoryLimit).toHaveBeenCalledOnce();
   });
+
+  it("coalesces concurrent triggers into one active pass and one trailing pass", async () => {
+    let releaseSummary!: () => void;
+    const store = {
+      getMessageCount: vi.fn().mockResolvedValue(10),
+      enforceHistoryLimit: vi.fn().mockResolvedValue({
+        countBefore: 10,
+        countAfter: 10,
+        limit: 50_000,
+        warningThreshold: 40_000,
+        prunedCount: 0,
+        warning: false,
+      }),
+    } as unknown as ConversationStore;
+    const logger = { warn: vi.fn() } as unknown as Logger;
+    const governor = new ConversationHistoryGovernor(store, logger);
+    const summarize = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSummary = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+    const options = {
+      botId: "00000000-0000-4000-8000-000000000017",
+      chatId: 42,
+      maxRawMessagesPerChat: 50_000,
+      summarize,
+    };
+
+    const first = governor.run(options);
+    await vi.waitFor(() => expect(summarize).toHaveBeenCalledOnce());
+    const second = governor.run(options);
+    const third = governor.run(options);
+
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+    releaseSummary();
+    await Promise.all([first, second, third]);
+
+    expect(summarize).toHaveBeenCalledTimes(2);
+    expect(store.getMessageCount).toHaveBeenCalledTimes(2);
+    expect(store.enforceHistoryLimit).toHaveBeenCalledTimes(2);
+  });
+
+  it("still runs a pending trigger when the active pass fails", async () => {
+    let rejectCount!: (reason: Error) => void;
+    const store = {
+      getMessageCount: vi
+        .fn()
+        .mockReturnValueOnce(
+          new Promise((_, reject) => {
+            rejectCount = reject;
+          }),
+        )
+        .mockResolvedValueOnce(10),
+      enforceHistoryLimit: vi.fn().mockResolvedValue({
+        countBefore: 10,
+        countAfter: 10,
+        limit: 50_000,
+        warningThreshold: 40_000,
+        prunedCount: 0,
+        warning: false,
+      }),
+    } as unknown as ConversationStore;
+    const governor = new ConversationHistoryGovernor(store, { warn: vi.fn() } as unknown as Logger);
+    const options = {
+      botId: "00000000-0000-4000-8000-000000000017",
+      chatId: 42,
+      maxRawMessagesPerChat: 50_000,
+      summarize: vi.fn().mockResolvedValue(undefined),
+    };
+
+    const first = governor.run(options);
+    const second = governor.run(options);
+    rejectCount(new Error("temporary database failure"));
+
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(store.getMessageCount).toHaveBeenCalledTimes(2);
+    expect(store.enforceHistoryLimit).toHaveBeenCalledOnce();
+  });
 });

@@ -59,7 +59,10 @@ export class EmbeddingService {
     }
   }
 
-  async generateEmbeddings(texts: string[]): Promise<(number[] | null)[]> {
+  async generateEmbeddings(
+    texts: string[],
+    abortSignal?: AbortSignal,
+  ): Promise<(number[] | null)[]> {
     if (texts.length === 0) return [];
     try {
       const truncated = texts.map((t) => t.slice(0, MAX_TEXT_LENGTH));
@@ -67,6 +70,7 @@ export class EmbeddingService {
         model: this.model,
         values: truncated,
         providerOptions: this.embeddingProviderOptions,
+        abortSignal,
       });
       return embeddings;
     } catch {

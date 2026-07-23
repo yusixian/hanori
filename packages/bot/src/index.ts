@@ -3,6 +3,7 @@ import type {
   ConversationCallbacks,
   PixAIGenerationRecord,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
@@ -20,6 +21,7 @@ import { commands, helpCommand } from "./commands/help.js";
 import { md2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
 import { createProviderCommand } from "./commands/provider.js";
+import { createPrivacyCommand } from "./commands/privacy.js";
 import { createImageGenCommand } from "./commands/imagegen.js";
 import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
 import { createImgCfgCommand } from "./commands/imgcfg.js";
@@ -52,7 +54,13 @@ export type AiReplyBotConfig = Omit<
 >;
 
 export interface BotTimerHandlers {
-  fireTimer: (chatId: number, timerId: string, reason: string) => void;
+  fireTimer: (
+    chatId: number,
+    timerId: string,
+    reason: string,
+    userId?: number,
+    memoryless?: boolean,
+  ) => void;
   cancelPendingTimer: (timerId: string) => void;
 }
 
@@ -62,6 +70,7 @@ export interface TimerCallbacks {
     chatId: number;
     seconds: number;
     reason: string;
+    userId: number;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFired?: (timerId: string) => void;
@@ -84,6 +93,7 @@ export interface BotConfig {
   mcpCallbacks?: McpCommandConfig;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
+  privacy?: UserPrivacyCallbacks;
   summary?: SummaryCallbacks;
 }
 
@@ -164,6 +174,9 @@ export function createBot(config: BotConfig) {
     | ReturnType<typeof createAiReplyHandler>["canUseImageGeneration"]
     | undefined;
   let aiSetAiEnabled: ReturnType<typeof createAiReplyHandler>["setAiEnabled"] | undefined;
+  let aiWaitForUserProfileUpdates:
+    | ReturnType<typeof createAiReplyHandler>["waitForUserProfileUpdates"]
+    | undefined;
   let disposeAiRuntime: (() => void) | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
@@ -180,6 +193,7 @@ export function createBot(config: BotConfig) {
     };
     const result = createAiReplyHandler({
       ...config.aiReply,
+      privacy: config.privacy,
       adminChatIds,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
@@ -213,6 +227,7 @@ export function createBot(config: BotConfig) {
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
     aiSetAiEnabled = result.setAiEnabled;
+    aiWaitForUserProfileUpdates = result.waitForUserProfileUpdates;
     disposeAiRuntime = result.destroy;
 
     // Register bot handlers with server for timer recovery and external cancel
@@ -255,6 +270,15 @@ export function createBot(config: BotConfig) {
     bot.command("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
   }
   bot.command("clear", createClearCommand(config.conversation, adminChatIds));
+  if (config.privacy) {
+    bot.command(
+      "privacy",
+      createPrivacyCommand({
+        ...config.privacy,
+        waitForPendingProfileUpdate: aiWaitForUserProfileUpdates,
+      }),
+    );
+  }
   bot.command(
     "clearreceived",
     authGuard,
@@ -506,6 +530,7 @@ export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker
 export {
   cleanupBotAvatarFiles,
   cleanupProfileAvatarFiles,
+  removeProfileAvatarFile,
 } from "./services/profile-avatar-files.js";
 export {
   isTerminalPixAIRecoveryError,

@@ -3,7 +3,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import type { AiGroupOverride } from "@cos-tool-bot/shared";
+import { DEFAULT_CONVERSATION_CONFIG, type AiGroupOverride } from "@cos-tool-bot/shared";
 import { ChevronRight, Trash2, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -142,6 +142,28 @@ export function GroupOverrideRow({
                 }
                 placeholder={t("groupOverride.followGlobal")}
               />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm">{t("groupOverride.groupHistoryMaxTokens")}</label>
+              <Input
+                type="number"
+                min={2_000}
+                max={64_000}
+                step={1_000}
+                value={override.groupHistoryMaxTokens ?? ""}
+                onChange={(e) =>
+                  onUpdate({
+                    groupHistoryMaxTokens: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+                placeholder={t("groupOverride.followGlobal")}
+              />
+              {(override.groupHistoryMaxTokens ?? 0) >
+                DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens && (
+                <p className="text-xs font-medium text-amber-700">
+                  {t("groupOverride.groupHistoryMaxTokensWarning")}
+                </p>
+              )}
             </div>
           </div>
 

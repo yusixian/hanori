@@ -1,7 +1,7 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
-import { NsfwChecker } from "@cos-tool-bot/bot";
+import { NsfwChecker, removeProfileAvatarFile } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
@@ -24,11 +24,13 @@ import type {
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  DEFAULT_TIMEOUT_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
 } from "@cos-tool-bot/shared";
@@ -78,6 +80,7 @@ import {
   BotNotRunningError,
   TelegramRichMessagesUnsupportedError,
 } from "./telegram-rich-message-errors.js";
+import { UserPrivacyService } from "./user-privacy-service.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
@@ -124,6 +127,7 @@ export class BotPool {
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
+  private userPrivacyService: UserPrivacyService;
   private chatModelStore: ChatModelStore;
   private chatProviderStore: ChatProviderStore;
   private backupService?: BackupService;
@@ -145,6 +149,7 @@ export class BotPool {
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
+    this.userPrivacyService = new UserPrivacyService(db);
     this.chatModelStore = new ChatModelStore(db);
     this.chatProviderStore = new ChatProviderStore(db);
   }
@@ -465,6 +470,33 @@ export class BotPool {
       );
     }
     const dbLogger = new DbLogger(this.db, this.logger, botId);
+    const privacyService = this.userPrivacyService;
+    const privacy: UserPrivacyCallbacks = {
+      getMode: (userId) => privacyService.getMode(botId, userId),
+      runExclusive: (userId, operation) => privacyService.runExclusive(botId, userId, operation),
+      setMode: (userId, mode) => privacyService.setMode(botId, userId, mode),
+      forget: async (userId) => {
+        await privacyService.setMode(botId, userId, "off");
+        const avatarPaths = await privacyService.getAvatarPaths(botId, userId);
+        try {
+          for (const avatarPath of avatarPaths) {
+            await removeProfileAvatarFile(getDataDir(botId), avatarPath);
+          }
+        } catch (error) {
+          dbLogger.warn("Failed to remove profile avatar during privacy forget", {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
+        const result = await privacyService.forget(botId, userId);
+        return {
+          conversationMessages: result.conversationMessages,
+          profiles: result.profiles,
+          personalMemories: result.personalMemories,
+        };
+      },
+    };
 
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
@@ -475,6 +507,7 @@ export class BotPool {
     const runtimeTimeoutConfig = aiConfig?.timeoutConfig
       ? { ...aiConfig.timeoutConfig, pixaiTaskMs: pixaiTaskTimeoutMs }
       : undefined;
+    const auxiliaryTimeoutMs = runtimeTimeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs;
     // Decrypt all providers up front — kept in-memory for bot lifetime.
     // Track skip reasons separately so operators can distinguish "no key configured"
     // from "encryption key mismatch" when diagnosing.
@@ -592,7 +625,23 @@ export class BotPool {
               model: activeProvider.defaultModel,
               providerFormat: activeProvider.providerFormat,
               logger: this.logger,
+              abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
             }),
+        });
+      const ensureChatCompression = (chatId: number) =>
+        compressConversation({
+          botId,
+          chatId,
+          store,
+          conversationConfig: conversationCfg,
+          apiKey: activeProvider.apiKey,
+          baseURL: activeProvider.baseURL,
+          model: activeProvider.defaultModel,
+          providerFormat: activeProvider.providerFormat,
+          logger: this.logger,
+          force: true,
+          keepRecent: 1,
+          abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
         });
       runInitialHistoryGovernance = async () => {
         if (conversationCfg.maxRawMessagesPerChat <= 0) return;
@@ -627,11 +676,13 @@ export class BotPool {
       }
 
       conversation = {
-        getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
+        getHistory: (chatId, limit, tokenBudget, options) =>
+          store.getHistory(botId, chatId, limit, tokenBudget, options),
+        getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit) =>
+          store.getRecentUserMessagesAcrossChats(botId, userId, excludeChatId, limit),
         addMessage: (p) => store.addMessage({ botId, ...p }),
         addMessages: async (msgs) => {
           const persisted = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
-          // Fire-and-forget: async generate embeddings (non-blocking)
           if (embeddingService && persisted.length > 0) {
             const toEmbed = persisted.filter(
               (message) =>
@@ -639,32 +690,50 @@ export class BotPool {
                 (message.role === "user" || message.role === "assistant"),
             );
             if (toEmbed.length > 0) {
-              embeddingService
-                .generateEmbeddings(toEmbed.map((message) => message.content))
-                .then((embeddings) => {
-                  for (let i = 0; i < embeddings.length; i++) {
-                    const emb = embeddings[i];
-                    if (emb) {
-                      store.updateEmbedding(toEmbed[i]!.id, emb).catch((err) => {
-                        this.logger.warn(err, "Failed to persist message embedding");
-                      });
-                    }
+              try {
+                const embeddings = await embeddingService.generateEmbeddings(
+                  toEmbed.map((message) => message.content),
+                  AbortSignal.timeout(auxiliaryTimeoutMs),
+                );
+                for (let i = 0; i < embeddings.length; i++) {
+                  const emb = embeddings[i];
+                  if (emb) {
+                    await store.updateEmbedding(toEmbed[i]!.id, emb);
                   }
-                })
-                .catch((err) => {
-                  this.logger.warn(err, "Batch message embedding generation failed");
-                });
+                }
+              } catch (err) {
+                this.logger.warn(err, "Batch message embedding generation failed");
+              }
             }
           }
         },
-        triggerCompression: (chatId) => {
+        upsertUserMessage: async (message) => {
+          const persisted = await store.upsertUserMessage({ botId, ...message });
+          if (embeddingService && persisted?.content) {
+            embeddingService
+              .generateEmbedding(persisted.content, AbortSignal.timeout(auxiliaryTimeoutMs))
+              .then((embedding) => {
+                if (embedding) return store.updateEmbedding(persisted.id, embedding);
+              })
+              .catch((err) => {
+                this.logger.warn(err, "Group message embedding generation failed");
+              });
+          }
+        },
+        ensureCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
-          governChat(chatId).catch((err) => {
+          await ensureChatCompression(chatId);
+        },
+        triggerCompression: async (chatId) => {
+          this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
+          try {
+            await governChat(chatId);
+          } catch (err) {
             void dbLogger.error(
               `Conversation history governance failed for chat=${chatId}: ${err instanceof Error ? err.message : String(err)}`,
               { chatId },
             );
-          });
+          }
         },
         clearHistory: (chatId) => store.clearHistory(botId, chatId),
       };
@@ -684,7 +753,10 @@ export class BotPool {
           searchHistory: async (params) => {
             let queryEmbedding: number[] | undefined;
             if (embeddingService && params.query) {
-              const emb = await embeddingService.generateEmbedding(params.query);
+              const emb = await embeddingService.generateEmbedding(
+                params.query,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) queryEmbedding = emb;
             }
             return cs.searchMessages(botId, { ...params, queryEmbedding });
@@ -711,7 +783,10 @@ export class BotPool {
             // Sync embedding generation for bot memories (for dedup)
             let embedding: number[] | undefined;
             if (es) {
-              const emb = await es.generateEmbedding(params.content);
+              const emb = await es.generateEmbedding(
+                params.content,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) {
                 embedding = emb;
                 // Dedup check (scoped by telegramId)
@@ -731,7 +806,10 @@ export class BotPool {
           recallMemories: async (params) => {
             let queryEmbedding: number[] | undefined;
             if (es && params.query) {
-              const emb = await es.generateEmbedding(params.query);
+              const emb = await es.generateEmbedding(
+                params.query,
+                AbortSignal.timeout(auxiliaryTimeoutMs),
+              );
               if (emb) queryEmbedding = emb;
             }
             return ms.recallMemories(botId, { ...params, queryEmbedding });
@@ -1134,6 +1212,7 @@ export class BotPool {
         chatId: number;
         seconds: number;
         reason: string;
+        userId: number;
       }) => {
         registry
           .registerAi({
@@ -1142,7 +1221,7 @@ export class BotPool {
             chatId: params.chatId,
             name: params.reason,
             seconds: params.seconds,
-            meta: { reason: params.reason },
+            meta: { reason: params.reason, userId: params.userId },
           })
           .catch((err) => {
             this.logger.error(err, `Failed to register AI timer in registry`);
@@ -1247,6 +1326,7 @@ export class BotPool {
       dbLogger,
       aiReply,
       conversation,
+      privacy,
       onRestart: () => this.restartBot(botId),
       onBackup,
       onTokenUsage,
@@ -1736,7 +1816,12 @@ export class BotPool {
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       // Reuse fireTimer path — it calls continueChat with the event description
-      handlers.fireTimer(chatId, `rss_digest_${Date.now()}`, eventDescription);
+      handlers.fireTimer(
+        chatId,
+        `rss_digest_${Date.now()}`,
+        eventDescription,
+        chatId > 0 ? chatId : undefined,
+      );
       this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
       return true;
     }
@@ -1757,16 +1842,23 @@ export class BotPool {
       return;
     }
 
-    // Mark as fired in registry
-    this.timerRegistry.markFired(timerId).catch((err) => {
-      this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
-    });
-
     // Fire via bot's continueChat
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       const reason = (meta?.reason as string) ?? "Recovered timer";
-      handlers.fireTimer(chatId, timerId, reason);
+      const storedUserId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
+      const userId = storedUserId ?? (chatId > 0 ? chatId : undefined);
+      const memoryless = userId === undefined;
+      handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
+      this.timerRegistry.markFired(timerId).catch((err) => {
+        this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
+      });
+      if (storedUserId === undefined) {
+        this.logger.warn(
+          { timerId, botId, chatId, inferredUserId: userId, memoryless },
+          "Recovered legacy timer without owner using compatibility mode",
+        );
+      }
       this.logger.info({ timerId, botId, chatId }, "Recovered timer fired via bot continueChat");
     } else {
       this.logger.warn(

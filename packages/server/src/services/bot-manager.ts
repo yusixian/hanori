@@ -16,6 +16,7 @@ import type {
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
@@ -28,6 +29,7 @@ interface BotManagerOptions {
   dbLogger: DbLogger;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
+  privacy?: UserPrivacyCallbacks;
   onRestart?: () => void | Promise<void>;
   onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
@@ -63,6 +65,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       mcpCallbacks: options.mcpCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
+      privacy: options.privacy,
       summary: options.summary,
     };
   }

@@ -256,6 +256,9 @@ export const aiSettings = {
       "提示词：将历史打包进系统提示词，兼容性最佳。消息：使用标准多轮消息格式，仅适用于原生支持多轮对话的模型。",
     maxContext: "最大上下文消息数",
     maxContextDescription: "发送给 LLM 的消息数量（1–100）",
+    groupHistoryMaxTokens: "群历史 Token 预算",
+    groupHistoryMaxTokensDescription:
+      "默认 12000，范围 2000–64000。预算内注入完整原始群历史；调高前请确认当前模型支持足够大的上下文。",
     retentionDays: "保留天数",
     retentionDescription: "0 = 不按时间清理；消息数量上限仍然生效",
     maxRawMessagesPerChat: "每个聊天的原始消息上限",
@@ -267,7 +270,11 @@ export const aiSettings = {
     includeGroupContext: "包含群聊上下文",
     allTriggers: "所有触发方式",
     randomOnly: "仅随机回复",
-    includeGroupContextDescription: "何时将近期群聊消息加入 LLM 上下文",
+    includeGroupContextDescription:
+      "仅在群聊对话历史关闭时，控制是否临时注入内存缓冲区中的近期消息",
+    groupPersistence: "群消息持久化",
+    groupPersistenceDescription:
+      "启用群聊对话历史后，支持的群消息会始终保存，即使没有触发 AI 回复。",
     saveGroupContext: "保存群聊上下文",
     saveGroupContextDescription: "何时将群聊上下文持久化到数据库",
     compressionSettings: "压缩设置",
@@ -513,6 +520,8 @@ export const aiSettings = {
     conversationOverrides: "对话设置覆盖",
     enableConversationHistory: "启用对话历史",
     maxContextMessages: "最大上下文消息数",
+    groupHistoryMaxTokens: "群历史 Token 预算",
+    groupHistoryMaxTokensWarning: "该预算高于默认值，请确认当前模型具有足够大的上下文窗口。",
     followGlobal: "跟随全局设置",
     toolsOverrides: "工具设置覆盖",
     enableImageGeneration: "允许所有用户使用图片生成",

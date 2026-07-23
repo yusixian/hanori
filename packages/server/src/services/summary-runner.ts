@@ -4,7 +4,8 @@ import type { Database } from "@cos-tool-bot/database";
 import { chatSummaries, conversationMessages, tokenUsage } from "@cos-tool-bot/database";
 import type { AiConfigStored, SummaryMode, SummaryTrigger } from "@cos-tool-bot/shared";
 import { generateText } from "ai";
-import { and, asc, between, eq, inArray } from "drizzle-orm";
+import { and, between, desc, eq, inArray } from "drizzle-orm";
+import { countTokens } from "gpt-tokenizer";
 import type { Logger } from "pino";
 import { tryDecrypt } from "../utils/crypto.js";
 import {
@@ -21,6 +22,138 @@ import {
 } from "./summary-prompts.js";
 
 export type RunError = "too_few_messages" | "llm_failed" | "disabled" | "no_provider";
+
+export const SUMMARY_INPUT_TOKEN_BUDGET = 24_000;
+const SUMMARY_CHUNK_OUTPUT_TOKENS = 2_048;
+const SUMMARY_MERGE_OUTPUT_TOKENS = 4_096;
+
+type SummarySourceMessage = {
+  userName: string | null;
+  content: string;
+  meta: unknown;
+};
+
+function truncateSummaryInput(content: string, tokenBudget: number): string {
+  if (tokenBudget <= 0) return "";
+  if (countTokens(content) <= tokenBudget) return content;
+
+  let low = 0;
+  let high = content.length;
+  let best = "";
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = `${content.slice(0, midpoint)}…`;
+    if (countTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+  return best;
+}
+
+export function chunkSummaryMessages(
+  messages: SummarySourceMessage[],
+  chatId: number,
+  tokenBudget = SUMMARY_INPUT_TOKEN_BUDGET,
+): string[] {
+  const chunks: string[] = [];
+  const separator = "\n";
+  const separatorTokens = countTokens(separator);
+  let current: string[] = [];
+  let currentTokens = 0;
+  for (const message of messages) {
+    const formatted = truncateSummaryInput(formatMessages([message], chatId), tokenBudget);
+    const messageTokens = countTokens(formatted);
+    const candidateTokens =
+      currentTokens + (current.length > 0 ? separatorTokens : 0) + messageTokens;
+    if (current.length > 0 && candidateTokens > tokenBudget) {
+      chunks.push(current.join(separator));
+      current = [];
+      currentTokens = 0;
+    }
+    if (current.length > 0) currentTokens += separatorTokens;
+    current.push(formatted);
+    currentTokens += messageTokens;
+  }
+  if (current.length > 0) chunks.push(current.join(separator));
+  return chunks;
+}
+
+export function newestRowsToChronological<T>(rows: T[]): T[] {
+  return [...rows].reverse();
+}
+
+function chunkSummaryFragments(
+  fragments: string[],
+  tokenBudget = SUMMARY_INPUT_TOKEN_BUDGET,
+): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  for (const fragment of fragments) {
+    const candidate = [...current, fragment];
+    const content = candidate.map((item, index) => `[分块 ${index + 1}]\n${item}`).join("\n\n");
+    if (current.length > 0 && countTokens(content) > tokenBudget) {
+      chunks.push(current);
+      current = [fragment];
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.length > 0) chunks.push(current);
+  return chunks;
+}
+
+export async function summarizeBoundedChunks(
+  chunks: string[],
+  systemPrompt: string,
+  callModel: (systemPrompt: string, content: string, maxOutputTokens: number) => Promise<string>,
+): Promise<string> {
+  if (chunks.length === 1) {
+    return callModel(systemPrompt, chunks[0]!, SUMMARY_MERGE_OUTPUT_TOKENS);
+  }
+
+  let summaries: string[] = [];
+  for (const [index, chunk] of chunks.entries()) {
+    summaries.push(
+      await callModel(
+        [
+          systemPrompt,
+          "",
+          `这是完整时间窗口的第 ${index + 1}/${chunks.length} 个连续分块。请完整提取该分块的主题、决定、待办、未解决事项与必要链接，供后续归并；不要假装已经看过其他分块。`,
+        ].join("\n"),
+        chunk,
+        SUMMARY_CHUNK_OUTPUT_TOKENS,
+      ),
+    );
+  }
+
+  let mergeLevel = 0;
+  while (summaries.length > 1) {
+    mergeLevel++;
+    const groups = chunkSummaryFragments(summaries);
+    const next: string[] = [];
+    for (const group of groups) {
+      const content = group
+        .map((fragment, index) => `[分块摘要 ${index + 1}]\n${fragment}`)
+        .join("\n\n");
+      next.push(
+        await callModel(
+          [
+            systemPrompt,
+            "",
+            `请归并这些分块摘要（归并层级 ${mergeLevel}），去重但不要遗漏主题、决定、待办、未解决事项和链接。只根据给定摘要作答。`,
+          ].join("\n"),
+          content,
+          SUMMARY_MERGE_OUTPUT_TOKENS,
+        ),
+      );
+    }
+    summaries = next;
+  }
+  return summaries[0]!;
+}
 
 export type ProviderResolutionFailure =
   | "no_providers_configured"
@@ -181,12 +314,16 @@ export class SummaryRunner {
       cfg.summaryConfig?.systemPrompt ??
       DEFAULT_SUMMARY_SYSTEM_PROMPT;
 
-    const formatted = formatMessages(
-      msgs.map((m) => ({ userName: m.userName, content: m.content, meta: m.meta })),
+    const chunks = chunkSummaryMessages(
+      msgs.map((message) => ({
+        userName: message.userName,
+        content: message.content,
+        meta: message.meta,
+      })),
       opts.chatId,
     );
-
     const startedAt = Date.now();
+    const aggregateUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
     try {
       const modelFactory =
         provider.providerFormat === "gemini"
@@ -196,39 +333,34 @@ export class SummaryRunner {
               baseURL: provider.baseURL,
               apiKey: provider.apiKey,
             });
-      const result = await generateText({
-        model: modelFactory(modelId),
-        temperature: 0.4,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: formatted },
-        ],
-      });
-      const raw = result.text ?? "";
-      const durationMs = Date.now() - startedAt;
-      const usage = result.usage;
 
-      if (!raw.trim()) {
-        const sumRow = await this.writeHistory({
-          opts,
-          windowStart,
-          windowEnd,
-          messageCount: msgs.length,
-          modelId,
-          content: "",
-          errorMessage: "empty_response",
-          durationMs,
-          promptTokens: usage?.inputTokens,
-          completionTokens: usage?.outputTokens,
+      const callModel = async (
+        callSystemPrompt: string,
+        content: string,
+        maxOutputTokens: number,
+      ) => {
+        const result = await generateText({
+          model: modelFactory(modelId),
+          temperature: 0.4,
+          maxOutputTokens,
+          messages: [
+            { role: "system", content: callSystemPrompt },
+            { role: "user", content },
+          ],
         });
-        return {
-          ok: false,
-          error: "llm_failed",
-          errorDetail: "empty_response",
-          messageCount: msgs.length,
-          summaryId: sumRow.id,
-        };
-      }
+        aggregateUsage.inputTokens += result.usage?.inputTokens ?? 0;
+        aggregateUsage.outputTokens += result.usage?.outputTokens ?? 0;
+        aggregateUsage.totalTokens +=
+          result.usage?.totalTokens ??
+          (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+        const text = result.text?.trim() ?? "";
+        if (!text) throw new Error("empty_response");
+        return text;
+      };
+
+      const raw = await summarizeBoundedChunks(chunks, systemPrompt, callModel);
+
+      const durationMs = Date.now() - startedAt;
 
       const contentHtml = wrapSummaryHtml(raw);
       const sumRow = await this.writeHistory({
@@ -239,10 +371,10 @@ export class SummaryRunner {
         modelId,
         content: raw,
         durationMs,
-        promptTokens: usage?.inputTokens,
-        completionTokens: usage?.outputTokens,
+        promptTokens: aggregateUsage.inputTokens,
+        completionTokens: aggregateUsage.outputTokens,
       });
-      await this.writeTokenUsage(opts, modelId, usage, durationMs);
+      await this.writeTokenUsage(opts, modelId, aggregateUsage, durationMs);
 
       return {
         ok: true,
@@ -264,7 +396,12 @@ export class SummaryRunner {
         content: "",
         errorMessage: detail.slice(0, 500),
         durationMs,
+        promptTokens: aggregateUsage.inputTokens,
+        completionTokens: aggregateUsage.outputTokens,
       });
+      if (aggregateUsage.totalTokens > 0) {
+        await this.writeTokenUsage(opts, modelId, aggregateUsage, durationMs);
+      }
       return {
         ok: false,
         error: "llm_failed",
@@ -372,7 +509,7 @@ export class SummaryRunner {
     limit: number,
     roleFilter: readonly string[],
   ) {
-    return this.db
+    const rows = await this.db
       .select({
         id: conversationMessages.id,
         role: conversationMessages.role,
@@ -390,8 +527,9 @@ export class SummaryRunner {
           between(conversationMessages.createdAt, windowStart, windowEnd),
         ),
       )
-      .orderBy(asc(conversationMessages.id))
+      .orderBy(desc(conversationMessages.createdAt), desc(conversationMessages.id))
       .limit(limit);
+    return newestRowsToChronological(rows);
   }
 
   private async writeHistory(params: {
