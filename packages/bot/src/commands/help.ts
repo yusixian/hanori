@@ -11,6 +11,7 @@ const commands = [
   },
   { command: "status", description: "(admin) 查看 Bot 运行状态" },
   { command: "clear", description: "(admin) 清除当前对话历史" },
+  { command: "privacy", description: "查看或切换个人化模式" },
   { command: "restart", description: "(admin) 重启服务" },
   { command: "backup", description: "(admin) 创建数据库备份" },
   { command: "stop", description: "(admin) 紧急停用 AI 回复并中断正在进行的调用" },

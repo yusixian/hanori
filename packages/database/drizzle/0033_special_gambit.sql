@@ -1,0 +1,1 @@
+ALTER TABLE "user_privacy_settings" ADD CONSTRAINT "user_privacy_mode_check" CHECK ("user_privacy_settings"."mode" in ('normal', 'isolated', 'off'));

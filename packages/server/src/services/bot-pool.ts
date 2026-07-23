@@ -24,6 +24,7 @@ import type {
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_CONVERSATION_CONFIG,
@@ -78,6 +79,7 @@ import {
   BotNotRunningError,
   TelegramRichMessagesUnsupportedError,
 } from "./telegram-rich-message-errors.js";
+import { UserPrivacyService } from "./user-privacy-service.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
@@ -124,6 +126,7 @@ export class BotPool {
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
+  private userPrivacyService: UserPrivacyService;
   private chatModelStore: ChatModelStore;
   private chatProviderStore: ChatProviderStore;
   private backupService?: BackupService;
@@ -145,6 +148,7 @@ export class BotPool {
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
+    this.userPrivacyService = new UserPrivacyService(db);
     this.chatModelStore = new ChatModelStore(db);
     this.chatProviderStore = new ChatProviderStore(db);
   }
@@ -465,6 +469,42 @@ export class BotPool {
       );
     }
     const dbLogger = new DbLogger(this.db, this.logger, botId);
+    const privacyService = this.userPrivacyService;
+    const privacy: UserPrivacyCallbacks = {
+      getMode: (userId) => privacyService.getMode(botId, userId),
+      runExclusive: (userId, operation) => privacyService.runExclusive(botId, userId, operation),
+      setMode: (userId, mode) => privacyService.setMode(botId, userId, mode),
+      forget: async (userId) => {
+        const result = await privacyService.forget(botId, userId);
+        const dataDir = path.resolve(getDataDir(botId));
+        await Promise.all(
+          result.avatarPaths.map(async (avatarPath) => {
+            const target = path.resolve(dataDir, avatarPath);
+            if (!target.startsWith(`${dataDir}${path.sep}`)) {
+              dbLogger.warn("Skipped unsafe profile avatar path during privacy forget", {
+                userId,
+                avatarPath,
+              });
+              return;
+            }
+            await unlink(target).catch((error: NodeJS.ErrnoException) => {
+              if (error.code !== "ENOENT") {
+                dbLogger.warn("Failed to remove profile avatar during privacy forget", {
+                  userId,
+                  avatarPath,
+                  error: error.message,
+                });
+              }
+            });
+          }),
+        );
+        return {
+          conversationMessages: result.conversationMessages,
+          profiles: result.profiles,
+          personalMemories: result.personalMemories,
+        };
+      },
+    };
 
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
@@ -594,6 +634,20 @@ export class BotPool {
               logger: this.logger,
             }),
         });
+      const ensureChatCompression = (chatId: number) =>
+        compressConversation({
+          botId,
+          chatId,
+          store,
+          conversationConfig: conversationCfg,
+          apiKey: activeProvider.apiKey,
+          baseURL: activeProvider.baseURL,
+          model: activeProvider.defaultModel,
+          providerFormat: activeProvider.providerFormat,
+          logger: this.logger,
+          force: true,
+          keepRecent: 1,
+        });
       runInitialHistoryGovernance = async () => {
         if (conversationCfg.maxRawMessagesPerChat <= 0) return;
         const warningThreshold = Math.floor(conversationCfg.maxRawMessagesPerChat * 0.8);
@@ -627,7 +681,10 @@ export class BotPool {
       }
 
       conversation = {
-        getHistory: (chatId, limit) => store.getHistory(botId, chatId, limit),
+        getHistory: (chatId, limit, tokenBudget) =>
+          store.getHistory(botId, chatId, limit, tokenBudget),
+        getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit) =>
+          store.getRecentUserMessagesAcrossChats(botId, userId, excludeChatId, limit),
         addMessage: (p) => store.addMessage({ botId, ...p }),
         addMessages: async (msgs) => {
           const persisted = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
@@ -656,6 +713,23 @@ export class BotPool {
                 });
             }
           }
+        },
+        upsertUserMessage: async (message) => {
+          const persisted = await store.upsertUserMessage({ botId, ...message });
+          if (embeddingService && persisted?.content) {
+            embeddingService
+              .generateEmbedding(persisted.content)
+              .then((embedding) => {
+                if (embedding) return store.updateEmbedding(persisted.id, embedding);
+              })
+              .catch((err) => {
+                this.logger.warn(err, "Group message embedding generation failed");
+              });
+          }
+        },
+        ensureCompression: async (chatId) => {
+          this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
+          await ensureChatCompression(chatId);
         },
         triggerCompression: (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
@@ -1247,6 +1321,7 @@ export class BotPool {
       dbLogger,
       aiReply,
       conversation,
+      privacy,
       onRestart: () => this.restartBot(botId),
       onBackup,
       onTokenUsage,

@@ -22,6 +22,8 @@ import type {
   ReplyMode,
   TimeoutConfig,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
+  UserPrivacyMode,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
@@ -38,11 +40,10 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
-import type { Api, Middleware } from "grammy";
+import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
-import { GroupContextPersistenceTracker } from "../services/group-context-persistence-tracker.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
@@ -166,6 +167,7 @@ export interface AiReplyConfig {
   adminChatIds: number[];
   conversationConfig?: ConversationConfig;
   conversation?: ConversationCallbacks;
+  privacy?: UserPrivacyCallbacks;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
   stickerPacks?: string[];
@@ -536,6 +538,7 @@ function resolveGroupConfig(
   triggerConfig: AiTriggerConfig;
   conversationEnabled: boolean;
   maxContextMessages: number;
+  groupHistoryMaxTokens: number;
 } {
   const conversationCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const override = config.groupOverrides[String(chatId)];
@@ -547,6 +550,7 @@ function resolveGroupConfig(
       triggerConfig: config.triggerConfig,
       conversationEnabled: conversationCfg.enabled,
       maxContextMessages: conversationCfg.maxContextMessages,
+      groupHistoryMaxTokens: conversationCfg.groupHistoryMaxTokens,
     };
   }
   return {
@@ -556,6 +560,7 @@ function resolveGroupConfig(
     triggerConfig: { ...config.triggerConfig, ...override.triggerConfig },
     conversationEnabled: override.conversationEnabled ?? conversationCfg.enabled,
     maxContextMessages: override.maxContextMessages ?? conversationCfg.maxContextMessages,
+    groupHistoryMaxTokens: override.groupHistoryMaxTokens ?? conversationCfg.groupHistoryMaxTokens,
   };
 }
 
@@ -634,6 +639,17 @@ function describeFiles(
   return result;
 }
 
+function describeGroupMessageForHistory(msg: Message): string {
+  if (msg.text) return msg.text;
+  const caption = msg.caption?.trim();
+  let attachment = "";
+  if (msg.photo) attachment = "[图片]";
+  else if (msg.document) {
+    attachment = `[文件: ${msg.document.file_name ?? "unknown"}]`;
+  }
+  return [attachment, caption].filter(Boolean).join("\n");
+}
+
 function formatGroupContextMessages(messages: BufferedMessage[]): string {
   return messages.map((m) => `[${m.userName}]: ${m.text}`).join("\n");
 }
@@ -676,7 +692,7 @@ const MAX_RECENT_BOT_MESSAGES = 20;
 const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 
 export function createAiReplyHandler(config: AiReplyConfig): {
-  handler: Middleware<BotContext>;
+  handler: MiddlewareFn<BotContext>;
   state: BotRuntimeState;
   setModelForChat: (chatId: number, modelId: string) => void;
   getModelForChat: (chatId: number) => string;
@@ -709,6 +725,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  waitForUserProfileUpdates: (userId: number) => Promise<void>;
   destroy: () => void;
 } {
   const cooldownMap = new Map<number, number>();
@@ -1139,14 +1156,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     number,
     { buffer: RingBuffer<BufferedMessage>; lastActive: number }
   >();
-  const groupContextPersistence = new GroupContextPersistenceTracker();
 
   const bufferCleanupTimer = setInterval(() => {
     const now = Date.now();
     for (const [chatId, entry] of groupBuffers) {
       if (now - entry.lastActive > BUFFER_STALE_MS) {
         groupBuffers.delete(chatId);
-        groupContextPersistence.clearChat(chatId);
       }
     }
   }, BUFFER_CLEANUP_INTERVAL);
@@ -1183,7 +1198,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
 
-  const handler: Middleware<BotContext> = async (ctx, next) => {
+  const handleMessage: MiddlewareFn<BotContext> = async (ctx, next) => {
     const msg = ctx.message;
     if (!msg) return next();
 
@@ -1207,6 +1222,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     let triggerResult: TriggerResult = false;
     let groupConversationEnabled = conversationCfg.enabled;
     let groupMaxContext = conversationCfg.maxContextMessages;
+    let groupHistoryMaxTokens = conversationCfg.groupHistoryMaxTokens;
     let groupTriggerConfig = config.triggerConfig;
 
     if (isPrivate) {
@@ -1219,35 +1235,32 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       effectivePrompt = groupCfg.systemPrompt;
       groupConversationEnabled = groupCfg.conversationEnabled;
       groupMaxContext = groupCfg.maxContextMessages;
+      groupHistoryMaxTokens = groupCfg.groupHistoryMaxTokens;
       groupTriggerConfig = groupCfg.triggerConfig;
     }
 
-    if (ctx.from) profileObserver?.observe(ctx.api, ctx.from);
+    const privacyMode: UserPrivacyMode = (await config.privacy?.getMode(userId)) ?? "normal";
+    const personalizationEnabled = privacyMode !== "off";
+    if (personalizationEnabled && ctx.from) profileObserver?.observe(ctx.api, ctx.from);
 
     const supportsAiContent = !!(msg.text || msg.photo || msg.document);
-    if (!supportsAiContent || aiDisabled) return next();
+    if (!supportsAiContent) return next();
 
     // Capture API reference and track private chats for event handlers
     botApi = ctx.api;
     if (isPrivate) knownPrivateChats.add(chatId);
 
     // Push to ring buffer for group chats (before trigger check)
+    let bufferedGroupText = "";
     if (!isPrivate) {
       const buffer = getOrCreateBuffer(chatId);
-      const bufferText =
-        msg.text ??
-        msg.caption ??
-        (msg.photo
-          ? "[图片]"
-          : msg.document
-            ? `[文件: ${msg.document.file_name ?? "unknown"}]`
-            : "");
-      if (bufferText) {
+      bufferedGroupText = describeGroupMessageForHistory(msg);
+      if (bufferedGroupText) {
         buffer.push({
           messageId: msg.message_id,
           userId,
           userName,
-          text: bufferText,
+          text: bufferedGroupText,
           timestamp: Date.now(),
         });
       }
@@ -1256,11 +1269,42 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     triggerResult = isPrivate
       ? "reply"
       : checkTrigger(ctx, groupTriggerConfig, chatId, cooldownMap);
-    if (!triggerResult) return next();
+    if (privacyMode === "off" && triggerResult !== "reply" && triggerResult !== "mention") {
+      triggerResult = false;
+    }
 
-    // Determine if conversation history is enabled
-    const useConversation =
-      config.conversation && (isPrivate ? conversationCfg.enabled : groupConversationEnabled);
+    const shouldPersistPublicGroupMessage =
+      !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
+    if (!triggerResult || aiDisabled) {
+      if (shouldPersistPublicGroupMessage) {
+        try {
+          await config.conversation!.upsertUserMessage({
+            chatId,
+            content: bufferedGroupText,
+            userId,
+            userName,
+            sourceKey: `telegram:${msg.message_id}:user`,
+            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+          });
+          config.conversation!.triggerCompression(chatId);
+        } catch (err) {
+          config.onLog?.({
+            level: "error",
+            message: `Failed to capture group message: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId, userId, messageId: msg.message_id },
+          });
+        }
+      }
+      return next();
+    }
+
+    const readConversation =
+      personalizationEnabled &&
+      config.conversation &&
+      (isPrivate ? conversationCfg.enabled : groupConversationEnabled);
+    const persistConversation =
+      config.conversation &&
+      (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
 
     // Hoisted so the outer finally can unregister even on early errors.
     let manualAbort: AbortController | null = null;
@@ -1337,6 +1381,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         onLog: config.onLog,
         onceGuard,
       });
+      if (!personalizationEnabled) delete behaviorTools.set_mood;
 
       // Resolve model + provider for this chat
       const currentModel = getModelForChat(chatId);
@@ -1393,7 +1438,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       // Collect group context from ring buffer
       let ringBufferContext = "";
-      if (!isPrivate) {
+      if (!isPrivate && !readConversation && personalizationEnabled) {
         const shouldIncludeContext =
           conversationCfg.groupContextMode === "all" ||
           (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
@@ -1503,6 +1548,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
       const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+      const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
+      const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
 
       // Build context after OCR/file enrichment so automatic memory retrieval sees
       // the same textual request that is persisted and sent to the model.
@@ -1516,19 +1563,21 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         userUsername: ctx.from?.username,
         chatTitle: ctx.chat?.title,
         conversationConfig: config.conversationConfig,
-        conversation: useConversation ? config.conversation : undefined,
+        conversation: readConversation ? config.conversation : undefined,
         historyFormat: conversationCfg.historyFormat,
         maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
+        groupHistoryMaxTokens: isPrivate ? undefined : groupHistoryMaxTokens,
         ringBufferContext: ringBufferContext || undefined,
         memoryConfig: config.memoryConfig,
-        memory: config.memory,
+        memory: personalizationEnabled ? config.memory : undefined,
         userId,
-        memoryTools,
+        includeCrossChatUserHistory: privacyMode === "normal",
+        memoryTools: requestMemoryTools,
         botMemoryConfig: config.botMemoryConfig,
-        botMemory: config.botMemory,
-        botMemoryTools,
+        botMemory: personalizationEnabled ? config.botMemory : undefined,
+        botMemoryTools: requestBotMemoryTools,
         retrievalQuery: rawContent || messageText,
-        currentMood: moodState.get(chatId),
+        currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
         stickerPacks: config.stickerPacks,
         webToolsConfig: config.webToolsConfig,
         webTools,
@@ -1538,6 +1587,25 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         dataFiles: config.dataFiles,
         messageConfig: getEffectiveMessageConfig(),
       });
+
+      if (!isPrivate && persistConversation) {
+        try {
+          await config.conversation!.upsertUserMessage({
+            chatId,
+            content: rawContent || bufferedGroupText || messageText,
+            userId,
+            userName,
+            sourceKey: `telegram:${msg.message_id}:user`,
+            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+          });
+        } catch (err) {
+          config.onLog?.({
+            level: "error",
+            message: `Failed to capture triggered group message: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId, userId, messageId: msg.message_id },
+          });
+        }
+      }
 
       // --- Assemble final user message (multimodal or text-only) ---
       const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
@@ -1554,11 +1622,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         currentRequest = { role: "user", content: textContent };
       }
       const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, currentRequest);
+      const historyBudget = promptTrace.sections
+        .map((section) => section.details?.["historyBudget"])
+        .find((details) => details !== undefined);
 
       // Combine all tools
       const allTools: Record<string, Tool> = {
-        ...memoryTools,
-        ...botMemoryTools,
+        ...requestMemoryTools,
+        ...requestBotMemoryTools,
         ...actionTools,
         ...telegramTools,
         ...behaviorTools,
@@ -1649,6 +1720,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           staticPrefixHash: promptTrace.staticPrefixHash,
           promptSections: promptTrace.sections,
           promptEstimatedTokens: promptTrace.totalEstimatedTokens,
+          historyBudget,
+          history_degraded:
+            typeof historyBudget === "object" &&
+            historyBudget !== null &&
+            "degraded" in historyBudget
+              ? historyBudget.degraded
+              : false,
           toolsEnabled: Object.keys(allTools),
           maxSteps,
           toolChoice,
@@ -1960,7 +2038,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
 
       // Save messages to conversation history (before checking text emptiness)
-      if (useConversation) {
+      if (persistConversation) {
         const toSave: Array<{
           chatId: number;
           role: ConversationRole;
@@ -1971,7 +2049,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           meta?: Record<string, unknown>;
         }> = [];
         const sourcePrefix = `telegram:${msg.message_id}`;
-        let contextSavedThrough: number | undefined;
 
         // Save system prompt used for this reply (deduplicated per chat)
         const sysMsg = messages.find((m) => m.role === "system")?.content;
@@ -1990,44 +2067,20 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           }
         }
 
-        // Save group context if configured
-        if (!isPrivate) {
-          const shouldSaveContext =
-            conversationCfg.saveGroupContext === "all" ||
-            (conversationCfg.saveGroupContext === "random_only" && triggerResult === "random");
-
-          if (shouldSaveContext) {
-            const buffer = groupBuffers.get(chatId);
-            if (buffer) {
-              const allMessages = buffer.buffer.getAll();
-              const contextMessages = groupContextPersistence.selectUnsavedContext(
-                chatId,
-                msg.message_id,
-                allMessages,
-              );
-              if (contextMessages.length > 0) {
-                contextSavedThrough = contextMessages.at(-1)!.messageId;
-                toSave.push({
-                  chatId,
-                  role: "context",
-                  content: formatGroupContextMessages(contextMessages),
-                  sourceKey: `${sourcePrefix}:context`,
-                });
-              }
-            }
-          }
+        // Group user messages are captured/upserted before the model call so ambient
+        // and failed-trigger messages are durable. Private messages remain part of
+        // the reply transaction and are omitted entirely in personalization-off mode.
+        if (isPrivate) {
+          toSave.push({
+            chatId,
+            role: "user",
+            content: rawContent || messageText,
+            userId,
+            userName,
+            sourceKey: `${sourcePrefix}:user`,
+            meta: { tgMessageId: msg.message_id },
+          });
         }
-
-        // Save user message (text only, no image data)
-        toSave.push({
-          chatId,
-          role: "user",
-          content: rawContent || messageText,
-          userId,
-          userName,
-          sourceKey: `${sourcePrefix}:user`,
-          meta: { tgMessageId: msg.message_id },
-        });
 
         // Save all tool calls and results from steps
         for (const step of steps) {
@@ -2103,31 +2156,16 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           },
         });
 
-        config
-          .conversation!.addMessages(toSave)
-          .then(() => {
-            if (!isPrivate && conversationCfg.saveGroupContext !== "none") {
-              const bufferedMessageIds =
-                groupBuffers
-                  .get(chatId)
-                  ?.buffer.getAll()
-                  .map((message) => message.messageId) ?? [];
-              groupContextPersistence.commitReply(
-                chatId,
-                msg.message_id,
-                contextSavedThrough,
-                bufferedMessageIds,
-              );
-            }
-            config.conversation!.triggerCompression(chatId);
-          })
-          .catch((err) => {
-            config.onLog?.({
-              level: "error",
-              message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
-              meta: { chatId },
-            });
+        try {
+          await config.conversation!.addMessages(toSave);
+          config.conversation!.triggerCompression(chatId);
+        } catch (err) {
+          config.onLog?.({
+            level: "error",
+            message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId },
           });
+        }
       }
 
       config.onLog?.({
@@ -2139,7 +2177,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           isPrivate,
           textLength: text?.length ?? 0,
           trigger: triggerResult,
-          conversationEnabled: !!useConversation,
+          conversationEnabled: !!persistConversation,
         },
       });
     } catch (err) {
@@ -2159,6 +2197,20 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       releaseChatLock?.();
       if (manualAbort) activeAbortControllers.delete(manualAbort);
     }
+  };
+
+  const handler: MiddlewareFn<BotContext> = async (ctx, next) => {
+    const userId = ctx.from?.id;
+    const entities = ctx.message?.entities ?? [];
+    const isCommand = entities.some(
+      (entity) => entity.type === "bot_command" && entity.offset === 0,
+    );
+    if (!config.privacy || userId === undefined || isCommand) {
+      return handleMessage(ctx, next);
+    }
+    return config.privacy.runExclusive(userId, async () => {
+      await handleMessage(ctx, next);
+    });
   };
 
   function buildDirectGenerate() {
@@ -2249,6 +2301,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    waitForUserProfileUpdates: (userId) =>
+      profileObserver?.waitForIdle(userId) ?? Promise.resolve(),
     destroy,
   };
 }

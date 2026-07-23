@@ -143,6 +143,22 @@ export function GroupOverrideRow({
                 placeholder={t("groupOverride.followGlobal")}
               />
             </div>
+            <div className="space-y-1.5">
+              <label className="text-sm">{t("groupOverride.groupHistoryMaxTokens")}</label>
+              <Input
+                type="number"
+                min={2_000}
+                max={64_000}
+                step={1_000}
+                value={override.groupHistoryMaxTokens ?? ""}
+                onChange={(e) =>
+                  onUpdate({
+                    groupHistoryMaxTokens: e.target.value ? Number(e.target.value) : undefined,
+                  })
+                }
+                placeholder={t("groupOverride.followGlobal")}
+              />
+            </div>
           </div>
 
           <div className="space-y-2">

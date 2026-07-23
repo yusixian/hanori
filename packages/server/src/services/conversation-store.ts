@@ -5,6 +5,8 @@ import {
   conversationSummaries,
 } from "@cos-tool-bot/database";
 import type { ConversationRole } from "@cos-tool-bot/shared";
+import type { ConversationHistoryBudgetTrace } from "@cos-tool-bot/shared";
+import { countTokens } from "gpt-tokenizer";
 import {
   and,
   asc,
@@ -19,6 +21,7 @@ import {
   isNotNull,
   lt,
   lte,
+  ne,
   sql,
 } from "drizzle-orm";
 import { escapeLike, rrfMerge } from "../utils/search.js";
@@ -33,6 +36,8 @@ const TRUNCATION_MARKER = "\n…[truncated for compaction]…\n";
 const HISTORY_TOOL_TRACE_MAX_CHARS = 2_000;
 const HISTORY_TOOL_TRUNCATION_MARKER = "…[truncated]";
 const HISTORY_PRUNE_BATCH_SIZE = 10_000;
+const HISTORY_MESSAGE_TOKEN_OVERHEAD = 6;
+const HISTORY_PROMPT_SCAN_BATCH_SIZE = 200;
 const DISPLAY_ONLY_HISTORY_TOOLS = new Set([
   "multi_message",
   "react_to_message",
@@ -117,6 +122,98 @@ function normalizeConversationMessage(
   };
 }
 
+function estimateHistoryMessageTokens(message: {
+  role: string;
+  content: string;
+  userName: string | null;
+}): number {
+  return (
+    countTokens(
+      `${message.role === "assistant" ? "AI" : message.userName || "User"}: ${message.content}`,
+    ) + HISTORY_MESSAGE_TOKEN_OVERHEAD
+  );
+}
+
+function truncateToTokenBudget(content: string, budget: number): string {
+  if (budget <= 0) return "";
+  if (countTokens(content) <= budget) return content;
+
+  let low = 0;
+  let high = content.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (countTokens(content.slice(0, middle)) <= budget) low = middle;
+    else high = middle - 1;
+  }
+  return content.slice(0, low);
+}
+
+export function selectHistoryWithinTokenBudget(
+  rows: Array<{
+    id: number;
+    role: string;
+    content: string;
+    userName: string | null;
+    createdAt: Date;
+  }>,
+  active: { cursorId: number; content: string } | undefined,
+  configuredTokens: number,
+) {
+  const completeTokens = rows.reduce(
+    (total, message) => total + estimateHistoryMessageTokens(message),
+    0,
+  );
+  if (completeTokens <= configuredTokens) {
+    const trace: ConversationHistoryBudgetTrace = {
+      configuredTokens,
+      usedTokens: completeTokens,
+      completeRawHistory: true,
+      usedSummary: false,
+      rawMessageCount: rows.length,
+      earliestMessageId: rows[0]?.id ?? null,
+      latestMessageId: rows.at(-1)?.id ?? null,
+      degraded: false,
+    };
+    return { summary: null, messages: rows, trace };
+  }
+
+  const summaryLimit = Math.floor(configuredTokens / 3);
+  const summary = active?.content ? truncateToTokenBudget(active.content, summaryLimit) : null;
+  const summaryTokens = summary ? countTokens(summary) : 0;
+  const tailBudget = Math.max(0, configuredTokens - summaryTokens);
+  const tailCandidates = active ? rows.filter((message) => message.id > active.cursorId) : rows;
+  const reversed: typeof rows = [];
+  let tailTokens = 0;
+  for (let index = tailCandidates.length - 1; index >= 0; index--) {
+    const message = tailCandidates[index]!;
+    const messageTokens = estimateHistoryMessageTokens(message);
+    if (reversed.length > 0 && tailTokens + messageTokens > tailBudget) break;
+    if (messageTokens > tailBudget) {
+      const contentBudget = Math.max(1, tailBudget - HISTORY_MESSAGE_TOKEN_OVERHEAD);
+      reversed.push({
+        ...message,
+        content: truncateToTokenBudget(message.content, contentBudget),
+      });
+      tailTokens = tailBudget;
+      break;
+    }
+    reversed.push(message);
+    tailTokens += messageTokens;
+  }
+  const messages = reversed.reverse();
+  const trace: ConversationHistoryBudgetTrace = {
+    configuredTokens,
+    usedTokens: summaryTokens + tailTokens,
+    completeRawHistory: false,
+    usedSummary: !!summary,
+    rawMessageCount: messages.length,
+    earliestMessageId: messages[0]?.id ?? null,
+    latestMessageId: messages.at(-1)?.id ?? null,
+    degraded: !summary,
+  };
+  return { summary, messages, trace };
+}
+
 export class ConversationStore {
   constructor(private db: Database) {}
 
@@ -152,15 +249,107 @@ export class ConversationStore {
     return rows;
   }
 
-  async getHistory(botId: string, chatId: number, limit: number) {
+  async upsertUserMessage(params: Omit<ConversationMessageInput, "role">) {
+    const normalized = normalizeConversationMessage({ ...params, role: "user" });
+    if (!normalized) return null;
+    const [row] = await this.db
+      .insert(conversationMessages)
+      .values({
+        botId: normalized.botId,
+        chatId: normalized.chatId,
+        role: "user",
+        content: normalized.content,
+        userId: normalized.userId,
+        userName: normalized.userName,
+        sourceKey: normalized.sourceKey,
+        meta: normalized.meta,
+      })
+      .onConflictDoUpdate({
+        target: [
+          conversationMessages.botId,
+          conversationMessages.chatId,
+          conversationMessages.sourceKey,
+        ],
+        set: {
+          content: normalized.content,
+          userId: normalized.userId,
+          userName: normalized.userName,
+          meta: normalized.meta,
+        },
+      })
+      .returning({
+        id: conversationMessages.id,
+        role: conversationMessages.role,
+        content: conversationMessages.content,
+      });
+    return row ?? null;
+  }
+
+  async getHistory(botId: string, chatId: number, limit: number, tokenBudget?: number) {
     const active = await this.getActiveCompaction(botId, chatId);
     const cursorId = active?.cursorId ?? 0;
 
+    if (tokenBudget !== undefined) {
+      const newestFirst: Array<{
+        id: number;
+        role: string;
+        content: string;
+        userName: string | null;
+        createdAt: Date;
+      }> = [];
+      let beforeId: number | undefined;
+      let scannedTokens = 0;
+      while (scannedTokens <= tokenBudget) {
+        const conditions = [
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          inArray(conversationMessages.role, ["user", "assistant", "context"]),
+        ];
+        if (beforeId !== undefined) conditions.push(lt(conversationMessages.id, beforeId));
+        const batch = await this.db
+          .select({
+            id: conversationMessages.id,
+            role: conversationMessages.role,
+            content: conversationMessages.content,
+            userName: conversationMessages.userName,
+            createdAt: conversationMessages.createdAt,
+          })
+          .from(conversationMessages)
+          .where(and(...conditions))
+          .orderBy(desc(conversationMessages.id))
+          .limit(HISTORY_PROMPT_SCAN_BATCH_SIZE);
+        if (batch.length === 0) break;
+        newestFirst.push(...batch);
+        scannedTokens += batch.reduce(
+          (total, message) => total + estimateHistoryMessageTokens(message),
+          0,
+        );
+        if (batch.length < HISTORY_PROMPT_SCAN_BATCH_SIZE) break;
+        beforeId = batch.at(-1)!.id;
+      }
+      const rows = newestFirst.reverse();
+      const selected = selectHistoryWithinTokenBudget(
+        rows,
+        active ? { cursorId: active.cursorId, content: active.content } : undefined,
+        tokenBudget,
+      );
+      return {
+        summary: selected.summary,
+        messages: selected.messages.map((message) => ({
+          ...message,
+          createdAt: message.createdAt.toISOString(),
+        })),
+        budgetTrace: selected.trace,
+      };
+    }
+
     const messages = await this.db
       .select({
+        id: conversationMessages.id,
         role: conversationMessages.role,
         content: conversationMessages.content,
         userName: conversationMessages.userName,
+        createdAt: conversationMessages.createdAt,
       })
       .from(conversationMessages)
       .where(
@@ -176,8 +365,41 @@ export class ConversationStore {
 
     return {
       summary: active?.content ?? null,
-      messages: messages.reverse(),
+      messages: messages.reverse().map((message) => ({
+        ...message,
+        createdAt: message.createdAt.toISOString(),
+      })),
     };
+  }
+
+  async getRecentUserMessagesAcrossChats(
+    botId: string,
+    userId: number,
+    excludeChatId: number,
+    limit: number,
+  ) {
+    const rows = await this.db
+      .select({
+        id: conversationMessages.id,
+        content: conversationMessages.content,
+        createdAt: conversationMessages.createdAt,
+      })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.userId, userId),
+          eq(conversationMessages.role, "user"),
+          ne(conversationMessages.chatId, excludeChatId),
+        ),
+      )
+      .orderBy(desc(conversationMessages.createdAt), desc(conversationMessages.id))
+      .limit(limit);
+    return rows.reverse().map((row) => ({
+      id: row.id,
+      content: row.content,
+      createdAt: row.createdAt.toISOString(),
+    }));
   }
 
   private async getActiveCompaction(botId: string, chatId: number) {

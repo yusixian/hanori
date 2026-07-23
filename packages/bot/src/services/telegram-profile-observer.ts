@@ -17,6 +17,8 @@ interface ProfilePhotoApi {
 
 interface PendingTouchState {
   latest: PendingObservation | null;
+  done: Promise<void>;
+  resolveDone: () => void;
 }
 
 interface PendingObservation {
@@ -76,6 +78,7 @@ function largestPhoto(sizes: PhotoSize[] | undefined): PhotoSize | undefined {
 export class TelegramProfileObserver {
   private readonly nextRefreshAt = new Map<number, RefreshThrottle>();
   private readonly pendingTouches = new Map<number, PendingTouchState>();
+  private readonly pendingRefreshes = new Map<number, Set<Promise<void>>>();
   private readonly refreshMs: number;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
@@ -101,7 +104,11 @@ export class TelegramProfileObserver {
       return;
     }
 
-    const state: PendingTouchState = { latest: null };
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    const state: PendingTouchState = { latest: null, done, resolveDone };
     this.pendingTouches.set(observation.telegramId, state);
     void (async () => {
       let pending: PendingObservation | null = { api, observation };
@@ -123,6 +130,7 @@ export class TelegramProfileObserver {
       if (this.pendingTouches.get(observation.telegramId) === state) {
         this.pendingTouches.delete(observation.telegramId);
       }
+      state.resolveDone();
     })();
   }
 
@@ -141,7 +149,7 @@ export class TelegramProfileObserver {
       nextAt: now + this.refreshMs,
     });
 
-    void (async () => {
+    const task = (async () => {
       const refreshVersion = await this.options.memory.beginProfileAvatarRefresh({
         telegramId: observation.telegramId,
         profileId,
@@ -155,10 +163,29 @@ export class TelegramProfileObserver {
       });
       this.reportError(error);
     });
+    let pending = this.pendingRefreshes.get(observation.telegramId);
+    if (!pending) {
+      pending = new Set();
+      this.pendingRefreshes.set(observation.telegramId, pending);
+    }
+    pending.add(task);
+    void task.then(() => {
+      pending!.delete(task);
+      if (pending!.size === 0) this.pendingRefreshes.delete(observation.telegramId);
+    });
   }
 
   observe(api: ProfilePhotoApi, user: User): void {
     this.enqueueTouch(api, observationFromUser(user));
+  }
+
+  async waitForIdle(telegramId: number): Promise<void> {
+    while (true) {
+      const touch = this.pendingTouches.get(telegramId)?.done;
+      const refreshes = [...(this.pendingRefreshes.get(telegramId) ?? [])];
+      if (!touch && refreshes.length === 0) return;
+      await Promise.all([...(touch ? [touch] : []), ...refreshes]);
+    }
   }
 
   private async refreshAvatar(

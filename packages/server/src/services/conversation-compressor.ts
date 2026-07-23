@@ -88,10 +88,15 @@ interface CompressOptions {
   model: string;
   providerFormat?: "openai" | "gemini";
   logger: Logger;
+  force?: boolean;
+  keepRecent?: number;
 }
 
 export function compressConversation(options: CompressOptions): Promise<void> {
-  if (!(options.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG).autoSummarize) {
+  if (
+    !(options.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG).autoSummarize &&
+    !options.force
+  ) {
     return Promise.resolve();
   }
 
@@ -141,7 +146,7 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
   const cfg = options.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
 
   const messageCount = await store.getUncompactedMessageCount(botId, chatId);
-  if (messageCount <= cfg.summarizeThreshold) return "complete";
+  if (!options.force && messageCount <= cfg.summarizeThreshold) return "complete";
 
   try {
     const compressed = await compressWithLLM(
@@ -153,6 +158,7 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
       baseURL,
       model,
       providerFormat,
+      options.keepRecent ?? (options.force ? 1 : cfg.maxContextMessages),
     );
     if (!compressed) {
       logger.warn(
@@ -179,8 +185,9 @@ async function compressWithLLM(
   baseURL: string,
   model: string,
   providerFormat?: "openai" | "gemini",
+  keepRecent = cfg.maxContextMessages,
 ) {
-  const candidate = await store.getCompactionCandidate(botId, chatId, cfg.maxContextMessages);
+  const candidate = await store.getCompactionCandidate(botId, chatId, keepRecent);
   if (!candidate) return true;
 
   let contextText = "";

@@ -81,6 +81,26 @@ describe("compressConversation", () => {
     expect(generateText).not.toHaveBeenCalled();
   });
 
+  it("can force a budget-driven compaction below the message-count threshold", async () => {
+    const store = createStore({
+      getUncompactedMessageCount: vi.fn().mockResolvedValue(2),
+    } as Partial<ConversationStore>);
+
+    await compressConversation({
+      ...createOptions(store),
+      conversationConfig: {
+        ...DEFAULT_CONVERSATION_CONFIG,
+        autoSummarize: false,
+        summarizeThreshold: 30,
+      },
+      force: true,
+      keepRecent: 1,
+    });
+
+    expect(store.getCompactionCandidate).toHaveBeenCalledWith(botId, chatId, 1);
+    expect(generateText).toHaveBeenCalledOnce();
+  });
+
   it("commits a cursor snapshot with message ids and roles in the prompt", async () => {
     const store = createStore();
 

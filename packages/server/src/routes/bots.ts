@@ -288,6 +288,7 @@ const aiConfigSchema = z
           .optional(),
         conversationEnabled: z.boolean().optional(),
         maxContextMessages: z.number().min(1).max(100).optional(),
+        groupHistoryMaxTokens: z.number().int().min(2_000).max(64_000).optional(),
         imageGenerationEnabled: z.boolean().optional(),
       }),
     ),
@@ -295,6 +296,12 @@ const aiConfigSchema = z
       .object({
         enabled: z.boolean(),
         maxContextMessages: z.number().min(1).max(100),
+        groupHistoryMaxTokens: z
+          .number()
+          .int()
+          .min(2_000)
+          .max(64_000)
+          .default(DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens),
         historyFormat: z.enum(["prompt", "messages"]).optional(),
         groupBufferSize: z.number().min(10).max(200),
         groupContextMode: z.enum(["all", "random_only", "none"]),

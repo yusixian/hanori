@@ -9,10 +9,46 @@ import {
   COMPACTION_MAX_BATCH_JSON_CHARS,
   COMPACTION_MAX_BATCH_MESSAGES,
   ConversationStore,
+  selectHistoryWithinTokenBudget,
 } from "./conversation-store.js";
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("selectHistoryWithinTokenBudget", () => {
+  const rows = Array.from({ length: 21 }, (_, index) => ({
+    id: index + 1,
+    role: "user",
+    content: `short message ${index + 1}`,
+    userName: "User",
+    createdAt: new Date(1_700_000_000_000 + index),
+  }));
+
+  it("keeps every raw message when more than 20 messages still fit the token budget", () => {
+    const selected = selectHistoryWithinTokenBudget(rows, undefined, 12_000);
+    expect(selected.summary).toBeNull();
+    expect(selected.messages).toHaveLength(21);
+    expect(selected.trace.completeRawHistory).toBe(true);
+    expect(selected.trace.earliestMessageId).toBe(1);
+    expect(selected.trace.latestMessageId).toBe(21);
+  });
+
+  it("uses a compacted summary plus the newest raw tail when history exceeds the budget", () => {
+    const largeRows = rows.map((row) => ({ ...row, content: row.content.repeat(100) }));
+    const selected = selectHistoryWithinTokenBudget(
+      largeRows,
+      { cursorId: 10, content: "Earlier history summary ".repeat(100) },
+      300,
+    );
+
+    expect(selected.trace.completeRawHistory).toBe(false);
+    expect(selected.trace.usedSummary).toBe(true);
+    expect(selected.trace.degraded).toBe(false);
+    expect(selected.messages.at(-1)?.id).toBe(21);
+    expect(selected.messages.every((message) => message.id > 10)).toBe(true);
+    expect(selected.trace.usedTokens).toBeLessThanOrEqual(300);
+  });
 });
 
 interface SummaryRow {
@@ -684,5 +720,32 @@ describe("ConversationStore.addMessages", () => {
 
     expect(state.inserted).toHaveLength(1);
     expect(state.inserted[0]?.["sourceKey"]).toBe("telegram:42:user");
+  });
+});
+
+describe("ConversationStore.getRecentUserMessagesAcrossChats", () => {
+  it("limits at the database boundary and restores selected rows to chronological order", async () => {
+    const limit = vi.fn(async () => [
+      { id: 12, content: "newest", createdAt: new Date("2026-07-22T00:00:00.000Z") },
+      { id: 11, content: "older", createdAt: new Date("2026-07-21T00:00:00.000Z") },
+    ]);
+    const query = {
+      from: () => query,
+      where: () => query,
+      orderBy: () => query,
+      limit,
+    };
+    const db = {
+      select: () => query,
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    await expect(
+      store.getRecentUserMessagesAcrossChats(baseParams.botId, 42, baseParams.chatId, 5),
+    ).resolves.toEqual([
+      { id: 11, content: "older", createdAt: "2026-07-21T00:00:00.000Z" },
+      { id: 12, content: "newest", createdAt: "2026-07-22T00:00:00.000Z" },
+    ]);
+    expect(limit).toHaveBeenCalledWith(5);
   });
 });

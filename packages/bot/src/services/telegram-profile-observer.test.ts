@@ -217,6 +217,36 @@ describe("TelegramProfileObserver", () => {
     ]);
   });
 
+  it("waits for an in-flight avatar refresh before reporting the user idle", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-idle-"));
+    tempDirs.push(dataDir);
+    const gate = deferred<void>();
+    const { memory } = createMemory();
+    const api = createControlledApi("none", "idle", gate.promise);
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      refreshMs: 0,
+    });
+
+    observer.observe(api as never, user);
+    await vi.waitFor(() => expect(memory.beginProfileAvatarRefresh).toHaveBeenCalledOnce());
+
+    let idle = false;
+    const waiting = observer.waitForIdle(user.id).then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+
+    gate.resolve();
+    await waiting;
+    expect(memory.updateProfileAvatar).toHaveBeenCalledWith(
+      expect.objectContaining({ telegramId: user.id, avatarPath: null }),
+    );
+  });
+
   it("coalesces blocked observations to the latest identity", async () => {
     let releaseFirst!: () => void;
     const firstTouch = new Promise<void>((resolve) => {
