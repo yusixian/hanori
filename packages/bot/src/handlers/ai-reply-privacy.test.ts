@@ -87,6 +87,7 @@ describe("AI reply group capture and privacy", () => {
     expect(history.upsertUserMessage).toHaveBeenCalledWith({
       chatId: -100,
       content: "ambient message",
+      userAuthoredContent: "ambient message",
       userId: 42,
       userName: "Tester",
       sourceKey: "telegram:7:user",
@@ -94,6 +95,28 @@ describe("AI reply group capture and privacy", () => {
     });
     expect(history.triggerCompression).toHaveBeenCalledWith(-100);
     expect(next).toHaveBeenCalled();
+    runtime.destroy();
+  });
+
+  it("captures a triggered group message before context assembly can fail", async () => {
+    const history = conversation();
+    vi.mocked(history.getHistory).mockRejectedValue(new Error("history unavailable"));
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = Object.assign(context("sample please answer"), {
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn(),
+    });
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(history.upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: -100,
+        content: "sample please answer",
+        userAuthoredContent: "sample please answer",
+        sourceKey: "telegram:7:user",
+      }),
+    );
     runtime.destroy();
   });
 
@@ -112,6 +135,42 @@ describe("AI reply group capture and privacy", () => {
 
     expect(history.upsertUserMessage).toHaveBeenCalledWith(
       expect.objectContaining({ content: "[图片]\ndiagram notes" }),
+    );
+    runtime.destroy();
+  });
+
+  it("keeps replied users' text out of the cross-chat user projection", async () => {
+    async function* textStream() {
+      yield "answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = Object.assign(context("sample my answer"), {
+      reply_to_message: {
+        message_id: 6,
+        text: "another user's secret",
+        from: { id: 43, is_bot: false, first_name: "Other" },
+      },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    });
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(history.upsertUserMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("another user's secret"),
+        userAuthoredContent: "sample my answer",
+      }),
     );
     runtime.destroy();
   });
@@ -199,6 +258,50 @@ describe("AI reply group capture and privacy", () => {
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("get_profile");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("save_memory");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("set_mood");
+    expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("set_timer");
+    runtime.destroy();
+  });
+
+  it("waits for private history compression before releasing the user request", async () => {
+    async function* textStream() {
+      yield "answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    let releaseCompression!: () => void;
+    const history = conversation();
+    vi.mocked(history.triggerCompression).mockImplementation(
+      () => new Promise<void>((resolve) => (releaseCompression = resolve)),
+    );
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = {
+      update: { update_id: 2 },
+      message: { message_id: 9, text: "remember this", entities: [] },
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "Tester" },
+      me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+      api: { sendChatAction: vi.fn() },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(21),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    } as unknown as BotContext;
+    let settled = false;
+
+    const handling = Promise.resolve(runtime.handler(ctx, vi.fn())).then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(history.triggerCompression).toHaveBeenCalledWith(42));
+
+    expect(settled).toBe(false);
+    releaseCompression();
+    await handling;
+    expect(settled).toBe(true);
     runtime.destroy();
   });
 });

@@ -207,6 +207,7 @@ export interface AiReplyConfig {
     chatId: number;
     seconds: number;
     reason: string;
+    userId: number;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;
@@ -722,7 +723,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     chatId: number,
     userId?: number,
   ) => Promise<DirectGenerateResult>;
-  fireTimerEvent: (chatId: number, timerId: string, reason: string) => void;
+  fireTimerEvent: (chatId: number, timerId: string, reason: string, userId?: number) => void;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
   waitForUserProfileUpdates: (userId: number) => Promise<void>;
@@ -1022,12 +1023,18 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   let botApi: Api | undefined = config.initialApi;
 
   // Timer fired callback - triggers continueChat
-  const onTimerFired = (timerChatId: number, timerId: string, reason: string) => {
+  const onTimerFired = (
+    timerChatId: number,
+    timerId: string,
+    reason: string,
+    timerUserId?: number,
+  ) => {
     if (!botApi) return;
     const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
     continueChat(botApi, buildContinueChatConfig(timerChatId), {
       chatId: timerChatId,
       eventDescription,
+      userId: timerUserId,
       timerDepth: 1,
     }).catch((err) => {
       config.onLog?.({
@@ -1091,6 +1098,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       behavioralPrompt: config.behavioralPrompt,
       conversationConfig: config.conversationConfig,
       conversation: config.conversation,
+      privacy: config.privacy,
       memoryConfig: config.memoryConfig,
       memory: config.memory,
       botMemoryConfig: config.botMemoryConfig,
@@ -1275,25 +1283,28 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
+    if (shouldPersistPublicGroupMessage) {
+      try {
+        await config.conversation!.upsertUserMessage({
+          chatId,
+          content: bufferedGroupText,
+          userAuthoredContent: bufferedGroupText,
+          userId,
+          userName,
+          sourceKey: `telegram:${msg.message_id}:user`,
+          meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+        });
+      } catch (err) {
+        config.onLog?.({
+          level: "error",
+          message: `Failed to capture group message: ${err instanceof Error ? err.message : String(err)}`,
+          meta: { chatId, userId, messageId: msg.message_id },
+        });
+      }
+    }
     if (!triggerResult || aiDisabled) {
       if (shouldPersistPublicGroupMessage) {
-        try {
-          await config.conversation!.upsertUserMessage({
-            chatId,
-            content: bufferedGroupText,
-            userId,
-            userName,
-            sourceKey: `telegram:${msg.message_id}:user`,
-            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
-          });
-          config.conversation!.triggerCompression(chatId);
-        } catch (err) {
-          config.onLog?.({
-            level: "error",
-            message: `Failed to capture group message: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId, userId, messageId: msg.message_id },
-          });
-        }
+        void config.conversation!.triggerCompression(chatId);
       }
       return next();
     }
@@ -1360,8 +1371,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         chatId,
         recentBotMessageIds: chatBotMsgIds,
         pendingActions,
-        onTimerFired,
-        onTimerCreate: config.onTimerCreate,
+        onTimerFired: (timerChatId, timerId, reason) =>
+          onTimerFired(timerChatId, timerId, reason, userId),
+        onTimerCreate: config.onTimerCreate
+          ? (params) => config.onTimerCreate!({ ...params, userId })
+          : undefined,
         onTimerCancel: config.onTimerCancel,
         onTimerFiredPersist: config.onTimerFiredPersist,
         onceGuard,
@@ -1370,6 +1384,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         receivedFiles: recentReceivedFiles.get(chatId),
         timeoutConfig: config.timeoutConfig,
       });
+      if (!personalizationEnabled) delete telegramTools.set_timer;
 
       // Create per-request behavior tools
       const behaviorTools = createBehaviorTools({
@@ -1547,9 +1562,31 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       }
 
       const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
+      const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
       const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
       const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
       const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
+
+      if (!isPrivate && persistConversation) {
+        try {
+          await config.conversation!.upsertUserMessage({
+            chatId,
+            content: rawContent || bufferedGroupText || messageText,
+            userAuthoredContent: userAuthoredContent || bufferedGroupText || messageText,
+            userId,
+            userName,
+            sourceKey: `telegram:${msg.message_id}:user`,
+            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+          });
+          void config.conversation!.triggerCompression(chatId);
+        } catch (err) {
+          config.onLog?.({
+            level: "error",
+            message: `Failed to enrich triggered group message: ${err instanceof Error ? err.message : String(err)}`,
+            meta: { chatId, userId, messageId: msg.message_id },
+          });
+        }
+      }
 
       // Build context after OCR/file enrichment so automatic memory retrieval sees
       // the same textual request that is persisted and sent to the model.
@@ -1587,25 +1624,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         dataFiles: config.dataFiles,
         messageConfig: getEffectiveMessageConfig(),
       });
-
-      if (!isPrivate && persistConversation) {
-        try {
-          await config.conversation!.upsertUserMessage({
-            chatId,
-            content: rawContent || bufferedGroupText || messageText,
-            userId,
-            userName,
-            sourceKey: `telegram:${msg.message_id}:user`,
-            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
-          });
-        } catch (err) {
-          config.onLog?.({
-            level: "error",
-            message: `Failed to capture triggered group message: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId, userId, messageId: msg.message_id },
-          });
-        }
-      }
 
       // --- Assemble final user message (multimodal or text-only) ---
       const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
@@ -2043,6 +2061,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId: number;
           role: ConversationRole;
           content: string;
+          userAuthoredContent?: string;
           userId?: number;
           userName?: string;
           sourceKey?: string;
@@ -2075,6 +2094,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             chatId,
             role: "user",
             content: rawContent || messageText,
+            userAuthoredContent: userAuthoredContent || messageText,
             userId,
             userName,
             sourceKey: `${sourcePrefix}:user`,
@@ -2158,7 +2178,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
         try {
           await config.conversation!.addMessages(toSave);
-          config.conversation!.triggerCompression(chatId);
+          if (isPrivate) await config.conversation!.triggerCompression(chatId);
+          else void config.conversation!.triggerCompression(chatId);
         } catch (err) {
           config.onLog?.({
             level: "error",

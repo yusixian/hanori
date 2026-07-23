@@ -13,6 +13,7 @@ import type {
   PixAIGenerationRecord,
   TimeoutConfig,
   TokenUsageRecord,
+  UserPrivacyCallbacks,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import type { PixAIRateLimiter } from "./pixai-rate-limiter.js";
@@ -66,6 +67,7 @@ export interface ContinueChatConfig {
   behavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
   conversation?: ConversationCallbacks;
+  privacy?: UserPrivacyCallbacks;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
   botMemoryConfig?: BotMemoryConfig;
@@ -88,6 +90,7 @@ export interface ContinueChatConfig {
     chatId: number;
     seconds: number;
     reason: string;
+    userId: number;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;
@@ -113,8 +116,28 @@ export async function continueChat(
   config: ContinueChatConfig,
   event: ContinueChatEvent,
 ): Promise<void> {
-  // Shared per-chat lock: mutually exclusive with the main AI-reply handler's streamText.
-  await withChatLock(event.chatId, () => doContinueChat(api, config, event));
+  const run = () =>
+    // Shared per-chat lock: mutually exclusive with the main AI-reply handler's streamText.
+    withChatLock(event.chatId, () => doContinueChat(api, config, event));
+  const eventUserId = event.userId;
+  const privacy = config.privacy;
+  if (eventUserId === undefined || !privacy) {
+    await run();
+    return;
+  }
+
+  await privacy.runExclusive(eventUserId, async () => {
+    const privacyMode = await privacy.getMode(eventUserId);
+    if (privacyMode === "off") {
+      config.onLog?.({
+        level: "info",
+        message: "Timer continueChat skipped because personalization is off",
+        meta: { chatId: event.chatId, userId: eventUserId },
+      });
+      return;
+    }
+    await run();
+  });
 }
 
 async function doContinueChat(
@@ -194,6 +217,7 @@ async function doContinueChat(
 
     const onceGuard = createOnceGuard();
     const timerDepth = event.timerDepth ?? 0;
+    const timerUserId = event.userId;
 
     // Wrap onTimerFired to increment depth.
     // We bypass the original config.onTimerFired (which hardcodes timerDepth: 1)
@@ -206,6 +230,7 @@ async function doContinueChat(
           continueChat(api, config, {
             chatId: tChatId,
             eventDescription,
+            userId: event.userId,
             timerDepth: timerDepth + 1,
           }).catch((err) => {
             config.onLog?.({
@@ -223,7 +248,10 @@ async function doContinueChat(
       recentBotMessageIds: chatBotMsgIds,
       pendingActions: config.pendingActions,
       onTimerFired: wrappedOnTimerFired,
-      onTimerCreate: config.onTimerCreate,
+      onTimerCreate:
+        config.onTimerCreate && timerUserId !== undefined
+          ? (params) => config.onTimerCreate?.({ ...params, userId: timerUserId })
+          : undefined,
       onTimerCancel: config.onTimerCancel,
       onTimerFiredPersist: config.onTimerFiredPersist,
       onceGuard,
@@ -517,18 +545,16 @@ async function doContinueChat(
         });
       }
 
-      config.conversation
-        .addMessages(toSave)
-        .then(() => {
-          config.conversation!.triggerCompression(chatId);
-        })
-        .catch((err) => {
-          config.onLog?.({
-            level: "error",
-            message: `Failed to save continuation conversation: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId },
-          });
+      try {
+        await config.conversation.addMessages(toSave);
+        await config.conversation.triggerCompression(chatId);
+      } catch (err) {
+        config.onLog?.({
+          level: "error",
+          message: `Failed to save continuation conversation: ${err instanceof Error ? err.message : String(err)}`,
+          meta: { chatId },
         });
+      }
     }
 
     config.onLog?.({

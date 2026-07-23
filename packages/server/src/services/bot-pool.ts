@@ -1,7 +1,7 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
-import { NsfwChecker } from "@cos-tool-bot/bot";
+import { NsfwChecker, removeProfileAvatarFile } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
@@ -475,29 +475,20 @@ export class BotPool {
       runExclusive: (userId, operation) => privacyService.runExclusive(botId, userId, operation),
       setMode: (userId, mode) => privacyService.setMode(botId, userId, mode),
       forget: async (userId) => {
+        await privacyService.setMode(botId, userId, "off");
+        const avatarPaths = await privacyService.getAvatarPaths(botId, userId);
+        try {
+          for (const avatarPath of avatarPaths) {
+            await removeProfileAvatarFile(getDataDir(botId), avatarPath);
+          }
+        } catch (error) {
+          dbLogger.warn("Failed to remove profile avatar during privacy forget", {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw error;
+        }
         const result = await privacyService.forget(botId, userId);
-        const dataDir = path.resolve(getDataDir(botId));
-        await Promise.all(
-          result.avatarPaths.map(async (avatarPath) => {
-            const target = path.resolve(dataDir, avatarPath);
-            if (!target.startsWith(`${dataDir}${path.sep}`)) {
-              dbLogger.warn("Skipped unsafe profile avatar path during privacy forget", {
-                userId,
-                avatarPath,
-              });
-              return;
-            }
-            await unlink(target).catch((error: NodeJS.ErrnoException) => {
-              if (error.code !== "ENOENT") {
-                dbLogger.warn("Failed to remove profile avatar during privacy forget", {
-                  userId,
-                  avatarPath,
-                  error: error.message,
-                });
-              }
-            });
-          }),
-        );
         return {
           conversationMessages: result.conversationMessages,
           profiles: result.profiles,
@@ -688,7 +679,6 @@ export class BotPool {
         addMessage: (p) => store.addMessage({ botId, ...p }),
         addMessages: async (msgs) => {
           const persisted = await store.addMessages(msgs.map((m) => ({ botId, ...m })));
-          // Fire-and-forget: async generate embeddings (non-blocking)
           if (embeddingService && persisted.length > 0) {
             const toEmbed = persisted.filter(
               (message) =>
@@ -696,21 +686,19 @@ export class BotPool {
                 (message.role === "user" || message.role === "assistant"),
             );
             if (toEmbed.length > 0) {
-              embeddingService
-                .generateEmbeddings(toEmbed.map((message) => message.content))
-                .then((embeddings) => {
-                  for (let i = 0; i < embeddings.length; i++) {
-                    const emb = embeddings[i];
-                    if (emb) {
-                      store.updateEmbedding(toEmbed[i]!.id, emb).catch((err) => {
-                        this.logger.warn(err, "Failed to persist message embedding");
-                      });
-                    }
+              try {
+                const embeddings = await embeddingService.generateEmbeddings(
+                  toEmbed.map((message) => message.content),
+                );
+                for (let i = 0; i < embeddings.length; i++) {
+                  const emb = embeddings[i];
+                  if (emb) {
+                    await store.updateEmbedding(toEmbed[i]!.id, emb);
                   }
-                })
-                .catch((err) => {
-                  this.logger.warn(err, "Batch message embedding generation failed");
-                });
+                }
+              } catch (err) {
+                this.logger.warn(err, "Batch message embedding generation failed");
+              }
             }
           }
         },
@@ -731,14 +719,16 @@ export class BotPool {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
           await ensureChatCompression(chatId);
         },
-        triggerCompression: (chatId) => {
+        triggerCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
-          governChat(chatId).catch((err) => {
+          try {
+            await governChat(chatId);
+          } catch (err) {
             void dbLogger.error(
               `Conversation history governance failed for chat=${chatId}: ${err instanceof Error ? err.message : String(err)}`,
               { chatId },
             );
-          });
+          }
         },
         clearHistory: (chatId) => store.clearHistory(botId, chatId),
       };
@@ -1208,6 +1198,7 @@ export class BotPool {
         chatId: number;
         seconds: number;
         reason: string;
+        userId: number;
       }) => {
         registry
           .registerAi({
@@ -1216,7 +1207,7 @@ export class BotPool {
             chatId: params.chatId,
             name: params.reason,
             seconds: params.seconds,
-            meta: { reason: params.reason },
+            meta: { reason: params.reason, userId: params.userId },
           })
           .catch((err) => {
             this.logger.error(err, `Failed to register AI timer in registry`);
@@ -1841,7 +1832,15 @@ export class BotPool {
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
       const reason = (meta?.reason as string) ?? "Recovered timer";
-      handlers.fireTimer(chatId, timerId, reason);
+      const userId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
+      if (userId === undefined) {
+        this.logger.warn(
+          { timerId, botId, chatId },
+          "Recovered user timer has no owner and will not trigger continueChat",
+        );
+        return;
+      }
+      handlers.fireTimer(chatId, timerId, reason, userId);
       this.logger.info({ timerId, botId, chatId }, "Recovered timer fired via bot continueChat");
     } else {
       this.logger.warn(

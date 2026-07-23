@@ -7,7 +7,7 @@ import {
   userPrivacySettings,
 } from "@cos-tool-bot/database";
 import type { UserPrivacyMode } from "@cos-tool-bot/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
 const PRIVACY_MODES = new Set<UserPrivacyMode>(["normal", "isolated", "off"]);
@@ -16,7 +16,6 @@ export interface ForgetUserDataResult {
   conversationMessages: number;
   profiles: number;
   personalMemories: number;
-  avatarPaths: string[];
 }
 
 export class UserPrivacyService {
@@ -49,6 +48,16 @@ export class UserPrivacyService {
       });
   }
 
+  async getAvatarPaths(botId: string, userId: number): Promise<string[]> {
+    const profiles = await this.db
+      .select({ avatarPath: peopleProfiles.avatarPath })
+      .from(peopleProfiles)
+      .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, userId)));
+    return profiles
+      .map((profile) => profile.avatarPath)
+      .filter((avatarPath): avatarPath is string => !!avatarPath);
+  }
+
   async forget(botId: string, userId: number): Promise<ForgetUserDataResult> {
     return this.db.transaction(async (tx) => {
       await tx
@@ -62,11 +71,21 @@ export class UserPrivacyService {
       const affectedChats = await tx
         .selectDistinct({ chatId: conversationMessages.chatId })
         .from(conversationMessages)
-        .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.userId, userId)));
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            or(eq(conversationMessages.userId, userId), eq(conversationMessages.chatId, userId)),
+          ),
+        );
 
       const deletedMessages = await tx
         .delete(conversationMessages)
-        .where(and(eq(conversationMessages.botId, botId), eq(conversationMessages.userId, userId)))
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            or(eq(conversationMessages.userId, userId), eq(conversationMessages.chatId, userId)),
+          ),
+        )
         .returning({ id: conversationMessages.id });
 
       if (affectedChats.length > 0) {
@@ -84,7 +103,7 @@ export class UserPrivacyService {
       const deletedProfiles = await tx
         .delete(peopleProfiles)
         .where(and(eq(peopleProfiles.botId, botId), eq(peopleProfiles.telegramId, userId)))
-        .returning({ id: peopleProfiles.id, avatarPath: peopleProfiles.avatarPath });
+        .returning({ id: peopleProfiles.id });
 
       const deletedMemories = await tx
         .delete(botMemories)
@@ -95,9 +114,6 @@ export class UserPrivacyService {
         conversationMessages: deletedMessages.length,
         profiles: deletedProfiles.length,
         personalMemories: deletedMemories.length,
-        avatarPaths: deletedProfiles
-          .map((profile) => profile.avatarPath)
-          .filter((avatarPath): avatarPath is string => !!avatarPath),
       };
     });
   }

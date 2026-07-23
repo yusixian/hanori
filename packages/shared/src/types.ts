@@ -280,6 +280,7 @@ export interface ConversationCallbacks {
     chatId: number;
     role: ConversationRole;
     content: string;
+    userAuthoredContent?: string;
     userId?: number;
     userName?: string;
     sourceKey?: string;
@@ -290,6 +291,7 @@ export interface ConversationCallbacks {
       chatId: number;
       role: ConversationRole;
       content: string;
+      userAuthoredContent?: string;
       userId?: number;
       userName?: string;
       sourceKey?: string;
@@ -299,13 +301,14 @@ export interface ConversationCallbacks {
   upsertUserMessage(params: {
     chatId: number;
     content: string;
+    userAuthoredContent: string;
     userId: number;
     userName?: string;
     sourceKey: string;
     meta?: Record<string, unknown>;
   }): Promise<void>;
   ensureCompression?(chatId: number): Promise<void>;
-  triggerCompression(chatId: number): void;
+  triggerCompression(chatId: number): Promise<void>;
   clearHistory(chatId: number): Promise<void>;
 }
 

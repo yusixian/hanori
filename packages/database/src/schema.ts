@@ -353,6 +353,7 @@ export const conversationMessages = pgTable(
     chatId: bigint("chat_id", { mode: "number" }).notNull(),
     role: text("role").notNull(), // 'user' | 'assistant' | 'context' | 'system' | 'tool_call' | 'tool_result'
     content: text("content").notNull(),
+    userAuthoredContent: text("user_authored_content"),
     userId: bigint("user_id", { mode: "number" }),
     userName: text("user_name"),
     sourceKey: text("source_key"),

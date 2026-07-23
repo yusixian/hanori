@@ -521,6 +521,7 @@ export const aiSettings = {
     enableConversationHistory: "启用对话历史",
     maxContextMessages: "最大上下文消息数",
     groupHistoryMaxTokens: "群历史 Token 预算",
+    groupHistoryMaxTokensWarning: "该预算高于默认值，请确认当前模型具有足够大的上下文窗口。",
     followGlobal: "跟随全局设置",
     toolsOverrides: "工具设置覆盖",
     enableImageGeneration: "允许所有用户使用图片生成",

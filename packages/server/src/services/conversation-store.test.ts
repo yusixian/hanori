@@ -721,6 +721,28 @@ describe("ConversationStore.addMessages", () => {
     expect(state.inserted).toHaveLength(1);
     expect(state.inserted[0]?.["sourceKey"]).toBe("telegram:42:user");
   });
+
+  it("persists a separate user-authored projection for cross-chat continuity", async () => {
+    const { db, state } = createMessageWriteDb();
+    const store = new ConversationStore(db);
+
+    await store.addMessages([
+      {
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        role: "user",
+        content: "[Reply to Bob: private quote]\nmy answer",
+        userAuthoredContent: "my answer",
+        userId: 42,
+      },
+    ]);
+
+    expect(state.inserted[0]).toMatchObject({
+      content: "[Reply to Bob: private quote]\nmy answer",
+      userAuthoredContent: "my answer",
+      userId: 42,
+    });
+  });
 });
 
 describe("ConversationStore.getRecentUserMessagesAcrossChats", () => {

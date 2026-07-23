@@ -50,6 +50,7 @@ interface ConversationMessageInput {
   chatId: number;
   role: ConversationRole;
   content: string;
+  userAuthoredContent?: string;
   userId?: number;
   userName?: string;
   sourceKey?: string;
@@ -234,6 +235,7 @@ export class ConversationStore {
           chatId: m.chatId,
           role: m.role,
           content: m.content,
+          userAuthoredContent: m.userAuthoredContent,
           userId: m.userId,
           userName: m.userName,
           sourceKey: m.sourceKey,
@@ -259,6 +261,7 @@ export class ConversationStore {
         chatId: normalized.chatId,
         role: "user",
         content: normalized.content,
+        userAuthoredContent: normalized.userAuthoredContent,
         userId: normalized.userId,
         userName: normalized.userName,
         sourceKey: normalized.sourceKey,
@@ -272,6 +275,7 @@ export class ConversationStore {
         ],
         set: {
           content: normalized.content,
+          userAuthoredContent: normalized.userAuthoredContent,
           userId: normalized.userId,
           userName: normalized.userName,
           meta: normalized.meta,
@@ -381,7 +385,7 @@ export class ConversationStore {
     const rows = await this.db
       .select({
         id: conversationMessages.id,
-        content: conversationMessages.content,
+        content: conversationMessages.userAuthoredContent,
         createdAt: conversationMessages.createdAt,
       })
       .from(conversationMessages)
@@ -391,13 +395,14 @@ export class ConversationStore {
           eq(conversationMessages.userId, userId),
           eq(conversationMessages.role, "user"),
           ne(conversationMessages.chatId, excludeChatId),
+          isNotNull(conversationMessages.userAuthoredContent),
         ),
       )
       .orderBy(desc(conversationMessages.createdAt), desc(conversationMessages.id))
       .limit(limit);
     return rows.reverse().map((row) => ({
       id: row.id,
-      content: row.content,
+      content: row.content!,
       createdAt: row.createdAt.toISOString(),
     }));
   }

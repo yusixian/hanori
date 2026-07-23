@@ -565,6 +565,8 @@ export const aiSettings = {
     enableConversationHistory: "Enable conversation history",
     maxContextMessages: "Max Context Messages",
     groupHistoryMaxTokens: "Group History Token Budget",
+    groupHistoryMaxTokensWarning:
+      "This budget exceeds the default. Confirm that the active model has enough context capacity.",
     followGlobal: "Follow global",
     toolsOverrides: "Tools Overrides",
     enableImageGeneration: "Enable image generation for all users",

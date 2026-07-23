@@ -42,7 +42,7 @@ describe("UserPrivacyService.runExclusive", () => {
     await first;
   });
 
-  it("deletes directly attributable data and invalidates affected chat compactions", async () => {
+  it("deletes directly attributable data including the whole private transcript", async () => {
     const deletedTables: unknown[] = [];
     const tx = {
       insert: () => ({
@@ -62,11 +62,13 @@ describe("UserPrivacyService.runExclusive", () => {
             if (table === conversationCompactionState) return Promise.resolve();
             return {
               returning: async () => {
-                if (table === conversationMessages) return [{ id: 1 }, { id: 2 }];
-                if (table === peopleProfiles) {
-                  return [{ id: 3, avatarPath: "avatars/42.jpg" }];
+                if (table === conversationMessages) {
+                  return [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
                 }
-                if (table === botMemories) return [{ id: 4 }];
+                if (table === peopleProfiles) {
+                  return [{ id: 5, avatarPath: "avatars/42.jpg" }];
+                }
+                if (table === botMemories) return [{ id: 6 }];
                 return [];
               },
             };
@@ -80,10 +82,9 @@ describe("UserPrivacyService.runExclusive", () => {
     const service = new UserPrivacyService(db);
 
     await expect(service.forget("bot-1", 42)).resolves.toEqual({
-      conversationMessages: 2,
+      conversationMessages: 4,
       profiles: 1,
       personalMemories: 1,
-      avatarPaths: ["avatars/42.jpg"],
     });
     expect(deletedTables).toEqual(
       expect.arrayContaining([
@@ -93,5 +94,19 @@ describe("UserPrivacyService.runExclusive", () => {
         botMemories,
       ]),
     );
+  });
+
+  it("loads avatar paths before deleting profile rows", async () => {
+    const where = vi
+      .fn()
+      .mockResolvedValue([{ avatarPath: "avatars/42.jpg" }, { avatarPath: null }]);
+    const db = {
+      select: () => ({
+        from: () => ({ where }),
+      }),
+    } as unknown as Database;
+    const service = new UserPrivacyService(db);
+
+    await expect(service.getAvatarPaths("bot-1", 42)).resolves.toEqual(["avatars/42.jpg"]);
   });
 });

@@ -54,7 +54,7 @@ export type AiReplyBotConfig = Omit<
 >;
 
 export interface BotTimerHandlers {
-  fireTimer: (chatId: number, timerId: string, reason: string) => void;
+  fireTimer: (chatId: number, timerId: string, reason: string, userId?: number) => void;
   cancelPendingTimer: (timerId: string) => void;
 }
 
@@ -64,6 +64,7 @@ export interface TimerCallbacks {
     chatId: number;
     seconds: number;
     reason: string;
+    userId: number;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFired?: (timerId: string) => void;
@@ -523,6 +524,7 @@ export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker
 export {
   cleanupBotAvatarFiles,
   cleanupProfileAvatarFiles,
+  removeProfileAvatarFile,
 } from "./services/profile-avatar-files.js";
 export {
   isTerminalPixAIRecoveryError,
