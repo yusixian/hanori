@@ -566,7 +566,7 @@ const aiConfigSchema = z
   );
 
 const aiModelsSchema = z.object({
-  providerId: z.string().min(1),
+  providerId: z.string().min(1).optional(),
   baseURL: z.string().url().optional(),
   apiKey: z.string().optional(),
   modelDiscoveryPath: modelDiscoveryPathSchema.optional(),
@@ -1403,9 +1403,11 @@ export function botsRoutes(
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       const migrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
-      const storedProvider = migrated?.providers?.find(
-        (provider) => provider.id === body.providerId,
-      );
+      const storedProvider = body.providerId
+        ? migrated?.providers?.find((provider) => provider.id === body.providerId)
+        : migrated
+          ? getActiveProvider(migrated)
+          : null;
       const draftApiKey = body.apiKey?.trim() || undefined;
 
       let apiKey = draftApiKey;
@@ -1443,15 +1445,20 @@ export function botsRoutes(
             );
           }
         }
-      } else if (!baseURL || !apiKey || modelDiscoveryPath === undefined) {
-        return c.json(
-          {
-            ok: false as const,
-            error:
-              "Unknown providers require a complete draft with base URL, API key, and discovery path",
-          },
-          400,
-        );
+      } else {
+        if (body.providerId === undefined) {
+          modelDiscoveryPath ??= DEFAULT_MODEL_DISCOVERY_PATH;
+        }
+        if (!baseURL || !apiKey || modelDiscoveryPath === undefined) {
+          return c.json(
+            {
+              ok: false as const,
+              error:
+                "Unknown providers require a complete draft with base URL, API key, and discovery path",
+            },
+            400,
+          );
+        }
       }
 
       if (!baseURL) {

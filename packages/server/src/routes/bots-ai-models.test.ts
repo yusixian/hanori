@@ -117,6 +117,29 @@ describe("provider-scoped AI model discovery", () => {
     });
   });
 
+  it("uses the active provider for legacy requests without a provider ID", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ id: "active-model" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await routeApp().request("/api/bots/bot-1/ai-models", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://active.example/v1/models",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer active-secret" },
+      }),
+    );
+  });
+
   it("uses the legacy /models path when a saved provider has no discovery setting", async () => {
     const config = storedAiConfig();
     config.providers![1]!.modelDiscoveryPath = undefined;
