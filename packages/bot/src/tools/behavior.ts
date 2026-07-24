@@ -7,8 +7,7 @@ import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { sleep } from "../utils/sleep.js";
 import { stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { stripThinkingContent } from "../utils/strip-thinking.js";
-import type { OnceGuardContext } from "./utils.js";
-import { wrapOnce, zodToAiSchema } from "./utils.js";
+import { zodToAiSchema } from "./utils.js";
 
 export interface MoodInfo {
   mood: string;
@@ -23,7 +22,7 @@ export interface BehaviorToolsOptions {
   moodState: Map<number, MoodInfo>;
   richMessageEnabled?: boolean;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
-  onceGuard?: OnceGuardContext;
+  onMultiMessageSent?: (text: string, messageId: number) => void;
 }
 
 export function createBehaviorTools(options: BehaviorToolsOptions): Record<string, Tool> {
@@ -34,13 +33,14 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
     moodState,
     richMessageEnabled = true,
     onLog,
-    onceGuard,
+    onMultiMessageSent,
   } = options;
+  const attemptedMultiMessagePayloads = new Set<string>();
 
   const tools: Record<string, Tool> = {
     multi_message: tool({
       description:
-        "分多条消息回复（像真人聊天那样）。每条消息之间会有打字延迟。使用后不需要再生成普通文本回复。",
+        "分多条消息回复（像真人聊天那样）。每条消息之间会有打字延迟。同一请求可在不同阶段发送不同内容，相同内容会被拦截。使用后不需要再生成普通文本回复。",
       inputSchema: zodToAiSchema(
         z.object({
           messages: z
@@ -56,10 +56,9 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
         }),
       ),
       execute: async ({ messages }) => {
-        try {
-          let sentCount = 0;
-          for (const msg of messages) {
-            const clean = stripMetaPrefix(
+        const cleanedMessages = messages
+          .map((msg) => ({
+            text: stripMetaPrefix(
               stripThinkingContent(msg.text, ({ pattern, strippedLength }) => {
                 onLog?.({
                   level: "info",
@@ -74,16 +73,30 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
                   meta: { chatId },
                 });
               },
-            );
-            if (!clean) continue;
-            if (msg.delay_ms) {
+            ),
+            delayMs: msg.delay_ms,
+          }))
+          .filter((msg) => !!msg.text);
+        const payloadKey = JSON.stringify(cleanedMessages.map((msg) => msg.text));
+        if (attemptedMultiMessagePayloads.has(payloadKey)) {
+          return {
+            blocked: true,
+            reason: "Identical multi_message content has already been attempted in this request.",
+          };
+        }
+        attemptedMultiMessagePayloads.add(payloadKey);
+
+        let sentCount = 0;
+        try {
+          for (const msg of cleanedMessages) {
+            if (msg.delayMs) {
               await api.sendChatAction(chatId, "typing");
-              await sleep(Math.min(msg.delay_ms, 5000));
+              await sleep(Math.min(msg.delayMs, 5000));
             }
             const { message } = await sendMarkdownWithFallback(
               api,
               chatId,
-              clean,
+              msg.text,
               richMessageEnabled,
               undefined,
               (mode, error) => {
@@ -98,11 +111,12 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
               },
             );
             recentBotMessageIds.push(message.message_id);
+            onMultiMessageSent?.(msg.text, message.message_id);
             sentCount++;
           }
           return { sent: sentCount };
         } catch (err) {
-          return { error: String(err) };
+          return { sent: sentCount, error: String(err) };
         }
       },
     }),
@@ -126,14 +140,6 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
       },
     }),
   };
-
-  // Wrap side-effect tools with once guard
-  if (onceGuard) {
-    const t = tools.multi_message;
-    if (t && "execute" in t && typeof t.execute === "function") {
-      t.execute = wrapOnce("multi_message", onceGuard, t.execute);
-    }
-  }
 
   return tools;
 }

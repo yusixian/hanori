@@ -1410,6 +1410,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       if (!personalizationEnabled) delete telegramTools.set_timer;
 
       // Create per-request behavior tools
+      const deliveredMultiMessages: string[] = [];
       const behaviorTools = createBehaviorTools({
         api: ctx.api,
         chatId,
@@ -1417,7 +1418,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         moodState,
         richMessageEnabled: isRichMessageEnabled(getEffectiveMessageConfig()),
         onLog: config.onLog,
-        onceGuard,
+        onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
       });
       if (!personalizationEnabled) delete behaviorTools.set_mood;
 
@@ -1800,9 +1801,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       );
 
       // ─── streamText (ai v6 API) ───
-      // In segment mode, multiMessageUsed tracks whether AI used the multi_message tool.
-      // In stream mode, multi_message is deleted so this stays false.
-      let multiMessageUsed = false;
       const currentProviderModels = currentProviderRuntime.models ?? config.models;
       const modelEntry = currentProviderModels?.find((m) => m.id === currentModel);
       const result = streamText({
@@ -1822,7 +1820,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           perStepAbort.reset();
           if (toolCalls?.length) {
             for (const tc of toolCalls) {
-              if (!isStreamMode && tc.toolName === "multi_message") multiMessageUsed = true;
               config.onLog?.({
                 level: "debug",
                 message: "AI tool call",
@@ -1860,7 +1857,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       // Preserve the first stream failure. AI SDK's later `result.text` access can replace
       // it with the generic "No output generated" error, hiding the actionable provider cause.
       let capturedStreamError: unknown;
-      // Track whether multi_message tool was used (segment mode only)
+      // Track whether multi_message actually delivered content (segment mode only).
       let sentViaMultiMessage = false;
       const logRichFallback = (mode: "rich" | "html", error: unknown) => {
         config.onLog?.({
@@ -1974,7 +1971,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
           for await (const _ of result.textStream) {
           }
-          sentViaMultiMessage = multiMessageUsed;
+          sentViaMultiMessage = deliveredMultiMessages.length > 0;
         }
       } finally {
         perStepAbort.cleanup();
@@ -2006,6 +2003,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           meta: { chatId, userId },
         });
       });
+      const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
       const steps = await result.steps;
       const usage = await result.usage;
       const finishReason = await result.finishReason;
@@ -2166,26 +2164,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
         // Save assistant reply with usage meta (even if empty text).
         // When multi_message handled the reply, the final `text` was discarded (never sent),
-        // so persist what actually went out — aggregated multi_message payloads — to keep
+        // so persist the exact messages confirmed as delivered to keep
         // conversation history consistent with what the user saw.
         let assistantContent = text || "";
         if (sentViaMultiMessage) {
-          const parts: string[] = [];
-          for (const step of steps) {
-            for (const tc of step.toolCalls) {
-              if (tc.toolName !== "multi_message") continue;
-              const input = tc.input as { messages?: Array<{ text?: string }> } | undefined;
-              if (input?.messages) {
-                for (const m of input.messages) {
-                  if (!m.text) continue;
-                  const clean = stripMetaPrefix(stripThinkingContent(m.text));
-                  if (clean) parts.push(clean);
-                }
-              }
-            }
-          }
-          if (parts.length) assistantContent = parts.join("\n");
-          else assistantContent = "";
+          assistantContent = deliveredMultiMessageContent;
           if (text) {
             config.onLog?.({
               level: "warn",
@@ -2225,7 +2208,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId,
           userId,
           isPrivate,
-          textLength: text?.length ?? 0,
+          textLength: sentViaMultiMessage
+            ? deliveredMultiMessageContent.length
+            : (text?.length ?? 0),
+          responseTextLength: text?.length ?? 0,
+          multiMessageSentCount: deliveredMultiMessages.length,
           trigger: triggerResult,
           conversationEnabled: !!persistConversation,
         },

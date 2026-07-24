@@ -22,7 +22,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   // Behavior tools (always available)
   lines.push("你拥有以下高级行为工具:");
   if (opts.hasMultiMessage) {
-    lines.push("- multi_message: 分多条消息回复（像真人那样）。使用后不需要再生成普通文本回复。");
+    lines.push(
+      "- multi_message: 分多条消息回复（像真人那样）。同一请求可在不同阶段发送不同内容，但不要重复相同内容；使用后不需要再生成普通文本回复。",
+    );
   }
   lines.push("- set_mood: 设置你的情绪状态，影响后续回复语气。");
 
