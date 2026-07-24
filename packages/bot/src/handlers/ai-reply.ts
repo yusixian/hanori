@@ -78,6 +78,7 @@ import {
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
+import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
@@ -2004,9 +2005,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         });
       });
       const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
+      const trailingTextCovered =
+        sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
       const steps = await result.steps;
       const usage = await result.usage;
       const finishReason = await result.finishReason;
+      let sentFinalText = false;
 
       // ─── Send final reply (when streaming/multi_message didn't handle it) ───
       if (isStreamMode && !streamStarted) {
@@ -2023,12 +2027,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           );
           chatBotMsgIds.push(...messageIds);
           streamStarted = messageIds.length > 0;
+          sentFinalText = streamStarted;
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
           capturedStreamError = undefined;
         }
       } else if (!isStreamMode) {
-        if (sentViaMultiMessage) {
+        if (sentViaMultiMessage && (!text || trailingTextCovered)) {
           await ctx.deleteWaiting();
         } else if (text) {
           const messageIds = await sendFormattedChunks(
@@ -2040,6 +2045,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             () => aiDisabled || !!manualAbort?.signal.aborted,
           );
           chatBotMsgIds.push(...messageIds);
+          sentFinalText = messageIds.length > 0;
         } else {
           await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
         }
@@ -2052,6 +2058,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       throwCapturedStreamError(capturedStreamError, streamStarted);
 
       const durationMs = Date.now() - startTime;
+      const assistantContent = sentViaMultiMessage
+        ? [deliveredMultiMessageContent, sentFinalText ? text : ""].filter(Boolean).join("\n")
+        : text || "";
+
+      if (sentViaMultiMessage && text && !sentFinalText) {
+        config.onLog?.({
+          level: trailingTextCovered ? "info" : "warn",
+          message: trailingTextCovered
+            ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
+            : `Failed to deliver ${text.length} uncovered trailing chars after multi_message`,
+          meta: { chatId, userId, trailingPreview: truncate(text, 200) },
+        });
+      }
 
       // Debug: AI response
       const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);
@@ -2162,21 +2181,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           }
         }
 
-        // Save assistant reply with usage meta (even if empty text).
-        // When multi_message handled the reply, the final `text` was discarded (never sent),
-        // so persist the exact messages confirmed as delivered to keep
-        // conversation history consistent with what the user saw.
-        let assistantContent = text || "";
-        if (sentViaMultiMessage) {
-          assistantContent = deliveredMultiMessageContent;
-          if (text) {
-            config.onLog?.({
-              level: "warn",
-              message: `multi_message used but model emitted ${text.length} trailing chars; dropped (not sent, not saved)`,
-              meta: { chatId, userId, droppedPreview: truncate(text, 200) },
-            });
-          }
-        }
+        // Persist only content confirmed as delivered. Uncovered trailing text is
+        // sent through the normal fallback path before it reaches this point.
         toSave.push({
           chatId,
           role: "assistant",
@@ -2208,9 +2214,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           chatId,
           userId,
           isPrivate,
-          textLength: sentViaMultiMessage
-            ? deliveredMultiMessageContent.length
-            : (text?.length ?? 0),
+          textLength: assistantContent.length,
           responseTextLength: text?.length ?? 0,
           multiMessageSentCount: deliveredMultiMessages.length,
           trigger: triggerResult,

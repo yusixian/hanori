@@ -58,15 +58,16 @@ function createPrivacy() {
 }
 
 describe("AI reply multi_message delivery", () => {
-  it("delivers a distinct follow-up batch and persists only delivered messages", async () => {
+  it("falls back to uncovered final text when a follow-up batch fails", async () => {
     const logs: BotLogEntry[] = [];
     const conversation = createConversation();
     let nextMessageId = 20;
-    const sendMessage = vi
-      .fn()
-      .mockImplementation(async (_chatId: number, text: string) =>
-        sentMessage(nextMessageId++, text),
-      );
+    let sendAttempt = 0;
+    const sendMessage = vi.fn().mockImplementation(async (_chatId: number, text: string) => {
+      sendAttempt++;
+      if (sendAttempt === 3) throw new Error("temporary Telegram failure");
+      return sentMessage(nextMessageId++, text);
+    });
     const api = {
       sendMessage,
       sendChatAction: vi.fn().mockResolvedValue(true),
@@ -180,9 +181,12 @@ describe("AI reply multi_message delivery", () => {
       "ack one",
       "ack two",
       "result one",
-      "result two",
     ]);
-    expect(steps[1]?.toolResults[0]?.output).toEqual({ sent: 2 });
+    expect(ctx.resolveWait).toHaveBeenCalledWith(trailing, "HTML");
+    expect(steps[1]?.toolResults[0]?.output).toEqual({
+      sent: 0,
+      error: "Error: temporary Telegram failure",
+    });
     expect(steps[2]?.toolResults[0]?.output).toEqual(expect.objectContaining({ blocked: true }));
     const savedBatch = conversation.addMessages.mock.calls[0]?.[0] ?? [];
     expect(savedBatch.find((message) => message.role === "assistant")?.content).toBe(
@@ -195,7 +199,7 @@ describe("AI reply multi_message delivery", () => {
         meta: expect.objectContaining({
           textLength: deliveredContent.length,
           responseTextLength: trailing.length,
-          multiMessageSentCount: 4,
+          multiMessageSentCount: 2,
         }),
       }),
     );

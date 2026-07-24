@@ -36,6 +36,7 @@ import {
   injectPixAITool,
 } from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
+import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
@@ -479,9 +480,12 @@ async function doContinueChat(
     });
     const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
     const sentViaMultiMessage = deliveredMultiMessages.length > 0;
+    const trailingTextCovered =
+      sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
+    const deliveredFinalChunks: string[] = [];
 
-    // Send text if multi_message wasn't used (segment mode) or stream failed
-    if ((!isStreamMode && !sentViaMultiMessage && text) || (streamFailed && text)) {
+    // Send text unless its complete content is already confirmed as delivered.
+    if ((!isStreamMode && !trailingTextCovered && text) || (streamFailed && text)) {
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const threshold = msgCfg.autoSplitThreshold ?? 0;
       const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
@@ -511,6 +515,7 @@ async function doContinueChat(
             },
           );
           chatBotMsgIds.push(message.message_id);
+          deliveredFinalChunks.push(chunk);
         } catch (sendError) {
           config.onLog?.({
             level: "error",
@@ -520,6 +525,9 @@ async function doContinueChat(
         }
       }
     }
+    const assistantContent = sentViaMultiMessage
+      ? [deliveredMultiMessageContent, ...deliveredFinalChunks].filter(Boolean).join("\n")
+      : text;
 
     // Await full results for post-processing
     const usage = await result.usage;
@@ -556,7 +564,6 @@ async function doContinueChat(
       });
 
       // Save the exact assistant content delivered to the chat.
-      const assistantContent = sentViaMultiMessage ? deliveredMultiMessageContent : text;
       if (assistantContent) {
         toSave.push({
           chatId,
@@ -583,7 +590,7 @@ async function doContinueChat(
       message: "continueChat completed",
       meta: {
         chatId,
-        textLength: sentViaMultiMessage ? deliveredMultiMessageContent.length : (text?.length ?? 0),
+        textLength: assistantContent.length,
         responseTextLength: text?.length ?? 0,
         multiMessageSentCount: deliveredMultiMessages.length,
       },
