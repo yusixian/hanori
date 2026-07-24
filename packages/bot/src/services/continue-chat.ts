@@ -36,6 +36,7 @@ import {
   injectPixAITool,
 } from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
+import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
@@ -278,6 +279,7 @@ async function doContinueChat(
       onceGuard,
     });
 
+    const deliveredMultiMessages: string[] = [];
     const behaviorTools = createBehaviorTools({
       api,
       chatId,
@@ -285,7 +287,7 @@ async function doContinueChat(
       moodState: config.moodState,
       richMessageEnabled: isRichMessageEnabled(config.messageConfig),
       onLog: config.onLog,
-      onceGuard,
+      onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
     });
 
     const allTools: Record<string, Tool> = {
@@ -378,7 +380,6 @@ async function doContinueChat(
     );
 
     // ─── streamText (ai v6 API) ───
-    let multiMessageUsed = false;
     const result = streamText({
       model: config.model,
       messages,
@@ -391,11 +392,8 @@ async function doContinueChat(
       providerOptions: config.providerOptions,
       experimental_onToolCallStart: () => perStepAbort.pause(),
       experimental_onToolCallFinish: () => perStepAbort.resume(),
-      onStepFinish: ({ toolCalls }) => {
+      onStepFinish: () => {
         perStepAbort.reset();
-        if (!isStreamMode && toolCalls?.some((tc) => tc.toolName === "multi_message")) {
-          multiMessageUsed = true;
-        }
       },
     });
 
@@ -403,7 +401,7 @@ async function doContinueChat(
     try {
       if (isStreamMode) {
         // Stream mode: pipe text chunks through the configured Telegram draft format.
-        // multi_message is deleted in stream mode so multiMessageUsed stays false.
+        // multi_message is deleted in stream mode.
         try {
           const thinkFiltered = filterThinkingStream(
             result.textStream,
@@ -480,9 +478,14 @@ async function doContinueChat(
         meta: { chatId },
       });
     });
+    const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
+    const sentViaMultiMessage = deliveredMultiMessages.length > 0;
+    const trailingTextCovered =
+      sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
+    const deliveredFinalChunks: string[] = [];
 
-    // Send text if multi_message wasn't used (segment mode) or stream failed
-    if ((!isStreamMode && !multiMessageUsed && text) || (streamFailed && text)) {
+    // Send text unless its complete content is already confirmed as delivered.
+    if ((!isStreamMode && !trailingTextCovered && text) || (streamFailed && text)) {
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const threshold = msgCfg.autoSplitThreshold ?? 0;
       const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
@@ -512,6 +515,7 @@ async function doContinueChat(
             },
           );
           chatBotMsgIds.push(message.message_id);
+          deliveredFinalChunks.push(chunk);
         } catch (sendError) {
           config.onLog?.({
             level: "error",
@@ -521,6 +525,9 @@ async function doContinueChat(
         }
       }
     }
+    const assistantContent = sentViaMultiMessage
+      ? [deliveredMultiMessageContent, ...deliveredFinalChunks].filter(Boolean).join("\n")
+      : text;
 
     // Await full results for post-processing
     const usage = await result.usage;
@@ -556,12 +563,12 @@ async function doContinueChat(
         content: `[事件] ${eventDescription}`,
       });
 
-      // Save assistant reply
-      if (text) {
+      // Save the exact assistant content delivered to the chat.
+      if (assistantContent) {
         toSave.push({
           chatId,
           role: "assistant",
-          content: text,
+          content: assistantContent,
           meta: { trigger: "event_continuation" },
         });
       }
@@ -581,7 +588,12 @@ async function doContinueChat(
     config.onLog?.({
       level: "info",
       message: "continueChat completed",
-      meta: { chatId, textLength: text?.length ?? 0, multiMessageUsed },
+      meta: {
+        chatId,
+        textLength: assistantContent.length,
+        responseTextLength: text?.length ?? 0,
+        multiMessageSentCount: deliveredMultiMessages.length,
+      },
     });
   } catch (err) {
     config.onLog?.({
