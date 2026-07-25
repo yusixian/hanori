@@ -1,4 +1,5 @@
 import type { MemoryCallbacks, PeopleProfileObservation } from "@cos-tool-bot/shared";
+import { GrammyError } from "grammy";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const telegramApi = vi.hoisted(() => {
@@ -32,7 +33,7 @@ vi.mock("grammy", async (importOriginal) => {
   };
 });
 
-import { createBot } from "./index.js";
+import { buildUpdateErrorMessage, createBot } from "./index.js";
 
 const chatId = -100;
 const userId = 42;
@@ -174,5 +175,30 @@ describe("createBot profile observation", () => {
 
     expect(touchProfile).not.toHaveBeenCalled();
     expect(apiCalls).not.toContain("sendChatAction");
+  });
+});
+
+describe("buildUpdateErrorMessage", () => {
+  it("includes the raw GrammyError description without any Markdown wrapping", () => {
+    const description =
+      "can't parse entities: Character '(' is reserved and must be escaped with the preceding '\\'";
+    const error = new GrammyError(
+      "Bad Request",
+      { ok: false, error_code: 400, description },
+      "sendMessage",
+      {},
+    );
+
+    const message = buildUpdateErrorMessage(537972451, error);
+
+    expect(message).toBe(`处理消息 537972451 时出错:\nError in request: ${description}`);
+    expect(message).not.toContain("```");
+  });
+
+  it("falls back to the error message for unknown errors", () => {
+    expect(buildUpdateErrorMessage(1, new Error("boom"))).toBe(
+      "处理消息 1 时出错:\nUnknown error: boom",
+    );
+    expect(buildUpdateErrorMessage(1, "nope")).toBe("处理消息 1 时出错:\nUnknown error: nope");
   });
 });

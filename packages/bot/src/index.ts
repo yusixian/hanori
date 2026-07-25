@@ -486,24 +486,23 @@ export function createBot(config: BotConfig) {
 
   bot.catch(async (err) => {
     const ctx = err.ctx;
-    let errorMsg = "处理消息 " + ctx.update.update_id + " 时出错:\n```\n";
-
-    const e = err.error;
-    if (e instanceof GrammyError) {
-      errorMsg += "Error in request:" + e.description;
-    } else if (e instanceof HttpError) {
-      errorMsg += "Could not contact Telegram:" + e;
-    } else {
-      errorMsg += "Unknown error:" + ((e as Error)?.message ?? String(e));
-    }
-    errorMsg += "\n```";
+    const errorMsg = buildUpdateErrorMessage(ctx.update.update_id, err.error);
     logger.error(errorMsg);
     config.onLog?.({ level: "error", message: errorMsg, meta: { updateId: ctx.update.update_id } });
-    await ctx.resolveWait(errorMsg, "Markdown").catch(() => {});
+    // Plain text on purpose: error descriptions are arbitrary strings and must
+    // never be re-parsed as Markdown/HTML, or the error report itself fails.
+    await ctx.resolveWait(errorMsg).catch(() => {});
   });
 
   botDisposers.set(bot, () => disposeAiRuntime?.());
   return bot;
+}
+
+export function buildUpdateErrorMessage(updateId: number, error: unknown): string {
+  const head = `处理消息 ${updateId} 时出错:\n`;
+  if (error instanceof GrammyError) return head + "Error in request: " + error.description;
+  if (error instanceof HttpError) return head + "Could not contact Telegram: " + error;
+  return head + "Unknown error: " + ((error as Error)?.message ?? String(error));
 }
 
 export { WrapperContext, type BotContext } from "./context.js";
