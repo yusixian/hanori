@@ -19,7 +19,7 @@ describe("getUpdateConstraint", () => {
     expect(getUpdateConstraint(createContext(7, "apikey"))).toBe("apikey");
   });
 
-  test.each(["stop", "resume"])("lets /%s bypass chat serialization", (command) => {
+  test.each(["stop", "resume", "md2tg"])("lets /%s bypass chat serialization", (command) => {
     expect(getUpdateConstraint(createContext(42, command))).toBeUndefined();
   });
 });
