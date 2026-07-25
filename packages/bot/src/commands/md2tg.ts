@@ -1,38 +1,42 @@
 import type { CommandMiddleware } from "grammy";
-import { GrammyError } from "grammy";
 import type { WrapperContext } from "../context.js";
-import { markdownToTelegramHtml } from "../utils/format.js";
+import { classifyMarkdownDelivery, sendMarkdownWithFallback } from "../utils/rich-message.js";
 
 const USAGE =
   "用法：\n" +
   "/md2tg <markdown> —— 直接转换并发送富文本\n" +
   "回复某条消息再发 /md2tg —— 转换被回复消息的正文\n" +
-  "支持：标题、**粗体**、*斜体*、~~删除线~~、`code`、代码块、链接、列表、引用，" +
-  "也可以直接写 Telegram HTML 标签，如 <u>下划线</u>、<tg-spoiler>剧透</tg-spoiler>";
+  "支持：标题、**粗体**、*斜体*、~~删除线~~、`code`、代码块、链接、列表、引用、表格；" +
+  "全局开启 richtext 后表格、||spoiler||、==高亮== 等走 Telegram 原生渲染，" +
+  "否则回退为 HTML/纯文本";
 
-export const md2tgCommand: CommandMiddleware<WrapperContext> = async (ctx) => {
-  const input =
-    ctx.command?.original_msg?.trim() ||
-    ctx.reply_to_message?.text ||
-    ctx.reply_to_message?.caption ||
-    "";
+export interface Md2tgCommandConfig {
+  getRichMessageEnabled?: () => boolean;
+}
 
-  if (!input) return ctx.reply(USAGE);
+export function createMd2tgCommand(
+  config: Md2tgCommandConfig = {},
+): CommandMiddleware<WrapperContext> {
+  return async (ctx) => {
+    const input =
+      ctx.command?.original_msg?.trim() ||
+      ctx.reply_to_message?.text ||
+      ctx.reply_to_message?.caption ||
+      "";
 
-  let html: string;
-  try {
-    html = markdownToTelegramHtml(input);
-  } catch {
-    return ctx.reply("转换失败，请检查输入的 Markdown 格式是否正确");
-  }
+    if (!input) return ctx.reply(USAGE);
 
-  try {
-    return await ctx.reply(html, { parse_mode: "HTML" });
-  } catch (error) {
-    if (error instanceof GrammyError) {
-      // Telegram rejected the converted HTML — fall back to the raw text.
-      return ctx.reply(`⚠️ 富文本发送失败（${error.description}），回退为原文：\n\n${input}`);
+    const chatId = ctx.chat?.id;
+    if (chatId === undefined) return;
+
+    // Share the AI reply delivery pipeline: native Rich Message (tables,
+    // spoilers, etc.) when enabled, then HTML, then plain text.
+    const richEnabled = config.getRichMessageEnabled?.() ?? false;
+    const deliveryClass = classifyMarkdownDelivery(input);
+    const result = await sendMarkdownWithFallback(ctx.api, chatId, input, richEnabled);
+
+    if (result.mode === "plain" && deliveryClass !== "plain") {
+      await ctx.reply("⚠️ 富文本渲染失败，已回退为原文").catch(() => {});
     }
-    throw error;
-  }
-};
+  };
+}

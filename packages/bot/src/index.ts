@@ -18,7 +18,7 @@ import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.
 import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { createDrawCommand } from "./commands/draw.js";
 import { commands, helpCommand } from "./commands/help.js";
-import { md2tgCommand } from "./commands/md2tg.js";
+import { createMd2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
 import { createProviderCommand } from "./commands/provider.js";
 import { createPrivacyCommand } from "./commands/privacy.js";
@@ -244,7 +244,10 @@ export function createBot(config: BotConfig) {
 
   bot.command("start", startCommand);
   bot.command("help", helpCommand);
-  bot.command("md2tg", md2tgCommand);
+  bot.command(
+    "md2tg",
+    createMd2tgCommand({ getRichMessageEnabled: () => aiGetRichMessageEnabled?.() ?? false }),
+  );
   bot.command("status", authGuard, createStatusCommand(statusConfig, aiState));
   bot.command("restart", authGuard, createRestartCommand(config.onRestart));
   bot.command("backup", authGuard, createBackupCommand(config.onBackup));
