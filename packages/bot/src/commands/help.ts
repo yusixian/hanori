@@ -6,8 +6,7 @@ const commands = [
   { command: "help", description: "显示帮助～" },
   {
     command: "md2tg",
-    description:
-      "将 Markdown 转换为 Telegram 格式，第二个可选参数为 `escape` | `remove` | `keep`, 默认为 escape",
+    description: "将 Markdown 转换为 Telegram 富文本，可直接跟文本或回复某条消息",
   },
   { command: "status", description: "(admin) 查看 Bot 运行状态" },
   { command: "clear", description: "(admin) 清除当前对话历史" },

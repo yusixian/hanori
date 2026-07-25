@@ -1,37 +1,38 @@
 import type { CommandMiddleware } from "grammy";
-import convertMarkdownToTelegramMarkdown from "telegramify-markdown";
+import { GrammyError } from "grammy";
 import type { WrapperContext } from "../context.js";
+import { markdownToTelegramHtml } from "../utils/format.js";
 
-export type UnsupportedTagsStrategy = "escape" | "remove" | "keep";
+const USAGE =
+  "用法：\n" +
+  "/md2tg <markdown> —— 直接转换并发送富文本\n" +
+  "回复某条消息再发 /md2tg —— 转换被回复消息的正文\n" +
+  "支持：标题、**粗体**、*斜体*、~~删除线~~、`code`、代码块、链接、列表、引用，" +
+  "也可以直接写 Telegram HTML 标签，如 <u>下划线</u>、<tg-spoiler>剧透</tg-spoiler>";
 
 export const md2tgCommand: CommandMiddleware<WrapperContext> = async (ctx) => {
-  const args = ctx.command?.args ?? [];
-  const validStrategies = ["escape", "remove", "keep"] as const;
-  const hasOpt =
-    args.length && args[0] && validStrategies.includes(args[0] as UnsupportedTagsStrategy);
-  const opt: UnsupportedTagsStrategy = hasOpt ? (args[0] as UnsupportedTagsStrategy) : "escape";
+  const input =
+    ctx.command?.original_msg?.trim() ||
+    ctx.reply_to_message?.text ||
+    ctx.reply_to_message?.caption ||
+    "";
 
-  const text = hasOpt
-    ? ctx.command.original_msg.slice(args[0]?.length ?? 0)
-    : ctx.command.original_msg;
+  if (!input) return ctx.reply(USAGE);
 
-  if (!text) {
-    return ctx.reply(
-      "请在命令后面附上要转换的 Markdown 文本，例如：\n" +
-        "第二个可选参数为 escape / remove / keep 表示当遇到不合法的标签时的行为，" +
-        "escape 表示将不合法的标签转换为 HTML 实体，remove 表示将不合法的标签删除，keep 表示保留不合法的标签\n" +
-        "默认不传的话是 `escape`，例如：/md2tg keep > balabala\n" +
-        "/md2tg 目前支持的格式如下：**粗体**\n" +
-        "- 无序列表\n" +
-        "[链接](https://example.com)\n" +
-        "`code`\n",
-    );
-  }
+  let html: string;
   try {
-    return ctx.reply(convertMarkdownToTelegramMarkdown(text, opt) ?? "转换失败", {
-      parse_mode: "MarkdownV2",
-    });
+    html = markdownToTelegramHtml(input);
   } catch {
     return ctx.reply("转换失败，请检查输入的 Markdown 格式是否正确");
+  }
+
+  try {
+    return await ctx.reply(html, { parse_mode: "HTML" });
+  } catch (error) {
+    if (error instanceof GrammyError) {
+      // Telegram rejected the converted HTML — fall back to the raw text.
+      return ctx.reply(`⚠️ 富文本发送失败（${error.description}），回退为原文：\n\n${input}`);
+    }
+    throw error;
   }
 };
