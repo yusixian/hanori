@@ -52,7 +52,10 @@ afterEach(() => {
   telegramApi.requests.length = 0;
 });
 
-function createCommandTestBot(configuration: "minimal" | "complete" = "minimal") {
+function createCommandTestBot(
+  configuration: "minimal" | "complete" = "minimal",
+  modelCommandAccess?: "admin" | "all",
+) {
   const complete = configuration === "complete";
   return createBot({
     token: "test-token",
@@ -96,6 +99,7 @@ function createCommandTestBot(configuration: "minimal" | "complete" = "minimal")
             },
           ],
           activeProviderId: "provider-a",
+          modelCommandAccess,
           webToolsConfig: {
             enabled: true,
             imageGeneration: {
@@ -214,6 +218,61 @@ describe("createBot command registry", () => {
     const helpNames = [...helpText.matchAll(/^\/([a-z0-9_]+) - /gm)].map((match) => match[1]);
     expect(helpNames).toEqual(activeNames);
   });
+
+  it("keeps model and provider Admin-only when legacy config requests public access", () => {
+    const bot = createCommandTestBot("complete", "all");
+    const selectionCommands = getActiveBotCommands(bot).filter(
+      ({ command }) => command === "model" || command === "provider",
+    );
+
+    expect(selectionCommands).toHaveLength(2);
+    expect(selectionCommands.map(({ effectiveAccess }) => effectiveAccess)).toEqual([
+      "admin",
+      "admin",
+    ]);
+  });
+
+  it("guards model and provider execution when legacy config requests public access", async () => {
+    const bot = createCommandTestBot("complete", "all");
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    for (const command of ["model", "provider"]) {
+      await bot.handleUpdate(
+        groupMessage(
+          {
+            text: `/${command} 1`,
+            entities: [{ type: "bot_command", offset: 0, length: command.length + 1 }],
+          },
+          userId + 1,
+        ) as never,
+      );
+    }
+
+    await vi.waitFor(() =>
+      expect(telegramApi.requests.filter(({ method }) => method === "sendMessage")).toHaveLength(2),
+    );
+    const replies = telegramApi.requests
+      .filter(({ method }) => method === "sendMessage")
+      .map(({ body }) => (body as { text: string }).text);
+    expect(replies).toEqual([
+      "[权限不足] 这种事人家确实帮不上忙呢，可以找管理员试试哟～",
+      "[权限不足] 这种事人家确实帮不上忙呢，可以找管理员试试哟～",
+    ]);
+  });
 });
 
 describe("createBot Telegram observation", () => {
@@ -324,14 +383,14 @@ function createProfileBot(options: { whitelisted?: boolean; adminIds?: number[] 
   return { bot, touchProfile, apiCalls: telegramApi.calls };
 }
 
-function groupMessage(content: Record<string, unknown>) {
+function groupMessage(content: Record<string, unknown>, senderId = userId) {
   return {
     update_id: Math.floor(Math.random() * 1_000_000),
     message: {
       message_id: Math.floor(Math.random() * 1_000_000),
       date: 1_700_000_000,
       chat: { id: chatId, type: "supergroup", title: "Test Group" },
-      from: { id: userId, is_bot: false, first_name: "Ai", username: "sample" },
+      from: { id: senderId, is_bot: false, first_name: "Ai", username: "sample" },
       ...content,
     },
   };

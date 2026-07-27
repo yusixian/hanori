@@ -157,8 +157,8 @@ export interface AiReplyConfig {
   activeProviderId?: string;
   providerOverride?: {
     getProviderForChat: (chatId: number) => string | undefined;
-    setProviderForChat: (chatId: number, providerId: string) => void;
-    resetProviderForChat: (chatId: number) => void;
+    setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
+    resetProviderForChat: (chatId: number) => Promise<void>;
   };
   systemPrompt: string;
   behavioralPrompt?: string;
@@ -188,8 +188,8 @@ export interface AiReplyConfig {
   modelCommandAccess?: "admin" | "all";
   modelOverride?: {
     getModelForChat: (chatId: number) => string | undefined;
-    setModelForChat: (chatId: number, modelId: string) => void;
-    resetModelForChat: (chatId: number) => void;
+    setModelForChat: (chatId: number, modelId: string) => Promise<void>;
+    resetModelForChat: (chatId: number) => Promise<void>;
   };
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
@@ -704,12 +704,12 @@ const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 export function createAiReplyHandler(config: AiReplyConfig): {
   handler: MiddlewareFn<BotContext>;
   state: BotRuntimeState;
-  setModelForChat: (chatId: number, modelId: string) => void;
+  setModelForChat: (chatId: number, modelId: string) => Promise<void>;
   getModelForChat: (chatId: number) => string;
-  resetModelForChat: (chatId: number) => void;
-  setProviderForChat: (chatId: number, providerId: string) => void;
+  resetModelForChat: (chatId: number) => Promise<void>;
+  setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
   getProviderForChat: (chatId: number) => string;
-  resetProviderForChat: (chatId: number) => void;
+  resetProviderForChat: (chatId: number) => Promise<void>;
   getProvidersList: () => Array<{ id: string; label: string; defaultModel: string }>;
   getModelsForChat: (chatId: number) => ModelEntry[];
   getReplyMode: () => ReplyMode;
@@ -781,17 +781,17 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     return chatModelMap.get(chatId) ?? providerDefault;
   }
 
-  function setModelForChat(chatId: number, modelId: string) {
+  async function setModelForChat(chatId: number, modelId: string): Promise<void> {
     if (config.modelOverride) {
-      config.modelOverride.setModelForChat(chatId, modelId);
+      await config.modelOverride.setModelForChat(chatId, modelId);
     } else {
       chatModelMap.set(chatId, modelId);
     }
   }
 
-  function resetModelForChat(chatId: number) {
+  async function resetModelForChat(chatId: number): Promise<void> {
     if (config.modelOverride) {
-      config.modelOverride.resetModelForChat(chatId);
+      await config.modelOverride.resetModelForChat(chatId);
     } else {
       chatModelMap.delete(chatId);
     }
@@ -938,18 +938,18 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     return providerRegistry.get(id) ?? providerRegistry.get(fallbackProviderId)!;
   }
 
-  function setProviderForChat(chatId: number, providerId: string) {
+  async function setProviderForChat(chatId: number, providerId: string): Promise<void> {
     if (!providerRegistry.has(providerId)) return;
     if (config.providerOverride) {
-      config.providerOverride.setProviderForChat(chatId, providerId);
+      await config.providerOverride.setProviderForChat(chatId, providerId);
     } else {
       chatProviderMap.set(chatId, providerId);
     }
   }
 
-  function resetProviderForChat(chatId: number) {
+  async function resetProviderForChat(chatId: number): Promise<void> {
     if (config.providerOverride) {
-      config.providerOverride.resetProviderForChat(chatId);
+      await config.providerOverride.resetProviderForChat(chatId);
     } else {
       chatProviderMap.delete(chatId);
     }

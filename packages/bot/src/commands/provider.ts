@@ -3,11 +3,13 @@ import type { WrapperContext } from "../context.js";
 
 export interface ProviderCommandConfig {
   getProviderForChat: (chatId: number) => string | undefined;
-  setProviderForChat: (chatId: number, providerId: string) => void;
-  resetProviderForChat: (chatId: number) => void;
+  setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
+  resetProviderForChat: (chatId: number) => Promise<void>;
   providers: Array<{ id: string; label: string; defaultModel: string }>;
   defaultProviderId: string;
 }
+
+const SAVE_FAILED_MESSAGE = "设置保存失败，请稍后重试。";
 
 export function createProviderCommand(
   config: ProviderCommandConfig,
@@ -41,7 +43,12 @@ export function createProviderCommand(
     }
 
     if (args === "reset") {
-      config.resetProviderForChat(chatId);
+      try {
+        await config.resetProviderForChat(chatId);
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
+      }
       const def = config.providers.find((p) => p.id === config.defaultProviderId);
       await ctx.reply(`已恢复默认 Provider: \`${def?.label ?? config.defaultProviderId}\``, {
         parse_mode: "Markdown",
@@ -50,10 +57,15 @@ export function createProviderCommand(
     }
 
     // Number index
-    const idx = Number.parseInt(args, 10);
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= config.providers.length) {
+    const idx = /^\d+$/.test(args) ? Number(args) : Number.NaN;
+    if (Number.isInteger(idx) && idx >= 1 && idx <= config.providers.length) {
       const selected = config.providers[idx - 1]!;
-      config.setProviderForChat(chatId, selected.id);
+      try {
+        await config.setProviderForChat(chatId, selected.id);
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
+      }
       await ctx.reply(`已切换到 Provider: \`${selected.label}\``, { parse_mode: "Markdown" });
       return;
     }
@@ -63,7 +75,12 @@ export function createProviderCommand(
       (p) => p.id === args || p.label === args || p.label.toLowerCase() === args.toLowerCase(),
     );
     if (match) {
-      config.setProviderForChat(chatId, match.id);
+      try {
+        await config.setProviderForChat(chatId, match.id);
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
+      }
       await ctx.reply(`已切换到 Provider: \`${match.label}\``, { parse_mode: "Markdown" });
       return;
     }

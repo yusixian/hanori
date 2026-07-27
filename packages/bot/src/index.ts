@@ -315,7 +315,6 @@ export function createBot(config: BotConfig) {
 
   // Register /model command if models are configured
   if (config.aiReply?.models?.length && aiSetModelForChat && aiGetModelForChat) {
-    const modelAccess = config.aiReply.modelCommandAccess ?? "admin";
     const modelCmd = createModelCommand({
       getModelForChat: aiGetModelForChat,
       setModelForChat: aiSetModelForChat,
@@ -324,14 +323,10 @@ export function createBot(config: BotConfig) {
       defaultModel: config.aiReply.model,
       getModelsForChat: aiGetModelsForChat,
     });
-    if (modelAccess === "admin") {
-      commandRegistry.registerConfigurable("model", "admin", authGuard, modelCmd);
-    } else {
-      commandRegistry.registerConfigurable("model", "public", modelCmd);
-    }
+    commandRegistry.register("model", authGuard, modelCmd);
   }
 
-  // Register /provider command if providers are configured (shares modelCommandAccess gate)
+  // Register /provider command if providers are configured
   const providersList: Array<{ id: string; label: string; defaultModel: string }> =
     aiGetProvidersList?.() ?? [];
   if (
@@ -340,7 +335,6 @@ export function createBot(config: BotConfig) {
     aiGetProviderForChat &&
     aiResetProviderForChat
   ) {
-    const providerAccess = config.aiReply?.modelCommandAccess ?? "admin";
     const defaultProviderId =
       config.aiReply?.activeProviderId &&
       providersList.some((p) => p.id === config.aiReply!.activeProviderId)
@@ -353,11 +347,7 @@ export function createBot(config: BotConfig) {
       providers: providersList,
       defaultProviderId,
     });
-    if (providerAccess === "admin") {
-      commandRegistry.registerConfigurable("provider", "admin", authGuard, providerCmd);
-    } else {
-      commandRegistry.registerConfigurable("provider", "public", providerCmd);
-    }
+    commandRegistry.register("provider", authGuard, providerCmd);
   }
 
   // Register /replymode command (admin only)

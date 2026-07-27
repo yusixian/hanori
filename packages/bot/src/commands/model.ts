@@ -4,13 +4,15 @@ import type { WrapperContext } from "../context.js";
 
 export interface ModelCommandConfig {
   getModelForChat: (chatId: number) => string;
-  setModelForChat: (chatId: number, modelId: string) => void;
-  resetModelForChat?: (chatId: number) => void;
+  setModelForChat: (chatId: number, modelId: string) => Promise<void>;
+  resetModelForChat?: (chatId: number) => Promise<void>;
   models: ModelEntry[];
   defaultModel: string;
   /** If provided, overrides `models` with a per-chat list (e.g. when provider changes per-chat). */
   getModelsForChat?: (chatId: number) => ModelEntry[];
 }
+
+const SAVE_FAILED_MESSAGE = "设置保存失败，请稍后重试。";
 
 export function createModelCommand(config: ModelCommandConfig): CommandMiddleware<WrapperContext> {
   return async (ctx) => {
@@ -44,20 +46,30 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
 
     // Reset
     if (args === "reset") {
-      if (config.resetModelForChat) {
-        config.resetModelForChat(chatId);
-      } else {
-        config.setModelForChat(chatId, config.defaultModel);
+      try {
+        if (config.resetModelForChat) {
+          await config.resetModelForChat(chatId);
+        } else {
+          await config.setModelForChat(chatId, config.defaultModel);
+        }
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
       }
       await ctx.reply(`已恢复默认模型: \`${config.defaultModel}\``, { parse_mode: "Markdown" });
       return;
     }
 
     // Try number index
-    const idx = Number.parseInt(args, 10);
-    if (!Number.isNaN(idx) && idx >= 1 && idx <= chatModels.length) {
+    const idx = /^\d+$/.test(args) ? Number(args) : Number.NaN;
+    if (Number.isInteger(idx) && idx >= 1 && idx <= chatModels.length) {
       const selected = chatModels[idx - 1]!;
-      config.setModelForChat(chatId, selected.id);
+      try {
+        await config.setModelForChat(chatId, selected.id);
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
+      }
       await ctx.reply(`已切换到模型: \`${selected.id}\``, { parse_mode: "Markdown" });
       return;
     }
@@ -67,14 +79,17 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
       (m) => m.id === args || m.id.toLowerCase() === args.toLowerCase(),
     );
     if (match) {
-      config.setModelForChat(chatId, match.id);
+      try {
+        await config.setModelForChat(chatId, match.id);
+      } catch {
+        await ctx.reply(SAVE_FAILED_MESSAGE);
+        return;
+      }
       await ctx.reply(`已切换到模型: \`${match.id}\``, { parse_mode: "Markdown" });
       return;
     }
 
-    // Allow setting arbitrary model name (not in the list)
-    config.setModelForChat(chatId, args);
-    await ctx.reply(`已切换到模型: \`${args}\`\n⚠️ 该模型不在预配置列表中`, {
+    await ctx.reply(`未找到模型: \`${args}\`\n使用 /model 查看可用列表`, {
       parse_mode: "Markdown",
     });
   };

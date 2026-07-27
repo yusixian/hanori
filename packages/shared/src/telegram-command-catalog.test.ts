@@ -11,6 +11,14 @@ describe("TELEGRAM_COMMAND_CATALOG", () => {
     }
   });
 
+  it("keeps model and provider selection Admin-only", () => {
+    for (const command of ["model", "provider"]) {
+      expect(TELEGRAM_COMMAND_CATALOG.find((entry) => entry.command === command)?.access).toBe(
+        "admin",
+      );
+    }
+  });
+
   it("has a non-empty, Telegram-compatible description for every locale", () => {
     for (const metadata of TELEGRAM_COMMAND_CATALOG) {
       expect(metadata.capability.trim()).not.toBe("");
