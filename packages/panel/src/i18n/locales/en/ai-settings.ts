@@ -59,6 +59,8 @@ export const aiSettings = {
     loadError: "Failed to load AI config",
     saveErrorDetail: "Save failed: {{detail}}",
     saveErrorHttp: "Save failed (HTTP {{status}})",
+    saveConflict:
+      "The config changed elsewhere. Your draft did not overwrite it; refresh and review before saving again.",
     saveSuccess: "AI config saved",
     saveError: "Failed to save",
     saveConfigError: "Failed to save AI config",

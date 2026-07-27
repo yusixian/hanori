@@ -53,6 +53,8 @@ Provider、模型、Prompt、工具、凭据、人物档案、聊天历史和用
 
 详情携带 opaque `revision`。保存时服务端在按 Bot 串行边界内重新锁定并读取最新 DB 数据；版本过期返回 `409 stale_revision` 和最新安全投影，客户端不得自动覆盖。DB commit 与运行态 apply 同属一个进程内 Bot 串行边界，避免旧请求反向覆盖新请求。DB 失败不会修改 runtime；runtime 失败则返回 `persisted: true, applied: false`，详情保持 `pending`，直到 Admin 手动 retry 或 Bot 下次从 DB 启动。
 
+现有 Web Panel 的整页 AI 配置保存也携带 Bot revision。任一侧先写入后，另一侧的旧草稿会收到 409 并保留在页面中等待人工刷新核对，避免整页 PUT 把 Mini App 刚写入的 `groupOverrides` 覆盖回旧版本。
+
 M1 明确为单实例控制面；跨实例锁、共享 pending 状态与常驻 retry worker 后移。
 
 ## DEV mock

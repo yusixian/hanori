@@ -244,6 +244,10 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
   };
 }
 
+function aiConfigRevision(updatedAt: Date | null | undefined): string {
+  return updatedAt?.toISOString() ?? "0";
+}
+
 const modelDiscoveryPathSchema = z
   .string()
   .trim()
@@ -253,6 +257,7 @@ const modelDiscoveryPathSchema = z
 
 const aiConfigSchema = z
   .object({
+    revision: z.string().min(1).max(100),
     enabled: z.boolean(),
     apiKey: z.string().optional(),
     baseURL: z.string(),
@@ -993,15 +998,27 @@ export function botsRoutes(
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
-      return c.json({ ok: true as const, data: toAiConfigPublic(bot.aiConfig) });
+      return c.json({
+        ok: true as const,
+        data: toAiConfigPublic(bot.aiConfig),
+        revision: aiConfigRevision(bot.updatedAt),
+      });
     })
     .put("/:botId/ai-config", zValidator("json", aiConfigSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
 
-      const aiConfig = await botPool.withAiConfigLock(botId, async () => {
+      const saveResult = await botPool.withAiConfigLock(botId, async () => {
         const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
-        if (!bot) return null;
+        if (!bot) return { kind: "not_found" as const };
+        const currentRevision = aiConfigRevision(bot.updatedAt);
+        if (body.revision !== currentRevision) {
+          return {
+            kind: "conflict" as const,
+            data: toAiConfigPublic(bot.aiConfig),
+            revision: currentRevision,
+          };
+        }
 
         // Migrate existing stored config first so we can reliably look up per-provider
         // encrypted keys by id when the client sends back the same provider without a new apiKey.
@@ -1181,11 +1198,32 @@ export function botsRoutes(
           imageOcrConfig,
         };
 
-        await db.update(bots).set({ aiConfig: updatedAiConfig }).where(eq(bots.id, botId));
-        return updatedAiConfig;
+        const changedAt = new Date(Math.max(Date.now(), (bot.updatedAt?.getTime() ?? 0) + 1));
+        await db
+          .update(bots)
+          .set({ aiConfig: updatedAiConfig, updatedAt: changedAt })
+          .where(eq(bots.id, botId));
+        return {
+          kind: "saved" as const,
+          aiConfig: updatedAiConfig,
+          revision: aiConfigRevision(changedAt),
+        };
       });
 
-      if (!aiConfig) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      if (saveResult.kind === "not_found") {
+        return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      }
+      if (saveResult.kind === "conflict") {
+        return c.json(
+          {
+            ok: false as const,
+            error: "AI configuration changed since it was loaded",
+            code: "stale_revision" as const,
+            latest: { data: saveResult.data, revision: saveResult.revision },
+          },
+          409,
+        );
+      }
 
       botPool.invalidateGitHubCredentials(botId);
 
@@ -1202,7 +1240,11 @@ export function botsRoutes(
         }
       }
 
-      return c.json({ ok: true as const, data: toAiConfigPublic(aiConfig) });
+      return c.json({
+        ok: true as const,
+        data: toAiConfigPublic(saveResult.aiConfig),
+        revision: saveResult.revision,
+      });
     })
     .get(
       "/:botId/conversations",

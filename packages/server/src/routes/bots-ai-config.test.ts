@@ -31,6 +31,7 @@ const existingAiConfig = {
 
 function requestBody() {
   return {
+    revision: "0",
     enabled: false,
     baseURL: "",
     model: "",
@@ -58,10 +59,11 @@ function ownerContext() {
 function routeDatabase(
   onSave?: (aiConfig: unknown) => void,
   aiConfig: unknown = existingAiConfig,
+  updatedAt: Date | null = null,
 ): Database {
   return {
     select: () => ({
-      from: () => ({ where: async () => [{ aiConfig }] }),
+      from: () => ({ where: async () => [{ aiConfig, updatedAt }] }),
     }),
     update: () => ({
       set: (value: { aiConfig: unknown }) => {
@@ -93,6 +95,31 @@ function savingBotPool(): BotPool {
 }
 
 describe("AI config GitHub coding provider contract", () => {
+  it("rejects a stale full-page save before it can overwrite a newer group patch", async () => {
+    const save = vi.fn();
+    const updatedAt = new Date("2026-07-27T12:00:00.000Z");
+    const app = routeApp(routeDatabase(save, existingAiConfig, updatedAt), savingBotPool());
+    const loaded = await app.request("/api/bots/bot-1/ai-config");
+    expect(await loaded.json()).toMatchObject({
+      ok: true,
+      revision: updatedAt.toISOString(),
+    });
+
+    const response = await app.request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody()),
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      code: "stale_revision",
+      latest: { revision: updatedAt.toISOString() },
+    });
+    expect(save).not.toHaveBeenCalled();
+  });
+
   it("fills the group history budget for legacy conversation config saves", async () => {
     let savedAiConfig: Record<string, unknown> | undefined;
     const response = await routeApp(

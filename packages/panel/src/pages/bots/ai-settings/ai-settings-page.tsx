@@ -138,6 +138,7 @@ export function BotAiSettingsPage() {
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
   const [managedProviderId, setManagedProviderId] = useState<string>();
   const savedDraftRef = useRef("");
+  const revisionRef = useRef("");
   // Draft per-provider api keys: keyed by provider id (or temp "__new_..." id until saved).
   // Cleared on save. Preserve-when-empty: empty string ⇒ keep existing encrypted key.
   const [providerApiKeys, setProviderApiKeys] = useState<Record<string, string>>({});
@@ -257,6 +258,7 @@ export function BotAiSettingsPage() {
       const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
       const json = await res.json();
       if (json.ok) {
+        revisionRef.current = json.revision;
         const triggerText = json.data.triggerConfig.triggerWords.join(", ");
         const stickersText = json.data.stickerPacks?.join(", ") ?? "";
         const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
@@ -348,6 +350,7 @@ export function BotAiSettingsPage() {
       const res = await client.api.bots[":botId"]["ai-config"].$put({
         param: { botId },
         json: {
+          revision: revisionRef.current,
           enabled: config.enabled,
           baseURL: activeProvider?.baseURL ?? config.baseURL,
           providerFormat: activeProvider?.providerFormat ?? config.providerFormat,
@@ -420,6 +423,10 @@ export function BotAiSettingsPage() {
         },
       });
       if (!res.ok) {
+        if (res.status === 409) {
+          setMessage({ type: "error", text: t("page.saveConflict") });
+          return;
+        }
         try {
           const errorJson = JSON.parse(await res.text());
           const detail = errorJson?.error?.issues
@@ -437,6 +444,7 @@ export function BotAiSettingsPage() {
       }
       const json = await res.json();
       if (json.ok) {
+        revisionRef.current = json.revision;
         const triggerText = json.data.triggerConfig.triggerWords.join(", ");
         const stickersText = json.data.stickerPacks?.join(", ") ?? "";
         const nextSummary = json.data.summaryConfig ?? summaryConfig;
@@ -694,7 +702,7 @@ export function BotAiSettingsPage() {
               <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
               <span className="sm:hidden">{t("page.preview")}</span>
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={handleSave} disabled={saving || revisionRef.current === ""}>
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />

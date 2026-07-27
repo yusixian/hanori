@@ -59,6 +59,7 @@ export const aiSettings = {
     loadError: "加载 AI 配置失败",
     saveErrorDetail: "保存失败：{{detail}}",
     saveErrorHttp: "保存失败（HTTP {{status}}）",
+    saveConflict: "配置已在其他页面更新。当前草稿尚未覆盖服务器，请刷新并重新核对后再保存。",
     saveSuccess: "AI 配置已保存",
     saveError: "保存失败",
     saveConfigError: "保存 AI 配置失败",
