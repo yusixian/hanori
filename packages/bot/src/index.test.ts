@@ -1,12 +1,21 @@
-import type { MemoryCallbacks, PeopleProfileObservation } from "@cos-tool-bot/shared";
+import {
+  TELEGRAM_COMMAND_CATALOG,
+  type MemoryCallbacks,
+  type PeopleProfileObservation,
+} from "@cos-tool-bot/shared";
 import { GrammyError } from "grammy";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const telegramApi = vi.hoisted(() => {
   const calls: string[] = [];
-  const fetch = vi.fn(async (input: string) => {
+  const requests: Array<{ method: string; body?: unknown }> = [];
+  const fetch = vi.fn(async (input: string, init?: RequestInit) => {
     const method = new URL(input).pathname.split("/").pop()!;
     calls.push(method);
+    requests.push({
+      method,
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : init?.body,
+    });
     const result =
       method === "sendMessage"
         ? {
@@ -18,7 +27,7 @@ const telegramApi = vi.hoisted(() => {
         : true;
     return { json: async () => ({ ok: true, result }) };
   });
-  return { calls, fetch };
+  return { calls, fetch, requests };
 });
 
 vi.mock("grammy", async (importOriginal) => {
@@ -33,13 +42,178 @@ vi.mock("grammy", async (importOriginal) => {
   };
 });
 
-import { buildUpdateErrorMessage, createBot } from "./index.js";
+import { buildUpdateErrorMessage, createBot, getActiveBotCommands } from "./index.js";
 
 const chatId = -100;
 const userId = 42;
 
 afterEach(() => {
   telegramApi.calls.length = 0;
+  telegramApi.requests.length = 0;
+});
+
+function createCommandTestBot(configuration: "minimal" | "complete" = "minimal") {
+  const complete = configuration === "complete";
+  return createBot({
+    token: "test-token",
+    botId: "bot-commands",
+    adminChatIds: [userId],
+    logger: { warn: vi.fn(), error: vi.fn() } as never,
+    aiReply: complete
+      ? {
+          botId: "bot-commands",
+          apiKey: "test-key",
+          baseURL: "https://example.test/v1",
+          model: "model-a",
+          systemPrompt: "test",
+          triggerConfig: {
+            replyToBot: false,
+            mentionBot: false,
+            triggerWords: [],
+            randomReplyPercent: 0,
+            randomReplyCooldown: 0,
+          },
+          groupOverrides: {},
+          models: [{ id: "model-a", label: "Model A" }],
+          providers: [
+            {
+              id: "provider-a",
+              label: "Provider A",
+              apiKey: "key-a",
+              baseURL: "https://a.example/v1",
+              providerFormat: "openai",
+              defaultModel: "model-a",
+              models: [{ id: "model-a", label: "Model A" }],
+            },
+            {
+              id: "provider-b",
+              label: "Provider B",
+              apiKey: "key-b",
+              baseURL: "https://b.example/v1",
+              providerFormat: "openai",
+              defaultModel: "model-b",
+              models: [{ id: "model-b", label: "Model B" }],
+            },
+          ],
+          activeProviderId: "provider-a",
+          webToolsConfig: {
+            enabled: true,
+            imageGeneration: {
+              provider: "pixai",
+              apiKey: "image-key",
+              model: "image-model",
+              pixaiConfig: {},
+            },
+          },
+        }
+      : undefined,
+    privacy: complete
+      ? {
+          getMode: async () => "normal",
+          runExclusive: async (_userId, operation) => operation(),
+          setMode: async () => {},
+          forget: async () => ({ conversationMessages: 0, profiles: 0, personalMemories: 0 }),
+        }
+      : undefined,
+    timerCallbacks: complete
+      ? {
+          onGetTimers: () => [],
+          onCancelTimer: async () => false,
+        }
+      : undefined,
+    mcpCallbacks: complete
+      ? {
+          listServers: async () => [],
+          addServer: async () => ({ ok: true }),
+          removeServer: async () => ({ ok: true }),
+        }
+      : undefined,
+    summary: complete
+      ? {
+          botId: "bot-commands",
+          triggerManual: async () => ({ ok: true }),
+          getAccessMode: async () => "all",
+          adminChatIds: [userId],
+        }
+      : undefined,
+  });
+}
+
+describe("createBot command registry", () => {
+  it("publishes only commands that were actually registered", async () => {
+    const bot = createCommandTestBot();
+    const activeCommands = getActiveBotCommands(bot);
+    expect(activeCommands.map(({ command }) => command)).toEqual([
+      "start",
+      "help",
+      "md2tg",
+      "status",
+      "restart",
+      "backup",
+      "clear",
+      "clearreceived",
+    ]);
+
+    expect(activeCommands.map(({ command }) => command)).not.toContain("provider");
+    expect(activeCommands.map(({ command }) => command)).not.toContain("model");
+    expect(activeCommands.map(({ command }) => command)).not.toContain("privacy");
+    expect(activeCommands.map(({ command }) => command)).not.toContain("stop");
+    expect(activeCommands.map(({ command }) => command)).not.toContain("timers");
+
+    await vi.waitFor(() => expect(telegramApi.calls).toContain("setMyCommands"));
+    const request = telegramApi.requests.find(({ method }) => method === "setMyCommands");
+    expect(request).toBeDefined();
+    const published = (
+      request!.body as { commands: Array<{ command: string; description: string }> }
+    ).commands;
+    expect(published.map(({ command }) => command)).toEqual(
+      activeCommands.map(({ command }) => command),
+    );
+    expect(published.find(({ command }) => command === "clear")?.description).toBe(
+      "清除当前对话历史",
+    );
+  });
+
+  it("keeps conditional provider/model commands in the registry, menu, and help together", async () => {
+    const bot = createCommandTestBot("complete");
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+    const activeNames = getActiveBotCommands(bot).map(({ command }) => command);
+    expect(activeNames).toEqual(TELEGRAM_COMMAND_CATALOG.map(({ command }) => command));
+
+    await bot.handleUpdate(
+      groupMessage({
+        text: "/help",
+        entities: [{ type: "bot_command", offset: 0, length: 5 }],
+      }) as never,
+    );
+
+    const menuRequest = telegramApi.requests.find(({ method }) => method === "setMyCommands");
+    expect(menuRequest).toBeDefined();
+    const menuNames = (menuRequest!.body as { commands: Array<{ command: string }> }).commands.map(
+      ({ command }) => command,
+    );
+    expect(menuNames).toEqual(activeNames);
+
+    const helpRequest = telegramApi.requests.find(({ method }) => method === "sendMessage");
+    expect(helpRequest).toBeDefined();
+    const helpText = (helpRequest!.body as { text: string }).text;
+    const helpNames = [...helpText.matchAll(/^\/([a-z0-9_]+) - /gm)].map((match) => match[1]);
+    expect(helpNames).toEqual(activeNames);
+  });
 });
 
 function createMemory() {

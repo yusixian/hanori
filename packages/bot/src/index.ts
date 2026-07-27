@@ -17,7 +17,7 @@ import { createClearCommand } from "./commands/clear.js";
 import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
 import { createDrawCommand } from "./commands/draw.js";
-import { commands, helpCommand } from "./commands/help.js";
+import { createHelpCommand } from "./commands/help.js";
 import { createMd2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
 import { createProviderCommand } from "./commands/provider.js";
@@ -32,6 +32,7 @@ import { createResumeCommand } from "./commands/resume.js";
 import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
 import { createStopCommand } from "./commands/stop.js";
+import { ActiveCommandRegistry } from "./commands/registry.js";
 import {
   createTimersCommand,
   isTimerCancelCallback,
@@ -117,6 +118,7 @@ export function createBot(config: BotConfig) {
     ) => BotContext,
   });
   bot.api.config.use(autoRetry());
+  const commandRegistry = new ActiveCommandRegistry(bot);
 
   const authGuard = createAuthGuard(adminChatIds);
 
@@ -242,21 +244,24 @@ export function createBot(config: BotConfig) {
     }
   }
 
-  bot.command("start", startCommand);
-  bot.command("help", helpCommand);
-  bot.command(
+  commandRegistry.register("start", startCommand);
+  commandRegistry.register(
+    "help",
+    createHelpCommand(() => commandRegistry.getActiveCommands()),
+  );
+  commandRegistry.register(
     "md2tg",
     createMd2tgCommand({ getRichMessageEnabled: () => aiGetRichMessageEnabled?.() ?? false }),
   );
-  bot.command("status", authGuard, createStatusCommand(statusConfig, aiState));
-  bot.command("restart", authGuard, createRestartCommand(config.onRestart));
-  bot.command("backup", authGuard, createBackupCommand(config.onBackup));
+  commandRegistry.register("status", authGuard, createStatusCommand(statusConfig, aiState));
+  commandRegistry.register("restart", authGuard, createRestartCommand(config.onRestart));
+  commandRegistry.register("backup", authGuard, createBackupCommand(config.onBackup));
   if (aiSetAiEnabled) {
-    bot.command("stop", authGuard, createStopCommand(aiSetAiEnabled));
-    bot.command("resume", authGuard, createResumeCommand(aiSetAiEnabled));
+    commandRegistry.register("stop", authGuard, createStopCommand(aiSetAiEnabled));
+    commandRegistry.register("resume", authGuard, createResumeCommand(aiSetAiEnabled));
   }
   if (aiUpdateWebToolApiKey) {
-    bot.command(
+    commandRegistry.register(
       "apikey",
       authGuard,
       createApiKeyCommand({
@@ -270,11 +275,11 @@ export function createBot(config: BotConfig) {
     );
   }
   if (config.mcpCallbacks) {
-    bot.command("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
+    commandRegistry.register("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
   }
-  bot.command("clear", createClearCommand(config.conversation, adminChatIds));
+  commandRegistry.register("clear", createClearCommand(config.conversation, adminChatIds));
   if (config.privacy) {
-    bot.command(
+    commandRegistry.register(
       "privacy",
       createPrivacyCommand({
         ...config.privacy,
@@ -282,7 +287,7 @@ export function createBot(config: BotConfig) {
       }),
     );
   }
-  bot.command(
+  commandRegistry.register(
     "clearreceived",
     authGuard,
     createClearReceivedCommand(config.aiReply?.dataFiles?.dataDir),
@@ -290,7 +295,7 @@ export function createBot(config: BotConfig) {
 
   // Register /timers command (admin only)
   if (config.timerCallbacks?.onGetTimers && config.timerCallbacks?.onCancelTimer) {
-    bot.command(
+    commandRegistry.register(
       "timers",
       authGuard,
       createTimersCommand({
@@ -312,9 +317,9 @@ export function createBot(config: BotConfig) {
       getModelsForChat: aiGetModelsForChat,
     });
     if (modelAccess === "admin") {
-      bot.command("model", authGuard, modelCmd);
+      commandRegistry.registerConfigurable("model", "admin", authGuard, modelCmd);
     } else {
-      bot.command("model", modelCmd);
+      commandRegistry.registerConfigurable("model", "public", modelCmd);
     }
   }
 
@@ -341,15 +346,15 @@ export function createBot(config: BotConfig) {
       defaultProviderId,
     });
     if (providerAccess === "admin") {
-      bot.command("provider", authGuard, providerCmd);
+      commandRegistry.registerConfigurable("provider", "admin", authGuard, providerCmd);
     } else {
-      bot.command("provider", providerCmd);
+      commandRegistry.registerConfigurable("provider", "public", providerCmd);
     }
   }
 
   // Register /replymode command (admin only)
   if (config.aiReply && aiGetReplyMode && aiSetReplyMode) {
-    bot.command(
+    commandRegistry.register(
       "replymode",
       authGuard,
       createReplyModeCommand({
@@ -361,7 +366,7 @@ export function createBot(config: BotConfig) {
 
   // Register /richtext command (admin only, persisted globally for this bot)
   if (aiGetRichMessageEnabled && aiSetRichMessageEnabled) {
-    bot.command(
+    commandRegistry.register(
       "richtext",
       authGuard,
       createRichTextCommand({
@@ -377,7 +382,7 @@ export function createBot(config: BotConfig) {
     aiGetImageGenEnabled &&
     aiSetImageGenEnabled
   ) {
-    bot.command(
+    commandRegistry.register(
       "imagegen",
       authGuard,
       createImageGenCommand({
@@ -393,7 +398,7 @@ export function createBot(config: BotConfig) {
     aiGetPixaiFullConfig &&
     aiUpdatePixaiConfig
   ) {
-    bot.command(
+    commandRegistry.register(
       "imgcfg",
       authGuard,
       createImgCfgCommand({
@@ -410,7 +415,7 @@ export function createBot(config: BotConfig) {
     aiDirectGenerate &&
     aiCanUseImageGeneration
   ) {
-    bot.command(
+    commandRegistry.register(
       "draw",
       createDrawCommand({
         directGenerate: aiDirectGenerate,
@@ -421,7 +426,7 @@ export function createBot(config: BotConfig) {
   }
 
   if (config.summary) {
-    bot.command("summary", createSummaryCommand(config.summary));
+    commandRegistry.register("summary", createSummaryCommand(config.summary));
   }
 
   if (aiHandler && aiState) {
@@ -482,7 +487,7 @@ export function createBot(config: BotConfig) {
     bot.on("message", aiHandler);
   }
 
-  bot.api.setMyCommands(commands).catch((err) => {
+  bot.api.setMyCommands(commandRegistry.getTelegramCommands()).catch((err) => {
     const desc = err instanceof GrammyError ? err.description : String(err);
     logger.warn(`Failed to set commands: ${desc}`);
   });
@@ -527,6 +532,7 @@ export {
 export type { McpCommandConfig } from "./commands/mcp.js";
 export type { SummaryCallbacks } from "./commands/summary.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
+export { getActiveBotCommands } from "./commands/registry.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";
 export {
