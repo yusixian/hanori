@@ -1,6 +1,10 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { AiReplyBotConfig, BotTimerHandlers } from "@cos-tool-bot/bot";
+import type {
+  AiReplyBotConfig,
+  BotTimerHandlers,
+  TelegramObservationCallbacks,
+} from "@cos-tool-bot/bot";
 import { NsfwChecker, removeProfileAvatarFile } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
@@ -64,6 +68,7 @@ import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import type { TelegramBotPublicProfile } from "./telegram-bot-runtime.js";
 import { selectMemoriesForPrompt } from "./prompt-memory-selector.js";
 import type { McpClientManager } from "./mcp-client-manager.js";
 import type { RssFeedService } from "./rss-feed-service.js";
@@ -138,6 +143,11 @@ export class BotPool {
   private summaryConfigService?: SummaryConfigService;
   private gitWorkspaceService?: GitWorkspaceService;
   private githubAppCredentialService?: GitHubAppCredentialService;
+  private telegramObservation?: TelegramObservationCallbacks;
+  private telegramProfileObserver?: (
+    botId: string,
+    profile: TelegramBotPublicProfile,
+  ) => void | Promise<void>;
   private githubCredentialGenerations = new GitHubCredentialGenerationGate();
 
   constructor(
@@ -183,6 +193,14 @@ export class BotPool {
 
   setGitHubAppCredentialService(service: GitHubAppCredentialService) {
     this.githubAppCredentialService = service;
+  }
+
+  setTelegramDirectoryCallbacks(
+    observation: TelegramObservationCallbacks,
+    profileObserver: (botId: string, profile: TelegramBotPublicProfile) => void | Promise<void>,
+  ) {
+    this.telegramObservation = observation;
+    this.telegramProfileObserver = profileObserver;
   }
 
   invalidateGitHubCredentials(botId: string): void {
@@ -1334,6 +1352,7 @@ export class BotPool {
       timerCallbacks,
       mcpCallbacks,
       summary: summaryCallbacks,
+      telegramObservation: this.telegramObservation,
     });
 
     const preexistingPendingCutoff = new Date();
@@ -1343,6 +1362,14 @@ export class BotPool {
       this.managers.delete(botId);
       this.botTimerHandlers.delete(botId);
       throw new Error("Bot failed to start; check bot logs for details");
+    }
+    if (this.telegramProfileObserver) {
+      try {
+        const profile = await manager.getTelegramProfile();
+        await this.telegramProfileObserver(botId, profile);
+      } catch (err) {
+        this.logger.warn({ err, botId }, "Failed to observe Telegram bot profile");
+      }
     }
     void runInitialHistoryGovernance?.().catch((err) => {
       void dbLogger.error(

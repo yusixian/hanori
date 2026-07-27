@@ -35,6 +35,7 @@ export const env = {
   GITHUB_APP_SLUG: optional("GITHUB_APP_SLUG"),
   // Used only once to bootstrap the first owner during migration.
   PANEL_PASSWORD: optional("PANEL_PASSWORD"),
+  MINI_APP_SESSION_SECRET: optional("MINI_APP_SESSION_SECRET"),
   ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],
   ENCRYPTION_KEY: optional("ENCRYPTION_KEY", DEFAULT_ENCRYPTION_KEY),
   USING_DEFAULT_ENCRYPTION_KEY: !process.env.ENCRYPTION_KEY,

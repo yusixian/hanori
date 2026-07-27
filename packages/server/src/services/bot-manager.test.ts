@@ -47,6 +47,27 @@ beforeEach(() => {
 });
 
 describe("BotManager runtime disposal", () => {
+  it("forwards Telegram observation callbacks into the bot runtime", async () => {
+    const telegramObservation = { onChatObserved: vi.fn() };
+    const manager = new BotManager({
+      botId: "bot-1",
+      token: "123:test",
+      adminChatIds: [1],
+      logger: {} as Logger,
+      dbLogger: {
+        info: vi.fn(async () => {}),
+        warn: vi.fn(async () => {}),
+        error: vi.fn(async () => {}),
+        log: vi.fn(async () => {}),
+      } as unknown as DbLogger,
+      telegramObservation,
+    });
+
+    await manager.start();
+
+    expect(mocks.createBot).toHaveBeenCalledWith(expect.objectContaining({ telegramObservation }));
+  });
+
   it("disposes every bot runtime across repeated starts and stops", async () => {
     const manager = createManager();
 

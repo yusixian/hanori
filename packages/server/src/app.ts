@@ -20,6 +20,7 @@ import { botFilesRoutes } from "./routes/bot-files.js";
 import { generationRoutes } from "./routes/generations.js";
 import { apiTestRoutes } from "./routes/api-test.js";
 import { mcpServerRoutes } from "./routes/mcp-servers.js";
+import { createMiniAppBotTokenResolver, miniAppRoutes } from "./routes/mini-app.js";
 import { rssRoutes } from "./routes/rss.js";
 import { summaryRoutes } from "./routes/summary.js";
 import { timerRoutes } from "./routes/timers.js";
@@ -37,6 +38,8 @@ import type { SummaryConfigService } from "./services/summary-config-service.js"
 import { BotRunService } from "./services/bot-run-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
 import type { GitHubAppCredentialService } from "./services/github-app-credentials.js";
+import type { TelegramMembershipVerifier } from "./services/mini-app-access-policy.js";
+import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 interface AppOptions {
   db: Database;
@@ -52,6 +55,9 @@ interface AppOptions {
   summaryService: ChatSummaryService;
   summaryConfigService: SummaryConfigService;
   githubAppService: GitHubAppCredentialService;
+  miniAppSessionSecret: string;
+  telegramDirectoryService: TelegramDirectoryService;
+  telegramMembershipVerifier: TelegramMembershipVerifier;
 }
 
 export function createApp(options: AppOptions) {
@@ -69,6 +75,9 @@ export function createApp(options: AppOptions) {
     summaryService,
     summaryConfigService,
     githubAppService,
+    miniAppSessionSecret,
+    telegramDirectoryService,
+    telegramMembershipVerifier,
   } = options;
 
   const app = new Hono()
@@ -88,6 +97,15 @@ export function createApp(options: AppOptions) {
       return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
     })
     .on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
+    .route(
+      "/api/mini-app",
+      miniAppRoutes({
+        sessionSecret: miniAppSessionSecret,
+        botTokenResolver: createMiniAppBotTokenResolver(db, encryptionKey),
+        directory: telegramDirectoryService,
+        membershipVerifier: telegramMembershipVerifier,
+      }),
+    )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))

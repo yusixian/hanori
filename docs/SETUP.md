@@ -62,14 +62,15 @@ pnpm dev
 
 ### Better Auth
 
-| 变量                   | 必填       | 说明                                                                                                          |
-| ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------- |
-| `BETTER_AUTH_SECRET`   | 是         | Better Auth 加密和 session 密钥，至少 32 位随机字符串。                                                       |
-| `BETTER_AUTH_URL`      | 生产必填   | 面板对外访问的完整 origin，例如 `https://bot.example.com`。开发环境未设置时默认使用 `http://localhost:3000`。 |
-| `AUTH_OWNER_EMAIL`     | 是         | 第一个 owner 的邮箱；每次启动都需要保留。                                                                     |
-| `PANEL_PASSWORD`       | 仅首次启动 | 旧版面板密码，同时作为迁移时第一个 owner 的初始密码。创建密码账户后即可删除。                                 |
-| `GOOGLE_CLIENT_ID`     | 否         | Google OAuth Client ID。只有和 `GOOGLE_CLIENT_SECRET` 同时配置时才启用 Google 登录。                          |
-| `GOOGLE_CLIENT_SECRET` | 否         | Google OAuth Client Secret。                                                                                  |
+| 变量                      | 必填                 | 说明                                                                                                                                               |
+| ------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `BETTER_AUTH_SECRET`      | 是                   | Better Auth 加密和 session 密钥，至少 32 位随机字符串。                                                                                            |
+| `BETTER_AUTH_URL`         | 生产必填             | 面板对外访问的完整 origin，例如 `https://bot.example.com`。开发环境未设置时默认使用 `http://localhost:3000`。                                      |
+| `AUTH_OWNER_EMAIL`        | 是                   | 第一个 owner 的邮箱；每次启动都需要保留。                                                                                                          |
+| `PANEL_PASSWORD`          | 仅首次启动           | 旧版面板密码，同时作为迁移时第一个 owner 的初始密码。创建密码账户后即可删除。                                                                      |
+| `MINI_APP_SESSION_SECRET` | 启用 Mini App 时必填 | Telegram Mini App 独立会话签名密钥，至少 32 位；不要复用 Bot Token 或 Better Auth 密钥。未配置不会影响现有 Bot/管理面板，Mini App 登录会返回 503。 |
+| `GOOGLE_CLIENT_ID`        | 否                   | Google OAuth Client ID。只有和 `GOOGLE_CLIENT_SECRET` 同时配置时才启用 Google 登录。                                                               |
+| `GOOGLE_CLIENT_SECRET`    | 否                   | Google OAuth Client Secret。                                                                                                                       |
 
 #### 从零配置 Google 登录
 
@@ -151,6 +152,14 @@ GOOGLE_CLIENT_SECRET=这里粘贴客户端密钥
 | `BOT_TOKEN`      | 否                 | 首次迁移到数据库的 Telegram Bot Token。迁移完成后可删除。                                                          |
 | `ADMIN_CHAT_IDS` | 否                 | JSON 数组，例如 `[123456789]`；首次迁移时写入 Bot 配置。                                                           |
 | `NSFW_API_URL`   | 否                 | 外部 NSFW 检测服务地址；不设置则不启用。                                                                           |
+
+启用 Telegram Mini App 前，单独生成会话密钥并重启服务：
+
+```bash
+openssl rand -hex 32
+```
+
+把输出写入 `MINI_APP_SESSION_SECRET`。该密钥轮换后，现有 Mini App 会话会立即失效；Bot Token、聊天数据和 Better Auth 管理面板会话不受影响。
 
 ### Embedding
 

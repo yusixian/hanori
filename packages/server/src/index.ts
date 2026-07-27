@@ -26,6 +26,8 @@ import { SummaryRunner } from "./services/summary-runner.js";
 import { TimerRegistry } from "./services/timer-registry.js";
 import { migrateAiConfig } from "./utils/ai-config-migrate.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
+import { BotPoolTelegramRuntimeAdapter } from "./services/telegram-bot-runtime.js";
+import { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 export type { AppType } from "./app.js";
 
@@ -134,6 +136,36 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const telegramDirectoryService = new TelegramDirectoryService(db);
+const telegramRuntime = new BotPoolTelegramRuntimeAdapter(botPool);
+botPool.setTelegramDirectoryCallbacks(
+  {
+    onChatObserved: async (observation) => {
+      await telegramDirectoryService.observeChat({
+        botId: observation.botId,
+        chatId: observation.chatId,
+        type: observation.chatType,
+        title: observation.title,
+        username: observation.username ?? null,
+        observedAt: new Date(observation.observedAt * 1000),
+      });
+    },
+    onBotMembershipObserved: async (observation) => {
+      await telegramDirectoryService.observeBotMembership({
+        botId: observation.botId,
+        chatId: observation.chatId,
+        type: observation.chatType,
+        title: null,
+        username: null,
+        status: observation.status,
+        observedAt: new Date(observation.observedAt * 1000),
+      });
+    },
+  },
+  async (botId, profile) => {
+    await telegramDirectoryService.upsertBotProfile({ botId, ...profile });
+  },
+);
 const githubAppService = new GitHubAppCredentialService({
   config: {
     appId: env.GITHUB_APP_ID,
@@ -232,6 +264,9 @@ const app = createApp({
   summaryService,
   summaryConfigService,
   githubAppService,
+  miniAppSessionSecret: env.MINI_APP_SESSION_SECRET,
+  telegramDirectoryService,
+  telegramMembershipVerifier: telegramRuntime,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

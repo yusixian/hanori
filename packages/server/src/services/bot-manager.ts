@@ -3,6 +3,7 @@ import type {
   BotConfig,
   McpCommandConfig,
   SummaryCallbacks,
+  TelegramObservationCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
 import { createBot, disposeBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
@@ -43,6 +44,7 @@ interface BotManagerOptions {
   timerCallbacks?: TimerCallbacks;
   mcpCallbacks?: McpCommandConfig;
   summary?: SummaryCallbacks;
+  telegramObservation?: TelegramObservationCallbacks;
 }
 
 export class BotManager implements IBotManager, TelegramRichMessageSender {
@@ -73,6 +75,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       conversation: options.conversation,
       privacy: options.privacy,
       summary: options.summary,
+      telegramObservation: options.telegramObservation,
     };
   }
 
