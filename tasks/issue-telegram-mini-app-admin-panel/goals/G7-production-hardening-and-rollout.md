@@ -71,4 +71,5 @@ git diff --check
 - 已实现 per-Bot `miniAppEnabled`（default false）、API fail-closed 404、私聊 `/panel`、群聊转私聊引导、JSON API fallback、CSP/security headers 与静态缓存策略。
 - 最终安全/前端 Review 的 P1 已修复：Editor 信任根越权、新 Telegram 账号复用旧 Cookie、Telegram SDK/CSP 全局扩权、Web iframe Cookie、session limiter 查库绕过/跨 Bot 拒绝服务与跨窗口 reservation 竞争。
 - 最终 runtime Review 的 P1 已修复：legacy 私聊 selection 迁移失败、群迁移后 runtime 未刷新、timer/RSS 误把 skip/failure 当成功、timer claim 崩溃永久丢失、工具副作用后的整段重放、RSS effect-only 错误推进 checkpoint，以及 crash 后 disable 遗留 handler/disposer。
+- [本地合成数据迁移/恢复演练](../evidence/G7-local-migration-rehearsal-2026-07-28.md)已通过：0037 基线 snapshot → 0038/0039 migrate/report → 全新数据库 restore；6 类 legacy 分支、默认关闭开关、legacy row 保留与迁移前 schema 恢复均符合预期。该证据不替代真实部署数据库快照演练。
 - 本地自动化与 production build 已通过；真实数据库 snapshot→migrate→report→restore 与 iOS/Android/Desktop/Web 表格必须由有 HTTPS/Telegram 环境的一方执行并留下私有证据。
