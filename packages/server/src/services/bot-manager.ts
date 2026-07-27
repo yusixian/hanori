@@ -20,6 +20,12 @@ import type {
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
+import {
+  isTelegramGroupChatId,
+  isTelegramUserId,
+  mapTelegramMembership,
+  type TelegramBotPublicProfile,
+} from "./telegram-bot-runtime.js";
 
 interface BotManagerOptions {
   botId: string;
@@ -155,6 +161,31 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
   }
 
+  async getTelegramProfile(): Promise<TelegramBotPublicProfile> {
+    const bot = this.requireRunningBot();
+    const profile = await bot.api.getMe();
+    if (!isTelegramUserId(profile.id)) {
+      throw new Error("Telegram returned an invalid bot user ID");
+    }
+    return {
+      telegramUserId: profile.id,
+      username: profile.username,
+      displayName: [profile.first_name, profile.last_name].filter(Boolean).join(" "),
+      observedAt: new Date(),
+    };
+  }
+
+  async isTelegramMember(input: { chatId: number; userId: number }): Promise<boolean> {
+    if (!isTelegramGroupChatId(input.chatId)) {
+      throw new Error("Telegram group chat ID must be a negative safe integer");
+    }
+    if (!isTelegramUserId(input.userId)) {
+      throw new Error("Telegram user ID must be a positive safe integer");
+    }
+    const member = await this.requireRunningBot().api.getChatMember(input.chatId, input.userId);
+    return mapTelegramMembership(member);
+  }
+
   async sendRichMessage(
     chatId: number,
     format: TelegramRichMessageFormat,
@@ -192,5 +223,12 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       nsfwChecker: this.botConfig.aiReply?.nsfwChecker,
       signal,
     });
+  }
+
+  private requireRunningBot(): NonNullable<typeof this.bot> {
+    if (this._status !== "running" || !this.bot) {
+      throw new Error(`Bot ${this.botId} is not running`);
+    }
+    return this.bot;
   }
 }
