@@ -47,6 +47,10 @@ import {
   createGitHubCallbackQueryHandler,
 } from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
+import {
+  createTelegramObservationMiddleware,
+  type TelegramObservationCallbacks,
+} from "./middleware/telegram-observation.js";
 import { getUpdateConstraint } from "./middleware/update-constraint.js";
 
 export type AiReplyBotConfig = Omit<
@@ -96,6 +100,7 @@ export interface BotConfig {
   conversation?: ConversationCallbacks;
   privacy?: UserPrivacyCallbacks;
   summary?: SummaryCallbacks;
+  telegramObservation?: TelegramObservationCallbacks;
 }
 
 const botDisposers = new WeakMap<object, () => void>();
@@ -128,6 +133,9 @@ export function createBot(config: BotConfig) {
   // AI reply without racing another full-config API key update from a different chat.
   bot.use(sequentialize(getUpdateConstraint));
   bot.use(stream());
+  bot.use(
+    createTelegramObservationMiddleware(config.botId, config.telegramObservation, config.onLog),
+  );
   bot.use(createLogMiddleware(config.onLog));
 
   // Build AI handler + runtime state (created before commands so state is available)
@@ -531,6 +539,17 @@ export {
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
 export type { SummaryCallbacks } from "./commands/summary.js";
+export {
+  createTelegramObservationMiddleware,
+  isValidTelegramGroupChatId,
+  projectTelegramObservations,
+  type TelegramBotMembershipObservation,
+  type TelegramBotMembershipStatus,
+  type TelegramChatMigrationObservation,
+  type TelegramChatObservation,
+  type TelegramGroupChatType,
+  type TelegramObservationCallbacks,
+} from "./middleware/telegram-observation.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { getActiveBotCommands } from "./commands/registry.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";

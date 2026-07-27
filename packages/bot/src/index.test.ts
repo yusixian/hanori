@@ -216,6 +216,46 @@ describe("createBot command registry", () => {
   });
 });
 
+describe("createBot Telegram observation", () => {
+  it("wires ordinary group updates to the configured observation callbacks", async () => {
+    const onChatObserved = vi.fn();
+    const bot = createBot({
+      token: "test-token",
+      botId: "bot-observation",
+      adminChatIds: [],
+      logger: { warn: vi.fn(), error: vi.fn() } as never,
+      telegramObservation: { onChatObserved },
+    });
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    await bot.handleUpdate(groupMessage({ text: "directory observation" }) as never);
+
+    expect(onChatObserved).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "chat",
+        botId: "bot-observation",
+        chatId,
+        chatType: "supergroup",
+        title: "Test Group",
+      }),
+    );
+  });
+});
+
 function createMemory() {
   const touchProfile = vi.fn(async (_observation: PeopleProfileObservation) => ({
     created: false,
