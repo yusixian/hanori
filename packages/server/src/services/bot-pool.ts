@@ -495,6 +495,10 @@ export class BotPool {
   }
 
   private async startBotImpl(botId: string) {
+    const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
+    if (!bot) throw new Error(`Bot ${botId} not found`);
+    if (!bot.isActive) throw new Error(`Bot ${botId} is disabled`);
+
     const existing = this.managers.get(botId);
     if (existing) {
       if (existing.status === "running") {
@@ -507,9 +511,6 @@ export class BotPool {
       );
       await this.stopBotImpl(botId);
     }
-
-    const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
-    if (!bot) throw new Error(`Bot ${botId} not found`);
 
     const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
     if (platform === "lark-webhook") {
@@ -1638,6 +1639,15 @@ export class BotPool {
 
   async restartBot(botId: string) {
     return this.enqueue(botId, async () => {
+      const [bot] = await this.db
+        .select({ isActive: bots.isActive })
+        .from(bots)
+        .where(eq(bots.id, botId));
+      if (!bot) throw new Error(`Bot ${botId} not found`);
+      if (!bot.isActive) {
+        await this.stopBotImpl(botId);
+        throw new Error(`Bot ${botId} is disabled`);
+      }
       await this.stopBotImpl(botId);
       await this.startBotImpl(botId);
     });

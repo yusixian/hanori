@@ -45,9 +45,21 @@ export class BotLifecycleError extends Error {
   }
 }
 
+export type BotLifecycleActor = {
+  kind: "telegram_user" | "better_auth_user";
+  id: string;
+};
+
 export interface LifecycleInput {
   botId: string;
-  actorTelegramUserId: number;
+  actor: BotLifecycleActor;
+}
+
+function auditActor(actor: BotLifecycleActor) {
+  return {
+    actorTelegramUserId: actor.kind === "telegram_user" ? Number(actor.id) : null,
+    actorRole: "admin" as const,
+  };
 }
 
 function state(desiredActive: boolean, runtimeStatus: BotStatus): BotLifecycleState {
@@ -88,7 +100,7 @@ export class BotLifecycleService {
   }
 
   restart(input: LifecycleInput): Promise<BotLifecycleMutationResult> {
-    this.assertActor(input.actorTelegramUserId);
+    const actor = this.validateActor(input.actor);
     return this.locks.run(input.botId, async () => {
       const desiredActive = await this.persist(() =>
         this.db.transaction(async (tx) => {
@@ -101,8 +113,7 @@ export class BotLifecycleService {
           const allowed = bot.isActive;
           await tx.insert(miniAppAuditEvents).values({
             botId: input.botId,
-            actorTelegramUserId: input.actorTelegramUserId,
-            actorRole: "admin",
+            ...auditActor(actor),
             capability: "bot.lifecycle.manage",
             action: allowed ? "bot.lifecycle.restart-requested" : "bot.lifecycle.restart-rejected",
             resourceType: "bot",
@@ -111,6 +122,8 @@ export class BotLifecycleService {
             nextSummary: {
               desiredActive: bot.isActive,
               runtimeAction: allowed ? "requested" : "rejected",
+              actorKind: actor.kind,
+              actorId: actor.id,
             },
             outcome: allowed ? "succeeded" : "failed",
             createdAt: this.now(),
@@ -133,7 +146,7 @@ export class BotLifecycleService {
     errorCode: BotLifecycleRuntimeErrorCode,
     apply: () => Promise<void>,
   ): Promise<BotLifecycleMutationResult> {
-    this.assertActor(input.actorTelegramUserId);
+    const actor = this.validateActor(input.actor);
     return this.locks.run(input.botId, async () => {
       await this.persist(() =>
         this.db.transaction(async (tx) => {
@@ -148,8 +161,7 @@ export class BotLifecycleService {
           }
           await tx.insert(miniAppAuditEvents).values({
             botId: input.botId,
-            actorTelegramUserId: input.actorTelegramUserId,
-            actorRole: "admin",
+            ...auditActor(actor),
             capability: "bot.lifecycle.manage",
             action,
             resourceType: "bot",
@@ -159,6 +171,8 @@ export class BotLifecycleService {
               desiredActive,
               desiredChanged: bot.isActive !== desiredActive,
               runtimeAction: "requested",
+              actorKind: actor.kind,
+              actorId: actor.id,
             },
             outcome: "succeeded",
             createdAt: this.now(),
@@ -197,10 +211,17 @@ export class BotLifecycleService {
     };
   }
 
-  private assertActor(actorTelegramUserId: number): void {
-    if (!Number.isSafeInteger(actorTelegramUserId) || actorTelegramUserId <= 0) {
+  private validateActor(actor: BotLifecycleActor): BotLifecycleActor {
+    const id = actor.id.trim();
+    if (
+      !id ||
+      id.length > 128 ||
+      (actor.kind === "telegram_user" &&
+        (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))))
+    ) {
       throw new BotLifecycleError("invalid_actor");
     }
+    return { ...actor, id };
   }
 
   private async persist<T>(operation: () => Promise<T>): Promise<T> {

@@ -22,8 +22,9 @@ import * as fs from "node:fs/promises";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import { env } from "../env.js";
-import type { AuthVariables } from "../middleware/better-auth.js";
+import { ownerOrAdmin, type AuthVariables } from "../middleware/better-auth.js";
 import type { BotPool } from "../services/bot-pool.js";
+import { BotLifecycleError, type BotLifecycleService } from "../services/bot-lifecycle-service.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
 import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "../services/ai-config-web-tools.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
@@ -691,6 +692,7 @@ export function botsRoutes(
   db: Database,
   botPool: BotPool,
   modelCapabilityService: ModelCapabilityService,
+  botLifecycleService?: BotLifecycleService,
 ) {
   return new Hono<{ Variables: AuthVariables }>()
     .get(
@@ -782,10 +784,17 @@ export function botsRoutes(
         .returning();
       const created = rows[0]!;
       if (body.isActive) {
-        try {
-          await botPool.startBot(created.id);
-        } catch {
-          // Bot created but failed to start — still return success
+        if (botLifecycleService) {
+          await botLifecycleService.enable({
+            botId: created.id,
+            actor: { kind: "better_auth_user", id: c.get("authUser").id },
+          });
+        } else {
+          try {
+            await botPool.startBot(created.id);
+          } catch {
+            // Test-only fallback for route units that do not install lifecycle services.
+          }
         }
       }
       return c.json({ ok: true as const, data: toBotWithStatus(created, botPool) }, 201);
@@ -793,6 +802,9 @@ export function botsRoutes(
     .put("/:botId", zValidator("json", updateBotSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
+      if (body.isActive !== undefined && !ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限管理 Bot 生命周期" }, 403);
+      }
 
       const [existing] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!existing) return c.json({ ok: false as const, error: "Bot not found" }, 404);
@@ -802,7 +814,6 @@ export function botsRoutes(
       if (body.token !== undefined)
         updates.encryptedToken = encrypt(body.token, env.ENCRYPTION_KEY);
       if (body.adminChatIds !== undefined) updates.adminChatIds = body.adminChatIds;
-      if (body.isActive !== undefined) updates.isActive = body.isActive;
 
       // Lark-specific updates
       if (body.webhookUrl !== undefined || body.signSecret !== undefined) {
@@ -839,20 +850,31 @@ export function botsRoutes(
       }
 
       const rows = await db.update(bots).set(updates).where(eq(bots.id, botId)).returning();
-      const updated = rows[0]!;
+      let updated = rows[0]!;
 
       const manager = botPool.getManager(botId);
 
       // Handle isActive lifecycle changes
       if (body.isActive !== undefined && body.isActive !== existing.isActive) {
-        try {
-          if (!body.isActive && manager) {
-            await botPool.stopBot(botId);
-          } else if (body.isActive && !manager) {
-            await botPool.startBot(botId);
+        if (botLifecycleService) {
+          const input = {
+            botId,
+            actor: { kind: "better_auth_user" as const, id: c.get("authUser").id },
+          };
+          const lifecycle = body.isActive
+            ? await botLifecycleService.enable(input)
+            : await botLifecycleService.disable(input);
+          updated = { ...updated, isActive: lifecycle.desiredActive };
+        } else {
+          try {
+            if (!body.isActive && manager) {
+              await botPool.stopBot(botId);
+            } else if (body.isActive && !manager) {
+              await botPool.startBot(botId);
+            }
+          } catch {
+            // Test-only fallback for route units that do not install lifecycle services.
           }
-        } catch {
-          // continue
         }
       } else {
         // Restart running bot if config changed
@@ -894,34 +916,49 @@ export function botsRoutes(
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       try {
-        await botPool.startBot(botId);
+        const data = botLifecycleService
+          ? await botLifecycleService.enable({
+              botId,
+              actor: { kind: "better_auth_user", id: c.get("authUser").id },
+            })
+          : await botPool.startBot(botId);
+        return c.json({ ok: true as const, ...(data ? { data } : {}) });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof BotLifecycleError ? err.message : "Bot could not be enabled";
         return c.json({ ok: false as const, error: msg }, 500);
       }
-      return c.json({ ok: true as const });
     })
     .post("/:botId/stop", async (c) => {
       const botId = c.req.param("botId");
       try {
-        await botPool.stopBot(botId);
+        const data = botLifecycleService
+          ? await botLifecycleService.disable({
+              botId,
+              actor: { kind: "better_auth_user", id: c.get("authUser").id },
+            })
+          : await botPool.stopBot(botId);
+        return c.json({ ok: true as const, ...(data ? { data } : {}) });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof BotLifecycleError ? err.message : "Bot could not be disabled";
         return c.json({ ok: false as const, error: msg }, 500);
       }
-      return c.json({ ok: true as const });
     })
     .post("/:botId/restart", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       try {
-        await botPool.restartBot(botId);
+        const data = botLifecycleService
+          ? await botLifecycleService.restart({
+              botId,
+              actor: { kind: "better_auth_user", id: c.get("authUser").id },
+            })
+          : await botPool.restartBot(botId);
+        return c.json({ ok: true as const, ...(data ? { data } : {}) });
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof BotLifecycleError ? err.message : "Bot could not be restarted";
         return c.json({ ok: false as const, error: msg }, 500);
       }
-      return c.json({ ok: true as const });
     })
     .post(
       "/:botId/ai-config/prompt-preview",

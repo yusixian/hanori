@@ -42,6 +42,7 @@ import type { TelegramMembershipVerifier } from "./services/mini-app-access-poli
 import type { MiniAppAccessService } from "./services/mini-app-access-service.js";
 import type { GroupConfigService } from "./services/group-config-service.js";
 import type { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
+import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 interface AppOptions {
@@ -64,6 +65,7 @@ interface AppOptions {
   miniAppAccessService: MiniAppAccessService;
   groupConfigService: GroupConfigService;
   chatAiSelectionService: ChatAiSelectionService;
+  botLifecycleService: BotLifecycleService;
 }
 
 export function createApp(options: AppOptions) {
@@ -87,6 +89,7 @@ export function createApp(options: AppOptions) {
     miniAppAccessService,
     groupConfigService,
     chatAiSelectionService,
+    botLifecycleService,
   } = options;
 
   const app = new Hono()
@@ -117,6 +120,7 @@ export function createApp(options: AppOptions) {
         accessService: miniAppAccessService,
         groupConfigService,
         chatAiSelectionService,
+        botLifecycleService,
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
@@ -128,7 +132,10 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/debug/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/github-app", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/github-app/*", requireRoles(ownerOrAdmin))
-    .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService))
+    .use("/api/bots/:botId/start", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/stop", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
+    .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService, botLifecycleService))
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))

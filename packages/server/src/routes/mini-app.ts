@@ -17,6 +17,7 @@ import {
   ChatAiSelectionError,
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
+import { BotLifecycleError, type BotLifecycleService } from "../services/bot-lifecycle-service.js";
 import {
   MiniAppAccessError,
   type MiniAppAccessService,
@@ -119,6 +120,7 @@ export interface MiniAppRoutesOptions {
     | "setDisplayPolicy"
     | "retryPublish"
   >;
+  botLifecycleService?: Pick<BotLifecycleService, "read" | "enable" | "disable" | "restart">;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
 }
@@ -860,6 +862,73 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
         return c.json({ ok: false as const, error: "Runtime apply failed" }, 503);
       }
     })
+    .get("/:botId/lifecycle", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "bot.settings.read", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.botLifecycleService) {
+        return c.json({ ok: false as const, error: "Bot lifecycle is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          lifecycle: await options.botLifecycleService.read(botId),
+        });
+      } catch (error) {
+        if (error instanceof BotLifecycleError && error.code === "not_found") {
+          return c.json({ ok: false as const, error: "Not found" }, 404);
+        }
+        return c.json({ ok: false as const, error: "Bot lifecycle is unavailable" }, 503);
+      }
+    })
+    .post("/:botId/lifecycle/:action", async (c) => {
+      const botId = c.req.param("botId");
+      const action = c.req.param("action");
+      if (action !== "enable" && action !== "disable" && action !== "restart") {
+        return c.json({ ok: false as const, error: "Not found" }, 404);
+      }
+      const authorization = await authorize(botId, c.req.raw, "bot.lifecycle.manage", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.botLifecycleService) {
+        return c.json({ ok: false as const, error: "Bot lifecycle is not available" }, 503);
+      }
+      try {
+        const input = {
+          botId,
+          actor: { kind: "telegram_user" as const, id: String(authorization.userId) },
+        };
+        const lifecycle =
+          action === "enable"
+            ? await options.botLifecycleService.enable(input)
+            : action === "disable"
+              ? await options.botLifecycleService.disable(input)
+              : await options.botLifecycleService.restart(input);
+        return c.json({ ok: true as const, lifecycle });
+      } catch (error) {
+        if (error instanceof BotLifecycleError) {
+          const status =
+            error.code === "not_found" ? 404 : error.code === "desired_inactive" ? 409 : 503;
+          return c.json({ ok: false as const, error: error.message, code: error.code }, status);
+        }
+        return c.json({ ok: false as const, error: "Bot lifecycle operation failed" }, 503);
+      }
+    })
     .get("/:botId/ai-selection/options", async (c) => {
       const botId = c.req.param("botId");
       const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", false);
@@ -940,6 +1009,31 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
         const mapped = await selectionError(error, () =>
           options.chatAiSelectionService!.readGlobal(botId),
         );
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .post("/:botId/ai-selection/retry", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          ...(await options.chatAiSelectionService.retryPublish(botId)),
+        });
+      } catch (error) {
+        const mapped = await selectionError(error);
         return c.json(mapped.body, mapped.status);
       }
     })

@@ -150,6 +150,23 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
       applyState: "applied" as const,
     })),
   };
+  const lifecycle = {
+    desiredActive: true,
+    runtimeStatus: "running" as const,
+    reconciled: true,
+  };
+  const botLifecycleService = {
+    read: vi.fn(async () => lifecycle),
+    enable: vi.fn(async () => ({ ...lifecycle, persisted: true as const, applied: true })),
+    disable: vi.fn(async () => ({
+      desiredActive: false,
+      runtimeStatus: "stopped" as const,
+      reconciled: true,
+      persisted: true as const,
+      applied: true,
+    })),
+    restart: vi.fn(async () => ({ ...lifecycle, persisted: true as const, applied: true })),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
     allowedOrigins: [ORIGIN],
@@ -161,6 +178,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     accessService,
     groupConfigService,
     chatAiSelectionService,
+    botLifecycleService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
@@ -170,6 +188,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     accessService,
     groupConfigService,
     chatAiSelectionService,
+    botLifecycleService,
     options,
   };
 }
@@ -607,6 +626,75 @@ describe("Mini App group configuration routes", () => {
   });
 });
 
+describe("Mini App lifecycle routes", () => {
+  async function sessionFor(app: Hono) {
+    const response = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    const body = (await response.json()) as { session: { csrfToken: string } };
+    return { cookie: cookieFrom(response), csrfToken: body.session.csrfToken };
+  }
+
+  it("exposes reconciled state and requires CSRF for Admin lifecycle mutations", async () => {
+    const { app, botLifecycleService } = testApp();
+    const session = await sessionFor(app);
+
+    const read = await app.request(`/mini-app/${BOT_A}/lifecycle`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toMatchObject({
+      lifecycle: { desiredActive: true, runtimeStatus: "running", reconciled: true },
+    });
+
+    const denied = await app.request(`/mini-app/${BOT_A}/lifecycle/disable`, {
+      method: "POST",
+      headers: { cookie: session.cookie },
+    });
+    expect(denied.status).toBe(403);
+
+    const accepted = await app.request(`/mini-app/${BOT_A}/lifecycle/disable`, {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        origin: ORIGIN,
+        "x-mini-app-csrf": session.csrfToken,
+      },
+    });
+    expect(accepted.status).toBe(200);
+    expect(botLifecycleService.disable).toHaveBeenCalledWith({
+      botId: BOT_A,
+      actor: { kind: "telegram_user", id: "42" },
+    });
+  });
+
+  it("keeps lifecycle management Admin-only", async () => {
+    const operatorSnapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [42],
+      grantedChatIds: [-1001],
+    };
+    const { app, botLifecycleService } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => operatorSnapshot) },
+    });
+    const session = await sessionFor(app);
+
+    const response = await app.request(`/mini-app/${BOT_A}/lifecycle/restart`, {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        origin: ORIGIN,
+        "x-mini-app-csrf": session.csrfToken,
+      },
+    });
+    expect(response.status).toBe(403);
+    expect(botLifecycleService.restart).not.toHaveBeenCalled();
+  });
+});
+
 describe("Mini App AI selection routes", () => {
   async function sessionFor(app: Hono) {
     const created = await app.request(`/mini-app/${BOT_A}/session`, {
@@ -714,6 +802,11 @@ describe("Mini App AI selection routes", () => {
     };
     const mutations = [
       {
+        path: `/mini-app/${BOT_A}/ai-selection/retry`,
+        method: "POST",
+        body: undefined,
+      },
+      {
         path: `/mini-app/${BOT_A}/groups/-1001/ai-selection`,
         method: "PATCH",
         body: {
@@ -766,6 +859,7 @@ describe("Mini App AI selection routes", () => {
     expect(chatAiSelectionService.setDisplayPolicy).toHaveBeenCalledWith(
       expect.objectContaining({ policy: "inherit" }),
     );
+    expect(chatAiSelectionService.retryPublish).toHaveBeenCalledTimes(2);
     expect(chatAiSelectionService.retryPublish).toHaveBeenCalledWith(BOT_A);
   });
 

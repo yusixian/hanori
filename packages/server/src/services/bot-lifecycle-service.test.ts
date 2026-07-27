@@ -10,6 +10,7 @@ import {
 const BOT_A = "00000000-0000-4000-8000-000000000001";
 const BOT_B = "00000000-0000-4000-8000-000000000002";
 const ACTOR_ID = 42;
+const ACTOR = { kind: "telegram_user", id: String(ACTOR_ID) } as const;
 
 function database(
   desiredReads: Array<boolean | undefined>,
@@ -121,9 +122,7 @@ describe("BotLifecycleService", () => {
       () => new Date("2026-07-28T00:00:00.000Z"),
     );
 
-    await expect(
-      service.enable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID }),
-    ).resolves.toMatchObject({
+    await expect(service.enable({ botId: BOT_A, actor: ACTOR })).resolves.toMatchObject({
       desiredActive: true,
       runtimeStatus: "running",
       reconciled: true,
@@ -142,6 +141,23 @@ describe("BotLifecycleService", () => {
     });
   });
 
+  it("records the Better Auth actor without coercing it to a Telegram ID", async () => {
+    const { db, audits } = database([false]);
+    const stopped = runtime({ [BOT_A]: "stopped" });
+    const service = new BotLifecycleService(db, stopped.value);
+
+    await service.enable({
+      botId: BOT_A,
+      actor: { kind: "better_auth_user", id: "account-7" },
+    });
+
+    expect(audits[0]).toMatchObject({
+      actorTelegramUserId: null,
+      actorRole: "admin",
+      nextSummary: { actorKind: "better_auth_user", actorId: "account-7" },
+    });
+  });
+
   it("keeps desired=true and returns a safe unreconciled result when start fails", async () => {
     const { db, updates } = database([false]);
     const stopped = runtime({ [BOT_A]: "stopped" }, [], {
@@ -149,7 +165,7 @@ describe("BotLifecycleService", () => {
     });
     const service = new BotLifecycleService(db, stopped.value);
 
-    const result = await service.enable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID });
+    const result = await service.enable({ botId: BOT_A, actor: ACTOR });
 
     expect(updates).toEqual([{ isActive: true }]);
     expect(result).toEqual({
@@ -170,16 +186,14 @@ describe("BotLifecycleService", () => {
     });
     const service = new BotLifecycleService(db, running.value);
 
-    await expect(service.disable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID })).resolves.toEqual(
-      {
-        desiredActive: false,
-        runtimeStatus: "running",
-        reconciled: false,
-        persisted: true,
-        applied: false,
-        errorCode: "stop_failed",
-      },
-    );
+    await expect(service.disable({ botId: BOT_A, actor: ACTOR })).resolves.toEqual({
+      desiredActive: false,
+      runtimeStatus: "running",
+      reconciled: false,
+      persisted: true,
+      applied: false,
+      errorCode: "stop_failed",
+    });
     expect(updates).toEqual([{ isActive: false }]);
   });
 
@@ -188,8 +202,8 @@ describe("BotLifecycleService", () => {
     const current = runtime({ [BOT_A]: "stopped", [BOT_B]: "running" });
     const service = new BotLifecycleService(db, current.value);
 
-    await service.enable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID });
-    await service.disable({ botId: BOT_B, actorTelegramUserId: ACTOR_ID });
+    await service.enable({ botId: BOT_A, actor: ACTOR });
+    await service.disable({ botId: BOT_B, actor: ACTOR });
 
     expect(current.start).toHaveBeenCalledWith(BOT_A);
     expect(current.stop).toHaveBeenCalledWith(BOT_B);
@@ -200,9 +214,9 @@ describe("BotLifecycleService", () => {
     const stopped = runtime({ [BOT_A]: "stopped" });
     const service = new BotLifecycleService(db, stopped.value);
 
-    await expect(
-      service.restart({ botId: BOT_A, actorTelegramUserId: ACTOR_ID }),
-    ).rejects.toMatchObject({ code: "desired_inactive" } satisfies Partial<BotLifecycleError>);
+    await expect(service.restart({ botId: BOT_A, actor: ACTOR })).rejects.toMatchObject({
+      code: "desired_inactive",
+    } satisfies Partial<BotLifecycleError>);
     expect(stopped.restart).not.toHaveBeenCalled();
     expect(updates).toEqual([]);
     expect(audits[0]).toMatchObject({
@@ -216,9 +230,7 @@ describe("BotLifecycleService", () => {
     const running = runtime({ [BOT_A]: "running" });
     const service = new BotLifecycleService(db, running.value);
 
-    await expect(
-      service.restart({ botId: BOT_A, actorTelegramUserId: ACTOR_ID }),
-    ).resolves.toMatchObject({
+    await expect(service.restart({ botId: BOT_A, actor: ACTOR })).resolves.toMatchObject({
       desiredActive: true,
       runtimeStatus: "running",
       reconciled: true,
@@ -237,7 +249,7 @@ describe("BotLifecycleService", () => {
     const stopped = runtime({ [BOT_A]: "stopped" });
     const service = new BotLifecycleService(db, stopped.value);
 
-    const operation = service.enable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID });
+    const operation = service.enable({ botId: BOT_A, actor: ACTOR });
 
     await expect(operation).rejects.toMatchObject({
       code: "persistence_failed",
@@ -261,10 +273,10 @@ describe("BotLifecycleService", () => {
     });
     const service = new BotLifecycleService(db, current.value);
 
-    const firstA = service.enable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID });
+    const firstA = service.enable({ botId: BOT_A, actor: ACTOR });
     await vi.waitFor(() => expect(current.start).toHaveBeenCalledWith(BOT_A));
-    const secondA = service.disable({ botId: BOT_A, actorTelegramUserId: ACTOR_ID });
-    const firstB = service.enable({ botId: BOT_B, actorTelegramUserId: ACTOR_ID });
+    const secondA = service.disable({ botId: BOT_A, actor: ACTOR });
+    const firstB = service.enable({ botId: BOT_B, actor: ACTOR });
 
     await expect(firstB).resolves.toMatchObject({ reconciled: true });
     expect(current.stop).not.toHaveBeenCalledWith(BOT_A);
