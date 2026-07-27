@@ -84,6 +84,67 @@ function createConfig(onLog: (entry: BotLogEntry) => void): AiReplyConfig {
 }
 
 describe("AI reply streaming", () => {
+  it("uses one selection snapshot for request execution and usage", async () => {
+    async function* textStream() {
+      yield "Complete";
+    }
+    let publishNextSnapshot!: () => void;
+    streamTextMock.mockImplementation(() => {
+      publishNextSnapshot();
+      return {
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const onTokenUsage = vi.fn();
+    const { ctx } = createContext();
+    const config = createConfig(vi.fn());
+    config.providers = [
+      {
+        id: "provider-a",
+        label: "Provider A",
+        apiKey: "secret-a",
+        baseURL: "https://a.example/v1",
+        providerFormat: "openai",
+        defaultModel: "model-a",
+        models: [{ id: "model-a" }],
+      },
+      {
+        id: "provider-b",
+        label: "Provider B",
+        apiKey: "secret-b",
+        baseURL: "https://b.example/v1",
+        providerFormat: "gemini",
+        defaultModel: "model-b",
+        models: [{ id: "model-b" }],
+      },
+    ];
+    config.activeProviderId = "provider-a";
+    config.aiSelectionSnapshot = {
+      global: { activeProviderId: "provider-a", activeModelId: null },
+      chats: {},
+    };
+    config.onTokenUsage = onTokenUsage;
+    const result = createAiReplyHandler(config);
+    publishNextSnapshot = () =>
+      result.applyAiSelectionSnapshot({
+        global: { activeProviderId: "provider-b", activeModelId: null },
+        chats: {},
+      });
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+
+    expect(onTokenUsage).toHaveBeenCalledWith(expect.objectContaining({ model: "model-a" }));
+    expect(result.getSelectionForChat(123)).toMatchObject({
+      providerId: "provider-b",
+      modelId: "model-b",
+    });
+  });
+
   it("uses the empty-reply fallback when the complete Rich stream result is empty", async () => {
     async function* emptyStream() {}
     streamTextMock.mockReturnValue({

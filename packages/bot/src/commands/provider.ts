@@ -2,11 +2,14 @@ import type { CommandMiddleware } from "grammy";
 import type { WrapperContext } from "../context.js";
 
 export interface ProviderCommandConfig {
-  getProviderForChat: (chatId: number) => string | undefined;
-  setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
-  resetProviderForChat: (chatId: number) => Promise<void>;
+  getSelectionForChat: (chatId: number) => { providerId: string };
+  setProviderForChat: (
+    chatId: number,
+    providerId: string,
+    actorTelegramUserId: number,
+  ) => Promise<void>;
+  resetProviderForChat: (chatId: number, actorTelegramUserId: number) => Promise<void>;
   providers: Array<{ id: string; label: string; defaultModel: string }>;
-  defaultProviderId: string;
 }
 
 const SAVE_FAILED_MESSAGE = "设置保存失败，请稍后重试。";
@@ -19,7 +22,7 @@ export function createProviderCommand(
     if (!chatId) return;
 
     const args = ctx.match?.toString().trim() ?? "";
-    const currentId = config.getProviderForChat(chatId) ?? config.defaultProviderId;
+    const currentId = config.getSelectionForChat(chatId).providerId;
 
     // No args: show current + list
     if (!args) {
@@ -42,15 +45,26 @@ export function createProviderCommand(
       return;
     }
 
+    const actorTelegramUserId = ctx.from?.id;
+    if (
+      typeof actorTelegramUserId !== "number" ||
+      !Number.isSafeInteger(actorTelegramUserId) ||
+      actorTelegramUserId <= 0
+    ) {
+      await ctx.reply(SAVE_FAILED_MESSAGE);
+      return;
+    }
+
     if (args === "reset") {
       try {
-        await config.resetProviderForChat(chatId);
+        await config.resetProviderForChat(chatId, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;
       }
-      const def = config.providers.find((p) => p.id === config.defaultProviderId);
-      await ctx.reply(`已恢复默认 Provider: \`${def?.label ?? config.defaultProviderId}\``, {
+      const resetProviderId = config.getSelectionForChat(chatId).providerId;
+      const resetProvider = config.providers.find((provider) => provider.id === resetProviderId);
+      await ctx.reply(`已恢复默认 Provider: \`${resetProvider?.label ?? resetProviderId}\``, {
         parse_mode: "Markdown",
       });
       return;
@@ -61,7 +75,7 @@ export function createProviderCommand(
     if (Number.isInteger(idx) && idx >= 1 && idx <= config.providers.length) {
       const selected = config.providers[idx - 1]!;
       try {
-        await config.setProviderForChat(chatId, selected.id);
+        await config.setProviderForChat(chatId, selected.id, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;
@@ -76,7 +90,7 @@ export function createProviderCommand(
     );
     if (match) {
       try {
-        await config.setProviderForChat(chatId, match.id);
+        await config.setProviderForChat(chatId, match.id, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;

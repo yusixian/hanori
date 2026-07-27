@@ -55,12 +55,17 @@ import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-a
 import type { PendingActionRegistry } from "./pending-actions.js";
 import { withChatLock } from "./chat-lock.js";
 
-export interface ContinueChatConfig {
+export interface ContinueChatSelection {
   model: LanguageModel;
   modelId: string;
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, Record<string, JSONValue>>;
+  agentToolsFactory?: () => Record<string, Tool>;
+}
+
+export interface ContinueChatConfig {
+  resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
   isAiDisabled?: () => boolean;
   registerAbortController?: (c: AbortController) => void;
   unregisterAbortController?: (c: AbortController) => void;
@@ -79,7 +84,6 @@ export interface ContinueChatConfig {
   artworkToolsConfig?: ArtworkToolsConfig;
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
-  agentToolsFactory?: () => Record<string, Tool>;
   dataFiles?: DataFilesConfig;
   pendingActions: PendingActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
@@ -179,6 +183,7 @@ async function doContinueChat(
     });
     return;
   }
+  const selection = config.resolveSelection(chatId);
 
   config.onLog?.({
     level: "info",
@@ -312,8 +317,8 @@ async function doContinueChat(
       });
     }
 
-    if (config.agentToolsFactory) {
-      Object.assign(allTools, config.agentToolsFactory());
+    if (selection.agentToolsFactory) {
+      Object.assign(allTools, selection.agentToolsFactory());
     }
 
     if (memoryTools) Object.assign(allTools, memoryTools);
@@ -381,15 +386,15 @@ async function doContinueChat(
 
     // ─── streamText (ai v6 API) ───
     const result = streamText({
-      model: config.model,
+      model: selection.model,
       messages,
       tools: wrapToolsWithCache(allTools, requestCache),
       stopWhen: stepCountIs(5),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,
-      temperature: config.temperature,
-      maxOutputTokens: config.maxTokens,
-      providerOptions: config.providerOptions,
+      temperature: selection.temperature,
+      maxOutputTokens: selection.maxTokens,
+      providerOptions: selection.providerOptions,
       experimental_onToolCallStart: () => perStepAbort.pause(),
       experimental_onToolCallFinish: () => perStepAbort.resume(),
       onStepFinish: () => {
@@ -537,7 +542,7 @@ async function doContinueChat(
     config.onTokenUsage?.({
       chatId,
       userId: event.userId,
-      model: config.modelId,
+      model: selection.modelId,
       promptTokens: usage.inputTokens ?? 0,
       completionTokens: usage.outputTokens ?? 0,
       totalTokens: usage.totalTokens ?? 0,

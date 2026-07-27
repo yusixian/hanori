@@ -42,7 +42,13 @@ vi.mock("grammy", async (importOriginal) => {
   };
 });
 
-import { buildUpdateErrorMessage, createBot, getActiveBotCommands } from "./index.js";
+import {
+  buildUpdateErrorMessage,
+  createBot,
+  getActiveBotCommands,
+  type AiSelectionCallbacks,
+  type BotAiSelectionRuntime,
+} from "./index.js";
 
 const chatId = -100;
 const userId = 42;
@@ -55,6 +61,7 @@ afterEach(() => {
 function createCommandTestBot(
   configuration: "minimal" | "complete" = "minimal",
   modelCommandAccess?: "admin" | "all",
+  aiSelectionCallbacks?: AiSelectionCallbacks,
 ) {
   const complete = configuration === "complete";
   return createBot({
@@ -86,7 +93,10 @@ function createCommandTestBot(
               baseURL: "https://a.example/v1",
               providerFormat: "openai",
               defaultModel: "model-a",
-              models: [{ id: "model-a", label: "Model A" }],
+              models: [
+                { id: "model-a", label: "Model A" },
+                { id: "model-a-2", label: "Model A 2" },
+              ],
             },
             {
               id: "provider-b",
@@ -125,6 +135,7 @@ function createCommandTestBot(
           onCancelTimer: async () => false,
         }
       : undefined,
+    aiSelectionCallbacks,
     mcpCallbacks: complete
       ? {
           listServers: async () => [],
@@ -230,6 +241,49 @@ describe("createBot command registry", () => {
       "admin",
       "admin",
     ]);
+  });
+
+  it("exposes atomic selection snapshot publishing through the Bot runtime controller", async () => {
+    let runtime!: BotAiSelectionRuntime;
+    const callbacks: AiSelectionCallbacks = {
+      setModel: vi.fn(async () => {}),
+      resetModel: vi.fn(async () => {}),
+      setProvider: vi.fn(async () => {}),
+      resetProvider: vi.fn(async () => {}),
+      onBotReady: (value) => {
+        runtime = value;
+      },
+    };
+    const bot = createCommandTestBot("complete", undefined, callbacks);
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    runtime.applyAiSelectionSnapshot({
+      global: { activeProviderId: "provider-a", activeModelId: "model-a-2" },
+      chats: {},
+    });
+    await bot.handleUpdate(
+      groupMessage({
+        text: "/model",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }) as never,
+    );
+
+    const replies = telegramApi.requests.filter(({ method }) => method === "sendMessage");
+    expect((replies.at(-1)!.body as { text: string }).text).toContain("当前模型: `model-a-2`");
   });
 
   it("guards model and provider execution when legacy config requests public access", async () => {

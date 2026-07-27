@@ -41,6 +41,7 @@ import {
 import { WrapperContext, type BotContext } from "./context.js";
 import { createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
+import type { AiSelectionMutations, AiSelectionSnapshot } from "./handlers/ai-selection.js";
 import {
   createPollAnswerHandler,
   createCallbackQueryHandler,
@@ -55,8 +56,16 @@ import { getUpdateConstraint } from "./middleware/update-constraint.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
-  "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token"
+  "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token" | "aiSelectionMutations"
 >;
+
+export interface BotAiSelectionRuntime {
+  applyAiSelectionSnapshot(snapshot: AiSelectionSnapshot): void;
+}
+
+export interface AiSelectionCallbacks extends AiSelectionMutations {
+  onBotReady?: (runtime: BotAiSelectionRuntime) => void;
+}
 
 export interface BotTimerHandlers {
   fireTimer: (
@@ -95,6 +104,7 @@ export interface BotConfig {
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
+  aiSelectionCallbacks?: AiSelectionCallbacks;
   mcpCallbacks?: McpCommandConfig;
   aiReply?: AiReplyBotConfig;
   conversation?: ConversationCallbacks;
@@ -142,19 +152,17 @@ export function createBot(config: BotConfig) {
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
   let aiState: ReturnType<typeof createAiReplyHandler>["state"] | undefined;
   let aiSetModelForChat: ReturnType<typeof createAiReplyHandler>["setModelForChat"] | undefined;
-  let aiGetModelForChat: ReturnType<typeof createAiReplyHandler>["getModelForChat"] | undefined;
   let aiResetModelForChat: ReturnType<typeof createAiReplyHandler>["resetModelForChat"] | undefined;
   let aiSetProviderForChat:
     | ReturnType<typeof createAiReplyHandler>["setProviderForChat"]
-    | undefined;
-  let aiGetProviderForChat:
-    | ReturnType<typeof createAiReplyHandler>["getProviderForChat"]
     | undefined;
   let aiResetProviderForChat:
     | ReturnType<typeof createAiReplyHandler>["resetProviderForChat"]
     | undefined;
   let aiGetProvidersList: ReturnType<typeof createAiReplyHandler>["getProvidersList"] | undefined;
-  let aiGetModelsForChat: ReturnType<typeof createAiReplyHandler>["getModelsForChat"] | undefined;
+  let aiGetSelectionForChat:
+    | ReturnType<typeof createAiReplyHandler>["getSelectionForChat"]
+    | undefined;
   let aiGetReplyMode: ReturnType<typeof createAiReplyHandler>["getReplyMode"] | undefined;
   let aiSetReplyMode: ReturnType<typeof createAiReplyHandler>["setReplyMode"] | undefined;
   let aiGetRichMessageEnabled:
@@ -213,17 +221,16 @@ export function createBot(config: BotConfig) {
       onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
       token,
       initialApi: bot.api,
+      aiSelectionMutations: config.aiSelectionCallbacks,
     });
     aiHandler = result.handler;
     aiState = result.state;
     aiSetModelForChat = result.setModelForChat;
-    aiGetModelForChat = result.getModelForChat;
     aiResetModelForChat = result.resetModelForChat;
     aiSetProviderForChat = result.setProviderForChat;
-    aiGetProviderForChat = result.getProviderForChat;
     aiResetProviderForChat = result.resetProviderForChat;
     aiGetProvidersList = result.getProvidersList;
-    aiGetModelsForChat = result.getModelsForChat;
+    aiGetSelectionForChat = result.getSelectionForChat;
     aiGetReplyMode = result.getReplyMode;
     aiSetReplyMode = result.setReplyMode;
     aiGetRichMessageEnabled = result.getRichMessageEnabled;
@@ -239,6 +246,10 @@ export function createBot(config: BotConfig) {
     aiSetAiEnabled = result.setAiEnabled;
     aiWaitForUserProfileUpdates = result.waitForUserProfileUpdates;
     disposeAiRuntime = result.destroy;
+
+    config.aiSelectionCallbacks?.onBotReady?.({
+      applyAiSelectionSnapshot: result.applyAiSelectionSnapshot,
+    });
 
     // Register bot handlers with server for timer recovery and external cancel
     if (config.timerCallbacks?.onBotReady) {
@@ -314,14 +325,11 @@ export function createBot(config: BotConfig) {
   }
 
   // Register /model command if models are configured
-  if (config.aiReply?.models?.length && aiSetModelForChat && aiGetModelForChat) {
+  if (config.aiReply?.models?.length && aiSetModelForChat && aiGetSelectionForChat) {
     const modelCmd = createModelCommand({
-      getModelForChat: aiGetModelForChat,
+      getSelectionForChat: aiGetSelectionForChat,
       setModelForChat: aiSetModelForChat,
-      resetModelForChat: aiResetModelForChat,
-      models: config.aiReply.models,
-      defaultModel: config.aiReply.model,
-      getModelsForChat: aiGetModelsForChat,
+      resetModelForChat: aiResetModelForChat!,
     });
     commandRegistry.register("model", authGuard, modelCmd);
   }
@@ -332,20 +340,14 @@ export function createBot(config: BotConfig) {
   if (
     providersList.length > 1 &&
     aiSetProviderForChat &&
-    aiGetProviderForChat &&
+    aiGetSelectionForChat &&
     aiResetProviderForChat
   ) {
-    const defaultProviderId =
-      config.aiReply?.activeProviderId &&
-      providersList.some((p) => p.id === config.aiReply!.activeProviderId)
-        ? config.aiReply.activeProviderId
-        : providersList[0]!.id;
     const providerCmd = createProviderCommand({
-      getProviderForChat: aiGetProviderForChat,
+      getSelectionForChat: aiGetSelectionForChat,
       setProviderForChat: aiSetProviderForChat,
       resetProviderForChat: aiResetProviderForChat,
       providers: providersList,
-      defaultProviderId,
     });
     commandRegistry.register("provider", authGuard, providerCmd);
   }
@@ -541,6 +543,12 @@ export {
   type TelegramObservationCallbacks,
 } from "./middleware/telegram-observation.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
+export type {
+  AiProviderRuntime,
+  AiSelectionMutations,
+  AiSelectionPair,
+  AiSelectionSnapshot,
+} from "./handlers/ai-selection.js";
 export { getActiveBotCommands } from "./commands/registry.js";
 export { NsfwChecker } from "./services/nsfw-checker.js";
 export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker.js";

@@ -5,6 +5,7 @@ import { createProviderCommand } from "./provider.js";
 function commandContext(match: string) {
   return {
     chat: { id: -100 },
+    from: { id: 42 },
     match,
     reply: vi.fn().mockResolvedValue(undefined),
   } as unknown as WrapperContext;
@@ -29,11 +30,10 @@ describe("createProviderCommand", () => {
     const ctx = commandContext("");
     const command = commandFunction(
       createProviderCommand({
-        getProviderForChat: () => "provider-a",
+        getSelectionForChat: () => ({ providerId: "provider-a" }),
         setProviderForChat,
         resetProviderForChat,
         providers,
-        defaultProviderId: "provider-a",
       }),
     );
 
@@ -55,11 +55,10 @@ describe("createProviderCommand", () => {
     const ctx = commandContext("2");
     const command = commandFunction(
       createProviderCommand({
-        getProviderForChat: () => "provider-a",
+        getSelectionForChat: () => ({ providerId: "provider-a" }),
         setProviderForChat,
         resetProviderForChat: vi.fn(async () => {}),
         providers,
-        defaultProviderId: "provider-a",
       }),
     );
 
@@ -69,7 +68,7 @@ describe("createProviderCommand", () => {
 
     resolveMutation();
     await execution;
-    expect(setProviderForChat).toHaveBeenCalledWith(-100, "provider-b");
+    expect(setProviderForChat).toHaveBeenCalledWith(-100, "provider-b", 42);
     expect(ctx.reply).toHaveBeenCalledWith("已切换到 Provider: `Provider B`", {
       parse_mode: "Markdown",
     });
@@ -79,11 +78,10 @@ describe("createProviderCommand", () => {
     const ctx = commandContext("provider-b");
     const command = commandFunction(
       createProviderCommand({
-        getProviderForChat: () => "provider-a",
+        getSelectionForChat: () => ({ providerId: "provider-a" }),
         setProviderForChat: vi.fn().mockRejectedValue(new Error("private database failure")),
         resetProviderForChat: vi.fn(async () => {}),
         providers,
-        defaultProviderId: "provider-a",
       }),
     );
 
@@ -102,11 +100,10 @@ describe("createProviderCommand", () => {
     const ctx = commandContext("reset");
     const command = commandFunction(
       createProviderCommand({
-        getProviderForChat: () => "provider-b",
+        getSelectionForChat: () => ({ providerId: "provider-b" }),
         setProviderForChat: vi.fn(async () => {}),
         resetProviderForChat: vi.fn().mockRejectedValue(new Error("private persistence failure")),
         providers,
-        defaultProviderId: "provider-a",
       }),
     );
 
@@ -118,5 +115,45 @@ describe("createProviderCommand", () => {
       expect.stringContaining("已恢复"),
       expect.anything(),
     );
+  });
+
+  it("reports the effective provider from the published snapshot after reset", async () => {
+    let currentProviderId = "provider-b";
+    const ctx = commandContext("reset");
+    const command = commandFunction(
+      createProviderCommand({
+        getSelectionForChat: () => ({ providerId: currentProviderId }),
+        setProviderForChat: vi.fn(async () => {}),
+        resetProviderForChat: vi.fn(async () => {
+          currentProviderId = "provider-a";
+        }),
+        providers,
+      }),
+    );
+
+    await command(ctx as never, vi.fn());
+
+    expect(ctx.reply).toHaveBeenCalledWith("已恢复默认 Provider: `Provider A`", {
+      parse_mode: "Markdown",
+    });
+  });
+
+  it("rejects writes without a safe positive Telegram actor id", async () => {
+    const setProviderForChat = vi.fn(async () => {});
+    const ctx = commandContext("1");
+    ctx.from!.id = Number.MAX_SAFE_INTEGER + 1;
+    const command = commandFunction(
+      createProviderCommand({
+        getSelectionForChat: () => ({ providerId: "provider-a" }),
+        setProviderForChat,
+        resetProviderForChat: vi.fn(async () => {}),
+        providers,
+      }),
+    );
+
+    await command(ctx as never, vi.fn());
+
+    expect(setProviderForChat).not.toHaveBeenCalled();
+    expect(ctx.reply).toHaveBeenCalledWith("设置保存失败，请稍后重试。");
   });
 });

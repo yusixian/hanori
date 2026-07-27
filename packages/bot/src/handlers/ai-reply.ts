@@ -36,9 +36,7 @@ import {
   isRichMessageEnabled,
   isStreamReplyMode,
 } from "@cos-tool-bot/shared";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
+import type { JSONValue, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
@@ -91,16 +89,14 @@ import { describeImages } from "../services/image-ocr.js";
 import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
 import { createMetaPrefixStreamFilter, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
+import {
+  createAiSelectionRuntime,
+  type AiProviderRuntime,
+  type AiSelectionMutations,
+  type AiSelectionSnapshot,
+} from "./ai-selection.js";
 
-export interface AiProviderRuntime {
-  id: string;
-  label: string;
-  apiKey: string;
-  baseURL: string;
-  providerFormat: "openai" | "gemini";
-  defaultModel: string;
-  models?: ModelEntry[];
-}
+export type { AiProviderRuntime } from "./ai-selection.js";
 
 export function buildGitHubCodingModelConfig(
   provider: AiProviderRuntime,
@@ -155,11 +151,9 @@ export interface AiReplyConfig {
   providerFormat?: "openai" | "gemini";
   providers?: AiProviderRuntime[];
   activeProviderId?: string;
-  providerOverride?: {
-    getProviderForChat: (chatId: number) => string | undefined;
-    setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
-    resetProviderForChat: (chatId: number) => Promise<void>;
-  };
+  activeModelId?: string | null;
+  aiSelectionSnapshot?: AiSelectionSnapshot;
+  aiSelectionMutations?: AiSelectionMutations;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -186,11 +180,6 @@ export interface AiReplyConfig {
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
-  modelOverride?: {
-    getModelForChat: (chatId: number) => string | undefined;
-    setModelForChat: (chatId: number, modelId: string) => Promise<void>;
-    resetModelForChat: (chatId: number) => Promise<void>;
-  };
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
   privateChatWhitelist?: number[];
@@ -704,14 +693,21 @@ const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 export function createAiReplyHandler(config: AiReplyConfig): {
   handler: MiddlewareFn<BotContext>;
   state: BotRuntimeState;
-  setModelForChat: (chatId: number, modelId: string) => Promise<void>;
-  getModelForChat: (chatId: number) => string;
-  resetModelForChat: (chatId: number) => Promise<void>;
-  setProviderForChat: (chatId: number, providerId: string) => Promise<void>;
-  getProviderForChat: (chatId: number) => string;
-  resetProviderForChat: (chatId: number) => Promise<void>;
+  setModelForChat: (chatId: number, modelId: string, actorTelegramUserId: number) => Promise<void>;
+  resetModelForChat: (chatId: number, actorTelegramUserId: number) => Promise<void>;
+  setProviderForChat: (
+    chatId: number,
+    providerId: string,
+    actorTelegramUserId: number,
+  ) => Promise<void>;
+  resetProviderForChat: (chatId: number, actorTelegramUserId: number) => Promise<void>;
+  applyAiSelectionSnapshot: (snapshot: AiSelectionSnapshot) => void;
+  getSelectionForChat: (chatId: number) => {
+    providerId: string;
+    modelId: string;
+    models: ModelEntry[];
+  };
   getProvidersList: () => Array<{ id: string; label: string; defaultModel: string }>;
-  getModelsForChat: (chatId: number) => ModelEntry[];
   getReplyMode: () => ReplyMode;
   setReplyMode: (mode: ReplyMode) => void;
   getRichMessageEnabled: () => boolean;
@@ -767,34 +763,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       c.abort(new Error("AI disabled by /stop"));
     }
     return toAbort.length;
-  }
-
-  // Per-chat model override (in-memory fallback)
-  const chatModelMap = new Map<number, string>();
-
-  function getModelForChat(chatId: number): string {
-    // Per-chat model override wins; otherwise fall back to the active provider's default model.
-    const providerDefault = getProviderRuntimeForChat(chatId).defaultModel || config.model;
-    if (config.modelOverride) {
-      return config.modelOverride.getModelForChat(chatId) ?? providerDefault;
-    }
-    return chatModelMap.get(chatId) ?? providerDefault;
-  }
-
-  async function setModelForChat(chatId: number, modelId: string): Promise<void> {
-    if (config.modelOverride) {
-      await config.modelOverride.setModelForChat(chatId, modelId);
-    } else {
-      chatModelMap.set(chatId, modelId);
-    }
-  }
-
-  async function resetModelForChat(chatId: number): Promise<void> {
-    if (config.modelOverride) {
-      await config.modelOverride.resetModelForChat(chatId);
-    } else {
-      chatModelMap.delete(chatId);
-    }
   }
 
   // Reply mode runtime override (takes precedence over config)
@@ -887,86 +855,30 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     return true;
   }
 
-  // Provider registry: prefer config.providers; fall back to legacy top-level fields.
-  // Synthesizes a single "__legacy__" entry when providers[] not supplied so all downstream
-  // code paths can uniformly look up by id.
-  const providerRegistry = new Map<string, AiProviderRuntime>();
-  if (config.providers && config.providers.length > 0) {
-    for (const p of config.providers) providerRegistry.set(p.id, p);
-  } else {
-    providerRegistry.set("__legacy__", {
-      id: "__legacy__",
-      label: "Default",
+  const selectionRuntime = createAiSelectionRuntime({
+    providers: config.providers,
+    activeProviderId: config.activeProviderId,
+    activeModelId: config.activeModelId,
+    initialSnapshot: config.aiSelectionSnapshot,
+    legacy: {
       apiKey: config.apiKey,
       baseURL: config.baseURL,
       providerFormat: config.providerFormat ?? "openai",
-      defaultModel: config.model,
+      model: config.model,
       models: config.models,
-    });
-  }
-  const fallbackProviderId =
-    config.activeProviderId && providerRegistry.has(config.activeProviderId)
-      ? config.activeProviderId
-      : providerRegistry.keys().next().value!;
+    },
+    mutations: config.aiSelectionMutations,
+  });
 
-  // Lazy-build LanguageModel factory per provider id (cached).
-  const providerClientCache = new Map<string, (modelId: string) => LanguageModel>();
-  function getProviderClient(providerId: string): (modelId: string) => LanguageModel {
-    const cached = providerClientCache.get(providerId);
-    if (cached) return cached;
-    const entry = providerRegistry.get(providerId) ?? providerRegistry.get(fallbackProviderId)!;
-    const factory: (modelId: string) => LanguageModel =
-      entry.providerFormat === "gemini"
-        ? createGoogleGenerativeAI({ baseURL: entry.baseURL, apiKey: entry.apiKey })
-        : createOpenAICompatible({ name: "custom", baseURL: entry.baseURL, apiKey: entry.apiKey });
-    providerClientCache.set(providerId, factory);
-    return factory;
-  }
-
-  // In-memory per-chat provider override (used when persistent callback not supplied).
-  const chatProviderMap = new Map<number, string>();
-
-  function getProviderIdForChat(chatId: number): string {
-    const override =
-      config.providerOverride?.getProviderForChat(chatId) ?? chatProviderMap.get(chatId);
-    if (override && providerRegistry.has(override)) return override;
-    return fallbackProviderId;
-  }
-
-  function getProviderRuntimeForChat(chatId: number): AiProviderRuntime {
-    const id = getProviderIdForChat(chatId);
-    return providerRegistry.get(id) ?? providerRegistry.get(fallbackProviderId)!;
-  }
-
-  async function setProviderForChat(chatId: number, providerId: string): Promise<void> {
-    if (!providerRegistry.has(providerId)) return;
-    if (config.providerOverride) {
-      await config.providerOverride.setProviderForChat(chatId, providerId);
-    } else {
-      chatProviderMap.set(chatId, providerId);
-    }
-  }
-
-  async function resetProviderForChat(chatId: number): Promise<void> {
-    if (config.providerOverride) {
-      await config.providerOverride.resetProviderForChat(chatId);
-    } else {
-      chatProviderMap.delete(chatId);
-    }
-  }
-
-  function getProvidersList(): Array<{ id: string; label: string; defaultModel: string }> {
-    return Array.from(providerRegistry.values()).map((p) => ({
-      id: p.id,
-      label: p.label,
-      defaultModel: p.defaultModel,
-    }));
-  }
-
-  /** Per-chat provider client factory (what the old singleton `provider` used to be). */
-  function getProviderClientForChat(chatId: number): (modelId: string) => LanguageModel {
-    return getProviderClient(getProviderIdForChat(chatId));
-  }
+  const setModelForChat = (chatId: number, modelId: string, actorTelegramUserId: number) =>
+    selectionRuntime.setModel(chatId, modelId, actorTelegramUserId);
+  const resetModelForChat = (chatId: number, actorTelegramUserId: number) =>
+    selectionRuntime.resetModel(chatId, actorTelegramUserId);
+  const setProviderForChat = (chatId: number, providerId: string, actorTelegramUserId: number) =>
+    selectionRuntime.setProvider(chatId, providerId, actorTelegramUserId);
+  const resetProviderForChat = (chatId: number, actorTelegramUserId: number) =>
+    selectionRuntime.resetProvider(chatId, actorTelegramUserId);
+  const getProvidersList = () => selectionRuntime.getProvidersList();
 
   // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -1084,15 +996,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   }
 
   function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
-    const modelId = chatId != null ? getModelForChat(chatId) : config.model;
-    const providerRuntime =
-      chatId != null
-        ? getProviderRuntimeForChat(chatId)
-        : (providerRegistry.get(fallbackProviderId) ?? providerRegistry.values().next().value!);
-    const models = providerRuntime.models ?? config.models;
-    const modelEntry = models?.find((m) => m.id === modelId);
-    const providerFactory =
-      chatId != null ? getProviderClientForChat(chatId) : getProviderClient(fallbackProviderId);
     // Telegram: private chat IDs are positive, group/supergroup IDs are negative
     const imageGenerationAllowed =
       chatId != null
@@ -1103,11 +1006,30 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           )
         : false;
     return {
-      model: providerFactory(modelId),
-      modelId,
-      temperature: modelEntry?.temperature,
-      maxTokens: modelEntry?.maxTokens,
-      providerOptions: buildProviderOptions(modelEntry, providerRuntime.providerFormat),
+      resolveSelection: (selectionChatId) => {
+        const selection = selectionRuntime.resolve(selectionChatId);
+        return Object.freeze({
+          model: selection.providerFactory(selection.modelId),
+          modelId: selection.modelId,
+          temperature: selection.modelEntry?.temperature,
+          maxTokens: selection.modelEntry?.maxTokens,
+          providerOptions: buildProviderOptions(
+            selection.modelEntry,
+            selection.providerRuntime.providerFormat,
+          ),
+          agentToolsFactory: config.agentToolsConfig?.enabled
+            ? () =>
+                createAgentTools({
+                  provider: (model) => selection.providerFactory(model),
+                  model: selection.modelId,
+                  agentConfig: config.agentToolsConfig!,
+                  webToolsConfig: config.webToolsConfig,
+                  onLog: config.onLog,
+                  timeoutConfig: config.timeoutConfig,
+                })
+            : undefined,
+        });
+      },
       isAiDisabled: () => aiDisabled,
       registerAbortController: (c) => activeAbortControllers.add(c),
       unregisterAbortController: (c) => activeAbortControllers.delete(c),
@@ -1126,17 +1048,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       artworkToolsConfig: config.artworkToolsConfig,
       timeoutConfig: config.timeoutConfig,
       webTools,
-      agentToolsFactory: config.agentToolsConfig?.enabled
-        ? () =>
-            createAgentTools({
-              provider: (m) => providerFactory(m),
-              model: modelId,
-              agentConfig: config.agentToolsConfig!,
-              webToolsConfig: config.webToolsConfig,
-              onLog: config.onLog,
-              timeoutConfig: config.timeoutConfig,
-            })
-        : undefined,
       dataFiles: config.dataFiles,
       pendingActions,
       recentBotMessageIds,
@@ -1424,10 +1335,11 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       });
       if (!personalizationEnabled) delete behaviorTools.set_mood;
 
-      // Resolve model + provider for this chat
-      const currentModel = getModelForChat(chatId);
-      const currentProviderRuntime = getProviderRuntimeForChat(chatId);
-      const currentProviderFactory = getProviderClientForChat(chatId);
+      // Resolve one immutable provider/model/factory snapshot after acquiring the chat lock.
+      const currentSelection = selectionRuntime.resolve(chatId);
+      const currentModel = currentSelection.modelId;
+      const currentProviderRuntime = currentSelection.providerRuntime;
+      const currentProviderFactory = currentSelection.providerFactory;
 
       // Create agent tools if enabled
       let agentTools: Record<string, Tool> = {};
@@ -2317,16 +2229,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     handler,
     state,
     setModelForChat,
-    getModelForChat,
     resetModelForChat,
     setProviderForChat,
-    getProviderForChat: getProviderIdForChat,
     resetProviderForChat,
-    getProvidersList,
-    getModelsForChat: (chatId: number): ModelEntry[] => {
-      const entry = getProviderRuntimeForChat(chatId);
-      return entry.models ?? config.models ?? [];
+    applyAiSelectionSnapshot: selectionRuntime.applyAiSelectionSnapshot,
+    getSelectionForChat: (chatId) => {
+      const selection = selectionRuntime.resolve(chatId);
+      return {
+        providerId: selection.providerId,
+        modelId: selection.modelId,
+        models: selection.providerRuntime.models ?? config.models ?? [],
+      };
     },
+    getProvidersList,
     getReplyMode: (): ReplyMode =>
       replyModeOverride ?? config.messageConfig?.replyMode ?? DEFAULT_MESSAGE_CONFIG.replyMode!,
     setReplyMode: (mode: ReplyMode) => {

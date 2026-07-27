@@ -3,13 +3,9 @@ import type { ModelEntry } from "@cos-tool-bot/shared";
 import type { WrapperContext } from "../context.js";
 
 export interface ModelCommandConfig {
-  getModelForChat: (chatId: number) => string;
-  setModelForChat: (chatId: number, modelId: string) => Promise<void>;
-  resetModelForChat?: (chatId: number) => Promise<void>;
-  models: ModelEntry[];
-  defaultModel: string;
-  /** If provided, overrides `models` with a per-chat list (e.g. when provider changes per-chat). */
-  getModelsForChat?: (chatId: number) => ModelEntry[];
+  getSelectionForChat: (chatId: number) => { modelId: string; models: ModelEntry[] };
+  setModelForChat: (chatId: number, modelId: string, actorTelegramUserId: number) => Promise<void>;
+  resetModelForChat: (chatId: number, actorTelegramUserId: number) => Promise<void>;
 }
 
 const SAVE_FAILED_MESSAGE = "设置保存失败，请稍后重试。";
@@ -20,8 +16,7 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
     if (!chatId) return;
 
     const args = ctx.match?.toString().trim() ?? "";
-    const currentModel = config.getModelForChat(chatId);
-    const chatModels = config.getModelsForChat ? config.getModelsForChat(chatId) : config.models;
+    const { modelId: currentModel, models: chatModels } = config.getSelectionForChat(chatId);
 
     // No args: show current model + list
     if (!args) {
@@ -44,19 +39,26 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
       return;
     }
 
+    const actorTelegramUserId = ctx.from?.id;
+    if (
+      typeof actorTelegramUserId !== "number" ||
+      !Number.isSafeInteger(actorTelegramUserId) ||
+      actorTelegramUserId <= 0
+    ) {
+      await ctx.reply(SAVE_FAILED_MESSAGE);
+      return;
+    }
+
     // Reset
     if (args === "reset") {
       try {
-        if (config.resetModelForChat) {
-          await config.resetModelForChat(chatId);
-        } else {
-          await config.setModelForChat(chatId, config.defaultModel);
-        }
+        await config.resetModelForChat(chatId, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;
       }
-      await ctx.reply(`已恢复默认模型: \`${config.defaultModel}\``, { parse_mode: "Markdown" });
+      const resetModel = config.getSelectionForChat(chatId).modelId;
+      await ctx.reply(`已恢复默认模型: \`${resetModel}\``, { parse_mode: "Markdown" });
       return;
     }
 
@@ -65,7 +67,7 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
     if (Number.isInteger(idx) && idx >= 1 && idx <= chatModels.length) {
       const selected = chatModels[idx - 1]!;
       try {
-        await config.setModelForChat(chatId, selected.id);
+        await config.setModelForChat(chatId, selected.id, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;
@@ -80,7 +82,7 @@ export function createModelCommand(config: ModelCommandConfig): CommandMiddlewar
     );
     if (match) {
       try {
-        await config.setModelForChat(chatId, match.id);
+        await config.setModelForChat(chatId, match.id, actorTelegramUserId);
       } catch {
         await ctx.reply(SAVE_FAILED_MESSAGE);
         return;

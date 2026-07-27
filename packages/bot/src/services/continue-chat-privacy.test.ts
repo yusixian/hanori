@@ -1,6 +1,7 @@
 import type { UserPrivacyCallbacks } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { acquireChatLock } from "./chat-lock.js";
 import { continueChat, type ContinueChatConfig } from "./continue-chat.js";
 
 describe("continueChat privacy", () => {
@@ -8,11 +9,18 @@ describe("continueChat privacy", () => {
     const onLog = vi.fn();
     const secretDescription = "private timer reason that must not reach logs";
 
-    await continueChat({} as Api, { onLog } as unknown as ContinueChatConfig, {
-      chatId: -100,
-      userId: 42,
-      eventDescription: secretDescription,
-    });
+    await continueChat(
+      {} as Api,
+      {
+        onLog,
+        resolveSelection: () => ({ model: {} as never, modelId: "model-a" }),
+      } as unknown as ContinueChatConfig,
+      {
+        chatId: -100,
+        userId: 42,
+        eventDescription: secretDescription,
+      },
+    );
 
     const serializedLogs = JSON.stringify(onLog.mock.calls);
     expect(serializedLogs).not.toContain(secretDescription);
@@ -69,5 +77,23 @@ describe("continueChat privacy", () => {
         message: "Ownerless private continuation skipped because privacy cannot be evaluated",
       }),
     );
+  });
+
+  it("resolves one selection snapshot only after acquiring the chat lock", async () => {
+    const chatId = -200;
+    const releaseLock = await acquireChatLock(chatId);
+    const resolveSelection = vi.fn(() => ({ model: {} as never, modelId: "model-a" }));
+
+    const continuation = continueChat(
+      {} as Api,
+      { resolveSelection } as unknown as ContinueChatConfig,
+      { chatId, userId: 42, eventDescription: "timer fired" },
+    );
+    await Promise.resolve();
+    expect(resolveSelection).not.toHaveBeenCalled();
+
+    releaseLock();
+    await continuation;
+    expect(resolveSelection).toHaveBeenCalledOnce();
   });
 });
