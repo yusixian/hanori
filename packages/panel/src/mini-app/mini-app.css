@@ -1396,6 +1396,12 @@
   color: var(--mini-text);
 }
 
+.mini-ai-settings button.is-danger,
+.mini-ai-card button.is-danger {
+  background: var(--tg-theme-destructive-text-color, #d94b4b);
+  color: #fff;
+}
+
 .mini-ai-settings button:disabled,
 .mini-ai-card button:disabled {
   cursor: not-allowed;
@@ -1423,6 +1429,147 @@
       transparent 58%
     ),
     color-mix(in srgb, var(--mini-surface) 72%, transparent);
+}
+
+.mini-bot-settings > .mini-ai-global-section {
+  padding-top: 0.25rem;
+  padding-bottom: 0;
+  border-top: 1px solid var(--mini-border);
+}
+
+.mini-settings-state {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.mini-settings-state div {
+  min-width: 0;
+  padding: 0.65rem;
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--mini-bg) 76%, transparent);
+}
+
+.mini-settings-state dt,
+.mini-settings-state dd {
+  margin: 0;
+}
+
+.mini-settings-state dt {
+  color: var(--mini-muted);
+  font-size: 0.65rem;
+}
+
+.mini-settings-state dd {
+  margin-top: 0.25rem;
+  overflow: hidden;
+  font-size: 0.78rem;
+  font-weight: 720;
+  text-overflow: ellipsis;
+}
+
+.mini-settings-state dd.is-good {
+  color: #4dbd88;
+}
+
+.mini-settings-state dd.is-pending {
+  color: #f2b84b;
+}
+
+.mini-settings-notice,
+.mini-settings-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0;
+  color: var(--mini-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.mini-settings-notice svg,
+.mini-settings-feedback svg {
+  width: 1rem;
+  flex: 0 0 auto;
+}
+
+.mini-settings-feedback.is-success {
+  color: #4dbd88;
+}
+
+.mini-settings-feedback.is-pending {
+  color: #f2b84b;
+}
+
+.mini-settings-feedback.is-error {
+  color: var(--tg-theme-destructive-text-color, #ef6a67);
+}
+
+.mini-settings-lifecycle-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.mini-settings-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.8rem;
+}
+
+.mini-settings-switch span,
+.mini-settings-switch strong,
+.mini-settings-switch small {
+  display: block;
+}
+
+.mini-settings-switch small,
+.mini-settings-prompt small {
+  margin-top: 0.2rem;
+  color: var(--mini-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.mini-settings-switch input {
+  width: 2.7rem;
+  height: 1.45rem;
+  accent-color: var(--mini-accent);
+}
+
+.mini-settings-prompt {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mini-settings-prompt > span {
+  color: var(--mini-muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.mini-settings-prompt textarea {
+  width: 100%;
+  min-height: 8rem;
+  resize: vertical;
+  padding: 0.75rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.75rem;
+  outline: none;
+  background: color-mix(in srgb, var(--mini-bg) 76%, transparent);
+  color: var(--mini-text);
+  font: inherit;
+  line-height: 1.5;
+}
+
+.mini-settings-prompt textarea:focus-visible {
+  border-color: var(--mini-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--mini-accent) 22%, transparent);
 }
 
 .mini-ai-group-card {

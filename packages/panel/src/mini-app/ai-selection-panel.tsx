@@ -298,7 +298,7 @@ export function GlobalAiSelectionSettings({
 
   if (!view || !draft) {
     return (
-      <main className="mini-app-content mini-ai-settings mini-groups-state">
+      <section className="mini-ai-settings mini-groups-state">
         {failed ? (
           <>
             <AlertTriangle aria-hidden="true" />
@@ -315,12 +315,12 @@ export function GlobalAiSelectionSettings({
             <p>{t("aiSelection.loadingGlobal")}</p>
           </>
         )}
-      </main>
+      </section>
     );
   }
 
   return (
-    <main className="mini-app-content mini-ai-settings">
+    <section className="mini-ai-settings mini-ai-global-section">
       <header className="mini-groups-heading">
         <p>{t("aiSelection.globalEyebrow")}</p>
         <h1>{t("aiSelection.globalTitle")}</h1>
@@ -410,7 +410,7 @@ export function GlobalAiSelectionSettings({
           }}
         />
       ) : null}
-    </main>
+    </section>
   );
 }
 
