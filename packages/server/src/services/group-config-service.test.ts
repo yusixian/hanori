@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   GroupConfigService,
   mergeGroupOverride,
+  nextGroupConfigUpdatedAt,
   projectGroupConfig,
 } from "./group-config-service.js";
 
@@ -151,6 +152,17 @@ describe("projectGroupConfig", () => {
     expect(
       projectGroupConfig({ aiConfig: null, updatedAt: null }, -1001, undefined).aiConfigured,
     ).toBe(false);
+  });
+});
+
+describe("nextGroupConfigUpdatedAt", () => {
+  it("advances beyond both Bot and Summary revisions when the clock does not move", () => {
+    const fixedNow = new Date("2026-07-27T12:00:00.000Z");
+    const summaryUpdatedAt = new Date("2026-07-27T12:00:00.004Z");
+
+    expect(nextGroupConfigUpdatedAt(fixedNow, fixedNow, summaryUpdatedAt).toISOString()).toBe(
+      "2026-07-27T12:00:00.005Z",
+    );
   });
 });
 

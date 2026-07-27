@@ -94,6 +94,20 @@ function normalizedConfig(aiConfig: AiConfigStored | null) {
   return aiConfig ? migrateAiConfig(aiConfig) : null;
 }
 
+export function nextGroupConfigUpdatedAt(
+  now: Date,
+  botUpdatedAt: Date | null,
+  summaryUpdatedAt: Date | null | undefined,
+): Date {
+  return new Date(
+    Math.max(
+      now.getTime(),
+      (botUpdatedAt?.getTime() ?? 0) + 1,
+      (summaryUpdatedAt?.getTime() ?? 0) + 1,
+    ),
+  );
+}
+
 export function projectGroupConfig(
   bot: BotConfigRow,
   chatId: number,
@@ -284,9 +298,7 @@ export class GroupConfigService {
         const ai = normalizedConfig(bot.aiConfig);
         if (input.patch.group && !ai) throw new GroupConfigUnavailableError();
         let override = ai?.groupOverrides[String(input.chatId)];
-        const changedAt = new Date(
-          Math.max(this.now().getTime(), (bot.updatedAt?.getTime() ?? 0) + 1),
-        );
+        const changedAt = nextGroupConfigUpdatedAt(this.now(), bot.updatedAt, summary?.updatedAt);
         if (input.patch.group) {
           if (!ai) throw new GroupConfigUnavailableError();
           override = mergeGroupOverride(override, input.chatId, input.patch.group);
