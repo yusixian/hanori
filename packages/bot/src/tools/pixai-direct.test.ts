@@ -9,6 +9,42 @@ afterEach(() => {
 });
 
 describe("directPixAIGenerate", () => {
+  test("logs prompt length without persisting direct generation prompts", async () => {
+    vi.spyOn(PixAIClient.prototype, "createTask").mockResolvedValue({
+      id: "task-1",
+      status: "pending",
+    });
+    vi.spyOn(PixAIClient.prototype, "pollUntilComplete").mockImplementation(
+      () => new Promise(() => {}),
+    );
+    const onLog = vi.fn().mockResolvedValue(undefined);
+    const prompt = "confidential direct image prompt";
+
+    await expect(
+      directPixAIGenerate(
+        prompt,
+        {},
+        {
+          getImageGenConfig: () => ({ provider: "pixai", apiKey: "key" }),
+          api: { sendMessage: vi.fn() } as unknown as Api,
+          chatId: 123,
+          userId: 456,
+          recentBotMessageIds: [],
+          onGenerationTrack: vi.fn().mockResolvedValue(undefined),
+          onLog,
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true, taskId: "task-1" });
+
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("PixAI direct task created"),
+        meta: expect.objectContaining({ promptLength: prompt.length }),
+      }),
+    );
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain(prompt);
+  });
+
   test("reserves the active slot while pending persistence is blocked", async () => {
     vi.spyOn(PixAIClient.prototype, "createTask").mockResolvedValue({
       id: "task-1",

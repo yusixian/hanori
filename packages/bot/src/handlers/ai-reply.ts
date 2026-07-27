@@ -290,12 +290,13 @@ interface ToolResultEntry {
   toolCallId: string;
 }
 
-const DEBUG_TRUNCATE_LEN = 500;
-
-function truncate(value: unknown, maxLen = DEBUG_TRUNCATE_LEN): string {
-  const str = typeof value === "string" ? value : JSON.stringify(value);
-  if (!str) return "";
-  return str.length > maxLen ? `${str.slice(0, maxLen)}...` : str;
+function serializedLength(value: unknown): number {
+  if (typeof value === "string") return value.length;
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
@@ -1827,7 +1828,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                 meta: {
                   step: stepCounter,
                   toolName: tc.toolName,
-                  args: truncate(tc.input),
+                  argsLength: serializedLength(tc.input),
                   toolCallId: tc.toolCallId,
                 },
               });
@@ -1841,7 +1842,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
                 meta: {
                   step: stepCounter,
                   toolName: tr.toolName,
-                  result: truncate(tr.output),
+                  resultLength: serializedLength(tr.output),
                   toolCallId: tr.toolCallId,
                 },
               });
@@ -2068,7 +2069,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           message: trailingTextCovered
             ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
             : `Failed to deliver ${text.length} uncovered trailing chars after multi_message`,
-          meta: { chatId, userId, trailingPreview: truncate(text, 200) },
+          meta: { chatId, userId, trailingLength: text.length },
         });
       }
 
@@ -2081,7 +2082,6 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         meta: {
           durationMs,
           responseLength: text?.length ?? 0,
-          responsePreview: truncate(text ?? "", 200),
           totalSteps: steps.length,
           finishReason,
           usage,

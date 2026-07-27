@@ -119,8 +119,14 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
 
         onLog?.({
           level: "debug",
-          message: `[delegate] agent=${agent} task=${task.slice(0, 100)}`,
-          meta: { agent, subAgentModel, maxSteps },
+          message: `[delegate] agent=${agent} started`,
+          meta: {
+            agent,
+            subAgentModel,
+            maxSteps,
+            taskLength: task.length,
+            contextLength: context?.length ?? 0,
+          },
         });
 
         try {

@@ -203,6 +203,26 @@ describe("AI reply multi_message delivery", () => {
         }),
       }),
     );
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        message: "AI tool call",
+        meta: expect.objectContaining({
+          toolName: "multi_message",
+          argsLength: expect.any(Number),
+        }),
+      }),
+    );
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        message: "AI tool result",
+        meta: expect.objectContaining({
+          toolName: "multi_message",
+          resultLength: expect.any(Number),
+        }),
+      }),
+    );
+    expect(JSON.stringify(logs)).not.toContain("ack one");
+    expect(JSON.stringify(logs)).not.toContain(trailing);
     runtime.destroy();
   });
 });

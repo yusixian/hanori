@@ -153,7 +153,7 @@ export async function directPixAIGenerate(
           chatId: opts.chatId,
           taskId: task.id,
           apiMode,
-          prompt: resolvedPrompt.slice(0, 200),
+          promptLength: resolvedPrompt.length,
         },
       });
 

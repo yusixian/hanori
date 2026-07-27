@@ -1,9 +1,11 @@
+import type { Tool } from "ai";
 import type { Api } from "grammy";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { PixAIGenerationRecord } from "@cos-tool-bot/shared";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import {
   handlePixAIBackgroundFailure,
+  createPixAITool,
   PixAIClient,
   PixAIGenerationPersistenceError,
   PixAITaskTerminalError,
@@ -11,6 +13,49 @@ import {
   recoverPixAIGeneration,
   trackPendingGeneration,
 } from "./pixai.js";
+
+interface ExecutableImageTool {
+  execute: (input: { prompt: string }) => Promise<unknown>;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("PixAI task logging", () => {
+  test("logs prompt length without persisting generation prompts", async () => {
+    const createTask = vi.spyOn(PixAIClient.prototype, "createTask").mockResolvedValue({
+      id: "task-1",
+      status: "pending",
+    });
+    const pollUntilComplete = vi
+      .spyOn(PixAIClient.prototype, "pollUntilComplete")
+      .mockImplementation(() => new Promise(() => {}));
+    const onLog = vi.fn();
+    const prompt = "confidential image prompt";
+    const tools = createPixAITool({
+      config: { provider: "pixai", apiKey: "key" },
+      api: { sendMessage: vi.fn() } as unknown as Api,
+      chatId: 123,
+      userId: 456,
+      recentBotMessageIds: [],
+      onGenerationTrack: vi.fn().mockResolvedValue(undefined),
+      onLog,
+    });
+
+    await (tools.generate_image as Tool as unknown as ExecutableImageTool).execute({ prompt });
+
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("PixAI task created"),
+        meta: expect.objectContaining({ promptLength: prompt.length }),
+      }),
+    );
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain(prompt);
+    createTask.mockRestore();
+    pollUntilComplete.mockRestore();
+  });
+});
 
 describe("PixAI recovery", () => {
   test("queries an existing task immediately even when the polling budget is exhausted", async () => {

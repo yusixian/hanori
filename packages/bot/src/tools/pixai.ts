@@ -648,7 +648,7 @@ export function createPixAITool(options: PixAIToolsOptions): Record<string, Tool
       onLog?.({
         level: "info",
         message: `PixAI task created (${apiMode}): ${task.id}`,
-        meta: { chatId, taskId: task.id, apiMode, prompt: ctx.resolvedPrompt.slice(0, 200) },
+        meta: { chatId, taskId: task.id, apiMode, promptLength: ctx.resolvedPrompt.length },
       });
 
       rateLimiter?.registerTask(task.id, chatId, userId);
