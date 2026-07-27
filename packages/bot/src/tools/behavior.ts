@@ -133,8 +133,12 @@ export function createBehaviorTools(options: BehaviorToolsOptions): Record<strin
         moodState.set(chatId, { mood, reason, timestamp: Date.now() });
         onLog?.({
           level: "debug",
-          message: `[mood] ${mood}${reason ? ` (${reason})` : ""}`,
-          meta: { chatId },
+          message: "Mood state updated",
+          meta: {
+            chatId,
+            moodLength: mood.length,
+            reasonLength: reason?.length ?? 0,
+          },
         });
         return { mood_set: mood };
       },

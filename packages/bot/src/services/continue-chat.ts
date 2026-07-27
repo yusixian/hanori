@@ -182,8 +182,8 @@ async function doContinueChat(
 
   config.onLog?.({
     level: "info",
-    message: `continueChat triggered: ${eventDescription}`,
-    meta: { chatId, userId: event.userId },
+    message: "continueChat triggered",
+    meta: { chatId, userId: event.userId, eventDescriptionLength: eventDescription.length },
   });
 
   let manualAbort: AbortController | null = null;

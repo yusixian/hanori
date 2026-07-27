@@ -13,6 +13,31 @@ function sentMessage(messageId: number, text: string): Message.TextMessage {
 }
 
 describe("behavior tools", () => {
+  it("stores mood state without copying tool arguments into generic logs", async () => {
+    const onLog = vi.fn();
+    const mood = "private mood";
+    const reason = "private reason";
+    const tools = createBehaviorTools({
+      api: {} as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      moodState: new Map(),
+      onLog,
+    });
+    const execute = tools.set_mood?.execute;
+    if (!execute) throw new Error("Expected set_mood execute");
+
+    await execute({ mood, reason }, { toolCallId: "mood", messages: [] });
+
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain(mood);
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain(reason);
+    expect(onLog).toHaveBeenCalledWith({
+      level: "debug",
+      message: "Mood state updated",
+      meta: { chatId: 42, moodLength: mood.length, reasonLength: reason.length },
+    });
+  });
+
   it("allows distinct multi_message batches while blocking duplicate content", async () => {
     let nextMessageId = 1;
     const sendMessage = vi

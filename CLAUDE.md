@@ -54,7 +54,7 @@ The server's `createApp()` in `packages/server/src/app.ts` uses **chained** `.ro
 
 ### Bot Command Pattern
 
-Commands live in `packages/bot/src/commands/`. Admin commands use `createAuthGuard(adminIds)` from `packages/bot/src/guards/auth.ts`. The restart command uses a callback pattern: `config.onRestart?.()`, handled by BotManager in the server package.
+Commands live in `packages/bot/src/commands/`. Product metadata belongs in the shared `TELEGRAM_COMMAND_CATALOG`; runtime registration must go through `ActiveCommandRegistry` so actual registration, `/help`, and `setMyCommands` stay aligned. Admin commands use `createAuthGuard(adminIds)` from `packages/bot/src/guards/auth.ts`. The restart command uses a callback pattern: `config.onRestart?.()`, handled by BotManager in the server package.
 
 ### Lark Webhook Bot
 
@@ -70,6 +70,8 @@ Webhook 频率限制：100 次/分钟，5 次/秒，请求体 ≤ 20KB。安全�
 ### Logging & SSE
 
 `DbLogger` writes to both pino stdout and the `botLogs` database table. The panel receives real-time logs via SSE at `GET /api/logs/stream` using fetch + ReadableStream (not EventSource).
+
+Generic persistent Bot logs must never contain group message text, captions, media filenames, sticker-pack names, AI prompts/responses, tool arguments/results, or raw Telegram updates. Keep structured identifiers, event/media kinds, lengths, timings, and outcomes instead. Content may only enter a purpose-specific store whose feature and retention semantics explicitly require it.
 
 ## Pre-commit Checklist
 

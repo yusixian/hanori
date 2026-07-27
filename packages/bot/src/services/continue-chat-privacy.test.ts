@@ -4,6 +4,26 @@ import { describe, expect, it, vi } from "vitest";
 import { continueChat, type ContinueChatConfig } from "./continue-chat.js";
 
 describe("continueChat privacy", () => {
+  it("does not persist the continuation event description in generic logs", async () => {
+    const onLog = vi.fn();
+    const secretDescription = "private timer reason that must not reach logs";
+
+    await continueChat({} as Api, { onLog } as unknown as ContinueChatConfig, {
+      chatId: -100,
+      userId: 42,
+      eventDescription: secretDescription,
+    });
+
+    const serializedLogs = JSON.stringify(onLog.mock.calls);
+    expect(serializedLogs).not.toContain(secretDescription);
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "continueChat triggered",
+        meta: expect.objectContaining({ eventDescriptionLength: secretDescription.length }),
+      }),
+    );
+  });
+
   it("rechecks timer ownership under the user privacy lock and skips off users", async () => {
     const getMode = vi.fn().mockResolvedValue("off");
     const runExclusive = vi.fn(async (_userId: number, operation: () => Promise<void>) =>
