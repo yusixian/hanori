@@ -22,6 +22,7 @@ import {
 } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
+import { AccessPage } from "./access-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
 import { createTelegramMiniAppAdapter, type TelegramMiniAppAdapter } from "./telegram-adapter";
 import "./i18n";
@@ -244,6 +245,7 @@ function ProtectedPage({
   if ((page === "settings" || page === "access") && state.session.role !== "admin") {
     return <Navigate to={`/mini-app/${botId}/groups`} replace />;
   }
+  if (page === "access") return <AccessPage botId={botId} session={state.session} />;
   return <PlaceholderPage page={page} />;
 }
 

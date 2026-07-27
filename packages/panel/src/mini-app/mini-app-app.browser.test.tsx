@@ -71,6 +71,29 @@ test("renders the admin navigation returned by the Bot-scoped session", async ()
   await expect.element(page.getByRole("heading", { name: "Groups are next" })).toBeVisible();
 });
 
+test("keeps Access unmounted for a non-admin session", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      Response.json({
+        ok: true,
+        user: { id: 42 },
+        session: { expiresAt: 1_800_000_900, csrfToken: "csrf" },
+        access: { role: "operator", capabilities: [], chatScope: { kind: "all" } },
+      }),
+    ),
+  );
+  render(
+    <MemoryRouter initialEntries={[`/mini-app/${BOT_ID}/access`]}>
+      <MiniAppApp />
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByRole("heading", { name: "Groups are next" })).toBeVisible();
+  expect(page.getByRole("heading", { name: "Access control" }).query()).toBeNull();
+  expect(page.getByRole("navigation").getByText("Access").query()).toBeNull();
+});
+
 test("shows an expired state for 401", async () => {
   vi.stubGlobal(
     "fetch",

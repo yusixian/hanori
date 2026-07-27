@@ -393,6 +393,538 @@
   place-items: center;
 }
 
+.mini-access {
+  display: grid;
+  gap: 2.4rem;
+  padding-bottom: 4rem;
+}
+
+.mini-access-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-top: 1.5rem;
+}
+
+.mini-access-intro h1 {
+  margin: 0.45rem 0 0.65rem;
+  font-size: clamp(2.4rem, 11vw, 4.6rem);
+  line-height: 0.95;
+  letter-spacing: -0.055em;
+}
+
+.mini-access-intro > div > p:last-child,
+.mini-access-section-heading p {
+  max-width: 36rem;
+  margin: 0;
+  color: var(--mini-muted);
+  line-height: 1.55;
+}
+
+.mini-access button,
+.mini-access input {
+  font: inherit;
+}
+
+.mini-access button,
+.mini-access-primary-link {
+  min-height: 2.75rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--mini-surface) 82%, transparent);
+  color: var(--mini-text);
+  cursor: pointer;
+}
+
+.mini-access button:focus-visible,
+.mini-access input:focus-visible,
+.mini-access-primary-link:focus-visible {
+  outline: 2px solid var(--mini-accent);
+  outline-offset: 3px;
+}
+
+.mini-access button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.mini-access-icon-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 2.9rem;
+  place-items: center;
+}
+
+.mini-access-icon-button svg {
+  width: 1.1rem;
+}
+
+.mini-access-alert {
+  margin: -1.2rem 0 0;
+  padding: 0.9rem 1rem;
+  border-left: 3px solid var(--tg-theme-destructive-text-color, #ef6a67);
+  background: color-mix(in srgb, var(--tg-theme-destructive-text-color, #ef6a67) 9%, transparent);
+  color: var(--mini-text);
+  line-height: 1.45;
+}
+
+.mini-access-section {
+  display: grid;
+  gap: 1rem;
+}
+
+.mini-access-section-heading {
+  display: grid;
+  gap: 1rem;
+}
+
+.mini-access-section-heading > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.8rem;
+}
+
+.mini-access-section-heading > div > span {
+  padding-top: 0.2rem;
+  color: var(--mini-accent);
+  font-family: "SFMono-Regular", "Cascadia Mono", monospace;
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+}
+
+.mini-access-section-heading h2 {
+  margin: 0 0 0.25rem;
+  font-size: clamp(1.55rem, 7vw, 2.5rem);
+  letter-spacing: -0.035em;
+}
+
+.mini-access-primary-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.65rem 0.85rem;
+  background: var(--mini-accent);
+  color: var(--mini-accent-text);
+  font-size: 0.82rem;
+  font-weight: 720;
+  text-decoration: none;
+}
+
+.mini-access-primary-link svg {
+  width: 1rem;
+}
+
+.mini-access-link-unavailable {
+  margin: 0;
+  color: var(--mini-muted);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.mini-access-card-list {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.mini-access-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 1.1rem;
+  background:
+    linear-gradient(120deg, color-mix(in srgb, var(--mini-surface) 86%, transparent), transparent),
+    color-mix(in srgb, var(--mini-bg) 78%, transparent);
+}
+
+.mini-access-card-title {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.mini-access-card-title > svg {
+  width: 1.25rem;
+  color: var(--mini-accent);
+}
+
+.mini-access-card-title h3,
+.mini-access-card-title p,
+.mini-access-note {
+  margin: 0;
+}
+
+.mini-access-card-title h3 {
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+.mini-access-card-title p,
+.mini-access-card > small,
+.mini-access-grant-detail small {
+  color: var(--mini-muted);
+  font-size: 0.72rem;
+}
+
+.mini-access-card-title > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 8.2rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 999px;
+  color: var(--mini-muted);
+  font-size: 0.64rem;
+  font-weight: 720;
+  text-align: center;
+}
+
+.mini-access-card-title > span.is-granted,
+.mini-access-card-title > span.is-verified {
+  border-color: color-mix(in srgb, var(--mini-accent) 34%, transparent);
+  color: var(--mini-accent);
+}
+
+.mini-access-card-title > span svg {
+  width: 0.8rem;
+}
+
+.mini-access-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.mini-access-facts > div {
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.8rem;
+}
+
+.mini-access-facts dt {
+  margin-bottom: 0.22rem;
+  color: var(--mini-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+}
+
+.mini-access-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.mini-access-facts dd.is-danger {
+  color: var(--tg-theme-destructive-text-color, #ef6a67);
+  font-weight: 700;
+}
+
+.mini-access-grant-form,
+.mini-access-operator-form,
+.mini-access-grant-detail {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mini-access-grant-form label,
+.mini-access-operator-form label,
+.mini-access-search-panel > label {
+  color: var(--mini-muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.mini-access-grant-form input,
+.mini-access-operator-form input,
+.mini-access-search-input input {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.8rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.8rem;
+  background: color-mix(in srgb, var(--mini-bg) 75%, transparent);
+  color: var(--mini-text);
+}
+
+.mini-access-grant-form > button,
+.mini-access-operator-form > button,
+.mini-access-confirm > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding-inline: 0.85rem;
+}
+
+.mini-access-grant-form > button,
+.mini-access-operator-form > button {
+  background: var(--mini-accent);
+  color: var(--mini-accent-text);
+  font-weight: 720;
+}
+
+.mini-access-grant-form svg,
+.mini-access-operator-form svg,
+.mini-access-confirm svg,
+.mini-access-danger-button svg {
+  width: 1rem;
+}
+
+.mini-access-membership-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin: 0;
+  color: var(--mini-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.mini-access-membership-warning svg {
+  flex: 0 0 auto;
+  width: 1rem;
+  color: var(--tg-theme-destructive-text-color, #ef6a67);
+}
+
+.mini-access-danger-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding-inline: 0.8rem;
+  color: var(--tg-theme-destructive-text-color, #ef6a67) !important;
+}
+
+.mini-access-confirm {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid
+    color-mix(in srgb, var(--tg-theme-destructive-text-color, #ef6a67) 32%, transparent);
+  border-radius: 0.85rem;
+}
+
+.mini-access-confirm strong {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.mini-access-confirm > button:first-of-type {
+  border-color: transparent;
+  background: var(--tg-theme-destructive-text-color, #ef6a67);
+  color: #fff;
+}
+
+.mini-access-search-panel {
+  display: grid;
+  gap: 0.55rem;
+  padding: 1rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--mini-surface) 66%, transparent);
+}
+
+.mini-access-search-panel > small {
+  color: var(--mini-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.mini-access-search-input {
+  position: relative;
+}
+
+.mini-access-search-input svg {
+  position: absolute;
+  top: 50%;
+  left: 0.8rem;
+  width: 1rem;
+  color: var(--mini-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.mini-access-search-input input {
+  padding-left: 2.35rem;
+}
+
+.mini-access-search-state,
+.mini-access-empty {
+  margin: 0;
+  padding: 1rem;
+  border: 1px dashed var(--mini-border);
+  border-radius: 0.9rem;
+  color: var(--mini-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.mini-access-people {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.mini-access-people button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.15rem 0.7rem;
+  min-height: 3.4rem;
+  padding: 0.65rem 0.75rem;
+  text-align: left;
+}
+
+.mini-access-people button[aria-selected="true"] {
+  border-color: var(--mini-accent);
+  background: color-mix(in srgb, var(--mini-accent) 12%, var(--mini-surface));
+}
+
+.mini-access-people button span {
+  font-weight: 700;
+}
+
+.mini-access-people button small {
+  grid-column: 1;
+  color: var(--mini-muted);
+}
+
+.mini-access-people button em {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  max-width: 7rem;
+  color: var(--tg-theme-destructive-text-color, #ef6a67);
+  font-size: 0.65rem;
+  font-style: normal;
+  text-align: right;
+}
+
+.mini-access-operator-form {
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--mini-border);
+}
+
+.mini-access-operator-form > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.mini-access-operator-form > div span {
+  color: var(--mini-muted);
+  font-family: "SFMono-Regular", monospace;
+  font-size: 0.72rem;
+}
+
+.mini-access-note {
+  color: var(--mini-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.mini-access-filters {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.mini-access-filters label {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.mini-access-filters span {
+  color: var(--mini-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mini-access-filters input {
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--mini-bg) 75%, transparent);
+  color: var(--mini-text);
+  font-size: 0.75rem;
+}
+
+.mini-access-activity {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mini-access-activity li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--mini-border);
+}
+
+.mini-access-activity li > svg {
+  width: 1rem;
+  color: var(--mini-accent);
+}
+
+.mini-access-activity li > div {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.mini-access-activity li > div:last-child {
+  justify-items: end;
+  text-align: right;
+}
+
+.mini-access-activity span,
+.mini-access-activity time,
+.mini-access-activity small {
+  overflow-wrap: anywhere;
+  color: var(--mini-muted);
+  font-size: 0.68rem;
+}
+
+.mini-access-activity em {
+  color: var(--mini-accent);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mini-access-state {
+  display: grid;
+  min-height: 65dvh;
+  place-content: center;
+  justify-items: center;
+  padding: 2rem;
+  text-align: center;
+}
+
+.mini-access-state > svg {
+  width: 2.2rem;
+  color: var(--mini-accent);
+}
+
+.mini-access-state button {
+  padding-inline: 1rem;
+}
+
 @keyframes mini-spin {
   to {
     transform: rotate(1turn);
@@ -426,6 +958,19 @@
   .mini-app-command-grid article {
     border: 1px solid var(--mini-border);
     border-radius: 1rem;
+  }
+  .mini-access-section-heading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .mini-access-card-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mini-access-card-list > .mini-access-card:only-child {
+    grid-column: 1 / -1;
+  }
+  .mini-access-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
