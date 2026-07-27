@@ -68,6 +68,7 @@ const createBotSchema = z
     token: z.string().optional().default(""),
     adminChatIds: z.array(z.number()).default([]),
     isActive: z.boolean().default(true),
+    miniAppEnabled: z.boolean().default(false),
     // Lark-specific fields
     webhookUrl: z.string().optional(),
     signSecret: z.string().optional(),
@@ -87,13 +88,18 @@ const createBotSchema = z
       return true;
     },
     { message: "Email password is required when creating email forward config" },
-  );
+  )
+  .refine((data) => data.platform === "telegram" || !data.miniAppEnabled, {
+    message: "Telegram Mini App is only available for Telegram bots",
+    path: ["miniAppEnabled"],
+  });
 
 const updateBotSchema = z.object({
   name: z.string().min(1).max(100).optional(),
   token: z.string().min(1).optional(),
   adminChatIds: z.array(z.number()).optional(),
   isActive: z.boolean().optional(),
+  miniAppEnabled: z.boolean().optional(),
   // Lark-specific fields
   webhookUrl: z.string().optional(),
   signSecret: z.string().optional(),
@@ -124,6 +130,7 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     tokenMasked,
     adminChatIds: bot.adminChatIds,
     isActive: bot.isActive,
+    miniAppEnabled: bot.miniAppEnabled,
     aiEnabled: bot.aiConfig?.enabled ?? false,
     aiHasApiKey: !!(
       bot.aiConfig && getActiveProvider(migrateAiConfig(bot.aiConfig))?.encryptedApiKey
@@ -778,6 +785,7 @@ export function botsRoutes(
           encryptedToken,
           adminChatIds: body.adminChatIds,
           isActive: body.isActive,
+          miniAppEnabled: body.miniAppEnabled,
           larkWebhookConfig: larkWebhookConfig ?? null,
           emailForwardConfig: emailForwardConfig ?? null,
         })
@@ -802,18 +810,28 @@ export function botsRoutes(
     .put("/:botId", zValidator("json", updateBotSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
-      if (body.isActive !== undefined && !ownerOrAdmin.has(c.get("authMember").role)) {
+      if (
+        (body.isActive !== undefined || body.miniAppEnabled !== undefined) &&
+        !ownerOrAdmin.has(c.get("authMember").role)
+      ) {
         return c.json({ ok: false as const, error: "当前角色没有权限管理 Bot 生命周期" }, 403);
       }
 
       const [existing] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!existing) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      if (body.miniAppEnabled && existing.platform !== "telegram") {
+        return c.json(
+          { ok: false as const, error: "Telegram Mini App is only available for Telegram bots" },
+          400,
+        );
+      }
 
       const updates: Partial<typeof bots.$inferInsert> = {};
       if (body.name !== undefined) updates.name = body.name;
       if (body.token !== undefined)
         updates.encryptedToken = encrypt(body.token, env.ENCRYPTION_KEY);
       if (body.adminChatIds !== undefined) updates.adminChatIds = body.adminChatIds;
+      if (body.miniAppEnabled !== undefined) updates.miniAppEnabled = body.miniAppEnabled;
 
       // Lark-specific updates
       if (body.webhookUrl !== undefined || body.signSecret !== undefined) {
@@ -883,13 +901,20 @@ export function botsRoutes(
           body.adminChatIds !== undefined ||
           body.webhookUrl !== undefined ||
           body.signSecret !== undefined ||
+          body.miniAppEnabled !== undefined ||
           body.emailForwardConfig !== undefined ||
           body.clearEmailForwardConfig;
         if (manager && needsRestart) {
           try {
             await botPool.restartBot(botId);
-          } catch {
-            // continue
+          } catch (error) {
+            if (body.miniAppEnabled !== undefined) {
+              console.error("Bot restart after Mini App flag update failed", { botId, error });
+              throw new HTTPException(503, {
+                message:
+                  "Mini App 设置已保存，但 Bot 重启失败。请检查 HTTPS 配置和服务端日志后重试",
+              });
+            }
           }
         }
       }

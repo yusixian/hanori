@@ -526,6 +526,14 @@ export class BotPool {
       );
     }
     const dbLogger = new DbLogger(this.db, this.logger, botId);
+    let miniAppUrl: string | undefined;
+    if (bot.miniAppEnabled) {
+      const configuredBaseUrl = new URL(env.BETTER_AUTH_URL);
+      if (configuredBaseUrl.protocol !== "https:") {
+        throw new Error("Telegram Mini App requires an HTTPS BETTER_AUTH_URL");
+      }
+      miniAppUrl = new URL(`/mini-app/${botId}/help`, configuredBaseUrl).toString();
+    }
     const privacyService = this.userPrivacyService;
     const privacy: UserPrivacyCallbacks = {
       getMode: (userId) => privacyService.getMode(botId, userId),
@@ -1390,6 +1398,7 @@ export class BotPool {
       mcpCallbacks,
       summary: summaryCallbacks,
       telegramObservation: this.telegramObservation,
+      miniAppUrl,
     });
 
     const preexistingPendingCutoff = new Date();

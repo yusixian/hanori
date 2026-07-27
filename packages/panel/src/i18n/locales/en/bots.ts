@@ -74,6 +74,7 @@ export const bots = {
     leaveEmptyIfNotConfigured: "Leave empty if not configured",
     keepCurrentSecret: "Leave empty to keep the current secret",
     autoStart: "Auto-start on server launch",
+    miniAppEnabled: "Enable Telegram Mini App (requires HTTPS setup)",
     email: {
       title: "Email Forwarding (IMAP)",
       imapHost: "IMAP Host",

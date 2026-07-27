@@ -1,0 +1,1 @@
+ALTER TABLE "bots" ADD COLUMN "mini_app_enabled" boolean DEFAULT false NOT NULL;

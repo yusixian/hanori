@@ -74,6 +74,7 @@ export class InMemoryMiniAppSessionRateLimiter implements MiniAppSessionRateLimi
 
 export interface MiniAppBotTokenResolver {
   resolve(botId: string): Promise<string | null>;
+  isEnabled(botId: string): Promise<boolean>;
 }
 
 export function createMiniAppBotTokenResolver(
@@ -81,11 +82,22 @@ export function createMiniAppBotTokenResolver(
   encryptionKey: string,
 ): MiniAppBotTokenResolver {
   return {
+    async isEnabled(botId) {
+      const [row] = await db
+        .select({ id: bots.id })
+        .from(bots)
+        .where(
+          and(eq(bots.id, botId), eq(bots.platform, "telegram"), eq(bots.miniAppEnabled, true)),
+        );
+      return row !== undefined;
+    },
     async resolve(botId) {
       const [row] = await db
         .select({ encryptedToken: bots.encryptedToken })
         .from(bots)
-        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
+        .where(
+          and(eq(bots.id, botId), eq(bots.platform, "telegram"), eq(bots.miniAppEnabled, true)),
+        );
       if (!row) return null;
       const token = tryDecrypt(row.encryptedToken, encryptionKey);
       if (!token) throw new Error("Telegram bot token is unavailable");
@@ -367,6 +379,9 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
   ) {
     const { headers } = request;
     if (!UUID_PATTERN.test(botId)) return { ok: false as const, status: 404 as const };
+    if (!(await options.botTokenResolver.isEnabled(botId))) {
+      return { ok: false as const, status: 404 as const };
+    }
     const token = readCookie(headers.get("cookie") ?? undefined, MINI_APP_SESSION_COOKIE_NAME);
     if (!token || options.sessionSecret.length < 32) {
       return { ok: false as const, status: 401 as const };
@@ -479,6 +494,9 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
       const botId = c.req.param("botId");
       if (!UUID_PATTERN.test(botId))
         return c.json({ ok: false as const, error: "Unauthorized" }, 401);
+      if (!(await options.botTokenResolver.isEnabled(botId))) {
+        return c.json({ ok: false as const, error: "Not found" }, 404);
+      }
       const token = readCookie(c.req.header("cookie"), MINI_APP_SESSION_COOKIE_NAME);
       if (!token || options.sessionSecret.length < 32) {
         c.header("Set-Cookie", clearMiniAppSessionCookie(botId));

@@ -48,6 +48,7 @@ interface BotManagerOptions {
   mcpCallbacks?: McpCommandConfig;
   summary?: SummaryCallbacks;
   telegramObservation?: TelegramObservationCallbacks;
+  miniAppUrl?: string;
 }
 
 export class BotManager implements IBotManager, TelegramRichMessageSender {
@@ -80,6 +81,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       privacy: options.privacy,
       summary: options.summary,
       telegramObservation: options.telegramObservation,
+      miniAppUrl: options.miniAppUrl,
     };
   }
 

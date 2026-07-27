@@ -112,6 +112,7 @@ export interface BotConfig {
   privacy?: UserPrivacyCallbacks;
   summary?: SummaryCallbacks;
   telegramObservation?: TelegramObservationCallbacks;
+  miniAppUrl?: string;
 }
 
 const botDisposers = new WeakMap<object, () => void>();
@@ -269,6 +270,17 @@ export function createBot(config: BotConfig) {
     "help",
     createHelpCommand(() => commandRegistry.getActiveCommands()),
   );
+  if (config.miniAppUrl) {
+    commandRegistry.register("panel", async (ctx) => {
+      const button =
+        ctx.chat.type === "private"
+          ? { text: "Open Panel", web_app: { url: config.miniAppUrl! } }
+          : { text: "Open Panel", url: config.miniAppUrl! };
+      await ctx.reply("Open the Bot help and management panel:", {
+        reply_markup: { inline_keyboard: [[button]] },
+      });
+    });
+  }
   commandRegistry.register(
     "md2tg",
     createMd2tgCommand({ getRichMessageEnabled: () => aiGetRichMessageEnabled?.() ?? false }),

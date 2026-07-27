@@ -69,6 +69,7 @@ function createCommandTestBot(
     botId: "bot-commands",
     adminChatIds: [userId],
     logger: { warn: vi.fn(), error: vi.fn() } as never,
+    miniAppUrl: complete ? "https://panel.example/mini-app/bot-commands/help" : undefined,
     aiReply: complete
       ? {
           botId: "bot-commands",
@@ -228,6 +229,62 @@ describe("createBot command registry", () => {
     const helpText = (helpRequest!.body as { text: string }).text;
     const helpNames = [...helpText.matchAll(/^\/([a-z0-9_]+) - /gm)].map((match) => match[1]);
     expect(helpNames).toEqual(activeNames);
+  });
+
+  it("opens the Mini App as a Web App in private chats and a URL from groups", async () => {
+    const bot = createCommandTestBot("complete");
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    await bot.handleUpdate({
+      update_id: 1,
+      message: {
+        message_id: 1,
+        date: 1_700_000_000,
+        chat: { id: userId, type: "private", first_name: "Ai" },
+        from: { id: userId, is_bot: false, first_name: "Ai" },
+        text: "/panel",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      },
+    } as never);
+    const privateReply = telegramApi.requests.find(({ method }) => method === "sendMessage");
+    expect(privateReply?.body).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [{ web_app: { url: "https://panel.example/mini-app/bot-commands/help" } }],
+        ],
+      },
+    });
+
+    telegramApi.requests.length = 0;
+    await bot.handleUpdate(
+      groupMessage({
+        text: "/panel",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }) as never,
+    );
+    const groupReply = telegramApi.requests.find(({ method }) => method === "sendMessage");
+    expect(groupReply?.body).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [[{ url: "https://panel.example/mini-app/bot-commands/help" }]],
+      },
+    });
+    expect(groupReply?.body).not.toMatchObject({
+      reply_markup: { inline_keyboard: [[{ web_app: expect.anything() }]] },
+    });
   });
 
   it("keeps model and provider Admin-only when legacy config requests public access", () => {

@@ -80,6 +80,7 @@ export const dataProvider: DataProvider = {
         token: string;
         adminChatIds: number[];
         isActive: boolean;
+        miniAppEnabled: boolean;
       };
       const res = await client.api.bots.$post({ json: vars });
       const json = await res.json();
@@ -98,6 +99,7 @@ export const dataProvider: DataProvider = {
         token?: string;
         adminChatIds?: number[];
         isActive?: boolean;
+        miniAppEnabled?: boolean;
       };
       const res = await client.api.bots[":botId"].$put({
         param: { botId: String(id) },

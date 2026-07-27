@@ -45,6 +45,7 @@ import type { ChatAiSelectionService } from "./services/chat-ai-selection-servic
 import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import type { BotSettingsService } from "./services/bot-settings-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
+import { APP_SECURITY_HEADERS, staticCacheControl } from "./http-policy.js";
 
 interface AppOptions {
   db: Database;
@@ -97,6 +98,10 @@ export function createApp(options: AppOptions) {
 
   const app = new Hono()
     .use("*", honoLogger())
+    .use("*", async (c, next) => {
+      await next();
+      for (const [name, value] of Object.entries(APP_SECURITY_HEADERS)) c.header(name, value);
+    })
     .use(
       "/api/*",
       cors({
@@ -172,9 +177,16 @@ export function createApp(options: AppOptions) {
     .use("/api/mcp-servers", requireAppAccess(auth, db))
     .use("/api/mcp-servers/*", requireAppAccess(auth, db))
     .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
-    .get("/api/health", (c) => c.json({ ok: true as const }));
+    .get("/api/health", (c) => c.json({ ok: true as const }))
+    .all("/api/*", (c) => c.json({ ok: false as const, error: "Not found" }, 404));
 
   // Serve panel static files in production (not chained - doesn't affect API types)
+  app.use("/*", async (c, next) => {
+    await next();
+    if (c.res.status >= 200 && c.res.status < 400) {
+      c.header("Cache-Control", staticCacheControl(c.req.path));
+    }
+  });
   app.use("/*", serveStatic({ root: "./public" }));
   app.get("/*", serveStatic({ root: "./public", path: "index.html" }));
 

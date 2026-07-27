@@ -42,6 +42,7 @@ export const bots = pgTable("bots", {
   larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
   emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
   isActive: boolean("is_active").notNull().default(true),
+  miniAppEnabled: boolean("mini_app_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

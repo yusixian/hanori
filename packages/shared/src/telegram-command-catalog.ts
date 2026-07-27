@@ -44,6 +44,17 @@ export const TELEGRAM_COMMAND_CATALOG = [
     publicHelpVisibility: "public",
   },
   {
+    command: "panel",
+    description: {
+      "zh-CN": "打开 Bot 帮助与管理面板（如已启用）",
+      en: "Open Bot help and management panel when enabled",
+    },
+    category: "general",
+    access: "public",
+    capability: "help.read",
+    publicHelpVisibility: "public",
+  },
+  {
     command: "md2tg",
     description: {
       "zh-CN": "将 Markdown 转为 Telegram 富文本",

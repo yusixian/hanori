@@ -185,6 +185,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     allowedOrigins: [ORIGIN],
     botTokenResolver: {
       resolve: vi.fn(async (botId: string) => (botId === BOT_A ? BOT_TOKEN : null)),
+      isEnabled: vi.fn(async (botId: string) => botId === BOT_A),
     },
     directory,
     membershipVerifier: { isMember: vi.fn(async () => false) },
@@ -257,6 +258,38 @@ describe("Mini App session routes", () => {
       body: JSON.stringify({ initData: signInitData() }),
     });
     expect(unknown.status).toBe(404);
+  });
+
+  it("keeps Mini App APIs dark when the per-Bot feature flag is disabled", async () => {
+    const enabled = testApp();
+    const sessionResponse = await enabled.app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    const cookie = cookieFrom(sessionResponse);
+    const resolve = vi.fn(async () => null);
+    const disabled = testApp({
+      botTokenResolver: { resolve, isEnabled: vi.fn(async () => false) },
+    }).app;
+
+    const create = await disabled.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    expect(create.status).toBe(404);
+    expect(resolve).toHaveBeenCalled();
+
+    const existing = await disabled.request(`/mini-app/${BOT_A}/access`, {
+      headers: { cookie },
+    });
+    expect(existing.status).toBe(404);
+
+    const session = await disabled.request(`/mini-app/${BOT_A}/session`, {
+      headers: { cookie },
+    });
+    expect(session.status).toBe(404);
   });
 
   it("rejects expired and future initData and fails closed when sessions are not configured", async () => {
@@ -341,7 +374,10 @@ describe("Mini App session routes", () => {
   });
 
   it("rejects a valid Bot A cookie on Bot B and clears invalid sessions", async () => {
-    const resolver = { resolve: vi.fn(async () => BOT_TOKEN) };
+    const resolver = {
+      resolve: vi.fn(async () => BOT_TOKEN),
+      isEnabled: vi.fn(async () => true),
+    };
     const { app } = testApp({ botTokenResolver: resolver });
     const created = await app.request(`/mini-app/${BOT_A}/session`, {
       method: "POST",

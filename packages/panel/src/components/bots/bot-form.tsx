@@ -29,6 +29,7 @@ export interface BotFormData {
   token: string | undefined;
   adminChatIds: number[];
   isActive: boolean;
+  miniAppEnabled: boolean;
   webhookUrl?: string;
   signSecret?: string;
   emailForwardConfig?: EmailForwardFormData;
@@ -41,6 +42,7 @@ interface BotFormProps {
     tokenMasked: string;
     adminChatIds: number[];
     isActive: boolean;
+    miniAppEnabled: boolean;
     webhookUrl?: string;
     hasSignSecret?: boolean;
     emailForwardConfig?: {
@@ -146,6 +148,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
   const [token, setToken] = useState("");
   const [adminChatIds, setAdminChatIds] = useState(initialData?.adminChatIds.join(", ") ?? "");
   const [isActive, setIsActive] = useState(initialData?.isActive ?? true);
+  const [miniAppEnabled, setMiniAppEnabled] = useState(initialData?.miniAppEnabled ?? false);
   const [submitting, setSubmitting] = useState(false);
 
   // Lark fields
@@ -221,6 +224,7 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
         token: platform === "telegram" ? (isEdit && !token ? undefined : token) : undefined,
         adminChatIds: ids,
         isActive,
+        miniAppEnabled,
       };
 
       if (platform === "lark-webhook") {
@@ -573,6 +577,19 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
               {t("form.autoStart")}
             </label>
           </div>
+
+          {platform === "telegram" ? (
+            <div className="flex items-center gap-2">
+              <Switch
+                id="miniAppEnabled"
+                checked={miniAppEnabled}
+                onCheckedChange={setMiniAppEnabled}
+              />
+              <label htmlFor="miniAppEnabled" className="text-sm font-medium">
+                {t("form.miniAppEnabled")}
+              </label>
+            </div>
+          ) : null}
 
           <Button type="submit" disabled={submitting} className="w-full">
             {submitting ? t("common:common.saving") : submitLabel}

@@ -74,6 +74,7 @@ export const bots = {
     leaveEmptyIfNotConfigured: "未配置时请留空",
     keepCurrentSecret: "留空以保留当前签名密钥",
     autoStart: "服务启动时自动启动",
+    miniAppEnabled: "启用 Telegram Mini App（需先完成 HTTPS 配置）",
     email: {
       title: "邮件转发（IMAP）",
       imapHost: "IMAP 主机",

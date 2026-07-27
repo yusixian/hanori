@@ -23,6 +23,7 @@ export function BotCreatePage() {
               token: data.token ?? "",
               adminChatIds: data.adminChatIds,
               isActive: data.isActive,
+              miniAppEnabled: data.miniAppEnabled,
               webhookUrl: data.webhookUrl,
               signSecret: data.signSecret,
               emailForwardConfig: data.emailForwardConfig,

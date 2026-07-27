@@ -274,6 +274,13 @@
       "when": 1785162815430,
       "tag": "0038_perpetual_metal_master",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1785166117672,
+      "tag": "0039_modern_plazm",
+      "breakpoints": true
     }
   ]
 }

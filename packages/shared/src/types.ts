@@ -1021,6 +1021,7 @@ export interface BotRecord {
   tokenMasked: string;
   adminChatIds: number[];
   isActive: boolean;
+  miniAppEnabled: boolean;
   aiEnabled: boolean;
   aiHasApiKey: boolean;
   createdAt: string;
