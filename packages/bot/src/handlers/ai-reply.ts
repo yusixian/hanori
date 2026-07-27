@@ -198,6 +198,7 @@ export interface AiReplyConfig {
     seconds: number;
     reason: string;
     userId: number;
+    handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;

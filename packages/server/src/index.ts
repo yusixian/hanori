@@ -346,14 +346,6 @@ for (const [name, svc] of scheduledServices) {
   }
 }
 
-// Recover AI timers from database
-await timerRegistry.recoverAiTimers(
-  (timerId, botId, chatId, meta) => {
-    botPool.fireRecoveredTimer(timerId, botId, chatId, meta);
-  },
-  (botId) => botPool.getManager(botId)?.status === "running",
-);
-
 // Graceful shutdown
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);

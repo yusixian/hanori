@@ -85,6 +85,7 @@ export interface TimerCallbacks {
     seconds: number;
     reason: string;
     userId: number;
+    handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFired?: (timerId: string) => void;

@@ -54,10 +54,12 @@ function createPool() {
     [...timers.values()].filter((entry) => !botId || entry.botId === botId).map(record),
   );
   const cancel = vi.fn(async (timerId: string) => timers.delete(timerId));
+  const pauseBot = vi.fn().mockResolvedValue(0);
   const registry = {
     get: (timerId: string) => timers.get(timerId),
     listActive,
     cancel,
+    pauseBot,
   } as unknown as TimerRegistry;
   const pool = new BotPool(
     {} as Database,
@@ -78,7 +80,7 @@ function createPool() {
     fireTimer: vi.fn(),
     cancelPendingTimer: cancelPendingTimerB,
   });
-  return { pool, listActive, cancel, cancelPendingTimerA, cancelPendingTimerB };
+  return { pool, listActive, cancel, pauseBot, cancelPendingTimerA, cancelPendingTimerB };
 }
 
 describe("BotPool timer tenant scope", () => {
@@ -105,5 +107,13 @@ describe("BotPool timer tenant scope", () => {
     expect(cancelPendingTimerA).toHaveBeenCalledWith("timer-a");
     expect(cancelPendingTimerB).not.toHaveBeenCalled();
     expect(cancel).toHaveBeenCalledWith("timer-a");
+  });
+
+  it("pauses durable timers even when the Bot has no live manager", async () => {
+    const { pool, pauseBot } = createPool();
+
+    await pool.stopBot(BOT_A);
+
+    expect(pauseBot).toHaveBeenCalledWith(BOT_A);
   });
 });

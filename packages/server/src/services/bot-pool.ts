@@ -1265,6 +1265,7 @@ export class BotPool {
         seconds: number;
         reason: string;
         userId: number;
+        handle: ReturnType<typeof setTimeout>;
       }) => {
         registry
           .registerAi({
@@ -1274,6 +1275,7 @@ export class BotPool {
             name: params.reason,
             seconds: params.seconds,
             meta: { reason: params.reason, userId: params.userId },
+            handle: params.handle,
           })
           .catch((err) => {
             this.logger.error(err, `Failed to register AI timer in registry`);
@@ -1419,6 +1421,23 @@ export class BotPool {
           { botId, error },
           "Bot started but its AI selection snapshot remains pending",
         );
+      }
+    }
+    if (this.botTimerHandlers.has(botId)) {
+      try {
+        await this.timerRegistry.resumeBot(botId, (timerId, ownerBotId, chatId, meta, delayed) => {
+          this.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed);
+        });
+      } catch (error) {
+        try {
+          await manager.stop();
+        } finally {
+          this.managers.delete(botId);
+          this.botTimerHandlers.delete(botId);
+          this.aiSelectionRuntimeDisposers.get(botId)?.();
+          this.aiSelectionRuntimeDisposers.delete(botId);
+        }
+        throw error;
       }
     }
     if (this.telegramProfileObserver) {
@@ -1628,6 +1647,7 @@ export class BotPool {
     this.generationRecoveryConfigs.delete(botId);
     this.stopGenerationRecoverySchedulerIfIdle();
     await this.cancelGenerationRecoveries(botId, `Bot ${botId} stopped`);
+    await this.timerRegistry.pauseBot(botId);
     const manager = this.managers.get(botId);
     if (!manager) return;
     await manager.stop();
@@ -1943,6 +1963,7 @@ export class BotPool {
     botId: string,
     chatId: number,
     meta: Record<string, unknown> | null,
+    delayed = false,
   ): void {
     const manager = this.managers.get(botId);
     if (!manager) {
@@ -1967,7 +1988,10 @@ export class BotPool {
           "Recovered legacy timer without owner using compatibility mode",
         );
       }
-      this.logger.info({ timerId, botId, chatId }, "Recovered timer fired via bot continueChat");
+      this.logger.info(
+        { timerId, botId, chatId, delayed },
+        "Recovered timer fired via bot continueChat",
+      );
     } else {
       this.logger.warn(
         { timerId, botId, chatId },

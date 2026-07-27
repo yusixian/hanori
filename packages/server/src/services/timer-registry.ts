@@ -3,6 +3,7 @@ import { timers } from "@cos-tool-bot/database";
 import type { TimerRecord, TimerStatus, TimerType } from "@cos-tool-bot/shared";
 import { and, eq, lt, ne } from "drizzle-orm";
 import type { Logger } from "pino";
+import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
 export interface RegisteredTimer {
   id: string;
@@ -21,7 +22,22 @@ export interface RegisteredTimer {
 
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const COMPLETED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
-const MAX_RECOVERY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export type TimerFireCallback = (
+  timerId: string,
+  botId: string,
+  chatId: number,
+  meta: Record<string, unknown> | null,
+  delayed: boolean,
+) => void;
+
+export interface TimerResumeResult {
+  recovered: number;
+  cancelled: number;
+  immediate: number;
+}
+
+type TimerRow = typeof timers.$inferSelect;
 
 function shortId(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -48,6 +64,8 @@ function toRecord(t: RegisteredTimer): TimerRecord {
 
 export class TimerRegistry {
   private active = new Map<string, RegisteredTimer>();
+  private pausedBots = new Set<string>();
+  private botLocks = new KeyedAsyncLock();
   private cleanupHandle: ReturnType<typeof setInterval>;
   private dbCleanupHandle: ReturnType<typeof setInterval>;
 
@@ -101,39 +119,47 @@ export class TimerRegistry {
     name: string;
     seconds: number;
     meta?: Record<string, unknown>;
+    handle?: ReturnType<typeof setTimeout>;
   }): Promise<string> {
-    const id = opts.timerId ?? `ai_${shortId()}`;
-    const firesAt = new Date(Date.now() + opts.seconds * 1000);
-    const timer: RegisteredTimer = {
-      id,
-      botId: opts.botId,
-      type: "ai",
-      name: opts.name,
-      chatId: opts.chatId,
-      status: "active",
-      intervalMs: null,
-      firesAt,
-      createdAt: new Date(),
-      meta: opts.meta ?? null,
-    };
-    this.active.set(id, timer);
+    return this.botLocks.run(opts.botId, async () => {
+      const id = opts.timerId ?? `ai_${shortId()}`;
+      const firesAt = new Date(Date.now() + opts.seconds * 1000);
+      const timer: RegisteredTimer = {
+        id,
+        botId: opts.botId,
+        type: "ai",
+        name: opts.name,
+        chatId: opts.chatId,
+        status: "active",
+        intervalMs: null,
+        firesAt,
+        createdAt: new Date(),
+        meta: opts.meta ?? null,
+        handle: opts.handle,
+      };
+      if (this.pausedBots.has(opts.botId)) {
+        if (timer.handle) clearTimeout(timer.handle);
+      } else {
+        this.active.set(id, timer);
+      }
 
-    try {
-      await this.db.insert(timers).values({
-        id: timer.id,
-        botId: timer.botId,
-        type: timer.type,
-        name: timer.name,
-        chatId: timer.chatId,
-        status: timer.status,
-        firesAt: timer.firesAt,
-        meta: timer.meta,
-      });
-    } catch (err) {
-      this.logger.error(err, `Failed to persist AI timer ${id}`);
-    }
+      try {
+        await this.db.insert(timers).values({
+          id: timer.id,
+          botId: timer.botId,
+          type: timer.type,
+          name: timer.name,
+          chatId: timer.chatId,
+          status: timer.status,
+          firesAt: timer.firesAt,
+          meta: timer.meta,
+        });
+      } catch (err) {
+        this.logger.error(err, `Failed to persist AI timer ${id}`);
+      }
 
-    return id;
+      return id;
+    });
   }
 
   /** Set the setTimeout handle for an AI timer (called after registerAi). */
@@ -159,7 +185,7 @@ export class TimerRegistry {
         await this.db
           .update(timers)
           .set({ status: "fired", firedAt: new Date() })
-          .where(eq(timers.id, timerId));
+          .where(and(eq(timers.id, timerId), eq(timers.status, "active")));
       }
     } catch (err) {
       this.logger.error(err, `Failed to mark timer ${timerId} as fired`);
@@ -201,95 +227,136 @@ export class TimerRegistry {
     return result;
   }
 
-  /** Recover AI timers from DB after restart. */
-  async recoverAiTimers(
-    onFire: (
-      timerId: string,
-      botId: string,
-      chatId: number,
-      meta: Record<string, unknown> | null,
-    ) => void,
-    isRunning: (botId: string) => boolean,
-  ): Promise<{ recovered: number; cancelled: number; immediate: number }> {
+  /** Clear one Bot's in-memory schedules without changing durable timer state. */
+  pauseBot(botId: string): Promise<number> {
+    return this.botLocks.run(botId, async () => this.pauseBotUnlocked(botId));
+  }
+
+  /** Rebuild one running Bot's schedules from durable active timers. */
+  resumeBot(botId: string, onFire: TimerFireCallback): Promise<TimerResumeResult> {
+    return this.botLocks.run(botId, async () => {
+      this.pauseBotUnlocked(botId);
+      this.pausedBots.delete(botId);
+      try {
+        const rows = await this.db
+          .select()
+          .from(timers)
+          .where(and(eq(timers.botId, botId), eq(timers.type, "ai"), eq(timers.status, "active")));
+        return await this.restoreRows(botId, rows, onFire);
+      } catch (err) {
+        this.logger.error(err, `Failed to resume AI timers for bot ${botId}`);
+        return { recovered: 0, cancelled: 0, immediate: 0 };
+      }
+    });
+  }
+
+  private pauseBotUnlocked(botId: string): number {
+    this.pausedBots.add(botId);
+    let paused = 0;
+    for (const [id, timer] of this.active) {
+      if (timer.botId !== botId) continue;
+      if (timer.handle) clearTimeout(timer.handle);
+      this.active.delete(id);
+      paused++;
+    }
+    return paused;
+  }
+
+  private async restoreRows(
+    botId: string,
+    rows: TimerRow[],
+    onFire: TimerFireCallback,
+  ): Promise<TimerResumeResult> {
     let recovered = 0;
     let cancelled = 0;
     let immediate = 0;
+    const now = Date.now();
 
-    try {
-      const rows = await this.db
-        .select()
-        .from(timers)
-        .where(and(eq(timers.type, "ai"), eq(timers.status, "active")));
-
-      const now = Date.now();
-
-      for (const row of rows) {
-        if (!row.botId || !row.firesAt || row.chatId == null) {
-          await this.db.update(timers).set({ status: "cancelled" }).where(eq(timers.id, row.id));
-          cancelled++;
-          continue;
-        }
-
-        // Bot not running → cancel
-        if (!isRunning(row.botId)) {
-          await this.db.update(timers).set({ status: "cancelled" }).where(eq(timers.id, row.id));
-          this.logger.info(`Timer ${row.id} cancelled: bot ${row.botId} not running`);
-          cancelled++;
-          continue;
-        }
-
-        const fireTime = row.firesAt.getTime();
-        const elapsed = now - fireTime;
-
-        if (elapsed > MAX_RECOVERY_WINDOW_MS) {
-          // Too old → cancel
-          await this.db.update(timers).set({ status: "cancelled" }).where(eq(timers.id, row.id));
-          this.logger.info(`Timer ${row.id} cancelled: expired >24h ago`);
-          cancelled++;
-          continue;
-        }
-
-        const timer: RegisteredTimer = {
-          id: row.id,
-          botId: row.botId,
-          type: "ai",
-          name: row.name,
-          chatId: row.chatId,
-          status: "active",
-          intervalMs: null,
-          firesAt: row.firesAt,
-          createdAt: row.createdAt,
-          meta: row.meta as Record<string, unknown> | null,
-        };
-        this.active.set(row.id, timer);
-
-        if (elapsed > 0) {
-          // Past due but within 24h → fire after a short delay to ensure bot handlers are ready
-          immediate++;
-          const handle = setTimeout(() => {
-            onFire(row.id, row.botId!, row.chatId!, timer.meta);
-          }, 2000);
-          handle.unref();
-          timer.handle = handle;
-        } else {
-          // Future → rebuild setTimeout
-          const delay = -elapsed;
-          const handle = setTimeout(() => {
-            onFire(row.id, row.botId!, row.chatId!, timer.meta);
-          }, delay);
-          handle.unref();
-          timer.handle = handle;
-          recovered++;
-        }
+    for (const row of rows) {
+      if (!row.firesAt || row.chatId == null) {
+        if (await this.cancelActive(row.id, botId)) cancelled++;
+        continue;
       }
-    } catch (err) {
-      this.logger.error(err, "Failed to recover AI timers");
-    }
 
-    if (recovered + cancelled + immediate > 0) {
-      this.logger.info({ recovered, cancelled, immediate }, "AI timer recovery complete");
+      const timer: RegisteredTimer = {
+        id: row.id,
+        botId,
+        type: "ai",
+        name: row.name,
+        chatId: row.chatId,
+        status: "active",
+        intervalMs: null,
+        firesAt: row.firesAt,
+        createdAt: row.createdAt,
+        meta: row.meta as Record<string, unknown> | null,
+      };
+      const delay = row.firesAt.getTime() - now;
+      if (delay <= 0) {
+        if (await this.claimActive(row.id, botId)) {
+          immediate++;
+          this.deliver(onFire, timer, true);
+        }
+        continue;
+      }
+
+      const handle = setTimeout(() => {
+        void this.botLocks
+          .run(botId, async () => {
+            if (this.active.get(row.id) !== timer) return;
+            this.active.delete(row.id);
+            if (await this.claimActive(row.id, botId)) this.deliver(onFire, timer, false);
+          })
+          .catch((err) => this.logger.error(err, `Failed to fire resumed timer ${row.id}`));
+      }, delay);
+      handle.unref();
+      timer.handle = handle;
+      this.active.set(row.id, timer);
+      recovered++;
     }
     return { recovered, cancelled, immediate };
+  }
+
+  private deliver(onFire: TimerFireCallback, timer: RegisteredTimer, delayed: boolean): void {
+    try {
+      onFire(timer.id, timer.botId!, timer.chatId!, timer.meta, delayed);
+    } catch (err) {
+      this.logger.error(err, `Failed to deliver resumed timer ${timer.id}`);
+    }
+  }
+
+  private async claimActive(timerId: string, botId: string): Promise<boolean> {
+    try {
+      const claimed = await this.db
+        .update(timers)
+        .set({ status: "fired", firedAt: new Date() })
+        .where(
+          and(
+            eq(timers.id, timerId),
+            eq(timers.botId, botId),
+            eq(timers.type, "ai"),
+            eq(timers.status, "active"),
+          ),
+        )
+        .returning({ id: timers.id });
+      return claimed.length === 1;
+    } catch (err) {
+      this.logger.error(err, `Failed to claim active timer ${timerId}`);
+      return false;
+    }
+  }
+
+  private async cancelActive(timerId: string, botId: string): Promise<boolean> {
+    try {
+      const cancelled = await this.db
+        .update(timers)
+        .set({ status: "cancelled" })
+        .where(and(eq(timers.id, timerId), eq(timers.botId, botId), eq(timers.status, "active")))
+        .returning({ id: timers.id });
+      return cancelled.length === 1;
+    } catch (err) {
+      this.logger.error(err, `Failed to cancel invalid active timer ${timerId}`);
+      return false;
+    }
   }
 
   /** Cleanup completed/cancelled timer records older than 7 days. */
@@ -345,5 +412,6 @@ export class TimerRegistry {
       }
     }
     this.active.clear();
+    this.pausedBots.clear();
   }
 }

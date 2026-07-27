@@ -32,6 +32,7 @@ export interface TelegramToolsOptions {
     chatId: number;
     seconds: number;
     reason: string;
+    handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => void;
@@ -333,6 +334,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             chatId,
             seconds,
             reason,
+            handle,
           });
 
           return {
