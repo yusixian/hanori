@@ -13,6 +13,7 @@ Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一
 | `/mini-app/:botId/groups/:chatId`  | 必需        | 查看群配置，并按 capability 决定是否渲染编辑控件  |
 | `/mini-app/:botId/settings`        | Admin       | 生命周期、AI 总开关、System Prompt、Provider/模型 |
 | `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动           |
+| `/mini-app/:botId/logs`            | Admin       | 查询当前 Bot 的脱敏运行日志                       |
 | `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                      |
 
 公共 Help 的命令来自 `TELEGRAM_COMMAND_CATALOG`，只选择 `publicHelpVisibility = public`。它不依赖 Telegram SDK 或 session API 的成功响应，也不展示 Bot capability、Provider 数量、运行状态或部署信息。
@@ -82,6 +83,14 @@ Settings 页仅 Admin 可见，并提供：
 
 Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因。`isActive` 是唯一 durable desired state：Disable 后 server restart 不会复活 Bot；runtime 失败时持久化状态仍保留，UI 显示 pending/unreconciled。Stop 会停止接收新 update 并取消当前进程中的 active Bot work；已经发送到外部系统的消息或请求不会回滚。Active timer 保留在数据库，重新启动后恢复；投递使用 60 秒 `processing` lease，同一 lease 只有一个 worker，成功后才标记 `fired`，已知失败回到 `active` 并在当前进程重试一次。若进程恰好在 Telegram 已接收、DB 标记成功前崩溃，lease 过期后的恢复可能重复投递——这是外部 API 无幂等键时选择“避免永久丢失”的 at-least-once 边界。事件返回空文本时会补发确定性提示；已知只读工具可安全重放，未知工具默认视为有副作用；副作用已经成功后，即使后续发送失败也不整段重放，以免重复图片生成、写文件、写记忆或 Telegram 操作。Timer 将这种“仅副作用成功”视为已消费；scheduled RSS 不暴露写工具，只有收到可见 Telegram delivery 才由服务统一推进整批 checkpoint，AI 停用、隐私关闭或发送失败都不会消费整批待发送项目。
 
+## 运行日志
+
+日志页复用 `audit.read` capability，只对当前 Bot 的 Admin 显示并开放 API；Operator、Viewer 与无授权用户都在服务端返回 403，关闭 Mini App 的 Bot 返回 404，其他 Bot 的 session Cookie 返回 401。该能力不扩展现有角色模型，也不允许通过前端路由或隐藏导航绕过服务端授权。
+
+`GET /api/mini-app/:botId/logs` 是只读、按 Bot 隔离的游标分页接口，单页最多 50 条并支持 level 筛选。M1 不提供自由文本搜索、SSE、自动轮询、下载或删除；用户显式刷新或加载更早日志，避免 raw message 侧信道、移动端持续连接和后台耗电。
+
+响应使用显式安全投影：只返回 `id`、`createdAt`、`level`、allowlist 固定事件文案，以及 allowlist 中的 `command`、`chatType`、`updateId`、`messageId`。不得回显数据库中的自由文本 `message` 或原始 `meta`，也不得返回消息正文、caption、文件名、sticker pack、参数、Provider/模型凭据、错误对象或 stack；未知事件按 level 映射成通用运行事件。客户端按严格 schema 拒绝多余字段。所有 `/api/mini-app/*` 响应由应用本身设置 `Cache-Control: private, no-store`，反向代理仍必须保持不缓存。
+
 ## 生产灰度 Runbook
 
 ### 1. 准备与迁移
@@ -90,9 +99,9 @@ Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因�
 2. 设置公开 HTTPS origin，例如 `BETTER_AUTH_URL=https://bot.example.com`。不能使用 localhost、裸 HTTP、额外 path 或尾部 `/`。
 3. 生成独立的 `MINI_APP_SESSION_SECRET`（至少 32 字符，不复用 Bot Token、`BETTER_AUTH_SECRET` 或 encryption key）。
 4. 保持所有 Bot 的 `miniAppEnabled=false`，部署新版本并运行 `pnpm db:migrate`。
-5. 在克隆/测试数据库检查 migration report，再启动应用完成 smoke test。`0038` 会保留 legacy override 表供兼容/核对；旧正数私聊 ID 和超出 JS safe integer 的负数 ID 会保留为 `ignored` 报告但不会写入群级 selection；`0039` 只新增默认 false 的 `mini_app_enabled`。
+5. 在克隆/测试数据库检查 migration report，再启动应用完成 smoke test。`0038` 会保留 legacy override 表供兼容/核对，并先把正数私聊 ID 记为 `ignored`；`0039` 只新增默认 false 的 `mini_app_enabled`；`0040` 放宽 selection 为安全非零 Telegram conversation ID，并重新校验、恢复仍有效的旧私聊 Provider/模型选择。超出 JS safe integer 的 ID 始终不迁移。
 
-建议在隔离数据库演练：从快照恢复一份副本 → 运行 `pnpm db:migrate` → 检查 `chat_ai_selection_migration_reports`、`chat_ai_selections` 和原 legacy rows → 再从同一快照恢复另一份副本验证恢复流程。仓库不提供 destructive down migration；应用回滚时保留新增表/列最安全，必须回到旧数据状态时只能恢复部署前快照。
+建议在隔离数据库演练：从快照恢复一份副本 → 运行 `pnpm db:migrate` → 检查 `chat_ai_selection_migration_reports`、正数/负数 `chat_ai_selections` 和原 legacy rows → 再从同一快照恢复另一份副本验证恢复流程。仓库不提供 destructive down migration；应用回滚时保留新增表/列最安全。旧应用会忽略正数 selection row；若必须恢复负数专用约束，需先备份并删除正数 row，否则 constraint 无法收紧。
 
 ### 2. HTTPS 与响应预检
 

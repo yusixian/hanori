@@ -6,6 +6,7 @@ import {
   Clock3,
   RefreshCw,
   Save,
+  Search,
   UsersRound,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -197,14 +198,19 @@ function GroupsList({ botId }: { botId: string }) {
   const { t } = useTranslation("miniApp");
   const [groups, setGroups] = useState<MiniAppGroup[] | null>(null);
   const [failed, setFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     setFailed(false);
+    setRefreshing(true);
     try {
       const response = await fetchMiniAppGroups(botId);
       setGroups(response.groups);
     } catch {
       setFailed(true);
+    } finally {
+      setRefreshing(false);
     }
   }, [botId]);
 
@@ -221,6 +227,16 @@ function GroupsList({ botId }: { botId: string }) {
       active = false;
     };
   }, [botId]);
+
+  const filteredGroups = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return groups ?? [];
+    return (groups ?? []).filter((group) =>
+      [group.title, group.username, String(group.chatId)].some((value) =>
+        value?.toLocaleLowerCase().includes(normalizedQuery),
+      ),
+    );
+  }, [groups, query]);
 
   if (!groups && !failed) {
     return (
@@ -248,19 +264,53 @@ function GroupsList({ botId }: { botId: string }) {
   return (
     <main className="mini-app-content mini-groups">
       <header className="mini-groups-heading">
-        <p>{t("groups.eyebrow")}</p>
-        <h1>{t("groups.title")}</h1>
-        <span>{t("groups.intro")}</span>
+        <div>
+          <p>{t("groups.eyebrow")}</p>
+          <h1>{t("groups.title")}</h1>
+        </div>
+        <span>{t("groups.count", { count: groups.length })}</span>
       </header>
+      <div className="mini-groups-toolbar">
+        <label>
+          <Search aria-hidden="true" />
+          <input
+            type="search"
+            aria-label={t("groups.searchLabel")}
+            value={query}
+            placeholder={t("groups.searchPlaceholder")}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="is-secondary mini-groups-refresh"
+          aria-label={t("groups.refresh")}
+          title={t("groups.refresh")}
+          disabled={refreshing}
+          onClick={() => void load()}
+        >
+          <RefreshCw className={refreshing ? "is-spinning" : undefined} aria-hidden="true" />
+        </button>
+      </div>
+      {failed ? (
+        <p className="mini-groups-feedback is-error" role="alert">
+          {t("groups.refreshFailed")}
+        </p>
+      ) : null}
       {groups.length === 0 ? (
         <section className="mini-groups-empty">
           <UsersRound aria-hidden="true" />
           <h2>{t("groups.emptyTitle")}</h2>
           <p>{t("groups.emptyBody")}</p>
         </section>
+      ) : filteredGroups.length === 0 ? (
+        <section className="mini-groups-empty is-filtered">
+          <Search aria-hidden="true" />
+          <h2>{t("groups.noMatches")}</h2>
+        </section>
       ) : (
         <section className="mini-groups-list" aria-label={t("groups.listLabel")}>
-          {groups.map((group) => (
+          {filteredGroups.map((group) => (
             <Link key={group.chatId} to={`/mini-app/${botId}/groups/${group.chatId}`}>
               <div className="mini-groups-card-title">
                 <span>{groupName(group)}</span>

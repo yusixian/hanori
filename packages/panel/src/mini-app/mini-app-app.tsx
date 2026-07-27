@@ -2,12 +2,11 @@ import { i18n, getResolvedLocale } from "@/i18n";
 import { TELEGRAM_COMMAND_CATALOG, type MiniAppRole } from "@cos-tool-bot/shared";
 import {
   BookOpenText,
-  ChevronRight,
   Languages,
+  ListTree,
   LockKeyhole,
   Settings2,
   ShieldCheck,
-  TerminalSquare,
   UsersRound,
 } from "lucide-react";
 import {
@@ -25,6 +24,7 @@ import { useTranslation } from "react-i18next";
 import { AccessPage } from "./access-page";
 import { BotSettingsPage } from "./bot-settings-panel";
 import { GroupsPage } from "./groups-page";
+import { LogsPage } from "./logs-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
 import {
   createTelegramMiniAppAdapter,
@@ -34,10 +34,10 @@ import {
 import "./i18n";
 import "./mini-app.css";
 
-type MiniAppPage = "groups" | "settings" | "access" | "help";
+type MiniAppPage = "groups" | "settings" | "access" | "logs" | "help";
 
 const NAVIGATION: Record<Exclude<MiniAppRole, "none">, readonly MiniAppPage[]> = {
-  admin: ["groups", "settings", "access", "help"],
+  admin: ["groups", "settings", "access", "logs", "help"],
   operator: ["groups", "help"],
   viewer: ["groups", "help"],
 };
@@ -50,6 +50,7 @@ const NAV_ICONS = {
   groups: UsersRound,
   settings: Settings2,
   access: ShieldCheck,
+  logs: ListTree,
   help: BookOpenText,
 } satisfies Record<MiniAppPage, typeof BookOpenText>;
 
@@ -74,7 +75,7 @@ class MiniAppErrorBoundary extends Component<{ children: ReactNode }, { failed: 
         <h1>{i18n.t("miniApp:session.unavailableTitle")}</h1>
         <a
           href={window.location.pathname.replace(
-            /\/(?:groups(?:\/-?\d+)?|settings|access)\/?$/,
+            /\/(?:groups(?:\/-?\d+)?|settings|access|logs)\/?$/,
             "/help",
           )}
         >
@@ -110,22 +111,6 @@ function LanguageButton() {
       <Languages aria-hidden="true" />
       <span>{locale === "zh-CN" ? "EN" : "中"}</span>
     </button>
-  );
-}
-
-function MiniAppHeader({ role }: { role: MiniAppRole | null }) {
-  const { t } = useTranslation("miniApp");
-  return (
-    <header className="mini-app-header">
-      <div className="mini-app-wordmark">
-        <span>{t("brand.eyebrow")}</span>
-        <strong>{t("brand.name")}</strong>
-      </div>
-      <div className="mini-app-header-actions">
-        {role && role !== "none" ? <span className="mini-app-role">{role}</span> : null}
-        <LanguageButton />
-      </div>
-    </header>
   );
 }
 
@@ -168,33 +153,19 @@ function HelpPage() {
 
   return (
     <main className="mini-app-content mini-app-help">
-      <section className="mini-app-hero">
-        <div className="mini-app-orbit" aria-hidden="true">
-          <span />
-          <span />
-          <TerminalSquare />
+      <header className="mini-app-help-heading">
+        <div className="mini-app-help-heading-copy">
+          <p className="mini-app-kicker">{t("help.eyebrow")}</p>
+          <h1>{t("help.title")}</h1>
+          <p className="mini-app-lede">{t("help.intro")}</p>
         </div>
-        <p className="mini-app-kicker">{t("help.eyebrow")}</p>
-        <h1>{t("help.title")}</h1>
-        <p className="mini-app-lede">{t("help.intro")}</p>
-      </section>
+        <LanguageButton />
+      </header>
 
-      <section className="mini-app-principle">
-        <LockKeyhole aria-hidden="true" />
-        <div>
-          <h2>{t("help.privacyTitle")}</h2>
-          <p>{t("help.privacyBody")}</p>
-        </div>
-      </section>
-
-      <section className="mini-app-command-section">
-        <div className="mini-app-section-heading">
-          <p>{t("help.commandsIntro")}</p>
-          <h2>{t("help.commandsTitle")}</h2>
-        </div>
+      <section className="mini-app-command-section" aria-label={t("help.title")}>
         {Object.entries(commandGroups).map(([category, entries]) => (
           <div className="mini-app-command-group" key={category}>
-            <h3>{t(`categories.${category}`)}</h3>
+            <h2>{t(`categories.${category}`)}</h2>
             <div className="mini-app-command-grid">
               {entries.map((entry) => (
                 <article key={entry.command}>
@@ -202,7 +173,6 @@ function HelpPage() {
                     /{entry.command}
                   </code>
                   <p>{entry.description[locale]}</p>
-                  <ChevronRight aria-hidden="true" />
                 </article>
               ))}
             </div>
@@ -210,11 +180,22 @@ function HelpPage() {
         ))}
       </section>
 
-      <section className="mini-app-project-note">
-        <span aria-hidden="true">HGRM / 01</span>
-        <h2>{t("help.projectTitle")}</h2>
-        <p>{t("help.projectBody")}</p>
-      </section>
+      <aside className="mini-app-help-notes">
+        <article>
+          <LockKeyhole aria-hidden="true" />
+          <div>
+            <h2>{t("help.privacyTitle")}</h2>
+            <p>{t("help.privacyBody")}</p>
+          </div>
+        </article>
+        <article>
+          <BookOpenText aria-hidden="true" />
+          <div>
+            <h2>{t("help.projectTitle")}</h2>
+            <p>{t("help.projectBody")}</p>
+          </div>
+        </article>
+      </aside>
     </main>
   );
 }
@@ -232,7 +213,7 @@ function SessionFailure({ state, botId }: { state: MiniAppSessionState; botId: s
   );
 }
 
-function PlaceholderPage({ page }: { page: Exclude<MiniAppPage, "help"> }) {
+function PlaceholderPage({ page }: { page: Exclude<MiniAppPage, "help" | "logs"> }) {
   const { t } = useTranslation("miniApp");
   const Icon = NAV_ICONS[page];
   return (
@@ -257,11 +238,15 @@ function ProtectedPage({
   if (!state) return <MiniAppLoading />;
   if (state.status !== "ready") return <SessionFailure state={state} botId={botId} />;
   if (state.session.role === "none") return <Navigate to={`/mini-app/${botId}/help`} replace />;
-  if ((page === "settings" || page === "access") && state.session.role !== "admin") {
+  if (
+    (page === "settings" || page === "access" || page === "logs") &&
+    state.session.role !== "admin"
+  ) {
     return <Navigate to={`/mini-app/${botId}/groups`} replace />;
   }
   if (page === "groups") return <GroupsPage botId={botId} session={state.session} />;
   if (page === "access") return <AccessPage botId={botId} session={state.session} />;
+  if (page === "logs") return <LogsPage botId={botId} />;
   if (page === "settings") {
     return <BotSettingsPage botId={botId} session={state.session} />;
   }
@@ -284,6 +269,7 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
     candidatePage === "groups" ||
     candidatePage === "settings" ||
     candidatePage === "access" ||
+    candidatePage === "logs" ||
     candidatePage === "help"
       ? candidatePage
       : "help";
@@ -320,7 +306,6 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
   const role = sessionState?.status === "ready" ? sessionState.session.role : null;
   return (
     <div className="mini-app-frame">
-      <MiniAppHeader role={role} />
       <Routes>
         <Route path="help" element={<HelpPage />} />
         <Route
@@ -338,6 +323,10 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
         <Route
           path="access"
           element={<ProtectedPage page="access" state={sessionState} botId={botId} />}
+        />
+        <Route
+          path="logs"
+          element={<ProtectedPage page="logs" state={sessionState} botId={botId} />}
         />
         <Route path="*" element={<Navigate to="help" replace />} />
       </Routes>

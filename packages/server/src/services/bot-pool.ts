@@ -1267,7 +1267,7 @@ export class BotPool {
 
     const registry = this.timerRegistry;
     const timerCallbacks = {
-      onTimerCreate: (params: {
+      onTimerCreate: async (params: {
         timerId: string;
         chatId: number;
         seconds: number;
@@ -1275,19 +1275,17 @@ export class BotPool {
         userId: number;
         handle: ReturnType<typeof setTimeout>;
       }) => {
-        registry
-          .registerAi({
-            timerId: params.timerId,
-            botId,
-            chatId: params.chatId,
-            name: params.reason,
-            seconds: params.seconds,
-            meta: { reason: params.reason, userId: params.userId },
-            handle: params.handle,
-          })
-          .catch((err) => {
-            this.logger.error(err, `Failed to register AI timer in registry`);
-          });
+        await registry.registerAi({
+          timerId: params.timerId,
+          botId,
+          chatId: params.chatId,
+          name: params.reason,
+          seconds: params.seconds,
+          meta: { reason: params.reason, userId: params.userId },
+          handle: params.handle,
+          onFire: (timerId, ownerBotId, chatId, meta, delayed) =>
+            this.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed),
+        });
       },
       onTimerCancel: (timerId: string) => {
         registry.cancel(timerId).catch((err) => {
@@ -2007,7 +2005,9 @@ export class BotPool {
       const storedUserId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
       const userId = storedUserId ?? (chatId > 0 ? chatId : undefined);
       const memoryless = userId === undefined;
-      await handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
+      handlers.cancelPendingTimer(timerId);
+      const delivered = await handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
+      if (!delivered) throw new Error("Timer completed without a visible Telegram delivery");
       if (storedUserId === undefined) {
         this.logger.warn(
           { timerId, botId, chatId, inferredUserId: userId, memoryless },

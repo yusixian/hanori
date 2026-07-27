@@ -87,7 +87,7 @@ export interface TimerCallbacks {
     reason: string;
     userId: number;
     handle: ReturnType<typeof setTimeout>;
-  }) => void;
+  }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFired?: (timerId: string) => Promise<void>;
   onGetTimers?: () => import("@cos-tool-bot/shared").TimerRecord[];

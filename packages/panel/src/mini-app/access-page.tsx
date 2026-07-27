@@ -181,6 +181,7 @@ export function AccessPage({ botId, session }: AccessPageProps) {
       ? { telegramUserId: exactTelegramId, username: null, displayName: null, lastSeen: "" }
       : null;
   const operatorIds = new Set(data?.operators.map(({ telegramUserId }) => telegramUserId));
+  const grantedChatCount = data?.chats.filter(({ granted }) => granted).length ?? 0;
   const filteredActivity = data?.activity.filter((entry) => {
     const actor = `${entry.actorRole} ${entry.actorTelegramUserId ?? ""}`.toLowerCase();
     const resource = `${entry.resourceType} ${entry.resourceId}`.toLowerCase();
@@ -219,11 +220,23 @@ export function AccessPage({ botId, session }: AccessPageProps) {
   return (
     <main className="mini-app-content mini-access">
       <header className="mini-access-intro">
-        <div>
-          <p className="mini-app-kicker">{t("access.eyebrow")}</p>
+        <div className="mini-access-intro-title">
           <h1>{t("access.title")}</h1>
           <p>{t("access.intro", { bot: data.bot.displayName })}</p>
         </div>
+        <dl className="mini-access-summary" aria-label={t("access.summary.label")}>
+          <div>
+            <dt>{t("access.summary.chats")}</dt>
+            <dd>
+              {grantedChatCount}
+              <span>/{data.chats.length}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>{t("access.summary.operators")}</dt>
+            <dd>{data.operators.length}</dd>
+          </div>
+        </dl>
         <button
           className="mini-access-icon-button"
           type="button"
@@ -245,26 +258,31 @@ export function AccessPage({ botId, session }: AccessPageProps) {
       <section className="mini-access-section" aria-labelledby="access-chats-title">
         <div className="mini-access-section-heading">
           <div>
-            <span aria-hidden="true">01</span>
+            <MessageSquare aria-hidden="true" />
             <div>
               <h2 id="access-chats-title">{t("access.chats.title")}</h2>
               <p>{t("access.chats.description")}</p>
             </div>
           </div>
-          {botUsername ? (
-            <a
-              className="mini-access-primary-link"
-              href={addGroupUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <Bot aria-hidden="true" />
-              {t("access.chats.addGroup")}
-              <ExternalLink aria-hidden="true" />
-            </a>
-          ) : (
-            <p className="mini-access-link-unavailable">{t("access.chats.addGroupUnavailable")}</p>
-          )}
+          <div className="mini-access-section-action">
+            <span className="mini-access-section-count">{data.chats.length}</span>
+            {botUsername ? (
+              <a
+                className="mini-access-primary-link"
+                href={addGroupUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Bot aria-hidden="true" />
+                {t("access.chats.addGroup")}
+                <ExternalLink aria-hidden="true" />
+              </a>
+            ) : (
+              <p className="mini-access-link-unavailable">
+                {t("access.chats.addGroupUnavailable")}
+              </p>
+            )}
+          </div>
         </div>
 
         {data.chats.length === 0 ? (
@@ -410,12 +428,13 @@ export function AccessPage({ botId, session }: AccessPageProps) {
       <section className="mini-access-section" aria-labelledby="access-operators-title">
         <div className="mini-access-section-heading">
           <div>
-            <span aria-hidden="true">02</span>
+            <UsersRound aria-hidden="true" />
             <div>
               <h2 id="access-operators-title">{t("access.operators.title")}</h2>
               <p>{t("access.operators.description")}</p>
             </div>
           </div>
+          <span className="mini-access-section-count">{data.operators.length}</span>
         </div>
 
         <div className="mini-access-search-panel">
@@ -606,12 +625,13 @@ export function AccessPage({ botId, session }: AccessPageProps) {
       <section className="mini-access-section" aria-labelledby="access-activity-title">
         <div className="mini-access-section-heading">
           <div>
-            <span aria-hidden="true">03</span>
+            <History aria-hidden="true" />
             <div>
               <h2 id="access-activity-title">{t("access.activity.title")}</h2>
               <p>{t("access.activity.description")}</p>
             </div>
           </div>
+          <span className="mini-access-section-count">{filteredActivity?.length ?? 0}</span>
         </div>
         <div className="mini-access-filters" aria-label={t("access.activity.filterLabel")}>
           {(["actor", "action", "resource"] as const).map((filter) => (

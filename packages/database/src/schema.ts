@@ -483,7 +483,7 @@ export const chatAiSelections = pgTable(
     primaryKey({ columns: [t.botId, t.chatId] }),
     check(
       "chat_ai_selections_chat_id_check",
-      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
+      sql`${t.chatId} <> 0 and ${t.chatId} between -9007199254740991 and 9007199254740991`,
     ),
     check("chat_ai_selections_provider_id_check", sql`length(btrim(${t.providerId})) > 0`),
     check(

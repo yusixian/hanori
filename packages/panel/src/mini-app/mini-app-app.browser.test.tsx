@@ -30,19 +30,45 @@ test("renders public Help without Telegram SDK or a working session API", async 
     </MemoryRouter>,
   );
 
-  await expect
-    .element(page.getByRole("heading", { name: "Your Telegram companion, explained." }))
-    .toBeVisible();
-  await expect.element(page.getByText("COS Tool Bot", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
   await expect.element(page.getByText("/help", { exact: true })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Privacy boundary" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "About" })).toBeVisible();
   await expect.element(page.getByRole("navigation").getByText("Help")).toBeVisible();
   expect(page.getByRole("navigation").getByText("Groups").query()).toBeNull();
+  expect(document.querySelector(".mini-app-header")).toBeNull();
+  expect(page.getByText("Telegram control deck", { exact: true }).query()).toBeNull();
+  expect(page.getByText("COS Tool Bot", { exact: true }).query()).toBeNull();
+  expect(document.querySelector(".mini-app-hero")).toBeNull();
+  expect(document.querySelector(".mini-app-command-section")).not.toBeNull();
   expect(document.body.textContent).not.toContain("providers configured");
   expect(document.body.textContent).not.toContain("runtime status: ");
+  expect(document.body.textContent).not.toMatch(/羽衣|Hagoromo|HGRM/);
+});
+
+test("switches language from the Help heading without a custom app header", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      throw new Error("offline");
+    }),
+  );
+
+  render(
+    <MemoryRouter initialEntries={[`/mini-app/${BOT_ID}/help`]}>
+      <MiniAppApp />
+    </MemoryRouter>,
+  );
+
+  const languageButton = page.getByRole("button", { name: "Language" });
+  await expect.element(languageButton).toBeVisible();
+  await languageButton.click();
+  await expect.element(page.getByRole("heading", { name: "命令", exact: true })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "语言" })).toBeVisible();
 });
 
 test("uses the explicit role navigation matrix", () => {
-  expect(navigationForRole("admin")).toEqual(["groups", "settings", "access", "help"]);
+  expect(navigationForRole("admin")).toEqual(["groups", "settings", "access", "logs", "help"]);
   expect(navigationForRole("operator")).toEqual(["groups", "help"]);
   expect(navigationForRole("viewer")).toEqual(["groups", "help"]);
   expect(navigationForRole("none")).toEqual(["help"]);
@@ -69,10 +95,34 @@ test("renders the admin navigation returned by the Bot-scoped session", async ()
     </MemoryRouter>,
   );
 
-  for (const label of ["Groups", "Settings", "Access", "Help"]) {
+  for (const label of ["Groups", "Settings", "Access", "Logs", "Help"]) {
     await expect.element(page.getByRole("navigation").getByText(label)).toBeVisible();
   }
   await expect.element(page.getByRole("heading", { name: "Groups", exact: true })).toBeVisible();
+});
+
+test("keeps Logs unmounted for a non-admin session", async () => {
+  const fetcher = vi.fn(async (input) => {
+    if (String(input).endsWith("/groups")) {
+      return Response.json({ ok: true, editable: true, groups: [] });
+    }
+    return Response.json({
+      ok: true,
+      user: { id: 42 },
+      session: { expiresAt: 1_800_000_900, csrfToken: "csrf" },
+      access: { role: "operator", capabilities: [], chatScope: { kind: "all" } },
+    });
+  });
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <MemoryRouter initialEntries={[`/mini-app/${BOT_ID}/logs`]}>
+      <MiniAppApp />
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByRole("heading", { name: "Groups", exact: true })).toBeVisible();
+  expect(page.getByRole("navigation").getByText("Logs").query()).toBeNull();
+  expect(fetcher.mock.calls.some(([input]) => String(input).includes("/logs"))).toBe(false);
 });
 
 test("keeps Access unmounted for a non-admin session", async () => {
@@ -124,7 +174,5 @@ test("returns a 403 session to public Help", async () => {
       <MiniAppApp />
     </MemoryRouter>,
   );
-  await expect
-    .element(page.getByRole("heading", { name: "Your Telegram companion, explained." }))
-    .toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
 });

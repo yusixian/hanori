@@ -81,7 +81,9 @@ test("renders the three admin access sections and the minimal-permission group l
 
   render(<AccessPage botId={BOT_ID} session={SESSION} />);
 
-  await expect.element(page.getByRole("heading", { name: "Access control" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Access" })).toBeVisible();
+  await expect.element(page.getByLabelText("Access summary")).toHaveTextContent("0/1");
+  await expect.element(page.getByLabelText("Access summary")).toHaveTextContent("Operators1");
   await expect.element(page.getByRole("heading", { name: "Group grants" })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "Operators" })).toBeVisible();
   await expect.element(page.getByRole("heading", { name: "90-day activity" })).toBeVisible();
@@ -144,7 +146,7 @@ test("projects people search results without rendering private profile fields", 
   );
   render(<AccessPage botId={BOT_ID} session={SESSION} />);
 
-  await expect.element(page.getByRole("heading", { name: "Access control" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Access" })).toBeVisible();
   await page.getByLabelText("Find a person").fill("ada");
   await expect.element(page.getByRole("option", { name: /Ada Lovelace/ })).toBeVisible();
 

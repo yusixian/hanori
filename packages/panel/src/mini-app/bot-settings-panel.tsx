@@ -89,7 +89,6 @@ function LifecycleCard({
         <Power aria-hidden="true" />
         <div>
           <h2>{t("botSettings.lifecycle.title")}</h2>
-          <p>{t("botSettings.lifecycle.body")}</p>
         </div>
       </div>
       <dl className="mini-settings-state">
@@ -218,7 +217,6 @@ function CommonSettingsCard({
         <SlidersHorizontal aria-hidden="true" />
         <div>
           <h2>{t("botSettings.common.title")}</h2>
-          <p>{t("botSettings.common.body")}</p>
         </div>
       </div>
       <label className="mini-settings-switch">
@@ -234,15 +232,17 @@ function CommonSettingsCard({
         />
       </label>
       <label className="mini-settings-prompt">
-        <span>{t("botSettings.common.systemPrompt")}</span>
+        <span>
+          {t("botSettings.common.systemPrompt")}
+          <small>{t("botSettings.common.promptLength", { count: systemPrompt.length })}</small>
+        </span>
         <textarea
           value={systemPrompt}
           disabled={saving}
           maxLength={50_000}
-          rows={7}
+          rows={4}
           onChange={(event) => setSystemPrompt(event.target.value)}
         />
-        <small>{t("botSettings.common.promptLength", { count: systemPrompt.length })}</small>
       </label>
       <div className="mini-ai-actions">
         <button
@@ -335,10 +335,9 @@ export function BotSettingsPage({
 
   return (
     <main className="mini-app-content mini-ai-settings mini-bot-settings">
-      <header className="mini-groups-heading">
+      <header className="mini-settings-page-heading">
         <p>{t("botSettings.eyebrow")}</p>
         <h1>{t("botSettings.title")}</h1>
-        <span>{t("botSettings.intro")}</span>
       </header>
       <LifecycleCard
         botId={botId}
@@ -346,13 +345,13 @@ export function BotSettingsPage({
         lifecycle={lifecycle}
         onChange={setLifecycle}
       />
+      <GlobalAiSelectionSettings botId={botId} session={session} />
       <CommonSettingsCard
         botId={botId}
         csrfToken={session.csrfToken}
         settings={settings}
         onChange={setSettings}
       />
-      <GlobalAiSelectionSettings botId={botId} session={session} />
     </main>
   );
 }

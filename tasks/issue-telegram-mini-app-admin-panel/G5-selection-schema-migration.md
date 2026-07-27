@@ -5,6 +5,7 @@
 `chat_ai_selections` is the new source of truth for per-chat Provider/model selection:
 
 - `(bot_id, chat_id)` is unique and Bot-scoped;
+- `chat_id` is a safe non-zero Telegram conversation ID: negative for group/supergroup, positive for private chat;
 - no row means inherit the Bot-wide active Provider and model;
 - `provider_id` is required and `model_id = null` means use that Provider's default model;
 - `revision` starts at `1` and every update must increase it;
@@ -14,7 +15,7 @@ The legacy `chat_provider_overrides` and `chat_model_overrides` tables are retai
 
 ## Deterministic legacy backfill
 
-The migration evaluates the union of legacy Provider and model rows once against each Bot's stored Provider catalog. The effective Provider is `activeProviderId` when it exists, otherwise the first configured Provider. A legacy flat AI config is evaluated as the same synthetic `__legacy__` Provider used by application normalization. A model belongs to a Provider only when it is that Provider's default model or appears in that Provider's configured/discovered `models` list.
+Migration `0038` evaluates negative group/supergroup rows against each Bot's stored Provider catalog. Migration `0040` applies the same validation to the positive private-chat rows that `0038` deliberately retained as `ignored`, then restores only valid selections. The effective Provider is `activeProviderId` when it exists, otherwise the first configured Provider. A legacy flat AI config is evaluated as the same synthetic `__legacy__` Provider used by application normalization. A model belongs to a Provider only when it is that Provider's default model or appears in that Provider's configured/discovered `models` list.
 
 | Legacy state                                       | Safe result                           |
 | -------------------------------------------------- | ------------------------------------- |
@@ -44,4 +45,4 @@ where outcome = 'inherited'
 order by bot_id, chat_id;
 ```
 
-Rollback disables the G5 runtime and returns the application to the preserved legacy tables. Do not copy new-table values back automatically: subsequent G5 writes may have no lossless representation across the two old tables. Keep both new tables and the report until a backed-up production rehearsal has been accepted.
+Rollback disables the G5 runtime and returns the application to the preserved legacy tables. Do not copy new-table values back automatically: subsequent G5 writes may have no lossless representation across the two old tables. Keep both new tables and the report until a backed-up production rehearsal has been accepted. Older application code can run against the widened constraint but will ignore positive selection rows; do not restore the old negative-only constraint unless positive rows have first been backed up and removed.

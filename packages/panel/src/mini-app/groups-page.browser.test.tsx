@@ -7,6 +7,7 @@ import { GroupsPage } from "./groups-page";
 import { parseMiniAppGroup } from "./groups";
 import type { MiniAppSessionView } from "./session";
 import "./i18n";
+import "./mini-app.css";
 
 const BOT_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -28,7 +29,7 @@ const GROUP = {
       trigger: {
         replyToBot: true,
         mentionBot: true,
-        triggerWords: ["hagoromo"],
+        triggerWords: ["helper"],
         randomReplyPercent: 5,
         randomReplyCooldown: 60,
       },
@@ -49,6 +50,13 @@ const GROUP = {
     },
   },
   applyState: "applied",
+} as const;
+
+const OTHER_GROUP = {
+  ...GROUP,
+  chatId: -1002,
+  title: "Release Room",
+  username: "release_room",
 } as const;
 
 function session(role: "admin" | "operator" | "viewer"): MiniAppSessionView {
@@ -100,6 +108,33 @@ test("renders a safe group directory linking to details", async () => {
   await expect
     .element(page.getByRole("link", { name: /Build Room/ }))
     .toHaveAttribute("href", `/mini-app/${BOT_ID}/groups/-1001`);
+  const meta = document.querySelector<HTMLElement>(".mini-groups-card-meta");
+  expect(meta).not.toBeNull();
+  expect(getComputedStyle(meta!).flexWrap).toBe("wrap");
+});
+
+test("filters the compact group directory and surfaces refresh failures", async () => {
+  let requests = 0;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      requests += 1;
+      if (requests > 1) throw new Error("offline");
+      return Response.json({ ok: true, editable: true, groups: [GROUP, OTHER_GROUP] });
+    }),
+  );
+  renderGroups("operator", false);
+
+  await expect.element(page.getByText("2 groups")).toBeVisible();
+  await page.getByRole("searchbox", { name: "Search groups" }).fill("release");
+  await expect.element(page.getByRole("link", { name: /Release Room/ })).toBeVisible();
+  expect(page.getByRole("link", { name: /Build Room/ }).query()).toBeNull();
+
+  await page.getByRole("button", { name: "Refresh groups" }).click();
+  await expect
+    .element(page.getByText("Refresh failed. The list below may be out of date."))
+    .toBeVisible();
+  await expect.element(page.getByRole("link", { name: /Release Room/ })).toBeVisible();
 });
 
 test("renders Viewer details without any edit controls", async () => {

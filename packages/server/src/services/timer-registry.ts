@@ -122,6 +122,7 @@ export class TimerRegistry {
     seconds: number;
     meta?: Record<string, unknown>;
     handle?: ReturnType<typeof setTimeout>;
+    onFire?: TimerFireCallback;
   }): Promise<string> {
     return this.botLocks.run(opts.botId, async () => {
       const id = opts.timerId ?? `ai_${shortId()}`;
@@ -139,11 +140,7 @@ export class TimerRegistry {
         meta: opts.meta ?? null,
         handle: opts.handle,
       };
-      if (this.pausedBots.has(opts.botId)) {
-        if (timer.handle) clearTimeout(timer.handle);
-      } else {
-        this.active.set(id, timer);
-      }
+      const paused = this.pausedBots.has(opts.botId);
 
       try {
         await this.db.insert(timers).values({
@@ -158,6 +155,17 @@ export class TimerRegistry {
         });
       } catch (err) {
         this.logger.error(err, `Failed to persist AI timer ${id}`);
+        if (opts.onFire) throw err;
+      }
+
+      if ((paused || opts.onFire) && timer.handle) clearTimeout(timer.handle);
+      if (!paused) {
+        if (opts.onFire) {
+          const delay = Math.max(0, firesAt.getTime() - Date.now());
+          this.scheduleDelivery(opts.onFire, timer, delay, false, true);
+        } else {
+          this.active.set(id, timer);
+        }
       }
 
       return id;
@@ -477,26 +485,12 @@ export class TimerRegistry {
   /** Sweep memory map for expired entries that weren't properly cleaned up. */
   private sweepExpired(): void {
     const now = Date.now();
-    const staleIds: string[] = [];
     for (const [id, t] of this.active) {
       if (t.type === "ai" && t.firesAt && t.firesAt.getTime() < now - CLEANUP_INTERVAL_MS) {
-        // AI timer past due by >5min but still in map → remove
+        // Expiry alone cannot prove Telegram delivery. A rejected delivery intentionally
+        // leaves the durable row active so the next Bot start can recover it.
         this.active.delete(id);
-        staleIds.push(id);
       }
-    }
-    // Sync stale timers to DB so they won't be recovered on restart
-    if (staleIds.length > 0) {
-      Promise.all(
-        staleIds.map((id) =>
-          this.db
-            .update(timers)
-            .set({ status: "fired", firedAt: new Date() })
-            .where(eq(timers.id, id)),
-        ),
-      ).catch((err) => {
-        this.logger.error(err, "Failed to mark swept timers as fired in DB");
-      });
     }
   }
 

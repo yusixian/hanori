@@ -184,6 +184,20 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
       settings,
     })),
   };
+  const logService = {
+    read: vi.fn(async () => ({
+      logs: [
+        {
+          id: 11,
+          level: "info" as const,
+          message: "Bot started",
+          createdAt: "2026-07-28T00:00:00.000Z",
+          meta: {},
+        },
+      ],
+      nextCursor: null,
+    })),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
     allowedOrigins: [ORIGIN],
@@ -198,6 +212,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     chatAiSelectionService,
     botLifecycleService,
     botSettingsService,
+    logService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
@@ -209,6 +224,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     chatAiSelectionService,
     botLifecycleService,
     botSettingsService,
+    logService,
     options,
   };
 }
@@ -229,6 +245,7 @@ describe("Mini App session routes", () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
     const body = await response.json();
     expect(body).toMatchObject({
       ok: true,
@@ -473,6 +490,118 @@ describe("Mini App session routes", () => {
     const response = await app.request(`/mini-app/${BOT_A}/session`, { method: "DELETE" });
     expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+});
+
+describe("Mini App log routes", () => {
+  async function sessionFor(app: Hono, userId = 42) {
+    const created = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData(userId) }),
+    });
+    return cookieFrom(created);
+  }
+
+  it("returns only the current Bot page to an admin and validates bounded filters", async () => {
+    const { app, logService } = testApp();
+    const cookie = await sessionFor(app);
+    const response = await app.request(`/mini-app/${BOT_A}/logs?limit=20&before=30&level=warn`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      ok: true,
+      logs: [
+        {
+          id: 11,
+          level: "info",
+          message: "Bot started",
+          createdAt: "2026-07-28T00:00:00.000Z",
+          meta: {},
+        },
+      ],
+      nextCursor: null,
+    });
+    expect(logService.read).toHaveBeenCalledWith(BOT_A, {
+      limit: 20,
+      before: 30,
+      level: "warn",
+    });
+
+    const invalid = await app.request(`/mini-app/${BOT_A}/logs?limit=500`, {
+      headers: { cookie },
+    });
+    expect(invalid.status).toBe(400);
+    expect(logService.read).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      role: "operator",
+      snapshot: {
+        botId: BOT_A,
+        adminTelegramUserIds: [],
+        operatorTelegramUserIds: [42],
+        grantedChatIds: [-1001],
+      } satisfies TelegramAccessSnapshot,
+      member: false,
+    },
+    {
+      role: "viewer",
+      snapshot: {
+        botId: BOT_A,
+        adminTelegramUserIds: [],
+        operatorTelegramUserIds: [],
+        grantedChatIds: [-1001],
+      } satisfies TelegramAccessSnapshot,
+      member: true,
+    },
+    {
+      role: "none",
+      snapshot: {
+        botId: BOT_A,
+        adminTelegramUserIds: [],
+        operatorTelegramUserIds: [],
+        grantedChatIds: [],
+      } satisfies TelegramAccessSnapshot,
+      member: false,
+    },
+  ])("denies $role before reading logs", async ({ snapshot, member }) => {
+    const { app, logService } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => snapshot) },
+      membershipVerifier: { isMember: vi.fn(async () => member) },
+    });
+    const cookie = await sessionFor(app);
+    const response = await app.request(`/mini-app/${BOT_A}/logs`, { headers: { cookie } });
+
+    expect(response.status).toBe(403);
+    expect(logService.read).not.toHaveBeenCalled();
+  });
+
+  it("keeps disabled Bots dark and rejects a Bot A cookie on Bot B", async () => {
+    const enabled = testApp({
+      botTokenResolver: {
+        resolve: vi.fn(async () => BOT_TOKEN),
+        isEnabled: vi.fn(async () => true),
+      },
+    });
+    const cookie = await sessionFor(enabled.app);
+    const crossBot = await enabled.app.request(`/mini-app/${BOT_B}/logs`, {
+      headers: { cookie },
+    });
+    expect(crossBot.status).toBe(401);
+    expect(enabled.logService.read).not.toHaveBeenCalled();
+
+    const disabled = testApp({
+      botTokenResolver: { resolve: vi.fn(async () => null), isEnabled: vi.fn(async () => false) },
+    });
+    const hidden = await disabled.app.request(`/mini-app/${BOT_A}/logs`, {
+      headers: { cookie },
+    });
+    expect(hidden.status).toBe(404);
+    expect(disabled.logService.read).not.toHaveBeenCalled();
   });
 });
 

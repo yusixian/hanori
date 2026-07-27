@@ -183,22 +183,25 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 ```text
 /help
 /panel
+/provider
+/model
 ```
 
-`/help` 应正常回复；`/panel` 应回复带 `Open Panel` 的 Web App 按钮。后台日志页应出现相应 command 记录。
+`/help` 应正常回复；`/panel` 应回复带 `Open Panel` 的 Web App 按钮；不带参数的 `/provider`、`/model` 应在私聊列出当前选择而不是保存失败。后台日志页应出现相应 command 事件。
 
 如果所有命令和普通消息都不回复，这不是 Tunnel 问题。先确认只有一个进程使用该 Token，再重启当前 server。`f97493f` 起，Bot 每次启动都会显式重置 Telegram `allowed_updates`，不会再继承只允许 `channel_post` 的旧状态。
 
 ### 3. 真实 Mini App 身份
 
-必须从 Telegram 私聊中的 Web App 按钮进入，才能获得签名 `initData`。直接在普通浏览器打开 Help 是允许的，但 Admin/Groups/Settings/Access 等受保护页面没有 Telegram `initData` 时返回 Help 或未认证状态，不能算真实验收。
+必须从 Telegram 私聊中的 Web App 按钮进入，才能获得签名 `initData`。直接在普通浏览器打开 Help 是允许的，但 Admin/Groups/Settings/Access/Logs 等受保护页面没有 Telegram `initData` 时返回 Help 或未认证状态，不能算真实验收。
 
 至少检查：
 
 - Admin 能看到管理导航与当前 Bot 数据；
+- Admin 能在 Logs 页按 level 查看当前 Bot 的安全事件投影，并手动刷新、加载更早记录；
 - 无授权用户只能看到公开 Help；
 - 关闭 `miniAppEnabled` 后旧 session 也不能继续读取 Mini App API；
-- Provider/Model、群配置、权限与 lifecycle mutation 均只出现在对应角色下。
+- Provider/Model、群配置、权限、日志与 lifecycle 操作均只出现在对应角色下；Operator、Viewer 不显示 Logs 导航，直达 URL 也不能请求日志 API。
 
 ## Telegram 群与 Channel 怎么测
 

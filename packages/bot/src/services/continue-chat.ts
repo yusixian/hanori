@@ -98,7 +98,7 @@ export interface ContinueChatConfig {
     reason: string;
     userId: number;
     handle: ReturnType<typeof setTimeout>;
-  }) => void;
+  }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;

@@ -44,6 +44,7 @@ import type { GroupConfigService } from "./services/group-config-service.js";
 import type { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
 import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import type { BotSettingsService } from "./services/bot-settings-service.js";
+import { MiniAppLogService } from "./services/mini-app-log-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 import { securityHeaders, staticCacheControl } from "./http-policy.js";
 
@@ -131,6 +132,7 @@ export function createApp(options: AppOptions) {
         chatAiSelectionService,
         botLifecycleService,
         botSettingsService,
+        logService: new MiniAppLogService(db),
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))

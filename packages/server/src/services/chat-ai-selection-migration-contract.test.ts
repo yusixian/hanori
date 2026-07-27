@@ -6,6 +6,10 @@ const migrationSql = readFileSync(
   new URL("../../../database/drizzle/0038_perpetual_metal_master.sql", import.meta.url),
   "utf8",
 );
+const privateChatCompatibilityMigrationSql = readFileSync(
+  new URL("../../../database/drizzle/0040_confused_korath.sql", import.meta.url),
+  "utf8",
+);
 
 const providers = [
   {
@@ -142,6 +146,30 @@ describe("0038 chat AI selection migration", () => {
     expect(migrationSql).toContain("THEN 'unsafe_chat_id'");
     expect(migrationSql).toMatch(
       /WHERE "selected_provider_id" IS NOT NULL\s+AND "chat_id" < 0\s+AND "chat_id" >= -9007199254740991/,
+    );
+  });
+});
+
+describe("0040 private chat AI selection compatibility migration", () => {
+  it("widens durable selections to safe non-zero Telegram conversation IDs", () => {
+    expect(privateChatCompatibilityMigrationSql).toContain(
+      '"chat_id" <> 0 and "chat_ai_selections"."chat_id" between -9007199254740991 and 9007199254740991',
+    );
+  });
+
+  it("re-evaluates positive legacy rows before restoring only validated selections", () => {
+    expect(privateChatCompatibilityMigrationSql).toMatch(
+      /coalesce\(provider\.chat_id, model\.chat_id\) > 0/,
+    );
+    expect(privateChatCompatibilityMigrationSql).toContain(
+      'INSERT INTO "chat_ai_selection_migration_reports"',
+    );
+    expect(privateChatCompatibilityMigrationSql).toContain('INSERT INTO "chat_ai_selections"');
+    expect(privateChatCompatibilityMigrationSql).toMatch(
+      /WHERE "selected_provider_id" IS NOT NULL\s+AND "chat_id" > 0\s+AND "chat_id" <= 9007199254740991/,
+    );
+    expect(privateChatCompatibilityMigrationSql).toContain(
+      'ON CONFLICT ("bot_id", "chat_id") DO NOTHING',
     );
   });
 });

@@ -200,7 +200,7 @@ export interface AiReplyConfig {
     reason: string;
     userId: number;
     handle: ReturnType<typeof setTimeout>;
-  }) => void;
+  }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;

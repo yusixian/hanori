@@ -19,6 +19,7 @@ import {
 } from "../services/chat-ai-selection-service.js";
 import { BotLifecycleError, type BotLifecycleService } from "../services/bot-lifecycle-service.js";
 import { BotSettingsError, type BotSettingsService } from "../services/bot-settings-service.js";
+import type { MiniAppLogService } from "../services/mini-app-log-service.js";
 import {
   MiniAppAccessError,
   type MiniAppAccessService,
@@ -156,6 +157,7 @@ export interface MiniAppRoutesOptions {
   >;
   botLifecycleService?: Pick<BotLifecycleService, "read" | "enable" | "disable" | "restart">;
   botSettingsService?: Pick<BotSettingsService, "read" | "patch">;
+  logService?: Pick<MiniAppLogService, "read">;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
 }
@@ -252,6 +254,12 @@ const botSettingsPatchSchema = z
       .refine((patch) => patch.enabled !== undefined || patch.systemPrompt !== undefined),
   })
   .strict();
+
+const miniAppLogQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(25),
+  before: z.coerce.number().int().positive().optional(),
+  level: z.enum(["debug", "info", "warn", "error"]).optional(),
+});
 
 function secureEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
@@ -444,6 +452,10 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
   }
 
   return new Hono()
+    .use("*", async (c, next) => {
+      await next();
+      c.header("Cache-Control", "private, no-store");
+    })
     .post("/:botId/session", async (c) => {
       const botId = c.req.param("botId");
       if (!UUID_PATTERN.test(botId)) return c.json({ ok: false as const, error: "Not found" }, 404);
@@ -563,6 +575,37 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
       if (!UUID_PATTERN.test(botId)) return c.json({ ok: false as const, error: "Not found" }, 404);
       c.header("Set-Cookie", clearMiniAppSessionCookie(botId));
       return c.json({ ok: true as const });
+    })
+    .get("/:botId/logs", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "audit.read", false);
+      if (!authorization.ok) {
+        if (authorization.status === 401) {
+          c.header("Set-Cookie", clearMiniAppSessionCookie(botId));
+        }
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.logService) {
+        return c.json({ ok: false as const, error: "Mini App logs are not configured" }, 503);
+      }
+      const parsed = miniAppLogQuerySchema.safeParse({
+        limit: c.req.query("limit"),
+        before: c.req.query("before"),
+        level: c.req.query("level"),
+      });
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid query" }, 400);
+      const page = await options.logService.read(botId, {
+        limit: parsed.data.limit,
+        ...(parsed.data.before ? { before: parsed.data.before } : {}),
+        ...(parsed.data.level ? { level: parsed.data.level } : {}),
+      });
+      return c.json({ ok: true as const, ...page });
     })
     .get("/:botId/access", async (c) => {
       const botId = c.req.param("botId");

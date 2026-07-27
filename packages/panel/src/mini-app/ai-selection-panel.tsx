@@ -321,22 +321,16 @@ export function GlobalAiSelectionSettings({
 
   return (
     <section className="mini-ai-settings mini-ai-global-section">
-      <header className="mini-groups-heading">
-        <p>{t("aiSelection.globalEyebrow")}</p>
-        <h1>{t("aiSelection.globalTitle")}</h1>
-        <span>{t("aiSelection.globalIntro")}</span>
-      </header>
-
       {view.applyState === "pending" ? (
         <PendingBanner retrying={retrying} disabled={changed} onRetry={() => void retry()} />
       ) : null}
 
-      <section className="mini-ai-card">
+      <section className="mini-ai-card mini-ai-global-card">
         <div className="mini-ai-card-heading">
           <Sparkles aria-hidden="true" />
           <div>
-            <h2>{t("aiSelection.selectionTitle")}</h2>
-            <p>{t("aiSelection.atomicHint")}</p>
+            <p>{t("aiSelection.globalEyebrow")}</p>
+            <h2>{t("aiSelection.globalTitle")}</h2>
           </div>
         </div>
         <SelectionFields
@@ -347,22 +341,15 @@ export function GlobalAiSelectionSettings({
             setDraft((current) => (current ? { ...current, ...selection } : current))
           }
         />
-      </section>
-
-      <section className="mini-ai-card">
-        <div className="mini-ai-card-heading">
-          {draft.displayDefault === "show" ? (
-            <Eye aria-hidden="true" />
-          ) : (
-            <EyeOff aria-hidden="true" />
-          )}
-          <div>
-            <h2>{t("aiSelection.publicDisplayTitle")}</h2>
-            <p>{t("aiSelection.publicDisplayBody")}</p>
-          </div>
-        </div>
-        <label className="mini-ai-select-row">
-          <span>{t("aiSelection.fields.defaultDisplay")}</span>
+        <label className="mini-ai-select-row mini-ai-display-row">
+          <span>
+            {draft.displayDefault === "show" ? (
+              <Eye aria-hidden="true" />
+            ) : (
+              <EyeOff aria-hidden="true" />
+            )}
+            {t("aiSelection.fields.defaultDisplay")}
+          </span>
           <select
             aria-label={t("aiSelection.fields.defaultDisplay")}
             value={draft.displayDefault}
@@ -379,26 +366,26 @@ export function GlobalAiSelectionSettings({
             <option value="hide">{t("aiSelection.display.hide")}</option>
           </select>
         </label>
-      </section>
 
-      <div className="mini-ai-actions">
-        <button
-          type="button"
-          className="is-secondary"
-          disabled={!changed || saving}
-          onClick={() => {
-            setDraft(globalDraft(view));
-            setFeedback(null);
-            setConflictLatest(null);
-          }}
-        >
-          {t("aiSelection.discard")}
-        </button>
-        <button type="button" disabled={!changed || saving} onClick={() => void save()}>
-          <Save aria-hidden="true" />
-          {t(saving ? "aiSelection.saving" : "aiSelection.save")}
-        </button>
-      </div>
+        <div className="mini-ai-actions">
+          <button
+            type="button"
+            className="is-secondary"
+            disabled={!changed || saving}
+            onClick={() => {
+              setDraft(globalDraft(view));
+              setFeedback(null);
+              setConflictLatest(null);
+            }}
+          >
+            {t("aiSelection.discard")}
+          </button>
+          <button type="button" disabled={!changed || saving} onClick={() => void save()}>
+            <Save aria-hidden="true" />
+            {t(saving ? "aiSelection.saving" : "aiSelection.save")}
+          </button>
+        </div>
+      </section>
 
       <FeedbackLine feedback={feedback} />
       {conflictLatest ? (

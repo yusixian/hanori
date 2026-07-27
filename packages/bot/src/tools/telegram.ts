@@ -33,7 +33,7 @@ export interface TelegramToolsOptions {
     seconds: number;
     reason: string;
     handle: ReturnType<typeof setTimeout>;
-  }) => void;
+  }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onceGuard?: OnceGuardContext;
@@ -318,28 +318,33 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             true, // persistent: managed by DB
           );
           clearTimeout(pending.handle);
-          const handle = setTimeout(() => {
-            const timer = options.pendingActions!.removeTimer(pending.timerId);
-            if (timer) {
-              void options.onTimerFired!(chatId, timer.timerId, timer.reason)
-                .then(() => options.onTimerFiredPersist?.(timer.timerId))
-                .catch(() => {
-                  // Delivery owns error logging; leaving the durable row active
-                  // allows recovery on the next Bot start.
-                });
+          if (options.onTimerCreate) {
+            try {
+              await options.onTimerCreate({
+                timerId: pending.timerId,
+                chatId,
+                seconds,
+                reason,
+                handle: pending.handle,
+              });
+            } catch (error) {
+              options.pendingActions.removeTimer(pending.timerId);
+              throw error;
             }
-          }, seconds * 1000);
-          handle.unref();
-          pending.handle = handle;
-
-          // Notify server to persist
-          options.onTimerCreate?.({
-            timerId: pending.timerId,
-            chatId,
-            seconds,
-            reason,
-            handle,
-          });
+          } else {
+            const handle = setTimeout(() => {
+              const timer = options.pendingActions!.removeTimer(pending.timerId);
+              if (timer) {
+                void options.onTimerFired!(chatId, timer.timerId, timer.reason)
+                  .then(() => options.onTimerFiredPersist?.(timer.timerId))
+                  .catch(() => {
+                    // Standalone Bot runtimes have no durable scheduler to retry through.
+                  });
+              }
+            }, seconds * 1000);
+            handle.unref();
+            pending.handle = handle;
+          }
 
           return {
             success: true,

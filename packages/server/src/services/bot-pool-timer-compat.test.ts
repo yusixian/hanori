@@ -18,6 +18,7 @@ function createPool(delivered = true) {
   } as unknown as Logger;
   const pool = new BotPool({} as Database, logger, {} as TimerRegistry);
   const fireTimer = vi.fn(async () => delivered);
+  const cancelPendingTimer = vi.fn();
   const internals = pool as unknown as {
     managers: Map<string, IBotManager>;
     botTimerHandlers: Map<string, BotTimerHandlers>;
@@ -25,9 +26,9 @@ function createPool(delivered = true) {
   internals.managers.set("bot-1", {} as IBotManager);
   internals.botTimerHandlers.set("bot-1", {
     fireTimer,
-    cancelPendingTimer: vi.fn(),
+    cancelPendingTimer,
   });
-  return { pool, fireTimer };
+  return { pool, fireTimer, cancelPendingTimer };
 }
 
 describe("BotPool recovered timer compatibility", () => {
@@ -46,12 +47,22 @@ describe("BotPool recovered timer compatibility", () => {
     await expect(fireRssDigest("bot-1", -100, "digest")).resolves.toBe(false);
   });
 
+  it("rejects a recovered timer without a visible Telegram delivery", async () => {
+    const { pool, cancelPendingTimer } = createPool(false);
+
+    await expect(
+      pool.fireRecoveredTimer("timer-1", "bot-1", 42, { reason: "delivery required" }),
+    ).rejects.toThrow("without a visible Telegram delivery");
+    expect(cancelPendingTimer).toHaveBeenCalledOnce();
+  });
+
   it("infers the owner for a legacy private timer", async () => {
-    const { pool, fireTimer } = createPool();
+    const { pool, fireTimer, cancelPendingTimer } = createPool();
 
     await pool.fireRecoveredTimer("timer-1", "bot-1", 42, { reason: "legacy private" });
 
     expect(fireTimer).toHaveBeenCalledWith(42, "timer-1", "legacy private", 42, false);
+    expect(cancelPendingTimer).toHaveBeenCalledWith("timer-1");
   });
 
   it("fires a legacy group timer in memoryless compatibility mode", async () => {

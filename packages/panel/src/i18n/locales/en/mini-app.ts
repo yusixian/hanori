@@ -1,20 +1,16 @@
 export const miniApp = {
-  brand: { eyebrow: "Telegram control deck", name: "COS Tool Bot" },
   language: "Language",
   help: {
-    eyebrow: "A calmer way to run your Bot",
-    title: "Your Telegram companion, explained.",
-    intro:
-      "This Mini App brings COS Tool Bot's useful commands and carefully scoped controls into Telegram. Public help stays available even when the control plane is offline.",
-    privacyTitle: "Privacy by boundary",
+    eyebrow: "Public help",
+    title: "Commands",
+    intro: "Public command directory. Availability depends on Bot settings and chat context.",
+    privacyTitle: "Privacy boundary",
     privacyBody:
-      "Panel access is separate from AI allowlists. This page never reveals providers, runtime status, credentials, or private group data.",
-    commandsTitle: "Commands you can rely on",
-    commandsIntro: "These public commands come from the same catalog used by the Bot.",
+      "Panel access is separate from AI allowlists. This page exposes no settings, credentials, or private group data.",
     commandLabel: "Telegram command /{{command}}",
-    projectTitle: "Why this project exists",
+    projectTitle: "About",
     projectBody:
-      "COS Tool Bot is a self-hosted, multi-Bot assistant toolkit. This Mini App keeps everyday help close while reserving consequential changes for explicitly trusted people.",
+      "COS Tool Bot is a self-hosted, multi-Bot assistant. Public help and authorized controls share this panel.",
   },
   categories: {
     general: "Essentials",
@@ -25,7 +21,7 @@ export const miniApp = {
     media: "Media",
     integrations: "Integrations",
   },
-  nav: { groups: "Groups", settings: "Settings", access: "Access", help: "Help" },
+  nav: { groups: "Groups", settings: "Settings", access: "Access", logs: "Logs", help: "Help" },
   session: {
     loading: "Verifying your Telegram session…",
     expiredTitle: "Session expired",
@@ -35,10 +31,29 @@ export const miniApp = {
     unavailableBody: "Help is still available while the connection recovers.",
     openHelp: "Open public help",
   },
+  logs: {
+    eyebrow: "Current Bot",
+    title: "Runtime logs",
+    count: "{{count}} loaded",
+    levelLabel: "Log level",
+    refresh: "Refresh logs",
+    loading: "Loading logs…",
+    empty: "No logs yet.",
+    noMatches: "No matching logs.",
+    listLabel: "Bot runtime logs",
+    errorTitle: "Logs unavailable",
+    errorBody: "The safe log projection for this Bot could not be loaded.",
+    retry: "Try again",
+    loadMore: "Load earlier logs",
+    loadingMore: "Loading…",
+    level: { all: "All", debug: "Debug", info: "Info", warn: "Warn", error: "Error" },
+    meta: { command: "Command", chatType: "Chat", updateId: "Update ID", messageId: "Message ID" },
+  },
   access: {
     eyebrow: "Bot-scoped trust map",
-    title: "Access control",
-    intro: "Manage the groups and operators trusted by {{bot}}. Every change is recorded.",
+    title: "Access",
+    intro: "{{bot}}: group members can view; Operators can perform consequential actions.",
+    summary: { label: "Access summary", chats: "Granted groups", operators: "Operators" },
     loading: "Loading access map…",
     refresh: "Refresh access map",
     retry: "Try again",
@@ -48,7 +63,7 @@ export const miniApp = {
     grantedBy: "Granted by {{id}} · {{date}}",
     chats: {
       title: "Group grants",
-      description: "A group is eligible only after the Bot has observed it as an administrator.",
+      description: "Only groups where the Bot is an admin can be granted; members stay read-only.",
       addGroup: "Add a group",
       addGroupUnavailable: "Bot username unavailable. Refresh before adding a group.",
       empty: "No groups have been observed yet. Add the Bot to a group, then refresh.",
@@ -65,13 +80,11 @@ export const miniApp = {
     },
     operators: {
       title: "Operators",
-      description:
-        "Operators can manage every granted group without being a member of those groups.",
+      description: "Can manage all granted groups and perform consequential actions for this Bot.",
       searchLabel: "Find a person",
       searchPlaceholder: "Telegram ID, @username, or display name",
-      searchPrivacy:
-        "Search returns identity fields only. Notes and profile memories are never searched.",
-      searching: "Searching safe identity fields…",
+      searchPrivacy: "Searches identity fields only; notes and profile memories stay private.",
+      searching: "Searching…",
       searchFailed: "People search is temporarily unavailable.",
       noResults: "No observed person matched. Enter an exact positive Telegram ID to continue.",
       results: "People search results",
@@ -84,7 +97,7 @@ export const miniApp = {
     },
     activity: {
       title: "90-day activity",
-      description: "A compact trail of access decisions and outcomes for this Bot.",
+      description: "Permission changes and outcomes.",
       filterLabel: "Filter access activity",
       filters: { actor: "Actor", action: "Action", resource: "Resource" },
       placeholders: {
@@ -114,6 +127,13 @@ export const miniApp = {
     eyebrow: "Bot-scoped group directory",
     title: "Groups",
     intro: "Review each observed group and change only the controls exposed by this Bot.",
+    count_one: "{{count}} group",
+    count_other: "{{count}} groups",
+    searchLabel: "Search groups",
+    searchPlaceholder: "Name, username, or ID",
+    refresh: "Refresh groups",
+    refreshFailed: "Refresh failed. The list below may be out of date.",
+    noMatches: "No matching groups",
     aiSelectionEntry: "AI selection",
     listLabel: "Observed groups",
     loading: "Loading groups…",
@@ -195,7 +215,7 @@ export const miniApp = {
     },
   },
   botSettings: {
-    eyebrow: "Bot-wide operations",
+    eyebrow: "Global",
     title: "Bot settings",
     intro:
       "Manage durable lifecycle state and the common AI defaults. Saved changes survive a server restart.",
@@ -211,7 +231,7 @@ export const miniApp = {
     },
     runtime: { running: "Running", stopped: "Stopped", restarting: "Restarting" },
     lifecycle: {
-      title: "Lifecycle",
+      title: "Runtime",
       body: "The desired state is durable. Runtime state reports whether this server has applied it.",
       desired: "Desired state",
       runtime: "Runtime state",
@@ -256,7 +276,7 @@ export const miniApp = {
     },
   },
   aiSelection: {
-    globalEyebrow: "Bot-wide AI route",
+    globalEyebrow: "Bot default",
     globalTitle: "Provider & model",
     globalIntro:
       "Choose the Bot default as one atomic pair. Group-specific selections can override it without changing the Provider catalog.",

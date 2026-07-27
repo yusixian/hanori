@@ -163,6 +163,10 @@ function effectivePair(
   return row ? { providerId: row.providerId, modelId: row.modelId } : global;
 }
 
+function isTelegramConversationId(chatId: number): boolean {
+  return Number.isSafeInteger(chatId) && chatId !== 0;
+}
+
 function displayPolicy(
   config: AiConfigStored,
   chatId: number,
@@ -263,12 +267,22 @@ export class ChatAiSelectionService {
     } as const;
   }
 
-  async readChat(botId: string, chatId: number, admin: boolean) {
+  private async readChatSelection(
+    botId: string,
+    chatId: number,
+    admin: boolean,
+    privateChat: boolean,
+  ) {
+    if (!isTelegramConversationId(chatId) || (privateChat ? chatId < 0 : chatId > 0)) {
+      throw new ChatAiSelectionError("not_found", "Chat was not found");
+    }
     const [[chat], bot, [row]] = await Promise.all([
-      this.db
-        .select({ leftAt: telegramChats.leftAt })
-        .from(telegramChats)
-        .where(and(eq(telegramChats.botId, botId), eq(telegramChats.chatId, chatId))),
+      privateChat
+        ? Promise.resolve([{ leftAt: null }])
+        : this.db
+            .select({ leftAt: telegramChats.leftAt })
+            .from(telegramChats)
+            .where(and(eq(telegramChats.botId, botId), eq(telegramChats.chatId, chatId))),
       this.readBot(botId),
       this.db
         .select()
@@ -297,6 +311,10 @@ export class ChatAiSelectionService {
       } as const;
     }
     return policy.visible ? { ...base, selection: safeSelection(pair, options) } : base;
+  }
+
+  async readChat(botId: string, chatId: number, admin: boolean) {
+    return this.readChatSelection(botId, chatId, admin, false);
   }
 
   private async publish(botId: string) {
@@ -363,13 +381,22 @@ export class ChatAiSelectionService {
     });
   }
 
-  async setChat(input: {
-    botId: string;
-    chatId: number;
-    expectedRevision: string;
-    pair: ChatAiSelectionPair;
-    actor: AiSelectionActor;
-  }) {
+  private async setChatSelection(
+    input: {
+      botId: string;
+      chatId: number;
+      expectedRevision: string;
+      pair: ChatAiSelectionPair;
+      actor: AiSelectionActor;
+    },
+    privateChat: boolean,
+  ) {
+    if (
+      !isTelegramConversationId(input.chatId) ||
+      (privateChat ? input.chatId < 0 : input.chatId > 0)
+    ) {
+      throw new ChatAiSelectionError("not_found", "Chat was not found");
+    }
     const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
@@ -378,10 +405,14 @@ export class ChatAiSelectionService {
           .from(bots)
           .where(eq(bots.id, input.botId))
           .for("update");
-        const [chat] = await tx
-          .select({ leftAt: telegramChats.leftAt })
-          .from(telegramChats)
-          .where(and(eq(telegramChats.botId, input.botId), eq(telegramChats.chatId, input.chatId)));
+        const [chat] = privateChat
+          ? [{ leftAt: null }]
+          : await tx
+              .select({ leftAt: telegramChats.leftAt })
+              .from(telegramChats)
+              .where(
+                and(eq(telegramChats.botId, input.botId), eq(telegramChats.chatId, input.chatId)),
+              );
         const [row] = await tx
           .select()
           .from(chatAiSelections)
@@ -434,16 +465,38 @@ export class ChatAiSelectionService {
         });
       });
       const published = await this.publish(input.botId);
-      return { ...published, chat: await this.readChat(input.botId, input.chatId, true) };
+      return {
+        ...published,
+        chat: await this.readChatSelection(input.botId, input.chatId, true, privateChat),
+      };
     });
   }
 
-  async resetChat(input: {
+  async setChat(input: {
     botId: string;
     chatId: number;
     expectedRevision: string;
+    pair: ChatAiSelectionPair;
     actor: AiSelectionActor;
   }) {
+    return this.setChatSelection(input, false);
+  }
+
+  private async resetChatSelection(
+    input: {
+      botId: string;
+      chatId: number;
+      expectedRevision: string;
+      actor: AiSelectionActor;
+    },
+    privateChat: boolean,
+  ) {
+    if (
+      !isTelegramConversationId(input.chatId) ||
+      (privateChat ? input.chatId < 0 : input.chatId > 0)
+    ) {
+      throw new ChatAiSelectionError("not_found", "Chat was not found");
+    }
     const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
@@ -452,10 +505,14 @@ export class ChatAiSelectionService {
           .from(bots)
           .where(eq(bots.id, input.botId))
           .for("update");
-        const [chat] = await tx
-          .select({ leftAt: telegramChats.leftAt })
-          .from(telegramChats)
-          .where(and(eq(telegramChats.botId, input.botId), eq(telegramChats.chatId, input.chatId)));
+        const [chat] = privateChat
+          ? [{ leftAt: null }]
+          : await tx
+              .select({ leftAt: telegramChats.leftAt })
+              .from(telegramChats)
+              .where(
+                and(eq(telegramChats.botId, input.botId), eq(telegramChats.chatId, input.chatId)),
+              );
         const [row] = await tx
           .select()
           .from(chatAiSelections)
@@ -488,8 +545,20 @@ export class ChatAiSelectionService {
         });
       });
       const published = await this.publish(input.botId);
-      return { ...published, chat: await this.readChat(input.botId, input.chatId, true) };
+      return {
+        ...published,
+        chat: await this.readChatSelection(input.botId, input.chatId, true, privateChat),
+      };
     });
+  }
+
+  async resetChat(input: {
+    botId: string;
+    chatId: number;
+    expectedRevision: string;
+    actor: AiSelectionActor;
+  }) {
+    return this.resetChatSelection(input, false);
   }
 
   async setDisplayPolicy(input: {
@@ -571,17 +640,21 @@ export class ChatAiSelectionService {
     providerId: string,
     actorTelegramUserId: number,
   ): Promise<void> {
-    const current = await this.readChat(botId, chatId, true);
+    const privateChat = chatId > 0;
+    const current = await this.readChatSelection(botId, chatId, true, privateChat);
     if (!("selection" in current) || !("providerId" in current.selection)) {
       throw new ChatAiSelectionError("not_found", "AI selection was not found");
     }
-    await this.setChat({
-      botId,
-      chatId,
-      expectedRevision: current.revision,
-      pair: { providerId, modelId: null },
-      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
-    });
+    await this.setChatSelection(
+      {
+        botId,
+        chatId,
+        expectedRevision: current.revision,
+        pair: { providerId, modelId: null },
+        actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+      },
+      privateChat,
+    );
   }
 
   async setModelFromTelegram(
@@ -590,17 +663,21 @@ export class ChatAiSelectionService {
     modelId: string,
     actorTelegramUserId: number,
   ): Promise<void> {
-    const current = await this.readChat(botId, chatId, true);
+    const privateChat = chatId > 0;
+    const current = await this.readChatSelection(botId, chatId, true, privateChat);
     if (!("selection" in current) || !("providerId" in current.selection)) {
       throw new ChatAiSelectionError("not_found", "AI selection was not found");
     }
-    await this.setChat({
-      botId,
-      chatId,
-      expectedRevision: current.revision,
-      pair: { providerId: current.selection.providerId, modelId },
-      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
-    });
+    await this.setChatSelection(
+      {
+        botId,
+        chatId,
+        expectedRevision: current.revision,
+        pair: { providerId: current.selection.providerId, modelId },
+        actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+      },
+      privateChat,
+    );
   }
 
   async resetProviderFromTelegram(
@@ -608,13 +685,17 @@ export class ChatAiSelectionService {
     chatId: number,
     actorTelegramUserId: number,
   ): Promise<void> {
-    const current = await this.readChat(botId, chatId, true);
-    await this.resetChat({
-      botId,
-      chatId,
-      expectedRevision: current.revision,
-      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
-    });
+    const privateChat = chatId > 0;
+    const current = await this.readChatSelection(botId, chatId, true, privateChat);
+    await this.resetChatSelection(
+      {
+        botId,
+        chatId,
+        expectedRevision: current.revision,
+        actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+      },
+      privateChat,
+    );
   }
 
   async resetModelFromTelegram(
@@ -622,18 +703,22 @@ export class ChatAiSelectionService {
     chatId: number,
     actorTelegramUserId: number,
   ): Promise<void> {
-    const current = await this.readChat(botId, chatId, true);
+    const privateChat = chatId > 0;
+    const current = await this.readChatSelection(botId, chatId, true, privateChat);
     if (current.source === "global") return;
     if (!("selection" in current) || !("providerId" in current.selection)) {
       throw new ChatAiSelectionError("not_found", "AI selection was not found");
     }
-    await this.setChat({
-      botId,
-      chatId,
-      expectedRevision: current.revision,
-      pair: { providerId: current.selection.providerId, modelId: null },
-      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
-    });
+    await this.setChatSelection(
+      {
+        botId,
+        chatId,
+        expectedRevision: current.revision,
+        pair: { providerId: current.selection.providerId, modelId: null },
+        actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+      },
+      privateChat,
+    );
   }
 
   /**

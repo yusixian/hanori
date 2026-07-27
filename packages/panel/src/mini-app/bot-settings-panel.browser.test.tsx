@@ -60,6 +60,25 @@ function getResponse(url: string) {
   return Response.json({ ok: true, global: GLOBAL_SELECTION });
 }
 
+test("puts compact high-priority controls first", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input) => getResponse(String(input))),
+  );
+
+  render(<BotSettingsPage botId={BOT_ID} session={SESSION} />);
+  await expect.element(page.getByRole("heading", { name: "Bot settings" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Runtime" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Provider & model" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "Common AI settings" })).toBeVisible();
+
+  const text = document.body.textContent ?? "";
+  expect(text.indexOf("Runtime")).toBeLessThan(text.indexOf("Provider & model"));
+  expect(text.indexOf("Provider & model")).toBeLessThan(text.indexOf("Common AI settings"));
+  expect(text).not.toContain("Manage durable lifecycle state");
+  expect(text).not.toContain("Provider and model are validated");
+});
+
 test("confirms disable and sends the Admin CSRF token", async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const confirm = vi.fn(() => true);

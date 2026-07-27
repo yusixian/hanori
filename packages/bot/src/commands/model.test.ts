@@ -11,6 +11,15 @@ function commandContext(match: string) {
   } as unknown as WrapperContext;
 }
 
+function privateCommandContext(match: string) {
+  return {
+    chat: { id: 42 },
+    from: { id: 42 },
+    match,
+    reply: vi.fn().mockResolvedValue(undefined),
+  } as unknown as WrapperContext;
+}
+
 function commandFunction(command: ReturnType<typeof createModelCommand>) {
   if (typeof command !== "function") throw new Error("Expected model command middleware function");
   return command;
@@ -72,6 +81,28 @@ describe("createModelCommand", () => {
     expect(ctx.reply).toHaveBeenCalledWith("已切换到模型: `model-b`", {
       parse_mode: "Markdown",
     });
+  });
+
+  it("keeps private-chat model changes scoped to the positive Telegram chat ID", async () => {
+    const setModelForChat = vi.fn(async () => {});
+    const ctx = privateCommandContext("model-b");
+    const command = commandFunction(
+      createModelCommand({
+        getSelectionForChat: () => ({
+          modelId: "model-a",
+          models: [
+            { id: "model-a", label: "Model A" },
+            { id: "model-b", label: "Model B" },
+          ],
+        }),
+        setModelForChat,
+        resetModelForChat: vi.fn(async () => {}),
+      }),
+    );
+
+    await command(ctx as never, vi.fn());
+
+    expect(setModelForChat).toHaveBeenCalledWith(42, "model-b", 42);
   });
 
   it("reports only a fixed safe error when model persistence fails", async () => {

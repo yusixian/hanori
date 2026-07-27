@@ -5,7 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cos-tool-bot Panel</title>
     <script type="module">
-      if (import.meta.env.DEV) import("react-grab");
+      if (import.meta.env.DEV && !window.location.pathname.startsWith("/mini-app/")) {
+        import("react-grab");
+      }
     </script>
   </head>
   <body>

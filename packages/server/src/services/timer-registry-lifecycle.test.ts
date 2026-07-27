@@ -46,6 +46,7 @@ function row(
 function database(selectResults: TimerRow[][] = [], initialRows: TimerRow[] = []) {
   const persisted = new Map(initialRows.map((entry) => [entry.id, structuredClone(entry)]));
   const updates: Array<Record<string, unknown>> = [];
+  const attemptedUpdates: Array<Record<string, unknown>> = [];
   const inserts: Array<Record<string, unknown>> = [];
 
   const applyUpdate = (values: Record<string, unknown>) => {
@@ -77,14 +78,17 @@ function database(selectResults: TimerRow[][] = [], initialRows: TimerRow[] = []
       },
     }),
     update: () => ({
-      set: (values: Record<string, unknown>) => ({
-        where: () => ({
-          returning: async () => applyUpdate(values),
-        }),
-      }),
+      set: (values: Record<string, unknown>) => {
+        attemptedUpdates.push(values);
+        return {
+          where: () => ({
+            returning: async () => applyUpdate(values),
+          }),
+        };
+      },
     }),
   } as unknown as Database;
-  return { db, persisted, updates, inserts };
+  return { db, persisted, updates, attemptedUpdates, inserts };
 }
 
 function logger() {
@@ -174,6 +178,69 @@ describe("TimerRegistry Bot lifecycle", () => {
     registry.destroy();
   });
 
+  it("retries a newly registered timer after its first delivery is rejected", async () => {
+    const timerId = "new-delivery-retry";
+    const durable = row(timerId, BOT_A, new Date(NOW.getTime() + 5_000));
+    const { db, persisted } = database([], [durable]);
+    const registry = new TimerRegistry(db, logger());
+    const onFire = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("Telegram delivery rejected"))
+      .mockResolvedValueOnce(undefined);
+
+    await registry.registerAi({
+      timerId,
+      botId: BOT_A,
+      chatId: 42,
+      name: "retry without restart",
+      seconds: 5,
+      onFire,
+    });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onFire).toHaveBeenCalledOnce();
+    expect(persisted.get(timerId)?.status).toBe("active");
+    expect(registry.get(timerId)).toMatchObject({ status: "active" });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(onFire).toHaveBeenCalledTimes(2);
+    expect(persisted.get(timerId)?.status).toBe("fired");
+    expect(registry.get(timerId)).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(onFire).toHaveBeenCalledTimes(2);
+    registry.destroy();
+  });
+
+  it("does not claim ownership when a newly registered timer cannot be persisted", async () => {
+    const insertError = new Error("database unavailable");
+    const db = {
+      insert: () => ({ values: async () => Promise.reject(insertError) }),
+    } as unknown as Database;
+    const registry = new TimerRegistry(db, logger());
+    const nativeFire = vi.fn();
+    const nativeHandle = setTimeout(nativeFire, 5_000);
+    const onFire = vi.fn(async () => {});
+
+    await expect(
+      registry.registerAi({
+        timerId: "not-persisted",
+        botId: BOT_A,
+        chatId: 42,
+        name: "must persist",
+        seconds: 5,
+        handle: nativeHandle,
+        onFire,
+      }),
+    ).rejects.toBe(insertError);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(nativeFire).toHaveBeenCalledOnce();
+    expect(onFire).not.toHaveBeenCalled();
+    expect(registry.get("not-persisted")).toBeUndefined();
+    registry.destroy();
+  });
+
   it("conditionally claims an overdue timer exactly once before delayed delivery", async () => {
     const overdue = row("overdue", BOT_A, new Date(NOW.getTime() - 48 * 60 * 60 * 1000));
     const { db, persisted } = database([[overdue], [overdue]], [overdue]);
@@ -213,6 +280,57 @@ describe("TimerRegistry Bot lifecycle", () => {
     expect(persisted.get("retry")?.status).toBe("active");
     expect(registry.get("retry")).toBeUndefined();
     registry.destroy();
+  });
+
+  it("keeps a rejected Telegram delivery recoverable after the stale-memory sweep", async () => {
+    const timerId = "delivery-rejected";
+    const firesAt = new Date(NOW.getTime() + 5_000);
+    const durable = row(timerId, BOT_A, firesAt);
+    const { db, persisted, attemptedUpdates } = database([[durable]], [durable]);
+    const first = new TimerRegistry(db, logger());
+    const deliver = vi.fn(async () => Promise.reject(new Error("Telegram delivery rejected")));
+    const handle = setTimeout(() => {
+      void deliver()
+        .then(() => first.markFired(timerId))
+        .catch(() => {});
+    }, 5_000);
+
+    await first.registerAi({
+      timerId,
+      botId: BOT_A,
+      chatId: 42,
+      name: "delivery retry",
+      seconds: 5,
+      handle,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(persisted.get(timerId)?.status).toBe("active");
+    expect(first.get(timerId)).toMatchObject({ status: "active" });
+
+    vi.setSystemTime(new Date(firesAt.getTime() + 5 * 60 * 1_000 + 1));
+    (
+      first as unknown as {
+        sweepExpired: () => void;
+      }
+    ).sweepExpired();
+
+    expect(persisted.get(timerId)?.status).toBe("active");
+    expect(attemptedUpdates).not.toContainEqual(expect.objectContaining({ status: "fired" }));
+    expect(first.get(timerId)).toBeUndefined();
+    first.destroy();
+
+    const restarted = new TimerRegistry(db, logger());
+    const resumedDelivery = vi.fn(async () => {});
+    await expect(restarted.resumeBot(BOT_A, resumedDelivery)).resolves.toMatchObject({
+      immediate: 1,
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(resumedDelivery).toHaveBeenCalledOnce();
+    expect(persisted.get(timerId)?.status).toBe("fired");
+    restarted.destroy();
   });
 
   it("recovers an expired processing lease after a previous process crashed", async () => {
