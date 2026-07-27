@@ -144,7 +144,10 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/start", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/stop", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
-    .route("/api/bots", botsRoutes(db, botPool, modelCapabilityService, botLifecycleService))
+    .route(
+      "/api/bots",
+      botsRoutes(db, botPool, modelCapabilityService, botLifecycleService, chatAiSelectionService),
+    )
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))

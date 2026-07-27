@@ -4,6 +4,7 @@ import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthVariables } from "../middleware/better-auth.js";
 import type { BotPool } from "../services/bot-pool.js";
+import type { ChatAiSelectionService } from "../services/chat-ai-selection-service.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import { botsRoutes } from "./bots.js";
 
@@ -74,7 +75,7 @@ function routeDatabase(
   } as unknown as Database;
 }
 
-function routeApp(db: Database, botPool: BotPool) {
+function routeApp(db: Database, botPool: BotPool, chatAiSelectionService?: ChatAiSelectionService) {
   return new Hono<{ Variables: AuthVariables }>()
     .onError((error, c) => {
       if (error instanceof HTTPException) {
@@ -83,7 +84,10 @@ function routeApp(db: Database, botPool: BotPool) {
       return c.json({ ok: false as const, error: "Internal Server Error" }, 500);
     })
     .use("*", ownerContext())
-    .route("/api/bots", botsRoutes(db, botPool, {} as ModelCapabilityService));
+    .route(
+      "/api/bots",
+      botsRoutes(db, botPool, {} as ModelCapabilityService, undefined, chatAiSelectionService),
+    );
 }
 
 function savingBotPool(): BotPool {
@@ -288,6 +292,86 @@ describe("AI config GitHub coding provider contract", () => {
 });
 
 describe("AI provider model configuration", () => {
+  it("preserves the durable active pair and reconciles chat selections after catalog edits", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const reconcileCatalog = vi.fn(async () => ({
+      persisted: true,
+      applied: true,
+      applyState: "applied" as const,
+      reset: 0,
+      defaulted: 0,
+    }));
+    const existing = {
+      ...existingAiConfig,
+      providers: [
+        {
+          id: "provider-a",
+          label: "Provider A",
+          encryptedApiKey: "encrypted-a",
+          baseURL: "https://a.example/v1",
+          providerFormat: "openai" as const,
+          defaultModel: "model-a",
+          models: [{ id: "model-a" }],
+        },
+        {
+          id: "provider-b",
+          label: "Provider B",
+          encryptedApiKey: "encrypted-b",
+          baseURL: "https://b.example/v1",
+          providerFormat: "openai" as const,
+          defaultModel: "model-b-default",
+          models: [{ id: "model-b-default" }, { id: "model-b-active" }],
+        },
+      ],
+      activeProviderId: "provider-b",
+      activeModelId: "model-b-active",
+      aiSelectionDisplayDefault: "hide" as const,
+    };
+    const service = { reconcileCatalog } as unknown as ChatAiSelectionService;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }, existing),
+      savingBotPool(),
+      service,
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "provider-a",
+            label: "Provider A renamed",
+            baseURL: "https://a.example/v1",
+            providerFormat: "openai",
+            defaultModel: "model-a",
+            models: [{ id: "model-a" }],
+          },
+          {
+            id: "provider-b",
+            label: "Provider B renamed",
+            baseURL: "https://b.example/v1",
+            providerFormat: "openai",
+            defaultModel: "model-b-default",
+            models: [{ id: "model-b-default" }, { id: "model-b-active" }],
+          },
+        ],
+        activeProviderId: "provider-a",
+        activeModelId: "model-a",
+        aiSelectionDisplayDefault: "show",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig).toMatchObject({
+      activeProviderId: "provider-b",
+      activeModelId: "model-b-active",
+      aiSelectionDisplayDefault: "hide",
+    });
+    expect(reconcileCatalog).toHaveBeenCalledWith("bot-1");
+  });
+
   it("returns the provider discovery path and preserves model thinking settings", async () => {
     const response = await routeApp(
       routeDatabase(undefined, {

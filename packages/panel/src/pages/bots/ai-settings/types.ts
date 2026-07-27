@@ -65,3 +65,26 @@ export interface StatusMessage {
   type: "success" | "error";
   text: string;
 }
+
+export interface AiSelectionOption {
+  id: string;
+  label: string;
+}
+
+export interface AiSelectionProviderOption extends AiSelectionOption {
+  defaultModelId: string;
+  models: AiSelectionOption[];
+}
+
+export interface GlobalAiSelection {
+  revision: string;
+  applyState: "applied" | "pending";
+  displayDefault: "show" | "hide";
+  selection: {
+    providerId: string;
+    modelId: string | null;
+    providerLabel: string;
+    modelLabel: string;
+  };
+  options: AiSelectionProviderOption[];
+}

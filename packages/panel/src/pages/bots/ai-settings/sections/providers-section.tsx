@@ -36,6 +36,7 @@ export function ProvidersSection({
   activeProviderId,
   managedProviderId,
   draftApiKeys,
+  canChangeActiveProvider = true,
   onProvidersChange,
   onActiveProviderChange,
   onManagedProviderChange,
@@ -46,6 +47,7 @@ export function ProvidersSection({
   managedProviderId?: string;
   /** Map: provider id (or "__new_<tempId>") → plaintext key in-progress (never persisted on display). */
   draftApiKeys: Record<string, string>;
+  canChangeActiveProvider?: boolean;
   onProvidersChange: (providers: AiProviderEntryPublic[]) => void;
   onActiveProviderChange: (id: string) => void;
   onManagedProviderChange: (id: string) => void;
@@ -270,7 +272,7 @@ export function ProvidersSection({
                 <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
                   <p className="text-muted-foreground text-xs">{t("providers.chatOverrideHelp")}</p>
                   <div className="flex items-center gap-2">
-                    {p.id !== activeProviderId && (
+                    {p.id !== activeProviderId && canChangeActiveProvider && (
                       <Button
                         variant="outline"
                         size="sm"

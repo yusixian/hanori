@@ -17,7 +17,7 @@ import type {
 } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { count, eq } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import * as fs from "node:fs/promises";
 import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
@@ -25,6 +25,10 @@ import { env } from "../env.js";
 import { ownerOrAdmin, type AuthVariables } from "../middleware/better-auth.js";
 import type { BotPool } from "../services/bot-pool.js";
 import { BotLifecycleError, type BotLifecycleService } from "../services/bot-lifecycle-service.js";
+import {
+  ChatAiSelectionError,
+  type ChatAiSelectionService,
+} from "../services/chat-ai-selection-service.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
 import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "../services/ai-config-web-tools.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
@@ -106,6 +110,35 @@ const updateBotSchema = z.object({
   emailForwardConfig: emailForwardConfigSchema.optional(),
   clearEmailForwardConfig: z.boolean().optional(),
 });
+
+const globalAiSelectionSchema = z
+  .object({
+    expectedRevision: z.string().min(1).max(2_000),
+    providerId: z.string().trim().min(1).max(100),
+    modelId: z.string().trim().min(1).max(200).nullable(),
+    displayDefault: z.enum(["show", "hide"]),
+  })
+  .strict();
+
+function canManageAiSelection(role: string): boolean {
+  return ownerOrAdmin.has(role);
+}
+
+function aiSelectionErrorResponse(c: Context, error: unknown) {
+  if (!(error instanceof ChatAiSelectionError)) {
+    console.error("AI selection request failed", { error });
+    return c.json({ ok: false as const, error: "AI selection request failed" }, 500);
+  }
+  const status =
+    error.code === "not_found"
+      ? 404
+      : error.code === "stale_revision"
+        ? 409
+        : error.code === "invalid_actor"
+          ? 400
+          : 422;
+  return c.json({ ok: false as const, code: error.code, error: error.message }, status);
+}
 
 function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWithStatus {
   const manager = botPool.getManager(bot.id);
@@ -700,6 +733,7 @@ export function botsRoutes(
   botPool: BotPool,
   modelCapabilityService: ModelCapabilityService,
   botLifecycleService?: BotLifecycleService,
+  chatAiSelectionService?: ChatAiSelectionService,
 ) {
   return new Hono<{ Variables: AuthVariables }>()
     .get(
@@ -1060,6 +1094,75 @@ export function botsRoutes(
         });
       },
     )
+    .get("/:botId/ai-selection", async (c) => {
+      if (!chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection service is unavailable" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          data: await chatAiSelectionService.readGlobal(c.req.param("botId")),
+          canManage: canManageAiSelection(c.get("authMember").role),
+        });
+      } catch (error) {
+        return aiSelectionErrorResponse(c, error);
+      }
+    })
+    .patch("/:botId/ai-selection", zValidator("json", globalAiSelectionSchema), async (c) => {
+      if (!canManageAiSelection(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限执行该操作" }, 403);
+      }
+      if (!chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection service is unavailable" }, 503);
+      }
+      const botId = c.req.param("botId");
+      const body = c.req.valid("json");
+      try {
+        const data = await chatAiSelectionService.setGlobal({
+          botId,
+          expectedRevision: body.expectedRevision,
+          pair: { providerId: body.providerId, modelId: body.modelId },
+          displayDefault: body.displayDefault,
+          actor: { kind: "better_auth_user", id: c.get("authUser").id },
+        });
+        return c.json({ ok: true as const, data });
+      } catch (error) {
+        if (error instanceof ChatAiSelectionError && error.code === "stale_revision") {
+          try {
+            return c.json(
+              {
+                ok: false as const,
+                code: error.code,
+                error: error.message,
+                latest: await chatAiSelectionService.readGlobal(botId),
+              },
+              409,
+            );
+          } catch {
+            // Fall through to the safe mapped error when the latest state cannot be read.
+          }
+        }
+        return aiSelectionErrorResponse(c, error);
+      }
+    })
+    .post("/:botId/ai-selection/retry", async (c) => {
+      if (!canManageAiSelection(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限执行该操作" }, 403);
+      }
+      if (!chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection service is unavailable" }, 503);
+      }
+      const botId = c.req.param("botId");
+      try {
+        const publish = await chatAiSelectionService.retryPublish(botId);
+        return c.json({
+          ok: true as const,
+          data: { ...publish, global: await chatAiSelectionService.readGlobal(botId) },
+        });
+      } catch (error) {
+        return aiSelectionErrorResponse(c, error);
+      }
+    })
     .get("/:botId/ai-config", async (c) => {
       const botId = c.req.param("botId");
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
@@ -1096,10 +1199,10 @@ export function botsRoutes(
 
         // Build new providers list with preserve-when-empty apiKey per entry.
         // Client sends temp ids like "__new_xxx" for unsaved providers; map them to real
-        // UUIDs here and remap activeProviderId through the same mapping so the client's
-        // selection survives the id rewrite.
+        // UUIDs here. Runtime selection is deliberately preserved from the latest stored
+        // config; the dedicated ai-selection endpoint is its only ordinary writer.
         let providers: AiProviderEntry[] | undefined;
-        let activeProviderId: string | undefined = body.activeProviderId;
+        let requestedInitialProviderId: string | undefined = body.activeProviderId;
         const providerIdMap = new Map<string, string>();
         if (body.providers !== undefined) {
           providers = body.providers.map((p) => {
@@ -1131,23 +1234,28 @@ export function botsRoutes(
               models: p.models,
             });
           });
-          if (activeProviderId && providerIdMap.has(activeProviderId)) {
-            activeProviderId = providerIdMap.get(activeProviderId);
-          }
-          if (!activeProviderId || !providers.some((p) => p.id === activeProviderId)) {
-            activeProviderId = providers[0]?.id;
+          if (requestedInitialProviderId && providerIdMap.has(requestedInitialProviderId)) {
+            requestedInitialProviderId = providerIdMap.get(requestedInitialProviderId);
           }
         }
         const effectiveProviders = providers ?? existingMigrated?.providers ?? [];
-        const selectedProviderId = activeProviderId ?? existingMigrated?.activeProviderId;
+        const existingProviderId = existingMigrated?.activeProviderId;
+        const selectedProviderId = existingMigrated
+          ? effectiveProviders.some((provider) => provider.id === existingProviderId)
+            ? existingProviderId
+            : effectiveProviders[0]?.id
+          : effectiveProviders.some((provider) => provider.id === requestedInitialProviderId)
+            ? requestedInitialProviderId
+            : effectiveProviders[0]?.id;
         const selectedProvider = effectiveProviders.find(
           (provider) => provider.id === selectedProviderId,
         );
         const requestedActiveModelId =
-          body.activeModelId ??
-          (existingMigrated && selectedProviderId === existingMigrated.activeProviderId
+          existingMigrated && selectedProviderId === existingMigrated.activeProviderId
             ? existingMigrated.activeModelId
-            : undefined);
+            : !existingMigrated
+              ? body.activeModelId
+              : undefined;
         if (
           requestedActiveModelId &&
           selectedProvider &&
@@ -1250,10 +1358,10 @@ export function botsRoutes(
           model: effectiveModel,
           providerFormat: body.providerFormat,
           providers: providers ?? existingMigrated?.providers,
-          activeProviderId: activeProviderId ?? existingMigrated?.activeProviderId,
+          activeProviderId: selectedProviderId,
           activeModelId,
           aiSelectionDisplayDefault:
-            body.aiSelectionDisplayDefault ?? existingMigrated?.aiSelectionDisplayDefault ?? "show",
+            existingMigrated?.aiSelectionDisplayDefault ?? body.aiSelectionDisplayDefault ?? "show",
           systemPrompt: body.systemPrompt,
           behavioralPrompt: body.behavioralPrompt,
           groupBehavioralPrompt: body.groupBehavioralPrompt,
@@ -1316,6 +1424,20 @@ export function botsRoutes(
       }
 
       botPool.invalidateGitHubCredentials(botId);
+
+      if (
+        chatAiSelectionService &&
+        saveResult.aiConfig.providers?.some((provider) => provider.encryptedApiKey)
+      ) {
+        try {
+          await chatAiSelectionService.reconcileCatalog(botId);
+        } catch (error) {
+          console.error("AI selection reconciliation after catalog save failed", { botId, error });
+          throw new HTTPException(503, {
+            message: "AI 配置已保存，但当前 Provider / Model 同步失败。请重试运行选择同步",
+          });
+        }
+      }
 
       // Restart bot if running so new config takes effect
       const manager = botPool.getManager(botId);

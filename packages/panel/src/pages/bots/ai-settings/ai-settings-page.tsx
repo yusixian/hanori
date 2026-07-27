@@ -61,6 +61,10 @@ import { TimeoutSection } from "./sections/timeout-section";
 import { ModelsSection } from "./sections/models-section";
 import { PrivateChatWhitelistSection } from "./sections/private-whitelist-section";
 import { ProvidersSection } from "./sections/providers-section";
+import {
+  GlobalAiSelectionSection,
+  type GlobalAiSelectionDraft,
+} from "./sections/global-ai-selection-section";
 import { StickerPacksSection } from "./sections/sticker-packs-section";
 import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { McpServersSection } from "./sections/mcp-servers-section";
@@ -73,7 +77,7 @@ import {
   DEFAULT_GITHUB_TOOLS,
   DEFAULT_WEB_TOOLS,
 } from "./types";
-import type { StatusMessage } from "./types";
+import type { GlobalAiSelection, StatusMessage } from "./types";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { renameProviderModelReferences, resolveManagedProviderIdAfterSave } from "./utils";
@@ -151,6 +155,13 @@ export function BotAiSettingsPage() {
   const [webSearchApiKey, setWebSearchApiKey] = useState("");
   const [webImageApiKey, setWebImageApiKey] = useState("");
   const [canManageGitHubCredentials, setCanManageGitHubCredentials] = useState(false);
+  const [globalSelection, setGlobalSelection] = useState<GlobalAiSelection | null>(null);
+  const [globalSelectionDraft, setGlobalSelectionDraft] = useState<GlobalAiSelectionDraft | null>(
+    null,
+  );
+  const [canManageAiSelection, setCanManageAiSelection] = useState(false);
+  const [savingSelection, setSavingSelection] = useState(false);
+  const [retryingSelection, setRetryingSelection] = useState(false);
   const [openGitHubAfterCallback, setOpenGitHubAfterCallback] = useState(
     () =>
       searchParams.get("githubApp") === "connected" || searchParams.get("githubApp") === "error",
@@ -294,6 +305,32 @@ export function BotAiSettingsPage() {
     loadConfig();
   }, [loadConfig]);
 
+  const loadGlobalSelection = useCallback(async () => {
+    if (!botId) return;
+    try {
+      const response = await authFetch(`/api/bots/${encodeURIComponent(botId)}/ai-selection`);
+      const body = (await response.json()) as {
+        ok?: boolean;
+        data?: GlobalAiSelection;
+        canManage?: boolean;
+      };
+      if (!response.ok || !body.ok || !body.data) return;
+      setGlobalSelection(body.data);
+      setGlobalSelectionDraft({
+        providerId: body.data.selection.providerId,
+        modelId: body.data.selection.modelId,
+        displayDefault: body.data.displayDefault,
+      });
+      setCanManageAiSelection(body.canManage === true);
+    } catch {
+      // Catalog configuration remains available when runtime selection is not ready yet.
+    }
+  }, [botId]);
+
+  useEffect(() => {
+    void loadGlobalSelection();
+  }, [loadGlobalSelection]);
+
   useEffect(() => {
     let active = true;
     setLoadedBot(null);
@@ -320,7 +357,7 @@ export function BotAiSettingsPage() {
     else toast.error(message.text);
   }, [message]);
 
-  const isDirty =
+  const isConfigDirty =
     savedDraftRef.current !== "" &&
     (savedDraftRef.current !==
       serializeDraft(config, triggerWordsText, stickerPacksText, summaryConfig, imageOcrConfig) ||
@@ -328,6 +365,14 @@ export function BotAiSettingsPage() {
       webSearchApiKey !== "" ||
       webImageApiKey !== "" ||
       Object.keys(providerApiKeys).length > 0);
+  const isSelectionDirty = Boolean(
+    globalSelection &&
+    globalSelectionDraft &&
+    (globalSelection.selection.providerId !== globalSelectionDraft.providerId ||
+      globalSelection.selection.modelId !== globalSelectionDraft.modelId ||
+      globalSelection.displayDefault !== globalSelectionDraft.displayDefault),
+  );
+  const isDirty = isConfigDirty || isSelectionDirty;
 
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -471,6 +516,7 @@ export function BotAiSettingsPage() {
           nextSummary,
           nextOcr,
         );
+        await loadGlobalSelection();
         setMessage({ type: "success", text: t("page.saveSuccess") });
       } else {
         setMessage({
@@ -482,6 +528,94 @@ export function BotAiSettingsPage() {
       setMessage({ type: "error", text: t("page.saveConfigError") });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSelectionSave = async () => {
+    if (!botId || !globalSelection || !globalSelectionDraft) return;
+    setSavingSelection(true);
+    try {
+      const response = await authFetch(`/api/bots/${encodeURIComponent(botId)}/ai-selection`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expectedRevision: globalSelection.revision,
+          ...globalSelectionDraft,
+        }),
+      });
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        latest?: GlobalAiSelection;
+        data?: { global?: GlobalAiSelection };
+      };
+      if (response.status === 409 && body.latest) {
+        setGlobalSelection(body.latest);
+        setGlobalSelectionDraft({
+          providerId: body.latest.selection.providerId,
+          modelId: body.latest.selection.modelId,
+          displayDefault: body.latest.displayDefault,
+        });
+        setMessage({ type: "error", text: t("selection.stale") });
+        return;
+      }
+      if (!response.ok || !body.ok || !body.data?.global) {
+        setMessage({ type: "error", text: body.error || t("selection.saveError") });
+        return;
+      }
+      const next = body.data.global;
+      setGlobalSelection(next);
+      setGlobalSelectionDraft({
+        providerId: next.selection.providerId,
+        modelId: next.selection.modelId,
+        displayDefault: next.displayDefault,
+      });
+      setMessage({
+        type: next.applyState === "applied" ? "success" : "error",
+        text:
+          next.applyState === "applied" ? t("selection.saveSuccess") : t("selection.savedPending"),
+      });
+    } catch {
+      setMessage({ type: "error", text: t("selection.saveError") });
+    } finally {
+      setSavingSelection(false);
+    }
+  };
+
+  const handleSelectionRetry = async () => {
+    if (!botId) return;
+    setRetryingSelection(true);
+    try {
+      const response = await authFetch(
+        `/api/bots/${encodeURIComponent(botId)}/ai-selection/retry`,
+        { method: "POST" },
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        error?: string;
+        data?: { global?: GlobalAiSelection };
+      };
+      if (!response.ok || !body.ok || !body.data?.global) {
+        setMessage({ type: "error", text: body.error || t("selection.retryError") });
+        return;
+      }
+      const next = body.data.global;
+      setGlobalSelection(next);
+      setGlobalSelectionDraft({
+        providerId: next.selection.providerId,
+        modelId: next.selection.modelId,
+        displayDefault: next.displayDefault,
+      });
+      setMessage({
+        type: next.applyState === "applied" ? "success" : "error",
+        text:
+          next.applyState === "applied" ? t("selection.retrySuccess") : t("selection.savedPending"),
+      });
+    } catch {
+      setMessage({ type: "error", text: t("selection.retryError") });
+    } finally {
+      setRetryingSelection(false);
     }
   };
 
@@ -702,7 +836,11 @@ export function BotAiSettingsPage() {
               <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
               <span className="sm:hidden">{t("page.preview")}</span>
             </Button>
-            <Button onClick={handleSave} disabled={saving || revisionRef.current === ""}>
+            <Button
+              onClick={handleSave}
+              disabled={saving || revisionRef.current === "" || isSelectionDirty}
+              title={isSelectionDirty ? t("selection.applyBeforeCatalogSave") : undefined}
+            >
               {saving ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -764,15 +902,39 @@ export function BotAiSettingsPage() {
 
           {activeSection === "providers" && (
             <div className="space-y-5">
+              {globalSelection && globalSelectionDraft && (
+                <GlobalAiSelectionSection
+                  selection={globalSelection}
+                  draft={globalSelectionDraft}
+                  canManage={canManageAiSelection}
+                  saving={savingSelection}
+                  retrying={retryingSelection}
+                  onChange={setGlobalSelectionDraft}
+                  onSave={() => void handleSelectionSave()}
+                  onRetry={() => void handleSelectionRetry()}
+                />
+              )}
               <ProvidersSection
                 providers={config.providers ?? []}
-                activeProviderId={config.activeProviderId}
+                activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
                 managedProviderId={managedProvider?.id}
                 draftApiKeys={providerApiKeys}
+                canChangeActiveProvider={canManageAiSelection && globalSelectionDraft !== null}
                 onProvidersChange={(providers) => setConfig((prev) => ({ ...prev, providers }))}
-                onActiveProviderChange={(activeProviderId) =>
-                  setConfig((prev) => ({ ...prev, activeProviderId }))
-                }
+                onActiveProviderChange={(providerId) => {
+                  const provider = globalSelection?.options.find(
+                    (option) => option.id === providerId,
+                  );
+                  if (!provider || !globalSelectionDraft) {
+                    setMessage({ type: "error", text: t("selection.unavailable") });
+                    return;
+                  }
+                  setGlobalSelectionDraft({
+                    ...globalSelectionDraft,
+                    providerId,
+                    modelId: provider.defaultModelId,
+                  });
+                }}
                 onManagedProviderChange={setManagedProviderId}
                 onDraftApiKeyChange={(id, key) =>
                   setProviderApiKeys((prev) => {
