@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "check:mini-app-entry": "node scripts/check-mini-app-entry.mjs",
     "typecheck": "tsc --noEmit",
     "test:browser": "vitest run --config vitest.browser.config.ts"
   },
