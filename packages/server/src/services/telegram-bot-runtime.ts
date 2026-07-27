@@ -11,6 +11,9 @@ export interface TelegramBotPublicProfile {
 export interface TelegramBotRuntime {
   getTelegramProfile(): Promise<TelegramBotPublicProfile>;
   isTelegramMember(input: { chatId: number; userId: number }): Promise<boolean>;
+  getTelegramBotMembership(input: {
+    chatId: number;
+  }): Promise<"creator" | "administrator" | "member" | "restricted" | "left" | "kicked">;
 }
 
 export interface BotManagerLookup {
@@ -51,7 +54,8 @@ export function supportsTelegramBotRuntime(
   const candidate = manager as Partial<TelegramBotRuntime>;
   return (
     typeof candidate.getTelegramProfile === "function" &&
-    typeof candidate.isTelegramMember === "function"
+    typeof candidate.isTelegramMember === "function" &&
+    typeof candidate.getTelegramBotMembership === "function"
   );
 }
 
@@ -84,6 +88,19 @@ export class BotPoolTelegramRuntimeAdapter implements TelegramMembershipVerifier
   async getProfile(botId: string): Promise<TelegramBotPublicProfile> {
     requireBotId(botId);
     return this.getRunningTelegramManager(botId).getTelegramProfile();
+  }
+
+  async getBotMembership(input: {
+    botId: string;
+    chatId: number;
+  }): Promise<"creator" | "administrator" | "member" | "restricted" | "left" | "kicked"> {
+    requireBotId(input.botId);
+    if (!isTelegramGroupChatId(input.chatId)) {
+      throw new Error("Telegram group chat ID must be a negative safe integer");
+    }
+    return this.getRunningTelegramManager(input.botId).getTelegramBotMembership({
+      chatId: input.chatId,
+    });
   }
 
   private getRunningTelegramManager(botId: string): IBotManager & TelegramBotRuntime {

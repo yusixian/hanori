@@ -29,6 +29,7 @@ import { migrateAiConfig } from "./utils/ai-config-migrate.js";
 import { migrateEnvBot } from "./services/migrate-env-bot.js";
 import { BotPoolTelegramRuntimeAdapter } from "./services/telegram-bot-runtime.js";
 import { TelegramDirectoryService } from "./services/telegram-directory-service.js";
+import { MiniAppAccessService } from "./services/mini-app-access-service.js";
 
 export type { AppType } from "./app.js";
 
@@ -140,6 +141,7 @@ const botPool = new BotPool(db, logger, timerRegistry);
 const telegramDirectoryService = new TelegramDirectoryService(db);
 const chatIdentityMigrationService = new ChatIdentityMigrationService(db);
 const telegramRuntime = new BotPoolTelegramRuntimeAdapter(botPool);
+const miniAppAccessService = new MiniAppAccessService(db, telegramRuntime);
 botPool.setTelegramDirectoryCallbacks(
   {
     onChatObserved: async (observation) => {
@@ -277,6 +279,7 @@ const app = createApp({
   miniAppSessionSecret: env.MINI_APP_SESSION_SECRET,
   telegramDirectoryService,
   telegramMembershipVerifier: telegramRuntime,
+  miniAppAccessService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

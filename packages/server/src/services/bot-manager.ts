@@ -189,6 +189,21 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     return mapTelegramMembership(member);
   }
 
+  async getTelegramBotMembership(input: {
+    chatId: number;
+  }): Promise<"creator" | "administrator" | "member" | "restricted" | "left" | "kicked"> {
+    if (!isTelegramGroupChatId(input.chatId)) {
+      throw new Error("Telegram group chat ID must be a negative safe integer");
+    }
+    const bot = this.requireRunningBot();
+    const profile = await bot.api.getMe();
+    if (!isTelegramUserId(profile.id)) {
+      throw new Error("Telegram returned an invalid bot user ID");
+    }
+    const member = await bot.api.getChatMember(input.chatId, profile.id);
+    return member.status;
+  }
+
   async sendRichMessage(
     chatId: number,
     format: TelegramRichMessageFormat,

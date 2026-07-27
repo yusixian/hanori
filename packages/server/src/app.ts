@@ -39,6 +39,7 @@ import { BotRunService } from "./services/bot-run-service.js";
 import type { TimerRegistry } from "./services/timer-registry.js";
 import type { GitHubAppCredentialService } from "./services/github-app-credentials.js";
 import type { TelegramMembershipVerifier } from "./services/mini-app-access-policy.js";
+import type { MiniAppAccessService } from "./services/mini-app-access-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 interface AppOptions {
@@ -58,6 +59,7 @@ interface AppOptions {
   miniAppSessionSecret: string;
   telegramDirectoryService: TelegramDirectoryService;
   telegramMembershipVerifier: TelegramMembershipVerifier;
+  miniAppAccessService: MiniAppAccessService;
 }
 
 export function createApp(options: AppOptions) {
@@ -78,6 +80,7 @@ export function createApp(options: AppOptions) {
     miniAppSessionSecret,
     telegramDirectoryService,
     telegramMembershipVerifier,
+    miniAppAccessService,
   } = options;
 
   const app = new Hono()
@@ -104,6 +107,7 @@ export function createApp(options: AppOptions) {
         botTokenResolver: createMiniAppBotTokenResolver(db, encryptionKey),
         directory: telegramDirectoryService,
         membershipVerifier: telegramMembershipVerifier,
+        accessService: miniAppAccessService,
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))

@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { MINI_APP_SESSION_COOKIE_NAME } from "../services/mini-app-session.js";
+import { MiniAppAccessError } from "../services/mini-app-access-service.js";
 import type { TelegramAccessSnapshot } from "../services/telegram-directory-service.js";
 import { miniAppRoutes, type MiniAppRoutesOptions } from "./mini-app.js";
 
@@ -36,6 +37,19 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
   const directory = {
     readAccessSnapshot: vi.fn(async (): Promise<TelegramAccessSnapshot | null> => snapshot),
   };
+  const accessService = {
+    readAccess: vi.fn(async () => ({
+      bot: { username: "example_chat_bot", displayName: "Example Bot" },
+      chats: [],
+      operators: [],
+      activity: [],
+    })),
+    searchPeople: vi.fn(async () => []),
+    grantChat: vi.fn(async () => {}),
+    revokeChat: vi.fn(async () => {}),
+    grantOperator: vi.fn(async () => {}),
+    revokeOperator: vi.fn(async () => {}),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
     botTokenResolver: {
@@ -43,12 +57,14 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     },
     directory,
     membershipVerifier: { isMember: vi.fn(async () => false) },
+    accessService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
   return {
     app: new Hono().route("/mini-app", miniAppRoutes(options)),
     directory,
+    accessService,
     options,
   };
 }
@@ -206,5 +222,137 @@ describe("Mini App session routes", () => {
     const response = await app.request(`/mini-app/${BOT_A}/session`, { method: "DELETE" });
     expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+});
+
+describe("Mini App Access routes", () => {
+  async function adminSession(app: Hono) {
+    const created = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    const body = (await created.clone().json()) as { session: { csrfToken: string } };
+    return { cookie: cookieFrom(created), csrfToken: body.session.csrfToken as string };
+  }
+
+  it("allows only current admins to read the Bot-scoped Access projection", async () => {
+    const { app, accessService } = testApp();
+    const session = await adminSession(app);
+    const response = await app.request(`/mini-app/${BOT_A}/access`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      bot: { username: "example_chat_bot" },
+      chats: [],
+      operators: [],
+    });
+    expect(accessService.readAccess).toHaveBeenCalledWith(BOT_A, {
+      actorTelegramUserId: undefined,
+      action: undefined,
+      resource: undefined,
+    });
+
+    const operatorSnapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [42],
+      grantedChatIds: [-1001],
+    };
+    const deniedService = {
+      ...accessService,
+      readAccess: vi.fn(async () => ({
+        bot: { username: "example_chat_bot", displayName: "Example Bot" },
+        chats: [],
+        operators: [],
+        activity: [],
+      })),
+    };
+    const operator = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => operatorSnapshot) },
+      accessService: deniedService,
+    }).app;
+    const operatorSession = await adminSession(operator);
+    const denied = await operator.request(`/mini-app/${BOT_A}/access`, {
+      headers: { cookie: operatorSession.cookie },
+    });
+    expect(denied.status).toBe(403);
+    expect(deniedService.readAccess).not.toHaveBeenCalled();
+  });
+
+  it("requires the signed session CSRF token and forwards only validated grant input", async () => {
+    const { app, accessService } = testApp();
+    const session = await adminSession(app);
+    const endpoint = `/mini-app/${BOT_A}/access/operator-grants`;
+    const request = {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ telegramUserId: 73, note: "  trusted helper  " }),
+    };
+    expect((await app.request(endpoint, request)).status).toBe(403);
+    expect(accessService.grantOperator).not.toHaveBeenCalled();
+
+    const accepted = await app.request(endpoint, {
+      ...request,
+      headers: { ...request.headers, "x-mini-app-csrf": session.csrfToken },
+    });
+    expect(accepted.status).toBe(200);
+    expect(accessService.grantOperator).toHaveBeenCalledWith({
+      botId: BOT_A,
+      actorTelegramUserId: 42,
+      telegramUserId: 73,
+      note: "trusted helper",
+    });
+  });
+
+  it("re-resolves authorization before revocation and rejects invalid resource IDs", async () => {
+    const { app, directory, accessService } = testApp();
+    const session = await adminSession(app);
+    directory.readAccessSnapshot.mockResolvedValueOnce({
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [],
+      grantedChatIds: [],
+    });
+    const revoked = await app.request(`/mini-app/${BOT_A}/access/operator-grants/73`, {
+      method: "DELETE",
+      headers: { cookie: session.cookie, "x-mini-app-csrf": session.csrfToken },
+    });
+    expect(revoked.status).toBe(403);
+    expect(accessService.revokeOperator).not.toHaveBeenCalled();
+
+    const invalid = await app.request(`/mini-app/${BOT_A}/access/chat-grants/42`, {
+      method: "DELETE",
+      headers: { cookie: session.cookie, "x-mini-app-csrf": session.csrfToken },
+    });
+    expect(invalid.status).toBe(400);
+  });
+
+  it("maps administrator verification failures without leaking internals", async () => {
+    const { app, accessService } = testApp();
+    accessService.grantChat.mockRejectedValueOnce(
+      new MiniAppAccessError("bot_admin_required", "The Bot must currently be an administrator"),
+    );
+    const session = await adminSession(app);
+    const response = await app.request(`/mini-app/${BOT_A}/access/chat-grants`, {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        "content-type": "application/json",
+        "x-mini-app-csrf": session.csrfToken,
+      },
+      body: JSON.stringify({ chatId: -1001 }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: "The Bot must currently be an administrator",
+      code: "bot_admin_required",
+    });
   });
 });

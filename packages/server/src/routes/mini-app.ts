@@ -1,8 +1,14 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
+import type { MiniAppCapability } from "@cos-tool-bot/shared";
+import { timingSafeEqual } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { tryDecrypt } from "../utils/crypto.js";
+import {
+  MiniAppAccessError,
+  type MiniAppAccessService,
+} from "../services/mini-app-access-service.js";
 import {
   MiniAppAccessPolicy,
   type TelegramMembershipVerifier,
@@ -84,8 +90,42 @@ export interface MiniAppRoutesOptions {
   directory: Pick<TelegramDirectoryService, "readAccessSnapshot"> | DirectoryReader;
   membershipVerifier: TelegramMembershipVerifier;
   accessPolicy?: MiniAppAccessPolicy;
+  accessService?: Pick<
+    MiniAppAccessService,
+    "readAccess" | "searchPeople" | "grantChat" | "revokeChat" | "grantOperator" | "revokeOperator"
+  >;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
+}
+
+function secureEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function isTelegramUserId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function isTelegramChatId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value < 0;
+}
+
+function parseNote(value: unknown): string | null | undefined {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") return undefined;
+  const note = value.trim();
+  return note.length <= 200 ? note || null : undefined;
+}
+
+function accessError(error: MiniAppAccessError): {
+  status: 404 | 409 | 503;
+  body: { ok: false; error: string; code: string };
+} {
+  const status =
+    error.code === "not_found" ? 404 : error.code === "verification_unavailable" ? 503 : 409;
+  return { status, body: { ok: false, error: error.message, code: error.code } };
 }
 
 function readCookie(header: string | undefined, name: string): string | null {
@@ -131,6 +171,52 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
       grantedChatIds: snapshot.grantedChatIds,
       membershipVerifier: options.membershipVerifier,
     });
+  }
+
+  async function authorize(
+    botId: string,
+    headers: Headers,
+    capability: MiniAppCapability,
+    requireCsrf: boolean,
+  ) {
+    if (!UUID_PATTERN.test(botId)) return { ok: false as const, status: 404 as const };
+    const token = readCookie(headers.get("cookie") ?? undefined, MINI_APP_SESSION_COOKIE_NAME);
+    if (!token || options.sessionSecret.length < 32) {
+      return { ok: false as const, status: 401 as const };
+    }
+    try {
+      const session = verifyMiniAppSession({
+        token,
+        expectedBotId: botId,
+        signingSecret: options.sessionSecret,
+        now: now(),
+      });
+      const access = await resolveAccess(botId, session.userId);
+      if (!access) return { ok: false as const, status: 401 as const };
+      if (!access.capabilities.includes(capability)) {
+        return { ok: false as const, status: 403 as const };
+      }
+      if (requireCsrf && !secureEqual(headers.get("x-mini-app-csrf") ?? "", session.csrfToken)) {
+        return { ok: false as const, status: 403 as const };
+      }
+      return { ok: true as const, userId: session.userId };
+    } catch (error) {
+      if (error instanceof MiniAppSessionError) {
+        return { ok: false as const, status: 401 as const };
+      }
+      throw error;
+    }
+  }
+
+  async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
+    try {
+      const body: unknown = await request.json();
+      return body !== null && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
   }
 
   return new Hono()
@@ -233,5 +319,202 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
       if (!UUID_PATTERN.test(botId)) return c.json({ ok: false as const, error: "Not found" }, 404);
       c.header("Set-Cookie", clearMiniAppSessionCookie(botId));
       return c.json({ ok: true as const });
+    })
+    .get("/:botId/access", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", false);
+      if (!authorization.ok) {
+        if (authorization.status === 401) {
+          c.header("Set-Cookie", clearMiniAppSessionCookie(botId));
+        }
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const actor = c.req.query("actor");
+      const actorTelegramUserId = actor === undefined ? undefined : Number(actor);
+      if (actor !== undefined && !isTelegramUserId(actorTelegramUserId)) {
+        return c.json({ ok: false as const, error: "Invalid actor filter" }, 400);
+      }
+      const action = c.req.query("action")?.trim();
+      const resource = c.req.query("resource")?.trim();
+      if ((action && action.length > 64) || (resource && resource.length > 64)) {
+        return c.json({ ok: false as const, error: "Invalid activity filter" }, 400);
+      }
+      const view = await options.accessService.readAccess(botId, {
+        actorTelegramUserId,
+        action: action || undefined,
+        resource: resource || undefined,
+      });
+      return c.json({ ok: true as const, ...view });
+    })
+    .get("/:botId/access/people", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const query = c.req.query("query") ?? "";
+      if (query.length > 64) return c.json({ ok: false as const, error: "Invalid query" }, 400);
+      return c.json({
+        ok: true as const,
+        people: await options.accessService.searchPeople(botId, query),
+      });
+    })
+    .post("/:botId/access/chat-grants", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const body = await readJsonBody(c.req.raw);
+      const note = parseNote(body?.["note"]);
+      if (!body || !isTelegramChatId(body["chatId"]) || note === undefined) {
+        return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      }
+      try {
+        await options.accessService.grantChat({
+          botId,
+          actorTelegramUserId: authorization.userId,
+          chatId: body["chatId"],
+          note,
+        });
+        return c.json({ ok: true as const });
+      } catch (error) {
+        if (error instanceof MiniAppAccessError) {
+          const mapped = accessError(error);
+          return c.json(mapped.body, mapped.status);
+        }
+        throw error;
+      }
+    })
+    .delete("/:botId/access/chat-grants/:chatId", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      try {
+        await options.accessService.revokeChat({
+          botId,
+          actorTelegramUserId: authorization.userId,
+          chatId,
+        });
+        return c.json({ ok: true as const });
+      } catch (error) {
+        if (error instanceof MiniAppAccessError) {
+          const mapped = accessError(error);
+          return c.json(mapped.body, mapped.status);
+        }
+        throw error;
+      }
+    })
+    .post("/:botId/access/operator-grants", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const body = await readJsonBody(c.req.raw);
+      const note = parseNote(body?.["note"]);
+      if (!body || !isTelegramUserId(body["telegramUserId"]) || note === undefined) {
+        return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      }
+      try {
+        await options.accessService.grantOperator({
+          botId,
+          actorTelegramUserId: authorization.userId,
+          telegramUserId: body["telegramUserId"],
+          note,
+        });
+        return c.json({ ok: true as const });
+      } catch (error) {
+        if (error instanceof MiniAppAccessError) {
+          const mapped = accessError(error);
+          return c.json(mapped.body, mapped.status);
+        }
+        throw error;
+      }
+    })
+    .delete("/:botId/access/operator-grants/:telegramUserId", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.accessService) {
+        return c.json({ ok: false as const, error: "Mini App access is not configured" }, 503);
+      }
+      const telegramUserId = Number(c.req.param("telegramUserId"));
+      if (!isTelegramUserId(telegramUserId)) {
+        return c.json({ ok: false as const, error: "Invalid Telegram user ID" }, 400);
+      }
+      try {
+        await options.accessService.revokeOperator({
+          botId,
+          actorTelegramUserId: authorization.userId,
+          telegramUserId,
+        });
+        return c.json({ ok: true as const });
+      } catch (error) {
+        if (error instanceof MiniAppAccessError) {
+          const mapped = accessError(error);
+          return c.json(mapped.body, mapped.status);
+        }
+        throw error;
+      }
     });
 }

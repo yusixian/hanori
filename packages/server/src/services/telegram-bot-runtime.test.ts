@@ -17,6 +17,7 @@ function telegramManager(
     stop: vi.fn(async () => {}),
     sendHtml: vi.fn(async () => {}),
     isTelegramMember: vi.fn(async () => true),
+    getTelegramBotMembership: vi.fn(async () => "administrator" as const),
     getTelegramProfile: vi.fn(async () => ({
       telegramUserId: 777,
       username: "example_chat_bot",
@@ -40,8 +41,12 @@ describe("BotPoolTelegramRuntimeAdapter", () => {
       telegramUserId: 777,
       username: "example_chat_bot",
     });
+    await expect(adapter.getBotMembership({ botId: "bot-a", chatId: -1001 })).resolves.toBe(
+      "administrator",
+    );
     expect(getManager).toHaveBeenCalledWith("bot-a");
     expect(manager.isTelegramMember).toHaveBeenCalledWith({ chatId: -1001, userId: 42 });
+    expect(manager.getTelegramBotMembership).toHaveBeenCalledWith({ chatId: -1001 });
   });
 
   it("rejects a mismatched manager instead of crossing Bot scope", async () => {
@@ -74,6 +79,7 @@ describe("BotPoolTelegramRuntimeAdapter", () => {
     };
     delete (nonTelegram as Partial<TelegramBotRuntime>).getTelegramProfile;
     delete (nonTelegram as Partial<TelegramBotRuntime>).isTelegramMember;
+    delete (nonTelegram as Partial<TelegramBotRuntime>).getTelegramBotMembership;
     expect(supportsTelegramBotRuntime(nonTelegram)).toBe(false);
     const unsupported = new BotPoolTelegramRuntimeAdapter({ getManager: () => nonTelegram });
     await expect(unsupported.getProfile("bot-a")).rejects.toThrow(

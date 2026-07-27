@@ -128,6 +128,23 @@ describe("BotManager Telegram runtime capability", () => {
     expect(JSON.stringify(profile)).not.toContain("must-not-leak");
   });
 
+  it("reads the Bot's current administrator status for grant validation", async () => {
+    const manager = createManager();
+    mocks.getMe.mockResolvedValue({
+      id: 777,
+      username: "example_chat_bot",
+      first_name: "Example Bot",
+      is_bot: true,
+    });
+    mocks.getChatMember.mockResolvedValue({ status: "administrator" });
+    await manager.start();
+
+    await expect(manager.getTelegramBotMembership({ chatId: -1001 })).resolves.toBe(
+      "administrator",
+    );
+    expect(mocks.getChatMember).toHaveBeenCalledWith(-1001, 777);
+  });
+
   it("rejects an invalid getMe identity", async () => {
     const manager = createManager();
     mocks.getMe.mockResolvedValue({
