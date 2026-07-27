@@ -272,13 +272,26 @@ export function createBot(config: BotConfig) {
   );
   if (config.miniAppUrl) {
     commandRegistry.register("panel", async (ctx) => {
-      const button =
-        ctx.chat.type === "private"
-          ? { text: "Open Panel", web_app: { url: config.miniAppUrl! } }
-          : { text: "Open Panel", url: config.miniAppUrl! };
-      await ctx.reply("Open the Bot help and management panel:", {
-        reply_markup: { inline_keyboard: [[button]] },
-      });
+      if (ctx.chat.type === "private") {
+        await ctx.reply("Open the Bot help and management panel:", {
+          reply_markup: {
+            inline_keyboard: [[{ text: "Open Panel", web_app: { url: config.miniAppUrl! } }]],
+          },
+        });
+        return;
+      }
+
+      const username = ctx.me.username;
+      await ctx.reply(
+        "Telegram only provides signed panel access from a private chat. Open this Bot privately, then send /panel.",
+        username
+          ? {
+              reply_markup: {
+                inline_keyboard: [[{ text: "Open Bot Chat", url: `https://t.me/${username}` }]],
+              },
+            }
+          : undefined,
+      );
     });
   }
   commandRegistry.register(

@@ -4,7 +4,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { BotPool } from "../services/bot-pool.js";
+import type { BotLifecycleService } from "../services/bot-lifecycle-service.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
+import type { AuthVariables } from "../middleware/better-auth.js";
 import { PeopleProfileStore } from "../services/people-profile-store.js";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
@@ -47,12 +49,92 @@ function profileDeleteDb(avatarPath: string | null) {
   } as unknown as Database;
 }
 
-function createApp(db: Database, botPool: BotPool) {
-  return new Hono().route(
-    "/bots",
-    botsRoutes(db, botPool, {} as unknown as ModelCapabilityService),
-  );
+function createApp(
+  db: Database,
+  botPool: BotPool,
+  options: { role?: string; lifecycle?: BotLifecycleService } = {},
+) {
+  return new Hono<{ Variables: AuthVariables }>()
+    .use("*", async (c, next) => {
+      c.set("authUser", { id: "user-1" } as never);
+      c.set("authMember", { role: options.role ?? "owner" } as never);
+      await next();
+    })
+    .route(
+      "/bots",
+      botsRoutes(db, botPool, {} as unknown as ModelCapabilityService, options.lifecycle),
+    );
 }
+
+describe("Mini App Bot management", () => {
+  it("does not let an editor enable Mini App while creating a Bot", async () => {
+    const insert = vi.fn();
+    const app = createApp({ insert } as unknown as Database, {} as BotPool, { role: "editor" });
+
+    const response = await app.request("/bots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "Restricted Bot",
+        platform: "telegram",
+        token: "123:test",
+        miniAppEnabled: true,
+      }),
+    });
+
+    expect(response.status).toBe(403);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("restarts an active Bot when disabling Mini App after its manager disappeared", async () => {
+    const botId = "00000000-0000-4000-8000-000000000001";
+    const existing = {
+      id: botId,
+      name: "Recovery Bot",
+      platform: "telegram" as const,
+      encryptedToken: "unreadable-test-token",
+      adminChatIds: [],
+      aiConfig: null,
+      larkWebhookConfig: null,
+      emailForwardConfig: null,
+      isActive: true,
+      miniAppEnabled: true,
+      createdAt: new Date("2026-07-27T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-27T00:00:00.000Z"),
+    };
+    const db = {
+      select: () => ({ from: () => ({ where: async () => [existing] }) }),
+      update: () => ({
+        set: (updates: Record<string, unknown>) => ({
+          where: () => ({ returning: async () => [{ ...existing, ...updates }] }),
+        }),
+      }),
+    } as unknown as Database;
+    const restart = vi.fn(async () => ({
+      desiredActive: true,
+      runtimeStatus: "running" as const,
+      reconciled: true,
+      persisted: true as const,
+      applied: true,
+    }));
+    const botPool = { getManager: vi.fn(() => undefined) } as unknown as BotPool;
+    const app = createApp(db, botPool, {
+      lifecycle: { restart } as unknown as BotLifecycleService,
+    });
+
+    const response = await app.request(`/bots/${botId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ miniAppEnabled: false }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(restart).toHaveBeenCalledWith({
+      botId,
+      actor: { kind: "better_auth_user", id: "user-1" },
+    });
+  });
+});
 
 describe("people profile avatar lifecycle", () => {
   it("returns conflict when manually creating an existing Telegram profile", async () => {

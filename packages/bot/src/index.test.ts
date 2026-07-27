@@ -231,7 +231,7 @@ describe("createBot command registry", () => {
     expect(helpNames).toEqual(activeNames);
   });
 
-  it("opens the Mini App as a Web App in private chats and a URL from groups", async () => {
+  it("opens the Mini App in private chats and directs groups to the private Bot chat", async () => {
     const bot = createCommandTestBot("complete");
     bot.botInfo = {
       id: 999,
@@ -278,8 +278,9 @@ describe("createBot command registry", () => {
     );
     const groupReply = telegramApi.requests.find(({ method }) => method === "sendMessage");
     expect(groupReply?.body).toMatchObject({
+      text: expect.stringContaining("private chat"),
       reply_markup: {
-        inline_keyboard: [[{ url: "https://panel.example/mini-app/bot-commands/help" }]],
+        inline_keyboard: [[{ url: "https://t.me/test_bot" }]],
       },
     });
     expect(groupReply?.body).not.toMatchObject({

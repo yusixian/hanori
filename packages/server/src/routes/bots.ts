@@ -766,6 +766,9 @@ export function botsRoutes(
     })
     .post("/", zValidator("json", createBotSchema), async (c) => {
       const body = c.req.valid("json");
+      if (body.miniAppEnabled && !ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限启用 Telegram Mini App" }, 403);
+      }
       const platform = body.platform ?? "telegram";
 
       let encryptedToken: string;
@@ -930,6 +933,30 @@ export function botsRoutes(
         }
       } else {
         // Restart running bot if config changed
+        const miniAppFlagChanged =
+          body.miniAppEnabled !== undefined && body.miniAppEnabled !== existing.miniAppEnabled;
+        let miniAppRestartHandled = false;
+        if (miniAppFlagChanged && updated.isActive) {
+          miniAppRestartHandled = true;
+          try {
+            if (botLifecycleService) {
+              const lifecycle = await botLifecycleService.restart({
+                botId,
+                actor: { kind: "better_auth_user", id: c.get("authUser").id },
+              });
+              if (!lifecycle.applied) throw new Error(lifecycle.errorCode ?? "restart_failed");
+            } else if (manager) {
+              await botPool.restartBot(botId);
+            } else {
+              await botPool.startBot(botId);
+            }
+          } catch (error) {
+            console.error("Bot restart after Mini App flag update failed", { botId, error });
+            throw new HTTPException(503, {
+              message: "Mini App 设置已保存，但 Bot 重启失败。请检查 HTTPS 配置和服务端日志后重试",
+            });
+          }
+        }
         const needsRestart =
           body.token !== undefined ||
           body.adminChatIds !== undefined ||
@@ -938,17 +965,11 @@ export function botsRoutes(
           body.miniAppEnabled !== undefined ||
           body.emailForwardConfig !== undefined ||
           body.clearEmailForwardConfig;
-        if (manager && needsRestart) {
+        if (manager && needsRestart && !miniAppRestartHandled) {
           try {
             await botPool.restartBot(botId);
-          } catch (error) {
-            if (body.miniAppEnabled !== undefined) {
-              console.error("Bot restart after Mini App flag update failed", { botId, error });
-              throw new HTTPException(503, {
-                message:
-                  "Mini App 设置已保存，但 Bot 重启失败。请检查 HTTPS 配置和服务端日志后重试",
-              });
-            }
+          } catch {
+            // Preserve the existing best-effort behavior for non-lifecycle settings.
           }
         }
       }
