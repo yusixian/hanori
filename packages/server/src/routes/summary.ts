@@ -16,12 +16,25 @@ import {
 } from "../services/summary-prompts.js";
 
 const accessModeSchema = z.enum(["all", "admin"]);
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
 const createConfigSchema = z.object({
   chatId: z.number().int(),
   isActive: z.boolean().optional(),
   scheduleHour: z.number().int().min(0).max(23).nullable().optional(),
   scheduleMinute: z.number().int().min(0).max(59).nullable().optional(),
+  timezone: timezoneSchema.nullable().optional(),
   windowHours: z.number().int().min(1).max(72).optional(),
   customPrompt: z.string().nullable().optional(),
   providerId: z.string().nullable().optional(),

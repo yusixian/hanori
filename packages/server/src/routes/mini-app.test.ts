@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { describe, expect, it, vi } from "vitest";
 import { MINI_APP_SESSION_COOKIE_NAME } from "../services/mini-app-session.js";
 import { MiniAppAccessError } from "../services/mini-app-access-service.js";
+import { GroupConfigConflictError } from "../services/group-config-service.js";
 import type { TelegramAccessSnapshot } from "../services/telegram-directory-service.js";
 import { miniAppRoutes, type MiniAppRoutesOptions } from "./mini-app.js";
 
@@ -11,6 +12,7 @@ const BOT_B = "00000000-0000-4000-8000-000000000002";
 const BOT_TOKEN = "123456:test-token";
 const SECRET = "mini-app-session-secret-at-least-32-characters";
 const NOW_SECONDS = 1_800_000_000;
+const ORIGIN = "http://localhost";
 
 function signInitData(userId = 42, authDate = NOW_SECONDS) {
   const fields: [string, string][] = [
@@ -50,14 +52,58 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     grantOperator: vi.fn(async () => {}),
     revokeOperator: vi.fn(async () => {}),
   };
+  const group = {
+    chatId: -1001,
+    type: "supergroup" as const,
+    title: "Build Room",
+    username: "build_room",
+    botMembershipStatus: "administrator",
+    membershipObservedAt: "2026-07-27T00:00:00.000Z",
+    lastObservedAt: "2026-07-27T00:00:00.000Z",
+    archived: false,
+    config: {
+      revision: "rev-1",
+      aiConfigured: true,
+      group: {
+        enabled: true,
+        whitelisted: false,
+        trigger: {
+          replyToBot: true,
+          mentionBot: true,
+          triggerWords: [],
+          randomReplyPercent: 0,
+          randomReplyCooldown: 0,
+        },
+        conversation: { enabled: true, maxContextMessages: 20, groupHistoryMaxTokens: 12_000 },
+      },
+      summary: {
+        enabled: false,
+        scheduleHour: null,
+        scheduleMinute: null,
+        timezone: "Asia/Shanghai",
+        windowHours: 24,
+        maxMessages: 2_000,
+        cooldownSeconds: 300,
+      },
+    },
+    applyState: "applied" as const,
+  };
+  const groupConfigService = {
+    list: vi.fn(async () => [group]),
+    read: vi.fn(async () => group),
+    patch: vi.fn(async () => ({ persisted: true, applied: true, group })),
+    retryApply: vi.fn(async () => group),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
+    allowedOrigins: [ORIGIN],
     botTokenResolver: {
       resolve: vi.fn(async (botId: string) => (botId === BOT_A ? BOT_TOKEN : null)),
     },
     directory,
     membershipVerifier: { isMember: vi.fn(async () => false) },
     accessService,
+    groupConfigService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
@@ -65,6 +111,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     app: new Hono().route("/mini-app", miniAppRoutes(options)),
     directory,
     accessService,
+    groupConfigService,
     options,
   };
 }
@@ -299,7 +346,11 @@ describe("Mini App Access routes", () => {
 
     const accepted = await app.request(endpoint, {
       ...request,
-      headers: { ...request.headers, "x-mini-app-csrf": session.csrfToken },
+      headers: {
+        ...request.headers,
+        origin: ORIGIN,
+        "x-mini-app-csrf": session.csrfToken,
+      },
     });
     expect(accepted.status).toBe(200);
     expect(accessService.grantOperator).toHaveBeenCalledWith({
@@ -321,14 +372,14 @@ describe("Mini App Access routes", () => {
     });
     const revoked = await app.request(`/mini-app/${BOT_A}/access/operator-grants/73`, {
       method: "DELETE",
-      headers: { cookie: session.cookie, "x-mini-app-csrf": session.csrfToken },
+      headers: { cookie: session.cookie, origin: ORIGIN, "x-mini-app-csrf": session.csrfToken },
     });
     expect(revoked.status).toBe(403);
     expect(accessService.revokeOperator).not.toHaveBeenCalled();
 
     const invalid = await app.request(`/mini-app/${BOT_A}/access/chat-grants/42`, {
       method: "DELETE",
-      headers: { cookie: session.cookie, "x-mini-app-csrf": session.csrfToken },
+      headers: { cookie: session.cookie, origin: ORIGIN, "x-mini-app-csrf": session.csrfToken },
     });
     expect(invalid.status).toBe(400);
   });
@@ -343,6 +394,7 @@ describe("Mini App Access routes", () => {
       method: "POST",
       headers: {
         cookie: session.cookie,
+        origin: ORIGIN,
         "content-type": "application/json",
         "x-mini-app-csrf": session.csrfToken,
       },
@@ -353,6 +405,146 @@ describe("Mini App Access routes", () => {
       ok: false,
       error: "The Bot must currently be an administrator",
       code: "bot_admin_required",
+    });
+  });
+});
+
+describe("Mini App group configuration routes", () => {
+  async function sessionFor(app: Hono) {
+    const created = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    const body = (await created.clone().json()) as { session: { csrfToken: string } };
+    return { cookie: cookieFrom(created), csrfToken: body.session.csrfToken };
+  }
+
+  it("projects only the current role's chat scope", async () => {
+    const snapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [42],
+      grantedChatIds: [-1001],
+    };
+    const { app, groupConfigService } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => snapshot) },
+    });
+    const session = await sessionFor(app);
+    const response = await app.request(`/mini-app/${BOT_A}/groups`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, editable: true });
+    expect(groupConfigService.list).toHaveBeenCalledWith(BOT_A, [-1001]);
+
+    const outsideScope = await app.request(`/mini-app/${BOT_A}/groups/-2002`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(outsideScope.status).toBe(403);
+  });
+
+  it("rejects viewers and over-posting, then accepts an allowed field PATCH with CSRF", async () => {
+    const viewerSnapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [],
+      grantedChatIds: [-1001],
+    };
+    const viewer = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => viewerSnapshot) },
+      membershipVerifier: { isMember: vi.fn(async () => true) },
+    }).app;
+    const viewerSession = await sessionFor(viewer);
+    const viewerWrite = await viewer.request(`/mini-app/${BOT_A}/groups/-1001`, {
+      method: "PATCH",
+      headers: {
+        cookie: viewerSession.cookie,
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-mini-app-csrf": viewerSession.csrfToken,
+      },
+      body: JSON.stringify({ expectedRevision: "rev-1", patch: { group: { enabled: false } } }),
+    });
+    expect(viewerWrite.status).toBe(403);
+
+    const operatorSnapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [42],
+      grantedChatIds: [-1001],
+    };
+    const { app, groupConfigService } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => operatorSnapshot) },
+    });
+    const session = await sessionFor(app);
+    const endpoint = `/mini-app/${BOT_A}/groups/-1001`;
+    const headers = {
+      cookie: session.cookie,
+      origin: ORIGIN,
+      "content-type": "application/json",
+      "x-mini-app-csrf": session.csrfToken,
+    };
+    const overPosted = await app.request(endpoint, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: "rev-1",
+        patch: { group: { systemPrompt: "must not pass" } },
+      }),
+    });
+    expect(overPosted.status).toBe(400);
+    expect(groupConfigService.patch).not.toHaveBeenCalled();
+
+    const crossOrigin = await app.request(endpoint, {
+      method: "PATCH",
+      headers: { ...headers, origin: "https://attacker.example" },
+      body: JSON.stringify({
+        expectedRevision: "rev-1",
+        patch: { group: { enabled: false } },
+      }),
+    });
+    expect(crossOrigin.status).toBe(403);
+    expect(groupConfigService.patch).not.toHaveBeenCalled();
+
+    const accepted = await app.request(endpoint, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: "rev-1",
+        patch: { group: { enabled: false }, summary: { timezone: "UTC" } },
+      }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(groupConfigService.patch).toHaveBeenCalledWith({
+      botId: BOT_A,
+      chatId: -1001,
+      actorTelegramUserId: 42,
+      actorRole: "operator",
+      expectedRevision: "rev-1",
+      patch: { group: { enabled: false }, summary: { timezone: "UTC" } },
+    });
+  });
+
+  it("returns 409 with the latest safe projection for stale writes", async () => {
+    const { app, groupConfigService } = testApp();
+    groupConfigService.patch.mockRejectedValueOnce(new GroupConfigConflictError());
+    const session = await sessionFor(app);
+    const response = await app.request(`/mini-app/${BOT_A}/groups/-1001`, {
+      method: "PATCH",
+      headers: {
+        cookie: session.cookie,
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-mini-app-csrf": session.csrfToken,
+      },
+      body: JSON.stringify({ expectedRevision: "stale", patch: { group: { enabled: false } } }),
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      code: "stale_revision",
+      latest: { chatId: -1001, config: { revision: "rev-1" } },
     });
   });
 });

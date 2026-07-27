@@ -1,4 +1,4 @@
-import type { IBotManager } from "@cos-tool-bot/shared";
+import type { AiGroupOverride, IBotManager } from "@cos-tool-bot/shared";
 import type { TelegramMembershipVerifier } from "./mini-app-access-policy.js";
 
 export interface TelegramBotPublicProfile {
@@ -14,6 +14,7 @@ export interface TelegramBotRuntime {
   getTelegramBotMembership(input: {
     chatId: number;
   }): Promise<"creator" | "administrator" | "member" | "restricted" | "left" | "kicked">;
+  applyTelegramGroupOverride(input: { chatId: number; override: AiGroupOverride }): void;
 }
 
 export interface BotManagerLookup {
@@ -55,7 +56,8 @@ export function supportsTelegramBotRuntime(
   return (
     typeof candidate.getTelegramProfile === "function" &&
     typeof candidate.isTelegramMember === "function" &&
-    typeof candidate.getTelegramBotMembership === "function"
+    typeof candidate.getTelegramBotMembership === "function" &&
+    typeof candidate.applyTelegramGroupOverride === "function"
   );
 }
 
@@ -100,6 +102,21 @@ export class BotPoolTelegramRuntimeAdapter implements TelegramMembershipVerifier
     }
     return this.getRunningTelegramManager(input.botId).getTelegramBotMembership({
       chatId: input.chatId,
+    });
+  }
+
+  async applyGroupOverride(input: {
+    botId: string;
+    chatId: number;
+    override: AiGroupOverride;
+  }): Promise<void> {
+    requireBotId(input.botId);
+    if (!isTelegramGroupChatId(input.chatId) || input.override.chatId !== input.chatId) {
+      throw new Error("Telegram group override scope is invalid");
+    }
+    this.getRunningTelegramManager(input.botId).applyTelegramGroupOverride({
+      chatId: input.chatId,
+      override: structuredClone(input.override),
     });
   }
 

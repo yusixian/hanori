@@ -4,13 +4,13 @@ Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一
 
 ## Route map
 
-| Route                              | Session     | G2 行为                                       |
-| ---------------------------------- | ----------- | --------------------------------------------- |
-| `/mini-app/:botId/help`            | 非必需      | 始终显示项目背景和 shared public command help |
-| `/mini-app/:botId/groups`          | 必需        | 按角色显示 shell；业务目录在 G3–G4 接入       |
-| `/mini-app/:botId/settings`        | Admin       | G2 仅显示无写操作的占位页                     |
-| `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动       |
-| `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                  |
+| Route                              | Session     | G2 行为                                          |
+| ---------------------------------- | ----------- | ------------------------------------------------ |
+| `/mini-app/:botId/help`            | 非必需      | 始终显示项目背景和 shared public command help    |
+| `/mini-app/:botId/groups`          | 必需        | 展示当前角色范围内的群，并按 capability 决定读写 |
+| `/mini-app/:botId/settings`        | Admin       | G2 仅显示无写操作的占位页                        |
+| `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动          |
+| `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                     |
 
 公共 Help 的命令来自 `TELEGRAM_COMMAND_CATALOG`，只选择 `publicHelpVisibility = public`。它不依赖 Telegram SDK 或 session API 的成功响应，也不展示 Bot capability、Provider 数量、运行状态或部署信息。
 
@@ -35,6 +35,25 @@ Access 页只对当前 Bot 的 Mini App Admin 开放；Operator、Viewer 和 `no
 Operator 可以管理当前 Bot 的全部已授权群，无需成为这些群的成员；Viewer 始终需要是具体授权群的当前成员。Operator grant 与 AI/private-chat allowlist 完全独立，撤销后下一次写入必须立即失败。
 
 人物搜索只使用 Telegram ID、username 和 display name，并只返回 ID、username、display name、last-seen 投影；不得搜索或返回 notes、traits、interests、AI 对话或人物档案内容。username 只帮助发现候选人，最终授权始终提交精确的正整数 Telegram ID。未被目录观察到的精确 ID 会明确标记为“资料未验证”，note 为可选上下文，不是强制授权理由。
+
+## 群配置
+
+`GET /api/mini-app/:botId/groups` 和详情接口只返回当前 capability 与 chat scope 允许的安全投影。Viewer 看到真实值但不会收到可编辑控件；Operator/Admin 的写请求必须同时携带同源 `Origin`、Bot-scoped Cookie 与 session 中的 `x-mini-app-csrf`。
+
+Mini App 只允许字段级 PATCH：
+
+| 区域    | 允许字段                                                 |
+| ------- | -------------------------------------------------------- |
+| 群运行  | `enabled`、`whitelisted`                                 |
+| 触发    | reply、mention、trigger words、随机回复比例与 cooldown   |
+| 对话    | enabled、上下文消息上限、群历史 token 上限               |
+| Summary | enabled、schedule、timezone、window、消息上限与 cooldown |
+
+Provider、模型、Prompt、工具、凭据、人物档案、聊天历史和用量不会出现在 G4 DTO，也不能通过 over-posting 写入。未配置 AI 的 Bot 仍可修改独立 Summary 配置，但群 AI 字段返回 `ai_not_configured`。
+
+详情携带 opaque `revision`。保存时服务端在按 Bot 串行边界内重新锁定并读取最新 DB 数据；版本过期返回 `409 stale_revision` 和最新安全投影，客户端不得自动覆盖。DB commit 与运行态 apply 同属一个进程内 Bot 串行边界，避免旧请求反向覆盖新请求。DB 失败不会修改 runtime；runtime 失败则返回 `persisted: true, applied: false`，详情保持 `pending`，直到 Admin 手动 retry 或 Bot 下次从 DB 启动。
+
+M1 明确为单实例控制面；跨实例锁、共享 pending 状态与常驻 retry worker 后移。
 
 ## DEV mock
 

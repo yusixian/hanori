@@ -740,6 +740,7 @@ export interface SummaryConfigRecord {
   isActive: boolean;
   scheduleHour: number | null;
   scheduleMinute: number | null;
+  timezone: string | null;
   windowHours: number;
   customPrompt: string | null;
   providerId: string | null;

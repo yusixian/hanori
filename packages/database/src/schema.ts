@@ -614,6 +614,7 @@ export const summaryConfigs = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     scheduleHour: integer("schedule_hour"),
     scheduleMinute: integer("schedule_minute"),
+    timezone: text("timezone"),
     windowHours: integer("window_hours").notNull().default(24),
     customPrompt: text("custom_prompt"),
     providerId: text("provider_id"),

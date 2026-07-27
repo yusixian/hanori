@@ -207,7 +207,7 @@ export class ChatSummaryService {
 
       // scheduleHour/Minute are stored in the bot's configured timezone (default Asia/Shanghai),
       // not UTC, so users see/set wall-clock time consistent with other in-product timestamps.
-      const tz = botCfg.timezone ?? DEFAULT_TIMEZONE;
+      const tz = cfg.timezone ?? botCfg.timezone ?? DEFAULT_TIMEZONE;
       const { hour, minute } = hourMinuteInTz(now, tz);
       if (hour !== cfg.scheduleHour || minute !== cfg.scheduleMinute) continue;
 

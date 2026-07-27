@@ -1,0 +1,1 @@
+ALTER TABLE "summary_configs" ADD COLUMN "timezone" text;

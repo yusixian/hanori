@@ -4,7 +4,15 @@ import type { MiniAppCapability } from "@cos-tool-bot/shared";
 import { timingSafeEqual } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
+import { z } from "zod";
 import { tryDecrypt } from "../utils/crypto.js";
+import {
+  GroupConfigArchivedError,
+  GroupConfigConflictError,
+  GroupConfigNotFoundError,
+  GroupConfigUnavailableError,
+  type GroupConfigService,
+} from "../services/group-config-service.js";
 import {
   MiniAppAccessError,
   type MiniAppAccessService,
@@ -86,6 +94,7 @@ interface DirectoryReader {
 
 export interface MiniAppRoutesOptions {
   sessionSecret: string;
+  allowedOrigins?: readonly string[];
   botTokenResolver: MiniAppBotTokenResolver;
   directory: Pick<TelegramDirectoryService, "readAccessSnapshot"> | DirectoryReader;
   membershipVerifier: TelegramMembershipVerifier;
@@ -94,9 +103,71 @@ export interface MiniAppRoutesOptions {
     MiniAppAccessService,
     "readAccess" | "searchPeople" | "grantChat" | "revokeChat" | "grantOperator" | "revokeOperator"
   >;
+  groupConfigService?: Pick<GroupConfigService, "list" | "read" | "patch" | "retryApply">;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
 }
+
+const timezoneSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((value) => {
+    try {
+      new Intl.DateTimeFormat("en", { timeZone: value });
+      return true;
+    } catch {
+      return false;
+    }
+  });
+
+const groupConfigPatchSchema = z
+  .object({
+    expectedRevision: z.string().min(1).max(100),
+    patch: z
+      .object({
+        group: z
+          .object({
+            enabled: z.boolean().optional(),
+            whitelisted: z.boolean().optional(),
+            trigger: z
+              .object({
+                replyToBot: z.boolean().optional(),
+                mentionBot: z.boolean().optional(),
+                triggerWords: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
+                randomReplyPercent: z.number().min(0).max(100).optional(),
+                randomReplyCooldown: z.number().int().min(0).max(86_400).optional(),
+              })
+              .strict()
+              .optional(),
+            conversation: z
+              .object({
+                enabled: z.boolean().optional(),
+                maxContextMessages: z.number().int().min(1).max(100).optional(),
+                groupHistoryMaxTokens: z.number().int().min(2_000).max(64_000).optional(),
+              })
+              .strict()
+              .optional(),
+          })
+          .strict()
+          .optional(),
+        summary: z
+          .object({
+            enabled: z.boolean().optional(),
+            scheduleHour: z.number().int().min(0).max(23).nullable().optional(),
+            scheduleMinute: z.number().int().min(0).max(59).nullable().optional(),
+            timezone: timezoneSchema.nullable().optional(),
+            windowHours: z.number().int().min(1).max(72).optional(),
+            maxMessages: z.number().int().min(10).max(2_000).nullable().optional(),
+            cooldownSeconds: z.number().int().min(0).max(86_400).nullable().optional(),
+          })
+          .strict()
+          .optional(),
+      })
+      .strict()
+      .refine((patch) => patch.group !== undefined || patch.summary !== undefined),
+  })
+  .strict();
 
 function secureEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
@@ -155,6 +226,16 @@ function publicAccess(decision: Awaited<ReturnType<MiniAppAccessPolicy["resolve"
   };
 }
 
+function chatScopeAllows(
+  access: Awaited<ReturnType<MiniAppAccessPolicy["resolve"]>>,
+  chatId: number,
+): boolean {
+  return (
+    access.chatScope.kind === "all" ||
+    (access.chatScope.kind === "granted" && access.chatScope.chatIds.includes(chatId))
+  );
+}
+
 export function miniAppRoutes(options: MiniAppRoutesOptions) {
   const accessPolicy = options.accessPolicy ?? new MiniAppAccessPolicy();
   const rateLimiter = options.rateLimiter ?? new InMemoryMiniAppSessionRateLimiter();
@@ -175,10 +256,11 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
 
   async function authorize(
     botId: string,
-    headers: Headers,
+    request: Request,
     capability: MiniAppCapability,
     requireCsrf: boolean,
   ) {
+    const { headers } = request;
     if (!UUID_PATTERN.test(botId)) return { ok: false as const, status: 404 as const };
     const token = readCookie(headers.get("cookie") ?? undefined, MINI_APP_SESSION_COOKIE_NAME);
     if (!token || options.sessionSecret.length < 32) {
@@ -196,10 +278,17 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
       if (!access.capabilities.includes(capability)) {
         return { ok: false as const, status: 403 as const };
       }
-      if (requireCsrf && !secureEqual(headers.get("x-mini-app-csrf") ?? "", session.csrfToken)) {
-        return { ok: false as const, status: 403 as const };
+      if (requireCsrf) {
+        const origin = headers.get("origin");
+        const allowedOrigins = options.allowedOrigins ?? [new URL(request.url).origin];
+        if (!origin || !allowedOrigins.includes(origin)) {
+          return { ok: false as const, status: 403 as const };
+        }
+        if (!secureEqual(headers.get("x-mini-app-csrf") ?? "", session.csrfToken)) {
+          return { ok: false as const, status: 403 as const };
+        }
       }
-      return { ok: true as const, userId: session.userId };
+      return { ok: true as const, userId: session.userId, access };
     } catch (error) {
       if (error instanceof MiniAppSessionError) {
         return { ok: false as const, status: 401 as const };
@@ -322,7 +411,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .get("/:botId/access", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", false);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", false);
       if (!authorization.ok) {
         if (authorization.status === 401) {
           c.header("Set-Cookie", clearMiniAppSessionCookie(botId));
@@ -357,7 +446,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .get("/:botId/access/people", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", false);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", false);
       if (!authorization.ok) {
         return c.json(
           {
@@ -379,7 +468,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .post("/:botId/access/chat-grants", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", true);
       if (!authorization.ok) {
         return c.json(
           {
@@ -415,7 +504,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .delete("/:botId/access/chat-grants/:chatId", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", true);
       if (!authorization.ok) {
         return c.json(
           {
@@ -449,7 +538,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .post("/:botId/access/operator-grants", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", true);
       if (!authorization.ok) {
         return c.json(
           {
@@ -485,7 +574,7 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     })
     .delete("/:botId/access/operator-grants/:telegramUserId", async (c) => {
       const botId = c.req.param("botId");
-      const authorization = await authorize(botId, c.req.raw.headers, "access.manage", true);
+      const authorization = await authorize(botId, c.req.raw, "access.manage", true);
       if (!authorization.ok) {
         return c.json(
           {
@@ -515,6 +604,171 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
           return c.json(mapped.body, mapped.status);
         }
         throw error;
+      }
+    })
+    .get("/:botId/groups", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "group.config.read", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.groupConfigService) {
+        return c.json({ ok: false as const, error: "Group configuration is not available" }, 503);
+      }
+      const scope =
+        authorization.access.chatScope.kind === "all"
+          ? ("all" as const)
+          : authorization.access.chatScope.kind === "granted"
+            ? authorization.access.chatScope.chatIds
+            : [];
+      try {
+        const groups = await options.groupConfigService.list(botId, scope);
+        return c.json({
+          ok: true as const,
+          editable: authorization.access.capabilities.includes("group.config.write"),
+          groups,
+        });
+      } catch (error) {
+        if (error instanceof GroupConfigNotFoundError) {
+          return c.json({ ok: false as const, error: "Not found" }, 404);
+        }
+        throw error;
+      }
+    })
+    .get("/:botId/groups/:chatId", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "group.config.read", false);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.groupConfigService) {
+        return c.json({ ok: false as const, error: "Group configuration is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          editable: authorization.access.capabilities.includes("group.config.write"),
+          group: await options.groupConfigService.read(botId, chatId),
+        });
+      } catch (error) {
+        if (error instanceof GroupConfigNotFoundError) {
+          return c.json({ ok: false as const, error: "Not found" }, 404);
+        }
+        throw error;
+      }
+    })
+    .patch("/:botId/groups/:chatId", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "group.config.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.groupConfigService) {
+        return c.json({ ok: false as const, error: "Group configuration is not available" }, 503);
+      }
+      const parsed = groupConfigPatchSchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.groupConfigService.patch({
+          botId,
+          chatId,
+          actorTelegramUserId: authorization.userId,
+          actorRole: authorization.access.role as "admin" | "operator",
+          expectedRevision: parsed.data.expectedRevision,
+          patch: parsed.data.patch,
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        if (error instanceof GroupConfigConflictError) {
+          return c.json(
+            {
+              ok: false as const,
+              error: "Stale revision",
+              code: "stale_revision" as const,
+              latest: await options.groupConfigService.read(botId, chatId),
+            },
+            409,
+          );
+        }
+        if (error instanceof GroupConfigArchivedError) {
+          return c.json(
+            { ok: false as const, error: error.message, code: "archived" as const },
+            409,
+          );
+        }
+        if (error instanceof GroupConfigUnavailableError) {
+          return c.json(
+            { ok: false as const, error: error.message, code: "ai_not_configured" as const },
+            409,
+          );
+        }
+        if (error instanceof GroupConfigNotFoundError) {
+          return c.json({ ok: false as const, error: "Not found" }, 404);
+        }
+        throw error;
+      }
+    })
+    .post("/:botId/groups/:chatId/retry-apply", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "bot.settings.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.groupConfigService) {
+        return c.json({ ok: false as const, error: "Group configuration is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          group: await options.groupConfigService.retryApply(botId, chatId),
+        });
+      } catch (error) {
+        if (error instanceof GroupConfigNotFoundError) {
+          return c.json({ ok: false as const, error: "Not found" }, 404);
+        }
+        if (error instanceof GroupConfigArchivedError) {
+          return c.json(
+            { ok: false as const, error: error.message, code: "archived" as const },
+            409,
+          );
+        }
+        return c.json({ ok: false as const, error: "Runtime apply failed" }, 503);
       }
     });
 }

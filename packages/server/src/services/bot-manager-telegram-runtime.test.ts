@@ -145,6 +145,28 @@ describe("BotManager Telegram runtime capability", () => {
     expect(mocks.getChatMember).toHaveBeenCalledWith(-1001, 777);
   });
 
+  it("hot-applies a scoped group override without restarting the Bot", async () => {
+    const manager = createManager();
+    const runtimeConfig = { groupOverrides: {} as Record<string, unknown> };
+    (
+      manager as unknown as {
+        botConfig: { aiReply: { groupOverrides: Record<string, unknown> } };
+      }
+    ).botConfig.aiReply = runtimeConfig;
+    await manager.start();
+
+    manager.applyTelegramGroupOverride({
+      chatId: -1001,
+      override: { chatId: -1001, whitelisted: true, enabled: false },
+    });
+
+    expect(runtimeConfig.groupOverrides).toEqual({
+      "-1001": { chatId: -1001, whitelisted: true, enabled: false },
+    });
+    expect(mocks.createBot).toHaveBeenCalledOnce();
+    expect(mocks.disposeBot).not.toHaveBeenCalled();
+  });
+
   it("rejects an invalid getMe identity", async () => {
     const manager = createManager();
     mocks.getMe.mockResolvedValue({

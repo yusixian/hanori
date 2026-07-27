@@ -9,6 +9,7 @@ import type {
 import { createBot, disposeBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
 import { run, type RunnerHandle } from "@grammyjs/runner";
 import type {
+  AiGroupOverride,
   BotStatus,
   ConversationCallbacks,
   IBotManager,
@@ -202,6 +203,16 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     }
     const member = await bot.api.getChatMember(input.chatId, profile.id);
     return member.status;
+  }
+
+  applyTelegramGroupOverride(input: { chatId: number; override: AiGroupOverride }): void {
+    if (!isTelegramGroupChatId(input.chatId) || input.override.chatId !== input.chatId) {
+      throw new Error("Telegram group override scope is invalid");
+    }
+    if (this._status !== "running" || !this.bot || !this.botConfig.aiReply) {
+      throw new Error(`Bot ${this.botId} is not running with AI configured`);
+    }
+    this.botConfig.aiReply.groupOverrides[String(input.chatId)] = structuredClone(input.override);
   }
 
   async sendRichMessage(

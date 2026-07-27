@@ -11,6 +11,7 @@ function toRecord(r: typeof summaryConfigs.$inferSelect): SummaryConfigRecord {
     isActive: r.isActive,
     scheduleHour: r.scheduleHour,
     scheduleMinute: r.scheduleMinute,
+    timezone: r.timezone,
     windowHours: r.windowHours,
     customPrompt: r.customPrompt,
     providerId: r.providerId,
@@ -55,6 +56,7 @@ export class SummaryConfigService {
     isActive?: boolean;
     scheduleHour?: number | null;
     scheduleMinute?: number | null;
+    timezone?: string | null;
     windowHours?: number;
     customPrompt?: string | null;
     providerId?: string | null;
@@ -71,6 +73,7 @@ export class SummaryConfigService {
         isActive: params.isActive ?? true,
         scheduleHour: params.scheduleHour ?? null,
         scheduleMinute: params.scheduleMinute ?? null,
+        timezone: params.timezone ?? null,
         windowHours: params.windowHours ?? 24,
         customPrompt: params.customPrompt ?? null,
         providerId: params.providerId ?? null,
@@ -90,6 +93,7 @@ export class SummaryConfigService {
       isActive: boolean;
       scheduleHour: number | null;
       scheduleMinute: number | null;
+      timezone: string | null;
       windowHours: number;
       customPrompt: string | null;
       providerId: string | null;
