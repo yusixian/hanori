@@ -4,12 +4,14 @@ import { auth as authEn } from "../src/i18n/locales/en/auth";
 import { botData as botDataEn } from "../src/i18n/locales/en/bot-data";
 import { bots as botsEn } from "../src/i18n/locales/en/bots";
 import { common as commonEn } from "../src/i18n/locales/en/common";
+import { miniApp as miniAppEn } from "../src/i18n/locales/en/mini-app";
 import { admin as adminZhCN } from "../src/i18n/locales/zh-CN/admin";
 import { aiSettings as aiSettingsZhCN } from "../src/i18n/locales/zh-CN/ai-settings";
 import { auth as authZhCN } from "../src/i18n/locales/zh-CN/auth";
 import { botData as botDataZhCN } from "../src/i18n/locales/zh-CN/bot-data";
 import { bots as botsZhCN } from "../src/i18n/locales/zh-CN/bots";
 import { common as commonZhCN } from "../src/i18n/locales/zh-CN/common";
+import { miniApp as miniAppZhCN } from "../src/i18n/locales/zh-CN/mini-app";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,6 +62,7 @@ const namespaces: Record<string, { en: ResourceTree; zhCN: ResourceTree }> = {
   bots: { en: botsEn, zhCN: botsZhCN },
   botData: { en: botDataEn, zhCN: botDataZhCN },
   aiSettings: { en: aiSettingsEn, zhCN: aiSettingsZhCN },
+  miniApp: { en: miniAppEn, zhCN: miniAppZhCN },
 };
 
 const failures: string[] = [];
@@ -137,6 +140,6 @@ if (failures.length > 0) {
   process.exitCode = 1;
 } else {
   console.log(
-    `i18n validation passed for ${checkedKeys} normalized keys across 6 namespaces and all static calls.`,
+    `i18n validation passed for ${checkedKeys} normalized keys across ${Object.keys(namespaces).length} namespaces and all static calls.`,
   );
 }

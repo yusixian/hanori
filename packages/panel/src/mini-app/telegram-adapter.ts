@@ -142,6 +142,7 @@ function readState(webApp: TelegramWebApp): TelegramMiniAppState {
 
 function stateCssVariables(state: TelegramMiniAppState): CssVariableMap {
   const variables: CssVariableMap = {
+    "--tg-color-scheme": state.colorScheme,
     "--tg-viewport-height": `${state.viewport.height}px`,
     "--tg-viewport-stable-height": `${state.viewport.stableHeight}px`,
     "--tg-safe-area-inset-top": `${state.safeArea.top}px`,

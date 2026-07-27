@@ -256,6 +256,8 @@ Forward 流程由 Telegram migration update 自动触发：先锁当前 Bot row�
 
 Mini App 不实例化 Refine auth/data/layout。独立 Telegram adapter 管理 `initData`、theme、viewport、safe area、ready/expand/back/close 与事件清理；DEV mock 只能通过 `import.meta.env.DEV` 进入。
 
+实现与本地 mock 使用方法见 `docs/TELEGRAM_MINI_APP.md`。
+
 导航：
 
 - admin：Groups、Settings、Access、Help；
