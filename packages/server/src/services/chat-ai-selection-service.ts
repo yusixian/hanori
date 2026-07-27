@@ -572,6 +572,9 @@ export class ChatAiSelectionService {
     actorTelegramUserId: number,
   ): Promise<void> {
     const current = await this.readChat(botId, chatId, true);
+    if (!("selection" in current) || !("providerId" in current.selection)) {
+      throw new ChatAiSelectionError("not_found", "AI selection was not found");
+    }
     await this.setChat({
       botId,
       chatId,
@@ -588,6 +591,9 @@ export class ChatAiSelectionService {
     actorTelegramUserId: number,
   ): Promise<void> {
     const current = await this.readChat(botId, chatId, true);
+    if (!("selection" in current) || !("providerId" in current.selection)) {
+      throw new ChatAiSelectionError("not_found", "AI selection was not found");
+    }
     await this.setChat({
       botId,
       chatId,
@@ -618,6 +624,9 @@ export class ChatAiSelectionService {
   ): Promise<void> {
     const current = await this.readChat(botId, chatId, true);
     if (current.source === "global") return;
+    if (!("selection" in current) || !("providerId" in current.selection)) {
+      throw new ChatAiSelectionError("not_found", "AI selection was not found");
+    }
     await this.setChat({
       botId,
       chatId,

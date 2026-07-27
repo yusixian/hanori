@@ -2,6 +2,9 @@ import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   AiReplyBotConfig,
+  AiSelectionCallbacks,
+  AiSelectionSnapshot,
+  BotAiSelectionRuntime,
   BotTimerHandlers,
   TelegramObservationCallbacks,
 } from "@cos-tool-bot/bot";
@@ -47,8 +50,6 @@ import { migrateAiConfig } from "../utils/ai-config-migrate.js";
 import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
-import { ChatModelStore } from "./chat-model-store.js";
-import { ChatProviderStore } from "./chat-provider-store.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationHistoryGovernor } from "./conversation-history-governor.js";
 import { ConversationStore } from "./conversation-store.js";
@@ -86,6 +87,12 @@ import {
   TelegramRichMessagesUnsupportedError,
 } from "./telegram-rich-message-errors.js";
 import { UserPrivacyService } from "./user-privacy-service.js";
+import type { ChatAiSelectionService } from "./chat-ai-selection-service.js";
+import type {
+  ChatAiSelectionRuntime,
+  ChatAiSelectionRuntimeRegistry,
+  ChatAiSelectionRuntimeSnapshot,
+} from "./chat-ai-selection-runtime-registry.js";
 
 const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const CONVERSATION_GOVERNANCE_STARTUP_GRACE_MS = 15_000;
@@ -93,6 +100,21 @@ const GENERATION_RECOVERY_CONCURRENCY = 3;
 const GENERATION_RECOVERY_BATCH_SIZE = GENERATION_RECOVERY_CONCURRENCY;
 const GENERATION_RECOVERY_SWEEP_INTERVAL_MS = 60_000;
 const GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
+
+function toBotAiSelectionSnapshot(snapshot: ChatAiSelectionRuntimeSnapshot): AiSelectionSnapshot {
+  return {
+    global: {
+      activeProviderId: snapshot.global.providerId,
+      activeModelId: snapshot.global.modelId,
+    },
+    chats: Object.fromEntries(
+      [...snapshot.chats].map(([chatId, pair]) => [
+        String(chatId),
+        { providerId: pair.providerId, modelId: pair.modelId },
+      ]),
+    ),
+  };
+}
 
 interface GenerationRecoveryEntry {
   controller: AbortController;
@@ -133,8 +155,17 @@ export class BotPool {
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
   private userPrivacyService: UserPrivacyService;
-  private chatModelStore: ChatModelStore;
-  private chatProviderStore: ChatProviderStore;
+  private chatAiSelectionService?: Pick<
+    ChatAiSelectionService,
+    | "loadRuntimeSnapshot"
+    | "retryPublish"
+    | "setModelFromTelegram"
+    | "resetModelFromTelegram"
+    | "setProviderFromTelegram"
+    | "resetProviderFromTelegram"
+  >;
+  private chatAiSelectionRuntimeRegistry?: ChatAiSelectionRuntimeRegistry;
+  private aiSelectionRuntimeDisposers = new Map<string, () => void>();
   private backupService?: BackupService;
   private rssFeedService?: RssFeedService;
   private mcpClientManager?: McpClientManager;
@@ -160,8 +191,14 @@ export class BotPool {
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
     this.userPrivacyService = new UserPrivacyService(db);
-    this.chatModelStore = new ChatModelStore(db);
-    this.chatProviderStore = new ChatProviderStore(db);
+  }
+
+  setChatAiSelectionService(
+    service: NonNullable<BotPool["chatAiSelectionService"]>,
+    runtimeRegistry: ChatAiSelectionRuntimeRegistry,
+  ): void {
+    this.chatAiSelectionService = service;
+    this.chatAiSelectionRuntimeRegistry = runtimeRegistry;
   }
 
   setBackupService(service: BackupService) {
@@ -518,6 +555,7 @@ export class BotPool {
 
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
+    let aiSelectionCallbacks: AiSelectionCallbacks | undefined;
     let conversation: ConversationCallbacks | undefined;
     let runInitialHistoryGovernance: (() => Promise<void>) | undefined;
     const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
@@ -862,18 +900,31 @@ export class BotPool {
         };
       }
 
-      // Load persisted per-chat model + provider overrides
-      const chatModelMap = await this.chatModelStore.loadOverrides(botId);
-      const chatModelStoreRef = this.chatModelStore;
-      const chatProviderMap = await this.chatProviderStore.loadOverrides(botId);
-      const chatProviderStoreRef = this.chatProviderStore;
-      // Purge stale overrides whose provider was deleted since last load
-      await chatProviderStoreRef.purgeInvalid(
-        botId,
-        providersRuntime.map((p) => p.id),
-      );
-      for (const [chatId, pid] of chatProviderMap) {
-        if (!providersRuntime.some((p) => p.id === pid)) chatProviderMap.delete(chatId);
+      const durableSelection = this.chatAiSelectionService
+        ? await this.chatAiSelectionService.loadRuntimeSnapshot(botId)
+        : undefined;
+      if (this.chatAiSelectionService && this.chatAiSelectionRuntimeRegistry) {
+        const service = this.chatAiSelectionService;
+        const registry = this.chatAiSelectionRuntimeRegistry;
+        aiSelectionCallbacks = {
+          setModel: (chatId, modelId, actorTelegramUserId) =>
+            service.setModelFromTelegram(botId, chatId, modelId, actorTelegramUserId),
+          resetModel: (chatId, actorTelegramUserId) =>
+            service.resetModelFromTelegram(botId, chatId, actorTelegramUserId),
+          setProvider: (chatId, providerId, actorTelegramUserId) =>
+            service.setProviderFromTelegram(botId, chatId, providerId, actorTelegramUserId),
+          resetProvider: (chatId, actorTelegramUserId) =>
+            service.resetProviderFromTelegram(botId, chatId, actorTelegramUserId),
+          onBotReady: (runtime: BotAiSelectionRuntime) => {
+            this.aiSelectionRuntimeDisposers.get(botId)?.();
+            const adapter: ChatAiSelectionRuntime = {
+              apply: async (snapshot) => {
+                runtime.applyAiSelectionSnapshot(toBotAiSelectionSnapshot(snapshot));
+              },
+            };
+            this.aiSelectionRuntimeDisposers.set(botId, registry.register(botId, adapter));
+          },
+        };
       }
 
       // Build data files config for prompt injection and file tools
@@ -899,21 +950,14 @@ export class BotPool {
         botId,
         apiKey,
         baseURL: activeProvider.baseURL,
-        model: activeProvider.defaultModel,
+        model: aiConfig.activeModelId ?? activeProvider.defaultModel,
         providerFormat: activeProvider.providerFormat,
         providers: providersRuntime,
         activeProviderId: activeProvider.id,
-        providerOverride: {
-          getProviderForChat: (chatId) => chatProviderMap.get(chatId),
-          setProviderForChat: (chatId, providerId) => {
-            chatProviderMap.set(chatId, providerId);
-            chatProviderStoreRef.setOverride(botId, chatId, providerId).catch(() => {});
-          },
-          resetProviderForChat: (chatId) => {
-            chatProviderMap.delete(chatId);
-            chatProviderStoreRef.removeOverride(botId, chatId).catch(() => {});
-          },
-        },
+        activeModelId: aiConfig.activeModelId ?? activeProvider.defaultModel,
+        aiSelectionSnapshot: durableSelection
+          ? toBotAiSelectionSnapshot(durableSelection)
+          : undefined,
         systemPrompt: aiConfig.systemPrompt,
         behavioralPrompt: aiConfig.behavioralPrompt,
         groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
@@ -1004,17 +1048,6 @@ export class BotPool {
         timeoutConfig: runtimeTimeoutConfig,
         models: activeProvider.models ?? aiConfig.models,
         modelCommandAccess: aiConfig.modelCommandAccess,
-        modelOverride: {
-          getModelForChat: (chatId) => chatModelMap.get(chatId),
-          setModelForChat: (chatId, modelId) => {
-            chatModelMap.set(chatId, modelId);
-            chatModelStoreRef.setOverride(botId, chatId, modelId).catch(() => {});
-          },
-          resetModelForChat: (chatId) => {
-            chatModelMap.delete(chatId);
-            chatModelStoreRef.removeOverride(botId, chatId).catch(() => {});
-          },
-        },
         dataFiles,
         privateChatWhitelist: aiConfig.privateChatWhitelist,
         nsfwChecker,
@@ -1343,6 +1376,7 @@ export class BotPool {
       logger: this.logger,
       dbLogger,
       aiReply,
+      aiSelectionCallbacks,
       conversation,
       privacy,
       onRestart: () => this.restartBot(botId),
@@ -1357,11 +1391,34 @@ export class BotPool {
 
     const preexistingPendingCutoff = new Date();
     this.managers.set(botId, manager);
-    await manager.start();
+    try {
+      await manager.start();
+    } catch (error) {
+      this.managers.delete(botId);
+      this.botTimerHandlers.delete(botId);
+      this.aiSelectionRuntimeDisposers.get(botId)?.();
+      this.aiSelectionRuntimeDisposers.delete(botId);
+      throw error;
+    }
     if (manager.status !== "running") {
       this.managers.delete(botId);
       this.botTimerHandlers.delete(botId);
+      this.aiSelectionRuntimeDisposers.get(botId)?.();
+      this.aiSelectionRuntimeDisposers.delete(botId);
       throw new Error("Bot failed to start; check bot logs for details");
+    }
+    if (this.chatAiSelectionService && aiReply) {
+      try {
+        const published = await this.chatAiSelectionService.retryPublish(botId);
+        if (!published.applied) {
+          this.logger.warn({ botId }, "AI selection snapshot is pending runtime application");
+        }
+      } catch (error) {
+        this.logger.warn(
+          { botId, error },
+          "Bot started but its AI selection snapshot remains pending",
+        );
+      }
     }
     if (this.telegramProfileObserver) {
       try {
@@ -1575,6 +1632,8 @@ export class BotPool {
     await manager.stop();
     this.managers.delete(botId);
     this.botTimerHandlers.delete(botId);
+    this.aiSelectionRuntimeDisposers.get(botId)?.();
+    this.aiSelectionRuntimeDisposers.delete(botId);
   }
 
   async restartBot(botId: string) {

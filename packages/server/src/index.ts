@@ -155,6 +155,7 @@ const chatAiSelectionService = new ChatAiSelectionService(
   chatAiSelectionRuntimeRegistry,
   (botId, operation) => botPool.withAiConfigLock(botId, operation),
 );
+botPool.setChatAiSelectionService(chatAiSelectionService, chatAiSelectionRuntimeRegistry);
 botPool.setTelegramDirectoryCallbacks(
   {
     onChatObserved: async (observation) => {

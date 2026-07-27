@@ -1083,7 +1083,7 @@ export function botsRoutes(
         );
         const requestedActiveModelId =
           body.activeModelId ??
-          (selectedProviderId === existingMigrated?.activeProviderId
+          (existingMigrated && selectedProviderId === existingMigrated.activeProviderId
             ? existingMigrated.activeModelId
             : undefined);
         if (

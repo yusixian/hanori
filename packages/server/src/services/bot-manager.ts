@@ -1,5 +1,6 @@
 import type {
   AiReplyBotConfig,
+  AiSelectionCallbacks,
   BotConfig,
   McpCommandConfig,
   SummaryCallbacks,
@@ -36,6 +37,7 @@ interface BotManagerOptions {
   logger: Logger;
   dbLogger: DbLogger;
   aiReply?: AiReplyBotConfig;
+  aiSelectionCallbacks?: AiSelectionCallbacks;
   conversation?: ConversationCallbacks;
   privacy?: UserPrivacyCallbacks;
   onRestart?: () => void | Promise<void>;
@@ -71,6 +73,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       onTokenUsage: options.onTokenUsage,
       onGenerationTrack: options.onGenerationTrack,
       timerCallbacks: options.timerCallbacks,
+      aiSelectionCallbacks: options.aiSelectionCallbacks,
       mcpCallbacks: options.mcpCallbacks,
       aiReply: options.aiReply,
       conversation: options.conversation,
