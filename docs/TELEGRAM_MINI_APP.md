@@ -4,11 +4,12 @@ Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一
 
 ## Route map
 
-| Route                              | Session     | G2 行为                                          |
+| Route                              | Session     | 行为                                             |
 | ---------------------------------- | ----------- | ------------------------------------------------ |
 | `/mini-app/:botId/help`            | 非必需      | 始终显示项目背景和 shared public command help    |
-| `/mini-app/:botId/groups`          | 必需        | 展示当前角色范围内的群，并按 capability 决定读写 |
-| `/mini-app/:botId/settings`        | Admin       | G2 仅显示无写操作的占位页                        |
+| `/mini-app/:botId/groups`          | 必需        | 展示当前角色范围内的安全群目录                   |
+| `/mini-app/:botId/groups/:chatId`  | 必需        | 查看群配置，并按 capability 决定是否渲染编辑控件 |
+| `/mini-app/:botId/settings`        | Admin       | G6 前仅显示无写操作的占位页                      |
 | `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动          |
 | `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                     |
 
@@ -54,6 +55,14 @@ Provider、模型、Prompt、工具、凭据、人物档案、聊天历史和用
 详情携带 opaque `revision`。保存时服务端在按 Bot 串行边界内重新锁定并读取最新 DB 数据；版本过期返回 `409 stale_revision` 和最新安全投影，客户端不得自动覆盖。DB commit 与运行态 apply 同属一个进程内 Bot 串行边界，避免旧请求反向覆盖新请求。DB 失败不会修改 runtime；runtime 失败则返回 `persisted: true, applied: false`，详情保持 `pending`，直到 Admin 手动 retry 或 Bot 下次从 DB 启动。
 
 现有 Web Panel 的整页 AI 配置保存也携带 Bot revision。任一侧先写入后，另一侧的旧草稿会收到 409 并保留在页面中等待人工刷新核对，避免整页 PUT 把 Mini App 刚写入的 `groupOverrides` 覆盖回旧版本。
+
+页面遵循以下交互边界：
+
+- Viewer 与归档群使用独立的只读投影，不渲染 disabled 表单；Operator/Admin 才能看到 G4 字段的编辑控件。
+- 本地修改会先显示字段级变更摘要，只有显式保存才发出 PATCH；放弃变更会恢复当前已读取版本。
+- `409 stale_revision` 会保留本地草稿并展示冲突，不自动重试或覆盖；用户必须显式采用服务端最新版本后重新修改。
+- `persisted: true, applied: false` 显示为 `pending`。所有角色都能看到状态，但只有 Admin 会收到“重试应用”操作。
+- 未配置 AI 时不渲染群 AI 编辑控件，但 Operator/Admin 仍可编辑 Summary；响应 JSON 在进入 UI 前必须通过字段、范围与敏感键校验。
 
 M1 明确为单实例控制面；跨实例锁、共享 pending 状态与常驻 retry worker 后移。
 

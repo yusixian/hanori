@@ -23,6 +23,7 @@ import {
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { AccessPage } from "./access-page";
+import { GroupsPage } from "./groups-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
 import { createTelegramMiniAppAdapter, type TelegramMiniAppAdapter } from "./telegram-adapter";
 import "./i18n";
@@ -66,7 +67,12 @@ class MiniAppErrorBoundary extends Component<{ children: ReactNode }, { failed: 
       <main className="mini-app-failure" role="alert">
         <LockKeyhole aria-hidden="true" />
         <h1>{i18n.t("miniApp:session.unavailableTitle")}</h1>
-        <a href={window.location.pathname.replace(/\/(?:groups|settings|access)\/?$/, "/help")}>
+        <a
+          href={window.location.pathname.replace(
+            /\/(?:groups(?:\/-?\d+)?|settings|access)\/?$/,
+            "/help",
+          )}
+        >
           {i18n.t("miniApp:session.openHelp")}
         </a>
       </main>
@@ -127,7 +133,11 @@ function MiniAppNavigation({ botId, role }: { botId: string; role: MiniAppRole |
         const Icon = NAV_ICONS[page];
         const href = `/mini-app/${botId}/${page}`;
         return (
-          <Link key={page} to={href} aria-current={pathname === href ? "page" : undefined}>
+          <Link
+            key={page}
+            to={href}
+            aria-current={pathname === href || pathname.startsWith(`${href}/`) ? "page" : undefined}
+          >
             <Icon aria-hidden="true" />
             <span>{t(`nav.${page}`)}</span>
           </Link>
@@ -245,6 +255,7 @@ function ProtectedPage({
   if ((page === "settings" || page === "access") && state.session.role !== "admin") {
     return <Navigate to={`/mini-app/${botId}/groups`} replace />;
   }
+  if (page === "groups") return <GroupsPage botId={botId} session={state.session} />;
   if (page === "access") return <AccessPage botId={botId} session={state.session} />;
   return <PlaceholderPage page={page} />;
 }
@@ -259,7 +270,16 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
     adapter.getSnapshot,
   );
   const [sessionState, setSessionState] = useState<MiniAppSessionState | null>(null);
-  const page = (location.pathname.split("/").filter(Boolean).at(-1) ?? "help") as MiniAppPage;
+  const segments = location.pathname.split("/").filter(Boolean);
+  const candidatePage = segments[2];
+  const page: MiniAppPage =
+    candidatePage === "groups" ||
+    candidatePage === "settings" ||
+    candidatePage === "access" ||
+    candidatePage === "help"
+      ? candidatePage
+      : "help";
+  const groupDetail = page === "groups" && segments.length > 3;
 
   useEffect(() => {
     adapter.ready();
@@ -278,8 +298,10 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
 
   useEffect(() => {
     if (page === "help") return;
-    return adapter.setBackButton(() => navigate(`/mini-app/${botId}/help`));
-  }, [adapter, botId, navigate, page]);
+    return adapter.setBackButton(() =>
+      navigate(`/mini-app/${botId}/${groupDetail ? "groups" : "help"}`),
+    );
+  }, [adapter, botId, groupDetail, navigate, page]);
 
   useEffect(() => {
     if (sessionState?.status === "forbidden" && page !== "help") {
@@ -295,6 +317,10 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
         <Route path="help" element={<HelpPage />} />
         <Route
           path="groups"
+          element={<ProtectedPage page="groups" state={sessionState} botId={botId} />}
+        />
+        <Route
+          path="groups/:chatId"
           element={<ProtectedPage page="groups" state={sessionState} botId={botId} />}
         />
         <Route
