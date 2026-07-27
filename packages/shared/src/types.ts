@@ -196,6 +196,8 @@ export interface AiGroupOverride {
   maxContextMessages?: number;
   groupHistoryMaxTokens?: number;
   imageGenerationEnabled?: boolean;
+  /** Controls whether safe Provider/model labels are exposed in the Mini App. */
+  aiSelectionDisplay?: "inherit" | "show" | "hide";
 }
 
 export interface ConversationConfig {
@@ -665,6 +667,10 @@ export interface AiConfigStored {
   providerFormat?: "openai" | "gemini";
   providers?: AiProviderEntry[];
   activeProviderId?: string;
+  /** Selected global model. Missing values inherit the active Provider default. */
+  activeModelId?: string;
+  /** Safe Provider/model labels are visible to authorized readers by default. */
+  aiSelectionDisplayDefault?: "show" | "hide";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -886,6 +892,8 @@ export interface AiConfigPublic {
   providerFormat?: "openai" | "gemini";
   providers: AiProviderEntryPublic[];
   activeProviderId?: string;
+  activeModelId?: string;
+  aiSelectionDisplayDefault?: "show" | "hide";
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;

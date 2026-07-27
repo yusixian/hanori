@@ -47,13 +47,24 @@ export function migrateAiConfig(stored: AiConfigStored): AiConfigStored {
 
   if (normalized.providers && normalized.providers.length > 0) {
     const providers = normalized.providers.map(normalizeAiProvider);
-    if (
-      !normalized.activeProviderId ||
-      !providers.some((p) => p.id === normalized.activeProviderId)
-    ) {
-      return { ...normalized, providers, activeProviderId: providers[0]!.id };
-    }
-    return { ...normalized, providers };
+    const activeProviderId =
+      !normalized.activeProviderId || !providers.some((p) => p.id === normalized.activeProviderId)
+        ? providers[0]!.id
+        : normalized.activeProviderId;
+    const activeProvider = providers.find((provider) => provider.id === activeProviderId)!;
+    const activeModelId =
+      normalized.activeModelId &&
+      (normalized.activeModelId === activeProvider.defaultModel ||
+        activeProvider.models?.some((model) => model.id === normalized.activeModelId))
+        ? normalized.activeModelId
+        : activeProvider.defaultModel;
+    return {
+      ...normalized,
+      providers,
+      activeProviderId,
+      activeModelId,
+      aiSelectionDisplayDefault: normalized.aiSelectionDisplayDefault ?? "show",
+    };
   }
 
   const legacy: AiProviderEntry = {
@@ -71,6 +82,8 @@ export function migrateAiConfig(stored: AiConfigStored): AiConfigStored {
     ...normalized,
     providers: [normalizedLegacy],
     activeProviderId: legacy.id,
+    activeModelId: normalizedLegacy.defaultModel,
+    aiSelectionDisplayDefault: normalized.aiSelectionDisplayDefault ?? "show",
   };
 }
 

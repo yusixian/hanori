@@ -33,6 +33,27 @@ function createStoredConfig(): AiConfigStored {
 }
 
 describe("migrateAiConfig", () => {
+  it("keeps global model selection separate from the Provider catalog default", () => {
+    const stored = createStoredConfig();
+    stored.activeProviderId = "provider-1";
+    stored.activeModelId = "model-2";
+    stored.providers = [
+      {
+        id: "provider-1",
+        label: "Provider",
+        encryptedApiKey: null,
+        baseURL: "https://example.invalid",
+        providerFormat: "openai",
+        defaultModel: "model-1",
+        models: [{ id: "model-1" }, { id: "model-2" }],
+      },
+    ];
+
+    const migrated = migrateAiConfig(stored);
+    expect(migrated.activeModelId).toBe("model-2");
+    expect(migrated.providers?.[0]?.defaultModel).toBe("model-1");
+    expect(migrated.aiSelectionDisplayDefault).toBe("show");
+  });
   it("adds the raw-history limit to configurations saved before the setting existed", () => {
     const migrated = migrateAiConfig(createStoredConfig());
 
