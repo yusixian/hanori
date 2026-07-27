@@ -14,6 +14,10 @@ import {
   type GroupConfigService,
 } from "../services/group-config-service.js";
 import {
+  ChatAiSelectionError,
+  type ChatAiSelectionService,
+} from "../services/chat-ai-selection-service.js";
+import {
   MiniAppAccessError,
   type MiniAppAccessService,
 } from "../services/mini-app-access-service.js";
@@ -104,6 +108,17 @@ export interface MiniAppRoutesOptions {
     "readAccess" | "searchPeople" | "grantChat" | "revokeChat" | "grantOperator" | "revokeOperator"
   >;
   groupConfigService?: Pick<GroupConfigService, "list" | "read" | "patch" | "retryApply">;
+  chatAiSelectionService?: Pick<
+    ChatAiSelectionService,
+    | "listOptions"
+    | "readGlobal"
+    | "readChat"
+    | "setGlobal"
+    | "setChat"
+    | "resetChat"
+    | "setDisplayPolicy"
+    | "retryPublish"
+  >;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
 }
@@ -169,6 +184,26 @@ const groupConfigPatchSchema = z
   })
   .strict();
 
+const selectionIdSchema = z.string().trim().min(1).max(256);
+const selectionRevisionSchema = z.string().min(1).max(512);
+const selectionPairSchema = z
+  .object({
+    expectedRevision: selectionRevisionSchema,
+    providerId: selectionIdSchema,
+    modelId: selectionIdSchema.nullable(),
+  })
+  .strict();
+const globalSelectionPatchSchema = selectionPairSchema.extend({
+  displayDefault: z.enum(["show", "hide"]).optional(),
+});
+const resetSelectionSchema = z.object({ expectedRevision: selectionRevisionSchema }).strict();
+const selectionDisplaySchema = z
+  .object({
+    expectedRevision: selectionRevisionSchema,
+    policy: z.enum(["inherit", "show", "hide"]),
+  })
+  .strict();
+
 function secureEqual(left: string, right: string): boolean {
   const leftBytes = Buffer.from(left);
   const rightBytes = Buffer.from(right);
@@ -197,6 +232,60 @@ function accessError(error: MiniAppAccessError): {
   const status =
     error.code === "not_found" ? 404 : error.code === "verification_unavailable" ? 503 : 409;
   return { status, body: { ok: false, error: error.message, code: error.code } };
+}
+
+async function selectionError(
+  error: unknown,
+  latest?: () => Promise<unknown>,
+): Promise<{
+  status: 404 | 409 | 503;
+  body: {
+    ok: false;
+    error: string;
+    code: string;
+    latest?: unknown;
+  };
+}> {
+  if (!(error instanceof ChatAiSelectionError)) {
+    return {
+      status: 503,
+      body: { ok: false, error: "AI selection is temporarily unavailable", code: "unavailable" },
+    };
+  }
+  if (error.code === "not_found") {
+    return { status: 404, body: { ok: false, error: "Not found", code: error.code } };
+  }
+  if (error.code === "ai_not_configured") {
+    return {
+      status: 503,
+      body: { ok: false, error: "AI selection is unavailable", code: error.code },
+    };
+  }
+  if (error.code === "stale_revision") {
+    try {
+      return {
+        status: 409,
+        body: {
+          ok: false,
+          error: "Stale revision",
+          code: error.code,
+          ...(latest ? { latest: await latest() } : {}),
+        },
+      };
+    } catch {
+      return {
+        status: 503,
+        body: { ok: false, error: "AI selection is temporarily unavailable", code: "unavailable" },
+      };
+    }
+  }
+  const publicError =
+    error.code === "archived"
+      ? "Archived chats are read-only"
+      : error.code === "provider_unavailable"
+        ? "Provider is unavailable"
+        : "Model is unavailable for this Provider";
+  return { status: 409, body: { ok: false, error: publicError, code: error.code } };
 }
 
 function readCookie(header: string | undefined, name: string): string | null {
@@ -769,6 +858,262 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
           );
         }
         return c.json({ ok: false as const, error: "Runtime apply failed" }, 503);
+      }
+    })
+    .get("/:botId/ai-selection/options", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          options: await options.chatAiSelectionService.listOptions(botId),
+        });
+      } catch (error) {
+        const mapped = await selectionError(error);
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .get("/:botId/ai-selection/global", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          global: await options.chatAiSelectionService.readGlobal(botId),
+        });
+      } catch (error) {
+        const mapped = await selectionError(error);
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .patch("/:botId/ai-selection/global", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      const parsed = globalSelectionPatchSchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.chatAiSelectionService.setGlobal({
+          botId,
+          expectedRevision: parsed.data.expectedRevision,
+          pair: { providerId: parsed.data.providerId, modelId: parsed.data.modelId },
+          ...(parsed.data.displayDefault ? { displayDefault: parsed.data.displayDefault } : {}),
+          actor: { kind: "telegram_user", id: String(authorization.userId) },
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        const mapped = await selectionError(error, () =>
+          options.chatAiSelectionService!.readGlobal(botId),
+        );
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .get("/:botId/groups/:chatId/ai-selection", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.read", false);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          editable: authorization.access.capabilities.includes("chat.ai-selection.write"),
+          chat: await options.chatAiSelectionService.readChat(
+            botId,
+            chatId,
+            authorization.access.role === "admin",
+          ),
+        });
+      } catch (error) {
+        const mapped = await selectionError(error);
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .patch("/:botId/groups/:chatId/ai-selection", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      const parsed = selectionPairSchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.chatAiSelectionService.setChat({
+          botId,
+          chatId,
+          expectedRevision: parsed.data.expectedRevision,
+          pair: { providerId: parsed.data.providerId, modelId: parsed.data.modelId },
+          actor: { kind: "telegram_user", id: String(authorization.userId) },
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        const mapped = await selectionError(error, () =>
+          options.chatAiSelectionService!.readChat(botId, chatId, true),
+        );
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .delete("/:botId/groups/:chatId/ai-selection", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      const parsed = resetSelectionSchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.chatAiSelectionService.resetChat({
+          botId,
+          chatId,
+          expectedRevision: parsed.data.expectedRevision,
+          actor: { kind: "telegram_user", id: String(authorization.userId) },
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        const mapped = await selectionError(error, () =>
+          options.chatAiSelectionService!.readChat(botId, chatId, true),
+        );
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .patch("/:botId/groups/:chatId/ai-selection/display", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      const parsed = selectionDisplaySchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.chatAiSelectionService.setDisplayPolicy({
+          botId,
+          chatId,
+          expectedRevision: parsed.data.expectedRevision,
+          policy: parsed.data.policy,
+          actor: { kind: "telegram_user", id: String(authorization.userId) },
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        const mapped = await selectionError(error, () =>
+          options.chatAiSelectionService!.readChat(botId, chatId, true),
+        );
+        return c.json(mapped.body, mapped.status);
+      }
+    })
+    .post("/:botId/groups/:chatId/ai-selection/retry", async (c) => {
+      const botId = c.req.param("botId");
+      const chatId = Number(c.req.param("chatId"));
+      if (!isTelegramChatId(chatId)) {
+        return c.json({ ok: false as const, error: "Invalid chat ID" }, 400);
+      }
+      const authorization = await authorize(botId, c.req.raw, "chat.ai-selection.write", true);
+      if (!authorization.ok || !chatScopeAllows(authorization.access, chatId)) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.ok ? 403 : authorization.status,
+        );
+      }
+      if (!options.chatAiSelectionService) {
+        return c.json({ ok: false as const, error: "AI selection is not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          ...(await options.chatAiSelectionService.retryPublish(botId)),
+        });
+      } catch (error) {
+        const mapped = await selectionError(error);
+        return c.json(mapped.body, mapped.status);
       }
     });
 }

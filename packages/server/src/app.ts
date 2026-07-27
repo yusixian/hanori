@@ -41,6 +41,7 @@ import type { GitHubAppCredentialService } from "./services/github-app-credentia
 import type { TelegramMembershipVerifier } from "./services/mini-app-access-policy.js";
 import type { MiniAppAccessService } from "./services/mini-app-access-service.js";
 import type { GroupConfigService } from "./services/group-config-service.js";
+import type { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 interface AppOptions {
@@ -62,6 +63,7 @@ interface AppOptions {
   telegramMembershipVerifier: TelegramMembershipVerifier;
   miniAppAccessService: MiniAppAccessService;
   groupConfigService: GroupConfigService;
+  chatAiSelectionService: ChatAiSelectionService;
 }
 
 export function createApp(options: AppOptions) {
@@ -84,6 +86,7 @@ export function createApp(options: AppOptions) {
     telegramMembershipVerifier,
     miniAppAccessService,
     groupConfigService,
+    chatAiSelectionService,
   } = options;
 
   const app = new Hono()
@@ -113,6 +116,7 @@ export function createApp(options: AppOptions) {
         membershipVerifier: telegramMembershipVerifier,
         accessService: miniAppAccessService,
         groupConfigService,
+        chatAiSelectionService,
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))

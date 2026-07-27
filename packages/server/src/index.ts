@@ -31,6 +31,8 @@ import { BotPoolTelegramRuntimeAdapter } from "./services/telegram-bot-runtime.j
 import { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 import { MiniAppAccessService } from "./services/mini-app-access-service.js";
 import { GroupConfigService } from "./services/group-config-service.js";
+import { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
+import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
 
 export type { AppType } from "./app.js";
 
@@ -145,6 +147,13 @@ const telegramRuntime = new BotPoolTelegramRuntimeAdapter(botPool);
 const miniAppAccessService = new MiniAppAccessService(db, telegramRuntime);
 const groupConfigService = new GroupConfigService(db, telegramRuntime, (botId, operation) =>
   botPool.withAiConfigLock(botId, operation),
+);
+const chatAiSelectionRuntimeRegistry = new ChatAiSelectionRuntimeRegistry();
+const chatAiSelectionService = new ChatAiSelectionService(
+  db,
+  env.ENCRYPTION_KEY,
+  chatAiSelectionRuntimeRegistry,
+  (botId, operation) => botPool.withAiConfigLock(botId, operation),
 );
 botPool.setTelegramDirectoryCallbacks(
   {
@@ -285,6 +294,7 @@ const app = createApp({
   telegramMembershipVerifier: telegramRuntime,
   miniAppAccessService,
   groupConfigService,
+  chatAiSelectionService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

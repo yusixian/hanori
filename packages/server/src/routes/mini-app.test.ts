@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { MINI_APP_SESSION_COOKIE_NAME } from "../services/mini-app-session.js";
 import { MiniAppAccessError } from "../services/mini-app-access-service.js";
 import { GroupConfigConflictError } from "../services/group-config-service.js";
+import { ChatAiSelectionError } from "../services/chat-ai-selection-service.js";
 import type { TelegramAccessSnapshot } from "../services/telegram-directory-service.js";
 import { miniAppRoutes, type MiniAppRoutesOptions } from "./mini-app.js";
 
@@ -94,6 +95,61 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     patch: vi.fn(async () => ({ persisted: true, applied: true, group })),
     retryApply: vi.fn(async () => group),
   };
+  const selection = {
+    revision: "selection-rev-1",
+    source: "chat" as const,
+    archived: false,
+    applyState: "applied" as const,
+    display: { defaultPolicy: "show" as const, overridePolicy: "inherit" as const, visible: true },
+    selection: {
+      providerId: "provider-a",
+      modelId: "model-a",
+      providerLabel: "Provider A",
+      modelLabel: "Model A",
+    },
+    options: [],
+  };
+  const globalSelection = {
+    revision: "global-rev-1",
+    applyState: "applied" as const,
+    displayDefault: "show" as const,
+    selection: selection.selection,
+    options: [],
+  };
+  const chatAiSelectionService = {
+    listOptions: vi.fn(async () => []),
+    readGlobal: vi.fn(async () => globalSelection),
+    readChat: vi.fn(async () => selection),
+    setGlobal: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+      global: globalSelection,
+    })),
+    setChat: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+      chat: selection,
+    })),
+    resetChat: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+      chat: selection,
+    })),
+    setDisplayPolicy: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+      chat: selection,
+    })),
+    retryPublish: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+    })),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
     allowedOrigins: [ORIGIN],
@@ -104,6 +160,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     membershipVerifier: { isMember: vi.fn(async () => false) },
     accessService,
     groupConfigService,
+    chatAiSelectionService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
@@ -112,6 +169,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     directory,
     accessService,
     groupConfigService,
+    chatAiSelectionService,
     options,
   };
 }
@@ -546,5 +604,206 @@ describe("Mini App group configuration routes", () => {
       code: "stale_revision",
       latest: { chatId: -1001, config: { revision: "rev-1" } },
     });
+  });
+});
+
+describe("Mini App AI selection routes", () => {
+  async function sessionFor(app: Hono) {
+    const created = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    const body = (await created.clone().json()) as { session: { csrfToken: string } };
+    return { cookie: cookieFrom(created), csrfToken: body.session.csrfToken };
+  }
+
+  it("allows Admin options/global reads and forwards only strict global selection input", async () => {
+    const { app, chatAiSelectionService } = testApp();
+    const session = await sessionFor(app);
+
+    const optionsResponse = await app.request(`/mini-app/${BOT_A}/ai-selection/options`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(optionsResponse.status).toBe(200);
+    expect(chatAiSelectionService.listOptions).toHaveBeenCalledWith(BOT_A);
+
+    const globalResponse = await app.request(`/mini-app/${BOT_A}/ai-selection/global`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(globalResponse.status).toBe(200);
+    expect(chatAiSelectionService.readGlobal).toHaveBeenCalledWith(BOT_A);
+
+    const endpoint = `/mini-app/${BOT_A}/ai-selection/global`;
+    const headers = {
+      cookie: session.cookie,
+      origin: ORIGIN,
+      "content-type": "application/json",
+      "x-mini-app-csrf": session.csrfToken,
+    };
+    const invalid = await app.request(endpoint, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: "global-rev-1",
+        providerId: "provider-a",
+        modelId: "model-a",
+        baseURL: "https://must-not-pass.example",
+      }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(chatAiSelectionService.setGlobal).not.toHaveBeenCalled();
+
+    const accepted = await app.request(endpoint, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: "global-rev-1",
+        providerId: "provider-a",
+        modelId: "model-a",
+        displayDefault: "hide",
+      }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(chatAiSelectionService.setGlobal).toHaveBeenCalledWith({
+      botId: BOT_A,
+      expectedRevision: "global-rev-1",
+      pair: { providerId: "provider-a", modelId: "model-a" },
+      displayDefault: "hide",
+      actor: { kind: "telegram_user", id: "42" },
+    });
+  });
+
+  it("passes Admin state to the server projection and enforces non-Admin chat scope", async () => {
+    const operatorSnapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [42],
+      grantedChatIds: [-1001],
+    };
+    const { app, chatAiSelectionService } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => operatorSnapshot) },
+    });
+    const session = await sessionFor(app);
+
+    const visible = await app.request(`/mini-app/${BOT_A}/groups/-1001/ai-selection`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(visible.status).toBe(200);
+    expect(chatAiSelectionService.readChat).toHaveBeenCalledWith(BOT_A, -1001, false);
+
+    const outside = await app.request(`/mini-app/${BOT_A}/groups/-2002/ai-selection`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(outside.status).toBe(403);
+
+    const deniedGlobal = await app.request(`/mini-app/${BOT_A}/ai-selection/global`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(deniedGlobal.status).toBe(403);
+  });
+
+  it("requires Origin and CSRF for every Admin mutation and forwards validated inputs", async () => {
+    const { app, chatAiSelectionService } = testApp();
+    const session = await sessionFor(app);
+    const commonHeaders = {
+      cookie: session.cookie,
+      origin: ORIGIN,
+      "content-type": "application/json",
+      "x-mini-app-csrf": session.csrfToken,
+    };
+    const mutations = [
+      {
+        path: `/mini-app/${BOT_A}/groups/-1001/ai-selection`,
+        method: "PATCH",
+        body: {
+          expectedRevision: "selection-rev-1",
+          providerId: "provider-a",
+          modelId: null,
+        },
+      },
+      {
+        path: `/mini-app/${BOT_A}/groups/-1001/ai-selection`,
+        method: "DELETE",
+        body: { expectedRevision: "selection-rev-1" },
+      },
+      {
+        path: `/mini-app/${BOT_A}/groups/-1001/ai-selection/display`,
+        method: "PATCH",
+        body: { expectedRevision: "selection-rev-1", policy: "inherit" },
+      },
+      {
+        path: `/mini-app/${BOT_A}/groups/-1001/ai-selection/retry`,
+        method: "POST",
+        body: undefined,
+      },
+    ];
+
+    for (const mutation of mutations) {
+      const denied = await app.request(mutation.path, {
+        method: mutation.method,
+        headers: { cookie: session.cookie, "content-type": "application/json" },
+        ...(mutation.body ? { body: JSON.stringify(mutation.body) } : {}),
+      });
+      expect(denied.status).toBe(403);
+
+      const accepted = await app.request(mutation.path, {
+        method: mutation.method,
+        headers: commonHeaders,
+        ...(mutation.body ? { body: JSON.stringify(mutation.body) } : {}),
+      });
+      expect(accepted.status).toBe(200);
+    }
+
+    expect(chatAiSelectionService.setChat).toHaveBeenCalledWith({
+      botId: BOT_A,
+      chatId: -1001,
+      expectedRevision: "selection-rev-1",
+      pair: { providerId: "provider-a", modelId: null },
+      actor: { kind: "telegram_user", id: "42" },
+    });
+    expect(chatAiSelectionService.resetChat).toHaveBeenCalledTimes(1);
+    expect(chatAiSelectionService.setDisplayPolicy).toHaveBeenCalledWith(
+      expect.objectContaining({ policy: "inherit" }),
+    );
+    expect(chatAiSelectionService.retryPublish).toHaveBeenCalledWith(BOT_A);
+  });
+
+  it("maps stale writes with a latest safe projection and hides unexpected errors", async () => {
+    const { app, chatAiSelectionService } = testApp();
+    const session = await sessionFor(app);
+    const headers = {
+      cookie: session.cookie,
+      origin: ORIGIN,
+      "content-type": "application/json",
+      "x-mini-app-csrf": session.csrfToken,
+    };
+    chatAiSelectionService.setChat.mockRejectedValueOnce(
+      new ChatAiSelectionError("stale_revision", "database details must not escape"),
+    );
+    const stale = await app.request(`/mini-app/${BOT_A}/groups/-1001/ai-selection`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({
+        expectedRevision: "stale",
+        providerId: "provider-a",
+        modelId: "model-a",
+      }),
+    });
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({
+      ok: false,
+      code: "stale_revision",
+      latest: { revision: "selection-rev-1" },
+    });
+
+    chatAiSelectionService.listOptions.mockRejectedValueOnce(
+      new Error("secret API key and database trace"),
+    );
+    const unavailable = await app.request(`/mini-app/${BOT_A}/ai-selection/options`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(unavailable.status).toBe(503);
+    expect(JSON.stringify(await unavailable.json())).not.toMatch(/secret API key|database trace/);
   });
 });
