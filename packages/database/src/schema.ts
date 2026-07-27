@@ -525,16 +525,12 @@ export const chatAiSelectionMigrationReports = pgTable(
   (t) => [
     primaryKey({ columns: [t.botId, t.chatId] }),
     check(
-      "chat_ai_selection_reports_chat_id_check",
-      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
-    ),
-    check(
       "chat_ai_selection_reports_outcome_check",
-      sql`${t.outcome} in ('migrated_pair', 'migrated_provider_default', 'inherited')`,
+      sql`${t.outcome} in ('migrated_pair', 'migrated_provider_default', 'inherited', 'ignored')`,
     ),
     check(
       "chat_ai_selection_reports_reason_check",
-      sql`${t.reason} in ('provider_only_valid', 'provider_only_invalid_provider', 'model_only_valid', 'model_only_no_effective_provider', 'model_only_invalid_model', 'pair_valid', 'pair_invalid_model_provider_default', 'pair_invalid_provider')`,
+      sql`${t.reason} in ('provider_only_valid', 'provider_only_invalid_provider', 'model_only_valid', 'model_only_no_effective_provider', 'model_only_invalid_model', 'pair_valid', 'pair_invalid_model_provider_default', 'pair_invalid_provider', 'non_group_chat', 'unsafe_chat_id')`,
     ),
     check(
       "chat_ai_selection_reports_selected_pair_check",

@@ -10,9 +10,8 @@ CREATE TABLE "chat_ai_selection_migration_reports" (
 	"reason" text NOT NULL,
 	"migrated_at" timestamp DEFAULT now() NOT NULL,
 	CONSTRAINT "chat_ai_selection_migration_reports_bot_id_chat_id_pk" PRIMARY KEY("bot_id","chat_id"),
-	CONSTRAINT "chat_ai_selection_reports_chat_id_check" CHECK ("chat_ai_selection_migration_reports"."chat_id" < 0 and "chat_ai_selection_migration_reports"."chat_id" >= -9007199254740991),
-	CONSTRAINT "chat_ai_selection_reports_outcome_check" CHECK ("chat_ai_selection_migration_reports"."outcome" in ('migrated_pair', 'migrated_provider_default', 'inherited')),
-	CONSTRAINT "chat_ai_selection_reports_reason_check" CHECK ("chat_ai_selection_migration_reports"."reason" in ('provider_only_valid', 'provider_only_invalid_provider', 'model_only_valid', 'model_only_no_effective_provider', 'model_only_invalid_model', 'pair_valid', 'pair_invalid_model_provider_default', 'pair_invalid_provider')),
+	CONSTRAINT "chat_ai_selection_reports_outcome_check" CHECK ("chat_ai_selection_migration_reports"."outcome" in ('migrated_pair', 'migrated_provider_default', 'inherited', 'ignored')),
+	CONSTRAINT "chat_ai_selection_reports_reason_check" CHECK ("chat_ai_selection_migration_reports"."reason" in ('provider_only_valid', 'provider_only_invalid_provider', 'model_only_valid', 'model_only_no_effective_provider', 'model_only_invalid_model', 'pair_valid', 'pair_invalid_model_provider_default', 'pair_invalid_provider', 'non_group_chat', 'unsafe_chat_id')),
 	CONSTRAINT "chat_ai_selection_reports_selected_pair_check" CHECK ("chat_ai_selection_migration_reports"."selected_provider_id" is not null or "chat_ai_selection_migration_reports"."selected_model_id" is null)
 );
 --> statement-breakpoint
@@ -162,8 +161,13 @@ SELECT
 	chat_id,
 	legacy_provider_id,
 	legacy_model_id,
-	CASE WHEN effective_provider_valid THEN effective_provider_id ELSE NULL END,
 	CASE
+		WHEN chat_id >= 0 OR chat_id < -9007199254740991 THEN NULL
+		WHEN effective_provider_valid THEN effective_provider_id
+		ELSE NULL
+	END,
+	CASE
+		WHEN chat_id >= 0 OR chat_id < -9007199254740991 THEN NULL
 		WHEN has_legacy_provider AND NOT has_legacy_model AND explicit_provider_valid
 			THEN btrim(explicit_provider ->> 'id')
 		WHEN NOT has_legacy_provider AND has_legacy_model AND effective_model_valid
@@ -173,6 +177,7 @@ SELECT
 		ELSE NULL
 	END,
 	CASE
+		WHEN chat_id >= 0 OR chat_id < -9007199254740991 THEN NULL
 		WHEN NOT has_legacy_provider AND has_legacy_model AND effective_model_valid
 			THEN btrim(legacy_model_id)
 		WHEN has_legacy_provider AND has_legacy_model AND explicit_model_valid
@@ -180,6 +185,7 @@ SELECT
 		ELSE NULL
 	END,
 	CASE
+		WHEN chat_id >= 0 OR chat_id < -9007199254740991 THEN 'ignored'
 		WHEN has_legacy_provider AND NOT has_legacy_model AND explicit_provider_valid
 			THEN 'migrated_provider_default'
 		WHEN NOT has_legacy_provider AND has_legacy_model AND effective_model_valid
@@ -191,6 +197,8 @@ SELECT
 		ELSE 'inherited'
 	END,
 	CASE
+		WHEN chat_id < -9007199254740991 THEN 'unsafe_chat_id'
+		WHEN chat_id >= 0 THEN 'non_group_chat'
 		WHEN has_legacy_provider AND NOT has_legacy_model AND explicit_provider_valid
 			THEN 'provider_only_valid'
 		WHEN has_legacy_provider AND NOT has_legacy_model
@@ -233,7 +241,9 @@ SELECT
 	"migrated_at",
 	"migrated_at"
 FROM "chat_ai_selection_migration_reports"
-WHERE "selected_provider_id" IS NOT NULL;--> statement-breakpoint
+WHERE "selected_provider_id" IS NOT NULL
+	AND "chat_id" < 0
+	AND "chat_id" >= -9007199254740991;--> statement-breakpoint
 
 CREATE FUNCTION "enforce_chat_ai_selection_revision"() RETURNS trigger AS $$
 BEGIN

@@ -134,4 +134,14 @@ describe("0038 chat AI selection migration", () => {
       /WHEN NOT has_legacy_provider AND has_legacy_model AND effective_provider_valid\s+THEN 'model_only_valid'/,
     );
   });
+
+  it("reports legacy private or unsafe IDs without creating group selections", () => {
+    expect(migrationSql).not.toContain('CONSTRAINT "chat_ai_selection_reports_chat_id_check"');
+    expect(migrationSql).toContain("THEN 'ignored'");
+    expect(migrationSql).toContain("THEN 'non_group_chat'");
+    expect(migrationSql).toContain("THEN 'unsafe_chat_id'");
+    expect(migrationSql).toMatch(
+      /WHERE "selected_provider_id" IS NOT NULL\s+AND "chat_id" < 0\s+AND "chat_id" >= -9007199254740991/,
+    );
+  });
 });
