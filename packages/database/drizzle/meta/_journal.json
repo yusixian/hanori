@@ -267,6 +267,13 @@
       "when": 1785159616271,
       "tag": "0037_aromatic_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1785162815430,
+      "tag": "0038_perpetual_metal_master",
+      "breakpoints": true
     }
   ]
 }

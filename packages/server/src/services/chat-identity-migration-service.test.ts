@@ -41,6 +41,8 @@ function snapshot(
     newChatGrant: false,
     oldSummaryConfig: false,
     newSummaryConfig: false,
+    oldAiSelection: false,
+    newAiSelection: false,
     oldModelOverride: false,
     newModelOverride: false,
     oldProviderOverride: false,
@@ -100,6 +102,8 @@ describe("buildChatIdentityMigrationPlan", () => {
         newChatGrant: true,
         oldSummaryConfig: true,
         newSummaryConfig: true,
+        oldAiSelection: true,
+        newAiSelection: true,
         oldModelOverride: true,
         newModelOverride: true,
         oldProviderOverride: true,
@@ -115,12 +119,14 @@ describe("buildChatIdentityMigrationPlan", () => {
       chatGrant: "drop-old",
       groupOverride: "drop-old",
       summaryConfig: "drop-old",
+      aiSelection: "drop-old",
       modelOverride: "drop-old",
       providerOverride: "drop-old",
       conflicts: {
         chat_grant: 1,
         group_override: 1,
         summary_config: 1,
+        ai_selection: 1,
         model_override: 1,
         provider_override: 1,
       },
@@ -193,6 +199,8 @@ describe("ChatIdentityMigrationService", () => {
           newChatGrant: true,
           oldSummaryConfig: true,
           newSummaryConfig: true,
+          oldAiSelection: true,
+          newAiSelection: true,
           oldModelOverride: true,
           newModelOverride: true,
           oldProviderOverride: true,
@@ -215,7 +223,13 @@ describe("ChatIdentityMigrationService", () => {
       2,
       expect.objectContaining({ botId: BOT_ID, chatId: OLD_CHAT_ID, type: "group" }),
     );
-    for (const kind of ["chat_grant", "summary_config", "model_override", "provider_override"]) {
+    for (const kind of [
+      "chat_grant",
+      "summary_config",
+      "ai_selection",
+      "model_override",
+      "provider_override",
+    ]) {
       expect(tx.applySingleton).toHaveBeenCalledWith(kind, expect.anything(), "drop-old");
     }
     expect(tx.updateGroupOverrides).toHaveBeenCalledWith(BOT_ID, config, {
@@ -243,6 +257,7 @@ describe("ChatIdentityMigrationService", () => {
         chat_grant: 1,
         group_override: 1,
         summary_config: 1,
+        ai_selection: 1,
         model_override: 1,
         provider_override: 1,
       },
@@ -259,6 +274,7 @@ describe("ChatIdentityMigrationService", () => {
         snapshot({
           oldChatGrant: true,
           oldSummaryConfig: true,
+          oldAiSelection: true,
           oldModelOverride: true,
           oldProviderOverride: true,
           groupOverrides: {

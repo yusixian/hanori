@@ -460,6 +460,88 @@ export const chatProviderOverrides = pgTable(
   (t) => [uniqueIndex("chat_provider_bot_chat_uniq").on(t.botId, t.chatId)],
 );
 
+export const chatAiSelections = pgTable(
+  "chat_ai_selections",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id"),
+    revision: integer("revision").notNull().default(1),
+    updatedByKind: text("updated_by_kind"),
+    updatedById: text("updated_by_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .notNull()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.chatId] }),
+    check(
+      "chat_ai_selections_chat_id_check",
+      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
+    ),
+    check("chat_ai_selections_provider_id_check", sql`length(btrim(${t.providerId})) > 0`),
+    check(
+      "chat_ai_selections_model_id_check",
+      sql`${t.modelId} is null or length(btrim(${t.modelId})) > 0`,
+    ),
+    check("chat_ai_selections_revision_check", sql`${t.revision} > 0`),
+    check(
+      "chat_ai_selections_updated_by_pair_check",
+      sql`(${t.updatedByKind} is null and ${t.updatedById} is null) or (${t.updatedByKind} is not null and ${t.updatedById} is not null)`,
+    ),
+    check(
+      "chat_ai_selections_updated_by_kind_check",
+      sql`${t.updatedByKind} is null or ${t.updatedByKind} in ('telegram_user', 'better_auth_user')`,
+    ),
+    check(
+      "chat_ai_selections_telegram_actor_check",
+      sql`${t.updatedByKind} is null or ${t.updatedByKind} <> 'telegram_user' or (${t.updatedById} ~ '^[1-9][0-9]*$' and ${t.updatedById}::numeric <= 9007199254740991)`,
+    ),
+  ],
+);
+
+export const chatAiSelectionMigrationReports = pgTable(
+  "chat_ai_selection_migration_reports",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    legacyProviderId: text("legacy_provider_id"),
+    legacyModelId: text("legacy_model_id"),
+    effectiveProviderId: text("effective_provider_id"),
+    selectedProviderId: text("selected_provider_id"),
+    selectedModelId: text("selected_model_id"),
+    outcome: text("outcome").notNull(),
+    reason: text("reason").notNull(),
+    migratedAt: timestamp("migrated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.chatId] }),
+    check(
+      "chat_ai_selection_reports_chat_id_check",
+      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
+    ),
+    check(
+      "chat_ai_selection_reports_outcome_check",
+      sql`${t.outcome} in ('migrated_pair', 'migrated_provider_default', 'inherited')`,
+    ),
+    check(
+      "chat_ai_selection_reports_reason_check",
+      sql`${t.reason} in ('provider_only_valid', 'provider_only_invalid_provider', 'model_only_valid', 'model_only_no_effective_provider', 'model_only_invalid_model', 'pair_valid', 'pair_invalid_model_provider_default', 'pair_invalid_provider')`,
+    ),
+    check(
+      "chat_ai_selection_reports_selected_pair_check",
+      sql`${t.selectedProviderId} is not null or ${t.selectedModelId} is null`,
+    ),
+  ],
+);
+
 export const pixaiGenerations = pgTable(
   "pixai_generations",
   {

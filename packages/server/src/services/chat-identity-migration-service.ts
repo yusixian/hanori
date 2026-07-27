@@ -2,6 +2,7 @@ import type { AiConfigStored, AiGroupOverride } from "@cos-tool-bot/shared";
 import type { Database } from "@cos-tool-bot/database";
 import {
   bots,
+  chatAiSelections,
   chatModelOverrides,
   chatProviderOverrides,
   miniAppAuditEvents,
@@ -11,7 +12,7 @@ import {
   telegramChats,
   timers,
 } from "@cos-tool-bot/database";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 const MIN_TELEGRAM_CHAT_ID = -9_007_199_254_740_991;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -32,6 +33,7 @@ export type ChatMigrationResourceKind =
   | "chat_grant"
   | "group_override"
   | "summary_config"
+  | "ai_selection"
   | "model_override"
   | "provider_override"
   | "rss_collection"
@@ -51,6 +53,8 @@ export interface ChatIdentityMigrationSnapshot {
   newChatGrant: boolean;
   oldSummaryConfig: boolean;
   newSummaryConfig: boolean;
+  oldAiSelection: boolean;
+  newAiSelection: boolean;
   oldModelOverride: boolean;
   newModelOverride: boolean;
   oldProviderOverride: boolean;
@@ -65,6 +69,7 @@ export interface ChatIdentityMigrationPlan {
   chatGrant: ChatMigrationSingletonAction;
   groupOverride: ChatMigrationSingletonAction;
   summaryConfig: ChatMigrationSingletonAction;
+  aiSelection: ChatMigrationSingletonAction;
   modelOverride: ChatMigrationSingletonAction;
   providerOverride: ChatMigrationSingletonAction;
   nextGroupOverrides: Record<string, AiGroupOverride> | null;
@@ -120,7 +125,7 @@ export interface ChatIdentityMigrationTransaction {
     groupOverrides: Readonly<Record<string, AiGroupOverride>>,
   ): Promise<ChatIdentityMigrationSnapshot>;
   applySingleton(
-    kind: "chat_grant" | "summary_config" | "model_override" | "provider_override",
+    kind: "chat_grant" | "summary_config" | "ai_selection" | "model_override" | "provider_override",
     input: Pick<ChatIdentityMigrationInput, "botId" | "oldChatId" | "newChatId">,
     action: Exclude<ChatMigrationSingletonAction, "none">,
   ): Promise<void>;
@@ -181,6 +186,7 @@ export function buildChatIdentityMigrationPlan(
 ): ChatIdentityMigrationPlan {
   const chatGrant = singletonAction(snapshot.oldChatGrant, snapshot.newChatGrant);
   const summaryConfig = singletonAction(snapshot.oldSummaryConfig, snapshot.newSummaryConfig);
+  const aiSelection = singletonAction(snapshot.oldAiSelection, snapshot.newAiSelection);
   const modelOverride = singletonAction(snapshot.oldModelOverride, snapshot.newModelOverride);
   const providerOverride = singletonAction(
     snapshot.oldProviderOverride,
@@ -211,6 +217,7 @@ export function buildChatIdentityMigrationPlan(
     ["chat_grant", chatGrant],
     ["group_override", groupOverride],
     ["summary_config", summaryConfig],
+    ["ai_selection", aiSelection],
     ["model_override", modelOverride],
     ["provider_override", providerOverride],
   ] as const) {
@@ -228,6 +235,7 @@ export function buildChatIdentityMigrationPlan(
     chatGrant,
     groupOverride,
     summaryConfig,
+    aiSelection,
     modelOverride,
     providerOverride,
     nextGroupOverrides,
@@ -320,6 +328,12 @@ class DrizzleChatIdentityMigrationTransaction implements ChatIdentityMigrationTr
       .select({ chatId: summaryConfigs.chatId })
       .from(summaryConfigs)
       .where(and(eq(summaryConfigs.botId, input.botId), inArray(summaryConfigs.chatId, chatIds)));
+    const selectionRows = await this.tx
+      .select({ chatId: chatAiSelections.chatId })
+      .from(chatAiSelections)
+      .where(
+        and(eq(chatAiSelections.botId, input.botId), inArray(chatAiSelections.chatId, chatIds)),
+      );
     const modelRows = await this.tx
       .select({ chatId: chatModelOverrides.chatId })
       .from(chatModelOverrides)
@@ -354,6 +368,8 @@ class DrizzleChatIdentityMigrationTransaction implements ChatIdentityMigrationTr
       newChatGrant: hasChat(grantRows, input.newChatId),
       oldSummaryConfig: hasChat(summaryRows, input.oldChatId),
       newSummaryConfig: hasChat(summaryRows, input.newChatId),
+      oldAiSelection: hasChat(selectionRows, input.oldChatId),
+      newAiSelection: hasChat(selectionRows, input.newChatId),
       oldModelOverride: hasChat(modelRows, input.oldChatId),
       newModelOverride: hasChat(modelRows, input.newChatId),
       oldProviderOverride: hasChat(providerRows, input.oldChatId),
@@ -365,10 +381,32 @@ class DrizzleChatIdentityMigrationTransaction implements ChatIdentityMigrationTr
   }
 
   async applySingleton(
-    kind: "chat_grant" | "summary_config" | "model_override" | "provider_override",
+    kind: "chat_grant" | "summary_config" | "ai_selection" | "model_override" | "provider_override",
     input: Pick<ChatIdentityMigrationInput, "botId" | "oldChatId" | "newChatId">,
     action: Exclude<ChatMigrationSingletonAction, "none">,
   ): Promise<void> {
+    if (kind === "ai_selection") {
+      const condition = and(
+        eq(chatAiSelections.botId, input.botId),
+        eq(chatAiSelections.chatId, input.oldChatId),
+      );
+      if (action === "move") {
+        await this.tx
+          .update(chatAiSelections)
+          .set({
+            chatId: input.newChatId,
+            revision: sql`${chatAiSelections.revision} + 1`,
+            updatedByKind: null,
+            updatedById: null,
+            updatedAt: sql`now()`,
+          })
+          .where(condition);
+      } else {
+        await this.tx.delete(chatAiSelections).where(condition);
+      }
+      return;
+    }
+
     const table = {
       chat_grant: miniAppChatGrants,
       summary_config: summaryConfigs,
@@ -548,6 +586,7 @@ export class ChatIdentityMigrationService {
       for (const [kind, action] of [
         ["chat_grant", plan.chatGrant],
         ["summary_config", plan.summaryConfig],
+        ["ai_selection", plan.aiSelection],
         ["model_override", plan.modelOverride],
         ["provider_override", plan.providerOverride],
       ] as const) {

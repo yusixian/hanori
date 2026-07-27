@@ -5,6 +5,7 @@ import postgres from "postgres";
 import * as schema from "./schema.js";
 
 export * from "./schema.js";
+export * from "./chat-ai-selection-migration.js";
 export { schema };
 
 export async function runMigrations(databaseUrl: string) {
