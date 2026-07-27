@@ -28,6 +28,11 @@ function createContext() {
   const streamError = new Error("Rich Message content cannot be empty");
   const api = {
     sendRichMessageDraft: vi.fn().mockResolvedValue(true),
+    sendPhoto: vi.fn().mockResolvedValue(sentMessage(31, "photo")),
+    sendMessage: vi.fn().mockResolvedValue(sentMessage(33, "fallback")),
+    sendPoll: vi.fn().mockResolvedValue({ message_id: 32, poll: { id: "poll-1" } }),
+    getChat: vi.fn().mockResolvedValue({ id: -100, type: "supergroup", title: "Test" }),
+    getChatMemberCount: vi.fn().mockResolvedValue(3),
   } as unknown as Api;
   let ctx!: BotContext;
   ctx = {
@@ -168,6 +173,200 @@ describe("AI reply streaming", () => {
     expect(onLog).not.toHaveBeenCalledWith(
       expect.objectContaining({ level: "error", message: expect.stringContaining("failed") }),
     );
+  });
+
+  it.each(["stream", "segment"] as const)(
+    "delivers a deterministic fallback for an empty %s continuation",
+    async (replyMode) => {
+      async function* emptyStream() {}
+      streamTextMock.mockReturnValue({
+        textStream: emptyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("stop"),
+      });
+      const { ctx } = createContext();
+      const config = createConfig(vi.fn());
+      config.messageConfig = {
+        replyMode,
+        richMessageEnabled: true,
+        autoSplitThreshold: 0,
+        splitDelayMs: 0,
+      };
+      config.initialApi = ctx.api;
+      const result = createAiReplyHandler(config);
+
+      await expect(
+        result.fireTimerEvent(-100, "timer-empty", "empty response", undefined, true),
+      ).resolves.toBe(true);
+      expect(ctx.api.sendMessage).toHaveBeenCalledWith(
+        -100,
+        "(事件已处理，但 AI 未生成回复内容)",
+        undefined,
+      );
+    },
+  );
+
+  it.each([
+    ["send_photo", { photo: "file-id" }],
+    ["set_timer", { seconds: 5, reason: "nested timer" }],
+    ["send_poll", { question: "Continue?", poll_options: ["Yes", "No"] }],
+  ] as const)("accepts successful %s with empty continuation text", async (toolName, input) => {
+    const { ctx } = createContext();
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        await options.tools[toolName].execute(input, {});
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.initialApi = ctx.api;
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(-100, "timer-tool", "tool event", undefined, true),
+    ).resolves.toBe(true);
+  });
+
+  it("adds a visible fallback after a read-only get_chat_info call", async () => {
+    const { ctx } = createContext();
+    streamTextMock.mockImplementation((options: any) => {
+      async function* readOnlyStream() {
+        await options.tools.get_chat_info.execute({}, {});
+        yield* [] as string[];
+      }
+      return {
+        textStream: readOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.initialApi = ctx.api;
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(-100, "timer-read", "read event", undefined, true),
+    ).resolves.toBe(true);
+    expect(ctx.api.sendMessage).toHaveBeenCalled();
+  });
+
+  it("retries when only a read-only tool ran and fallback delivery failed", async () => {
+    const { ctx } = createContext();
+    vi.mocked(ctx.api.sendMessage).mockRejectedValue(new Error("Telegram unavailable"));
+    streamTextMock.mockImplementation((options: any) => {
+      async function* readOnlyStream() {
+        await options.tools.get_chat_info.execute({}, {});
+        yield* [] as string[];
+      }
+      return {
+        textStream: readOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.initialApi = ctx.api;
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(-100, "timer-read-failed", "read event", undefined, true),
+    ).rejects.toThrow("Telegram unavailable");
+  });
+
+  it.each([-100, 123])(
+    "does not expose RSS writes or consume items before scheduled digest delivery in chat %s",
+    async (chatId) => {
+      const { ctx } = createContext();
+      vi.mocked(ctx.api.sendMessage).mockRejectedValue(new Error("Telegram unavailable"));
+      const onMarkDigested = vi.fn();
+      streamTextMock.mockImplementation((options: any) => {
+        expect(options.tools.check_rss).toBeDefined();
+        expect(options.tools.mark_rss_read).toBeUndefined();
+        async function* digestStream() {
+          yield "digest";
+        }
+        return {
+          textStream: digestStream(),
+          text: Promise.resolve("digest"),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+          finishReason: Promise.resolve("stop"),
+        };
+      });
+      const config = createConfig(vi.fn());
+      config.messageConfig = {
+        replyMode: "segment",
+        richMessageEnabled: true,
+        autoSplitThreshold: 0,
+        splitDelayMs: 0,
+      };
+      config.initialApi = ctx.api;
+      config.rssCallbacks = {
+        onListCollections: vi.fn(),
+        onGetNewItems: vi.fn(),
+        onMarkDigested,
+        onAddFeed: vi.fn(),
+        onRemoveFeed: vi.fn(),
+        onCreateCollection: vi.fn(),
+      } as unknown as NonNullable<AiReplyConfig["rssCallbacks"]>;
+      const result = createAiReplyHandler(config);
+
+      await expect(
+        result.fireTimerEvent(
+          chatId,
+          "rss-digest",
+          "scheduled digest",
+          chatId > 0 ? chatId : undefined,
+          chatId < 0,
+          false,
+        ),
+      ).rejects.toThrow("Telegram unavailable");
+      expect(onMarkDigested).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not replay a visible tool when trailing text delivery fails", async () => {
+    const { ctx } = createContext();
+    vi.mocked(ctx.api.sendMessage).mockRejectedValue(new Error("Telegram unavailable"));
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolStream() {
+        await options.tools.send_photo.execute({ photo: "file-id" }, {});
+        yield "final text";
+      }
+      return {
+        textStream: toolStream(),
+        text: Promise.resolve("final text"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.messageConfig = {
+      replyMode: "segment",
+      richMessageEnabled: true,
+      autoSplitThreshold: 0,
+      splitDelayMs: 0,
+    };
+    config.initialApi = ctx.api;
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(-100, "timer-tool-text", "tool event", undefined, true),
+    ).resolves.toBe(false);
   });
 
   it("cleans a waiting status created after the final streamed chunk", async () => {

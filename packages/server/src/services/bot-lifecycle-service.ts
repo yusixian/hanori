@@ -181,9 +181,9 @@ export class BotLifecycleService {
       );
 
       const runtimeStatus = this.runtime.getStatus(input.botId);
-      const alreadyReconciled = desiredActive
-        ? runtimeStatus === "running"
-        : runtimeStatus === "stopped";
+      // Disable always calls the idempotent runtime stop so stale handlers and
+      // disposers are cleaned even when the manager already disappeared.
+      const alreadyReconciled = desiredActive && runtimeStatus === "running";
       return alreadyReconciled
         ? { ...state(desiredActive, runtimeStatus), persisted: true, applied: true }
         : this.applyRuntime(input.botId, desiredActive, errorCode, apply);

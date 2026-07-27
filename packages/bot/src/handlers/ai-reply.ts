@@ -76,6 +76,7 @@ import {
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
+import { VISIBLE_EFFECT_TOOL_NAMES } from "../tools/visible-effects.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
@@ -201,7 +202,7 @@ export interface AiReplyConfig {
     handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
-  onTimerFiredPersist?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => Promise<void>;
   rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
   mcpTools?: McpToolsOptions;
   initialApi?: Api;
@@ -292,28 +293,6 @@ function serializedLength(value: unknown): number {
 const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_STALE_MS = 30 * 60 * 1000;
-
-// Tools that produce visible side effects (used to decide whether to delete the waiting message)
-const VISIBLE_EFFECT_TOOL_NAMES = new Set([
-  "react_to_message",
-  "send_sticker",
-  // Telegram tools
-  "send_photo",
-  "send_voice",
-  "send_document",
-  "send_media_group",
-  "close_poll",
-  "set_timer",
-  "cancel_timer",
-  "send_dice",
-  "delete_own_message",
-  "pin_message",
-  "get_chat_info",
-  // Behavior tools
-  "set_mood",
-  // Artwork tools
-  "send_artwork",
-]);
 
 async function directlyReplyAndCleanup(
   ctx: WrapperContext,
@@ -735,7 +714,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     reason: string,
     userId?: number,
     memoryless?: boolean,
-  ) => void;
+    allowRssWrites?: boolean,
+  ) => Promise<boolean>;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
   waitForUserProfileUpdates: (userId: number) => Promise<void>;
@@ -957,21 +937,25 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     reason: string,
     timerUserId?: number,
     memoryless?: boolean,
-  ) => {
-    if (!botApi) return;
+    allowRssWrites?: boolean,
+  ): Promise<boolean> => {
+    if (!botApi) return Promise.reject(new Error("Bot API is not ready for timer delivery"));
     const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
-    continueChat(botApi, buildContinueChatConfig(timerChatId), {
+    return continueChat(botApi, buildContinueChatConfig(timerChatId), {
       chatId: timerChatId,
       eventDescription,
       userId: timerUserId,
       timerDepth: 1,
       memoryless,
+      requireDelivery: true,
+      allowRssWrites,
     }).catch((err) => {
       config.onLog?.({
         level: "error",
         message: `Timer continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
         meta: { chatId: timerChatId, timerId },
       });
+      throw err;
     });
   };
 
@@ -1054,7 +1038,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       recentBotMessageIds,
       moodState,
       stickerPacks: config.stickerPacks,
-      onTimerFired,
+      onTimerFired: async (timerChatId, timerId, reason) => {
+        await onTimerFired(timerChatId, timerId, reason);
+      },
       onTimerCreate: config.onTimerCreate,
       onTimerCancel: config.onTimerCancel,
       onTimerFiredPersist: config.onTimerFiredPersist,
@@ -1308,8 +1294,9 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         userId,
         recentBotMessageIds: chatBotMsgIds,
         pendingActions,
-        onTimerFired: (timerChatId, timerId, reason) =>
-          onTimerFired(timerChatId, timerId, reason, userId),
+        onTimerFired: async (timerChatId, timerId, reason) => {
+          await onTimerFired(timerChatId, timerId, reason, userId);
+        },
         onTimerCreate: config.onTimerCreate
           ? (params) => config.onTimerCreate!({ ...params, userId })
           : undefined,

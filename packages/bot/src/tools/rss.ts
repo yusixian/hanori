@@ -8,6 +8,7 @@ export interface RssToolsOptions {
   chatId: number;
   adminChatIds: number[];
   forceAdmin?: boolean;
+  allowWrites?: boolean;
   onListCollections: () => Promise<RssCollectionRecord[]>;
   onGetNewItems: (
     collectionId: number,
@@ -65,7 +66,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
   };
 
   // Admin-only tools
-  if (isAdmin) {
+  if (isAdmin && options.allowWrites !== false) {
     tools.mark_rss_read = tool({
       description:
         "标记某个 RSS 合集的所有未读条目为已读。完成 RSS 摘要后必须调用此工具确认已处理。",

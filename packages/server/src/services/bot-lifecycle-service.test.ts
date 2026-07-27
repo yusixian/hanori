@@ -209,6 +209,20 @@ describe("BotLifecycleService", () => {
     expect(current.stop).toHaveBeenCalledWith(BOT_B);
   });
 
+  it("runs idempotent stop even when runtime already reports stopped", async () => {
+    const { db } = database([false]);
+    const stopped = runtime({ [BOT_A]: "stopped" });
+    const service = new BotLifecycleService(db, stopped.value);
+
+    await expect(service.disable({ botId: BOT_A, actor: ACTOR })).resolves.toMatchObject({
+      desiredActive: false,
+      runtimeStatus: "stopped",
+      reconciled: true,
+      applied: true,
+    });
+    expect(stopped.stop).toHaveBeenCalledWith(BOT_A);
+  });
+
   it("rejects restart while desired=false without touching runtime", async () => {
     const { db, audits, updates } = database([false]);
     const stopped = runtime({ [BOT_A]: "stopped" });

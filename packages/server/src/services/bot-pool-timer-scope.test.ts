@@ -73,11 +73,11 @@ function createPool() {
     botTimerHandlers: Map<string, BotTimerHandlers>;
   };
   internals.botTimerHandlers.set(BOT_A, {
-    fireTimer: vi.fn(),
+    fireTimer: vi.fn(async () => true),
     cancelPendingTimer: cancelPendingTimerA,
   });
   internals.botTimerHandlers.set(BOT_B, {
-    fireTimer: vi.fn(),
+    fireTimer: vi.fn(async () => true),
     cancelPendingTimer: cancelPendingTimerB,
   });
   return { pool, listActive, cancel, pauseBot, cancelPendingTimerA, cancelPendingTimerB };
@@ -111,9 +111,18 @@ describe("BotPool timer tenant scope", () => {
 
   it("pauses durable timers even when the Bot has no live manager", async () => {
     const { pool, pauseBot } = createPool();
+    const internals = pool as unknown as {
+      botTimerHandlers: Map<string, BotTimerHandlers>;
+      aiSelectionRuntimeDisposers: Map<string, () => void>;
+    };
+    const dispose = vi.fn();
+    internals.aiSelectionRuntimeDisposers.set(BOT_A, dispose);
 
     await pool.stopBot(BOT_A);
 
     expect(pauseBot).toHaveBeenCalledWith(BOT_A);
+    expect(internals.botTimerHandlers.has(BOT_A)).toBe(false);
+    expect(internals.aiSelectionRuntimeDisposers.has(BOT_A)).toBe(false);
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });

@@ -10,15 +10,14 @@ vi.mock("../env.js", () => ({
   env: { ENCRYPTION_KEY: "test-key" },
 }));
 
-function createPool() {
-  const markFired = vi.fn().mockResolvedValue(undefined);
+function createPool(delivered = true) {
   const logger = {
     info: vi.fn(),
     warn: vi.fn(),
     error: vi.fn(),
   } as unknown as Logger;
-  const pool = new BotPool({} as Database, logger, { markFired } as unknown as TimerRegistry);
-  const fireTimer = vi.fn();
+  const pool = new BotPool({} as Database, logger, {} as TimerRegistry);
+  const fireTimer = vi.fn(async () => delivered);
   const internals = pool as unknown as {
     managers: Map<string, IBotManager>;
     botTimerHandlers: Map<string, BotTimerHandlers>;
@@ -28,25 +27,38 @@ function createPool() {
     fireTimer,
     cancelPendingTimer: vi.fn(),
   });
-  return { pool, fireTimer, markFired };
+  return { pool, fireTimer };
 }
 
 describe("BotPool recovered timer compatibility", () => {
-  it("infers the owner for a legacy private timer", async () => {
-    const { pool, fireTimer, markFired } = createPool();
+  it("does not accept an RSS digest without a visible Telegram delivery", async () => {
+    const { pool } = createPool(false);
+    const fireRssDigest = (
+      pool as unknown as {
+        fireRssDigest: (
+          botId: string,
+          chatId: number,
+          eventDescription: string,
+        ) => Promise<boolean>;
+      }
+    ).fireRssDigest.bind(pool);
 
-    pool.fireRecoveredTimer("timer-1", "bot-1", 42, { reason: "legacy private" });
+    await expect(fireRssDigest("bot-1", -100, "digest")).resolves.toBe(false);
+  });
+
+  it("infers the owner for a legacy private timer", async () => {
+    const { pool, fireTimer } = createPool();
+
+    await pool.fireRecoveredTimer("timer-1", "bot-1", 42, { reason: "legacy private" });
 
     expect(fireTimer).toHaveBeenCalledWith(42, "timer-1", "legacy private", 42, false);
-    await vi.waitFor(() => expect(markFired).toHaveBeenCalledWith("timer-1"));
   });
 
   it("fires a legacy group timer in memoryless compatibility mode", async () => {
-    const { pool, fireTimer, markFired } = createPool();
+    const { pool, fireTimer } = createPool();
 
-    pool.fireRecoveredTimer("timer-2", "bot-1", -100, { reason: "legacy group" });
+    await pool.fireRecoveredTimer("timer-2", "bot-1", -100, { reason: "legacy group" });
 
     expect(fireTimer).toHaveBeenCalledWith(-100, "timer-2", "legacy group", undefined, true);
-    await vi.waitFor(() => expect(markFired).toHaveBeenCalledWith("timer-2"));
   });
 });

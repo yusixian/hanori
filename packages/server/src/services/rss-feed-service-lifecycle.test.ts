@@ -78,4 +78,13 @@ describe("RssFeedService Bot lifecycle", () => {
     await expect(service.triggerDigest(COLLECTION.id)).resolves.toBe(true);
     expect(updates).toEqual([{ lastDigestAt: expect.any(Date) }, { digestedAt: expect.any(Date) }]);
   });
+
+  it("does not advance checkpoints when asynchronous delivery fails", async () => {
+    const { db, updates } = database();
+    const service = new RssFeedService(db, logger);
+    service.setDigestTrigger(async () => false);
+
+    await expect(service.triggerDigest(COLLECTION.id)).resolves.toBe(false);
+    expect(updates).toEqual([]);
+  });
 });

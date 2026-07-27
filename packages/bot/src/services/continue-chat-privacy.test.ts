@@ -58,6 +58,30 @@ describe("continueChat privacy", () => {
     );
   });
 
+  it("rejects privacy and AI-disabled skips when reliable delivery is required", async () => {
+    const privacy = {
+      getMode: vi.fn().mockResolvedValue("off"),
+      runExclusive: vi.fn(async (_userId: number, operation: () => Promise<void>) => operation()),
+    } as unknown as UserPrivacyCallbacks;
+
+    await expect(
+      continueChat({} as Api, { privacy } as unknown as ContinueChatConfig, {
+        chatId: 42,
+        userId: 42,
+        eventDescription: "timer fired",
+        requireDelivery: true,
+      }),
+    ).rejects.toThrow("personalization is off");
+
+    await expect(
+      continueChat({} as Api, { isAiDisabled: () => true } as unknown as ContinueChatConfig, {
+        chatId: -100,
+        eventDescription: "rss digest",
+        requireDelivery: true,
+      }),
+    ).rejects.toThrow("AI is disabled");
+  });
+
   it("fails closed for an ownerless private continuation", async () => {
     const privacy = {
       getMode: vi.fn(),

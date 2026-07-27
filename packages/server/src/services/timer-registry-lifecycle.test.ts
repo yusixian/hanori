@@ -49,11 +49,23 @@ function database(selectResults: TimerRow[][] = [], initialRows: TimerRow[] = []
   const inserts: Array<Record<string, unknown>> = [];
 
   const applyUpdate = (values: Record<string, unknown>) => {
-    const active = [...persisted.values()].find((entry) => entry.status === "active");
-    if (!active) return [];
-    Object.assign(active, values);
+    const target = [...persisted.values()].find((entry) => {
+      if (values.status === "processing") {
+        return (
+          entry.status === "active" ||
+          (entry.status === "processing" &&
+            entry.firedAt !== null &&
+            entry.firedAt.getTime() <= Date.now() - 60_000)
+        );
+      }
+      if (values.status === "fired") return entry.status === "processing";
+      if (values.status === "active") return entry.status === "processing";
+      return entry.status === "active";
+    });
+    if (!target) return [];
+    Object.assign(target, values);
     updates.push(values);
-    return [{ id: active.id }];
+    return [{ id: target.id }];
   };
   const db = {
     select: () => ({
@@ -173,6 +185,7 @@ describe("TimerRegistry Bot lifecycle", () => {
       first.resumeBot(BOT_A, onFire),
       second.resumeBot(BOT_A, onFire),
     ]);
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(results.map((result) => result.immediate).sort()).toEqual([0, 1]);
     expect(persisted.get("overdue")?.status).toBe("fired");
@@ -180,6 +193,63 @@ describe("TimerRegistry Bot lifecycle", () => {
     expect(onFire).toHaveBeenCalledWith("overdue", BOT_A, 42, overdue.meta, true);
     first.destroy();
     second.destroy();
+  });
+
+  it("restores a claimed timer when recovered delivery fails", async () => {
+    const overdue = row("retry", BOT_A, new Date(NOW.getTime() - 1_000));
+    const { db, persisted, updates } = database([[overdue]], [overdue]);
+    const registry = new TimerRegistry(db, logger());
+
+    await expect(
+      registry.resumeBot(BOT_A, async () => Promise.reject(new Error("delivery failed"))),
+    ).resolves.toEqual({ recovered: 0, cancelled: 0, immediate: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(persisted.get("retry")?.status).toBe("active");
+    expect(updates).toContainEqual({ status: "active", firedAt: null });
+    expect(registry.get("retry")).toMatchObject({ status: "active" });
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(persisted.get("retry")?.status).toBe("active");
+    expect(registry.get("retry")).toBeUndefined();
+    registry.destroy();
+  });
+
+  it("recovers an expired processing lease after a previous process crashed", async () => {
+    const crashed = row("crashed", BOT_A, new Date(NOW.getTime() - 120_000), {
+      status: "processing",
+      firedAt: new Date(NOW.getTime() - 61_000),
+    });
+    const { db, persisted } = database([[crashed]], [crashed]);
+    const registry = new TimerRegistry(db, logger());
+    const onFire = vi.fn(async () => {});
+
+    await expect(registry.resumeBot(BOT_A, onFire)).resolves.toMatchObject({ immediate: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onFire).toHaveBeenCalledOnce();
+    expect(persisted.get("crashed")?.status).toBe("fired");
+    registry.destroy();
+  });
+
+  it("does not hold the Bot lock while an overdue delivery is in flight", async () => {
+    const overdue = row("slow", BOT_A, new Date(NOW.getTime() - 1_000));
+    const { db } = database([[overdue]], [overdue]);
+    const registry = new TimerRegistry(db, logger());
+    let releaseDelivery = () => {};
+    const delivery = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    const onFire = vi.fn(() => delivery);
+
+    await expect(registry.resumeBot(BOT_A, onFire)).resolves.toMatchObject({ immediate: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onFire).toHaveBeenCalledOnce();
+
+    await expect(registry.pauseBot(BOT_A)).resolves.toBe(0);
+    releaseDelivery();
+    await Promise.resolve();
+    registry.destroy();
   });
 
   it("fails reconciliation when durable timers cannot be loaded", async () => {

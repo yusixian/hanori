@@ -26,7 +26,7 @@ export interface TelegramToolsOptions {
   recentBotMessageIds: number[];
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
-  onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
+  onTimerFired?: (chatId: number, timerId: string, reason: string) => Promise<void>;
   onTimerCreate?: (params: {
     timerId: string;
     chatId: number;
@@ -35,7 +35,7 @@ export interface TelegramToolsOptions {
     handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
-  onTimerFiredPersist?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onceGuard?: OnceGuardContext;
   dataDir?: string;
   token?: string;
@@ -321,8 +321,12 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           const handle = setTimeout(() => {
             const timer = options.pendingActions!.removeTimer(pending.timerId);
             if (timer) {
-              options.onTimerFiredPersist?.(timer.timerId);
-              options.onTimerFired!(chatId, timer.timerId, timer.reason);
+              void options.onTimerFired!(chatId, timer.timerId, timer.reason)
+                .then(() => options.onTimerFiredPersist?.(timer.timerId))
+                .catch(() => {
+                  // Delivery owns error logging; leaving the durable row active
+                  // allows recovery on the next Bot start.
+                });
             }
           }, seconds * 1000);
           handle.unref();

@@ -20,7 +20,11 @@ const MAX_CONCURRENT_FETCHES = 5;
 const MAX_SUMMARY_LENGTH = 500;
 const CLEANUP_DAYS = 30;
 
-export type RssDigestTrigger = (botId: string, chatId: number, eventDescription: string) => boolean;
+export type RssDigestTrigger = (
+  botId: string,
+  chatId: number,
+  eventDescription: string,
+) => boolean | Promise<boolean>;
 
 export class RssFeedService {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -291,7 +295,7 @@ export class RssFeedService {
       maxDisplay,
       truncatedFeeds,
     );
-    const fired = this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
+    const fired = await this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
 
     if (fired) {
       await this.db

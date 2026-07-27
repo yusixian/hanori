@@ -46,6 +46,7 @@ import {
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
+import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
 import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
@@ -89,7 +90,7 @@ export interface ContinueChatConfig {
   recentBotMessageIds: Map<number, number[]>;
   moodState: Map<number, MoodInfo>;
   stickerPacks?: string[];
-  onTimerFired?: (chatId: number, timerId: string, reason: string) => void;
+  onTimerFired?: (chatId: number, timerId: string, reason: string) => Promise<void>;
   onTimerCreate?: (params: {
     timerId: string;
     chatId: number;
@@ -99,7 +100,7 @@ export interface ContinueChatConfig {
     handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
-  onTimerFiredPersist?: (timerId: string) => void;
+  onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
@@ -116,13 +117,19 @@ export interface ContinueChatEvent {
   userName?: string;
   timerDepth?: number;
   memoryless?: boolean;
+  requireDelivery?: boolean;
+  allowRssWrites?: boolean;
+}
+
+function requireContinuationDelivery(event: ContinueChatEvent, reason: string): void {
+  if (event.requireDelivery) throw new Error(`Continuation was not delivered: ${reason}`);
 }
 
 export async function continueChat(
   api: Api,
   config: ContinueChatConfig,
   event: ContinueChatEvent,
-): Promise<void> {
+): Promise<boolean> {
   const executionConfig = event.memoryless
     ? {
         ...config,
@@ -144,14 +151,14 @@ export async function continueChat(
       message: "Ownerless private continuation skipped because privacy cannot be evaluated",
       meta: { chatId: event.chatId },
     });
-    return;
+    requireContinuationDelivery(event, "ownerless private event");
+    return false;
   }
   if (eventUserId === undefined || !privacy) {
-    await run();
-    return;
+    return await run();
   }
 
-  await privacy.runExclusive(eventUserId, async () => {
+  return await privacy.runExclusive(eventUserId, async () => {
     const privacyMode = await privacy.getMode(eventUserId);
     if (privacyMode === "off") {
       config.onLog?.({
@@ -159,9 +166,10 @@ export async function continueChat(
         message: "Personalized continuation skipped because personalization is off",
         meta: { chatId: event.chatId, userId: eventUserId },
       });
-      return;
+      requireContinuationDelivery(event, "personalization is off");
+      return false;
     }
-    await run();
+    return await run();
   });
 }
 
@@ -169,7 +177,7 @@ async function doContinueChat(
   api: Api,
   config: ContinueChatConfig,
   event: ContinueChatEvent,
-): Promise<void> {
+): Promise<boolean> {
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -182,9 +190,11 @@ async function doContinueChat(
       message: "continueChat skipped — AI disabled",
       meta: { chatId },
     });
-    return;
+    requireContinuationDelivery(event, "AI is disabled");
+    return false;
   }
   const selection = config.resolveSelection(chatId);
+  let successfulToolEffectCount = 0;
 
   config.onLog?.({
     level: "info",
@@ -251,21 +261,26 @@ async function doContinueChat(
     // The reused `config` still carries the original onTimerFired, so the next
     // doContinueChat will re-wrap it with the correct depth.
     const wrappedOnTimerFired = config.onTimerFired
-      ? (tChatId: number, timerId: string, reason: string) => {
+      ? async (tChatId: number, timerId: string, reason: string) => {
           const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
-          continueChat(api, config, {
-            chatId: tChatId,
-            eventDescription,
-            userId: event.userId,
-            timerDepth: timerDepth + 1,
-            memoryless: event.memoryless,
-          }).catch((err) => {
+          try {
+            await continueChat(api, config, {
+              chatId: tChatId,
+              eventDescription,
+              userId: event.userId,
+              timerDepth: timerDepth + 1,
+              memoryless: event.memoryless,
+              requireDelivery: true,
+              allowRssWrites: event.allowRssWrites,
+            });
+          } catch (err) {
             config.onLog?.({
               level: "error",
               message: `Timer continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
               meta: { chatId: tChatId, timerId },
             });
-          });
+            throw err;
+          }
         }
       : undefined;
 
@@ -363,6 +378,7 @@ async function doContinueChat(
         chatId: event.chatId,
         adminChatIds: config.adminIds ?? [],
         forceAdmin: event.userId == null,
+        allowWrites: event.allowRssWrites !== false,
       });
       Object.assign(allTools, rssTools);
     }
@@ -374,6 +390,7 @@ async function doContinueChat(
     }
 
     const startTime = Date.now();
+    let streamedMessageCount = 0;
     const requestCache = createRequestCache();
     manualAbort = new AbortController();
     config.registerAbortController?.(manualAbort);
@@ -389,7 +406,12 @@ async function doContinueChat(
     const result = streamText({
       model: selection.model,
       messages,
-      tools: wrapToolsWithCache(allTools, requestCache),
+      tools: wrapToolsWithCache(
+        trackSuccessfulToolEffects(allTools, () => {
+          successfulToolEffectCount += 1;
+        }),
+        requestCache,
+      ),
       stopWhen: stepCountIs(5),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,
@@ -438,6 +460,7 @@ async function doContinueChat(
           for (const msg of sentMessages) {
             chatBotMsgIds.push(msg.message_id);
           }
+          streamedMessageCount = sentMessages.length;
         } catch (streamErr) {
           streamFailed = true;
           config.onLog?.({
@@ -464,7 +487,8 @@ async function doContinueChat(
         message: "continueChat aborted mid-reply, dropping pending sends",
         meta: { chatId },
       });
-      return;
+      if (successfulToolEffectCount === 0) requireContinuationDelivery(event, "reply was aborted");
+      return false;
     }
 
     const afterThink = stripThinkingContent(
@@ -528,12 +552,35 @@ async function doContinueChat(
             message: `Rich Message fallbacks failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`,
             meta: { chatId },
           });
+          if (event.requireDelivery && successfulToolEffectCount === 0) throw sendError;
         }
       }
     }
     const assistantContent = sentViaMultiMessage
       ? [deliveredMultiMessageContent, ...deliveredFinalChunks].filter(Boolean).join("\n")
       : text;
+
+    let visibleDeliveryCount =
+      streamedMessageCount + deliveredMultiMessages.length + deliveredFinalChunks.length;
+    if (event.requireDelivery && visibleDeliveryCount === 0) {
+      try {
+        const { message } = await sendMarkdownWithFallback(
+          api,
+          chatId,
+          "(事件已处理，但 AI 未生成回复内容)",
+          isRichMessageEnabled(config.messageConfig),
+        );
+        chatBotMsgIds.push(message.message_id);
+        visibleDeliveryCount += 1;
+      } catch (emptyReplyError) {
+        if (successfulToolEffectCount === 0) throw emptyReplyError;
+        config.onLog?.({
+          level: "warn",
+          message: "Continuation fallback failed after a successful tool effect",
+          meta: { chatId },
+        });
+      }
+    }
 
     // Await full results for post-processing
     const usage = await result.usage;
@@ -601,12 +648,15 @@ async function doContinueChat(
         multiMessageSentCount: deliveredMultiMessages.length,
       },
     });
+    return visibleDeliveryCount > 0;
   } catch (err) {
     config.onLog?.({
       level: "error",
       message: `continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
       meta: { chatId },
     });
+    if (event.requireDelivery && successfulToolEffectCount === 0) throw err;
+    return false;
   } finally {
     if (manualAbort) config.unregisterAbortController?.(manualAbort);
   }

@@ -1294,9 +1294,10 @@ export class BotPool {
           this.logger.error(err, `Failed to cancel timer ${timerId} in registry`);
         });
       },
-      onTimerFired: (timerId: string) => {
-        registry.markFired(timerId).catch((err) => {
+      onTimerFired: async (timerId: string) => {
+        await registry.markFired(timerId).catch((err) => {
           this.logger.error(err, `Failed to mark timer ${timerId} fired in registry`);
+          throw err;
         });
       },
       onGetTimers: () => this.getActiveTimersForBot(botId),
@@ -1434,9 +1435,9 @@ export class BotPool {
     }
     if (this.botTimerHandlers.has(botId)) {
       try {
-        await this.timerRegistry.resumeBot(botId, (timerId, ownerBotId, chatId, meta, delayed) => {
-          this.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed);
-        });
+        await this.timerRegistry.resumeBot(botId, (timerId, ownerBotId, chatId, meta, delayed) =>
+          this.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed),
+        );
       } catch (error) {
         try {
           await manager.stop();
@@ -1658,12 +1659,14 @@ export class BotPool {
     await this.cancelGenerationRecoveries(botId, `Bot ${botId} stopped`);
     await this.timerRegistry.pauseBot(botId);
     const manager = this.managers.get(botId);
-    if (!manager) return;
-    await manager.stop();
-    this.managers.delete(botId);
-    this.botTimerHandlers.delete(botId);
-    this.aiSelectionRuntimeDisposers.get(botId)?.();
-    this.aiSelectionRuntimeDisposers.delete(botId);
+    try {
+      if (manager) await manager.stop();
+    } finally {
+      this.managers.delete(botId);
+      this.botTimerHandlers.delete(botId);
+      this.aiSelectionRuntimeDisposers.get(botId)?.();
+      this.aiSelectionRuntimeDisposers.delete(botId);
+    }
   }
 
   async restartBot(botId: string) {
@@ -1949,35 +1952,52 @@ export class BotPool {
   }
 
   /** Fire RSS digest via bot's continueChat. Returns true if handler existed and was invoked. */
-  private fireRssDigest(botId: string, chatId: number, eventDescription: string): boolean {
+  private async fireRssDigest(
+    botId: string,
+    chatId: number,
+    eventDescription: string,
+  ): Promise<boolean> {
     const handlers = this.botTimerHandlers.get(botId);
     if (handlers) {
-      // Reuse fireTimer path — it calls continueChat with the event description
-      handlers.fireTimer(
-        chatId,
-        `rss_digest_${Date.now()}`,
-        eventDescription,
-        chatId > 0 ? chatId : undefined,
-      );
-      this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
-      return true;
+      try {
+        const delivered = await handlers.fireTimer(
+          chatId,
+          `rss_digest_${Date.now()}`,
+          eventDescription,
+          chatId > 0 ? chatId : undefined,
+          undefined,
+          false,
+        );
+        if (!delivered) {
+          this.logger.warn(
+            { botId, chatId },
+            "RSS digest completed without a visible Telegram delivery",
+          );
+          return false;
+        }
+        this.logger.info({ botId, chatId }, "RSS digest triggered via continueChat");
+        return true;
+      } catch (error) {
+        this.logger.error({ botId, chatId, error }, "RSS digest continueChat failed");
+        return false;
+      }
     }
     this.logger.warn({ botId, chatId }, "No handler for bot, RSS digest cannot trigger");
     return false;
   }
 
   /** Fire a recovered timer by triggering the bot's continueChat. */
-  fireRecoveredTimer(
+  async fireRecoveredTimer(
     timerId: string,
     botId: string,
     chatId: number,
     meta: Record<string, unknown> | null,
     delayed = false,
-  ): void {
+  ): Promise<void> {
     const manager = this.managers.get(botId);
     if (!manager) {
       this.logger.warn(`Cannot fire recovered timer ${timerId}: bot ${botId} not managed`);
-      return;
+      return Promise.reject(new Error("Bot runtime is not managed"));
     }
 
     // Fire via bot's continueChat
@@ -1987,10 +2007,7 @@ export class BotPool {
       const storedUserId = typeof meta?.["userId"] === "number" ? meta["userId"] : undefined;
       const userId = storedUserId ?? (chatId > 0 ? chatId : undefined);
       const memoryless = userId === undefined;
-      handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
-      this.timerRegistry.markFired(timerId).catch((err) => {
-        this.logger.error(err, `Failed to mark recovered timer ${timerId} as fired`);
-      });
+      await handlers.fireTimer(chatId, timerId, reason, userId, memoryless);
       if (storedUserId === undefined) {
         this.logger.warn(
           { timerId, botId, chatId, inferredUserId: userId, memoryless },
@@ -2001,11 +2018,13 @@ export class BotPool {
         { timerId, botId, chatId, delayed },
         "Recovered timer fired via bot continueChat",
       );
+      return;
     } else {
       this.logger.warn(
         { timerId, botId, chatId },
         "No fire handler for bot, recovered timer cannot trigger continueChat",
       );
+      return Promise.reject(new Error("Bot timer handler is not ready"));
     }
   }
 }

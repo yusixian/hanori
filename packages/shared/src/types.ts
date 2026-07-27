@@ -775,7 +775,8 @@ export interface ChatAiSelectionRecord {
 export type ChatAiSelectionMigrationOutcome =
   | "migrated_pair"
   | "migrated_provider_default"
-  | "inherited";
+  | "inherited"
+  | "ignored";
 
 export type ChatAiSelectionMigrationReason =
   | "provider_only_valid"
@@ -785,7 +786,9 @@ export type ChatAiSelectionMigrationReason =
   | "model_only_invalid_model"
   | "pair_valid"
   | "pair_invalid_model_provider_default"
-  | "pair_invalid_provider";
+  | "pair_invalid_provider"
+  | "non_group_chat"
+  | "unsafe_chat_id";
 
 export interface ChatAiSelectionMigrationReportRecord {
   botId: string;
@@ -1228,7 +1231,7 @@ export interface RssItemRecord {
 // Timer types
 
 export type TimerType = "ai" | "system";
-export type TimerStatus = "active" | "fired" | "cancelled";
+export type TimerStatus = "active" | "processing" | "fired" | "cancelled";
 
 export interface TimerRecord {
   id: string;

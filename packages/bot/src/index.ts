@@ -74,7 +74,8 @@ export interface BotTimerHandlers {
     reason: string,
     userId?: number,
     memoryless?: boolean,
-  ) => void;
+    allowRssWrites?: boolean,
+  ) => Promise<boolean>;
   cancelPendingTimer: (timerId: string) => void;
 }
 
@@ -88,7 +89,7 @@ export interface TimerCallbacks {
     handle: ReturnType<typeof setTimeout>;
   }) => void;
   onTimerCancel?: (timerId: string) => void;
-  onTimerFired?: (timerId: string) => void;
+  onTimerFired?: (timerId: string) => Promise<void>;
   onGetTimers?: () => import("@cos-tool-bot/shared").TimerRecord[];
   onCancelTimer?: (timerId: string) => Promise<boolean>;
   onBotReady?: (handlers: BotTimerHandlers) => void;

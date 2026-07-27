@@ -191,12 +191,22 @@ botPool.setTelegramDirectoryCallbacks(
       });
     },
     onChatMigrationObserved: async (observation) => {
-      await chatIdentityMigrationService.migrate({
+      const result = await chatIdentityMigrationService.migrate({
         botId: observation.botId,
         oldChatId: observation.oldChatId,
         newChatId: observation.newChatId,
         observedAt: observation.observedAt,
       });
+      if (result.changed && botPool.getManager(observation.botId)) {
+        // Do not await inside the Bot update callback: the queued restart waits
+        // for this update to finish before stopping the current manager.
+        void botPool.restartBot(observation.botId).catch((error) => {
+          void dbLogger.error("Bot restart after Telegram chat migration failed", {
+            botId: observation.botId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     },
   },
   async (botId, profile) => {
