@@ -5,7 +5,10 @@ const mocks = vi.hoisted(() => ({
   createBot: vi.fn(() => ({ api: {} })),
   disposeBot: vi.fn(),
   run: vi.fn<
-    (_bot: unknown) => { stop: () => Promise<void>; task: () => Promise<void> | undefined }
+    (
+      _bot: unknown,
+      _options?: unknown,
+    ) => { stop: () => Promise<void>; task: () => Promise<void> | undefined }
   >(() => ({ stop: vi.fn(async () => {}), task: vi.fn(() => undefined) })),
 }));
 
@@ -17,7 +20,7 @@ vi.mock("@cos-tool-bot/bot", () => ({
 
 vi.mock("@grammyjs/runner", () => ({ run: mocks.run }));
 
-import { BotManager } from "./bot-manager.js";
+import { BotManager, TELEGRAM_LONG_POLL_UPDATE_TYPES } from "./bot-manager.js";
 import type { DbLogger } from "./db-logger.js";
 
 function createManager(): BotManager {
@@ -47,6 +50,18 @@ beforeEach(() => {
 });
 
 describe("BotManager runtime disposal", () => {
+  it("resets Telegram allowed updates instead of inheriting stale server state", async () => {
+    const manager = createManager();
+
+    await manager.start();
+
+    expect(mocks.run).toHaveBeenCalledWith(expect.anything(), {
+      runner: { fetch: { allowed_updates: TELEGRAM_LONG_POLL_UPDATE_TYPES } },
+    });
+    expect(TELEGRAM_LONG_POLL_UPDATE_TYPES).toContain("message");
+    expect(TELEGRAM_LONG_POLL_UPDATE_TYPES).toContain("my_chat_member");
+  });
+
   it("forwards Telegram observation callbacks into the bot runtime", async () => {
     const telegramObservation = { onChatObserved: vi.fn() };
     const manager = new BotManager({

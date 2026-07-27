@@ -8,7 +8,7 @@ import type {
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
 import { createBot, disposeBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
-import { run, type RunnerHandle } from "@grammyjs/runner";
+import { run, type FetchOptions, type RunnerHandle } from "@grammyjs/runner";
 import type {
   AiGroupOverride,
   BotStatus,
@@ -29,6 +29,19 @@ import {
   mapTelegramMembership,
   type TelegramBotPublicProfile,
 } from "./telegram-bot-runtime.js";
+
+export const TELEGRAM_LONG_POLL_UPDATE_TYPES = [
+  "message",
+  "edited_message",
+  "channel_post",
+  "edited_channel_post",
+  "callback_query",
+  "poll_answer",
+  "my_chat_member",
+  "chat_member",
+  "message_reaction",
+  "message_reaction_count",
+] as const satisfies NonNullable<FetchOptions["allowed_updates"]>;
 
 interface BotManagerOptions {
   botId: string;
@@ -109,7 +122,9 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     // is sequential, which means a stuck AI reply would block /stop and every
     // other command for up to aiReplyMs (5 min).
     try {
-      const handle = run(bot);
+      const handle = run(bot, {
+        runner: { fetch: { allowed_updates: TELEGRAM_LONG_POLL_UPDATE_TYPES } },
+      });
       this.runnerHandle = handle;
       await this.dbLogger.info("Bot started");
 
