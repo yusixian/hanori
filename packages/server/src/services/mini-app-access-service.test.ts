@@ -13,9 +13,13 @@ function queryReturning<T>(rows: T[]) {
     where: vi.fn(() => builder),
     orderBy: vi.fn(() => builder),
     limit: vi.fn(() => promise),
-    then: promise.then.bind(promise),
   };
   return builder;
+}
+
+function queryReturningAtWhere<T>(rows: T[]) {
+  const where = vi.fn(async () => rows);
+  return { from: vi.fn(() => ({ where })) };
 }
 
 describe("MiniAppAccessService", () => {
@@ -50,7 +54,7 @@ describe("MiniAppAccessService", () => {
   });
 
   it("fails closed before creating a chat grant when the Bot is not an administrator", async () => {
-    const select = vi.fn(() => queryReturning([{ chatId: -1001 }]));
+    const select = vi.fn(() => queryReturningAtWhere([{ chatId: -1001 }]));
     const transaction = vi.fn();
     const getBotMembership = vi.fn(async () => "member" as const);
     const service = new MiniAppAccessService({ select, transaction } as unknown as Database, {
@@ -90,7 +94,7 @@ describe("MiniAppAccessService", () => {
       }),
       select: vi.fn((selection: unknown) => {
         expect(selection).toEqual({ telegramUserId: peopleProfiles.telegramId });
-        return queryReturning([{ telegramUserId: 73 }]);
+        return queryReturningAtWhere([{ telegramUserId: 73 }]);
       }),
     };
     const transaction = vi.fn(async (callback: (value: typeof tx) => Promise<void>) =>
