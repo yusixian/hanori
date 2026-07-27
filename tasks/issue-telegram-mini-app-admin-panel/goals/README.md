@@ -9,8 +9,8 @@
 | G0   | 隐私日志、命令事实和 Summary 安全基线可验证                   | 已完成 | 无          |
 | G1   | Telegram session、群目录、grant 与 capability 可通过 API 演示 | 已完成 | G0          |
 | G2   | 公共 Help 与隔离 Mini App shell 可在浏览器/Telegram 演示      | 已完成 | G0、G1 契约 |
-| G3   | Admin 添加群/Operator，撤销后权限立即失效                     | 进行中 | G1、G2      |
-| G4   | Viewer 只读、Operator 字段级编辑并热应用                      | 待开始 | G1–G3       |
+| G3   | Admin 添加群/Operator，撤销后权限立即失效                     | 已完成 | G1、G2      |
+| G4   | Viewer 只读、Operator 字段级编辑并热应用                      | 进行中 | G1–G3       |
 | G5   | Admin 全局/群级 Provider 模型选择跨入口一致                   | 待开始 | G1、G4      |
 | G6   | Durable lifecycle 与常用 Settings 可演示                      | 待开始 | G1、G2、G5  |
 | G7   | 默认关闭、单 Bot 灰度、四端验收与可回滚                       | 待开始 | G3–G6       |
