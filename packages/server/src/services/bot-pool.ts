@@ -1255,8 +1255,8 @@ export class BotPool {
           this.logger.error(err, `Failed to mark timer ${timerId} fired in registry`);
         });
       },
-      onGetTimers: () => registry.listActive(),
-      onCancelTimer: (timerId: string) => this.cancelTimer(timerId),
+      onGetTimers: () => this.getActiveTimersForBot(botId),
+      onCancelTimer: (timerId: string) => this.cancelTimerForBot(botId, timerId),
       onBotReady: (handlers: import("@cos-tool-bot/bot").BotTimerHandlers) => {
         this.botTimerHandlers.set(botId, handlers);
       },
@@ -1796,6 +1796,18 @@ export class BotPool {
     if (timer?.botId) {
       this.botTimerHandlers.get(timer.botId)?.cancelPendingTimer(timerId);
     }
+    return this.timerRegistry.cancel(timerId);
+  }
+
+  getActiveTimersForBot(botId: string) {
+    return this.timerRegistry.listActive({ botId });
+  }
+
+  /** Cancel only when the timer belongs to the requesting Bot. */
+  async cancelTimerForBot(botId: string, timerId: string): Promise<boolean> {
+    const timer = this.timerRegistry.get(timerId);
+    if (!timer || timer.botId !== botId) return false;
+    this.botTimerHandlers.get(botId)?.cancelPendingTimer(timerId);
     return this.timerRegistry.cancel(timerId);
   }
 
