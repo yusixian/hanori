@@ -83,49 +83,49 @@ function truncateDescription(text: string, maxLen: number): string {
   return trimmed.slice(0, maxLen) + "…";
 }
 
-// Extract diagnostic fields from ai SDK errors (AI_APICallError / AI_RetryError / AbortError).
-// Returns a plain object safe for JSON logging.
-function extractErrorDetail(err: unknown): Record<string, unknown> {
-  if (err == null) return { raw: String(err) };
-  if (typeof err !== "object") return { raw: String(err) };
+function serializedLength(value: unknown): number | undefined {
+  if (typeof value === "string") return value.length;
+  try {
+    return JSON.stringify(value)?.length;
+  } catch {
+    return undefined;
+  }
+}
+
+// AI SDK errors can carry response bodies, request data, headers, and recursive
+// causes. Keep this diagnostic projection allowlisted because it is persisted.
+export function sanitizeOcrErrorForLog(err: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    errorType: err === null ? "null" : typeof err,
+  };
+  if (err == null || typeof err !== "object") return out;
+
   const anyErr = err as Record<string, unknown> & { cause?: unknown };
-  const out: Record<string, unknown> = {};
   if (err instanceof Error) {
     out.name = err.name;
-    out.message = err.message;
-    if (err.stack) out.stack = err.stack.split("\n").slice(0, 5).join("\n");
+    out.messageLength = err.message.length;
   }
-  // Common AI SDK fields
-  for (const k of [
-    "statusCode",
-    "url",
-    "responseBody",
-    "responseHeaders",
-    "data",
-    "isRetryable",
-    "reason",
-  ]) {
-    if (k in anyErr && anyErr[k] !== undefined) {
-      const v = anyErr[k];
-      // Truncate huge response bodies
-      if (typeof v === "string" && v.length > 2000) {
-        out[k] = v.slice(0, 2000) + `…(+${v.length - 2000} chars)`;
-      } else {
-        out[k] = v;
-      }
+
+  if (typeof anyErr.statusCode === "number" && Number.isSafeInteger(anyErr.statusCode)) {
+    out.statusCode = anyErr.statusCode;
+  }
+  if (typeof anyErr.isRetryable === "boolean") out.isRetryable = anyErr.isRetryable;
+
+  for (const key of ["responseBody", "data", "reason"] as const) {
+    if (!(key in anyErr) || anyErr[key] === undefined) continue;
+    out[`${key}Type`] = anyErr[key] === null ? "null" : typeof anyErr[key];
+    const length = serializedLength(anyErr[key]);
+    if (length !== undefined) out[`${key}Length`] = length;
+  }
+
+  if (anyErr.cause !== undefined) {
+    out.causeType = anyErr.cause === null ? "null" : typeof anyErr.cause;
+    if (anyErr.cause instanceof Error) {
+      out.causeName = anyErr.cause.name;
+      out.causeMessageLength = anyErr.cause.message.length;
     }
   }
-  if (anyErr.cause) {
-    out.cause = extractErrorDetail(anyErr.cause);
-  }
-  // Fallback: if nothing captured, dump JSON
-  if (Object.keys(out).length === 0) {
-    try {
-      out.json = JSON.parse(JSON.stringify(err));
-    } catch {
-      out.raw = String(err);
-    }
-  }
+
   return out;
 }
 
@@ -257,7 +257,7 @@ export async function describeImages(opts: DescribeImagesOptions): Promise<OcrRe
           mimeType: img.mimeType,
           imageBytes: img.buffer.length,
           durationMs,
-          error: extractErrorDetail(err),
+          error: sanitizeOcrErrorForLog(err),
         },
         "Image OCR call failed",
       );
