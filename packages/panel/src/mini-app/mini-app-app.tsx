@@ -23,6 +23,7 @@ import {
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { AccessPage } from "./access-page";
+import { GlobalAiSelectionSettings } from "./ai-selection-panel";
 import { GroupsPage } from "./groups-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
 import { createTelegramMiniAppAdapter, type TelegramMiniAppAdapter } from "./telegram-adapter";
@@ -257,6 +258,9 @@ function ProtectedPage({
   }
   if (page === "groups") return <GroupsPage botId={botId} session={state.session} />;
   if (page === "access") return <AccessPage botId={botId} session={state.session} />;
+  if (page === "settings") {
+    return <GlobalAiSelectionSettings botId={botId} session={state.session} />;
+  }
   return <PlaceholderPage page={page} />;
 }
 

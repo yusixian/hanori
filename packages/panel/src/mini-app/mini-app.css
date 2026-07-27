@@ -1060,6 +1060,13 @@
   font-size: 0.7rem;
 }
 
+.mini-groups-ai-entry {
+  color: var(--mini-link);
+  font-size: 0.66rem;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
 .mini-groups-status {
   display: inline-flex;
   align-items: center;
@@ -1347,6 +1354,260 @@
   grid-column: 1 / -1;
 }
 
+.mini-ai-settings {
+  display: grid;
+  align-content: start;
+  gap: 1rem;
+  padding-bottom: 4.5rem;
+}
+
+.mini-ai-settings button,
+.mini-ai-card button,
+.mini-ai-settings select,
+.mini-ai-card select {
+  font: inherit;
+}
+
+.mini-ai-settings button,
+.mini-ai-card button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.65rem 0.9rem;
+  border: 1px solid transparent;
+  border-radius: 0.8rem;
+  background: var(--mini-accent);
+  color: var(--mini-accent-text);
+  font-weight: 720;
+  cursor: pointer;
+}
+
+.mini-ai-settings button svg,
+.mini-ai-card button svg {
+  width: 1rem;
+}
+
+.mini-ai-settings button.is-secondary,
+.mini-ai-card button.is-secondary {
+  border-color: var(--mini-border);
+  background: transparent;
+  color: var(--mini-text);
+}
+
+.mini-ai-settings button:disabled,
+.mini-ai-card button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.mini-ai-settings button:focus-visible,
+.mini-ai-settings select:focus-visible,
+.mini-ai-card button:focus-visible,
+.mini-ai-card select:focus-visible {
+  outline: 2px solid var(--mini-accent);
+  outline-offset: 3px;
+}
+
+.mini-ai-card {
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 1.05rem;
+  background:
+    linear-gradient(
+      145deg,
+      color-mix(in srgb, var(--mini-accent) 7%, transparent),
+      transparent 58%
+    ),
+    color-mix(in srgb, var(--mini-surface) 72%, transparent);
+}
+
+.mini-ai-group-card {
+  margin-top: 0.15rem;
+}
+
+.mini-ai-card-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.7rem;
+  align-items: start;
+}
+
+.mini-ai-card-heading > svg {
+  width: 1.15rem;
+  margin-top: 0.08rem;
+  color: var(--mini-accent);
+}
+
+.mini-ai-card-heading h2,
+.mini-ai-card-heading p {
+  margin: 0;
+}
+
+.mini-ai-card-heading h2 {
+  font-size: 1rem;
+  letter-spacing: -0.015em;
+}
+
+.mini-ai-card-heading p {
+  margin-top: 0.22rem;
+  color: var(--mini-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.mini-ai-fields {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.mini-ai-fields label,
+.mini-ai-select-row {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mini-ai-fields label > span,
+.mini-ai-select-row > span {
+  color: var(--mini-muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.mini-ai-fields select,
+.mini-ai-select-row select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: 0.65rem 2rem 0.65rem 0.75rem;
+  border: 1px solid var(--mini-border);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--mini-bg) 76%, transparent);
+  color: var(--mini-text);
+}
+
+.mini-ai-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.mini-ai-pending,
+.mini-ai-conflict {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0.85rem;
+  border: 1px solid color-mix(in srgb, #f2b84b 40%, var(--mini-border));
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, #f2b84b 8%, transparent);
+}
+
+.mini-ai-pending > div,
+.mini-ai-conflict {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.mini-ai-pending > div {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.mini-ai-pending svg,
+.mini-ai-conflict > svg {
+  width: 1.1rem;
+  color: #f2b84b;
+}
+
+.mini-ai-pending span,
+.mini-ai-pending strong,
+.mini-ai-conflict span,
+.mini-ai-conflict strong {
+  display: block;
+}
+
+.mini-ai-pending span,
+.mini-ai-conflict span {
+  color: var(--mini-muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.mini-ai-pending strong,
+.mini-ai-conflict strong {
+  margin-bottom: 0.15rem;
+  color: var(--mini-text);
+  font-size: 0.84rem;
+}
+
+.mini-ai-feedback {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.85rem 1rem;
+  border-left: 3px solid var(--mini-accent);
+  background: color-mix(in srgb, var(--mini-accent) 9%, transparent);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.mini-ai-feedback svg {
+  width: 1rem;
+  flex: 0 0 auto;
+}
+
+.mini-ai-feedback.is-error {
+  border-color: #f2b84b;
+  background: color-mix(in srgb, #f2b84b 10%, transparent);
+}
+
+.mini-ai-feedback.is-success {
+  border-color: #5bc897;
+  background: color-mix(in srgb, #5bc897 10%, transparent);
+}
+
+.mini-ai-readonly dl {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0;
+}
+
+.mini-ai-readonly dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(6rem, auto);
+  gap: 0.6rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--mini-border);
+}
+
+.mini-ai-readonly dt {
+  color: var(--mini-muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.mini-ai-readonly dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.mini-ai-inline-state {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  color: var(--mini-muted);
+  font-size: 0.78rem;
+}
+
+.mini-ai-inline-state > svg {
+  width: 1.15rem;
+  color: #f2b84b;
+}
+
 @keyframes mini-spin {
   to {
     transform: rotate(1turn);
@@ -1415,6 +1676,14 @@
   }
   .mini-groups-conflict > button {
     grid-column: auto;
+  }
+  .mini-ai-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .mini-ai-pending,
+  .mini-ai-conflict {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
   }
 }
 

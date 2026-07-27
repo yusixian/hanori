@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router";
+import { GroupAiSelectionCard } from "./ai-selection-panel";
 import type { MiniAppSessionView } from "./session";
 import {
   fetchMiniAppGroup,
@@ -267,6 +268,9 @@ function GroupsList({ botId }: { botId: string }) {
               </div>
               <div className="mini-groups-card-meta">
                 <code>{group.chatId}</code>
+                {group.config.aiConfigured ? (
+                  <span className="mini-groups-ai-entry">{t("groups.aiSelectionEntry")}</span>
+                ) : null}
                 <StatusPill group={group} />
               </div>
               <ChevronRight aria-hidden="true" />
@@ -778,6 +782,10 @@ function GroupDetail({ botId, chatId, session }: GroupsPageProps & { chatId: num
             </button>
           ) : null}
         </section>
+      ) : null}
+
+      {detail.group.config.aiConfigured ? (
+        <GroupAiSelectionCard botId={botId} chatId={chatId} session={session} />
       ) : null}
 
       {editable ? (
