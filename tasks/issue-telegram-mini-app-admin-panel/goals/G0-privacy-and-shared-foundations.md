@@ -20,13 +20,13 @@
 
 ## 验收
 
-- [ ] 群消息正文、caption 和原始 update 不进入通用持久日志。
-- [ ] 私聊/群聊结构化日志仍能定位 Bot、chat、user、message 和结果。
-- [ ] 代表性配置下，实际注册命令与 `setMyCommands` 集合一致。
-- [ ] `/help` 不再维护独立命令列表。
-- [ ] Summary 无法跨 Bot update/delete。
-- [ ] 两个并发 manual summary 请求最多一个占用 cooldown。
-- [ ] 现有行为回归测试通过。
+- [x] 群消息正文、caption 和原始 update 不进入通用持久日志。
+- [x] 私聊/群聊结构化日志仍能定位 Bot、chat、user、message 和结果。
+- [x] 代表性配置下，实际注册命令与 `setMyCommands` 集合一致。
+- [x] `/help` 不再维护独立命令列表。
+- [x] Summary 无法跨 Bot update/delete。
+- [x] 两个并发 manual summary 请求最多一个占用 cooldown。
+- [x] 现有行为回归测试通过。
 
 ## 验证命令
 
@@ -54,3 +54,11 @@ pnpm fmt:check
 
 - 对本 Goal diff 做一次轻量 review。
 - 修复全部 P0/P1 后才进入 G1/G2；P2 只记录不阻塞。
+
+## 完成证据（2026-07-27）
+
+- 合并态 focused tests：40 files / 217 tests 通过。
+- `pnpm typecheck`、`pnpm fmt:check` 通过；`pnpm lint` 为 0 error，仅 3 个既有 warning。
+- `pnpm db:generate` 输出 `No schema changes, nothing to migrate`。
+- 阶段 review 修复了 `continueChat`、`set_mood` 与 Image OCR provider error 的通用日志内容泄漏；复查后无剩余 P0/P1。
+- 验证盲区：Summary 原子占用仍是 mock DB 测试；真实 PostgreSQL 双连接竞争留到 G7 集成演练。真实 Telegram `setMyCommands/getMyCommands` 往返也留到 G7 四端验收。
