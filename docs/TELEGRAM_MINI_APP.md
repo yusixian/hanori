@@ -4,14 +4,14 @@ Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一
 
 ## Route map
 
-| Route                              | Session     | 行为                                             |
-| ---------------------------------- | ----------- | ------------------------------------------------ |
-| `/mini-app/:botId/help`            | 非必需      | 始终显示项目背景和 shared public command help    |
-| `/mini-app/:botId/groups`          | 必需        | 展示当前角色范围内的安全群目录                   |
-| `/mini-app/:botId/groups/:chatId`  | 必需        | 查看群配置，并按 capability 决定是否渲染编辑控件 |
-| `/mini-app/:botId/settings`        | Admin       | G6 前仅显示无写操作的占位页                      |
-| `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动          |
-| `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                     |
+| Route                              | Session     | 行为                                              |
+| ---------------------------------- | ----------- | ------------------------------------------------- |
+| `/mini-app/:botId/help`            | 非必需      | 始终显示项目背景和 shared public command help     |
+| `/mini-app/:botId/groups`          | 必需        | 展示当前角色范围内的安全群目录                    |
+| `/mini-app/:botId/groups/:chatId`  | 必需        | 查看群配置，并按 capability 决定是否渲染编辑控件  |
+| `/mini-app/:botId/settings`        | Admin       | 生命周期、AI 总开关、System Prompt、Provider/模型 |
+| `/mini-app/:botId/access`          | Admin       | 管理群授权、Operator 与近 90 天权限活动           |
+| `/login`、`/bots/*` 和其他现有路由 | Better Auth | 继续进入独立 `AdminPanelApp`                      |
 
 公共 Help 的命令来自 `TELEGRAM_COMMAND_CATALOG`，只选择 `publicHelpVisibility = public`。它不依赖 Telegram SDK 或 session API 的成功响应，也不展示 Bot capability、Provider 数量、运行状态或部署信息。
 
@@ -66,6 +66,70 @@ Provider、模型、Prompt、工具、凭据、人物档案、聊天历史和用
 
 M1 明确为单实例控制面；跨实例锁、共享 pending 状态与常驻 retry worker 后移。
 
+## Provider、模型与 Bot Settings
+
+全局和群级 Provider/模型都通过 `ChatAiSelectionService` 原子保存。Admin 可以修改；Operator、Viewer 只能在展示策略允许时看到公开 label，响应不会包含 Provider ID、Model ID、Base URL、credential 或候选目录。群级 row 不存在表示继承全局值；reset 会删除群级 selection。Provider 与模型必须来自同一个可用 Provider，Telegram `/provider`、`/model`、Better Auth Panel 和 Mini App 共用同一持久化与运行态发布路径。
+
+Settings 页仅 Admin 可见，并提供：
+
+- durable Bot enable/disable/restart，分别展示 `desiredActive`、`runtimeStatus` 与 `reconciled`；
+- Bot 全局 AI enable 与 System Prompt；
+- 全局 Provider/模型和默认公开展示策略。
+
+Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因。`isActive` 是唯一 durable desired state：Disable 后 server restart 不会复活 Bot；runtime 失败时持久化状态仍保留，UI 显示 pending/unreconciled。Stop 会停止接收新 update 并取消当前进程中的 active Bot work；已经发送到外部系统的消息或请求不会回滚。Active timer 保留在数据库，重新启动后恢复，过期 reminder 只 claim/补发一次并标记 `delayed=true`。RSS digest 只有在运行中的 Bot 接受任务后才推进 checkpoint，停机期间不会静默丢弃待发送项目。
+
+## 生产灰度 Runbook
+
+### 1. 准备与迁移
+
+1. 对生产数据库创建可恢复快照，并记录当前应用 commit；不要把连接串或快照提交到仓库。
+2. 设置公开 HTTPS origin，例如 `BETTER_AUTH_URL=https://bot.example.com`。不能使用 localhost、裸 HTTP、额外 path 或尾部 `/`。
+3. 生成独立的 `MINI_APP_SESSION_SECRET`（至少 32 字符，不复用 Bot Token、`BETTER_AUTH_SECRET` 或 encryption key）。
+4. 保持所有 Bot 的 `miniAppEnabled=false`，部署新版本并运行 `pnpm db:migrate`。
+5. 在克隆/测试数据库检查 migration report，再启动应用完成 smoke test。`0038` 会保留 legacy override 表供兼容/核对；`0039` 只新增默认 false 的 `mini_app_enabled`。
+
+建议在隔离数据库演练：从快照恢复一份副本 → 运行 `pnpm db:migrate` → 检查 `chat_ai_selection_migration_reports`、`chat_ai_selections` 和原 legacy rows → 再从同一快照恢复另一份副本验证恢复流程。仓库不提供 destructive down migration；应用回滚时保留新增表/列最安全，必须回到旧数据状态时只能恢复部署前快照。
+
+### 2. HTTPS 与响应预检
+
+将 `<origin>` 和 `<botId>` 替换为真实值：
+
+```bash
+curl -fsS -D - -o /dev/null <origin>/mini-app/<botId>/help
+curl -fsS -D - -o /dev/null <origin>/assets/<hashed-asset>
+curl -fsS <origin>/api/definitely-not-a-route
+```
+
+确认 HTML 为 `no-cache, no-store, must-revalidate`，hash asset 为一年 `immutable`，响应含 Telegram-compatible CSP、`nosniff`、Referrer/Permissions Policy，未知 `/api/*` 返回 JSON 404。反向代理必须保留 `Origin`、Cookie 和 `Set-Cookie`，且不能缓存 `/api/mini-app/*`。
+
+### 3. 只开启测试 Bot
+
+1. 在现有 Better Auth Panel 编辑测试 Telegram Bot，开启“Telegram Mini App”，保存后确认 Bot 恢复 running；HTTPS 配错会持久化选择但返回 503，修正后可再次关闭/开启以 reconcile。
+2. 私聊测试 Bot 发送 `/panel`。只有 private chat 使用 Telegram `web_app` 按钮并携带签名 `initData`；群内 `/panel` 只引导用户进入 Bot 私聊，不把普通网页 URL 伪装成已认证入口。
+3. 可选配置永久 Menu Button：在 `@BotFather` 使用 `/setmenubutton`，选择测试 Bot，将 URL 设置为 `<origin>/mini-app/<botId>/help`。代码不会自动覆盖既有 Menu Button。
+4. 不在确认四端通过前给其他 Bot 开启开关。
+
+### 4. 测试身份与四端验收
+
+准备四类独立身份，真实 ID/群名只记在私有发布记录中：Admin（在该 Bot `adminChatIds`）、Operator grant、已授权群当前成员 Viewer、无授权用户。至少准备一个已授权测试群，并让 Bot 为 administrator/creator。
+
+| 客户端           | 登录/initData | 主题/safe area/返回 | 角色与字段投影 | 配置+冲突/pending | 撤权即时生效 | lifecycle | 状态 |
+| ---------------- | ------------- | ------------------- | -------------- | ----------------- | ------------ | --------- | ---- |
+| Telegram iOS     |               |                     |                |                   |              |           | 待测 |
+| Telegram Android |               |                     |                |                   |              |           | 待测 |
+| Telegram Desktop |               |                     |                |                   |              |           | 待测 |
+| Telegram Web     |               |                     |                |                   |              |           | 待测 |
+
+每端都要验证：None 只能看 Help；Viewer 只能读自己仍属于的授权群；Operator 可写所有授权群的低风险字段但不能管理 access/lifecycle/selection；Admin 可管理 access、任意当前群、Provider/模型和 lifecycle。撤销 chat/operator grant 后，下一个请求立即失权；隐藏 Provider/模型时非 Admin 响应中连内部 ID 都不存在。Stop 后确认其他 Bot 正常、timer/RSS 未丢，Enable 后恢复；Restart 不改变 desired state。
+
+### 5. 回退
+
+1. 先在 Better Auth Panel 关闭该 Bot 的 `miniAppEnabled`，确认 Mini App API（包括旧 Cookie）返回 404，Bot 私聊 `/panel` 从命令菜单移除且 Bot 仍运行。
+2. 若配置过 Menu Button，在 `@BotFather` `/setmenubutton` 中恢复默认/移除自定义入口。
+3. 如需立即注销全部 Mini App session，可轮换 `MINI_APP_SESSION_SECRET`；这不影响 Bot Token、聊天数据或 Better Auth session。
+4. 回滚应用版本时保留 additive schema。只有 migration 数据本身需要撤销时才停服务并恢复预迁移数据库快照；不要手工删除新表或猜测反向 SQL。
+5. 原 AI `whitelisted` 与 `privateChatWhitelist` 不属于 Mini App grant，开关或回退不得修改它们。
+
 ## DEV mock
 
 mock 只能在 Vite `import.meta.env.DEV` 分支进入，production build 在读取 query/localStorage 前已经返回。开发环境可打开：
@@ -98,7 +162,9 @@ pnpm lint
 pnpm fmt:check
 ```
 
-截图占位（G7 用 Telegram 四端实测产物替换）：
+Telegram 四端验收尚需在真实 HTTPS 环境完成；本地自动化不能替代真实 `initData`、Cookie 与 WebView 行为。可将发布证据保存在不含真实 ID/secret 的私有记录中。
+
+截图建议：
 
 - `docs/screenshots/telegram-mini-app-help-light.png`
 - `docs/screenshots/telegram-mini-app-help-dark.png`

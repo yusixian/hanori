@@ -1,5 +1,7 @@
 # G7：生产硬化与单 Bot 灰度
 
+状态：代码与自动化硬化已完成；真实 HTTPS 数据库演练、Telegram 四端验收待执行，不得标记 Goal 完成。
+
 ## 纵向、可演示的结果
 
 默认关闭 Mini App 部署后，现有 Bot/Panel 无行为变化；只为测试 Bot 开启后，Telegram iOS、Android、Desktop、Web 都能完成登录、角色访问、配置变更、权限撤销和生命周期操作，并能按文档关闭入口和回滚。
@@ -22,13 +24,13 @@
 
 ## 验收
 
-- [ ] 默认关闭时没有公开管理 route 或菜单入口副作用。
-- [ ] `/api/*` 未匹配路径稳定返回 JSON 404。
+- [x] 默认关闭时没有公开管理 route 或菜单入口副作用。
+- [x] `/api/*` 未匹配路径稳定返回 JSON 404。
 - [ ] Cookie、CSP、缓存和 HTTPS 检查在生产构建通过。
-- [ ] 认证/越权日志不包含原始 initData、Cookie、token、key 或正文。
+- [x] 认证/越权日志不包含原始 initData、Cookie、token、key 或正文。
 - [ ] Migration、rollback 和旧 selection 报告在备份数据库演练通过。
 - [ ] iOS、Android、Desktop、Web 均完成测试清单。
-- [ ] 关闭 feature flag/menu 后可回退，现有 AI allowlist 不受影响。
+- [x] 关闭 feature flag/menu 后可回退，现有 AI allowlist 不受影响。
 
 ## 验证命令
 
@@ -63,3 +65,9 @@ git diff --check
 
 - 对 G7 做轻量 review 并修复 P0/P1。
 - 随后对总分支相对 main 做一次完整 review；修复总分支 P0/P1 后才交付测试流程。
+
+## 当前证据与待办
+
+- 已实现 per-Bot `miniAppEnabled`（default false）、API fail-closed 404、私聊 `/panel`、群聊转私聊引导、JSON API fallback、CSP/security headers 与静态缓存策略。
+- 轻量安全 Review 的 P1 已修复：旧 session 在关闭开关后仍可读、Editor 创建时绕过开关权限、启用失败后关闭开关不能恢复 Bot、群聊普通 URL 缺少签名 `initData`。
+- 自动化通过后再勾选 production build 条目；真实数据库 snapshot→migrate→report→restore 与 iOS/Android/Desktop/Web 表格必须由有 HTTPS/Telegram 环境的一方执行并留下私有证据。
