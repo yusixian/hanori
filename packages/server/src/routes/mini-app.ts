@@ -47,7 +47,9 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MiniAppSessionRateLimiter {
-  consume(key: string): boolean;
+  consume(key: string, limit?: number): boolean;
+  reserve(key: string, limit?: number): number | null;
+  release(key: string, reservation: number): void;
 }
 
 export class InMemoryMiniAppSessionRateLimiter implements MiniAppSessionRateLimiter {
@@ -57,18 +59,37 @@ export class InMemoryMiniAppSessionRateLimiter implements MiniAppSessionRateLimi
     private readonly limit = 30,
     private readonly windowMs = 60_000,
     private readonly now = () => Date.now(),
+    private readonly maxEntries = 10_000,
   ) {}
 
-  consume(key: string): boolean {
+  consume(key: string, requestedLimit = this.limit): boolean {
+    return this.reserve(key, requestedLimit) !== null;
+  }
+
+  reserve(key: string, requestedLimit = this.limit): number | null {
     const now = this.now();
     const current = this.#entries.get(key);
     if (!current || current.resetAt <= now) {
-      this.#entries.set(key, { count: 1, resetAt: now + this.windowMs });
-      return true;
+      if (!current && this.#entries.size >= this.maxEntries) {
+        for (const [candidateKey, candidate] of this.#entries) {
+          if (candidate.resetAt <= now) this.#entries.delete(candidateKey);
+        }
+        if (this.#entries.size >= this.maxEntries) return null;
+      }
+      const resetAt = now + this.windowMs;
+      this.#entries.set(key, { count: 1, resetAt });
+      return resetAt;
     }
-    if (current.count >= this.limit) return false;
+    if (current.count >= requestedLimit) return null;
     current.count += 1;
-    return true;
+    return current.resetAt;
+  }
+
+  release(key: string, reservation: number): void {
+    const current = this.#entries.get(key);
+    if (!current || current.resetAt !== reservation) return;
+    current.count -= 1;
+    if (current.count <= 0) this.#entries.delete(key);
   }
 }
 
@@ -326,12 +347,6 @@ function readCookie(header: string | undefined, name: string): string | null {
   return null;
 }
 
-function clientKey(headers: Headers, botId: string): string {
-  const forwarded = headers.get("x-forwarded-for")?.split(",", 1)[0]?.trim();
-  const address = forwarded && forwarded.length <= 128 ? forwarded : "unknown";
-  return `${botId}:${address}`;
-}
-
 function publicAccess(decision: Awaited<ReturnType<MiniAppAccessPolicy["resolve"]>>) {
   return {
     role: decision.role,
@@ -432,7 +447,21 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     .post("/:botId/session", async (c) => {
       const botId = c.req.param("botId");
       if (!UUID_PATTERN.test(botId)) return c.json({ ok: false as const, error: "Not found" }, 404);
-      if (!rateLimiter.consume(clientKey(c.req.raw.headers, botId))) {
+      // A fixed, high-capacity circuit breaker protects the feature-flag lookup
+      // without allocating attacker-controlled high-cardinality keys.
+      const globalReservation = rateLimiter.reserve("session:global", 3_000);
+      if (globalReservation === null) {
+        return c.json({ ok: false as const, error: "Too many requests" }, 429);
+      }
+      if (!(await options.botTokenResolver.isEnabled(botId))) {
+        return c.json({ ok: false as const, error: "Not found" }, 404);
+      }
+      // Enabled Bots leave the unknown-ID circuit breaker immediately, so a
+      // single Bot's pre-auth exhaustion cannot consume the shared capacity.
+      rateLimiter.release("session:global", globalReservation);
+      // Contain unsigned traffic to one enabled Bot before expensive parsing or
+      // HMAC verification; successful identities receive a smaller user bucket.
+      if (!rateLimiter.consume(`session:${botId}:preauth`, 120)) {
         return c.json({ ok: false as const, error: "Too many requests" }, 429);
       }
       if (options.sessionSecret.length < 32) {
@@ -464,6 +493,9 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
           botToken,
           now: requestNow,
         });
+        if (!rateLimiter.consume(`session:${botId}:${verified.user.id}`)) {
+          return c.json({ ok: false as const, error: "Too many requests" }, 429);
+        }
         const session = createMiniAppSession({
           botId,
           userId: verified.user.id,

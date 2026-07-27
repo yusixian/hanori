@@ -1,5 +1,10 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { APP_SECURITY_HEADERS, staticCacheControl } from "./http-policy.js";
+import {
+  APP_SECURITY_HEADERS,
+  MINI_APP_SECURITY_HEADERS,
+  securityHeaders,
+  staticCacheControl,
+} from "./http-policy.js";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
 process.env.BETTER_AUTH_SECRET ??= "test-secret";
@@ -12,11 +17,17 @@ beforeAll(async () => {
 });
 
 describe("production HTTP policy", () => {
-  it("allows the Telegram SDK while denying object and unexpected framing origins", () => {
-    const csp = APP_SECURITY_HEADERS["Content-Security-Policy"];
-    expect(csp).toContain("script-src 'self' https://telegram.org");
-    expect(csp).toContain("frame-ancestors https://web.telegram.org https://*.telegram.org");
-    expect(csp).toContain("object-src 'none'");
+  it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {
+    const adminCsp = APP_SECURITY_HEADERS["Content-Security-Policy"];
+    const miniAppCsp = MINI_APP_SECURITY_HEADERS["Content-Security-Policy"];
+    expect(adminCsp).toContain("script-src 'self'");
+    expect(adminCsp).not.toContain("https://telegram.org");
+    expect(adminCsp).toContain("frame-ancestors 'none'");
+    expect(miniAppCsp).toContain("script-src 'self' https://telegram.org");
+    expect(miniAppCsp).toContain("frame-ancestors https://web.telegram.org https://*.telegram.org");
+    expect(miniAppCsp).toContain("object-src 'none'");
+    expect(securityHeaders("/mini-app/bot/help")).toBe(MINI_APP_SECURITY_HEADERS);
+    expect(securityHeaders("/api/mini-app/bot/session")).toBe(APP_SECURITY_HEADERS);
     expect(APP_SECURITY_HEADERS["X-Content-Type-Options"]).toBe("nosniff");
   });
 

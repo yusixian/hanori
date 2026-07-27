@@ -111,10 +111,10 @@ describe("Mini App session", () => {
   it("serializes and clears a secure bot-path cookie", () => {
     const created = session("bot/a");
     expect(serializeMiniAppSessionCookie("bot/a", created.token)).toBe(
-      `cos_mini_app_session=${created.token}; Path=/api/mini-app/bot%2Fa; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
+      `cos_mini_app_session=${created.token}; Path=/api/mini-app/bot%2Fa; Max-Age=900; HttpOnly; Secure; SameSite=None; Partitioned`,
     );
     expect(clearMiniAppSessionCookie("bot/a")).toBe(
-      "cos_mini_app_session=; Path=/api/mini-app/bot%2Fa; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax",
+      "cos_mini_app_session=; Path=/api/mini-app/bot%2Fa; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=None; Partitioned",
     );
   });
 

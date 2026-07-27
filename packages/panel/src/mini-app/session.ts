@@ -101,18 +101,17 @@ export async function bootstrapMiniAppSession(input: {
   const fetcher = input.fetcher ?? fetch;
   const endpoint = `/api/mini-app/${encodeURIComponent(input.botId)}/session`;
   try {
-    const existing = await fetcher(endpoint, { credentials: "same-origin" });
-    const existingState = await readResponse(existing);
-    if (existingState?.status !== "expired" || input.initData.length === 0) {
-      return existingState ?? { status: "unavailable" };
+    if (input.initData.length > 0) {
+      const created = await fetcher(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ initData: input.initData }),
+      });
+      return (await readResponse(created)) ?? { status: "unavailable" };
     }
-    const created = await fetcher(endpoint, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ initData: input.initData }),
-    });
-    return (await readResponse(created)) ?? { status: "unavailable" };
+    const existing = await fetcher(endpoint, { credentials: "same-origin" });
+    return (await readResponse(existing)) ?? { status: "unavailable" };
   } catch {
     return { status: "unavailable" };
   }

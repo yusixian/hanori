@@ -67,7 +67,7 @@ function createApp(
 }
 
 describe("Mini App Bot management", () => {
-  it("does not let an editor enable Mini App while creating a Bot", async () => {
+  it("does not let an editor create a Bot trust root", async () => {
     const insert = vi.fn();
     const app = createApp({ insert } as unknown as Database, {} as BotPool, { role: "editor" });
 
@@ -78,12 +78,77 @@ describe("Mini App Bot management", () => {
         name: "Restricted Bot",
         platform: "telegram",
         token: "123:test",
-        miniAppEnabled: true,
+        miniAppEnabled: false,
       }),
     });
 
     expect(response.status).toBe(403);
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("does not let an editor replace Telegram admins or the Bot token", async () => {
+    const existing = {
+      id: "00000000-0000-4000-8000-000000000001",
+      platform: "telegram",
+      adminChatIds: [7],
+      isActive: false,
+      miniAppEnabled: false,
+    };
+    const select = vi.fn(() => ({ from: () => ({ where: async () => [existing] }) }));
+    const app = createApp({ select } as unknown as Database, {} as BotPool, { role: "editor" });
+
+    for (const body of [{ adminChatIds: [42] }, { token: "999:attacker-token" }]) {
+      const response = await app.request("/bots/00000000-0000-4000-8000-000000000001", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect(response.status).toBe(403);
+    }
+    expect(select).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets an editor save ordinary fields when protected values are unchanged", async () => {
+    const botId = "00000000-0000-4000-8000-000000000001";
+    const existing = {
+      id: botId,
+      name: "Before",
+      platform: "telegram" as const,
+      encryptedToken: "encrypted",
+      adminChatIds: [9, 7],
+      aiConfig: null,
+      larkWebhookConfig: null,
+      emailForwardConfig: null,
+      isActive: false,
+      miniAppEnabled: false,
+      createdAt: new Date("2026-07-27T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-27T00:00:00.000Z"),
+    };
+    const db = {
+      select: () => ({ from: () => ({ where: async () => [existing] }) }),
+      update: () => ({
+        set: (updates: Record<string, unknown>) => ({
+          where: () => ({ returning: async () => [{ ...existing, ...updates }] }),
+        }),
+      }),
+    } as unknown as Database;
+    const app = createApp(db, { getManager: vi.fn(() => undefined) } as unknown as BotPool, {
+      role: "editor",
+    });
+
+    const response = await app.request(`/bots/${botId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        name: "After",
+        adminChatIds: [7, 9, 9],
+        isActive: false,
+        miniAppEnabled: false,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true, data: { name: "After" } });
   });
 
   it("restarts an active Bot when disabling Mini App after its manager disappeared", async () => {

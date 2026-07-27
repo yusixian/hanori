@@ -45,7 +45,7 @@ import type { ChatAiSelectionService } from "./services/chat-ai-selection-servic
 import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import type { BotSettingsService } from "./services/bot-settings-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
-import { APP_SECURITY_HEADERS, staticCacheControl } from "./http-policy.js";
+import { securityHeaders, staticCacheControl } from "./http-policy.js";
 
 interface AppOptions {
   db: Database;
@@ -100,7 +100,8 @@ export function createApp(options: AppOptions) {
     .use("*", honoLogger())
     .use("*", async (c, next) => {
       await next();
-      for (const [name, value] of Object.entries(APP_SECURITY_HEADERS)) c.header(name, value);
+      for (const [name, value] of Object.entries(securityHeaders(c.req.path)))
+        c.header(name, value);
     })
     .use(
       "/api/*",

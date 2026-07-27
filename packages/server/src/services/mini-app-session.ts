@@ -206,9 +206,9 @@ export function serializeMiniAppSessionCookie(botId: string, token: string): str
   if (token.length > 4096 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) {
     throw new MiniAppSessionError("INVALID_SESSION_CONFIG");
   }
-  return `${MINI_APP_SESSION_COOKIE_NAME}=${token}; Path=${cookiePath(botId)}; Max-Age=${MINI_APP_SESSION_TTL_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
+  return `${MINI_APP_SESSION_COOKIE_NAME}=${token}; Path=${cookiePath(botId)}; Max-Age=${MINI_APP_SESSION_TTL_SECONDS}; HttpOnly; Secure; SameSite=None; Partitioned`;
 }
 
 export function clearMiniAppSessionCookie(botId: string): string {
-  return `${MINI_APP_SESSION_COOKIE_NAME}=; Path=${cookiePath(botId)}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=Lax`;
+  return `${MINI_APP_SESSION_COOKIE_NAME}=; Path=${cookiePath(botId)}; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; Secure; SameSite=None; Partitioned`;
 }

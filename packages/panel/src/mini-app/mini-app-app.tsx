@@ -26,7 +26,11 @@ import { AccessPage } from "./access-page";
 import { BotSettingsPage } from "./bot-settings-panel";
 import { GroupsPage } from "./groups-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
-import { createTelegramMiniAppAdapter, type TelegramMiniAppAdapter } from "./telegram-adapter";
+import {
+  createTelegramMiniAppAdapter,
+  ensureTelegramMiniAppSdk,
+  type TelegramMiniAppAdapter,
+} from "./telegram-adapter";
 import "./i18n";
 import "./mini-app.css";
 
@@ -347,7 +351,15 @@ export function MiniAppApp() {
   const [adapter, setAdapter] = useState<TelegramMiniAppAdapter | null>(null);
   useLayoutEffect(() => {
     if (!rootRef.current) return;
-    setAdapter(createTelegramMiniAppAdapter(rootRef.current));
+    const root = rootRef.current;
+    setAdapter(createTelegramMiniAppAdapter(root));
+    let active = true;
+    void ensureTelegramMiniAppSdk().then(() => {
+      if (active) setAdapter(createTelegramMiniAppAdapter(root));
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (

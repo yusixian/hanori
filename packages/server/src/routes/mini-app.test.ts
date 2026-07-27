@@ -6,7 +6,11 @@ import { MiniAppAccessError } from "../services/mini-app-access-service.js";
 import { GroupConfigConflictError } from "../services/group-config-service.js";
 import { ChatAiSelectionError } from "../services/chat-ai-selection-service.js";
 import type { TelegramAccessSnapshot } from "../services/telegram-directory-service.js";
-import { miniAppRoutes, type MiniAppRoutesOptions } from "./mini-app.js";
+import {
+  InMemoryMiniAppSessionRateLimiter,
+  miniAppRoutes,
+  type MiniAppRoutesOptions,
+} from "./mini-app.js";
 
 const BOT_A = "00000000-0000-4000-8000-000000000001";
 const BOT_B = "00000000-0000-4000-8000-000000000002";
@@ -233,12 +237,12 @@ describe("Mini App session routes", () => {
     });
     expect(body).not.toHaveProperty("token");
     expect(response.headers.get("set-cookie")).toContain(
-      `Path=/api/mini-app/${BOT_A}; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
+      `Path=/api/mini-app/${BOT_A}; Max-Age=900; HttpOnly; Secure; SameSite=None; Partitioned`,
     );
   });
 
   it("rejects tampered initData, unknown bots, and exhausted rate limits", async () => {
-    const denied = { consume: vi.fn(() => false) };
+    const denied = { consume: vi.fn(() => false), reserve: vi.fn(() => null), release: vi.fn() };
     const limited = testApp({ rateLimiter: denied }).app;
     expect((await limited.request(`/mini-app/${BOT_A}/session`, { method: "POST" })).status).toBe(
       429,
@@ -260,6 +264,78 @@ describe("Mini App session routes", () => {
     expect(unknown.status).toBe(404);
   });
 
+  it("protects disabled Bot lookups without allocating per-Bot limiter state", async () => {
+    const rateLimiter = {
+      consume: vi.fn(() => true),
+      reserve: vi.fn(() => 60_000),
+      release: vi.fn(),
+    };
+    const disabled = testApp({
+      rateLimiter,
+      botTokenResolver: {
+        resolve: vi.fn(async () => null),
+        isEnabled: vi.fn(async () => false),
+      },
+    }).app;
+
+    const response = await disabled.request(`/mini-app/${BOT_B}/session`, { method: "POST" });
+
+    expect(response.status).toBe(404);
+    expect(rateLimiter.reserve).toHaveBeenCalledOnce();
+    expect(rateLimiter.reserve).toHaveBeenCalledWith("session:global", 3_000);
+    expect(rateLimiter.release).not.toHaveBeenCalled();
+  });
+
+  it("isolates pre-auth exhaustion to one enabled Bot after the global circuit breaker", async () => {
+    const consume = vi.fn((key: string) => key !== `session:${BOT_A}:preauth`);
+    const reserve = vi.fn(() => 60_000);
+    const release = vi.fn();
+    const { app, options } = testApp({ rateLimiter: { consume, reserve, release } });
+
+    const response = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(options.botTokenResolver.isEnabled).toHaveBeenCalledWith(BOT_A);
+    expect(reserve).toHaveBeenCalledWith("session:global", 3_000);
+    expect(release).toHaveBeenCalledWith("session:global", 60_000);
+    expect(consume).toHaveBeenCalledWith(`session:${BOT_A}:preauth`, 120);
+  });
+
+  it("bounds high-cardinality session limiter state and reclaims expired entries", () => {
+    let now = 1_000;
+    const limiter = new InMemoryMiniAppSessionRateLimiter(2, 100, () => now, 2);
+
+    const reservation = limiter.reserve("a");
+    expect(reservation).toBe(1_100);
+    expect(limiter.consume("b")).toBe(true);
+    expect(limiter.consume("c")).toBe(false);
+    expect(limiter.consume("a")).toBe(true);
+    expect(limiter.consume("a")).toBe(false);
+
+    limiter.release("a", reservation!);
+    expect(limiter.consume("a")).toBe(true);
+
+    now += 101;
+    expect(limiter.consume("c")).toBe(true);
+  });
+
+  it("does not release a reservation from an expired limiter window", () => {
+    let now = 1_000;
+    const limiter = new InMemoryMiniAppSessionRateLimiter(1, 100, () => now, 2);
+    const oldReservation = limiter.reserve("global");
+    expect(oldReservation).toBe(1_100);
+
+    now = 1_101;
+    expect(limiter.reserve("global")).toBe(1_201);
+    limiter.release("global", oldReservation!);
+
+    expect(limiter.consume("global")).toBe(false);
+  });
+
   it("keeps Mini App APIs dark when the per-Bot feature flag is disabled", async () => {
     const enabled = testApp();
     const sessionResponse = await enabled.app.request(`/mini-app/${BOT_A}/session`, {
@@ -279,7 +355,7 @@ describe("Mini App session routes", () => {
       body: JSON.stringify({ initData: signInitData() }),
     });
     expect(create.status).toBe(404);
-    expect(resolve).toHaveBeenCalled();
+    expect(resolve).not.toHaveBeenCalled();
 
     const existing = await disabled.request(`/mini-app/${BOT_A}/access`, {
       headers: { cookie },

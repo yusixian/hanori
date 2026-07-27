@@ -766,8 +766,8 @@ export function botsRoutes(
     })
     .post("/", zValidator("json", createBotSchema), async (c) => {
       const body = c.req.valid("json");
-      if (body.miniAppEnabled && !ownerOrAdmin.has(c.get("authMember").role)) {
-        return c.json({ ok: false as const, error: "当前角色没有权限启用 Telegram Mini App" }, 403);
+      if (!ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限创建 Bot" }, 403);
       }
       const platform = body.platform ?? "telegram";
 
@@ -847,15 +847,26 @@ export function botsRoutes(
     .put("/:botId", zValidator("json", updateBotSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
-      if (
-        (body.isActive !== undefined || body.miniAppEnabled !== undefined) &&
-        !ownerOrAdmin.has(c.get("authMember").role)
-      ) {
-        return c.json({ ok: false as const, error: "当前角色没有权限管理 Bot 生命周期" }, 403);
-      }
-
       const [existing] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!existing) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+
+      const normalizedAdminIds = (ids: readonly number[]) =>
+        [...new Set(ids)].sort((a, b) => a - b);
+      const adminIdsChanged =
+        body.adminChatIds !== undefined &&
+        JSON.stringify(normalizedAdminIds(body.adminChatIds)) !==
+          JSON.stringify(normalizedAdminIds(existing.adminChatIds));
+      const protectedSettingChanged =
+        body.token !== undefined ||
+        adminIdsChanged ||
+        (body.isActive !== undefined && body.isActive !== existing.isActive) ||
+        (body.miniAppEnabled !== undefined && body.miniAppEnabled !== existing.miniAppEnabled);
+      if (protectedSettingChanged && !ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json(
+          { ok: false as const, error: "当前角色没有权限管理 Bot 身份或生命周期" },
+          403,
+        );
+      }
       if (body.miniAppEnabled && existing.platform !== "telegram") {
         return c.json(
           { ok: false as const, error: "Telegram Mini App is only available for Telegram bots" },

@@ -13,7 +13,7 @@ function readyResponse(role = "admin") {
 }
 
 describe("bootstrapMiniAppSession", () => {
-  it("uses an existing Bot-scoped session without sending initData", async () => {
+  it("exchanges current initData before trusting an existing browser cookie", async () => {
     const fetcher = vi.fn(async () => readyResponse());
 
     await expect(
@@ -22,25 +22,24 @@ describe("bootstrapMiniAppSession", () => {
 
     expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledWith(`/api/mini-app/${BOT_ID}/session`, {
+      method: "POST",
       credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: "secret" }),
     });
   });
 
-  it("exchanges initData only after an expired cookie response", async () => {
-    const fetcher = vi
-      .fn()
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
-      .mockResolvedValueOnce(readyResponse("viewer"));
+  it("uses a Bot-scoped cookie only when Telegram provides no fresh initData", async () => {
+    const fetcher = vi.fn(async () => readyResponse("viewer"));
 
     await expect(
-      bootstrapMiniAppSession({ botId: BOT_ID, initData: "signed", fetcher }),
+      bootstrapMiniAppSession({ botId: BOT_ID, initData: "", fetcher }),
     ).resolves.toMatchObject({ status: "ready", session: { role: "viewer" } });
 
-    expect(fetcher).toHaveBeenNthCalledWith(
-      2,
-      `/api/mini-app/${BOT_ID}/session`,
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ initData: "signed" }) }),
-    );
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith(`/api/mini-app/${BOT_ID}/session`, {
+      credentials: "same-origin",
+    });
   });
 
   it("fails closed for missing initData, 403, malformed data, and network errors", async () => {

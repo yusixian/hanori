@@ -111,8 +111,31 @@ const EMPTY_STATE: TelegramMiniAppState = Object.freeze({
 });
 
 const DEV_MOCK_STORAGE_KEY = "cos-tool-bot:telegram-mini-app-mock";
+const TELEGRAM_SDK_URL = "https://telegram.org/js/telegram-web-app.js";
+let telegramSdkPromise: Promise<void> | undefined;
 
 type CssVariableMap = Record<`--${string}`, string>;
+
+export function ensureTelegramMiniAppSdk(): Promise<void> {
+  if (typeof window === "undefined" || window.Telegram?.WebApp || import.meta.env.MODE === "test") {
+    return Promise.resolve();
+  }
+  if (telegramSdkPromise) return telegramSdkPromise;
+
+  telegramSdkPromise = new Promise((resolve) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[src="${TELEGRAM_SDK_URL}"]`);
+    const script = existing ?? document.createElement("script");
+    const finish = () => resolve();
+    script.addEventListener("load", finish, { once: true });
+    script.addEventListener("error", finish, { once: true });
+    if (!existing) {
+      script.src = TELEGRAM_SDK_URL;
+      script.async = true;
+      document.head.append(script);
+    }
+  });
+  return telegramSdkPromise;
+}
 
 function normalizeInsets(
   insets: Partial<TelegramContentInsets> | undefined,
