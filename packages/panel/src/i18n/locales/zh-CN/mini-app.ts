@@ -1,11 +1,11 @@
 export const miniApp = {
-  brand: { eyebrow: "Telegram 控制舱", name: "羽衣" },
+  brand: { eyebrow: "Telegram 控制舱", name: "COS Tool Bot" },
   language: "语言",
   help: {
     eyebrow: "更从容地使用你的 Bot",
-    title: "先认识羽衣，再开始操作。",
+    title: "在 Telegram 里使用 COS Tool Bot。",
     intro:
-      "羽衣把 COS Tool Bot 的常用命令和经过严格授权的管理能力带进 Telegram。即使控制服务暂时离线，公共帮助仍然可以阅读。",
+      "这个小程序把 COS Tool Bot 的常用命令和经过严格授权的管理能力带进 Telegram。即使控制服务暂时离线，公共帮助仍然可以阅读。",
     privacyTitle: "权限边界就是隐私边界",
     privacyBody:
       "面板权限与 AI 白名单完全独立。此页面不会透露 Provider、运行状态、凭据或私有群组数据。",
@@ -14,7 +14,7 @@ export const miniApp = {
     commandLabel: "Telegram 命令 /{{command}}",
     projectTitle: "为什么做这个项目",
     projectBody:
-      "COS Tool Bot 是一个可自托管、多 Bot 的助手机器人工具箱。羽衣让日常帮助触手可及，同时把重要操作只交给被明确授权的人。",
+      "COS Tool Bot 是一个可自托管、多 Bot 的助手机器人工具箱。这个小程序让日常帮助触手可及，同时把重要操作只交给被明确授权的人。",
   },
   categories: {
     general: "常用",

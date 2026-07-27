@@ -33,6 +33,7 @@ test("renders public Help without Telegram SDK or a working session API", async 
   await expect
     .element(page.getByRole("heading", { name: "Your Telegram companion, explained." }))
     .toBeVisible();
+  await expect.element(page.getByText("COS Tool Bot", { exact: true })).toBeVisible();
   await expect.element(page.getByText("/help", { exact: true })).toBeVisible();
   await expect.element(page.getByRole("navigation").getByText("Help")).toBeVisible();
   expect(page.getByRole("navigation").getByText("Groups").query()).toBeNull();

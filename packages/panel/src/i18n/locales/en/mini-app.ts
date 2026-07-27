@@ -1,11 +1,11 @@
 export const miniApp = {
-  brand: { eyebrow: "Telegram control deck", name: "Hagoromo" },
+  brand: { eyebrow: "Telegram control deck", name: "COS Tool Bot" },
   language: "Language",
   help: {
     eyebrow: "A calmer way to run your Bot",
     title: "Your Telegram companion, explained.",
     intro:
-      "Hagoromo brings COS Tool Bot's useful commands and carefully scoped controls into Telegram. Public help stays available even when the control plane is offline.",
+      "This Mini App brings COS Tool Bot's useful commands and carefully scoped controls into Telegram. Public help stays available even when the control plane is offline.",
     privacyTitle: "Privacy by boundary",
     privacyBody:
       "Panel access is separate from AI allowlists. This page never reveals providers, runtime status, credentials, or private group data.",
@@ -14,7 +14,7 @@ export const miniApp = {
     commandLabel: "Telegram command /{{command}}",
     projectTitle: "Why this project exists",
     projectBody:
-      "COS Tool Bot is a self-hosted, multi-Bot assistant toolkit. Hagoromo keeps everyday help close while reserving consequential changes for explicitly trusted people.",
+      "COS Tool Bot is a self-hosted, multi-Bot assistant toolkit. This Mini App keeps everyday help close while reserving consequential changes for explicitly trusted people.",
   },
   categories: {
     general: "Essentials",
