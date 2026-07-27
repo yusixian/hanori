@@ -33,8 +33,11 @@ export class SummaryConfigService {
     return rows.map(toRecord);
   }
 
-  async get(id: number): Promise<SummaryConfigRecord | null> {
-    const [row] = await this.db.select().from(summaryConfigs).where(eq(summaryConfigs.id, id));
+  async get(botId: string, id: number): Promise<SummaryConfigRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(summaryConfigs)
+      .where(and(eq(summaryConfigs.botId, botId), eq(summaryConfigs.id, id)));
     return row ? toRecord(row) : null;
   }
 
@@ -81,6 +84,7 @@ export class SummaryConfigService {
   }
 
   async update(
+    botId: string,
     id: number,
     updates: Partial<{
       isActive: boolean;
@@ -98,15 +102,15 @@ export class SummaryConfigService {
     const [row] = await this.db
       .update(summaryConfigs)
       .set(updates)
-      .where(eq(summaryConfigs.id, id))
+      .where(and(eq(summaryConfigs.botId, botId), eq(summaryConfigs.id, id)))
       .returning();
     return row ? toRecord(row) : null;
   }
 
-  async delete(id: number): Promise<boolean> {
+  async delete(botId: string, id: number): Promise<boolean> {
     const deleted = await this.db
       .delete(summaryConfigs)
-      .where(eq(summaryConfigs.id, id))
+      .where(and(eq(summaryConfigs.botId, botId), eq(summaryConfigs.id, id)))
       .returning({ id: summaryConfigs.id });
     return deleted.length > 0;
   }

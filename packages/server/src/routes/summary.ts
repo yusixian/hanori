@@ -69,9 +69,7 @@ export function summaryRoutes(
   configService: SummaryConfigService,
 ) {
   async function requireConfig(botId: string, id: number) {
-    const cfg = await configService.get(id);
-    if (!cfg || cfg.botId !== botId) return null;
-    return cfg;
+    return configService.get(botId, id);
   }
 
   return new Hono()
@@ -121,19 +119,15 @@ export function summaryRoutes(
       zValidator("json", updateConfigSchema),
       async (c) => {
         const { botId, id } = c.req.valid("param");
-        const existing = await requireConfig(botId, id);
-        if (!existing) return c.json(notFound, 404);
         const body = c.req.valid("json");
-        const row = await configService.update(id, body);
+        const row = await configService.update(botId, id, body);
         if (!row) return c.json(notFound, 404);
         return c.json({ ok: true as const, data: row });
       },
     )
     .delete("/:botId/summary/configs/:id", zValidator("param", idParamSchema), async (c) => {
       const { botId, id } = c.req.valid("param");
-      const existing = await requireConfig(botId, id);
-      if (!existing) return c.json(notFound, 404);
-      const ok = await configService.delete(id);
+      const ok = await configService.delete(botId, id);
       if (!ok) return c.json(notFound, 404);
       return c.json({ ok: true as const, data: { deleted: true } });
     })

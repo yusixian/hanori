@@ -1,7 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import { summaryConfigs } from "@cos-tool-bot/database";
 import type { SummaryMode } from "@cos-tool-bot/shared";
-import { and, eq, isNotNull, isNull, lt, or } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import { DEFAULT_COOLDOWN_SECONDS, DEFAULT_TIMEZONE } from "./summary-prompts.js";
 import type { SummaryRunner } from "./summary-runner.js";
@@ -86,23 +86,42 @@ export class ChatSummaryService {
       .from(summaryConfigs)
       .where(and(eq(summaryConfigs.botId, opts.botId), eq(summaryConfigs.chatId, opts.chatId)));
 
-    // Cooldown check (bypassable for panel admin button)
+    // Atomically claim the manual cooldown before running. The initial read supplies
+    // per-chat overrides, but only this conditional update decides who may proceed.
     if (!opts.bypassCooldown && row) {
       const cooldownSeconds = row.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS;
-      if (row.lastManualAt) {
-        const elapsed = Date.now() - row.lastManualAt.getTime();
-        if (elapsed < cooldownSeconds * 1000) {
-          return { ok: false, reason: "cooldown" };
-        }
+      const claimed = await this.db
+        .update(summaryConfigs)
+        .set({ lastManualAt: sql`CURRENT_TIMESTAMP` })
+        .where(
+          and(
+            eq(summaryConfigs.botId, opts.botId),
+            eq(summaryConfigs.chatId, opts.chatId),
+            eq(summaryConfigs.id, row.id),
+            or(
+              isNull(summaryConfigs.lastManualAt),
+              lte(
+                summaryConfigs.lastManualAt,
+                sql`CURRENT_TIMESTAMP - ${cooldownSeconds} * INTERVAL '1 second'`,
+              ),
+            ),
+          ),
+        )
+        .returning({ id: summaryConfigs.id });
+      if (claimed.length === 0) {
+        return { ok: false, reason: "cooldown" };
       }
-    }
-
-    // Mark manual timestamp before run (race protection)
-    if (row) {
+    } else if (opts.bypassCooldown && row) {
       await this.db
         .update(summaryConfigs)
-        .set({ lastManualAt: new Date() })
-        .where(eq(summaryConfigs.id, row.id));
+        .set({ lastManualAt: sql`CURRENT_TIMESTAMP` })
+        .where(
+          and(
+            eq(summaryConfigs.botId, opts.botId),
+            eq(summaryConfigs.chatId, opts.chatId),
+            eq(summaryConfigs.id, row.id),
+          ),
+        );
     }
 
     const result = await this.runner.run({
