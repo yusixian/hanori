@@ -245,7 +245,8 @@ export class TimerRegistry {
         return await this.restoreRows(botId, rows, onFire);
       } catch (err) {
         this.logger.error(err, `Failed to resume AI timers for bot ${botId}`);
-        return { recovered: 0, cancelled: 0, immediate: 0 };
+        this.pausedBots.add(botId);
+        throw err;
       }
     });
   }

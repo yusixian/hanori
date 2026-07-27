@@ -181,4 +181,19 @@ describe("TimerRegistry Bot lifecycle", () => {
     first.destroy();
     second.destroy();
   });
+
+  it("fails reconciliation when durable timers cannot be loaded", async () => {
+    const loadError = new Error("database unavailable");
+    const db = {
+      select: () => ({
+        from: () => ({ where: async () => Promise.reject(loadError) }),
+      }),
+    } as unknown as Database;
+    const log = logger();
+    const registry = new TimerRegistry(db, log);
+
+    await expect(registry.resumeBot(BOT_A, vi.fn())).rejects.toBe(loadError);
+    expect(log.error).toHaveBeenCalled();
+    registry.destroy();
+  });
 });
