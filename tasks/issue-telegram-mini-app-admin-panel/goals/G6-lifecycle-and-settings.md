@@ -33,7 +33,7 @@ Admin 在 Mini App 启用、停用或重启当前 Bot：状态在整个 server r
 ## 验证命令
 
 ```bash
-pnpm test -- packages/server/src/services/bot-manager.test.ts packages/server/src/services/bot-pool packages/server/src/routes/bots-profile-lifecycle.test.ts packages/server/src/services/timer-registry.test.ts
+pnpm exec vitest run --config vitest.config.ts packages/server/src/services/bot-manager.test.ts packages/server/src/services/bot-pool packages/server/src/routes/bots-profile-lifecycle.test.ts packages/server/src/services/timer-registry.test.ts
 pnpm test:browser
 pnpm typecheck
 pnpm lint

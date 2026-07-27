@@ -34,7 +34,7 @@
 
 ```bash
 pnpm db:generate
-pnpm test -- packages/server/src packages/bot/src
+pnpm exec vitest run --config vitest.config.ts packages/server/src packages/bot/src
 pnpm typecheck
 pnpm lint
 pnpm fmt:check

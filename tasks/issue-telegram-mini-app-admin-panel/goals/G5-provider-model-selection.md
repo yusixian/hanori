@@ -35,7 +35,7 @@ Admin 在 Settings 修改全局 Provider/模型，并在任意当前 Bot 群卡�
 
 ```bash
 pnpm db:generate
-pnpm test -- packages/server/src/services/chat-model-store.test.ts packages/server/src/services/chat-provider-store.test.ts packages/bot/src/commands packages/bot/src/handlers
+pnpm exec vitest run --config vitest.config.ts packages/server/src/services/chat-model-store.test.ts packages/server/src/services/chat-provider-store.test.ts packages/bot/src/commands packages/bot/src/handlers
 pnpm test:browser
 pnpm typecheck
 pnpm lint

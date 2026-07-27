@@ -31,7 +31,7 @@
 ## 验证命令
 
 ```bash
-pnpm test -- packages/bot/src packages/server/src/routes/summary.test.ts packages/server/src/services/chat-summary-service.test.ts
+pnpm exec vitest run --config vitest.config.ts packages/bot/src packages/server/src/routes/summary.test.ts packages/server/src/services/chat-summary-service.test.ts
 pnpm typecheck
 pnpm lint
 pnpm fmt:check

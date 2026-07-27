@@ -32,7 +32,7 @@ Viewer 可以只读查看授权群的安全配置；Operator 可以在详情页�
 ## 验证命令
 
 ```bash
-pnpm test -- packages/server/src/routes packages/server/src/services packages/bot/src
+pnpm exec vitest run --config vitest.config.ts packages/server/src/routes packages/server/src/services packages/bot/src
 pnpm test:browser
 pnpm i18n:check
 pnpm typecheck

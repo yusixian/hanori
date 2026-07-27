@@ -32,7 +32,7 @@ Admin 在 Telegram Mini App 中通过安全搜索或精确 ID 添加/删除 Oper
 ## 验证命令
 
 ```bash
-pnpm test -- packages/server/src/routes packages/server/src/services
+pnpm exec vitest run --config vitest.config.ts packages/server/src/routes packages/server/src/services
 pnpm test:browser
 pnpm i18n:check
 pnpm typecheck
