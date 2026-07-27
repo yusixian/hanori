@@ -41,12 +41,26 @@ export class ChatAiSelectionError extends Error {
       | "ai_not_configured"
       | "provider_unavailable"
       | "model_unavailable"
+      | "invalid_actor"
       | "stale_revision",
     message: string,
   ) {
     super(message);
     this.name = "ChatAiSelectionError";
   }
+}
+
+function validateActor(actor: AiSelectionActor): AiSelectionActor {
+  const id = actor.id.trim();
+  if (
+    !id ||
+    id.length > 128 ||
+    (actor.kind === "telegram_user" &&
+      (!/^[1-9]\d*$/.test(id) || !Number.isSafeInteger(Number(id))))
+  ) {
+    throw new ChatAiSelectionError("invalid_actor", "A valid actor is required");
+  }
+  return { ...actor, id };
 }
 
 type BotRow = Pick<typeof bots.$inferSelect, "aiConfig" | "updatedAt">;
@@ -301,6 +315,7 @@ export class ChatAiSelectionService {
     displayDefault?: "show" | "hide";
     actor: AiSelectionActor;
   }) {
+    const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
         const [bot] = await tx
@@ -331,7 +346,7 @@ export class ChatAiSelectionService {
           .where(eq(bots.id, input.botId));
         await tx.insert(miniAppAuditEvents).values({
           botId: input.botId,
-          actorTelegramUserId: input.actor.kind === "telegram_user" ? Number(input.actor.id) : null,
+          actorTelegramUserId: actor.kind === "telegram_user" ? Number(actor.id) : null,
           actorRole: "admin",
           capability: "chat.ai-selection.write",
           action: "ai-selection.global.updated",
@@ -355,6 +370,7 @@ export class ChatAiSelectionService {
     pair: ChatAiSelectionPair;
     actor: AiSelectionActor;
   }) {
+    const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
         const [bot] = await tx
@@ -389,8 +405,8 @@ export class ChatAiSelectionService {
             chatId: input.chatId,
             ...pair,
             revision: row ? row.revision + 1 : 1,
-            updatedByKind: input.actor.kind,
-            updatedById: input.actor.id,
+            updatedByKind: actor.kind,
+            updatedById: actor.id,
             updatedAt: changedAt,
           })
           .onConflictDoUpdate({
@@ -398,14 +414,14 @@ export class ChatAiSelectionService {
             set: {
               ...pair,
               revision: row ? row.revision + 1 : 1,
-              updatedByKind: input.actor.kind,
-              updatedById: input.actor.id,
+              updatedByKind: actor.kind,
+              updatedById: actor.id,
               updatedAt: changedAt,
             },
           });
         await tx.insert(miniAppAuditEvents).values({
           botId: input.botId,
-          actorTelegramUserId: input.actor.kind === "telegram_user" ? Number(input.actor.id) : null,
+          actorTelegramUserId: actor.kind === "telegram_user" ? Number(actor.id) : null,
           actorRole: "admin",
           capability: "chat.ai-selection.write",
           action: "ai-selection.chat.updated",
@@ -428,6 +444,7 @@ export class ChatAiSelectionService {
     expectedRevision: string;
     actor: AiSelectionActor;
   }) {
+    const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
         const [bot] = await tx
@@ -458,7 +475,7 @@ export class ChatAiSelectionService {
           );
         await tx.insert(miniAppAuditEvents).values({
           botId: input.botId,
-          actorTelegramUserId: input.actor.kind === "telegram_user" ? Number(input.actor.id) : null,
+          actorTelegramUserId: actor.kind === "telegram_user" ? Number(actor.id) : null,
           actorRole: "admin",
           capability: "chat.ai-selection.write",
           action: "ai-selection.chat.reset",
@@ -482,6 +499,7 @@ export class ChatAiSelectionService {
     policy: AiSelectionDisplayPolicy;
     actor: AiSelectionActor;
   }) {
+    const actor = validateActor(input.actor);
     return this.withBotLock(input.botId, async () => {
       await this.db.transaction(async (tx) => {
         const [bot] = await tx
@@ -526,7 +544,7 @@ export class ChatAiSelectionService {
           .where(eq(bots.id, input.botId));
         await tx.insert(miniAppAuditEvents).values({
           botId: input.botId,
-          actorTelegramUserId: input.actor.kind === "telegram_user" ? Number(input.actor.id) : null,
+          actorTelegramUserId: actor.kind === "telegram_user" ? Number(actor.id) : null,
           actorRole: "admin",
           capability: "chat.ai-selection.write",
           action: "ai-selection.display.updated",
@@ -545,6 +563,68 @@ export class ChatAiSelectionService {
 
   async retryPublish(botId: string) {
     return this.withBotLock(botId, async () => this.publish(botId));
+  }
+
+  async setProviderFromTelegram(
+    botId: string,
+    chatId: number,
+    providerId: string,
+    actorTelegramUserId: number,
+  ): Promise<void> {
+    const current = await this.readChat(botId, chatId, true);
+    await this.setChat({
+      botId,
+      chatId,
+      expectedRevision: current.revision,
+      pair: { providerId, modelId: null },
+      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+    });
+  }
+
+  async setModelFromTelegram(
+    botId: string,
+    chatId: number,
+    modelId: string,
+    actorTelegramUserId: number,
+  ): Promise<void> {
+    const current = await this.readChat(botId, chatId, true);
+    await this.setChat({
+      botId,
+      chatId,
+      expectedRevision: current.revision,
+      pair: { providerId: current.selection.providerId, modelId },
+      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+    });
+  }
+
+  async resetProviderFromTelegram(
+    botId: string,
+    chatId: number,
+    actorTelegramUserId: number,
+  ): Promise<void> {
+    const current = await this.readChat(botId, chatId, true);
+    await this.resetChat({
+      botId,
+      chatId,
+      expectedRevision: current.revision,
+      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+    });
+  }
+
+  async resetModelFromTelegram(
+    botId: string,
+    chatId: number,
+    actorTelegramUserId: number,
+  ): Promise<void> {
+    const current = await this.readChat(botId, chatId, true);
+    if (current.source === "global") return;
+    await this.setChat({
+      botId,
+      chatId,
+      expectedRevision: current.revision,
+      pair: { providerId: current.selection.providerId, modelId: null },
+      actor: { kind: "telegram_user", id: String(actorTelegramUserId) },
+    });
   }
 
   /**

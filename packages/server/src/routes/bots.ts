@@ -185,10 +185,12 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     enabled: migrated.enabled,
     hasApiKey: !!active.encryptedApiKey,
     baseURL: active.baseURL,
-    model: active.defaultModel,
+    model: migrated.activeModelId ?? active.defaultModel,
     providerFormat: active.providerFormat,
     providers,
     activeProviderId: migrated.activeProviderId,
+    activeModelId: migrated.activeModelId,
+    aiSelectionDisplayDefault: migrated.aiSelectionDisplayDefault,
     systemPrompt: migrated.systemPrompt,
     behavioralPrompt: migrated.behavioralPrompt,
     groupBehavioralPrompt: migrated.groupBehavioralPrompt,
@@ -544,6 +546,8 @@ const aiConfigSchema = z
       )
       .optional(),
     activeProviderId: z.string().optional(),
+    activeModelId: z.string().trim().min(1).optional(),
+    aiSelectionDisplayDefault: z.enum(["show", "hide"]).optional(),
   })
   .refine(
     (data) => {
@@ -1072,6 +1076,27 @@ export function botsRoutes(
             activeProviderId = providers[0]?.id;
           }
         }
+        const effectiveProviders = providers ?? existingMigrated?.providers ?? [];
+        const selectedProviderId = activeProviderId ?? existingMigrated?.activeProviderId;
+        const selectedProvider = effectiveProviders.find(
+          (provider) => provider.id === selectedProviderId,
+        );
+        const requestedActiveModelId =
+          body.activeModelId ??
+          (selectedProviderId === existingMigrated?.activeProviderId
+            ? existingMigrated.activeModelId
+            : undefined);
+        if (
+          requestedActiveModelId &&
+          selectedProvider &&
+          requestedActiveModelId !== selectedProvider.defaultModel &&
+          !selectedProvider.models?.some((model) => model.id === requestedActiveModelId)
+        ) {
+          throw new HTTPException(400, {
+            message: "The selected model is not available for the active Provider",
+          });
+        }
+        const activeModelId = requestedActiveModelId ?? selectedProvider?.defaultModel;
 
         // Legacy top-level apiKey handling (kept for backward-compat clients that don't yet
         // send providers[]). Preserve-when-empty.
@@ -1164,6 +1189,9 @@ export function botsRoutes(
           providerFormat: body.providerFormat,
           providers: providers ?? existingMigrated?.providers,
           activeProviderId: activeProviderId ?? existingMigrated?.activeProviderId,
+          activeModelId,
+          aiSelectionDisplayDefault:
+            body.aiSelectionDisplayDefault ?? existingMigrated?.aiSelectionDisplayDefault ?? "show",
           systemPrompt: body.systemPrompt,
           behavioralPrompt: body.behavioralPrompt,
           groupBehavioralPrompt: body.groupBehavioralPrompt,
