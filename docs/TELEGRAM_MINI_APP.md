@@ -1,5 +1,7 @@
 # Telegram Mini App 开发说明
 
+本机使用真实测试 Bot、Cloudflare Tunnel 与 `tg-test.example.invalid` 的可重复启动步骤见 [Telegram Mini App 本地 HTTPS 开发与测试 Bot](./TELEGRAM_MINI_APP_LOCAL_DEV.md)。
+
 Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一个 `BrowserRouter`，但拥有独立的 lazy chunk、session facade、错误边界、Telegram adapter 与 scoped CSS。Mini App 不挂载 Refine，也不会把 Telegram theme 写到 `document` 或后台页面。
 
 ## Route map
