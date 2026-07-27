@@ -4,6 +4,7 @@ import {
   bigint,
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   json,
@@ -46,6 +47,160 @@ export const bots = pgTable("bots", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export const telegramBotProfiles = pgTable(
+  "telegram_bot_profiles",
+  {
+    botId: uuid("bot_id")
+      .primaryKey()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    telegramUserId: bigint("telegram_user_id", { mode: "number" }).notNull(),
+    username: text("username").notNull(),
+    displayName: text("display_name").notNull(),
+    observedAt: timestamp("observed_at").defaultNow().notNull(),
+  },
+  (t) => [
+    check(
+      "telegram_bot_profiles_user_id_check",
+      sql`${t.telegramUserId} > 0 and ${t.telegramUserId} <= 9007199254740991`,
+    ),
+  ],
+);
+
+export const telegramChats = pgTable(
+  "telegram_chats",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    type: text("type").notNull(),
+    title: text("title"),
+    username: text("username"),
+    botMembershipStatus: text("bot_membership_status"),
+    membershipObservedAt: timestamp("membership_observed_at"),
+    lastObservedAt: timestamp("last_observed_at").defaultNow().notNull(),
+    leftAt: timestamp("left_at"),
+    migratedToChatId: bigint("migrated_to_chat_id", { mode: "number" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.chatId] }),
+    foreignKey({
+      columns: [t.botId, t.migratedToChatId],
+      foreignColumns: [t.botId, t.chatId],
+      name: "telegram_chats_migrated_to_fk",
+    }),
+    index("telegram_chats_bot_last_observed_idx").on(t.botId, t.lastObservedAt),
+    index("telegram_chats_bot_membership_idx").on(t.botId, t.botMembershipStatus),
+    check(
+      "telegram_chats_chat_id_check",
+      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
+    ),
+    check("telegram_chats_type_check", sql`${t.type} in ('group', 'supergroup')`),
+    check(
+      "telegram_chats_membership_status_check",
+      sql`${t.botMembershipStatus} is null or ${t.botMembershipStatus} in ('creator', 'administrator', 'member', 'restricted', 'left', 'kicked')`,
+    ),
+    check(
+      "telegram_chats_migrated_to_check",
+      sql`${t.migratedToChatId} is null or (${t.migratedToChatId} < 0 and ${t.migratedToChatId} >= -9007199254740991 and ${t.migratedToChatId} <> ${t.chatId})`,
+    ),
+  ],
+);
+
+export const miniAppChatGrants = pgTable(
+  "mini_app_chat_grants",
+  {
+    botId: uuid("bot_id").notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.chatId] }),
+    foreignKey({
+      columns: [t.botId, t.chatId],
+      foreignColumns: [telegramChats.botId, telegramChats.chatId],
+      name: "mini_app_chat_grants_catalog_fk",
+    }).onDelete("cascade"),
+    check(
+      "mini_app_chat_grants_chat_id_check",
+      sql`${t.chatId} < 0 and ${t.chatId} >= -9007199254740991`,
+    ),
+    check(
+      "mini_app_chat_grants_creator_check",
+      sql`${t.createdBy} > 0 and ${t.createdBy} <= 9007199254740991`,
+    ),
+  ],
+);
+
+export const miniAppOperatorGrants = pgTable(
+  "mini_app_operator_grants",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    telegramUserId: bigint("telegram_user_id", { mode: "number" }).notNull(),
+    createdBy: bigint("created_by", { mode: "number" }).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.telegramUserId] }),
+    check(
+      "mini_app_operator_grants_user_id_check",
+      sql`${t.telegramUserId} > 0 and ${t.telegramUserId} <= 9007199254740991`,
+    ),
+    check(
+      "mini_app_operator_grants_creator_check",
+      sql`${t.createdBy} > 0 and ${t.createdBy} <= 9007199254740991`,
+    ),
+  ],
+);
+
+export const miniAppAuditEvents = pgTable(
+  "mini_app_audit_events",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    actorTelegramUserId: bigint("actor_telegram_user_id", { mode: "number" }),
+    actorRole: text("actor_role").notNull(),
+    capability: text("capability").notNull(),
+    action: text("action").notNull(),
+    resourceType: text("resource_type").notNull(),
+    resourceId: text("resource_id").notNull(),
+    previousSummary: json("previous_summary").$type<Record<string, unknown>>(),
+    nextSummary: json("next_summary").$type<Record<string, unknown>>(),
+    outcome: text("outcome").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("mini_app_audit_events_bot_created_idx").on(t.botId, t.createdAt),
+    index("mini_app_audit_events_bot_actor_idx").on(t.botId, t.actorTelegramUserId, t.createdAt),
+    index("mini_app_audit_events_bot_action_idx").on(t.botId, t.action, t.createdAt),
+    index("mini_app_audit_events_bot_resource_idx").on(
+      t.botId,
+      t.resourceType,
+      t.resourceId,
+      t.createdAt,
+    ),
+    check(
+      "mini_app_audit_events_actor_id_check",
+      sql`${t.actorTelegramUserId} is null or (${t.actorTelegramUserId} > 0 and ${t.actorTelegramUserId} <= 9007199254740991)`,
+    ),
+    check(
+      "mini_app_audit_events_actor_role_check",
+      sql`${t.actorRole} in ('admin', 'operator', 'viewer', 'system')`,
+    ),
+    check(
+      "mini_app_audit_events_outcome_check",
+      sql`${t.outcome} in ('succeeded', 'failed', 'partial')`,
+    ),
+  ],
+);
 
 export const mcpServers = pgTable("mcp_servers", {
   id: serial("id").primaryKey(),

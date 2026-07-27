@@ -253,6 +253,13 @@
       "when": 1784841426892,
       "tag": "0035_sparkling_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785154137407,
+      "tag": "0036_white_nick_fury",
+      "breakpoints": true
     }
   ]
 }
