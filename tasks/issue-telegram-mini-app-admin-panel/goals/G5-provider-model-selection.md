@@ -67,3 +67,4 @@ pnpm fmt:check
 - 单表 migration、migration report contract、全局/群级 service、Telegram 命令与两套 Panel 均已接到同一写路径。
 - Mini App 浏览器测试覆盖原子 Provider/模型/展示策略、409 草稿保留、pending retry、Viewer 安全 label；Better Auth Panel 覆盖目录保存与 selection 冲突边界。
 - 阶段 Review 未遗留 P0/P1；真实备份数据库 forward/restore 演练保留给 G7 发布门禁。
+- 最终 Review 补齐旧正数私聊 ID/超安全范围 ID：migration report 标记 `ignored` 并说明原因，新群级 selection 只接收安全负数群 ID。

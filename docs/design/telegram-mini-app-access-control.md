@@ -165,7 +165,7 @@ Provider/模型展示策略与 selection 解耦：Bot AI 配置保存默认 show
 5. Cookie Path 限定 `/api/mini-app/:botId`，载荷内 Bot ID 必须与路径一致。
 6. 原始 `initData` 验证后即丢弃，不进入日志或浏览器存储。
 
-默认 `SameSite=Lax`，以 Telegram iOS、Android、Desktop、Web 实测为发布门槛；只有实测要求时才改为 `SameSite=None; Secure`。
+会话 Cookie 使用 `HttpOnly + Secure + SameSite=None + Partitioned`，兼容 Telegram Web 的跨站 iframe；所有写请求仍必须通过 Origin 和 CSRF 双重校验。Telegram iOS、Android、Desktop、Web 实测仍是发布门槛。
 
 ### 5.2 API 边界
 
@@ -221,7 +221,7 @@ Operator 可修改：群启用、AI 群白名单、trigger、conversation enable
 
 停止拒绝新 updates，取消活跃 AI 生成和未完成内部任务；已经发生的外部副作用不能回滚。配置、已落库历史和其他 Bot 不受影响。
 
-Active timer 在停机期间保持 durable；重新启动时恢复，已过期提醒补发一次并标记延迟。Lifecycle 实施必须同时修复普通 stop/restart 丢失 timer handle 的现有问题，并覆盖 Summary/RSS 等 Bot-scoped job 的停止语义。
+Active timer 在停机期间保持 durable；重新启动时恢复。投递通过有时限的 `processing` lease 防止并发 worker 重复执行，成功后才 `fired`，已知失败恢复 `active` 并有界重试；进程在外部投递成功与 DB finalize 之间崩溃时允许 lease 过期后重试，以避免永久丢失。已知只读工具可安全重放，未知工具默认视为有副作用；副作用成功后不整段重放。Timer 可消费 effect-only 结果；scheduled RSS 不暴露写工具，只有可见 Telegram delivery 才由服务统一推进整批 checkpoint。Lifecycle 实施必须同时修复普通 stop/restart 丢失 timer handle 的现有问题，并覆盖 Summary/RSS 等 Bot-scoped job 的停止语义。
 
 ### 6.4 `TelegramMembershipVerifier`
 

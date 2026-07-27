@@ -149,7 +149,7 @@ Admin 导航为 Groups / Settings / Access / Help；Operator/Viewer 为 Groups /
 - 路径统一为 `/api/mini-app/:botId/*`；
 - URL botId 只是 selector；session 内 Bot ID 必须与路径一致；
 - Cookie Path 限定当前 Bot API 路径；
-- 默认 `HttpOnly + Secure + SameSite=Lax`；只有实机证明需要时才使用 `SameSite=None; Secure`；
+- 会话 Cookie 使用 `HttpOnly + Secure + SameSite=None + Partitioned`，兼容 Telegram Web 的跨站 iframe；所有写请求仍必须通过 Origin 和 CSRF 双重校验；
 - session TTL 15 分钟；
 - 验证 initData hash、`auth_date`、未来时间、重复字段和 safe integer；
 - 原始 initData 验证后丢弃，不进入日志或浏览器存储；
@@ -247,7 +247,7 @@ Provider/模型展示策略不进入 selection 表：Bot 默认保存在 AI 配�
 
 Stop 停止新 updates，取消活跃 AI 生成和未完成内部任务；已发生的外部 tool side effect 不回滚。已保存配置、历史和其他 Bot 不受影响。
 
-Active timer 在停机期间保留；start/restart 恢复，过期提醒补发一次并标记 delayed。实现必须修复现有普通 stop/restart 遗失 timer handle，并定义 Summary/RSS 等 Bot-scoped job 的一致停止语义。
+Active timer 在停机期间保留；start/restart 恢复。恢复投递使用有时限的 `processing` lease，成功后才 `fired`，失败恢复 `active` 并有界重试；外部投递与 DB finalize 之间的崩溃歧义选择 at-least-once，避免永久丢失。实现必须修复现有普通 stop/restart 遗失 timer handle，并定义 Summary/RSS 等 Bot-scoped job 的一致停止语义。
 
 ### TelegramMembershipVerifier
 
@@ -352,7 +352,7 @@ Blocked by：G1、G2。
 
 - [ ] desired/runtime 状态可区分并可 reconcile。
 - [ ] enable/disable 在 server restart 后保持用户选择。
-- [ ] restart/stop 不遗失 active timer，overdue timer 只补发一次并标记 delayed。
+- [ ] restart/stop 不遗失 active timer，overdue timer 以 lease 防并发重复并标记 delayed；崩溃歧义按文档允许 at-least-once。
 - [ ] Stop 的 AI、Summary、RSS 等 Bot-scoped job 行为有测试。
 - [ ] Admin 可修改 global AI enable/System Prompt，并看到 pending-apply 状态。
 

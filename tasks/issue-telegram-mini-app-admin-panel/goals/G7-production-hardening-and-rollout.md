@@ -26,7 +26,7 @@
 
 - [x] 默认关闭时没有公开管理 route 或菜单入口副作用。
 - [x] `/api/*` 未匹配路径稳定返回 JSON 404。
-- [ ] Cookie、CSP、缓存和 HTTPS 检查在生产构建通过。
+- [x] Cookie、CSP、缓存和 HTTPS 检查在生产构建通过。
 - [x] 认证/越权日志不包含原始 initData、Cookie、token、key 或正文。
 - [ ] Migration、rollback 和旧 selection 报告在备份数据库演练通过。
 - [ ] iOS、Android、Desktop、Web 均完成测试清单。
@@ -69,5 +69,6 @@ git diff --check
 ## 当前证据与待办
 
 - 已实现 per-Bot `miniAppEnabled`（default false）、API fail-closed 404、私聊 `/panel`、群聊转私聊引导、JSON API fallback、CSP/security headers 与静态缓存策略。
-- 轻量安全 Review 的 P1 已修复：旧 session 在关闭开关后仍可读、Editor 创建时绕过开关权限、启用失败后关闭开关不能恢复 Bot、群聊普通 URL 缺少签名 `initData`。
-- 自动化通过后再勾选 production build 条目；真实数据库 snapshot→migrate→report→restore 与 iOS/Android/Desktop/Web 表格必须由有 HTTPS/Telegram 环境的一方执行并留下私有证据。
+- 最终安全/前端 Review 的 P1 已修复：Editor 信任根越权、新 Telegram 账号复用旧 Cookie、Telegram SDK/CSP 全局扩权、Web iframe Cookie、session limiter 查库绕过/跨 Bot 拒绝服务与跨窗口 reservation 竞争。
+- 最终 runtime Review 的 P1 已修复：legacy 私聊 selection 迁移失败、群迁移后 runtime 未刷新、timer/RSS 误把 skip/failure 当成功、timer claim 崩溃永久丢失、工具副作用后的整段重放、RSS effect-only 错误推进 checkpoint，以及 crash 后 disable 遗留 handler/disposer。
+- 本地自动化与 production build 已通过；真实数据库 snapshot→migrate→report→restore 与 iOS/Android/Desktop/Web 表格必须由有 HTTPS/Telegram 环境的一方执行并留下私有证据。

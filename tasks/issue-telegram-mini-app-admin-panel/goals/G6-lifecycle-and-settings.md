@@ -63,6 +63,6 @@ pnpm fmt:check
 ## 完成证据
 
 - Better Auth 与 Mini App 复用 `BotLifecycleService`；BotPool 以 durable `isActive` 为启动闸门，返回 desired/runtime/reconciled，不以当前 manager 存在与否推断期望状态。
-- Timer pause/resume、overdue exactly-once claim、跨 Bot 隔离和恢复失败 fail-closed 有聚焦测试；RSS 只有运行中 Bot 接受 digest 后才推进 checkpoint。
+- Timer pause/resume、`processing` lease、跨 Bot 隔离、失败回滚和一次有界重试有聚焦测试；正常路径单次投递，外部投递与 DB finalize 之间的崩溃歧义按 at-least-once 恢复。事件空文本会补发确定性提示；已知只读工具可重放、未知工具默认有副作用，副作用成功后不因发送失败整段重放。Timer 将 effect-only 结果视为已消费；scheduled RSS 不暴露写工具，只有可见 Telegram delivery 才由服务统一推进整批 checkpoint。
 - Mini App Settings 已交付 lifecycle、AI 总开关、System Prompt 和全局 Provider/模型。Enable 不确认，Disable/Restart 二次确认；浏览器测试覆盖 CSRF 与原子 settings mutation。
-- 阶段 Review 修复：timer resume 错误伪成功、RSS 停机静默丢 digest、Mini App flag 启用失败后无法关闭并恢复 Bot。
+- 阶段 Review 修复：timer resume 错误伪成功、RSS 停机静默丢 digest、Mini App flag 启用失败后无法关闭并恢复 Bot。最终 Review 继续修复 `continueChat` 吞掉 skip/send error、claim 后崩溃永久丢 timer、工具成功后整段重放、RSS effect-only 错误推进 checkpoint、crash 后 disable 未清理 handler/disposer，以及群迁移后 runtime 仍使用旧 chat ID。

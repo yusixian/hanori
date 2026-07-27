@@ -25,7 +25,9 @@ Telegram Mini App 与现有 Better Auth 管理后台共用一个 Vite SPA 和一
 - Telegram `themeChanged`、`viewportChanged`、`safeAreaChanged` 和 `contentSafeAreaChanged` 订阅清理；
 - 只写入传入 Mini App root 的 `--tg-*` CSS variables。
 
-SDK 缺失时 adapter 为安全 no-op，Help 仍可直接打开。受保护页面先读取 Bot-scoped Cookie；401 且存在 `initData` 时才交换新 session。401 显示会话过期，403 回到 Help，网络/响应异常 fail closed。
+Telegram SDK 只在 `/mini-app/*` surface 懒加载，现有 `/login`、`/bots/*` 不加载远端脚本，也不允许 Telegram framing。SDK 缺失时 adapter 为安全 no-op，Help 仍可直接打开。Telegram 提供非空 `initData` 时总是先交换当前身份的新 session，避免账号切换后复用旧 Cookie；只有没有新 `initData` 时才读取 Bot-scoped Cookie。401 显示会话过期，403 回到 Help，网络/响应异常 fail closed。
+
+会话 Cookie 使用 `HttpOnly; Secure; SameSite=None; Partitioned` 以支持 Telegram Web 跨站 iframe，并将 Path 限定到单一 Bot API；写请求仍必须同时通过同源 `Origin` 与 session CSRF 校验。
 
 ## Access 管理
 
@@ -76,7 +78,7 @@ Settings 页仅 Admin 可见，并提供：
 - Bot 全局 AI enable 与 System Prompt；
 - 全局 Provider/模型和默认公开展示策略。
 
-Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因。`isActive` 是唯一 durable desired state：Disable 后 server restart 不会复活 Bot；runtime 失败时持久化状态仍保留，UI 显示 pending/unreconciled。Stop 会停止接收新 update 并取消当前进程中的 active Bot work；已经发送到外部系统的消息或请求不会回滚。Active timer 保留在数据库，重新启动后恢复，过期 reminder 只 claim/补发一次并标记 `delayed=true`。RSS digest 只有在运行中的 Bot 接受任务后才推进 checkpoint，停机期间不会静默丢弃待发送项目。
+Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因。`isActive` 是唯一 durable desired state：Disable 后 server restart 不会复活 Bot；runtime 失败时持久化状态仍保留，UI 显示 pending/unreconciled。Stop 会停止接收新 update 并取消当前进程中的 active Bot work；已经发送到外部系统的消息或请求不会回滚。Active timer 保留在数据库，重新启动后恢复；投递使用 60 秒 `processing` lease，同一 lease 只有一个 worker，成功后才标记 `fired`，已知失败回到 `active` 并在当前进程重试一次。若进程恰好在 Telegram 已接收、DB 标记成功前崩溃，lease 过期后的恢复可能重复投递——这是外部 API 无幂等键时选择“避免永久丢失”的 at-least-once 边界。事件返回空文本时会补发确定性提示；已知只读工具可安全重放，未知工具默认视为有副作用；副作用已经成功后，即使后续发送失败也不整段重放，以免重复图片生成、写文件、写记忆或 Telegram 操作。Timer 将这种“仅副作用成功”视为已消费；scheduled RSS 不暴露写工具，只有收到可见 Telegram delivery 才由服务统一推进整批 checkpoint，AI 停用、隐私关闭或发送失败都不会消费整批待发送项目。
 
 ## 生产灰度 Runbook
 
@@ -86,7 +88,7 @@ Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因�
 2. 设置公开 HTTPS origin，例如 `BETTER_AUTH_URL=https://bot.example.com`。不能使用 localhost、裸 HTTP、额外 path 或尾部 `/`。
 3. 生成独立的 `MINI_APP_SESSION_SECRET`（至少 32 字符，不复用 Bot Token、`BETTER_AUTH_SECRET` 或 encryption key）。
 4. 保持所有 Bot 的 `miniAppEnabled=false`，部署新版本并运行 `pnpm db:migrate`。
-5. 在克隆/测试数据库检查 migration report，再启动应用完成 smoke test。`0038` 会保留 legacy override 表供兼容/核对；`0039` 只新增默认 false 的 `mini_app_enabled`。
+5. 在克隆/测试数据库检查 migration report，再启动应用完成 smoke test。`0038` 会保留 legacy override 表供兼容/核对；旧正数私聊 ID 和超出 JS safe integer 的负数 ID 会保留为 `ignored` 报告但不会写入群级 selection；`0039` 只新增默认 false 的 `mini_app_enabled`。
 
 建议在隔离数据库演练：从快照恢复一份副本 → 运行 `pnpm db:migrate` → 检查 `chat_ai_selection_migration_reports`、`chat_ai_selections` 和原 legacy rows → 再从同一快照恢复另一份副本验证恢复流程。仓库不提供 destructive down migration；应用回滚时保留新增表/列最安全，必须回到旧数据状态时只能恢复部署前快照。
 
@@ -97,10 +99,10 @@ Enable 直接执行；Disable 与 Restart 需要二次确认，不要求原因�
 ```bash
 curl -fsS -D - -o /dev/null <origin>/mini-app/<botId>/help
 curl -fsS -D - -o /dev/null <origin>/assets/<hashed-asset>
-curl -fsS <origin>/api/definitely-not-a-route
+curl -sS -i <origin>/api/definitely-not-a-route
 ```
 
-确认 HTML 为 `no-cache, no-store, must-revalidate`，hash asset 为一年 `immutable`，响应含 Telegram-compatible CSP、`nosniff`、Referrer/Permissions Policy，未知 `/api/*` 返回 JSON 404。反向代理必须保留 `Origin`、Cookie 和 `Set-Cookie`，且不能缓存 `/api/mini-app/*`。
+确认 HTML 为 `no-cache, no-store, must-revalidate`，hash asset 为一年 `immutable`；Mini App HTML 的 CSP 允许 Telegram SDK/framing，后台与 API 的 CSP 只允许 self 且 `frame-ancestors 'none'`；所有响应含 `nosniff`、Referrer/Permissions Policy，未知 `/api/*` 返回可见的 JSON 404。反向代理必须保留 `Origin`、Cookie 和 `Set-Cookie`，且不能缓存 `/api/mini-app/*`。
 
 ### 3. 只开启测试 Bot
 
