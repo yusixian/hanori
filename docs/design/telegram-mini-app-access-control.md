@@ -1,6 +1,6 @@
 # Telegram Mini App 管理面板与访问控制设计
 
-状态：已完成产品决策，等待按 Epic Goals 实施
+状态：实施中（G0–G1 已完成，G2 进行中）
 
 日期：2026-07-27
 
@@ -230,6 +230,15 @@ Active timer 在停机期间保持 durable；重新启动时恢复，已过期�
 ### 6.5 `ChatIdentityMigrationService`
 
 basic group 升级为 supergroup 时，在事务中迁移 chat grant、group override、Summary config、AI selection 和其他 M1 chat-scoped 资源。目标 ID 已有显式配置时目标优先，保留 old ID lineage 和 conflict audit；不迁移聊天历史。
+
+Forward 流程由 Telegram migration update 自动触发：先锁当前 Bot row，再创建 target catalog identity，随后在同一事务迁移 grant、完整 `groupOverrides`、Summary config、旧 model/provider override、RSS collection 与 timer，最后写 lineage 和只含资源 ID/计数的 system audit。重复 update 不产生第二次写入；同一 old ID 指向不同 target 时拒绝处理。
+
+以下内容刻意留在 old chat ID：conversation messages/summaries/compaction state、chat summaries 与 PixAI generations。迁移不复制内容，也不在 audit 中保存消息或 Prompt。
+
+回滚分两层处理：
+
+- G1 schema migration 仅新增表。回退应用版本时保留这些表最安全，旧版本会忽略它们；生产执行 `pnpm db:migrate` 前仍必须创建数据库快照。
+- chat identity migration 采用 target-wins，冲突时会删除 old singleton，因此不提供自动反向迁移。需要恢复 old 配置只能从迁移前数据库快照回滚，再重新处理 Telegram 已升级后的 target chat；该演练是 G7 发布门禁。
 
 ## 7. 前端架构
 

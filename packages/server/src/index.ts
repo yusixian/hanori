@@ -8,6 +8,7 @@ import { createAuth, ensureAuthBootstrap } from "./auth.js";
 import { env } from "./env.js";
 import { BackupService } from "./services/backup.js";
 import { BotPool } from "./services/bot-pool.js";
+import { ChatIdentityMigrationService } from "./services/chat-identity-migration-service.js";
 import { ChatSummaryService } from "./services/chat-summary-service.js";
 import { ModelCapabilityService } from "./services/model-capability-service.js";
 import { DbLogger } from "./services/db-logger.js";
@@ -137,6 +138,7 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
 const telegramDirectoryService = new TelegramDirectoryService(db);
+const chatIdentityMigrationService = new ChatIdentityMigrationService(db);
 const telegramRuntime = new BotPoolTelegramRuntimeAdapter(botPool);
 botPool.setTelegramDirectoryCallbacks(
   {
@@ -159,6 +161,14 @@ botPool.setTelegramDirectoryCallbacks(
         username: null,
         status: observation.status,
         observedAt: new Date(observation.observedAt * 1000),
+      });
+    },
+    onChatMigrationObserved: async (observation) => {
+      await chatIdentityMigrationService.migrate({
+        botId: observation.botId,
+        oldChatId: observation.oldChatId,
+        newChatId: observation.newChatId,
+        observedAt: observation.observedAt,
       });
     },
   },

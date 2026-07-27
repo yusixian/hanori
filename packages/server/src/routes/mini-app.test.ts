@@ -11,9 +11,9 @@ const BOT_TOKEN = "123456:test-token";
 const SECRET = "mini-app-session-secret-at-least-32-characters";
 const NOW_SECONDS = 1_800_000_000;
 
-function signInitData(userId = 42) {
+function signInitData(userId = 42, authDate = NOW_SECONDS) {
   const fields: [string, string][] = [
-    ["auth_date", String(NOW_SECONDS)],
+    ["auth_date", String(authDate)],
     ["query_id", "query-a"],
     ["user", JSON.stringify({ id: userId, first_name: "Ada" })],
   ];
@@ -102,6 +102,54 @@ describe("Mini App session routes", () => {
       body: JSON.stringify({ initData: signInitData() }),
     });
     expect(unknown.status).toBe(404);
+  });
+
+  it("rejects expired and future initData and fails closed when sessions are not configured", async () => {
+    const { app } = testApp();
+    for (const authDate of [NOW_SECONDS - 301, NOW_SECONDS + 1]) {
+      const response = await app.request(`/mini-app/${BOT_A}/session`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ initData: signInitData(42, authDate) }),
+      });
+      expect(response.status).toBe(401);
+    }
+
+    const unavailable = testApp({ sessionSecret: "" }).app;
+    expect(
+      (await unavailable.request(`/mini-app/${BOT_A}/session`, { method: "POST" })).status,
+    ).toBe(503);
+  });
+
+  it("derives viewer access from current Telegram membership on every request", async () => {
+    const snapshot: TelegramAccessSnapshot = {
+      botId: BOT_A,
+      adminTelegramUserIds: [],
+      operatorTelegramUserIds: [],
+      grantedChatIds: [-1001],
+    };
+    const membershipVerifier = { isMember: vi.fn(async () => true) };
+    const { app } = testApp({
+      directory: { readAccessSnapshot: vi.fn(async () => snapshot) },
+      membershipVerifier,
+    });
+    const created = await app.request(`/mini-app/${BOT_A}/session`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ initData: signInitData() }),
+    });
+    expect(await created.clone().json()).toMatchObject({
+      access: { role: "viewer", chatScope: { kind: "granted", chatIds: [-1001] } },
+    });
+
+    membershipVerifier.isMember.mockResolvedValueOnce(false);
+    const revoked = await app.request(`/mini-app/${BOT_A}/session`, {
+      headers: { cookie: cookieFrom(created) },
+    });
+    expect(await revoked.json()).toMatchObject({
+      access: { role: "none", chatScope: { kind: "none" } },
+    });
+    expect(membershipVerifier.isMember).toHaveBeenCalledTimes(2);
   });
 
   it("re-resolves grants on every session read so revocation takes effect immediately", async () => {

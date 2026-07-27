@@ -21,14 +21,14 @@
 
 ## 验收
 
-- [ ] 篡改、过期、未来时间、重复字段、错 Bot 和 unsafe ID 均被拒绝。
-- [ ] Bot A session 无法访问 Bot B。
-- [ ] Admin 仅来自当前 Bot `adminChatIds`。
-- [ ] Operator grant 与 chat grant 独立于现有 AI allowlists。
-- [ ] Viewer grant 还必须通过当前 membership 校验，失败时 fail closed。
-- [ ] Grant 撤销对下一次 mutation 立即生效。
-- [ ] Bot 离群记录归档，重新加入可恢复。
-- [ ] group → supergroup 迁移遵守 target-wins 并记录冲突。
+- [x] 篡改、过期、未来时间、重复字段、错 Bot 和 unsafe ID 均被拒绝。
+- [x] Bot A session 无法访问 Bot B。
+- [x] Admin 仅来自当前 Bot `adminChatIds`。
+- [x] Operator grant 与 chat grant 独立于现有 AI allowlists。
+- [x] Viewer grant 还必须通过当前 membership 校验，失败时 fail closed。
+- [x] Grant 撤销对下一次权限解析立即生效；具体 mutation 的 403 由 G3/G4 验收。
+- [x] Bot 离群记录归档，重新加入可恢复。
+- [x] group → supergroup 迁移遵守 target-wins 并记录冲突。
 
 ## 验证命令
 
@@ -58,3 +58,12 @@ pnpm fmt:check
 
 - 重点 review tenant isolation、签名算法、Cookie、grant 撤销和 migration。
 - 修复全部 P0/P1 后才允许 UI 消费这些 API。
+
+## 完成证据（2026-07-27）
+
+- 固定签名 fixture 通过 HTTP session route 演示 admin/viewer/none、15 分钟 Bot-scoped Cookie、过期/未来/篡改拒绝、跨 Bot 拒绝，以及 grant/membership 下一次解析立即降权。
+- Bot observation 已接入真实 BotPool 启动链；运行时只暴露 `getMe` 公开投影和 `getChatMember` membership，不暴露 token 或 Telegram client。
+- chat identity migration 使用 Bot row lock 和单事务执行 target-wins、lineage 与 system audit；明确排除 conversation/history、compaction、chat summaries 和 PixAI generations。
+- `pnpm db:generate` 输出 `No schema changes, nothing to migrate`；全仓 `pnpm typecheck`、`pnpm fmt:check`、server build 通过；`pnpm lint` 为 0 error、3 个既有 warning。
+- server+bot 全范围测试首轮 85 files / 637 tests 中，82 files / 623 tests 通过；其余 3 files 因 sandbox `listen EPERM`/连带超时失败，在允许 loopback 的环境单独重跑 3 files / 59 tests 全部通过。
+- 阶段边界 Review 未发现 P0/P1。验证盲区：真实 PostgreSQL 双连接竞争、数据库快照/回滚演练与真实 Telegram iOS/Android/Desktop/Web 往返留到 G7。

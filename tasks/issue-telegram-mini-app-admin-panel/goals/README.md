@@ -7,8 +7,8 @@
 | Goal | 纵向结果                                                      | 状态   | 前置        |
 | ---- | ------------------------------------------------------------- | ------ | ----------- |
 | G0   | 隐私日志、命令事实和 Summary 安全基线可验证                   | 已完成 | 无          |
-| G1   | Telegram session、群目录、grant 与 capability 可通过 API 演示 | 进行中 | G0          |
-| G2   | 公共 Help 与隔离 Mini App shell 可在浏览器/Telegram 演示      | 待开始 | G0、G1 契约 |
+| G1   | Telegram session、群目录、grant 与 capability 可通过 API 演示 | 已完成 | G0          |
+| G2   | 公共 Help 与隔离 Mini App shell 可在浏览器/Telegram 演示      | 进行中 | G0、G1 契约 |
 | G3   | Admin 添加群/Operator，撤销后权限立即失效                     | 待开始 | G1、G2      |
 | G4   | Viewer 只读、Operator 字段级编辑并热应用                      | 待开始 | G1–G3       |
 | G5   | Admin 全局/群级 Provider 模型选择跨入口一致                   | 待开始 | G1、G4      |
