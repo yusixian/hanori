@@ -28,6 +28,7 @@ export class RssFeedService {
   private parser = new Parser({ timeout: FETCH_TIMEOUT_MS });
   private onDigestTrigger?: RssDigestTrigger;
   private lastCleanupAt = 0;
+  private digestInFlight = new Set<number>();
 
   constructor(
     private db: Database,
@@ -201,6 +202,17 @@ export class RssFeedService {
 
   async triggerDigest(collectionId: number): Promise<boolean> {
     if (!this.onDigestTrigger) return false;
+    if (this.digestInFlight.has(collectionId)) return false;
+    this.digestInFlight.add(collectionId);
+    try {
+      return await this.triggerDigestOnce(collectionId);
+    } finally {
+      this.digestInFlight.delete(collectionId);
+    }
+  }
+
+  private async triggerDigestOnce(collectionId: number): Promise<boolean> {
+    if (!this.onDigestTrigger) return false;
 
     const [collection] = await this.db
       .select()
@@ -273,12 +285,6 @@ export class RssFeedService {
     // Apply collection-level total cap
     const maxDisplay = collection.maxDigestItems ?? 30;
 
-    // Update lastDigestAt first to prevent duplicate triggers from concurrent checkDigests.
-    await this.db
-      .update(rssCollections)
-      .set({ lastDigestAt: new Date() })
-      .where(eq(rssCollections.id, collectionId));
-
     const eventDescription = buildDigestEventDescription(
       collection,
       items,
@@ -287,10 +293,11 @@ export class RssFeedService {
     );
     const fired = this.onDigestTrigger(collection.botId, collection.chatId, eventDescription);
 
-    // Auto-mark all fetched items as digested once digest dispatched to bot handler.
-    // Previously relied on AI calling mark_rss_read tool, but AI sometimes skipped it,
-    // leaving items stuck as unread in the panel even though summary had been sent.
     if (fired) {
+      await this.db
+        .update(rssCollections)
+        .set({ lastDigestAt: new Date() })
+        .where(eq(rssCollections.id, collectionId));
       await this.markItemsDigested(rawItems.map((i) => i.id));
     }
     return fired;
