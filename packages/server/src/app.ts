@@ -43,6 +43,7 @@ import type { MiniAppAccessService } from "./services/mini-app-access-service.js
 import type { GroupConfigService } from "./services/group-config-service.js";
 import type { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
 import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
+import type { BotSettingsService } from "./services/bot-settings-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
 
 interface AppOptions {
@@ -66,6 +67,7 @@ interface AppOptions {
   groupConfigService: GroupConfigService;
   chatAiSelectionService: ChatAiSelectionService;
   botLifecycleService: BotLifecycleService;
+  botSettingsService: BotSettingsService;
 }
 
 export function createApp(options: AppOptions) {
@@ -90,6 +92,7 @@ export function createApp(options: AppOptions) {
     groupConfigService,
     chatAiSelectionService,
     botLifecycleService,
+    botSettingsService,
   } = options;
 
   const app = new Hono()
@@ -121,6 +124,7 @@ export function createApp(options: AppOptions) {
         groupConfigService,
         chatAiSelectionService,
         botLifecycleService,
+        botSettingsService,
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))

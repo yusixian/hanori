@@ -18,6 +18,7 @@ import {
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
 import { BotLifecycleError, type BotLifecycleService } from "../services/bot-lifecycle-service.js";
+import { BotSettingsError, type BotSettingsService } from "../services/bot-settings-service.js";
 import {
   MiniAppAccessError,
   type MiniAppAccessService,
@@ -121,6 +122,7 @@ export interface MiniAppRoutesOptions {
     | "retryPublish"
   >;
   botLifecycleService?: Pick<BotLifecycleService, "read" | "enable" | "disable" | "restart">;
+  botSettingsService?: Pick<BotSettingsService, "read" | "patch">;
   rateLimiter?: MiniAppSessionRateLimiter;
   now?: () => Date | number;
 }
@@ -203,6 +205,18 @@ const selectionDisplaySchema = z
   .object({
     expectedRevision: selectionRevisionSchema,
     policy: z.enum(["inherit", "show", "hide"]),
+  })
+  .strict();
+const botSettingsPatchSchema = z
+  .object({
+    expectedRevision: z.string().min(1).max(100),
+    patch: z
+      .object({
+        enabled: z.boolean().optional(),
+        systemPrompt: z.string().max(50_000).optional(),
+      })
+      .strict()
+      .refine((patch) => patch.enabled !== undefined || patch.systemPrompt !== undefined),
   })
   .strict();
 
@@ -860,6 +874,91 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
           );
         }
         return c.json({ ok: false as const, error: "Runtime apply failed" }, 503);
+      }
+    })
+    .get("/:botId/settings", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "bot.settings.read", false);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.botSettingsService) {
+        return c.json({ ok: false as const, error: "Bot settings are not available" }, 503);
+      }
+      try {
+        return c.json({
+          ok: true as const,
+          settings: await options.botSettingsService.read(botId),
+        });
+      } catch (error) {
+        if (error instanceof BotSettingsError) {
+          const status =
+            error.code === "not_found" ? 404 : error.code === "ai_not_configured" ? 409 : 503;
+          return c.json({ ok: false as const, error: error.message, code: error.code }, status);
+        }
+        return c.json({ ok: false as const, error: "Bot settings are unavailable" }, 503);
+      }
+    })
+    .patch("/:botId/settings", async (c) => {
+      const botId = c.req.param("botId");
+      const authorization = await authorize(botId, c.req.raw, "bot.settings.write", true);
+      if (!authorization.ok) {
+        return c.json(
+          {
+            ok: false as const,
+            error: authorization.status === 401 ? "Unauthorized" : "Forbidden",
+          },
+          authorization.status,
+        );
+      }
+      if (!options.botSettingsService) {
+        return c.json({ ok: false as const, error: "Bot settings are not available" }, 503);
+      }
+      const parsed = botSettingsPatchSchema.safeParse(await readJsonBody(c.req.raw));
+      if (!parsed.success) return c.json({ ok: false as const, error: "Invalid request" }, 400);
+      try {
+        const result = await options.botSettingsService.patch({
+          botId,
+          expectedRevision: parsed.data.expectedRevision,
+          patch: parsed.data.patch,
+          actor: { kind: "telegram_user", id: String(authorization.userId) },
+        });
+        return c.json({ ok: true as const, ...result });
+      } catch (error) {
+        if (error instanceof BotSettingsError) {
+          const status =
+            error.code === "not_found"
+              ? 404
+              : error.code === "stale_revision"
+                ? 409
+                : error.code === "ai_not_configured"
+                  ? 409
+                  : 503;
+          let latest: unknown;
+          if (error.code === "stale_revision") {
+            try {
+              latest = await options.botSettingsService.read(botId);
+            } catch {
+              latest = undefined;
+            }
+          }
+          return c.json(
+            {
+              ok: false as const,
+              error: error.message,
+              code: error.code,
+              ...(latest ? { latest } : {}),
+            },
+            status,
+          );
+        }
+        return c.json({ ok: false as const, error: "Bot settings update failed" }, 503);
       }
     })
     .get("/:botId/lifecycle", async (c) => {

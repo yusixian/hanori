@@ -33,6 +33,7 @@ import { MiniAppAccessService } from "./services/mini-app-access-service.js";
 import { GroupConfigService } from "./services/group-config-service.js";
 import { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
 import { BotLifecycleService } from "./services/bot-lifecycle-service.js";
+import { BotSettingsService } from "./services/bot-settings-service.js";
 import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
 
 export type { AppType } from "./app.js";
@@ -163,6 +164,9 @@ const botLifecycleService = new BotLifecycleService(db, {
   stop: (botId) => botPool.stopBot(botId),
   restart: (botId) => botPool.restartBot(botId),
 });
+const botSettingsService = new BotSettingsService(db, botLifecycleService, (botId, operation) =>
+  botPool.withAiConfigLock(botId, operation),
+);
 botPool.setTelegramDirectoryCallbacks(
   {
     onChatObserved: async (observation) => {
@@ -304,6 +308,7 @@ const app = createApp({
   groupConfigService,
   chatAiSelectionService,
   botLifecycleService,
+  botSettingsService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

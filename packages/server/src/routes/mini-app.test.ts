@@ -167,6 +167,19 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     })),
     restart: vi.fn(async () => ({ ...lifecycle, persisted: true as const, applied: true })),
   };
+  const settings = {
+    revision: "settings-rev-1",
+    ai: { enabled: true, systemPrompt: "You are helpful." },
+  };
+  const botSettingsService = {
+    read: vi.fn(async () => settings),
+    patch: vi.fn(async () => ({
+      persisted: true as const,
+      applied: true,
+      applyState: "applied" as const,
+      settings,
+    })),
+  };
   const options: MiniAppRoutesOptions = {
     sessionSecret: SECRET,
     allowedOrigins: [ORIGIN],
@@ -179,6 +192,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     groupConfigService,
     chatAiSelectionService,
     botLifecycleService,
+    botSettingsService,
     now: () => NOW_SECONDS * 1000,
     ...overrides,
   };
@@ -189,6 +203,7 @@ function testApp(overrides: Partial<MiniAppRoutesOptions> = {}) {
     groupConfigService,
     chatAiSelectionService,
     botLifecycleService,
+    botSettingsService,
     options,
   };
 }
@@ -666,6 +681,49 @@ describe("Mini App lifecycle routes", () => {
     expect(accepted.status).toBe(200);
     expect(botLifecycleService.disable).toHaveBeenCalledWith({
       botId: BOT_A,
+      actor: { kind: "telegram_user", id: "42" },
+    });
+  });
+
+  it("reads and updates only the common Admin settings contract", async () => {
+    const { app, botSettingsService } = testApp();
+    const session = await sessionFor(app);
+    const read = await app.request(`/mini-app/${BOT_A}/settings`, {
+      headers: { cookie: session.cookie },
+    });
+    expect(read.status).toBe(200);
+    await expect(read.json()).resolves.toMatchObject({
+      settings: { ai: { enabled: true, systemPrompt: "You are helpful." } },
+    });
+
+    const denied = await app.request(`/mini-app/${BOT_A}/settings`, {
+      method: "PATCH",
+      headers: { cookie: session.cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        expectedRevision: "settings-rev-1",
+        patch: { enabled: false },
+      }),
+    });
+    expect(denied.status).toBe(403);
+
+    const accepted = await app.request(`/mini-app/${BOT_A}/settings`, {
+      method: "PATCH",
+      headers: {
+        cookie: session.cookie,
+        origin: ORIGIN,
+        "content-type": "application/json",
+        "x-mini-app-csrf": session.csrfToken,
+      },
+      body: JSON.stringify({
+        expectedRevision: "settings-rev-1",
+        patch: { enabled: false, systemPrompt: "Updated" },
+      }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(botSettingsService.patch).toHaveBeenCalledWith({
+      botId: BOT_A,
+      expectedRevision: "settings-rev-1",
+      patch: { enabled: false, systemPrompt: "Updated" },
       actor: { kind: "telegram_user", id: "42" },
     });
   });
