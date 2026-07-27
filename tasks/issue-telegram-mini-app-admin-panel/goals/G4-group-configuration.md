@@ -21,13 +21,13 @@ Viewer 可以只读查看授权群的安全配置；Operator 可以在详情页�
 
 ## 验收
 
-- [ ] Operator 只能修改 granted chat 的允许字段。
-- [ ] Viewer 所有 mutation 403，且 DTO 无 Prompt、profiles、history、usage 或 credentials。
-- [ ] 两个并发非重叠字段更新不会互相丢失。
-- [ ] stale revision 返回 409 和最新值。
-- [ ] DB 失败不修改 runtime；runtime 失败显示 persisted/pending apply。
-- [ ] 运行中配置热应用不 restart Bot。
-- [ ] Summary update/delete 与 cooldown 继续满足 G0 不变量。
+- [x] Operator 只能修改 granted chat 的允许字段。
+- [x] Viewer 所有 mutation 403，且 DTO 无 Prompt、profiles、history、usage 或 credentials。
+- [x] 两个并发非重叠字段更新不会互相丢失。
+- [x] stale revision 返回 409 和最新值。
+- [x] DB 失败不修改 runtime；runtime 失败显示 persisted/pending apply。
+- [x] 运行中配置热应用不 restart Bot。
+- [x] Summary update/delete 与 cooldown 继续满足 G0 不变量。
 
 ## 验证命令
 
@@ -47,7 +47,7 @@ pnpm fmt:check
 
 ## 明确不做
 
-- 不整体 PUT AI config。
+- Mini App 不整体 PUT AI config；既有 Web Panel 整页保存使用 Bot revision 防止覆盖 Mini App 新值。
 - 不让 Operator 修改 Provider、模型、Prompt 或展示策略。
 - 不实现常驻 retry worker。
 - 不在本 Goal 正规化全部 groupOverrides JSON。
@@ -56,3 +56,10 @@ pnpm fmt:check
 
 - 重点 review lost update、field over-posting、runtime/DB 分裂和权限投影。
 - 修复全部 P0/P1 后进入 AI selection。
+
+## 完成证据
+
+- 后端与 runtime：`5646e20`；Web Panel stale-save 防护：`64cffa5`；Mini App UI：`7390264`；revision 单调性修复：`5fc1183`。
+- 后端 G4/相关服务定向测试 63/63，完整 Panel browser 66/66；全仓 typecheck、format、i18n、Panel build 通过；lint 为 0 error、3 个既有 warning。
+- 阶段 Review 发现并修复两个 P1：commit 后 runtime apply 重排序，以及 summary-only 同毫秒更新不推进 revision；复核后无剩余明确 P0/P1。
+- 真实 PostgreSQL 行锁/rollback、Telegram Bot 热应用与四端 WebView 仍属于 G7 实机/发布门禁；M1 明确不覆盖多实例锁和 durable retry worker。
