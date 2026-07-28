@@ -7,6 +7,21 @@ import type {
 } from "@cos-tool-bot/shared";
 import type { ModelOption } from "./types";
 
+export type AiConfigSaveRecoveryResult = "not-applicable" | "reloaded" | "reload-failed";
+
+export async function recoverAiConfigAfterApplyFailure(
+  status: number,
+  reload: () => Promise<boolean>,
+): Promise<AiConfigSaveRecoveryResult> {
+  if (status !== 503) return "not-applicable";
+
+  try {
+    return (await reload()) ? "reloaded" : "reload-failed";
+  } catch {
+    return "reload-failed";
+  }
+}
+
 export function groupModelsByProvider(models: ModelEntry[]): [string, ModelEntry[]][] {
   const groups = new Map<string, ModelEntry[]>();
   for (const m of models) {

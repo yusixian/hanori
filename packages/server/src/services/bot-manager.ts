@@ -72,6 +72,10 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
   private dbLogger: DbLogger;
   private _status: BotStatus = "stopped";
   private startedAt: number | null = null;
+  private shutdownAttempt: {
+    bot: ReturnType<typeof createBot>;
+    promise: Promise<void>;
+  } | null = null;
 
   constructor(options: BotManagerOptions) {
     this.botId = options.botId;
@@ -113,6 +117,9 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       return;
     }
 
+    if (this.shutdownAttempt) await this.shutdownAttempt.promise;
+    if (this.bot) await this.stop();
+
     const bot = createBot(this.botConfig);
     this.bot = bot;
     this._status = "running";
@@ -128,31 +135,49 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       this.runnerHandle = handle;
       await this.dbLogger.info("Bot started");
 
-      handle.task()?.catch((err) => {
-        disposeBot(bot);
-        if (this.bot !== bot) return;
-        this._status = "stopped";
-        this.startedAt = null;
-        this.bot = null;
-        this.runnerHandle = null;
-        this.dbLogger
-          .error(`Bot crashed: ${err instanceof Error ? err.message : String(err)}`)
+      const runnerTask = handle.task();
+      if (runnerTask) {
+        void runnerTask
+          .catch(async (err) => {
+            if (this.bot === bot) {
+              this._status = "stopped";
+              this.startedAt = null;
+            }
+            let disposeError: unknown;
+            try {
+              await this.shutdownRuntime(bot, handle);
+            } catch (error) {
+              disposeError = error;
+            }
+            const crashMessage = err instanceof Error ? err.message : String(err);
+            const disposeMessage = disposeError
+              ? `; runtime drain failed: ${disposeError instanceof Error ? disposeError.message : String(disposeError)}`
+              : "";
+            await this.dbLogger.error(`Bot crashed: ${crashMessage}${disposeMessage}`);
+          })
           .catch(() => {});
-      });
+      }
     } catch (err) {
-      disposeBot(bot);
       this._status = "stopped";
       this.startedAt = null;
-      this.bot = null;
-      this.runnerHandle = null;
+      let disposeError: unknown;
+      try {
+        await this.shutdownRuntime(bot, this.runnerHandle);
+      } catch (error) {
+        disposeError = error;
+      }
+      const disposeMessage = disposeError
+        ? `; runtime drain failed: ${disposeError instanceof Error ? disposeError.message : String(disposeError)}`
+        : "";
       await this.dbLogger.error(
-        `Bot failed to start: ${err instanceof Error ? err.message : String(err)}`,
+        `Bot failed to start: ${err instanceof Error ? err.message : String(err)}${disposeMessage}`,
       );
+      if (disposeError) throw disposeError;
     }
   }
 
   async stop() {
-    if (!this.bot || this._status === "stopped") {
+    if (!this.bot) {
       await this.dbLogger.warn("Bot is not running");
       return;
     }
@@ -161,13 +186,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     const runnerHandle = this.runnerHandle;
     this._status = "stopped";
     this.startedAt = null;
-    this.runnerHandle = null;
-    if (this.bot === bot) this.bot = null;
-    try {
-      disposeBot(bot);
-    } finally {
-      await runnerHandle?.stop();
-    }
+    await this.shutdownRuntime(bot, runnerHandle);
     await this.dbLogger.info("Bot stopped");
   }
 
@@ -279,5 +298,34 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       throw new Error(`Bot ${this.botId} is not running`);
     }
     return this.bot;
+  }
+
+  private shutdownRuntime(
+    bot: ReturnType<typeof createBot>,
+    runnerHandle: RunnerHandle | null,
+  ): Promise<void> {
+    const current = this.shutdownAttempt;
+    if (current) {
+      if (current.bot === bot) return current.promise;
+      return current.promise.then(() => this.shutdownRuntime(bot, runnerHandle));
+    }
+
+    let attempt!: { bot: ReturnType<typeof createBot>; promise: Promise<void> };
+    const promise = (async () => {
+      try {
+        try {
+          await disposeBot(bot);
+        } finally {
+          await runnerHandle?.stop();
+        }
+        if (this.bot === bot) this.bot = null;
+        if (this.runnerHandle === runnerHandle) this.runnerHandle = null;
+      } finally {
+        if (this.shutdownAttempt === attempt) this.shutdownAttempt = null;
+      }
+    })();
+    attempt = { bot, promise };
+    this.shutdownAttempt = attempt;
+    return promise;
   }
 }

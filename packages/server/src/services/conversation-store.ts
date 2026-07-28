@@ -318,9 +318,14 @@ export class ConversationStore {
     chatId: number,
     limit: number,
     tokenBudget?: number,
-    options?: { excludeSourceKey?: string },
+    options?: { excludeSourceKey?: string; beforeId?: number },
   ) {
-    const active = await this.getActiveCompaction(botId, chatId);
+    const historyBeforeId = options?.beforeId;
+    const activeCompaction = await this.getActiveCompaction(botId, chatId);
+    const active =
+      historyBeforeId === undefined || (activeCompaction?.cursorId ?? 0) < historyBeforeId
+        ? activeCompaction
+        : undefined;
     const cursorId = active?.cursorId ?? 0;
     const excludeSourceKey = options?.excludeSourceKey;
 
@@ -348,6 +353,9 @@ export class ConversationStore {
               ne(conversationMessages.sourceKey, excludeSourceKey),
             )!,
           );
+        }
+        if (historyBeforeId !== undefined) {
+          conditions.push(lt(conversationMessages.id, historyBeforeId));
         }
         if (beforeId !== undefined) conditions.push(lt(conversationMessages.id, beforeId));
         const batch = await this.db
@@ -417,6 +425,7 @@ export class ConversationStore {
           eq(conversationMessages.chatId, chatId),
           gt(conversationMessages.id, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
+          historyBeforeId === undefined ? undefined : lt(conversationMessages.id, historyBeforeId),
           excludeSourceKey
             ? or(
                 isNull(conversationMessages.sourceKey),

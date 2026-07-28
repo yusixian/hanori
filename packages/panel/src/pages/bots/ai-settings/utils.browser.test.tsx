@@ -1,6 +1,15 @@
-import type { AiConfigPublic, ImageOcrConfig, SummaryConfigStored } from "@cos-tool-bot/shared";
-import { expect, test } from "vitest";
-import { renameProviderModelReferences, resolveManagedProviderIdAfterSave } from "./utils";
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  type AiConfigPublic,
+  type ImageOcrConfig,
+  type SummaryConfigStored,
+} from "@cos-tool-bot/shared";
+import { expect, test, vi } from "vitest";
+import {
+  recoverAiConfigAfterApplyFailure,
+  renameProviderModelReferences,
+  resolveManagedProviderIdAfterSave,
+} from "./utils";
 
 const summaryConfig: SummaryConfigStored = {
   enabled: true,
@@ -45,6 +54,7 @@ function config(activeProviderId = "provider-a"): AiConfigPublic {
       randomReplyPercent: 0,
       randomReplyCooldown: 60,
     },
+    executionConfig: DEFAULT_AI_EXECUTION_CONFIG,
     groupOverrides: {},
     githubToolsConfig: {
       enabled: true,
@@ -144,4 +154,29 @@ test("keeps a managed provider selected when it was already persisted", () => {
       activeProviderId: "provider-a",
     }),
   ).toBe("provider-b");
+});
+
+test("reloads authoritative config after a saved config could not be applied", async () => {
+  const reload = vi.fn().mockResolvedValue(true);
+
+  await expect(recoverAiConfigAfterApplyFailure(503, reload)).resolves.toBe("reloaded");
+  expect(reload).toHaveBeenCalledOnce();
+});
+
+test("does not reload config for ordinary save failures", async () => {
+  const reload = vi.fn().mockResolvedValue(true);
+
+  await expect(recoverAiConfigAfterApplyFailure(409, reload)).resolves.toBe("not-applicable");
+  expect(reload).not.toHaveBeenCalled();
+});
+
+test("reports when authoritative config cannot be reloaded", async () => {
+  await expect(recoverAiConfigAfterApplyFailure(503, async () => false)).resolves.toBe(
+    "reload-failed",
+  );
+  await expect(
+    recoverAiConfigAfterApplyFailure(503, async () => {
+      throw new Error("network unavailable");
+    }),
+  ).resolves.toBe("reload-failed");
 });

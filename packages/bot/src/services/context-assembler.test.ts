@@ -221,6 +221,24 @@ describe("prompt bundle", () => {
     });
   });
 
+  it("bounds group history at the current persisted message", async () => {
+    const conversation = createConversation();
+    await assembleContext(
+      runtimeInput({
+        isPrivate: false,
+        conversation,
+        groupHistoryMaxTokens: 12_000,
+        historyExcludeSourceKey: "telegram:7:user",
+        historyBeforeId: 41,
+      }),
+    );
+
+    expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
+      excludeSourceKey: "telegram:7:user",
+      beforeId: 41,
+    });
+  });
+
   it("attempts compression and reloads history before degrading an over-budget group prompt", async () => {
     const conversation = createConversation();
     vi.mocked(conversation.getHistory)

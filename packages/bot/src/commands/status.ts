@@ -33,6 +33,11 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function formatDurationMs(ms: number): string {
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1_000).toFixed(1)}s`;
+}
+
 export function createStatusCommand(
   aiConfig?: StatusCommandConfig,
   state?: BotRuntimeState,
@@ -63,6 +68,20 @@ export function createStatusCommand(
     }
 
     if (state) {
+      const execution = state.getAiExecutionStats();
+      const averageWaitMs = execution.started > 0 ? execution.totalWaitMs / execution.started : 0;
+      const averageRunMs = execution.started > 0 ? execution.totalRunMs / execution.started : 0;
+      lines.push("");
+      lines.push("🧠 <b>AI 执行队列</b>");
+      lines.push(`• 运行中: ${execution.active}/${execution.maxConcurrent}`);
+      lines.push(`• 排队: ${execution.queued}`);
+      lines.push(
+        `• 完成/拒绝/取消: ${execution.completed}/${execution.rejected}/${execution.cancelled}`,
+      );
+      lines.push(
+        `• 平均等待/运行: ${formatDurationMs(averageWaitMs)}/${formatDurationMs(averageRunMs)}`,
+      );
+
       // Current chat mood
       lines.push("");
       if (chatId) {

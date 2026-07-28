@@ -1,10 +1,12 @@
-import type {
-  AgentToolsConfig,
-  AiConfigPublic,
-  AiTriggerConfig,
-  ModelCapability,
-  WebToolsConfigPublic,
-  GitHubToolsConfigPublic,
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  type AiExecutionConfig,
+  type AgentToolsConfig,
+  type AiConfigPublic,
+  type AiTriggerConfig,
+  type ModelCapability,
+  type WebToolsConfigPublic,
+  type GitHubToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 
 export interface ModelOption {
@@ -48,6 +50,8 @@ export const DEFAULT_GITHUB_TOOLS: GitHubToolsConfigPublic = {
   repositories: [],
 };
 
+export const DEFAULT_EXECUTION_CONFIG: AiExecutionConfig = DEFAULT_AI_EXECUTION_CONFIG;
+
 export const DEFAULT_CONFIG: AiConfigPublic = {
   enabled: false,
   hasApiKey: false,
@@ -57,6 +61,7 @@ export const DEFAULT_CONFIG: AiConfigPublic = {
   behavioralPrompt: "",
   groupBehavioralPrompt: "",
   triggerConfig: DEFAULT_TRIGGER,
+  executionConfig: DEFAULT_EXECUTION_CONFIG,
   groupOverrides: {},
   providers: [],
 };

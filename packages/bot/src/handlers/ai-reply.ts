@@ -1,6 +1,7 @@
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
+  AiExecutionConfig,
   AiGroupOverride,
   AiTriggerConfig,
   ArtworkToolsConfig,
@@ -27,6 +28,7 @@ import type {
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
 import {
+  DEFAULT_AI_EXECUTION_CONFIG,
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
@@ -46,7 +48,15 @@ import { PendingActionRegistry } from "../services/pending-actions.js";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
-import { acquireChatLock } from "../services/chat-lock.js";
+import {
+  AiExecutionCoordinator,
+  AiRunCancelledError,
+  AiRunDrainTimeoutError,
+  type AiExecutionCoordinatorStats,
+  type AiRunContext,
+} from "../services/ai-execution-coordinator.js";
+import { AiIngressLock } from "../services/ai-ingress-lock.js";
+import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
   createActionTools,
   createAgentTools,
@@ -180,6 +190,9 @@ export interface AiReplyConfig {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  executionConfig?: AiExecutionConfig;
+  /** Return after scheduler admission so grammY can process the next update in the same Chat. */
+  detachReplyExecution?: boolean;
   imageOcrConfig?: ImageOcrConfig;
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
@@ -668,6 +681,7 @@ export interface BotRuntimeState {
   getAllMoods(): ReadonlyMap<number, MoodInfo>;
   getActiveGroupCount(): number;
   getPendingActions(): PendingActionRegistry;
+  getAiExecutionStats(): AiExecutionCoordinatorStats;
   getPendingGitHubActions(): PendingGitHubActionRegistry;
   getContinueChatConfig(chatId?: number): ContinueChatConfig;
   isPrivateChat(chatId: number): boolean;
@@ -676,7 +690,10 @@ export interface BotRuntimeState {
 const MAX_RECENT_BOT_MESSAGES = 20;
 const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 
-export function createAiReplyHandler(config: AiReplyConfig): {
+export function createAiReplyHandler(
+  config: AiReplyConfig,
+  runtime?: { ingressLock?: AiIngressLock },
+): {
   handler: MiddlewareFn<BotContext>;
   state: BotRuntimeState;
   setModelForChat: (chatId: number, modelId: string, actorTelegramUserId: number) => Promise<void>;
@@ -724,8 +741,12 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   ) => Promise<boolean>;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  cancelChatRuns: (chatId: number) => Promise<number>;
+  cancelUserRuns: (userId: number) => Promise<number>;
+  runChatMutation: <T>(chatId: number, operation: () => Promise<T>) => Promise<T>;
+  runUserMutation: <T>(userId: number, operation: () => Promise<T>) => Promise<T>;
   waitForUserProfileUpdates: (userId: number) => Promise<void>;
-  destroy: () => void;
+  destroy: () => Promise<void>;
 } {
   const cooldownMap = new Map<number, number>();
 
@@ -733,6 +754,19 @@ export function createAiReplyHandler(config: AiReplyConfig): {
   // all in-flight streamText calls via the registered controllers.
   let aiDisabled = false;
   const activeAbortControllers = new Set<AbortController>();
+  const executionConfig: AiExecutionConfig = {
+    ...DEFAULT_AI_EXECUTION_CONFIG,
+    ...config.executionConfig,
+    queueNotice: {
+      ...DEFAULT_AI_EXECUTION_CONFIG.queueNotice,
+      ...config.executionConfig?.queueNotice,
+    },
+  };
+  const executionCoordinator = new AiExecutionCoordinator({
+    maxConcurrent: executionConfig.maxConcurrentReplies,
+    maxQueued: 100,
+  });
+  const ingressLock = runtime?.ingressLock ?? new AiIngressLock();
 
   function isAiEnabled(): boolean {
     return !aiDisabled;
@@ -744,12 +778,13 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       return 0;
     }
     aiDisabled = true;
+    const scheduledAborted = executionCoordinator.cancelAllNow();
     const toAbort = [...activeAbortControllers];
     activeAbortControllers.clear();
     for (const c of toAbort) {
       c.abort(new Error("AI disabled by /stop"));
     }
-    return toAbort.length;
+    return Math.max(scheduledAborted, toAbort.length);
   }
 
   // Reply mode runtime override (takes precedence over config)
@@ -1023,6 +1058,49 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         });
       },
       isAiDisabled: () => aiDisabled,
+      runWithExecution: async (scope, operation) => {
+        const scheduledAt = Date.now();
+        let executionStartedAt: number | undefined;
+        let scheduledResult: ReturnType<typeof operation> | undefined;
+        await ingressLock.runExecutionAdmission(scope.chatId, scope.userId, async () => {
+          const scheduled = executionCoordinator.schedule(scope, async (context) => {
+            executionStartedAt = Date.now();
+            config.onLog?.({
+              level: "info",
+              message: "AI continuation execution started",
+              meta: {
+                ...scope,
+                waitMs: Math.max(0, executionStartedAt - scheduledAt),
+                ...executionCoordinator.stats,
+              },
+            });
+            return operation(context);
+          });
+          if (scheduled.queued) {
+            config.onLog?.({
+              level: "info",
+              message: "AI continuation queued",
+              meta: { ...scope, ...executionCoordinator.stats },
+            });
+          }
+          scheduledResult = scheduled.result;
+          scheduled.start();
+        });
+        try {
+          return await scheduledResult!;
+        } finally {
+          config.onLog?.({
+            level: "info",
+            message: "AI continuation execution finished",
+            meta: {
+              ...scope,
+              runMs:
+                executionStartedAt === undefined ? 0 : Math.max(0, Date.now() - executionStartedAt),
+              ...executionCoordinator.stats,
+            },
+          });
+        }
+      },
       registerAbortController: (c) => activeAbortControllers.add(c),
       unregisterAbortController: (c) => activeAbortControllers.delete(c),
       systemPrompt: config.systemPrompt,
@@ -1126,6 +1204,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     getAllMoods: () => moodState,
     getActiveGroupCount: () => groupBuffers.size,
     getPendingActions: () => pendingActions,
+    getAiExecutionStats: () => executionCoordinator.stats,
     getPendingGitHubActions: () => pendingGitHubActions,
     getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
@@ -1185,6 +1264,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
     // Push to ring buffer for group chats (before trigger check)
     let bufferedGroupText = "";
+    let groupBufferSnapshot: BufferedMessage[] = [];
+    let persistedGroupMessageId: number | undefined;
     if (!isPrivate) {
       const buffer = getOrCreateBuffer(chatId);
       bufferedGroupText = describeGroupMessageForHistory(msg);
@@ -1197,6 +1278,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           timestamp: Date.now(),
         });
       }
+      groupBufferSnapshot = buffer.getAll();
     }
 
     triggerResult = isPrivate
@@ -1220,7 +1302,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
         };
         if (config.conversation!.upsertUserMessage) {
-          await config.conversation!.upsertUserMessage(message);
+          const persisted = await config.conversation!.upsertUserMessage(message);
+          persistedGroupMessageId = persisted?.id;
         } else {
           await config.conversation!.addMessage({ ...message, role: "user" });
         }
@@ -1246,938 +1329,1060 @@ export function createAiReplyHandler(config: AiReplyConfig): {
       config.conversation &&
       (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
 
-    // Hoisted so the outer finally can unregister even on early errors.
-    let manualAbort: AbortController | null = null;
-    let releaseChatLock: (() => void) | null = null;
-    try {
-      // Shared per-chat lock: mutually exclusive with timer-driven continueChat
-      // so their streamText runs never race over recentBotMessageIds/moodState/history.
-      releaseChatLock = await acquireChatLock(chatId);
-      await ctx.replyWithChatAction("typing");
+    const executeTurn = async (
+      executionContext: AiRunContext,
+      preserveQueuedMessage: boolean,
+    ): Promise<void> => {
+      // Hoisted so the outer finally can unregister even on early errors.
+      let manualAbort: AbortController | null = null;
+      try {
+        if (!executionContext.isCurrent()) throw new AiRunCancelledError();
+        const turnMessageConfig = Object.freeze({ ...getEffectiveMessageConfig() });
+        await ctx.replyWithChatAction("typing");
 
-      // Lazy-load sticker packs (deduped via shared promise)
-      if (!stickerCachePromise && config.stickerPacks?.length) {
-        stickerCachePromise = loadStickerPacks(ctx.api, config.stickerPacks, stickerCache);
-      }
-      if (stickerCachePromise) await stickerCachePromise;
+        // Lazy-load sticker packs (deduped via shared promise)
+        if (!stickerCachePromise && config.stickerPacks?.length) {
+          stickerCachePromise = loadStickerPacks(ctx.api, config.stickerPacks, stickerCache);
+        }
+        if (stickerCachePromise) await stickerCachePromise;
 
-      // Per-chat recent bot message IDs
-      let chatBotMsgIds = recentBotMessageIds.get(chatId);
-      if (!chatBotMsgIds) {
-        chatBotMsgIds = [];
-        recentBotMessageIds.set(chatId, chatBotMsgIds);
-      }
-      // Trim old IDs
-      while (chatBotMsgIds.length > MAX_RECENT_BOT_MESSAGES) chatBotMsgIds.shift();
+        // Per-chat recent bot message IDs
+        let chatBotMsgIds = recentBotMessageIds.get(chatId);
+        if (!chatBotMsgIds) {
+          chatBotMsgIds = [];
+          recentBotMessageIds.set(chatId, chatBotMsgIds);
+        }
+        // Trim old IDs
+        while (chatBotMsgIds.length > MAX_RECENT_BOT_MESSAGES) chatBotMsgIds.shift();
 
-      // Create per-request once guard to prevent duplicate side-effect tool calls
-      const onceGuard = createOnceGuard();
+        // Create per-request once guard to prevent duplicate side-effect tool calls
+        const onceGuard = createOnceGuard();
 
-      // Create per-request action tools
-      const actionTools = createActionTools({
-        api: ctx.api,
-        chatId,
-        messageId: msg.message_id,
-        stickerCache,
-        onceGuard,
-      });
+        // Create per-request action tools
+        const actionTools = createActionTools({
+          api: ctx.api,
+          chatId,
+          messageId: msg.message_id,
+          stickerCache,
+          onceGuard,
+        });
 
-      // Extract received files metadata
-      const receivedFiles = extractFilesFromMessage(msg);
-      if (receivedFiles.length) {
-        recentReceivedFiles.set(chatId, receivedFiles);
-      }
-      const messageText = msg.text ?? msg.caption ?? "";
+        // Extract received files metadata
+        const receivedFiles = extractFilesFromMessage(msg);
+        if (receivedFiles.length) {
+          recentReceivedFiles.set(chatId, receivedFiles);
+        }
+        const messageText = msg.text ?? msg.caption ?? "";
 
-      // Extract reply-to message metadata
-      const replyMsg = ctx.reply_to_message;
-      const replyFiles = extractFilesFromMessage(replyMsg);
-      const replyText = replyMsg?.text ?? replyMsg?.caption ?? "";
+        // Extract reply-to message metadata
+        const replyMsg = ctx.reply_to_message;
+        const replyFiles = extractFilesFromMessage(replyMsg);
+        const replyText = replyMsg?.text ?? replyMsg?.caption ?? "";
 
-      // Create per-request telegram tools
-      const telegramTools = createTelegramTools({
-        api: ctx.api,
-        chatId,
-        userId,
-        recentBotMessageIds: chatBotMsgIds,
-        pendingActions,
-        onTimerFired: async (timerChatId, timerId, reason) => {
-          await onTimerFired(timerChatId, timerId, reason, userId);
-        },
-        onTimerCreate: config.onTimerCreate
-          ? (params) => config.onTimerCreate!({ ...params, userId })
-          : undefined,
-        onTimerCancel: config.onTimerCancel,
-        onTimerFiredPersist: config.onTimerFiredPersist,
-        onceGuard,
-        dataDir: config.dataFiles?.dataDir,
-        token: config.token,
-        receivedFiles: recentReceivedFiles.get(chatId),
-        timeoutConfig: config.timeoutConfig,
-      });
-      if (!personalizationEnabled) delete telegramTools.set_timer;
-
-      // Create per-request behavior tools
-      const deliveredMultiMessages: string[] = [];
-      const behaviorTools = createBehaviorTools({
-        api: ctx.api,
-        chatId,
-        recentBotMessageIds: chatBotMsgIds,
-        moodState,
-        richMessageEnabled: isRichMessageEnabled(getEffectiveMessageConfig()),
-        onLog: config.onLog,
-        onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
-      });
-      if (!personalizationEnabled) delete behaviorTools.set_mood;
-
-      // Resolve one immutable provider/model/factory snapshot after acquiring the chat lock.
-      const currentSelection = selectionRuntime.resolve(chatId);
-      const currentModel = currentSelection.modelId;
-      const currentProviderRuntime = currentSelection.providerRuntime;
-      const currentProviderFactory = currentSelection.providerFactory;
-
-      // Create agent tools if enabled
-      let agentTools: Record<string, Tool> = {};
-      if (config.agentToolsConfig?.enabled) {
-        agentTools = createAgentTools({
-          provider: (m) => currentProviderFactory(m),
-          model: currentModel,
-          agentConfig: config.agentToolsConfig,
-          webToolsConfig: config.webToolsConfig,
-          onLog: config.onLog,
+        // Create per-request telegram tools
+        const telegramTools = createTelegramTools({
+          api: ctx.api,
+          chatId,
+          userId,
+          recentBotMessageIds: chatBotMsgIds,
+          pendingActions,
+          onTimerFired: async (timerChatId, timerId, reason) => {
+            await onTimerFired(timerChatId, timerId, reason, userId);
+          },
+          onTimerCreate: config.onTimerCreate
+            ? (params) => config.onTimerCreate!({ ...params, userId })
+            : undefined,
+          onTimerCancel: config.onTimerCancel,
+          onTimerFiredPersist: config.onTimerFiredPersist,
+          onceGuard,
+          dataDir: config.dataFiles?.dataDir,
+          token: config.token,
+          receivedFiles: recentReceivedFiles.get(chatId),
           timeoutConfig: config.timeoutConfig,
         });
-      }
+        if (!personalizationEnabled) delete telegramTools.set_timer;
 
-      let githubTools: Record<string, Tool> = {};
-      if (
-        config.githubToolsConfig?.enabled &&
-        (isAdmin || config.githubToolsConfig.publicReadEnabled)
-      ) {
-        githubTools = createGitHubTools({
-          config: config.githubToolsConfig,
-          isAdmin,
-          userId,
-          chatId,
-          api: ctx.api,
-          pendingActions: pendingGitHubActions,
-          codeCallbacks: config.githubCodeCallbacks,
-          codingModel: resolveGitHubCodingModelConfig(
-            config.githubToolsConfig,
-            config.providers,
-            currentProviderRuntime,
-            currentModel,
-          ),
-        });
-      }
-
-      // Create artwork tools if enabled
-      let artworkTools: Record<string, Tool> = {};
-      if (config.artworkToolsConfig?.enabled) {
-        artworkTools = createArtworkTools({
+        // Create per-request behavior tools
+        const deliveredMultiMessages: string[] = [];
+        const behaviorTools = createBehaviorTools({
           api: ctx.api,
           chatId,
           recentBotMessageIds: chatBotMsgIds,
-          config: config.artworkToolsConfig,
-          onceGuard,
-          timeoutConfig: config.timeoutConfig,
+          moodState,
+          richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
+          onLog: config.onLog,
+          onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
         });
-      }
+        if (!personalizationEnabled) delete behaviorTools.set_mood;
 
-      // Collect group context from ring buffer
-      let ringBufferContext = "";
-      if (!isPrivate && !readConversation && personalizationEnabled) {
-        const shouldIncludeContext =
-          conversationCfg.groupContextMode === "all" ||
-          (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
+        // Resolve one immutable provider/model/factory snapshot after acquiring the scheduler slot.
+        const currentSelection = selectionRuntime.resolve(chatId);
+        const currentModel = currentSelection.modelId;
+        const currentProviderRuntime = currentSelection.providerRuntime;
+        const currentProviderFactory = currentSelection.providerFactory;
 
-        if (shouldIncludeContext) {
-          const buffer = groupBuffers.get(chatId);
-          if (buffer) {
-            const allMessages = buffer.buffer.getAll();
-            const contextMessages = allMessages.slice(0, -1);
+        // Create agent tools if enabled
+        let agentTools: Record<string, Tool> = {};
+        if (config.agentToolsConfig?.enabled) {
+          agentTools = createAgentTools({
+            provider: (m) => currentProviderFactory(m),
+            model: currentModel,
+            agentConfig: config.agentToolsConfig,
+            webToolsConfig: config.webToolsConfig,
+            onLog: config.onLog,
+            timeoutConfig: config.timeoutConfig,
+          });
+        }
+
+        let githubTools: Record<string, Tool> = {};
+        if (
+          config.githubToolsConfig?.enabled &&
+          (isAdmin || config.githubToolsConfig.publicReadEnabled)
+        ) {
+          githubTools = createGitHubTools({
+            config: config.githubToolsConfig,
+            isAdmin,
+            userId,
+            chatId,
+            api: ctx.api,
+            pendingActions: pendingGitHubActions,
+            codeCallbacks: config.githubCodeCallbacks,
+            codingModel: resolveGitHubCodingModelConfig(
+              config.githubToolsConfig,
+              config.providers,
+              currentProviderRuntime,
+              currentModel,
+            ),
+          });
+        }
+
+        // Create artwork tools if enabled
+        let artworkTools: Record<string, Tool> = {};
+        if (config.artworkToolsConfig?.enabled) {
+          artworkTools = createArtworkTools({
+            api: ctx.api,
+            chatId,
+            recentBotMessageIds: chatBotMsgIds,
+            config: config.artworkToolsConfig,
+            onceGuard,
+            timeoutConfig: config.timeoutConfig,
+          });
+        }
+
+        // Collect group context from ring buffer
+        let ringBufferContext = "";
+        if (!isPrivate && !readConversation && personalizationEnabled) {
+          const shouldIncludeContext =
+            conversationCfg.groupContextMode === "all" ||
+            (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
+
+          if (shouldIncludeContext) {
+            const contextMessages = groupBufferSnapshot.filter(
+              (buffered) => buffered.messageId !== msg.message_id,
+            );
             if (contextMessages.length > 0) {
               ringBufferContext = formatGroupContextMessages(contextMessages);
             }
           }
         }
-      }
 
-      // --- Download images for vision / OCR ---
-      const hasVision = inferCapabilities(currentModel).includes("vision");
-      const ocrEnabled = !!config.imageOcrConfig?.enabled;
-      const needImages = hasVision || ocrEnabled;
-      const imageDownloadTimeout =
-        config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
-      const [imageBuffers, replyImageBuffers] = await Promise.all([
-        needImages && receivedFiles.length
-          ? downloadImagesForVision(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
-          : [],
-        needImages && replyFiles.length
-          ? downloadImagesForVision(ctx.api, config.token, replyFiles, imageDownloadTimeout)
-          : [],
-      ]);
+        // --- Download images for vision / OCR ---
+        const hasVision = inferCapabilities(currentModel).includes("vision");
+        const ocrEnabled = !!config.imageOcrConfig?.enabled;
+        const needImages = hasVision || ocrEnabled;
+        const imageDownloadTimeout =
+          config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
+        const [imageBuffers, replyImageBuffers] = await Promise.all([
+          needImages && receivedFiles.length
+            ? downloadImagesForVision(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
+            : [],
+          needImages && replyFiles.length
+            ? downloadImagesForVision(ctx.api, config.token, replyFiles, imageDownloadTimeout)
+            : [],
+        ]);
 
-      // --- Run OCR on downloaded images (only for current-message files, not replies) ---
-      const ocrDescriptions = new Map<number, string>();
-      if (ocrEnabled && config.imageOcrConfig && imageBuffers.length > 0) {
-        try {
-          const ocrResults = await describeImages({
-            botId: config.botId,
-            chatId,
-            userId,
-            images: imageBuffers.map((b) => ({ buffer: b.buffer, mimeType: b.mimeType })),
-            config: config.imageOcrConfig,
-            providers: config.providers,
-            activeProviderId: config.activeProviderId,
-            logger: {
-              debug: (o, m) => {
-                config.onLog?.({
-                  level: "debug",
-                  message: `[image-ocr] ${m ?? ""}`,
-                  meta: o as Record<string, unknown>,
-                });
+        // --- Run OCR on downloaded images (only for current-message files, not replies) ---
+        const ocrDescriptions = new Map<number, string>();
+        if (ocrEnabled && config.imageOcrConfig && imageBuffers.length > 0) {
+          try {
+            const ocrResults = await describeImages({
+              botId: config.botId,
+              chatId,
+              userId,
+              images: imageBuffers.map((b) => ({ buffer: b.buffer, mimeType: b.mimeType })),
+              config: config.imageOcrConfig,
+              providers: config.providers,
+              activeProviderId: config.activeProviderId,
+              logger: {
+                debug: (o, m) => {
+                  config.onLog?.({
+                    level: "debug",
+                    message: `[image-ocr] ${m ?? ""}`,
+                    meta: o as Record<string, unknown>,
+                  });
+                },
+                info: (o, m) => {
+                  config.onLog?.({
+                    level: "info",
+                    message: `[image-ocr] ${m ?? ""}`,
+                    meta: o as Record<string, unknown>,
+                  });
+                },
+                warn: (o, m) => {
+                  config.onLog?.({
+                    level: "warn",
+                    message: `[image-ocr] ${m ?? ""}`,
+                    meta: o as Record<string, unknown>,
+                  });
+                },
               },
-              info: (o, m) => {
-                config.onLog?.({
-                  level: "info",
-                  message: `[image-ocr] ${m ?? ""}`,
-                  meta: o as Record<string, unknown>,
-                });
-              },
-              warn: (o, m) => {
-                config.onLog?.({
-                  level: "warn",
-                  message: `[image-ocr] ${m ?? ""}`,
-                  meta: o as Record<string, unknown>,
-                });
-              },
-            },
-            onTokenUsage: config.onTokenUsage,
-          });
-          const skipCounts: Record<string, number> = {};
-          let ok = 0;
-          for (let i = 0; i < ocrResults.length; i++) {
-            const res = ocrResults[i]!;
-            const sourceIndex = imageBuffers[i]?.sourceIndex;
-            if (res.description && sourceIndex != null) {
-              ocrDescriptions.set(sourceIndex, res.description);
-              ok++;
-            } else if (res.skipReason) {
-              skipCounts[res.skipReason] = (skipCounts[res.skipReason] ?? 0) + 1;
+              onTokenUsage: config.onTokenUsage,
+            });
+            const skipCounts: Record<string, number> = {};
+            let ok = 0;
+            for (let i = 0; i < ocrResults.length; i++) {
+              const res = ocrResults[i]!;
+              const sourceIndex = imageBuffers[i]?.sourceIndex;
+              if (res.description && sourceIndex != null) {
+                ocrDescriptions.set(sourceIndex, res.description);
+                ok++;
+              } else if (res.skipReason) {
+                skipCounts[res.skipReason] = (skipCounts[res.skipReason] ?? 0) + 1;
+              }
             }
+            config.onLog?.({
+              level: "info",
+              message: `[image-ocr] processed ${imageBuffers.length} image(s): ${ok} ok, skips=${JSON.stringify(skipCounts)}`,
+              meta: { chatId, ok, skipCounts },
+            });
+          } catch (err) {
+            config.onLog?.({
+              level: "warn",
+              message: `[image-ocr] describeImages threw: ${err instanceof Error ? err.message : String(err)}`,
+              meta: { chatId },
+            });
           }
-          config.onLog?.({
-            level: "info",
-            message: `[image-ocr] processed ${imageBuffers.length} image(s): ${ok} ok, skips=${JSON.stringify(skipCounts)}`,
-            meta: { chatId, ok, skipCounts },
-          });
-        } catch (err) {
-          config.onLog?.({
-            level: "warn",
-            message: `[image-ocr] describeImages threw: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId },
-          });
         }
-      }
 
-      // --- Build text description (always needed for history and non-vision) ---
-      const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
+        // --- Build text description (always needed for history and non-vision) ---
+        const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
 
-      // --- Build reply-to context description ---
-      let replyContextDesc = "";
-      if (replyMsg) {
-        const replyFileDesc = describeFiles(replyFiles, "", " ");
-        const replyContent = `${replyFileDesc}${replyText}`.trim();
-        if (replyContent) {
-          replyContextDesc = `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${replyContent}]\n`;
+        // --- Build reply-to context description ---
+        let replyContextDesc = "";
+        if (replyMsg) {
+          const replyFileDesc = describeFiles(replyFiles, "", " ");
+          const replyContent = `${replyFileDesc}${replyText}`.trim();
+          if (replyContent) {
+            replyContextDesc = `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${replyContent}]\n`;
+          }
         }
-      }
 
-      const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
-      const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
-      const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
-      const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
-      const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
+        const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
+        const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
+        const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
+        const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
 
-      if (!isPrivate && persistConversation) {
-        try {
-          const message = {
+        if (!isPrivate && persistConversation) {
+          try {
+            const message = {
+              chatId,
+              content: rawContent || bufferedGroupText || messageText,
+              userAuthoredContent: personalizationEnabled
+                ? userAuthoredContent || bufferedGroupText || messageText
+                : undefined,
+              userId,
+              userName,
+              sourceKey: `telegram:${msg.message_id}:user`,
+              meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+            };
+            if (config.conversation!.upsertUserMessage) {
+              const persisted = await config.conversation!.upsertUserMessage(message);
+              persistedGroupMessageId = persisted?.id ?? persistedGroupMessageId;
+            } else {
+              await config.conversation!.addMessage({ ...message, role: "user" });
+            }
+          } catch (err) {
+            config.onLog?.({
+              level: "error",
+              message: `Failed to enrich triggered group message: ${err instanceof Error ? err.message : String(err)}`,
+              meta: { chatId, userId, messageId: msg.message_id },
+            });
+          }
+        }
+
+        // Build context after OCR/file enrichment so automatic memory retrieval sees
+        // the same textual request that is persisted and sent to the model.
+        const promptBundle = await assembleContext({
+          systemPrompt: effectivePrompt,
+          behavioralPrompt: config.behavioralPrompt,
+          groupBehavioralPrompt: config.groupBehavioralPrompt,
+          isPrivate,
+          chatId,
+          userName,
+          userUsername: ctx.from?.username,
+          chatTitle: ctx.chat?.title,
+          conversationConfig: config.conversationConfig,
+          conversation: readConversation ? config.conversation : undefined,
+          historyFormat: conversationCfg.historyFormat,
+          maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
+          groupHistoryMaxTokens: isPrivate ? undefined : groupHistoryMaxTokens,
+          historyExcludeSourceKey: isPrivate ? undefined : `telegram:${msg.message_id}:user`,
+          historyBeforeId: isPrivate ? undefined : persistedGroupMessageId,
+          ringBufferContext: ringBufferContext || undefined,
+          memoryConfig: config.memoryConfig,
+          memory: personalizationEnabled ? config.memory : undefined,
+          userId,
+          includeCrossChatUserHistory: privacyMode === "normal",
+          memoryTools: requestMemoryTools,
+          botMemoryConfig: config.botMemoryConfig,
+          botMemory: personalizationEnabled ? config.botMemory : undefined,
+          botMemoryTools: requestBotMemoryTools,
+          retrievalQuery: rawContent || messageText,
+          currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
+          stickerPacks: config.stickerPacks,
+          webToolsConfig: config.webToolsConfig,
+          webTools,
+          agentToolsConfig: config.agentToolsConfig,
+          artworkToolsEnabled: config.artworkToolsConfig?.enabled,
+          hasFileTools: !!fileTools,
+          dataFiles: config.dataFiles,
+          messageConfig: turnMessageConfig,
+        });
+
+        // --- Assemble final user message (multimodal or text-only) ---
+        const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
+        let currentRequest: UserModelMessage;
+        if (allImageBuffers.length > 0) {
+          const parts: UserModelMessage["content"] = allImageBuffers.map((img) => ({
+            type: "image" as const,
+            image: img.buffer,
+            mimeType: img.mimeType,
+          }));
+          parts.push({ type: "text" as const, text: textContent || "用户发送了一张图片" });
+          currentRequest = { role: "user", content: parts };
+        } else {
+          currentRequest = { role: "user", content: textContent };
+        }
+        const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, currentRequest);
+        const historyBudget = promptTrace.sections
+          .map((section) => section.details?.["historyBudget"])
+          .find((details) => details !== undefined);
+
+        // Combine all tools
+        const allTools: Record<string, Tool> = {
+          ...requestMemoryTools,
+          ...requestBotMemoryTools,
+          ...actionTools,
+          ...telegramTools,
+          ...behaviorTools,
+          ...webTools,
+          ...agentTools,
+          ...githubTools,
+          ...artworkTools,
+          ...fileTools,
+        };
+
+        // RSS tools (per-request: depends on chatId)
+        if (config.rssCallbacks) {
+          const rssTools = createRssTools({
+            ...config.rssCallbacks,
             chatId,
-            content: rawContent || bufferedGroupText || messageText,
-            userAuthoredContent: personalizationEnabled
-              ? userAuthoredContent || bufferedGroupText || messageText
-              : undefined,
+            adminChatIds: config.adminChatIds,
+          });
+          Object.assign(allTools, rssTools);
+        }
+
+        // MCP tools (external MCP server tools, resolved dynamically per request)
+        if (config.mcpTools) {
+          const mcpTools = createMcpTools(config.mcpTools, { includeAdminTools: isAdmin });
+          const mcpToolKeys = Object.keys(mcpTools);
+          if (mcpToolKeys.length > 0) {
+            Object.assign(allTools, mcpTools);
+            config.onLog?.({
+              level: "info",
+              message: `MCP tools injected: ${mcpToolKeys.join(", ")}`,
+            });
+          } else {
+            config.onLog?.({
+              level: "warn",
+              message: "MCP config present but no tools available (servers may be disconnected)",
+            });
+          }
+        }
+
+        // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
+        injectPixAITool(allTools, {
+          allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
+          webToolsConfig: config.webToolsConfig,
+          api: ctx.api,
+          chatId,
+          userId: ctx.from?.id,
+          recentBotMessageIds: chatBotMsgIds,
+          timeoutConfig: config.timeoutConfig,
+          onLog: config.onLog,
+          onGenerationTrack: config.onGenerationTrack,
+          rateLimiter: pixaiRateLimiter,
+          adminIds: config.adminChatIds,
+          nsfwChecker: config.nsfwChecker,
+        });
+
+        // Stream mode and segment mode are mutually exclusive:
+        // - Stream: multi_message is removed; private chats use the configured draft format
+        // - Segment: multi_message is available; AI sends messages via tool, no streaming
+        const msgCfg = turnMessageConfig;
+        const isStreamMode = isStreamReplyMode(msgCfg) && !preserveQueuedMessage;
+        const richMessageEnabled = isRichMessageEnabled(msgCfg) && !preserveQueuedMessage;
+        if (isStreamMode || preserveQueuedMessage) {
+          delete allTools.multi_message;
+        }
+
+        // Increase maxSteps when agent tools, web tools, or artwork tools are available
+        const baseMaxSteps = memoryCfg.maxSteps || 3;
+        const hasAdvancedTools =
+          config.agentToolsConfig?.enabled ||
+          config.githubToolsConfig?.enabled ||
+          config.webToolsConfig?.enabled ||
+          config.artworkToolsConfig?.enabled;
+        const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
+        const toolChoice = memoryCfg.toolChoice ?? "auto";
+        const stableTools = sortToolsForPromptCache(allTools);
+        const toolSchemaHash = createToolSchemaHash(stableTools);
+        const cacheFingerprint = createCacheFingerprint({
+          providerId: currentProviderRuntime.id,
+          model: currentModel,
+          staticPrefixHash: promptTrace.staticPrefixHash,
+          toolSchemaHash,
+        });
+
+        // Debug: AI request
+        const startTime = Date.now();
+        config.onLog?.({
+          level: "debug",
+          message: "AI request",
+          meta: {
+            model: currentModel,
+            providerId: currentProviderRuntime.id,
+            providerLabel: currentProviderRuntime.label,
+            baseURL: currentProviderRuntime.baseURL,
+            providerFormat: currentProviderRuntime.providerFormat,
+            messagesCount: messages.length,
+            systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
+            staticPrefixHash: promptTrace.staticPrefixHash,
+            toolSchemaHash,
+            cacheFingerprint,
+            promptSections: promptTrace.sections,
+            promptEstimatedTokens: promptTrace.totalEstimatedTokens,
+            historyBudget,
+            history_degraded:
+              typeof historyBudget === "object" &&
+              historyBudget !== null &&
+              "degraded" in historyBudget
+                ? historyBudget.degraded
+                : false,
+            toolsEnabled: Object.keys(stableTools),
+            maxSteps,
+            toolChoice,
+            chatId,
             userId,
             userName,
-            sourceKey: `telegram:${msg.message_id}:user`,
-            meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
-          };
-          if (config.conversation!.upsertUserMessage) {
-            await config.conversation!.upsertUserMessage(message);
-          } else {
-            await config.conversation!.addMessage({ ...message, role: "user" });
-          }
-        } catch (err) {
-          config.onLog?.({
-            level: "error",
-            message: `Failed to enrich triggered group message: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId, userId, messageId: msg.message_id },
-          });
-        }
-      }
-
-      // Build context after OCR/file enrichment so automatic memory retrieval sees
-      // the same textual request that is persisted and sent to the model.
-      const promptBundle = await assembleContext({
-        systemPrompt: effectivePrompt,
-        behavioralPrompt: config.behavioralPrompt,
-        groupBehavioralPrompt: config.groupBehavioralPrompt,
-        isPrivate,
-        chatId,
-        userName,
-        userUsername: ctx.from?.username,
-        chatTitle: ctx.chat?.title,
-        conversationConfig: config.conversationConfig,
-        conversation: readConversation ? config.conversation : undefined,
-        historyFormat: conversationCfg.historyFormat,
-        maxContextMessages: isPrivate ? conversationCfg.maxContextMessages : groupMaxContext,
-        groupHistoryMaxTokens: isPrivate ? undefined : groupHistoryMaxTokens,
-        historyExcludeSourceKey: isPrivate ? undefined : `telegram:${msg.message_id}:user`,
-        ringBufferContext: ringBufferContext || undefined,
-        memoryConfig: config.memoryConfig,
-        memory: personalizationEnabled ? config.memory : undefined,
-        userId,
-        includeCrossChatUserHistory: privacyMode === "normal",
-        memoryTools: requestMemoryTools,
-        botMemoryConfig: config.botMemoryConfig,
-        botMemory: personalizationEnabled ? config.botMemory : undefined,
-        botMemoryTools: requestBotMemoryTools,
-        retrievalQuery: rawContent || messageText,
-        currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
-        stickerPacks: config.stickerPacks,
-        webToolsConfig: config.webToolsConfig,
-        webTools,
-        agentToolsConfig: config.agentToolsConfig,
-        artworkToolsEnabled: config.artworkToolsConfig?.enabled,
-        hasFileTools: !!fileTools,
-        dataFiles: config.dataFiles,
-        messageConfig: getEffectiveMessageConfig(),
-      });
-
-      // --- Assemble final user message (multimodal or text-only) ---
-      const allImageBuffers = [...replyImageBuffers, ...imageBuffers];
-      let currentRequest: UserModelMessage;
-      if (allImageBuffers.length > 0) {
-        const parts: UserModelMessage["content"] = allImageBuffers.map((img) => ({
-          type: "image" as const,
-          image: img.buffer,
-          mimeType: img.mimeType,
-        }));
-        parts.push({ type: "text" as const, text: textContent || "用户发送了一张图片" });
-        currentRequest = { role: "user", content: parts };
-      } else {
-        currentRequest = { role: "user", content: textContent };
-      }
-      const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, currentRequest);
-      const historyBudget = promptTrace.sections
-        .map((section) => section.details?.["historyBudget"])
-        .find((details) => details !== undefined);
-
-      // Combine all tools
-      const allTools: Record<string, Tool> = {
-        ...requestMemoryTools,
-        ...requestBotMemoryTools,
-        ...actionTools,
-        ...telegramTools,
-        ...behaviorTools,
-        ...webTools,
-        ...agentTools,
-        ...githubTools,
-        ...artworkTools,
-        ...fileTools,
-      };
-
-      // RSS tools (per-request: depends on chatId)
-      if (config.rssCallbacks) {
-        const rssTools = createRssTools({
-          ...config.rssCallbacks,
-          chatId,
-          adminChatIds: config.adminChatIds,
+            isPrivate,
+            trigger: triggerResult,
+          },
         });
-        Object.assign(allTools, rssTools);
-      }
 
-      // MCP tools (external MCP server tools, resolved dynamically per request)
-      if (config.mcpTools) {
-        const mcpTools = createMcpTools(config.mcpTools, { includeAdminTools: isAdmin });
-        const mcpToolKeys = Object.keys(mcpTools);
-        if (mcpToolKeys.length > 0) {
-          Object.assign(allTools, mcpTools);
-          config.onLog?.({
-            level: "info",
-            message: `MCP tools injected: ${mcpToolKeys.join(", ")}`,
-          });
-        } else {
+        let stepCounter = 0;
+        const requestCache = createRequestCache();
+        const wrappedTools = wrapToolsWithStatus(
+          wrapToolsWithCache(stableTools, requestCache),
+          ctx,
+        );
+        manualAbort = new AbortController();
+        activeAbortControllers.add(manualAbort);
+        const perStepAbort = createPerStepAbort(
+          config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
+          AbortSignal.any([
+            AbortSignal.timeout(
+              config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
+            ),
+            manualAbort.signal,
+            executionContext.signal,
+          ]),
+        );
+
+        // ─── streamText (ai v6 API) ───
+        const currentProviderModels = currentProviderRuntime.models ?? config.models;
+        const modelEntry = currentProviderModels?.find((m) => m.id === currentModel);
+        const result = streamText({
+          model: currentProviderFactory(currentModel),
+          messages,
+          tools: wrappedTools,
+          stopWhen: stepCountIs(maxSteps),
+          toolChoice,
+          abortSignal: perStepAbort.signal,
+          temperature: modelEntry?.temperature,
+          maxOutputTokens: modelEntry?.maxTokens,
+          providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
+          experimental_onToolCallStart: () => perStepAbort.pause(),
+          experimental_onToolCallFinish: () => perStepAbort.resume(),
+          onStepFinish: ({ toolCalls, toolResults }) => {
+            stepCounter++;
+            perStepAbort.reset();
+            if (toolCalls?.length) {
+              for (const tc of toolCalls) {
+                config.onLog?.({
+                  level: "debug",
+                  message: "AI tool call",
+                  meta: {
+                    step: stepCounter,
+                    toolName: tc.toolName,
+                    argsLength: serializedLength(tc.input),
+                    toolCallId: tc.toolCallId,
+                  },
+                });
+              }
+            }
+            if (toolResults?.length) {
+              for (const tr of toolResults as ToolResultEntry[]) {
+                config.onLog?.({
+                  level: "debug",
+                  message: "AI tool result",
+                  meta: {
+                    step: stepCounter,
+                    toolName: tr.toolName,
+                    resultLength: serializedLength(tr.output),
+                    toolCallId: tr.toolCallId,
+                  },
+                });
+              }
+              if (ctx.waiting_message) {
+                ctx.resolveWait("💭 回复中...").catch(() => {});
+              }
+            }
+          },
+        });
+
+        // Track whether streaming actually sent any messages (stream mode only)
+        let streamStarted = false;
+        // Preserve the first stream failure. AI SDK's later `result.text` access can replace
+        // it with the generic "No output generated" error, hiding the actionable provider cause.
+        let capturedStreamError: unknown;
+        // Track whether multi_message actually delivered content (segment mode only).
+        let sentViaMultiMessage = false;
+        const logRichFallback = (mode: "rich" | "html", error: unknown) => {
           config.onLog?.({
             level: "warn",
-            message: "MCP config present but no tools available (servers may be disconnected)",
+            message: `${mode === "rich" ? "Rich Message" : "HTML"} delivery failed, falling back`,
+            meta: {
+              chatId,
+              userId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        };
+
+        try {
+          if (isStreamMode && ctx.chat?.type === "private") {
+            // ─── Private stream mode: Rich Markdown draft + persistent Rich Message ───
+            const thinkFilter = createThinkingStreamFilter(({ pattern, strippedLength }) => {
+              config.onLog?.({
+                level: "info",
+                message: `Stripped thinking content from stream (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId, userId },
+              });
+            });
+            const metaFilter = createMetaPrefixStreamFilter(({ pattern, strippedLength }) => {
+              config.onLog?.({
+                level: "warn",
+                message: `Stripped meta prefix from stream (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId, userId },
+              });
+            });
+            // Buffer leading whitespace so the first yield always carries a visible char.
+            // Telegram draft methods reject cumulative content that trims to empty.
+            let leadingBuffer = "";
+            let hasVisibleContent = false;
+            async function* managedTextStream() {
+              const emit = async (out: string) => {
+                if (out) await ctx.deleteWaiting();
+              };
+              for await (const chunk of result.textStream) {
+                const afterThink = thinkFilter.push(chunk);
+                if (!afterThink) continue;
+                const filtered = metaFilter.push(afterThink);
+                if (!filtered) continue;
+                if (!hasVisibleContent) {
+                  leadingBuffer += filtered;
+                  if (/\S/.test(leadingBuffer)) {
+                    hasVisibleContent = true;
+                    await emit(leadingBuffer);
+                    yield leadingBuffer;
+                    leadingBuffer = "";
+                  }
+                  continue;
+                }
+                await emit(filtered);
+                yield filtered;
+              }
+              const thinkFlushed = thinkFilter.flush();
+              const afterThinkFlush = thinkFlushed ? metaFilter.push(thinkFlushed) : "";
+              const metaFlushed = metaFilter.flush();
+              const flushed = afterThinkFlush + metaFlushed;
+              if (flushed) leadingBuffer += flushed;
+              if (leadingBuffer && /\S/.test(leadingBuffer)) {
+                hasVisibleContent = true;
+                await emit(leadingBuffer);
+                yield leadingBuffer;
+                leadingBuffer = "";
+              }
+            }
+
+            const sentMessages: Message[] = [];
+            try {
+              if (richMessageEnabled) {
+                const thinkingShown = await showRichThinkingDraft(
+                  ctx.api,
+                  chatId,
+                  ctx.update.update_id,
+                  ctx.message?.message_thread_id,
+                );
+                if (thinkingShown) await ctx.deleteWaiting();
+                sentMessages.push(await ctx.replyWithMarkdownStream(managedTextStream()));
+              } else {
+                const legacyMessages = await ctx.replyWithStream(managedTextStream());
+                await formatSentMessagesHtml(ctx.api, legacyMessages);
+                sentMessages.push(...legacyMessages);
+              }
+              streamStarted = sentMessages.length > 0;
+            } catch (streamErr) {
+              capturedStreamError = streamErr;
+              const streamMethod = richMessageEnabled
+                ? "replyWithMarkdownStream"
+                : "replyWithStream";
+              config.onLog?.({
+                level: "warn",
+                message: `${streamMethod} failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
+                meta: {
+                  chatId,
+                  userId,
+                  errorName: streamErr instanceof Error ? streamErr.name : undefined,
+                  errorCause:
+                    streamErr instanceof Error && streamErr.cause
+                      ? String(streamErr.cause)
+                      : undefined,
+                },
+              });
+              // The draft may contain only a prefix. Wait for result.text below, then persist
+              // the complete response through the same split/fallback path as group replies.
+              streamStarted = false;
+            }
+
+            for (const message of sentMessages) chatBotMsgIds.push(message.message_id);
+          } else {
+            // ─── Segment mode and group stream mode: drain before final delivery ───
+            // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
+            for await (const _ of result.textStream) {
+            }
+            sentViaMultiMessage = deliveredMultiMessages.length > 0;
+          }
+        } finally {
+          perStepAbort.cleanup();
+        }
+
+        // If /stop fired while streamText was running, drop all pending sends + saves.
+        if (aiDisabled || manualAbort?.signal.aborted || !executionContext.isCurrent()) {
+          config.onLog?.({
+            level: "info",
+            message: "AI disabled mid-reply, dropping pending sends",
+            meta: { chatId, userId },
+          });
+          await ctx.deleteWaiting().catch(() => {});
+          return;
+        }
+
+        const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
+        const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "info",
+            message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId, userId },
+          });
+        });
+        const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "warn",
+            message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId, userId },
+          });
+        });
+        const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
+        const trailingTextCovered =
+          sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
+        const steps = await result.steps;
+        const usage = await result.usage;
+        const finishReason = await result.finishReason;
+        let sentFinalText = false;
+
+        // ─── Send final reply (when streaming/multi_message didn't handle it) ───
+        if (isStreamMode && !streamStarted) {
+          // Group chats cannot stream drafts. Private stream failures also land here only
+          // after the complete provider result has been drained and filtered.
+          if (text) {
+            const messageIds = await sendFormattedChunks(
+              ctx,
+              text,
+              msgCfg,
+              richMessageEnabled,
+              logRichFallback,
+              () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
+            );
+            chatBotMsgIds.push(...messageIds);
+            streamStarted = messageIds.length > 0;
+            sentFinalText = streamStarted;
+          } else {
+            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+            capturedStreamError = undefined;
+          }
+        } else if (!isStreamMode) {
+          if (sentViaMultiMessage && (!text || trailingTextCovered)) {
+            await ctx.deleteWaiting();
+          } else if (text) {
+            const messageIds = await sendFormattedChunks(
+              ctx,
+              text,
+              msgCfg,
+              richMessageEnabled,
+              logRichFallback,
+              () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
+            );
+            chatBotMsgIds.push(...messageIds);
+            sentFinalText = messageIds.length > 0;
+          } else {
+            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+          }
+        }
+
+        if (isStreamMode && isPrivate && streamStarted) {
+          await ctx.deleteWaiting();
+        }
+
+        throwCapturedStreamError(capturedStreamError, streamStarted);
+
+        const durationMs = Date.now() - startTime;
+        const assistantContent = sentViaMultiMessage
+          ? [deliveredMultiMessageContent, sentFinalText ? text : ""].filter(Boolean).join("\n")
+          : text || "";
+
+        if (sentViaMultiMessage && text && !sentFinalText) {
+          config.onLog?.({
+            level: trailingTextCovered ? "info" : "warn",
+            message: trailingTextCovered
+              ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
+              : `Failed to deliver ${text.length} uncovered trailing chars after multi_message`,
+            meta: { chatId, userId, trailingLength: text.length },
           });
         }
-      }
 
-      // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
-      injectPixAITool(allTools, {
-        allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
-        webToolsConfig: config.webToolsConfig,
-        api: ctx.api,
-        chatId,
-        userId: ctx.from?.id,
-        recentBotMessageIds: chatBotMsgIds,
-        timeoutConfig: config.timeoutConfig,
-        onLog: config.onLog,
-        onGenerationTrack: config.onGenerationTrack,
-        rateLimiter: pixaiRateLimiter,
-        adminIds: config.adminChatIds,
-        nsfwChecker: config.nsfwChecker,
-      });
+        // Debug: AI response
+        const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);
+        const totalToolResults = steps.reduce((n, s) => n + s.toolResults.length, 0);
+        config.onLog?.({
+          level: "debug",
+          message: "AI response",
+          meta: {
+            durationMs,
+            responseLength: text?.length ?? 0,
+            totalSteps: steps.length,
+            finishReason,
+            usage,
+            totalToolCalls,
+            totalToolResults,
+          },
+        });
 
-      // Stream mode and segment mode are mutually exclusive:
-      // - Stream: multi_message is removed; private chats use the configured draft format
-      // - Segment: multi_message is available; AI sends messages via tool, no streaming
-      const msgCfg = getEffectiveMessageConfig();
-      const isStreamMode = isStreamReplyMode(msgCfg);
-      const richMessageEnabled = isRichMessageEnabled(msgCfg);
-      if (isStreamMode) {
-        delete allTools.multi_message;
-      }
-
-      // Increase maxSteps when agent tools, web tools, or artwork tools are available
-      const baseMaxSteps = memoryCfg.maxSteps || 3;
-      const hasAdvancedTools =
-        config.agentToolsConfig?.enabled ||
-        config.githubToolsConfig?.enabled ||
-        config.webToolsConfig?.enabled ||
-        config.artworkToolsConfig?.enabled;
-      const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
-      const toolChoice = memoryCfg.toolChoice ?? "auto";
-      const stableTools = sortToolsForPromptCache(allTools);
-      const toolSchemaHash = createToolSchemaHash(stableTools);
-      const cacheFingerprint = createCacheFingerprint({
-        providerId: currentProviderRuntime.id,
-        model: currentModel,
-        staticPrefixHash: promptTrace.staticPrefixHash,
-        toolSchemaHash,
-      });
-
-      // Debug: AI request
-      const startTime = Date.now();
-      config.onLog?.({
-        level: "debug",
-        message: "AI request",
-        meta: {
+        // Record token usage
+        config.onTokenUsage?.({
+          chatId,
+          userId,
           model: currentModel,
+          promptTokens: usage.inputTokens ?? 0,
+          completionTokens: usage.outputTokens ?? 0,
+          totalTokens: usage.totalTokens ?? 0,
+          ...extractCacheTokenUsage(
+            usage,
+            steps.map((step) => step.usage),
+          ),
           providerId: currentProviderRuntime.id,
-          providerLabel: currentProviderRuntime.label,
-          baseURL: currentProviderRuntime.baseURL,
-          providerFormat: currentProviderRuntime.providerFormat,
-          messagesCount: messages.length,
-          systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
           staticPrefixHash: promptTrace.staticPrefixHash,
           toolSchemaHash,
           cacheFingerprint,
-          promptSections: promptTrace.sections,
-          promptEstimatedTokens: promptTrace.totalEstimatedTokens,
-          historyBudget,
-          history_degraded:
-            typeof historyBudget === "object" &&
-            historyBudget !== null &&
-            "degraded" in historyBudget
-              ? historyBudget.degraded
-              : false,
-          toolsEnabled: Object.keys(stableTools),
-          maxSteps,
-          toolChoice,
-          chatId,
-          userId,
-          userName,
-          isPrivate,
-          trigger: triggerResult,
-        },
-      });
+          durationMs,
+          trigger: triggerResult as string,
+        });
 
-      let stepCounter = 0;
-      const requestCache = createRequestCache();
-      const wrappedTools = wrapToolsWithStatus(wrapToolsWithCache(stableTools, requestCache), ctx);
-      manualAbort = new AbortController();
-      activeAbortControllers.add(manualAbort);
-      const perStepAbort = createPerStepAbort(
-        config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
-        AbortSignal.any([
-          AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
-          manualAbort.signal,
-        ]),
-      );
+        // Save messages to conversation history (before checking text emptiness)
+        if (persistConversation) {
+          const toSave: Array<{
+            chatId: number;
+            role: ConversationRole;
+            content: string;
+            userAuthoredContent?: string;
+            userId?: number;
+            userName?: string;
+            sourceKey?: string;
+            meta?: Record<string, unknown>;
+          }> = [];
+          const sourcePrefix = `telegram:${msg.message_id}`;
 
-      // ─── streamText (ai v6 API) ───
-      const currentProviderModels = currentProviderRuntime.models ?? config.models;
-      const modelEntry = currentProviderModels?.find((m) => m.id === currentModel);
-      const result = streamText({
-        model: currentProviderFactory(currentModel),
-        messages,
-        tools: wrappedTools,
-        stopWhen: stepCountIs(maxSteps),
-        toolChoice,
-        abortSignal: perStepAbort.signal,
-        temperature: modelEntry?.temperature,
-        maxOutputTokens: modelEntry?.maxTokens,
-        providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
-        experimental_onToolCallStart: () => perStepAbort.pause(),
-        experimental_onToolCallFinish: () => perStepAbort.resume(),
-        onStepFinish: ({ toolCalls, toolResults }) => {
-          stepCounter++;
-          perStepAbort.reset();
-          if (toolCalls?.length) {
-            for (const tc of toolCalls) {
-              config.onLog?.({
-                level: "debug",
-                message: "AI tool call",
+          // Save system prompt used for this reply (deduplicated per chat)
+          const sysMsg = messages.find((m) => m.role === "system")?.content;
+          if (typeof sysMsg === "string" && sysMsg) {
+            const prev = lastSystemContent.get(chatId);
+            if (prev !== sysMsg) {
+              if (lastSystemContent.size >= SYSTEM_CONTENT_CAP) lastSystemContent.clear();
+              lastSystemContent.set(chatId, sysMsg);
+              toSave.push({
+                chatId,
+                role: "system" as ConversationRole,
+                content: sysMsg,
+                sourceKey: `${sourcePrefix}:system`,
+                meta: { model: currentModel, trigger: triggerResult },
+              });
+            }
+          }
+
+          // Group user messages are captured/upserted before the model call so ambient
+          // and failed-trigger messages are durable. Private messages remain part of
+          // the reply transaction and are omitted entirely in personalization-off mode.
+          if (isPrivate) {
+            toSave.push({
+              chatId,
+              role: "user",
+              content: rawContent || messageText,
+              userAuthoredContent: userAuthoredContent || messageText,
+              userId,
+              userName,
+              sourceKey: `${sourcePrefix}:user`,
+              meta: { tgMessageId: msg.message_id },
+            });
+          }
+
+          // Save all tool calls and results from steps
+          for (const step of steps) {
+            for (const tc of step.toolCalls) {
+              toSave.push({
+                chatId,
+                role: "tool_call",
+                content: tc.toolName,
+                sourceKey: `${sourcePrefix}:tool-call:${tc.toolCallId}`,
                 meta: {
-                  step: stepCounter,
                   toolName: tc.toolName,
-                  argsLength: serializedLength(tc.input),
+                  args: JSON.stringify(tc.input),
                   toolCallId: tc.toolCallId,
                 },
               });
             }
-          }
-          if (toolResults?.length) {
-            for (const tr of toolResults as ToolResultEntry[]) {
-              config.onLog?.({
-                level: "debug",
-                message: "AI tool result",
+            for (const tr of step.toolResults as ToolResultEntry[]) {
+              toSave.push({
+                chatId,
+                role: "tool_result",
+                content:
+                  typeof tr.output === "string"
+                    ? tr.output
+                    : (JSON.stringify(tr.output) ?? String(tr.output)),
+                sourceKey: `${sourcePrefix}:tool-result:${tr.toolCallId}`,
                 meta: {
-                  step: stepCounter,
                   toolName: tr.toolName,
-                  resultLength: serializedLength(tr.output),
                   toolCallId: tr.toolCallId,
                 },
               });
             }
-            if (ctx.waiting_message) {
-              ctx.resolveWait("💭 回复中...").catch(() => {});
-            }
-          }
-        },
-      });
-
-      // Track whether streaming actually sent any messages (stream mode only)
-      let streamStarted = false;
-      // Preserve the first stream failure. AI SDK's later `result.text` access can replace
-      // it with the generic "No output generated" error, hiding the actionable provider cause.
-      let capturedStreamError: unknown;
-      // Track whether multi_message actually delivered content (segment mode only).
-      let sentViaMultiMessage = false;
-      const logRichFallback = (mode: "rich" | "html", error: unknown) => {
-        config.onLog?.({
-          level: "warn",
-          message: `${mode === "rich" ? "Rich Message" : "HTML"} delivery failed, falling back`,
-          meta: {
-            chatId,
-            userId,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        });
-      };
-
-      try {
-        if (isStreamMode && ctx.chat?.type === "private") {
-          // ─── Private stream mode: Rich Markdown draft + persistent Rich Message ───
-          const thinkFilter = createThinkingStreamFilter(({ pattern, strippedLength }) => {
-            config.onLog?.({
-              level: "info",
-              message: `Stripped thinking content from stream (pattern: ${pattern}, ${strippedLength} chars)`,
-              meta: { chatId, userId },
-            });
-          });
-          const metaFilter = createMetaPrefixStreamFilter(({ pattern, strippedLength }) => {
-            config.onLog?.({
-              level: "warn",
-              message: `Stripped meta prefix from stream (pattern: ${pattern}, ${strippedLength} chars)`,
-              meta: { chatId, userId },
-            });
-          });
-          // Buffer leading whitespace so the first yield always carries a visible char.
-          // Telegram draft methods reject cumulative content that trims to empty.
-          let leadingBuffer = "";
-          let hasVisibleContent = false;
-          async function* managedTextStream() {
-            const emit = async (out: string) => {
-              if (out) await ctx.deleteWaiting();
-            };
-            for await (const chunk of result.textStream) {
-              const afterThink = thinkFilter.push(chunk);
-              if (!afterThink) continue;
-              const filtered = metaFilter.push(afterThink);
-              if (!filtered) continue;
-              if (!hasVisibleContent) {
-                leadingBuffer += filtered;
-                if (/\S/.test(leadingBuffer)) {
-                  hasVisibleContent = true;
-                  await emit(leadingBuffer);
-                  yield leadingBuffer;
-                  leadingBuffer = "";
-                }
-                continue;
-              }
-              await emit(filtered);
-              yield filtered;
-            }
-            const thinkFlushed = thinkFilter.flush();
-            const afterThinkFlush = thinkFlushed ? metaFilter.push(thinkFlushed) : "";
-            const metaFlushed = metaFilter.flush();
-            const flushed = afterThinkFlush + metaFlushed;
-            if (flushed) leadingBuffer += flushed;
-            if (leadingBuffer && /\S/.test(leadingBuffer)) {
-              hasVisibleContent = true;
-              await emit(leadingBuffer);
-              yield leadingBuffer;
-              leadingBuffer = "";
-            }
           }
 
-          const sentMessages: Message[] = [];
-          try {
-            if (richMessageEnabled) {
-              const thinkingShown = await showRichThinkingDraft(
-                ctx.api,
-                chatId,
-                ctx.update.update_id,
-                ctx.message?.message_thread_id,
-              );
-              if (thinkingShown) await ctx.deleteWaiting();
-              sentMessages.push(await ctx.replyWithMarkdownStream(managedTextStream()));
-            } else {
-              const legacyMessages = await ctx.replyWithStream(managedTextStream());
-              await formatSentMessagesHtml(ctx.api, legacyMessages);
-              sentMessages.push(...legacyMessages);
-            }
-            streamStarted = sentMessages.length > 0;
-          } catch (streamErr) {
-            capturedStreamError = streamErr;
-            const streamMethod = richMessageEnabled ? "replyWithMarkdownStream" : "replyWithStream";
-            config.onLog?.({
-              level: "warn",
-              message: `${streamMethod} failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
-              meta: {
-                chatId,
-                userId,
-                errorName: streamErr instanceof Error ? streamErr.name : undefined,
-                errorCause:
-                  streamErr instanceof Error && streamErr.cause
-                    ? String(streamErr.cause)
-                    : undefined,
-              },
-            });
-            // The draft may contain only a prefix. Wait for result.text below, then persist
-            // the complete response through the same split/fallback path as group replies.
-            streamStarted = false;
-          }
-
-          for (const message of sentMessages) chatBotMsgIds.push(message.message_id);
-        } else {
-          // ─── Segment mode and group stream mode: drain before final delivery ───
-          // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
-          for await (const _ of result.textStream) {
-          }
-          sentViaMultiMessage = deliveredMultiMessages.length > 0;
-        }
-      } finally {
-        perStepAbort.cleanup();
-      }
-
-      // If /stop fired while streamText was running, drop all pending sends + saves.
-      if (aiDisabled || manualAbort?.signal.aborted) {
-        config.onLog?.({
-          level: "info",
-          message: "AI disabled mid-reply, dropping pending sends",
-          meta: { chatId, userId },
-        });
-        await ctx.deleteWaiting().catch(() => {});
-        return;
-      }
-
-      const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
-      const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
-        config.onLog?.({
-          level: "info",
-          message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
-          meta: { chatId, userId },
-        });
-      });
-      const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
-        config.onLog?.({
-          level: "warn",
-          message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
-          meta: { chatId, userId },
-        });
-      });
-      const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
-      const trailingTextCovered =
-        sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
-      const steps = await result.steps;
-      const usage = await result.usage;
-      const finishReason = await result.finishReason;
-      let sentFinalText = false;
-
-      // ─── Send final reply (when streaming/multi_message didn't handle it) ───
-      if (isStreamMode && !streamStarted) {
-        // Group chats cannot stream drafts. Private stream failures also land here only
-        // after the complete provider result has been drained and filtered.
-        if (text) {
-          const messageIds = await sendFormattedChunks(
-            ctx,
-            text,
-            msgCfg,
-            richMessageEnabled,
-            logRichFallback,
-            () => aiDisabled || !!manualAbort?.signal.aborted,
-          );
-          chatBotMsgIds.push(...messageIds);
-          streamStarted = messageIds.length > 0;
-          sentFinalText = streamStarted;
-        } else {
-          await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
-          capturedStreamError = undefined;
-        }
-      } else if (!isStreamMode) {
-        if (sentViaMultiMessage && (!text || trailingTextCovered)) {
-          await ctx.deleteWaiting();
-        } else if (text) {
-          const messageIds = await sendFormattedChunks(
-            ctx,
-            text,
-            msgCfg,
-            richMessageEnabled,
-            logRichFallback,
-            () => aiDisabled || !!manualAbort?.signal.aborted,
-          );
-          chatBotMsgIds.push(...messageIds);
-          sentFinalText = messageIds.length > 0;
-        } else {
-          await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
-        }
-      }
-
-      if (isStreamMode && isPrivate && streamStarted) {
-        await ctx.deleteWaiting();
-      }
-
-      throwCapturedStreamError(capturedStreamError, streamStarted);
-
-      const durationMs = Date.now() - startTime;
-      const assistantContent = sentViaMultiMessage
-        ? [deliveredMultiMessageContent, sentFinalText ? text : ""].filter(Boolean).join("\n")
-        : text || "";
-
-      if (sentViaMultiMessage && text && !sentFinalText) {
-        config.onLog?.({
-          level: trailingTextCovered ? "info" : "warn",
-          message: trailingTextCovered
-            ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
-            : `Failed to deliver ${text.length} uncovered trailing chars after multi_message`,
-          meta: { chatId, userId, trailingLength: text.length },
-        });
-      }
-
-      // Debug: AI response
-      const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);
-      const totalToolResults = steps.reduce((n, s) => n + s.toolResults.length, 0);
-      config.onLog?.({
-        level: "debug",
-        message: "AI response",
-        meta: {
-          durationMs,
-          responseLength: text?.length ?? 0,
-          totalSteps: steps.length,
-          finishReason,
-          usage,
-          totalToolCalls,
-          totalToolResults,
-        },
-      });
-
-      // Record token usage
-      config.onTokenUsage?.({
-        chatId,
-        userId,
-        model: currentModel,
-        promptTokens: usage.inputTokens ?? 0,
-        completionTokens: usage.outputTokens ?? 0,
-        totalTokens: usage.totalTokens ?? 0,
-        ...extractCacheTokenUsage(
-          usage,
-          steps.map((step) => step.usage),
-        ),
-        providerId: currentProviderRuntime.id,
-        staticPrefixHash: promptTrace.staticPrefixHash,
-        toolSchemaHash,
-        cacheFingerprint,
-        durationMs,
-        trigger: triggerResult as string,
-      });
-
-      // Save messages to conversation history (before checking text emptiness)
-      if (persistConversation) {
-        const toSave: Array<{
-          chatId: number;
-          role: ConversationRole;
-          content: string;
-          userAuthoredContent?: string;
-          userId?: number;
-          userName?: string;
-          sourceKey?: string;
-          meta?: Record<string, unknown>;
-        }> = [];
-        const sourcePrefix = `telegram:${msg.message_id}`;
-
-        // Save system prompt used for this reply (deduplicated per chat)
-        const sysMsg = messages.find((m) => m.role === "system")?.content;
-        if (typeof sysMsg === "string" && sysMsg) {
-          const prev = lastSystemContent.get(chatId);
-          if (prev !== sysMsg) {
-            if (lastSystemContent.size >= SYSTEM_CONTENT_CAP) lastSystemContent.clear();
-            lastSystemContent.set(chatId, sysMsg);
-            toSave.push({
-              chatId,
-              role: "system" as ConversationRole,
-              content: sysMsg,
-              sourceKey: `${sourcePrefix}:system`,
-              meta: { model: currentModel, trigger: triggerResult },
-            });
-          }
-        }
-
-        // Group user messages are captured/upserted before the model call so ambient
-        // and failed-trigger messages are durable. Private messages remain part of
-        // the reply transaction and are omitted entirely in personalization-off mode.
-        if (isPrivate) {
+          // Persist only content confirmed as delivered. Uncovered trailing text is
+          // sent through the normal fallback path before it reaches this point.
           toSave.push({
             chatId,
-            role: "user",
-            content: rawContent || messageText,
-            userAuthoredContent: userAuthoredContent || messageText,
-            userId,
-            userName,
-            sourceKey: `${sourcePrefix}:user`,
-            meta: { tgMessageId: msg.message_id },
+            role: "assistant",
+            content: assistantContent,
+            sourceKey: `${sourcePrefix}:assistant`,
+            meta: {
+              model: currentModel,
+              trigger: triggerResult,
+              usage,
+            },
           });
-        }
 
-        // Save all tool calls and results from steps
-        for (const step of steps) {
-          for (const tc of step.toolCalls) {
-            toSave.push({
-              chatId,
-              role: "tool_call",
-              content: tc.toolName,
-              sourceKey: `${sourcePrefix}:tool-call:${tc.toolCallId}`,
-              meta: {
-                toolName: tc.toolName,
-                args: JSON.stringify(tc.input),
-                toolCallId: tc.toolCallId,
-              },
-            });
-          }
-          for (const tr of step.toolResults as ToolResultEntry[]) {
-            toSave.push({
-              chatId,
-              role: "tool_result",
-              content:
-                typeof tr.output === "string"
-                  ? tr.output
-                  : (JSON.stringify(tr.output) ?? String(tr.output)),
-              sourceKey: `${sourcePrefix}:tool-result:${tr.toolCallId}`,
-              meta: {
-                toolName: tr.toolName,
-                toolCallId: tr.toolCallId,
-              },
+          if (!executionContext.isCurrent()) return;
+          try {
+            await config.conversation!.addMessages(toSave);
+            if (isPrivate) await config.conversation!.triggerCompression(chatId);
+          } catch (err) {
+            config.onLog?.({
+              level: "error",
+              message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
+              meta: { chatId },
             });
           }
         }
 
-        // Persist only content confirmed as delivered. Uncovered trailing text is
-        // sent through the normal fallback path before it reaches this point.
-        toSave.push({
-          chatId,
-          role: "assistant",
-          content: assistantContent,
-          sourceKey: `${sourcePrefix}:assistant`,
+        config.onLog?.({
+          level: "info",
+          message: "AI reply sent",
           meta: {
-            model: currentModel,
+            chatId,
+            userId,
+            isPrivate,
+            textLength: assistantContent.length,
+            responseTextLength: text?.length ?? 0,
+            multiMessageSentCount: deliveredMultiMessages.length,
             trigger: triggerResult,
-            usage,
+            conversationEnabled: !!persistConversation,
           },
         });
-
+      } catch (err) {
+        if (!executionContext.isCurrent()) {
+          await ctx.deleteWaiting().catch(() => {});
+          return;
+        }
+        const errMsg = err instanceof Error ? err.message : String(err);
+        config.onLog?.({
+          level: "error",
+          message: `AI reply failed: ${errMsg}`,
+          meta: { chatId, userId },
+        });
+        const errorReply = `AI 回复时出错:\n${errMsg}`;
         try {
-          await config.conversation!.addMessages(toSave);
-          if (isPrivate) await config.conversation!.triggerCompression(chatId);
-        } catch (err) {
+          await ctx.resolveWait(errorReply);
+        } catch {
+          await directlyReplyAndCleanup(ctx, errorReply);
+        }
+      } finally {
+        if (!isPrivate && persistConversation) {
+          void config.conversation!.triggerCompression(chatId);
+        }
+        if (manualAbort) activeAbortControllers.delete(manualAbort);
+      }
+    };
+
+    let preserveQueuedMessage = false;
+    const scheduledAt = Date.now();
+    let executionStartedAt: number | undefined;
+    let scheduled;
+    try {
+      scheduled = executionCoordinator.schedule({ chatId, userId }, async (executionContext) => {
+        executionStartedAt = Date.now();
+        config.onLog?.({
+          level: "info",
+          message: "AI reply execution started",
+          meta: {
+            chatId,
+            userId,
+            waitMs: Math.max(0, executionStartedAt - scheduledAt),
+            ...executionCoordinator.stats,
+          },
+        });
+        const run = () => executeTurn(executionContext, preserveQueuedMessage);
+        if (!config.privacy) return run();
+        return config.privacy.runExclusive(userId, async () => {
+          const currentPrivacyMode = await config.privacy!.getMode(userId);
+          if (currentPrivacyMode !== privacyMode) {
+            throw new AiRunCancelledError("User privacy mode changed before AI execution");
+          }
+          return run();
+        });
+      });
+    } catch (error) {
+      if (error instanceof AiReplyQueueFullError) {
+        config.onLog?.({
+          level: "warn",
+          message: "AI reply queue is full",
+          meta: { chatId, userId, ...executionCoordinator.stats },
+        });
+        await ctx.directlyReply("助手现在真的忙不过来啦，请稍后再试哦～").catch(() => {});
+        return;
+      }
+      throw error;
+    }
+
+    preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
+    void scheduled.result
+      .then(
+        () => {
+          config.onLog?.({
+            level: "info",
+            message: "AI reply execution finished",
+            meta: {
+              chatId,
+              userId,
+              runMs:
+                executionStartedAt === undefined ? 0 : Math.max(0, Date.now() - executionStartedAt),
+              ...executionCoordinator.stats,
+            },
+          });
+        },
+        async (error) => {
+          if (error instanceof AiRunCancelledError) {
+            config.onLog?.({
+              level: "info",
+              message: "AI reply execution cancelled",
+              meta: { chatId, userId, ...executionCoordinator.stats },
+            });
+            try {
+              await ctx.deleteWaiting();
+            } catch {
+              // Best-effort cleanup after a cancelled detached turn.
+            }
+            return;
+          }
+          const message = error instanceof Error ? error.message : String(error);
           config.onLog?.({
             level: "error",
-            message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
-            meta: { chatId },
+            message: "Scheduled AI reply failed before execution",
+            meta: { chatId, userId, error: message, ...executionCoordinator.stats },
           });
-        }
-      }
+          try {
+            await ctx.resolveWait(`AI 回复时出错:\n${message}`);
+          } catch {
+            // The turn already failed before normal delivery fallbacks were available.
+          }
+        },
+      )
+      .catch(() => {});
 
+    if (preserveQueuedMessage) {
       config.onLog?.({
         level: "info",
-        message: "AI reply sent",
-        meta: {
-          chatId,
-          userId,
-          isPrivate,
-          textLength: assistantContent.length,
-          responseTextLength: text?.length ?? 0,
-          multiMessageSentCount: deliveredMultiMessages.length,
-          trigger: triggerResult,
-          conversationEnabled: !!persistConversation,
-        },
+        message: "AI reply queued",
+        meta: { chatId, userId, ...executionCoordinator.stats },
       });
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      config.onLog?.({
-        level: "error",
-        message: `AI reply failed: ${errMsg}`,
-        meta: { chatId, userId },
+      await ctx.wait(executionConfig.queueNotice.text).catch((error) => {
+        config.onLog?.({
+          level: "warn",
+          message: "Failed to send AI queue notice",
+          meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
+        });
       });
-      const errorReply = `AI 回复时出错:\n${errMsg}`;
-      try {
-        await ctx.resolveWait(errorReply);
-      } catch {
-        await directlyReplyAndCleanup(ctx, errorReply);
-      }
-    } finally {
-      if (!isPrivate && persistConversation) {
-        void config.conversation!.triggerCompression(chatId);
-      }
-      releaseChatLock?.();
-      if (manualAbort) activeAbortControllers.delete(manualAbort);
     }
+    scheduled.start();
+    if (!config.detachReplyExecution) await scheduled.result;
+    return;
   };
 
   const handler: MiddlewareFn<BotContext> = async (ctx, next) => {
+    const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
     const entities = ctx.message?.entities ?? [];
     const isCommand = entities.some(
       (entity) => entity.type === "bot_command" && entity.offset === 0,
     );
-    if (!config.privacy || userId === undefined || isCommand) {
+    if (chatId === undefined || userId === undefined || isCommand) {
       return handleMessage(ctx, next);
     }
-    return config.privacy.runExclusive(userId, async () => {
+    if (ingressLock.hasMessageAdmission(ctx)) {
+      return handleMessage(ctx, next);
+    }
+    return ingressLock.runMessage(chatId, userId, async () => {
       await handleMessage(ctx, next);
     });
   };
@@ -2220,22 +2425,38 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     };
   }
 
-  let destroyed = false;
-  function destroy(): void {
-    if (destroyed) return;
-    destroyed = true;
-    setAiEnabled(false);
-    clearInterval(cleanupTimer);
-    clearInterval(bufferCleanupTimer);
-    pendingActions.destroy();
-    pendingGitHubActions.destroy();
-    cooldownMap.clear();
-    recentReceivedFiles.clear();
-    recentBotMessageIds.clear();
-    moodState.clear();
-    knownPrivateChats.clear();
-    lastSystemContent.clear();
-    groupBuffers.clear();
+  let destroyStarted = false;
+  let destroyPromise: Promise<void> | undefined;
+  function destroy(): Promise<void> {
+    if (destroyPromise) return destroyPromise;
+    if (!destroyStarted) {
+      destroyStarted = true;
+      setAiEnabled(false);
+      clearInterval(cleanupTimer);
+      clearInterval(bufferCleanupTimer);
+      pendingActions.destroy();
+      pendingGitHubActions.destroy();
+      cooldownMap.clear();
+      recentReceivedFiles.clear();
+      recentBotMessageIds.clear();
+      moodState.clear();
+      knownPrivateChats.clear();
+      lastSystemContent.clear();
+      groupBuffers.clear();
+    }
+    let attempt!: Promise<void>;
+    attempt = (async () => {
+      try {
+        const result = await executionCoordinator.destroyAndDrain();
+        if (!result.settled || result.timedOut) {
+          throw new AiRunDrainTimeoutError("Timed out draining AI runs during Bot shutdown");
+        }
+      } finally {
+        if (destroyPromise === attempt) destroyPromise = undefined;
+      }
+    })();
+    destroyPromise = attempt;
+    return attempt;
   }
 
   return {
@@ -2273,6 +2494,28 @@ export function createAiReplyHandler(config: AiReplyConfig): {
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    cancelChatRuns: async (chatId) => {
+      const result = await executionCoordinator.cancelChat(chatId);
+      if (!result.settled || result.timedOut) {
+        throw new AiRunDrainTimeoutError(
+          "Timed out waiting for the active AI reply; history was not cleared",
+        );
+      }
+      groupBuffers.delete(chatId);
+      recentBotMessageIds.delete(chatId);
+      return result.cancelled;
+    },
+    cancelUserRuns: async (userId) => {
+      const result = await executionCoordinator.cancelUser(userId);
+      if (!result.settled || result.timedOut) {
+        throw new AiRunDrainTimeoutError(
+          "Timed out waiting for active AI replies; privacy data was not changed",
+        );
+      }
+      return result.cancelled;
+    },
+    runChatMutation: (chatId, operation) => ingressLock.runChatMutation(chatId, operation),
+    runUserMutation: (userId, operation) => ingressLock.runUserMutation(userId, operation),
     waitForUserProfileUpdates: (userId) =>
       profileObserver?.waitForIdle(userId) ?? Promise.resolve(),
     destroy,

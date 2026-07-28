@@ -81,6 +81,7 @@ export interface ContextAssemblyInput {
   maxContextMessages: number;
   groupHistoryMaxTokens?: number;
   historyExcludeSourceKey?: string;
+  historyBeforeId?: number;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -659,13 +660,20 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const useConversation =
     input.conversation && (input.isPrivate ? conversationConfig.enabled : true);
   if (useConversation) {
+    const historyOptions =
+      input.historyExcludeSourceKey || input.historyBeforeId !== undefined
+        ? {
+            ...(input.historyExcludeSourceKey
+              ? { excludeSourceKey: input.historyExcludeSourceKey }
+              : {}),
+            ...(input.historyBeforeId !== undefined ? { beforeId: input.historyBeforeId } : {}),
+          }
+        : undefined;
     let history = await input.conversation!.getHistory(
       input.chatId,
       input.maxContextMessages,
       input.isPrivate ? undefined : input.groupHistoryMaxTokens,
-      input.historyExcludeSourceKey
-        ? { excludeSourceKey: input.historyExcludeSourceKey }
-        : undefined,
+      historyOptions,
     );
     if (
       !input.isPrivate &&
@@ -678,9 +686,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
           input.chatId,
           input.maxContextMessages,
           input.groupHistoryMaxTokens,
-          input.historyExcludeSourceKey
-            ? { excludeSourceKey: input.historyExcludeSourceKey }
-            : undefined,
+          historyOptions,
         );
       } catch {
         // The raw tail remains usable. The trace below marks this prompt as degraded.

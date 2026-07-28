@@ -114,6 +114,44 @@ describe("BotManager runtime disposal", () => {
     expect(stop).toHaveBeenCalledOnce();
   });
 
+  it("waits for detached AI runs to drain before finishing runner shutdown", async () => {
+    const manager = createManager();
+    let finishDrain!: () => void;
+    const drain = new Promise<void>((resolve) => {
+      finishDrain = resolve;
+    });
+    mocks.disposeBot.mockImplementationOnce(() => drain);
+    const stop = vi.fn(async () => {});
+    mocks.run.mockImplementationOnce(() => ({ stop, task: vi.fn(() => undefined) }));
+    await manager.start();
+
+    const stopping = manager.stop();
+    await vi.waitFor(() => expect(mocks.disposeBot).toHaveBeenCalledOnce());
+    expect(stop).not.toHaveBeenCalled();
+
+    finishDrain();
+    await stopping;
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  it("retries a timed-out drain before starting a replacement runtime", async () => {
+    const manager = createManager();
+    const drainError = new Error("Timed out draining AI runs during Bot shutdown");
+    await manager.start();
+    mocks.disposeBot.mockRejectedValueOnce(drainError);
+
+    await expect(manager.restart()).rejects.toBe(drainError);
+
+    expect(mocks.createBot).toHaveBeenCalledOnce();
+    expect(manager.status).toBe("stopped");
+
+    await manager.start();
+
+    expect(mocks.disposeBot).toHaveBeenCalledTimes(2);
+    expect(mocks.createBot).toHaveBeenCalledTimes(2);
+    expect(manager.status).toBe("running");
+  });
+
   it("keeps runtime state disposed when runner shutdown fails", async () => {
     const manager = createManager();
     const stopError = new Error("runner stop failed");
@@ -141,6 +179,25 @@ describe("BotManager runtime disposal", () => {
 
     expect(mocks.disposeBot).toHaveBeenCalledWith(mocks.createBot.mock.results[0]!.value);
     expect(manager.status).toBe("stopped");
+  });
+
+  it("retries disposal after startup cleanup fails before creating another runtime", async () => {
+    const manager = createManager();
+    const drainError = new Error("AI drain timed out");
+    mocks.run.mockImplementationOnce(() => {
+      throw new Error("runner failed");
+    });
+    mocks.disposeBot.mockRejectedValueOnce(drainError);
+
+    await expect(manager.start()).rejects.toBe(drainError);
+    expect(mocks.createBot).toHaveBeenCalledOnce();
+    expect(manager.status).toBe("stopped");
+
+    await manager.start();
+
+    expect(mocks.disposeBot).toHaveBeenCalledTimes(2);
+    expect(mocks.createBot).toHaveBeenCalledTimes(2);
+    expect(manager.status).toBe("running");
   });
 
   it("disposes the runtime when the runner crashes", async () => {

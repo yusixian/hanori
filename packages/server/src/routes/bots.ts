@@ -6,7 +6,12 @@ import {
 } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
-import { DEFAULT_CONVERSATION_CONFIG, IMAGE_MAX_SIZE, IMAGE_MIN_SIZE } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_CONVERSATION_CONFIG,
+  IMAGE_MAX_SIZE,
+  IMAGE_MIN_SIZE,
+} from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
   AiConfigStored,
@@ -207,6 +212,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
       },
       groupOverrides: {},
       providers: [],
+      executionConfig: DEFAULT_AI_EXECUTION_CONFIG,
     };
   }
   const migrated = migrateAiConfig(config);
@@ -261,6 +267,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     artworkToolsConfig: migrated.artworkToolsConfig,
     botMemoryConfig: migrated.botMemoryConfig,
     messageConfig: migrated.messageConfig,
+    executionConfig: migrated.executionConfig ?? DEFAULT_AI_EXECUTION_CONFIG,
     models: active.models ?? migrated.models,
     modelCommandAccess: migrated.modelCommandAccess,
     embeddingConfig: migrated.embeddingConfig
@@ -296,6 +303,24 @@ const modelDiscoveryPathSchema = z
   .trim()
   .refine((path) => path === "" || isValidModelDiscoveryPath(path), {
     message: "Model discovery path must be empty or begin with a single slash",
+  });
+
+const aiExecutionConfigSchema = z
+  .object({
+    maxConcurrentReplies: z.number().int().min(1).max(32),
+    queueNotice: z.object({
+      enabled: z.boolean(),
+      text: z.string().trim().max(200),
+    }),
+  })
+  .superRefine((config, context) => {
+    if (config.queueNotice.enabled && config.queueNotice.text.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Queue notice text is required when the notice is enabled",
+        path: ["queueNotice", "text"],
+      });
+    }
   });
 
 const aiConfigSchema = z
@@ -475,6 +500,7 @@ const aiConfigSchema = z
         splitDelayMs: z.number().min(0).max(5000),
       })
       .optional(),
+    executionConfig: aiExecutionConfigSchema.optional(),
     embeddingConfig: z
       .object({
         enabled: z.boolean(),
@@ -1411,6 +1437,10 @@ export function botsRoutes(
           artworkToolsConfig: body.artworkToolsConfig,
           botMemoryConfig: body.botMemoryConfig,
           messageConfig: body.messageConfig,
+          executionConfig:
+            body.executionConfig ??
+            existingMigrated?.executionConfig ??
+            DEFAULT_AI_EXECUTION_CONFIG,
           timeoutConfig:
             body.timeoutConfig?.pixaiTaskMs === undefined
               ? body.timeoutConfig

@@ -58,6 +58,47 @@ describe("continueChat privacy", () => {
     );
   });
 
+  it("acquires max-one execution ownership before the privacy lock", async () => {
+    const order: string[] = [];
+    let executionOwned = false;
+    const runWithExecution: NonNullable<ContinueChatConfig["runWithExecution"]> = async (
+      _scope,
+      operation,
+    ) => {
+      order.push("execution");
+      expect(executionOwned).toBe(false);
+      executionOwned = true;
+      try {
+        return await operation({
+          signal: new AbortController().signal,
+          isCurrent: () => true,
+        });
+      } finally {
+        executionOwned = false;
+      }
+    };
+    const privacy = {
+      runExclusive: vi.fn(async (_userId: number, operation: () => Promise<boolean>) => {
+        order.push("privacy");
+        expect(executionOwned).toBe(true);
+        return operation();
+      }),
+      getMode: vi.fn(async () => {
+        order.push("mode");
+        return "off" as const;
+      }),
+    } as unknown as UserPrivacyCallbacks;
+
+    await continueChat({} as Api, { privacy, runWithExecution } as unknown as ContinueChatConfig, {
+      chatId: 42,
+      userId: 42,
+      eventDescription: "timer fired",
+    });
+
+    expect(order).toEqual(["execution", "privacy", "mode"]);
+    expect(executionOwned).toBe(false);
+  });
+
   it("rejects privacy and AI-disabled skips when reliable delivery is required", async () => {
     const privacy = {
       getMode: vi.fn().mockResolvedValue("off"),

@@ -784,6 +784,7 @@ export class BotPool {
                 this.logger.warn(err, "Group message embedding generation failed");
               });
           }
+          return persisted ? { id: persisted.id } : undefined;
         },
         ensureCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);
@@ -1053,6 +1054,7 @@ export class BotPool {
         botMemoryConfig: botMemoryCfg,
         botMemory,
         messageConfig: aiConfig.messageConfig,
+        executionConfig: aiConfig.executionConfig,
         imageOcrConfig: aiConfig.imageOcrConfig,
         timeoutConfig: runtimeTimeoutConfig,
         models: activeProvider.models ?? aiConfig.models,
@@ -1405,17 +1407,14 @@ export class BotPool {
     try {
       await manager.start();
     } catch (error) {
-      this.managers.delete(botId);
-      this.botTimerHandlers.delete(botId);
-      this.aiSelectionRuntimeDisposers.get(botId)?.();
-      this.aiSelectionRuntimeDisposers.delete(botId);
+      // BotManager retains its runtime when shutdown/drain fails. Confirm a retryable stop before
+      // dropping the only Pool-owned reference; otherwise a later start could create a replacement
+      // while detached work from this manager is still alive.
+      await this.stopBotImpl(botId);
       throw error;
     }
     if (manager.status !== "running") {
-      this.managers.delete(botId);
-      this.botTimerHandlers.delete(botId);
-      this.aiSelectionRuntimeDisposers.get(botId)?.();
-      this.aiSelectionRuntimeDisposers.delete(botId);
+      await this.stopBotImpl(botId);
       throw new Error("Bot failed to start; check bot logs for details");
     }
     if (this.chatAiSelectionService && aiReply) {
@@ -1437,14 +1436,7 @@ export class BotPool {
           this.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed),
         );
       } catch (error) {
-        try {
-          await manager.stop();
-        } finally {
-          this.managers.delete(botId);
-          this.botTimerHandlers.delete(botId);
-          this.aiSelectionRuntimeDisposers.get(botId)?.();
-          this.aiSelectionRuntimeDisposers.delete(botId);
-        }
+        await this.stopBotImpl(botId);
         throw error;
       }
     }
@@ -1657,13 +1649,19 @@ export class BotPool {
     await this.cancelGenerationRecoveries(botId, `Bot ${botId} stopped`);
     await this.timerRegistry.pauseBot(botId);
     const manager = this.managers.get(botId);
+    let stopped = !manager;
     try {
-      if (manager) await manager.stop();
+      if (manager) {
+        await manager.stop();
+        stopped = true;
+      }
     } finally {
-      this.managers.delete(botId);
-      this.botTimerHandlers.delete(botId);
-      this.aiSelectionRuntimeDisposers.get(botId)?.();
-      this.aiSelectionRuntimeDisposers.delete(botId);
+      if (stopped) {
+        this.managers.delete(botId);
+        this.botTimerHandlers.delete(botId);
+        this.aiSelectionRuntimeDisposers.get(botId)?.();
+        this.aiSelectionRuntimeDisposers.delete(botId);
+      }
     }
   }
 

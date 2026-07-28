@@ -263,7 +263,7 @@ export interface ConversationCallbacks {
     chatId: number,
     limit: number,
     tokenBudget?: number,
-    options?: { excludeSourceKey?: string },
+    options?: { excludeSourceKey?: string; beforeId?: number },
   ): Promise<{
     summary: string | null;
     messages: Array<{
@@ -310,7 +310,7 @@ export interface ConversationCallbacks {
     userName?: string;
     sourceKey: string;
     meta?: Record<string, unknown>;
-  }): Promise<void>;
+  }): Promise<{ id: number } | void>;
   ensureCompression?(chatId: number): Promise<void>;
   triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;
@@ -484,6 +484,24 @@ export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
   richMessageEnabled: true,
   autoSplitThreshold: 0, // disabled by default
   splitDelayMs: 800,
+};
+
+export interface AiExecutionConfig {
+  /** Maximum number of AI replies that may execute concurrently across chats for one Bot. */
+  maxConcurrentReplies: number;
+  queueNotice: {
+    enabled: boolean;
+    /** Plain-text notice sent when an AI reply must wait for a scheduler slot. */
+    text: string;
+  };
+}
+
+export const DEFAULT_AI_EXECUTION_CONFIG: AiExecutionConfig = {
+  maxConcurrentReplies: 4,
+  queueNotice: {
+    enabled: true,
+    text: "助手正在忙哦，一会儿就来陪你哦～",
+  },
 };
 
 export function isStreamReplyMode(config?: MessageConfig): boolean {
@@ -685,6 +703,7 @@ export interface AiConfigStored {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  executionConfig?: AiExecutionConfig;
   /** @deprecated migrated into providers[0].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
@@ -911,6 +930,7 @@ export interface AiConfigPublic {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  executionConfig: AiExecutionConfig;
   /** @deprecated reflects providers[activeProviderId].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";

@@ -61,6 +61,10 @@ export const aiSettings = {
     saveErrorHttp: "Save failed (HTTP {{status}})",
     saveConflict:
       "The config changed elsewhere. Your draft did not overwrite it; refresh and review before saving again.",
+    saveApplyFailed:
+      "AI config was saved, but the Bot could not apply it. Saved values were reloaded. Check the Bot status, then save again to retry.",
+    saveApplyFailedRefreshError:
+      "AI config may have been saved, but the Bot could not apply it and the panel could not reload the latest version. Refresh the page before editing or saving again.",
     saveSuccess: "AI config saved",
     saveError: "Failed to save",
     saveConfigError: "Failed to save AI config",
@@ -103,6 +107,11 @@ export const aiSettings = {
     conversationContext: {
       title: "Conversation context",
       description: "Control history windows and context construction.",
+    },
+    execution: {
+      title: "Execution & queueing",
+      description: "Limit concurrent AI replies and configure the waiting notice.",
+      summary: "{{count}} concurrent replies",
     },
     messageDelivery: {
       title: "Message delivery",
@@ -334,6 +343,26 @@ export const aiSettings = {
       "0 = disabled. Recommended: 1500–2500. Max per chunk: 4096 (Telegram limit).",
     splitDelay: "Split Delay (ms)",
     splitDelayDescription: "Delay between split messages. Shows a typing indicator.",
+  },
+  execution: {
+    title: "Execution & queueing",
+    description:
+      "Only long-running AI replies and scheduled continuations use these slots. Commands bypass them; tools, sub-agents, and image generation keep their existing limits. Saving restarts a running Bot and cancels its active and queued replies.",
+    maxConcurrentReplies: "Concurrent AI replies",
+    maxConcurrentRepliesDescription:
+      "Maximum replies running across chats for this Bot (1–32). Replies in the same chat still run one at a time.",
+    queueNotice: "Queue notice",
+    queueNoticeDescription: "Send a waiting message when a reply cannot start immediately.",
+    queueNoticeText: "Waiting message",
+    queueNoticeTextDescription: "Sent as plain text and limited to 200 characters.",
+    validation: {
+      maxConcurrentReplies: "Enter a whole number from 1 to 32.",
+      queueNoticeText: {
+        required: "Enter a waiting message while queue notices are enabled.",
+        tooLong: "Keep the waiting message within 200 characters.",
+      },
+      fixErrors: "Fix the execution and queueing settings before saving.",
+    },
   },
   timeouts: {
     title: "Timeout Configuration",
