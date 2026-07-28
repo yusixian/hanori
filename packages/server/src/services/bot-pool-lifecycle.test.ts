@@ -82,8 +82,12 @@ function createPool(resumeBot = vi.fn(async () => 0)) {
     { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger,
     timerRegistry,
   );
+  const recoverPendingTurns = vi
+    .spyOn(pool.getConversationStore(), "recoverPendingTurns")
+    .mockResolvedValue(0);
   return {
     pool,
+    recoverPendingTurns,
     internals: pool as unknown as {
       managers: Map<string, IBotManager>;
       botTimerHandlers: Map<string, unknown>;
@@ -117,6 +121,24 @@ beforeEach(() => {
 });
 
 describe("BotPool failed runtime cleanup", () => {
+  it("recovers pending conversation turns before accepting Telegram updates", async () => {
+    managerMocks.factories.push((options) =>
+      fakeManager(options, (manager) => {
+        manager.start.mockImplementation(async () => {
+          manager.status = "running";
+        });
+      }),
+    );
+    const { pool, recoverPendingTurns } = createPool();
+
+    await expect(pool.startBot(BOT_ID)).resolves.toBeUndefined();
+
+    expect(recoverPendingTurns).toHaveBeenCalledWith(BOT_ID);
+    expect(recoverPendingTurns.mock.invocationCallOrder[0]).toBeLessThan(
+      managerMocks.created[0]!.start.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it("retains a manager whose start cleanup still cannot drain", async () => {
     const drainError = new Error("AI drain timed out");
     managerMocks.factories.push((options) =>

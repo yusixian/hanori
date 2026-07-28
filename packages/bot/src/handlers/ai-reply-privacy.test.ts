@@ -91,7 +91,7 @@ describe("AI reply group capture and privacy", () => {
       userId: 42,
       userName: "Tester",
       sourceKey: "telegram:7:user",
-      meta: { tgMessageId: 7, publicGroupHistory: true },
+      meta: { tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
     });
     expect(history.triggerCompression).toHaveBeenCalledWith(-100);
     expect(next).toHaveBeenCalled();
@@ -168,6 +168,7 @@ describe("AI reply group capture and privacy", () => {
 
     expect(history.getHistory).toHaveBeenCalledWith(-100, expect.any(Number), expect.any(Number), {
       excludeSourceKey: "telegram:7:user",
+      beforeTelegramMessageId: 7,
     });
     expect(history.upsertUserMessage).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -225,6 +226,7 @@ describe("AI reply group capture and privacy", () => {
 
     expect(history.getHistory).toHaveBeenCalledWith(-100, expect.any(Number), expect.any(Number), {
       excludeSourceKey: "telegram:7:user",
+      beforeTelegramMessageId: 7,
     });
     expect(history.getRecentUserMessagesAcrossChats).not.toHaveBeenCalled();
     expect(history.upsertUserMessage).toHaveBeenLastCalledWith(

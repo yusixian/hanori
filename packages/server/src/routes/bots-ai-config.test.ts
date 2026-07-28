@@ -318,11 +318,15 @@ describe("AI config GitHub coding provider contract", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody()),
       });
-      const responseBody = await response.text();
+      const responseBody = await response.json();
 
       expect(response.status).toBe(503);
-      expect(responseBody).toContain("AI 配置已保存，但 Bot 重启失败");
-      expect(responseBody).not.toContain("restart-secret-detail");
+      expect(responseBody).toMatchObject({
+        ok: false,
+        code: "saved_apply_failed",
+        error: "AI 配置已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
+      });
+      expect(JSON.stringify(responseBody)).not.toContain("restart-secret-detail");
       expect(invalidateGitHubCredentials).toHaveBeenCalledWith("bot-1");
       expect(restartBot).toHaveBeenCalledWith("bot-1");
       expect(errorSpy).toHaveBeenCalledWith("Bot restart after AI config save failed", {

@@ -512,8 +512,21 @@ export function BotAiSettingsPage() {
         },
       });
       if (!res.ok) {
-        const recovery = await recoverAiConfigAfterApplyFailure(res.status, () =>
-          loadConfig(false),
+        type SaveErrorResponse = {
+          code?: string;
+          error?: string | { issues?: Array<{ path: string[]; message: string }> };
+        };
+        const responseText = await res.text();
+        let errorJson: SaveErrorResponse | undefined;
+        try {
+          const parsed: unknown = JSON.parse(responseText);
+          if (parsed && typeof parsed === "object") errorJson = parsed as SaveErrorResponse;
+        } catch {
+          // The HTTP fallback below handles non-JSON responses.
+        }
+        const recovery = await recoverAiConfigAfterApplyFailure(
+          { status: res.status, code: errorJson?.code },
+          () => loadConfig(false),
         );
         if (recovery === "reloaded") {
           await loadGlobalSelection();
@@ -528,17 +541,13 @@ export function BotAiSettingsPage() {
           setMessage({ type: "error", text: t("page.saveConflict") });
           return;
         }
-        try {
-          const errorJson = JSON.parse(await res.text());
-          const detail = errorJson?.error?.issues
-            ? (errorJson.error.issues as Array<{ path: string[]; message: string }>)
-                .map(
-                  (i: { path: string[]; message: string }) => `${i.path.join(".")}: ${i.message}`,
-                )
-                .join("; ")
+        if (errorJson) {
+          const issues = typeof errorJson.error === "object" ? errorJson.error.issues : undefined;
+          const detail = issues
+            ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
             : JSON.stringify(errorJson);
           setMessage({ type: "error", text: t("page.saveErrorDetail", { detail }) });
-        } catch {
+        } else {
           setMessage({ type: "error", text: t("page.saveErrorHttp", { status: res.status }) });
         }
         return;

@@ -4,8 +4,11 @@ import {
   conversationSummaries,
   type Database,
 } from "@cos-tool-bot/database";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildConversationHistoryBoundary,
   COMPACTION_MAX_BATCH_JSON_CHARS,
   COMPACTION_MAX_BATCH_MESSAGES,
   ConversationStore,
@@ -14,6 +17,177 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe("buildConversationHistoryBoundary", () => {
+  it("bounds Telegram turns by message ID while retaining an ID fallback", () => {
+    const query = new PgDialect().sqlToQuery(buildConversationHistoryBoundary(102, 12) as SQL);
+
+    expect(query.sql).toContain("split_part");
+    expect(query.sql).toContain("source_key");
+    expect(query.sql).toContain('"id" <');
+    expect(query.params).toEqual([12, 102]);
+  });
+});
+
+describe("ConversationStore.getHistory", () => {
+  it("keeps queued Telegram turns in conversation order", async () => {
+    const rows = [
+      {
+        id: 101,
+        role: "user",
+        content: "A user",
+        userName: "A",
+        createdAt: new Date("2026-07-29T00:00:01.000Z"),
+        turnOrderId: 101,
+      },
+      {
+        id: 102,
+        role: "user",
+        content: "B user",
+        userName: "B",
+        createdAt: new Date("2026-07-29T00:00:02.000Z"),
+        turnOrderId: 102,
+      },
+      {
+        id: 104,
+        role: "assistant",
+        content: "A assistant",
+        userName: null,
+        createdAt: new Date("2026-07-29T00:00:04.000Z"),
+        turnOrderId: 101,
+      },
+      {
+        id: 105,
+        role: "assistant",
+        content: "B assistant",
+        userName: null,
+        createdAt: new Date("2026-07-29T00:00:05.000Z"),
+        turnOrderId: 102,
+      },
+    ];
+    const dialect = new PgDialect();
+    let selectedTable: unknown;
+    let orderSql = "";
+    const db = {
+      select: () => {
+        const query = {
+          from: (table: unknown) => {
+            selectedTable = table;
+            return query;
+          },
+          innerJoin: () => query,
+          where: () => query,
+          orderBy: (...expressions: SQL[]) => {
+            orderSql = expressions
+              .map((expression) => dialect.sqlToQuery(expression).sql)
+              .join(" ");
+            return query;
+          },
+          limit: async (limit: number) => {
+            if (selectedTable === conversationCompactionState) return [];
+            const usesTurnOrder = orderSql.includes("turnOrderId");
+            return [...rows]
+              .sort((left, right) => {
+                const leftOrder = usesTurnOrder ? left.turnOrderId : left.id;
+                const rightOrder = usesTurnOrder ? right.turnOrderId : right.id;
+                return rightOrder - leftOrder || right.id - left.id;
+              })
+              .slice(0, limit);
+          },
+        };
+        return query;
+      },
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    const history = await store.getHistory(baseParams.botId, baseParams.chatId, 20, undefined, {
+      beforeId: 103,
+      beforeTelegramMessageId: 13,
+    });
+
+    expect(history.messages.map((message) => message.content)).toEqual([
+      "A user",
+      "A assistant",
+      "B user",
+      "B assistant",
+    ]);
+    expect(orderSql).toContain("turnOrderId");
+  });
+
+  it("keeps both sides of a turn when token-budget history crosses a page boundary", async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => {
+      const userId = index + 101;
+      return [
+        {
+          id: userId,
+          role: "user",
+          content: `user ${index + 1}`,
+          userName: `User ${index + 1}`,
+          createdAt: new Date(1_700_000_000_000 + index),
+          historyOrderId: userId,
+        },
+        {
+          id: userId + 101,
+          role: "assistant",
+          content: `assistant ${index + 1}`,
+          userName: null,
+          createdAt: new Date(1_700_000_100_000 + index),
+          historyOrderId: userId,
+        },
+      ];
+    }).flat();
+    const newestFirst = [...rows].sort(
+      (left, right) => right.historyOrderId - left.historyOrderId || right.id - left.id,
+    );
+    const dialect = new PgDialect();
+    let selectedTable: unknown;
+    let historyReadCount = 0;
+    let whereSql = "";
+    const historyWhereSql: string[] = [];
+    const db = {
+      select: () => {
+        const query = {
+          from: (table: unknown) => {
+            selectedTable = table;
+            return query;
+          },
+          innerJoin: () => query,
+          where: (expression: SQL) => {
+            whereSql = dialect.sqlToQuery(expression).sql;
+            return query;
+          },
+          orderBy: () => query,
+          limit: async () => {
+            if (selectedTable === conversationCompactionState) return [];
+            historyReadCount++;
+            historyWhereSql.push(whereSql);
+            if (historyReadCount === 1) return newestFirst.slice(0, 200);
+            if (historyReadCount === 2 && whereSql.includes("turnOrderId")) {
+              return newestFirst.slice(200);
+            }
+            return [];
+          },
+        };
+        return query;
+      },
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    const history = await store.getHistory(baseParams.botId, baseParams.chatId, 20, 12_000, {
+      beforeId: 500,
+      beforeTelegramMessageId: 500,
+    });
+
+    expect(history.messages).toHaveLength(202);
+    expect(history.messages.slice(0, 4).map((message) => message.content)).toEqual([
+      "user 1",
+      "assistant 1",
+      "user 2",
+      "assistant 2",
+    ]);
+    expect(historyWhereSql[1]).toContain("turnOrderId");
+  });
 });
 
 describe("selectHistoryWithinTokenBudget", () => {
@@ -359,20 +533,107 @@ describe("ConversationStore.deleteMessage", () => {
   });
 });
 
+describe("ConversationStore.completeTurn", () => {
+  it("preserves source metadata while marking a pending turn complete", async () => {
+    const state = {
+      meta: { tgMessageId: 11, publicGroupHistory: true, turnState: "pending" },
+    };
+    const tx = {
+      select: () => {
+        const query = {
+          from: () => query,
+          where: () => query,
+          limit: () => query,
+          for: async () => [{ id: 101, meta: state.meta }],
+        };
+        return query;
+      },
+      update: () => ({
+        set: (values: { meta: typeof state.meta }) => ({
+          where: async () => {
+            state.meta = values.meta;
+          },
+        }),
+      }),
+    };
+    const db = {
+      transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    await expect(
+      store.completeTurn(baseParams.botId, baseParams.chatId, "telegram:11:user"),
+    ).resolves.toBe(true);
+
+    expect(state.meta).toEqual({
+      tgMessageId: 11,
+      publicGroupHistory: true,
+      turnState: "complete",
+    });
+  });
+
+  it("recovers every pending turn for a bot without replacing other metadata", async () => {
+    const dialect = new PgDialect();
+    let setSql = "";
+    let whereSql = "";
+    const db = {
+      update: (table: unknown) => {
+        expect(table).toBe(conversationMessages);
+        return {
+          set: (values: { meta: SQL }) => {
+            setSql = dialect.sqlToQuery(values.meta).sql;
+            return {
+              where: (condition: SQL) => {
+                whereSql = dialect.sqlToQuery(condition).sql;
+                return {
+                  returning: async () => [{ id: 101 }, { id: 104 }],
+                };
+              },
+            };
+          },
+        };
+      },
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    await expect(store.recoverPendingTurns(baseParams.botId)).resolves.toBe(2);
+
+    expect(setSql).toContain("jsonb_set");
+    expect(setSql).toContain("turnState");
+    expect(whereSql).toContain("bot_id");
+    expect(whereSql).toContain("turnState");
+  });
+});
+
 function createCandidateDb(
-  messages: Array<{ id: number; role: string; content: string; userName: string | null }>,
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    userName: string | null;
+    historyOrderId?: number;
+    turnState?: "pending" | "complete";
+  }>,
 ) {
-  const state = { cursorId: 0, boundaryId: 0, selectCall: 0 };
+  const state: {
+    cursorId: number;
+    retainedOrderId?: number;
+    pendingOrderId?: number;
+  } = { cursorId: 0 };
+  const dialect = new PgDialect();
+  const orderId = (message: (typeof messages)[number]) => message.historyOrderId ?? message.id;
   const db = {
-    select: () => {
-      state.selectCall += 1;
-      const callType = (state.selectCall - 1) % 3;
+    select: (selection: Record<string, unknown>) => {
       let limit = Number.POSITIVE_INFINITY;
       let offset = 0;
+      let whereSql = "";
       const query = {
         from: () => query,
         innerJoin: () => query,
-        where: () => query,
+        where: (expression: SQL) => {
+          whereSql = dialect.sqlToQuery(expression).sql;
+          return query;
+        },
         orderBy: () => query,
         limit: (value: number) => {
           limit = value;
@@ -388,23 +649,44 @@ function createCandidateDb(
           onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
         ): PromiseLike<TResult1 | TResult2> => {
           let rows: unknown[];
-          if (callType === 0) {
+          if ("summaryId" in selection) {
+            state.retainedOrderId = undefined;
+            state.pendingOrderId = undefined;
             rows =
               state.cursorId === 0
                 ? []
                 : [{ summaryId: 7, cursorId: state.cursorId, content: "Prior summary" }];
-          } else if (callType === 1) {
-            const activeRows = messages
-              .filter((message) => message.id > state.cursorId)
-              .sort((a, b) => b.id - a.id);
-            const boundary = activeRows[offset];
-            state.boundaryId = boundary?.id ?? 0;
-            rows = boundary ? [{ id: boundary.id }] : [];
-          } else {
+          } else if ("content" in selection) {
+            const upperOrderId =
+              state.retainedOrderId === undefined
+                ? state.pendingOrderId
+                : state.pendingOrderId === undefined
+                  ? state.retainedOrderId
+                  : Math.min(state.retainedOrderId, state.pendingOrderId);
             rows = messages
-              .filter((message) => message.id > state.cursorId && message.id <= state.boundaryId)
-              .sort((a, b) => a.id - b.id)
+              .filter(
+                (message) =>
+                  orderId(message) > state.cursorId &&
+                  (upperOrderId === undefined || orderId(message) < upperOrderId),
+              )
+              .sort((left, right) => orderId(left) - orderId(right) || left.id - right.id)
+              .map((message) => ({ ...message, historyOrderId: orderId(message) }))
               .slice(0, limit);
+          } else if (whereSql.includes("turnState")) {
+            const pending = messages
+              .filter(
+                (message) => orderId(message) > state.cursorId && message.turnState === "pending",
+              )
+              .sort((left, right) => orderId(left) - orderId(right) || left.id - right.id)[0];
+            state.pendingOrderId = pending === undefined ? undefined : orderId(pending);
+            rows = pending ? [{ historyOrderId: orderId(pending) }] : [];
+          } else {
+            const activeRows = messages
+              .filter((message) => orderId(message) > state.cursorId)
+              .sort((left, right) => orderId(right) - orderId(left) || right.id - left.id);
+            const retained = activeRows[offset];
+            state.retainedOrderId = retained === undefined ? undefined : orderId(retained);
+            rows = retained ? [{ historyOrderId: orderId(retained) }] : [];
           }
           return Promise.resolve(rows).then(onfulfilled, onrejected);
         },
@@ -467,6 +749,61 @@ describe("ConversationStore.getCompactionCandidate", () => {
     expect(candidate?.newCursorId).toBe(1);
     expect(candidate?.messages[0]?.content.length).toBeLessThan(COMPACTION_MAX_BATCH_JSON_CHARS);
     expect(candidate?.messages[0]?.content).toContain("truncated for compaction");
+  });
+
+  it("keeps recent complete turns while compacting older interleaved source rows", async () => {
+    const { db } = createCandidateDb([
+      { id: 1, role: "user", content: "user-a", userName: "Alice", historyOrderId: 1 },
+      { id: 2, role: "user", content: "user-b", userName: "Bob", historyOrderId: 2 },
+      { id: 3, role: "assistant", content: "assistant-a", userName: null, historyOrderId: 1 },
+      { id: 4, role: "assistant", content: "assistant-b", userName: null, historyOrderId: 2 },
+    ]);
+    const store = new ConversationStore(db);
+
+    const candidate = await store.getCompactionCandidate(baseParams.botId, baseParams.chatId, 2);
+
+    expect(candidate?.messages.map((message) => message.content)).toEqual([
+      "user-a",
+      "assistant-a",
+    ]);
+    expect(candidate?.sourceMessageIds).toEqual([1, 3]);
+    expect(candidate?.newCursorId).toBe(1);
+  });
+
+  it("does not advance compaction across a pending reply turn", async () => {
+    const { db } = createCandidateDb([
+      {
+        id: 1,
+        role: "user",
+        content: "complete-a",
+        userName: "Alice",
+        historyOrderId: 1,
+        turnState: "complete",
+      },
+      {
+        id: 2,
+        role: "user",
+        content: "pending-b",
+        userName: "Bob",
+        historyOrderId: 2,
+        turnState: "pending",
+      },
+      {
+        id: 3,
+        role: "user",
+        content: "complete-c",
+        userName: "Carol",
+        historyOrderId: 3,
+        turnState: "complete",
+      },
+    ]);
+    const store = new ConversationStore(db);
+
+    const candidate = await store.getCompactionCandidate(baseParams.botId, baseParams.chatId, 0);
+
+    expect(candidate?.messages.map((message) => message.content)).toEqual(["complete-a"]);
+    expect(candidate?.sourceMessageIds).toEqual([1]);
+    expect(candidate?.newCursorId).toBe(1);
   });
 });
 

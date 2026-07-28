@@ -4,6 +4,7 @@ import type { ConversationCallbacks } from "@cos-tool-bot/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WrapperContext, type BotContext } from "../context.js";
 import { AiRunCancelledError } from "../services/ai-execution-coordinator.js";
+import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
 
 const { streamTextMock } = vi.hoisted(() => ({ streamTextMock: vi.fn() }));
@@ -22,8 +23,8 @@ beforeEach(() => {
   streamTextMock.mockReset();
 });
 
-afterEach(() => {
-  for (const runtime of runtimes.splice(0)) runtime.destroy();
+afterEach(async () => {
+  await Promise.allSettled(runtimes.splice(0).map((runtime) => runtime.destroy()));
 });
 
 function deferred<T>() {
@@ -200,7 +201,170 @@ describe("AI reply queue delivery", () => {
     expect(getHistory.mock.calls[0]?.[3]).toEqual({
       excludeSourceKey: "telegram:11:user",
       beforeId: 101,
+      beforeTelegramMessageId: 11,
     });
+  });
+
+  it("links every persisted group turn row to its ingress user row", async () => {
+    streamTextMock.mockImplementationOnce(() => streamResult(Promise.resolve("# Final")));
+    const { api } = createApi();
+    const addMessages = vi.fn().mockResolvedValue([]);
+    const completeTurn = vi.fn().mockResolvedValue(undefined);
+    const conversation: ConversationCallbacks = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages,
+      upsertUserMessage: vi.fn().mockResolvedValue({ id: 101 }),
+      completeTurn,
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
+
+    await vi.waitFor(() => expect(addMessages).toHaveBeenCalledOnce());
+    const persisted = addMessages.mock.calls[0]?.[0] as Array<{
+      role: string;
+      meta?: Record<string, unknown>;
+    }>;
+    expect(persisted).not.toHaveLength(0);
+    expect(persisted.every((message) => message.meta?.["turnOrderId"] === 101)).toBe(true);
+    await vi.waitFor(() => expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user"));
+  });
+
+  it("finalizes group persistence even when the ingress callback returns no row id", async () => {
+    streamTextMock.mockImplementationOnce(() => streamResult(Promise.resolve("# Final")));
+    const { api } = createApi();
+    const completeTurn = vi.fn().mockResolvedValue(undefined);
+    const triggerCompression = vi.fn().mockResolvedValue(undefined);
+    const conversation: ConversationCallbacks = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages: vi.fn().mockResolvedValue(undefined),
+      upsertUserMessage: vi.fn().mockResolvedValue(undefined),
+      completeTurn,
+      triggerCompression,
+      clearHistory: vi.fn(),
+    };
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
+
+    await vi.waitFor(() => expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user"));
+    expect(triggerCompression).toHaveBeenCalledWith(CHAT_ID);
+  });
+
+  it("retries transient failures while finalizing group persistence", async () => {
+    streamTextMock.mockImplementationOnce(() => streamResult(Promise.resolve("# Final")));
+    const { api } = createApi();
+    const completeTurn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("temporary database failure"))
+      .mockRejectedValueOnce(new Error("temporary database failure"))
+      .mockResolvedValue(undefined);
+    const triggerCompression = vi.fn().mockResolvedValue(undefined);
+    const conversation: ConversationCallbacks = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages: vi.fn().mockResolvedValue(undefined),
+      upsertUserMessage: vi.fn().mockResolvedValue({ id: 101 }),
+      completeTurn,
+      triggerCompression,
+      clearHistory: vi.fn(),
+    };
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
+
+    await vi.waitFor(() => expect(completeTurn).toHaveBeenCalledTimes(3));
+    expect(triggerCompression).toHaveBeenCalledWith(CHAT_ID);
+  });
+
+  it("releases ingress while a queued notice is still being sent", async () => {
+    const firstReply = deferred<string>();
+    const noticeStarted = deferred<void>();
+    const finishNotice = deferred<void>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(firstReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Queued final")));
+    const { api, sendMessage } = createApi();
+    sendMessage.mockImplementationOnce(async (_chatId, text) => {
+      noticeStarted.resolve(undefined);
+      await finishNotice.promise;
+      return sentMessage(202, text);
+    });
+    const ingressLock = new AiIngressLock();
+    const runtime = createAiReplyHandler(createConfig(true), { ingressLock });
+    runtimes.push(runtime);
+    const activeContext = createContext(api, 1, 11, "sample active");
+    const queuedContext = createContext(api, 2, 12, "sample queued");
+
+    await ingressLock.runAdmittedMessage(activeContext, CHAT_ID, USER_ID, async () => {
+      await runtime.handler(activeContext, vi.fn());
+    });
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+    const queuedAdmission = ingressLock.runAdmittedMessage(
+      queuedContext,
+      CHAT_ID,
+      USER_ID,
+      async () => {
+        await runtime.handler(queuedContext, vi.fn());
+      },
+    );
+    await noticeStarted.promise;
+
+    const mutation = vi.fn();
+    const chatMutation = ingressLock.runChatMutation(CHAT_ID, async () => mutation());
+    try {
+      await vi.waitFor(() => expect(mutation).toHaveBeenCalledOnce());
+    } finally {
+      finishNotice.resolve(undefined);
+      firstReply.resolve("# Active final");
+      await Promise.allSettled([queuedAdmission, chatMutation]);
+    }
+  });
+
+  it("starts a queued model turn without waiting for its slow queue notice", async () => {
+    const firstReply = deferred<string>();
+    const noticeStarted = deferred<void>();
+    const finishNotice = deferred<void>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(firstReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Queued final")));
+    const { api, sendMessage } = createApi();
+    sendMessage.mockImplementationOnce(async (_chatId, text) => {
+      noticeStarted.resolve(undefined);
+      await finishNotice.promise;
+      return sentMessage(202, text);
+    });
+    const config = createConfig(true);
+    config.executionConfig!.maxConcurrentReplies = 1;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+      await runtime.handler(createContext(api, 2, 12, "sample queued"), vi.fn());
+      await noticeStarted.promise;
+
+      firstReply.resolve("# Active final");
+
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(2));
+    } finally {
+      firstReply.resolve("# Active final");
+      finishNotice.resolve(undefined);
+    }
   });
 
   it("detaches a long active turn, queues the next turn, and edits its notice in place", async () => {
@@ -355,6 +519,148 @@ describe("AI reply queue delivery", () => {
         expect.objectContaining({ message: "AI disabled mid-reply, dropping pending sends" }),
       ),
     );
+  });
+
+  it("drains a delayed queue notice and its cancellation cleanup before destroy resolves", async () => {
+    const activeReply = deferred<string>();
+    const noticeStarted = deferred<void>();
+    const finishNotice = deferred<void>();
+    streamTextMock.mockImplementationOnce(() => streamResult(activeReply.promise));
+    const { api, sendMessage, deleteMessages } = createApi();
+    sendMessage.mockImplementationOnce(async (_chatId, text) => {
+      noticeStarted.resolve(undefined);
+      await finishNotice.promise;
+      return sentMessage(202, text);
+    });
+    const runtime = createAiReplyHandler(createConfig(true));
+    runtimes.push(runtime);
+    let destroyPromise: Promise<void> | undefined;
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+      await runtime.handler(createContext(api, 2, 12, "sample queued"), vi.fn());
+      await noticeStarted.promise;
+
+      destroyPromise = runtime.destroy();
+      let destroySettled = false;
+      void destroyPromise.then(() => {
+        destroySettled = true;
+      });
+      activeReply.resolve("# Cancelled active final");
+      await vi.waitFor(() => expect(runtime.state.getAiExecutionStats().tracked).toBe(0));
+
+      expect(destroySettled).toBe(false);
+      expect(deleteMessages).not.toHaveBeenCalled();
+
+      finishNotice.resolve(undefined);
+      await destroyPromise;
+
+      expect(deleteMessages).toHaveBeenCalledWith(CHAT_ID, [202], undefined);
+    } finally {
+      activeReply.resolve("# Cancelled active final");
+      finishNotice.resolve(undefined);
+      if (destroyPromise) await Promise.allSettled([destroyPromise]);
+    }
+  });
+
+  it.each([
+    ["Chat", (runtime: ReturnType<typeof createAiReplyHandler>) => runtime.cancelChatRuns(CHAT_ID)],
+    ["User", (runtime: ReturnType<typeof createAiReplyHandler>) => runtime.cancelUserRuns(USER_ID)],
+  ])(
+    "drains a delayed queue notice before a scoped %s cancellation resolves",
+    async (_scope, cancel) => {
+      const activeReply = deferred<string>();
+      const noticeStarted = deferred<void>();
+      const finishNotice = deferred<void>();
+      streamTextMock.mockImplementationOnce(() => streamResult(activeReply.promise));
+      const { api, sendMessage, deleteMessages } = createApi();
+      sendMessage.mockImplementationOnce(async (_chatId, text) => {
+        noticeStarted.resolve(undefined);
+        await finishNotice.promise;
+        return sentMessage(202, text);
+      });
+      const config = createConfig(true);
+      config.executionConfig!.maxConcurrentReplies = 1;
+      const runtime = createAiReplyHandler(config);
+      runtimes.push(runtime);
+      let cancelPromise: Promise<number> | undefined;
+
+      try {
+        await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+        await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+        await runtime.handler(createContext(api, 2, 12, "sample queued"), vi.fn());
+        await noticeStarted.promise;
+
+        let cancelSettled = false;
+        cancelPromise = cancel(runtime);
+        void cancelPromise.then(() => {
+          cancelSettled = true;
+        });
+        activeReply.resolve("# Cancelled active final");
+        await vi.waitFor(() => expect(runtime.state.getAiExecutionStats().tracked).toBe(0));
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+        expect(cancelSettled).toBe(false);
+        expect(deleteMessages).not.toHaveBeenCalled();
+
+        finishNotice.resolve(undefined);
+        await cancelPromise;
+
+        expect(deleteMessages).toHaveBeenCalledWith(CHAT_ID, [202], undefined);
+      } finally {
+        activeReply.resolve("# Cancelled active final");
+        finishNotice.resolve(undefined);
+        if (cancelPromise) await Promise.allSettled([cancelPromise]);
+      }
+    },
+  );
+
+  it("drains a delayed queue-full reply before destroy resolves", async () => {
+    const activeReply = deferred<string>();
+    const busyReplyStarted = deferred<void>();
+    const finishBusyReply = deferred<void>();
+    streamTextMock.mockImplementationOnce(() => streamResult(activeReply.promise));
+    const { api, sendMessage } = createApi();
+    sendMessage.mockImplementationOnce(async (_chatId, text) => {
+      busyReplyStarted.resolve(undefined);
+      await finishBusyReply.promise;
+      return sentMessage(202, text);
+    });
+    const config = createConfig(false);
+    config.executionConfig!.maxConcurrentReplies = 1;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+    let destroyPromise: Promise<void> | undefined;
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+      for (let index = 0; index <= 100; index++) {
+        await runtime.handler(
+          createContext(api, index + 2, index + 12, `sample queued ${index}`),
+          vi.fn(),
+        );
+      }
+      await busyReplyStarted.promise;
+
+      destroyPromise = runtime.destroy();
+      let destroySettled = false;
+      void destroyPromise.then(() => {
+        destroySettled = true;
+      });
+      activeReply.resolve("# Cancelled active final");
+      await vi.waitFor(() => expect(runtime.state.getAiExecutionStats().tracked).toBe(0));
+
+      expect(destroySettled).toBe(false);
+
+      finishBusyReply.resolve(undefined);
+      await destroyPromise;
+    } finally {
+      activeReply.resolve("# Cancelled active final");
+      finishBusyReply.resolve(undefined);
+      if (destroyPromise) await Promise.allSettled([destroyPromise]);
+    }
   });
 
   it("clears cached group context with Chat-scoped cancellation", async () => {

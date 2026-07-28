@@ -1495,9 +1495,15 @@ export function botsRoutes(
           await chatAiSelectionService.reconcileCatalog(botId);
         } catch (error) {
           console.error("AI selection reconciliation after catalog save failed", { botId, error });
-          throw new HTTPException(503, {
-            message: "AI 配置已保存，但当前 Provider / Model 同步失败。请重试运行选择同步",
-          });
+          return c.json(
+            {
+              ok: false as const,
+              code: "saved_apply_failed" as const,
+              error: "AI 配置已保存，但当前 Provider / Model 同步失败。请重试运行选择同步",
+              revision: saveResult.revision,
+            },
+            503,
+          );
         }
       }
 
@@ -1508,9 +1514,15 @@ export function botsRoutes(
           await botPool.restartBot(botId);
         } catch (error) {
           console.error("Bot restart after AI config save failed", { botId, error });
-          throw new HTTPException(503, {
-            message: "AI 配置已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
-          });
+          return c.json(
+            {
+              ok: false as const,
+              code: "saved_apply_failed" as const,
+              error: "AI 配置已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
+              revision: saveResult.revision,
+            },
+            503,
+          );
         }
       }
 

@@ -230,12 +230,14 @@ describe("prompt bundle", () => {
         groupHistoryMaxTokens: 12_000,
         historyExcludeSourceKey: "telegram:7:user",
         historyBeforeId: 41,
+        historyBeforeTelegramMessageId: 7,
       }),
     );
 
     expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
       excludeSourceKey: "telegram:7:user",
       beforeId: 41,
+      beforeTelegramMessageId: 7,
     });
   });
 

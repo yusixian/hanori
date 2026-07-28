@@ -525,6 +525,13 @@ export class BotPool {
         "Encryption key mismatch: cannot decrypt bot token. Please update the token in bot settings.",
       );
     }
+    const recoveredPendingTurns = await this.conversationStore.recoverPendingTurns(botId);
+    if (recoveredPendingTurns > 0) {
+      this.logger.warn(
+        { botId, recoveredPendingTurns },
+        "Recovered incomplete conversation turns before bot startup",
+      );
+    }
     const dbLogger = new DbLogger(this.db, this.logger, botId);
     let miniAppUrl: string | undefined;
     if (bot.miniAppEnabled) {
@@ -785,6 +792,9 @@ export class BotPool {
               });
           }
           return persisted ? { id: persisted.id } : undefined;
+        },
+        completeTurn: async (chatId, sourceKey) => {
+          await store.completeTurn(botId, chatId, sourceKey);
         },
         ensureCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);

@@ -159,23 +159,39 @@ test("keeps a managed provider selected when it was already persisted", () => {
 test("reloads authoritative config after a saved config could not be applied", async () => {
   const reload = vi.fn().mockResolvedValue(true);
 
-  await expect(recoverAiConfigAfterApplyFailure(503, reload)).resolves.toBe("reloaded");
+  await expect(
+    recoverAiConfigAfterApplyFailure({ status: 503, code: "saved_apply_failed" }, reload),
+  ).resolves.toBe("reloaded");
   expect(reload).toHaveBeenCalledOnce();
 });
 
 test("does not reload config for ordinary save failures", async () => {
   const reload = vi.fn().mockResolvedValue(true);
 
-  await expect(recoverAiConfigAfterApplyFailure(409, reload)).resolves.toBe("not-applicable");
+  await expect(recoverAiConfigAfterApplyFailure({ status: 409 }, reload)).resolves.toBe(
+    "not-applicable",
+  );
+  expect(reload).not.toHaveBeenCalled();
+});
+
+test("does not reload config for an unclassified 503 response", async () => {
+  const reload = vi.fn().mockResolvedValue(true);
+
+  await expect(recoverAiConfigAfterApplyFailure({ status: 503 }, reload)).resolves.toBe(
+    "not-applicable",
+  );
   expect(reload).not.toHaveBeenCalled();
 });
 
 test("reports when authoritative config cannot be reloaded", async () => {
-  await expect(recoverAiConfigAfterApplyFailure(503, async () => false)).resolves.toBe(
-    "reload-failed",
-  );
   await expect(
-    recoverAiConfigAfterApplyFailure(503, async () => {
+    recoverAiConfigAfterApplyFailure(
+      { status: 503, code: "saved_apply_failed" },
+      async () => false,
+    ),
+  ).resolves.toBe("reload-failed");
+  await expect(
+    recoverAiConfigAfterApplyFailure({ status: 503, code: "saved_apply_failed" }, async () => {
       throw new Error("network unavailable");
     }),
   ).resolves.toBe("reload-failed");

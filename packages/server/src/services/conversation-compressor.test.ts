@@ -27,6 +27,7 @@ function createStore(overrides: Partial<ConversationStore> = {}) {
         { id: 11, role: "user", content: "Keep this fact", userName: "Alice" },
         { id: 12, role: "tool_result", content: "Tool output", userName: null },
       ],
+      sourceMessageIds: [11, 12],
       newCursorId: 12,
     }),
     commitCompaction: vi.fn().mockResolvedValue(true),

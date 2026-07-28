@@ -69,6 +69,7 @@ export interface CompactionCandidate {
     content: string;
     userName: string | null;
   }>;
+  sourceMessageIds: number[];
   newCursorId: number;
 }
 
@@ -79,6 +80,31 @@ export interface HistoryLimitResult {
   warningThreshold: number;
   prunedCount: number;
   warning: boolean;
+}
+
+export function conversationMessageOrderId() {
+  return sql<number>`case
+    when ${conversationMessages.meta}->>'turnOrderId' ~ '^[1-9][0-9]*$'
+      then (${conversationMessages.meta}->>'turnOrderId')::integer
+    else ${conversationMessages.id}
+  end`;
+}
+
+function orderConversationMessagesByTurn<T extends { id: number; historyOrderId?: number }>(
+  messages: readonly T[],
+): T[] {
+  return [...messages].sort(
+    (left, right) =>
+      (left.historyOrderId ?? left.id) - (right.historyOrderId ?? right.id) || left.id - right.id,
+  );
+}
+
+function storedMessageOrderId(
+  id: number,
+  meta: Record<string, unknown> | null | undefined,
+): number {
+  const value = meta?.["turnOrderId"];
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : id;
 }
 
 function truncateCompactionContent(content: string, maxChars: number): string {
@@ -125,6 +151,23 @@ function normalizeConversationMessage(
   };
 }
 
+export function buildConversationHistoryBoundary(
+  beforeId: number | undefined,
+  beforeTelegramMessageId: number | undefined,
+) {
+  if (beforeTelegramMessageId === undefined) {
+    return beforeId === undefined ? undefined : lt(conversationMessages.id, beforeId);
+  }
+
+  const fallback =
+    beforeId === undefined ? sql<boolean>`true` : lt(conversationMessages.id, beforeId);
+  return sql<boolean>`case
+    when ${conversationMessages.sourceKey} ~ '^telegram:[0-9]+:'
+      then split_part(${conversationMessages.sourceKey}, ':', 2)::bigint < ${beforeTelegramMessageId}
+    else ${fallback}
+  end`;
+}
+
 function estimateHistoryMessageTokens(message: {
   role: string;
   content: string;
@@ -158,6 +201,7 @@ export function selectHistoryWithinTokenBudget(
     content: string;
     userName: string | null;
     createdAt: Date;
+    historyOrderId?: number;
   }>,
   active:
     | {
@@ -201,7 +245,9 @@ export function selectHistoryWithinTokenBudget(
   const summary = active?.content ? truncateToTokenBudget(active.content, summaryLimit) : null;
   const summaryTokens = summary ? countTokens(summary) : 0;
   const tailBudget = Math.max(0, configuredTokens - summaryTokens);
-  const tailCandidates = active ? rows.filter((message) => message.id > active.cursorId) : rows;
+  const tailCandidates = active
+    ? rows.filter((message) => (message.historyOrderId ?? message.id) > active.cursorId)
+    : rows;
   const reversed: typeof rows = [];
   let tailTokens = 0;
   for (let index = tailCandidates.length - 1; index >= 0; index--) {
@@ -313,14 +359,67 @@ export class ConversationStore {
     return row ?? null;
   }
 
+  async completeTurn(botId: string, chatId: number, sourceKey: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ id: conversationMessages.id, meta: conversationMessages.meta })
+        .from(conversationMessages)
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            eq(conversationMessages.chatId, chatId),
+            eq(conversationMessages.sourceKey, sourceKey),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      if (!row) return false;
+      if (row.meta?.["turnState"] === "complete") return true;
+      await tx
+        .update(conversationMessages)
+        .set({ meta: { ...row.meta, turnState: "complete" } })
+        .where(eq(conversationMessages.id, row.id));
+      return true;
+    });
+  }
+
+  async recoverPendingTurns(botId: string): Promise<number> {
+    const recovered = await this.db
+      .update(conversationMessages)
+      .set({
+        meta: sql<Record<string, unknown>>`jsonb_set(
+          coalesce(${conversationMessages.meta}::jsonb, '{}'::jsonb),
+          '{turnState}',
+          '"complete"'::jsonb,
+          true
+        )::json`,
+      })
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          sql`${conversationMessages.meta}->>'turnState' = 'pending'`,
+        ),
+      )
+      .returning({ id: conversationMessages.id });
+    return recovered.length;
+  }
+
   async getHistory(
     botId: string,
     chatId: number,
     limit: number,
     tokenBudget?: number,
-    options?: { excludeSourceKey?: string; beforeId?: number },
+    options?: {
+      excludeSourceKey?: string;
+      beforeId?: number;
+      beforeTelegramMessageId?: number;
+    },
   ) {
     const historyBeforeId = options?.beforeId;
+    const historyBoundary = buildConversationHistoryBoundary(
+      historyBeforeId,
+      options?.beforeTelegramMessageId,
+    );
     const activeCompaction = await this.getActiveCompaction(botId, chatId);
     const active =
       historyBeforeId === undefined || (activeCompaction?.cursorId ?? 0) < historyBeforeId
@@ -328,6 +427,7 @@ export class ConversationStore {
         : undefined;
     const cursorId = active?.cursorId ?? 0;
     const excludeSourceKey = options?.excludeSourceKey;
+    const historyOrderId = conversationMessageOrderId();
 
     if (tokenBudget !== undefined) {
       const newestFirst: Array<{
@@ -336,8 +436,10 @@ export class ConversationStore {
         content: string;
         userName: string | null;
         createdAt: Date;
+        historyOrderId: number;
       }> = [];
-      let beforeId: number | undefined;
+      let pageBeforeOrderId: number | undefined;
+      let pageBeforeId: number | undefined;
       let scannedTokens = 0;
       let scannedAllHistory = false;
       while (scannedTokens <= tokenBudget) {
@@ -354,10 +456,15 @@ export class ConversationStore {
             )!,
           );
         }
-        if (historyBeforeId !== undefined) {
-          conditions.push(lt(conversationMessages.id, historyBeforeId));
+        if (historyBoundary) conditions.push(historyBoundary);
+        if (pageBeforeOrderId !== undefined && pageBeforeId !== undefined) {
+          conditions.push(
+            or(
+              lt(historyOrderId, pageBeforeOrderId),
+              and(eq(historyOrderId, pageBeforeOrderId), lt(conversationMessages.id, pageBeforeId)),
+            )!,
+          );
         }
-        if (beforeId !== undefined) conditions.push(lt(conversationMessages.id, beforeId));
         const batch = await this.db
           .select({
             id: conversationMessages.id,
@@ -365,10 +472,11 @@ export class ConversationStore {
             content: conversationMessages.content,
             userName: conversationMessages.userName,
             createdAt: conversationMessages.createdAt,
+            historyOrderId,
           })
           .from(conversationMessages)
           .where(and(...conditions))
-          .orderBy(desc(conversationMessages.id))
+          .orderBy(desc(historyOrderId), desc(conversationMessages.id))
           .limit(HISTORY_PROMPT_SCAN_BATCH_SIZE);
         if (batch.length === 0) {
           scannedAllHistory = true;
@@ -383,11 +491,14 @@ export class ConversationStore {
           scannedAllHistory = true;
           break;
         }
-        beforeId = batch.at(-1)!.id;
+        pageBeforeOrderId = batch.at(-1)!.historyOrderId;
+        pageBeforeId = batch.at(-1)!.id;
       }
       const rows = newestFirst.reverse();
       const scannedThroughActiveCursor =
-        !active || scannedAllHistory || rows.some((message) => message.id <= active.cursorId);
+        !active ||
+        scannedAllHistory ||
+        rows.some((message) => message.historyOrderId <= active.cursorId);
       const selected = selectHistoryWithinTokenBudget(
         rows,
         active
@@ -403,7 +514,10 @@ export class ConversationStore {
       return {
         summary: selected.summary,
         messages: selected.messages.map((message) => ({
-          ...message,
+          id: message.id,
+          role: message.role,
+          content: message.content,
+          userName: message.userName,
           createdAt: message.createdAt.toISOString(),
         })),
         budgetTrace: selected.trace,
@@ -417,15 +531,16 @@ export class ConversationStore {
         content: conversationMessages.content,
         userName: conversationMessages.userName,
         createdAt: conversationMessages.createdAt,
+        historyOrderId,
       })
       .from(conversationMessages)
       .where(
         and(
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
-          gt(conversationMessages.id, cursorId),
+          gt(historyOrderId, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
-          historyBeforeId === undefined ? undefined : lt(conversationMessages.id, historyBeforeId),
+          historyBoundary,
           excludeSourceKey
             ? or(
                 isNull(conversationMessages.sourceKey),
@@ -434,13 +549,16 @@ export class ConversationStore {
             : undefined,
         ),
       )
-      .orderBy(desc(conversationMessages.id))
+      .orderBy(desc(historyOrderId), desc(conversationMessages.id))
       .limit(limit);
 
     return {
       summary: active?.content ?? null,
       messages: messages.reverse().map((message) => ({
-        ...message,
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        userName: message.userName,
         createdAt: message.createdAt.toISOString(),
       })),
     };
@@ -521,6 +639,7 @@ export class ConversationStore {
 
   async getUncompactedMessageCount(botId: string, chatId: number): Promise<number> {
     const active = await this.getActiveCompaction(botId, chatId);
+    const historyOrderId = conversationMessageOrderId();
     const [result] = await this.db
       .select({ total: count() })
       .from(conversationMessages)
@@ -528,7 +647,7 @@ export class ConversationStore {
         and(
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
-          gt(conversationMessages.id, active?.cursorId ?? 0),
+          gt(historyOrderId, active?.cursorId ?? 0),
         ),
       );
     return Number(result?.total ?? 0);
@@ -541,22 +660,45 @@ export class ConversationStore {
   ): Promise<CompactionCandidate | null> {
     const active = await this.getActiveCompaction(botId, chatId);
     const oldCursorId = active?.cursorId ?? 0;
-    const cutoff = await this.db
-      .select({ id: conversationMessages.id })
+    const historyOrderId = conversationMessageOrderId();
+    let retainedOrderId: number | undefined;
+    if (keepRecent > 0) {
+      const retained = await this.db
+        .select({ historyOrderId })
+        .from(conversationMessages)
+        .where(
+          and(
+            eq(conversationMessages.botId, botId),
+            eq(conversationMessages.chatId, chatId),
+            gt(historyOrderId, oldCursorId),
+          ),
+        )
+        .orderBy(desc(historyOrderId), desc(conversationMessages.id))
+        .limit(1)
+        .offset(keepRecent - 1);
+      if (retained.length === 0) return null;
+      retainedOrderId = retained[0]!.historyOrderId;
+    }
+
+    const [pending] = await this.db
+      .select({ historyOrderId })
       .from(conversationMessages)
       .where(
         and(
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
-          gt(conversationMessages.id, oldCursorId),
+          gt(historyOrderId, oldCursorId),
+          sql`${conversationMessages.meta}->>'turnState' = 'pending'`,
         ),
       )
-      .orderBy(desc(conversationMessages.id))
-      .limit(1)
-      .offset(Math.max(0, keepRecent));
-
-    if (cutoff.length === 0) return null;
-    const newCursorId = cutoff[0]!.id;
+      .orderBy(asc(historyOrderId), asc(conversationMessages.id))
+      .limit(1);
+    const upperOrderId =
+      retainedOrderId === undefined
+        ? pending?.historyOrderId
+        : pending === undefined
+          ? retainedOrderId
+          : Math.min(retainedOrderId, pending.historyOrderId);
 
     const messages = await this.db
       .select({
@@ -570,51 +712,99 @@ export class ConversationStore {
           else ${conversationMessages.content}
         end`,
         userName: conversationMessages.userName,
+        historyOrderId,
       })
       .from(conversationMessages)
       .where(
         and(
           eq(conversationMessages.botId, botId),
           eq(conversationMessages.chatId, chatId),
-          gt(conversationMessages.id, oldCursorId),
-          lte(conversationMessages.id, newCursorId),
+          gt(historyOrderId, oldCursorId),
+          upperOrderId === undefined ? undefined : lt(historyOrderId, upperOrderId),
         ),
       )
-      .orderBy(asc(conversationMessages.id))
-      .limit(COMPACTION_MAX_BATCH_MESSAGES);
+      .orderBy(asc(historyOrderId), asc(conversationMessages.id))
+      .limit(COMPACTION_MAX_BATCH_MESSAGES + 1);
 
     if (messages.length === 0) return null;
-    const batch: CompactionCandidate["messages"] = [];
-    let jsonChars = 0;
-    for (const message of messages) {
-      const jsonOverhead =
-        JSON.stringify({
-          id: message.id,
-          role: message.role,
-          userName: message.userName,
-          content: "",
-        }).length + 1;
-      const remainingChars = COMPACTION_MAX_BATCH_JSON_CHARS - jsonChars - jsonOverhead;
-      if (batch.length > 0 && remainingChars <= 0) break;
-
-      const contentBudget = Math.max(
-        1,
-        Math.floor(Math.max(1, remainingChars) / JSON_ESCAPE_EXPANSION_FACTOR),
+    let completeMessages = messages.slice(0, COMPACTION_MAX_BATCH_MESSAGES);
+    const overflowMessage = messages[COMPACTION_MAX_BATCH_MESSAGES];
+    if (
+      overflowMessage &&
+      completeMessages.at(-1)?.historyOrderId === overflowMessage.historyOrderId
+    ) {
+      const partialOrderId = overflowMessage.historyOrderId;
+      completeMessages = completeMessages.filter(
+        (message) => message.historyOrderId !== partialOrderId,
       );
-      const content = truncateCompactionContent(message.content, contentBudget);
-      batch.push({ ...message, content });
-      jsonChars += jsonOverhead + content.length * JSON_ESCAPE_EXPANSION_FACTOR;
-      if (jsonChars >= COMPACTION_MAX_BATCH_JSON_CHARS) break;
+    }
+    if (completeMessages.length === 0) return null;
+
+    const sourceBatch: typeof messages = [];
+    let jsonChars = 0;
+    for (let index = 0; index < completeMessages.length; ) {
+      const orderId = completeMessages[index]!.historyOrderId;
+      let turnEnd = index + 1;
+      while (
+        turnEnd < completeMessages.length &&
+        completeMessages[turnEnd]!.historyOrderId === orderId
+      ) {
+        turnEnd++;
+      }
+      const turn = completeMessages.slice(index, turnEnd);
+      const overhead = turn.reduce(
+        (total, message) =>
+          total +
+          JSON.stringify({
+            id: message.id,
+            role: message.role,
+            userName: message.userName,
+            content: "",
+          }).length +
+          1,
+        0,
+      );
+      const preferredChars = turn.reduce(
+        (total, message) => total + message.content.length * JSON_ESCAPE_EXPANSION_FACTOR,
+        overhead,
+      );
+      const remainingJsonChars = COMPACTION_MAX_BATCH_JSON_CHARS - jsonChars;
+      if (sourceBatch.length > 0 && preferredChars > remainingJsonChars) break;
+      if (overhead + turn.length * JSON_ESCAPE_EXPANSION_FACTOR > remainingJsonChars) return null;
+
+      let remainingContentChars = Math.floor(
+        (remainingJsonChars - overhead) / JSON_ESCAPE_EXPANSION_FACTOR,
+      );
+      let turnContentChars = 0;
+      for (let turnIndex = 0; turnIndex < turn.length; turnIndex++) {
+        const message = turn[turnIndex]!;
+        const remainingMessages = turn.length - turnIndex;
+        const contentBudget =
+          preferredChars <= remainingJsonChars
+            ? message.content.length
+            : Math.max(1, Math.floor(remainingContentChars / remainingMessages));
+        const content = truncateCompactionContent(message.content, contentBudget);
+        sourceBatch.push({ ...message, content });
+        remainingContentChars -= content.length;
+        turnContentChars += content.length;
+      }
+      jsonChars += overhead + turnContentChars * JSON_ESCAPE_EXPANSION_FACTOR;
+      index = turnEnd;
     }
 
-    const lastMessage = batch.at(-1);
+    const lastMessage = sourceBatch.at(-1);
     if (!lastMessage) return null;
+    const sourceMessageIds = sourceBatch.map((message) => message.id).sort((a, b) => a - b);
+    const orderedBatch = orderConversationMessagesByTurn(sourceBatch).map(
+      ({ id, role, content, userName }) => ({ id, role, content, userName }),
+    );
     return {
       activeSummaryId: active?.summaryId ?? null,
       oldCursorId,
       existingSummary: active?.content ?? null,
-      messages: batch,
-      newCursorId: lastMessage.id,
+      messages: orderedBatch,
+      sourceMessageIds,
+      newCursorId: lastMessage.historyOrderId,
     };
   }
 
@@ -638,6 +828,7 @@ export class ConversationStore {
 
     try {
       await this.db.transaction(async (tx) => {
+        const historyOrderId = conversationMessageOrderId();
         const sourceRows = await tx
           .select({ id: conversationMessages.id })
           .from(conversationMessages)
@@ -645,8 +836,8 @@ export class ConversationStore {
             and(
               eq(conversationMessages.botId, params.botId),
               eq(conversationMessages.chatId, params.chatId),
-              gt(conversationMessages.id, params.oldCursorId),
-              lte(conversationMessages.id, params.newCursorId),
+              gt(historyOrderId, params.oldCursorId),
+              lte(historyOrderId, params.newCursorId),
             ),
           )
           .orderBy(asc(conversationMessages.id))
@@ -735,7 +926,7 @@ export class ConversationStore {
             eq(conversationMessages.chatId, chatId),
           ),
         )
-        .returning({ id: conversationMessages.id });
+        .returning({ id: conversationMessages.id, meta: conversationMessages.meta });
       if (result.length === 0) return false;
 
       const [active] = await tx
@@ -757,7 +948,7 @@ export class ConversationStore {
         .limit(1)
         .for("update");
 
-      if (active && messageId <= active.cursorId) {
+      if (active && storedMessageOrderId(messageId, result[0]?.meta) <= active.cursorId) {
         await tx
           .delete(conversationCompactionState)
           .where(

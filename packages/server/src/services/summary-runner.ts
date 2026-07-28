@@ -20,6 +20,7 @@ import {
   formatMessages,
   wrapSummaryHtml,
 } from "./summary-prompts.js";
+import { conversationMessageOrderId } from "./conversation-store.js";
 
 export type RunError = "too_few_messages" | "llm_failed" | "disabled" | "no_provider";
 
@@ -509,6 +510,7 @@ export class SummaryRunner {
     limit: number,
     roleFilter: readonly string[],
   ) {
+    const historyOrderId = conversationMessageOrderId();
     const rows = await this.db
       .select({
         id: conversationMessages.id,
@@ -517,6 +519,7 @@ export class SummaryRunner {
         userName: conversationMessages.userName,
         meta: conversationMessages.meta,
         createdAt: conversationMessages.createdAt,
+        historyOrderId,
       })
       .from(conversationMessages)
       .where(
@@ -527,7 +530,7 @@ export class SummaryRunner {
           between(conversationMessages.createdAt, windowStart, windowEnd),
         ),
       )
-      .orderBy(desc(conversationMessages.createdAt), desc(conversationMessages.id))
+      .orderBy(desc(historyOrderId), desc(conversationMessages.id))
       .limit(limit);
     return newestRowsToChronological(rows);
   }

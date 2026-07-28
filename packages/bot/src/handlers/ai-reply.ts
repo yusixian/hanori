@@ -54,6 +54,7 @@ import {
   AiRunDrainTimeoutError,
   type AiExecutionCoordinatorStats,
   type AiRunContext,
+  type AiRunScope,
 } from "../services/ai-execution-coordinator.js";
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
@@ -312,6 +313,7 @@ function serializedLength(value: unknown): number {
 const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_STALE_MS = 30 * 60 * 1000;
+const DETACHED_DELIVERY_DRAIN_WAIT_MS = 5_000;
 
 async function directlyReplyAndCleanup(
   ctx: WrapperContext,
@@ -688,6 +690,7 @@ export interface BotRuntimeState {
 }
 
 const MAX_RECENT_BOT_MESSAGES = 20;
+const TURN_FINALIZATION_RETRY_DELAYS_MS = [0, 50, 150] as const;
 const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 
 export function createAiReplyHandler(
@@ -767,6 +770,53 @@ export function createAiReplyHandler(
     maxQueued: 100,
   });
   const ingressLock = runtime?.ingressLock ?? new AiIngressLock();
+  interface DetachedDeliveryTask {
+    scope: AiRunScope;
+    settled: Promise<void>;
+  }
+  const detachedDeliveryTasks = new Set<DetachedDeliveryTask>();
+
+  function trackDetachedDelivery(task: Promise<unknown>, scope: AiRunScope): Promise<void> {
+    let tracked!: DetachedDeliveryTask;
+    const settled = task
+      .then(
+        () => undefined,
+        () => undefined,
+      )
+      .finally(() => {
+        detachedDeliveryTasks.delete(tracked);
+      });
+    tracked = { scope, settled };
+    detachedDeliveryTasks.add(tracked);
+    return settled;
+  }
+
+  async function drainDetachedDeliveries(
+    scope?: Partial<AiRunScope>,
+    waitMs = DETACHED_DELIVERY_DRAIN_WAIT_MS,
+  ): Promise<boolean> {
+    const matchingTasks = [...detachedDeliveryTasks].filter(
+      (task) =>
+        (scope?.chatId === undefined || task.scope.chatId === scope.chatId) &&
+        (scope?.userId === undefined || task.scope.userId === scope.userId),
+    );
+    if (matchingTasks.length === 0) return true;
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const allSettled = Promise.all(matchingTasks.map((task) => task.settled)).then(() => {
+      settled = true;
+    });
+    await Promise.race([
+      allSettled,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, waitMs);
+        timeout.unref?.();
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    return settled;
+  }
 
   function isAiEnabled(): boolean {
     return !aiDisabled;
@@ -1290,6 +1340,8 @@ export function createAiReplyHandler(
 
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
+    const groupTurnSourceKey = `telegram:${msg.message_id}:user`;
+    const tracksGroupTurnCompletion = !!config.conversation?.completeTurn;
     if (shouldPersistPublicGroupMessage) {
       try {
         const message = {
@@ -1298,8 +1350,13 @@ export function createAiReplyHandler(
           userAuthoredContent: personalizationEnabled ? bufferedGroupText : undefined,
           userId,
           userName,
-          sourceKey: `telegram:${msg.message_id}:user`,
-          meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+          sourceKey: groupTurnSourceKey,
+          meta: {
+            tgMessageId: msg.message_id,
+            publicGroupHistory: true,
+            turnState:
+              triggerResult && !aiDisabled && tracksGroupTurnCompletion ? "pending" : "complete",
+          },
         };
         if (config.conversation!.upsertUserMessage) {
           const persisted = await config.conversation!.upsertUserMessage(message);
@@ -1593,8 +1650,12 @@ export function createAiReplyHandler(
                 : undefined,
               userId,
               userName,
-              sourceKey: `telegram:${msg.message_id}:user`,
-              meta: { tgMessageId: msg.message_id, publicGroupHistory: true },
+              sourceKey: groupTurnSourceKey,
+              meta: {
+                tgMessageId: msg.message_id,
+                publicGroupHistory: true,
+                turnState: tracksGroupTurnCompletion ? "pending" : "complete",
+              },
             };
             if (config.conversation!.upsertUserMessage) {
               const persisted = await config.conversation!.upsertUserMessage(message);
@@ -1629,6 +1690,7 @@ export function createAiReplyHandler(
           groupHistoryMaxTokens: isPrivate ? undefined : groupHistoryMaxTokens,
           historyExcludeSourceKey: isPrivate ? undefined : `telegram:${msg.message_id}:user`,
           historyBeforeId: isPrivate ? undefined : persistedGroupMessageId,
+          historyBeforeTelegramMessageId: isPrivate ? undefined : msg.message_id,
           ringBufferContext: ringBufferContext || undefined,
           memoryConfig: config.memoryConfig,
           memory: personalizationEnabled ? config.memory : undefined,
@@ -2133,6 +2195,8 @@ export function createAiReplyHandler(
             meta?: Record<string, unknown>;
           }> = [];
           const sourcePrefix = `telegram:${msg.message_id}`;
+          const turnOrderMeta =
+            persistedGroupMessageId === undefined ? {} : { turnOrderId: persistedGroupMessageId };
 
           // Save system prompt used for this reply (deduplicated per chat)
           const sysMsg = messages.find((m) => m.role === "system")?.content;
@@ -2146,7 +2210,7 @@ export function createAiReplyHandler(
                 role: "system" as ConversationRole,
                 content: sysMsg,
                 sourceKey: `${sourcePrefix}:system`,
-                meta: { model: currentModel, trigger: triggerResult },
+                meta: { ...turnOrderMeta, model: currentModel, trigger: triggerResult },
               });
             }
           }
@@ -2176,6 +2240,7 @@ export function createAiReplyHandler(
                 content: tc.toolName,
                 sourceKey: `${sourcePrefix}:tool-call:${tc.toolCallId}`,
                 meta: {
+                  ...turnOrderMeta,
                   toolName: tc.toolName,
                   args: JSON.stringify(tc.input),
                   toolCallId: tc.toolCallId,
@@ -2192,6 +2257,7 @@ export function createAiReplyHandler(
                     : (JSON.stringify(tr.output) ?? String(tr.output)),
                 sourceKey: `${sourcePrefix}:tool-result:${tr.toolCallId}`,
                 meta: {
+                  ...turnOrderMeta,
                   toolName: tr.toolName,
                   toolCallId: tr.toolCallId,
                 },
@@ -2210,6 +2276,7 @@ export function createAiReplyHandler(
               model: currentModel,
               trigger: triggerResult,
               usage,
+              ...turnOrderMeta,
             },
           });
 
@@ -2258,14 +2325,39 @@ export function createAiReplyHandler(
           await directlyReplyAndCleanup(ctx, errorReply);
         }
       } finally {
-        if (!isPrivate && persistConversation) {
-          void config.conversation!.triggerCompression(chatId);
-        }
         if (manualAbort) activeAbortControllers.delete(manualAbort);
       }
     };
 
     let preserveQueuedMessage = false;
+    let queueNotice: Promise<void> | undefined;
+    let groupTurnFinalization: Promise<void> | undefined;
+    const finalizeGroupTurn = () => {
+      if (isPrivate || !persistConversation) return Promise.resolve();
+      groupTurnFinalization ??= (async () => {
+        let lastError: unknown;
+        for (const delayMs of TURN_FINALIZATION_RETRY_DELAYS_MS) {
+          if (delayMs > 0) await sleep(delayMs);
+          try {
+            await config.conversation!.completeTurn?.(chatId, groupTurnSourceKey);
+            void config.conversation!.triggerCompression(chatId);
+            return;
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        config.onLog?.({
+          level: "error",
+          message: "Failed to finalize conversation turn",
+          meta: {
+            chatId,
+            userId,
+            error: lastError instanceof Error ? lastError.message : String(lastError),
+          },
+        });
+      })();
+      return groupTurnFinalization;
+    };
     const scheduledAt = Date.now();
     let executionStartedAt: number | undefined;
     let scheduled;
@@ -2282,7 +2374,12 @@ export function createAiReplyHandler(
             ...executionCoordinator.stats,
           },
         });
-        const run = () => executeTurn(executionContext, preserveQueuedMessage);
+        const run = async () => {
+          if (!executionContext.isCurrent()) {
+            throw new AiRunCancelledError("AI reply was cancelled before execution");
+          }
+          return executeTurn(executionContext, preserveQueuedMessage);
+        };
         if (!config.privacy) return run();
         return config.privacy.runExclusive(userId, async () => {
           const currentPrivacyMode = await config.privacy!.getMode(userId);
@@ -2299,56 +2396,72 @@ export function createAiReplyHandler(
           message: "AI reply queue is full",
           meta: { chatId, userId, ...executionCoordinator.stats },
         });
-        await ctx.directlyReply("助手现在真的忙不过来啦，请稍后再试哦～").catch(() => {});
+        const busyReply = trackDetachedDelivery(
+          ctx
+            .directlyReply("助手现在真的忙不过来啦，请稍后再试哦～")
+            .then(() => undefined)
+            .catch(() => undefined),
+          { chatId, userId },
+        );
+        const finalization = trackDetachedDelivery(finalizeGroupTurn(), { chatId, userId });
+        if (!config.detachReplyExecution) await Promise.all([busyReply, finalization]);
         return;
       }
+      await finalizeGroupTurn();
       throw error;
     }
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
-    void scheduled.result
-      .then(
-        () => {
-          config.onLog?.({
-            level: "info",
-            message: "AI reply execution finished",
-            meta: {
-              chatId,
-              userId,
-              runMs:
-                executionStartedAt === undefined ? 0 : Math.max(0, Date.now() - executionStartedAt),
-              ...executionCoordinator.stats,
-            },
-          });
-        },
-        async (error) => {
-          if (error instanceof AiRunCancelledError) {
+    trackDetachedDelivery(
+      scheduled.result
+        .finally(finalizeGroupTurn)
+        .then(
+          () => {
             config.onLog?.({
               level: "info",
-              message: "AI reply execution cancelled",
-              meta: { chatId, userId, ...executionCoordinator.stats },
+              message: "AI reply execution finished",
+              meta: {
+                chatId,
+                userId,
+                runMs:
+                  executionStartedAt === undefined
+                    ? 0
+                    : Math.max(0, Date.now() - executionStartedAt),
+                ...executionCoordinator.stats,
+              },
+            });
+          },
+          async (error) => {
+            await queueNotice;
+            if (error instanceof AiRunCancelledError) {
+              config.onLog?.({
+                level: "info",
+                message: "AI reply execution cancelled",
+                meta: { chatId, userId, ...executionCoordinator.stats },
+              });
+              try {
+                await ctx.deleteWaiting();
+              } catch {
+                // Best-effort cleanup after a cancelled detached turn.
+              }
+              return;
+            }
+            const message = error instanceof Error ? error.message : String(error);
+            config.onLog?.({
+              level: "error",
+              message: "Scheduled AI reply failed before execution",
+              meta: { chatId, userId, error: message, ...executionCoordinator.stats },
             });
             try {
-              await ctx.deleteWaiting();
+              await ctx.resolveWait(`AI 回复时出错:\n${message}`);
             } catch {
-              // Best-effort cleanup after a cancelled detached turn.
+              // The turn already failed before normal delivery fallbacks were available.
             }
-            return;
-          }
-          const message = error instanceof Error ? error.message : String(error);
-          config.onLog?.({
-            level: "error",
-            message: "Scheduled AI reply failed before execution",
-            meta: { chatId, userId, error: message, ...executionCoordinator.stats },
-          });
-          try {
-            await ctx.resolveWait(`AI 回复时出错:\n${message}`);
-          } catch {
-            // The turn already failed before normal delivery fallbacks were available.
-          }
-        },
-      )
-      .catch(() => {});
+          },
+        )
+        .catch(() => {}),
+      { chatId, userId },
+    );
 
     if (preserveQueuedMessage) {
       config.onLog?.({
@@ -2356,16 +2469,22 @@ export function createAiReplyHandler(
         message: "AI reply queued",
         meta: { chatId, userId, ...executionCoordinator.stats },
       });
-      await ctx.wait(executionConfig.queueNotice.text).catch((error) => {
-        config.onLog?.({
-          level: "warn",
-          message: "Failed to send AI queue notice",
-          meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
-        });
-      });
+      queueNotice = trackDetachedDelivery(
+        ctx.wait(executionConfig.queueNotice.text).catch((error) => {
+          config.onLog?.({
+            level: "warn",
+            message: "Failed to send AI queue notice",
+            meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
+          });
+        }),
+        { chatId, userId },
+      );
     }
     scheduled.start();
-    if (!config.detachReplyExecution) await scheduled.result;
+    if (!config.detachReplyExecution) {
+      await queueNotice;
+      await scheduled.result;
+    }
     return;
   };
 
@@ -2448,7 +2567,8 @@ export function createAiReplyHandler(
     attempt = (async () => {
       try {
         const result = await executionCoordinator.destroyAndDrain();
-        if (!result.settled || result.timedOut) {
+        const deliveriesSettled = await drainDetachedDeliveries();
+        if (!result.settled || result.timedOut || !deliveriesSettled) {
           throw new AiRunDrainTimeoutError("Timed out draining AI runs during Bot shutdown");
         }
       } finally {
@@ -2496,7 +2616,8 @@ export function createAiReplyHandler(
     setAiEnabled,
     cancelChatRuns: async (chatId) => {
       const result = await executionCoordinator.cancelChat(chatId);
-      if (!result.settled || result.timedOut) {
+      const deliveriesSettled = await drainDetachedDeliveries({ chatId });
+      if (!result.settled || result.timedOut || !deliveriesSettled) {
         throw new AiRunDrainTimeoutError(
           "Timed out waiting for the active AI reply; history was not cleared",
         );
@@ -2507,7 +2628,8 @@ export function createAiReplyHandler(
     },
     cancelUserRuns: async (userId) => {
       const result = await executionCoordinator.cancelUser(userId);
-      if (!result.settled || result.timedOut) {
+      const deliveriesSettled = await drainDetachedDeliveries({ userId });
+      if (!result.settled || result.timedOut || !deliveriesSettled) {
         throw new AiRunDrainTimeoutError(
           "Timed out waiting for active AI replies; privacy data was not changed",
         );

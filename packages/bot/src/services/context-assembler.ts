@@ -82,6 +82,7 @@ export interface ContextAssemblyInput {
   groupHistoryMaxTokens?: number;
   historyExcludeSourceKey?: string;
   historyBeforeId?: number;
+  historyBeforeTelegramMessageId?: number;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -661,12 +662,17 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     input.conversation && (input.isPrivate ? conversationConfig.enabled : true);
   if (useConversation) {
     const historyOptions =
-      input.historyExcludeSourceKey || input.historyBeforeId !== undefined
+      input.historyExcludeSourceKey ||
+      input.historyBeforeId !== undefined ||
+      input.historyBeforeTelegramMessageId !== undefined
         ? {
             ...(input.historyExcludeSourceKey
               ? { excludeSourceKey: input.historyExcludeSourceKey }
               : {}),
             ...(input.historyBeforeId !== undefined ? { beforeId: input.historyBeforeId } : {}),
+            ...(input.historyBeforeTelegramMessageId !== undefined
+              ? { beforeTelegramMessageId: input.historyBeforeTelegramMessageId }
+              : {}),
           }
         : undefined;
     let history = await input.conversation!.getHistory(

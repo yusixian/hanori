@@ -263,7 +263,11 @@ export interface ConversationCallbacks {
     chatId: number,
     limit: number,
     tokenBudget?: number,
-    options?: { excludeSourceKey?: string; beforeId?: number },
+    options?: {
+      excludeSourceKey?: string;
+      beforeId?: number;
+      beforeTelegramMessageId?: number;
+    },
   ): Promise<{
     summary: string | null;
     messages: Array<{
@@ -311,6 +315,7 @@ export interface ConversationCallbacks {
     sourceKey: string;
     meta?: Record<string, unknown>;
   }): Promise<{ id: number } | void>;
+  completeTurn?(chatId: number, sourceKey: string): Promise<void>;
   ensureCompression?(chatId: number): Promise<void>;
   triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;
