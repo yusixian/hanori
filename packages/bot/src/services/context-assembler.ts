@@ -350,7 +350,7 @@ function finishBundle(
         (total, message) => total + countTokens(message.content),
         0,
       ),
-      staticPrefixHash: createHash("md5").update(staticContent).digest("hex").slice(0, 8),
+      staticPrefixHash: createHash("sha256").update(staticContent).digest("hex").slice(0, 24),
     },
   };
 }

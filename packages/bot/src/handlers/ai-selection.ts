@@ -80,6 +80,7 @@ function defaultProviderFactory(provider: AiProviderRuntime): AiModelFactory {
         name: "custom",
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
+        includeUsage: true,
       });
 }
 

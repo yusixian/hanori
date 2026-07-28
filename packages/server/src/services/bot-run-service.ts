@@ -246,7 +246,12 @@ export class BotRunService {
       const factory =
         provider.providerFormat === "gemini"
           ? createGoogleGenerativeAI({ baseURL: provider.baseURL, apiKey })
-          : createOpenAICompatible({ name: "custom", baseURL: provider.baseURL, apiKey });
+          : createOpenAICompatible({
+              name: "custom",
+              baseURL: provider.baseURL,
+              apiKey,
+              includeUsage: true,
+            });
       const modelEntry = (provider.models ?? config.models)?.find(
         (entry) => entry.id === provider.defaultModel,
       );

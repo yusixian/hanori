@@ -1,4 +1,4 @@
-import type { LanguageModel } from "ai";
+import { streamText, type LanguageModel } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import {
   createAiSelectionRuntime,
@@ -65,6 +65,43 @@ function createRuntime(
 }
 
 describe("AiSelectionRuntime", () => {
+  it("requests usage in OpenAI-compatible streaming responses", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "stop after request capture" } }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const runtime = createAiSelectionRuntime({
+        providers: [providers[0]!],
+        activeProviderId: "provider-a",
+        legacy: {
+          apiKey: "legacy",
+          baseURL: "https://legacy.example/v1",
+          providerFormat: "openai",
+          model: "legacy-model",
+        },
+      });
+      const selection = runtime.resolve();
+      const result = streamText({
+        model: selection.providerFactory(selection.modelId),
+        prompt: "usage probe",
+      });
+
+      await expect(result.text).rejects.toThrow();
+
+      const request = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(JSON.parse(String(request?.body))).toMatchObject({
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("resolves the configured global active model and chat default-model semantics", () => {
     const runtime = createRuntime({
       initialSnapshot: snapshot("provider-b", "model-b-2", {
