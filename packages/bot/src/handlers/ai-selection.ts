@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { ModelEntry } from "@cos-tool-bot/shared";
 import type { LanguageModel } from "ai";
+import { createUsageAwareOpenAICompatible } from "../utils/openai-compatible.js";
 
 export interface AiProviderRuntime {
   id: string;
@@ -76,11 +76,10 @@ export interface AiSelectionRuntime {
 function defaultProviderFactory(provider: AiProviderRuntime): AiModelFactory {
   return provider.providerFormat === "gemini"
     ? createGoogleGenerativeAI({ baseURL: provider.baseURL, apiKey: provider.apiKey })
-    : createOpenAICompatible({
+    : createUsageAwareOpenAICompatible({
         name: "custom",
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
-        includeUsage: true,
       });
 }
 
