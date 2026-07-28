@@ -75,9 +75,37 @@ ingress:
 
 credential 文件必须只留在 `~/.cloudflared`，不要复制进仓库。
 
-## 每次开发的启动顺序
+## 推荐：一键启停
 
-建议使用四个终端，并按下面顺序启动。
+确认 tunnel 配置已按上文准备后，在仓库根目录运行：
+
+```bash
+pnpm dev:mini-app
+```
+
+该命令会依次启动 dev Compose、等待 PostgreSQL、运行 migration，再统一启动 Server、Vite `:5174` 与指定 Cloudflare Tunnel。脚本优先读取 `~/.cloudflared/cos-tool-bot-tg-test.yml`，当前者不存在时兼容本次已跑通的 `/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml`；默认使用 `https://tg-test.example.invalid`，并为本次进程自动生成临时 `MINI_APP_SESSION_SECRET`。日志保留在当前终端；按 `Ctrl-C` 会停止全部进程和 dev Compose，但保留数据库 volume。
+
+也可以从另一个终端查看或停止：
+
+```bash
+pnpm dev:mini-app:status
+pnpm dev:mini-app:stop
+```
+
+脚本只会向自己记录的 supervisor PID 发送停止信号，不会全局 `pkill cloudflared`。启动前若发现当前 named tunnel 已有 connector，会拒绝继续并只显示 PID，避免同一个 tunnel 被不同 ingress 配置随机分流，也不会输出可能包含 token 的完整命令行。
+
+需要覆盖默认值时：
+
+```bash
+COS_TOOL_BOT_TUNNEL_CONFIG=~/.cloudflared/cos-tool-bot-tg-test.yml \
+COS_TOOL_BOT_MINI_APP_ORIGIN=https://tg-test.example.invalid \
+COS_TOOL_BOT_MINI_APP_PANEL_PORT=5174 \
+pnpm dev:mini-app
+```
+
+## 手工启动顺序
+
+需要逐项调试时，可以继续使用四个终端，并按下面顺序启动。
 
 ### 终端 A：数据库与 migration
 
@@ -117,7 +145,7 @@ Bot started
 
 ```bash
 __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=tg-test.example.invalid \
-pnpm exec vite --port 5174 --strictPort --host 127.0.0.1
+pnpm --filter @cos-tool-bot/panel exec vite --port 5174 --strictPort --host 127.0.0.1
 ```
 
 这里显式使用 `5174`，避免与日常 `pnpm dev` 的默认 `5173` 冲突。Vite 自带 `/api` 到 `localhost:3000` 的本地 proxy；Cloudflare ingress 仍直接把公网 `/api/*` 转给 3000。
@@ -217,7 +245,13 @@ Mini App M1 的可授权对象是 `group` / `supergroup`，不是广播 Channel�
 
 ## 停止本地环境
 
-按以下顺序在各终端 `Ctrl-C`：
+统一脚本启动时，直接在启动终端按 `Ctrl-C`，或在任意终端运行：
+
+```bash
+pnpm dev:mini-app:stop
+```
+
+手工启动时，按以下顺序在各终端 `Ctrl-C`：
 
 1. `cloudflared`；
 2. Vite；

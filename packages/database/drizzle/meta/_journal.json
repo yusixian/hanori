@@ -288,6 +288,20 @@
       "when": 1785176534454,
       "tag": "0040_confused_korath",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1785243252400,
+      "tag": "0041_powerful_thunderbolts",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1785243461161,
+      "tag": "0042_shocking_vector",
+      "breakpoints": true
     }
   ]
 }

@@ -88,6 +88,12 @@ import type { DataFilesConfig } from "../utils/data-files.js";
 import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { describeImages } from "../services/image-ocr.js";
 import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
+import { extractCacheTokenUsage } from "../utils/cache-usage.js";
+import {
+  createCacheFingerprint,
+  createToolSchemaHash,
+  sortToolsForPromptCache,
+} from "../utils/prompt-cache.js";
 import { createMetaPrefixStreamFilter, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 import {
@@ -996,6 +1002,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         return Object.freeze({
           model: selection.providerFactory(selection.modelId),
           modelId: selection.modelId,
+          providerId: selection.providerId,
           temperature: selection.modelEntry?.temperature,
           maxTokens: selection.modelEntry?.maxTokens,
           providerOptions: buildProviderOptions(
@@ -1654,6 +1661,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         config.artworkToolsConfig?.enabled;
       const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
       const toolChoice = memoryCfg.toolChoice ?? "auto";
+      const stableTools = sortToolsForPromptCache(allTools);
+      const toolSchemaHash = createToolSchemaHash(stableTools);
+      const cacheFingerprint = createCacheFingerprint({
+        providerId: currentProviderRuntime.id,
+        model: currentModel,
+        staticPrefixHash: promptTrace.staticPrefixHash,
+        toolSchemaHash,
+      });
 
       // Debug: AI request
       const startTime = Date.now();
@@ -1669,6 +1684,8 @@ export function createAiReplyHandler(config: AiReplyConfig): {
           messagesCount: messages.length,
           systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
           staticPrefixHash: promptTrace.staticPrefixHash,
+          toolSchemaHash,
+          cacheFingerprint,
           promptSections: promptTrace.sections,
           promptEstimatedTokens: promptTrace.totalEstimatedTokens,
           historyBudget,
@@ -1678,7 +1695,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
             "degraded" in historyBudget
               ? historyBudget.degraded
               : false,
-          toolsEnabled: Object.keys(allTools),
+          toolsEnabled: Object.keys(stableTools),
           maxSteps,
           toolChoice,
           chatId,
@@ -1691,7 +1708,7 @@ export function createAiReplyHandler(config: AiReplyConfig): {
 
       let stepCounter = 0;
       const requestCache = createRequestCache();
-      const wrappedTools = wrapToolsWithStatus(wrapToolsWithCache(allTools, requestCache), ctx);
+      const wrappedTools = wrapToolsWithStatus(wrapToolsWithCache(stableTools, requestCache), ctx);
       manualAbort = new AbortController();
       activeAbortControllers.add(manualAbort);
       const perStepAbort = createPerStepAbort(
@@ -1998,6 +2015,14 @@ export function createAiReplyHandler(config: AiReplyConfig): {
         promptTokens: usage.inputTokens ?? 0,
         completionTokens: usage.outputTokens ?? 0,
         totalTokens: usage.totalTokens ?? 0,
+        ...extractCacheTokenUsage(
+          usage,
+          steps.map((step) => step.usage),
+        ),
+        providerId: currentProviderRuntime.id,
+        staticPrefixHash: promptTrace.staticPrefixHash,
+        toolSchemaHash,
+        cacheFingerprint,
         durationMs,
         trigger: triggerResult as string,
       });

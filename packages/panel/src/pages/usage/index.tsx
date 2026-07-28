@@ -11,6 +11,8 @@ import {
   Area,
   BarChart,
   Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -34,6 +36,14 @@ interface Summary {
   promptTokens: number;
   completionTokens: number;
   requestCount: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheObservedRequestCount: number;
+  cacheWriteObservedRequestCount: number;
+  cacheHitRequestCount: number;
+  cacheObservationRate: number | null;
+  cacheTokenHitRate: number | null;
+  cacheRequestHitRate: number | null;
 }
 
 interface TrendPoint {
@@ -42,6 +52,14 @@ interface TrendPoint {
   completionTokens: number;
   totalTokens: number;
   requestCount: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cacheObservedRequestCount: number;
+  cacheWriteObservedRequestCount: number;
+  cacheHitRequestCount: number;
+  cacheObservationRate: number | null;
+  cacheTokenHitRate: number | null;
+  cacheRequestHitRate: number | null;
 }
 
 interface ModelStat {
@@ -188,6 +206,12 @@ export function UsagePage() {
     [locale],
   );
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
+  const percentFormatter = useMemo(
+    () => new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 1 }),
+    [locale],
+  );
+  const formatRate = (value: number | null | undefined) =>
+    value == null ? "—" : percentFormatter.format(value);
   const granLabel = range <= 7 ? t("usage.hourly") : t("usage.daily");
 
   return (
@@ -242,6 +266,49 @@ export function UsagePage() {
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard
+          title={t("usage.cacheReadTokens")}
+          value={
+            summary && summary.cacheObservedRequestCount > 0
+              ? formatTokens(summary.cacheReadTokens)
+              : "—"
+          }
+        />
+        <StatCard
+          title={t("usage.cacheTokenHitRate")}
+          value={formatRate(summary?.cacheTokenHitRate)}
+          sub={
+            summary
+              ? t("usage.cacheHitRequests", {
+                  hit: numberFormatter.format(summary.cacheHitRequestCount),
+                  observed: numberFormatter.format(summary.cacheObservedRequestCount),
+                })
+              : undefined
+          }
+        />
+        <StatCard
+          title={t("usage.cacheObservationRate")}
+          value={formatRate(summary?.cacheObservationRate)}
+          sub={
+            summary
+              ? t("usage.cacheObservedRequests", {
+                  observed: numberFormatter.format(summary.cacheObservedRequestCount),
+                  total: numberFormatter.format(summary.requestCount),
+                })
+              : undefined
+          }
+        />
+        <StatCard
+          title={t("usage.cacheWriteTokens")}
+          value={
+            summary && summary.cacheWriteObservedRequestCount > 0
+              ? formatTokens(summary.cacheWriteTokens)
+              : "—"
+          }
+        />
+      </div>
+
       {/* Daily Activity Heatmap */}
       <Card>
         <CardHeader>
@@ -249,6 +316,71 @@ export function UsagePage() {
         </CardHeader>
         <CardContent>
           <TokenHeatmap data={heatmapData} loading={heatmapLoading} />
+        </CardContent>
+      </Card>
+
+      {/* Prompt Cache Trend */}
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("usage.cacheTrend", { granularity: granLabel })}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading && trend.length === 0 ? (
+            <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
+              {t("usage.loading")}
+            </div>
+          ) : trend.length === 0 ? (
+            <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
+              {t("usage.noData")}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={trend}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={(v: string) => {
+                    const date = new Date(v);
+                    return range <= 7
+                      ? shortDateTimeFormatter.format(date)
+                      : shortDateFormatter.format(date);
+                  }}
+                  className="text-xs"
+                />
+                <YAxis
+                  domain={[0, 1]}
+                  tickFormatter={(value: number) => percentFormatter.format(value)}
+                  className="text-xs"
+                />
+                <Tooltip
+                  formatter={(value) => percentFormatter.format(Number(value))}
+                  labelFormatter={(label) => dateTimeFormatter.format(new Date(String(label)))}
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="cacheTokenHitRate"
+                  name={t("usage.cacheTokenHitRate")}
+                  stroke="#22c55e"
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="cacheRequestHitRate"
+                  name={t("usage.cacheRequestHitRate")}
+                  stroke="#14b8a6"
+                  connectNulls={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="cacheObservationRate"
+                  name={t("usage.cacheObservationRate")}
+                  stroke="#a855f7"
+                  strokeDasharray="5 5"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </CardContent>
       </Card>
 

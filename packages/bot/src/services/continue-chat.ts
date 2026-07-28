@@ -52,6 +52,12 @@ import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
+import { extractCacheTokenUsage } from "../utils/cache-usage.js";
+import {
+  createCacheFingerprint,
+  createToolSchemaHash,
+  sortToolsForPromptCache,
+} from "../utils/prompt-cache.js";
 import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 import { withChatLock } from "./chat-lock.js";
@@ -59,6 +65,7 @@ import { withChatLock } from "./chat-lock.js";
 export interface ContinueChatSelection {
   model: LanguageModel;
   modelId: string;
+  providerId: string;
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, Record<string, JSONValue>>;
@@ -239,7 +246,7 @@ async function doContinueChat(
       userId: event.userId,
     });
 
-    const { messages } = appendCurrentRequest(promptBundle, {
+    const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, {
       role: "user",
       content: `[系统事件通知] ${eventDescription}`,
     });
@@ -389,6 +396,28 @@ async function doContinueChat(
       delete allTools.multi_message;
     }
 
+    const stableTools = sortToolsForPromptCache(allTools);
+    const toolSchemaHash = createToolSchemaHash(stableTools);
+    const cacheFingerprint = createCacheFingerprint({
+      providerId: selection.providerId,
+      model: selection.modelId,
+      staticPrefixHash: promptTrace.staticPrefixHash,
+      toolSchemaHash,
+    });
+    config.onLog?.({
+      level: "debug",
+      message: "AI continuation request",
+      meta: {
+        chatId,
+        providerId: selection.providerId,
+        model: selection.modelId,
+        staticPrefixHash: promptTrace.staticPrefixHash,
+        toolSchemaHash,
+        cacheFingerprint,
+        toolsEnabled: Object.keys(stableTools),
+      },
+    });
+
     const startTime = Date.now();
     let streamedMessageCount = 0;
     const requestCache = createRequestCache();
@@ -407,7 +436,7 @@ async function doContinueChat(
       model: selection.model,
       messages,
       tools: wrapToolsWithCache(
-        trackSuccessfulToolEffects(allTools, () => {
+        trackSuccessfulToolEffects(stableTools, () => {
           successfulToolEffectCount += 1;
         }),
         requestCache,
@@ -583,6 +612,7 @@ async function doContinueChat(
     }
 
     // Await full results for post-processing
+    const steps = await result.steps;
     const usage = await result.usage;
     const durationMs = Date.now() - startTime;
 
@@ -594,6 +624,14 @@ async function doContinueChat(
       promptTokens: usage.inputTokens ?? 0,
       completionTokens: usage.outputTokens ?? 0,
       totalTokens: usage.totalTokens ?? 0,
+      ...extractCacheTokenUsage(
+        usage,
+        steps.map((step) => step.usage),
+      ),
+      providerId: selection.providerId,
+      staticPrefixHash: promptTrace.staticPrefixHash,
+      toolSchemaHash,
+      cacheFingerprint,
       durationMs,
       trigger: "event_continuation",
     });

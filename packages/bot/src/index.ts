@@ -570,6 +570,7 @@ export {
   type TelegramObservationCallbacks,
 } from "./middleware/telegram-observation.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
+export { createUsageAwareOpenAICompatible } from "./utils/openai-compatible.js";
 export type {
   AiProviderRuntime,
   AiSelectionMutations,
