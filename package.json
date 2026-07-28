@@ -6,6 +6,9 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"pnpm --filter @cos-tool-bot/server dev\" \"pnpm --filter @cos-tool-bot/panel dev\"",
+    "dev:mini-app": "bash scripts/dev-mini-app.sh start",
+    "dev:mini-app:stop": "bash scripts/dev-mini-app.sh stop",
+    "dev:mini-app:status": "bash scripts/dev-mini-app.sh status",
     "dev:coding-worker": "pnpm --filter @cos-tool-bot/coding-worker dev",
     "dev:db": "docker compose -p cos-bot-dev -f docker-compose.dev.yml up -d",
     "build": "pnpm -r build",
