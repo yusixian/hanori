@@ -59,6 +59,11 @@ import {
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
+  AiTurnCoalescer,
+  type CoalesceBatchHandle,
+  type CoalescedTurnMessage,
+} from "../services/ai-turn-coalescer.js";
+import {
   createActionTools,
   createAgentTools,
   createArtworkTools,
@@ -639,6 +644,25 @@ function describeFiles(
   return result;
 }
 
+/**
+ * Reply quotes are anchors, not content: the quoted message usually already sits in the
+ * history window, so inlining it verbatim duplicates it once per reply and bloats prompts.
+ */
+const MAX_REPLY_QUOTE_CHARS = 160;
+
+function truncateReplyQuote(content: string): string {
+  if (content.length <= MAX_REPLY_QUOTE_CHARS) return content;
+  return `${content.slice(0, MAX_REPLY_QUOTE_CHARS)}…`;
+}
+
+function describeReplyQuote(replyMsg: Message | undefined, fileDesc = ""): string {
+  if (!replyMsg) return "";
+  const replyText = replyMsg.text ?? replyMsg.caption ?? "";
+  const content = truncateReplyQuote(`${fileDesc}${replyText}`.trim());
+  if (!content) return "";
+  return `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${content}]\n`;
+}
+
 function describeGroupMessageForHistory(msg: Message): string {
   if (msg.text) return msg.text;
   const caption = msg.caption?.trim();
@@ -769,6 +793,7 @@ export function createAiReplyHandler(
     maxConcurrent: executionConfig.maxConcurrentReplies,
     maxQueued: 100,
   });
+  const turnCoalescer = new AiTurnCoalescer();
   const ingressLock = runtime?.ingressLock ?? new AiIngressLock();
   interface DetachedDeliveryTask {
     scope: AiRunScope;
@@ -1379,6 +1404,27 @@ export function createAiReplyHandler(
       return next();
     }
 
+    // A rapid text-only follow-up merges into the same user's queued run instead of
+    // scheduling a second model call. Media messages keep the full per-turn pipeline.
+    if (msg.text && !msg.photo && !msg.document) {
+      const followUpText = `${describeReplyQuote(ctx.reply_to_message)}${msg.text}`.trim();
+      const merged =
+        !!followUpText &&
+        turnCoalescer.tryAppend(chatId, userId, {
+          tgMessageId: msg.message_id,
+          text: followUpText,
+          sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
+        });
+      if (merged) {
+        config.onLog?.({
+          level: "info",
+          message: "AI reply coalesced into queued turn",
+          meta: { chatId, userId, ...executionCoordinator.stats },
+        });
+        return;
+      }
+    }
+
     const readConversation =
       config.conversation &&
       (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
@@ -1449,7 +1495,6 @@ export function createAiReplyHandler(
         // Extract reply-to message metadata
         const replyMsg = ctx.reply_to_message;
         const replyFiles = extractFilesFromMessage(replyMsg);
-        const replyText = replyMsg?.text ?? replyMsg?.caption ?? "";
 
         // Create per-request telegram tools
         const telegramTools = createTelegramTools({
@@ -1640,18 +1685,20 @@ export function createAiReplyHandler(
         const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
 
         // --- Build reply-to context description ---
-        let replyContextDesc = "";
-        if (replyMsg) {
-          const replyFileDesc = describeFiles(replyFiles, "", " ");
-          const replyContent = `${replyFileDesc}${replyText}`.trim();
-          if (replyContent) {
-            replyContextDesc = `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${replyContent}]\n`;
-          }
-        }
+        const replyContextDesc = describeReplyQuote(replyMsg, describeFiles(replyFiles, "", " "));
 
         const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
         const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
-        const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        // Coalesced follow-ups extend the model request only; their own history rows were
+        // written at ingress, and this run's history read is bounded before this message.
+        const coalescedLines = coalescedExtras.map((extra) =>
+          isPrivate ? extra.text : `[${userName}]: ${extra.text}`,
+        );
+        const ownContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        const textContent = [ownContent, ...coalescedLines].join("\n");
+        const retrievalQuery = [rawContent || messageText, ...coalescedExtras.map((e) => e.text)]
+          .join("\n")
+          .trim();
         const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
         const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
 
@@ -1716,7 +1763,7 @@ export function createAiReplyHandler(
           botMemoryConfig: config.botMemoryConfig,
           botMemory: personalizationEnabled ? config.botMemory : undefined,
           botMemoryTools: requestBotMemoryTools,
-          retrievalQuery: rawContent || messageText,
+          retrievalQuery,
           currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
           stickerPacks: config.stickerPacks,
           webToolsConfig: config.webToolsConfig,
@@ -2245,6 +2292,19 @@ export function createAiReplyHandler(
               sourceKey: `${sourcePrefix}:user`,
               meta: { tgMessageId: msg.message_id },
             });
+            // Private follow-ups skipped ingress persistence; save them with this turn.
+            for (const extra of coalescedExtras) {
+              toSave.push({
+                chatId,
+                role: "user",
+                content: extra.text,
+                userAuthoredContent: extra.text,
+                userId,
+                userName,
+                sourceKey: `telegram:${extra.tgMessageId}:user`,
+                meta: { tgMessageId: extra.tgMessageId },
+              });
+            }
           }
 
           // Save all tool calls and results from steps
@@ -2347,15 +2407,23 @@ export function createAiReplyHandler(
 
     let preserveQueuedMessage = false;
     let queueNotice: Promise<void> | undefined;
+    let coalesceHandle: CoalesceBatchHandle | undefined;
+    let coalescedExtras: CoalescedTurnMessage[] = [];
     let groupTurnFinalization: Promise<void> | undefined;
     const finalizeGroupTurn = () => {
       if (isPrivate || !persistConversation) return Promise.resolve();
       groupTurnFinalization ??= (async () => {
+        const sourceKeys = [
+          groupTurnSourceKey,
+          ...coalescedExtras.flatMap((extra) => (extra.sourceKey ? [extra.sourceKey] : [])),
+        ];
         let lastError: unknown;
         for (const delayMs of TURN_FINALIZATION_RETRY_DELAYS_MS) {
           if (delayMs > 0) await sleep(delayMs);
           try {
-            await config.conversation!.completeTurn?.(chatId, groupTurnSourceKey);
+            for (const sourceKey of sourceKeys) {
+              await config.conversation!.completeTurn?.(chatId, sourceKey);
+            }
             void config.conversation!.triggerCompression(chatId);
             return;
           } catch (error) {
@@ -2379,6 +2447,8 @@ export function createAiReplyHandler(
     let scheduled;
     try {
       scheduled = executionCoordinator.schedule({ chatId, userId }, async (executionContext) => {
+        // Synchronous drain: everything appended before this instant joins this turn.
+        coalescedExtras = coalesceHandle?.drain() ?? [];
         executionStartedAt = Date.now();
         config.onLog?.({
           level: "info",
@@ -2387,6 +2457,7 @@ export function createAiReplyHandler(
             chatId,
             userId,
             waitMs: Math.max(0, executionStartedAt - scheduledAt),
+            coalescedCount: coalescedExtras.length,
             ...executionCoordinator.stats,
           },
         });
@@ -2428,8 +2499,14 @@ export function createAiReplyHandler(
     }
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
+    if (scheduled.queued) coalesceHandle = turnCoalescer.open(chatId, userId);
     trackDetachedDelivery(
       scheduled.result
+        .finally(() => {
+          // A run cancelled while queued never drained; recover its extras for finalization.
+          const undrained = coalesceHandle?.close();
+          if (undrained?.length) coalescedExtras = [...coalescedExtras, ...undrained];
+        })
         .finally(finalizeGroupTurn)
         .then(
           () => {
@@ -2567,6 +2644,7 @@ export function createAiReplyHandler(
     if (!destroyStarted) {
       destroyStarted = true;
       setAiEnabled(false);
+      turnCoalescer.destroy();
       clearInterval(cleanupTimer);
       clearInterval(bufferCleanupTimer);
       pendingActions.destroy();
