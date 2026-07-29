@@ -930,16 +930,31 @@ describe("ConversationStore.cleanup", () => {
   });
 });
 
-function createHistoryLimitDb(messageIds: number[]) {
-  const state = { messageIds: [...messageIds], rawHistoryIntact: true };
-  let selectedForDeletion: number[] = [];
+type HistoryLimitRow = { id: number; orderId?: number; turnState?: "pending" | "complete" };
+
+function createHistoryLimitDb(rows: HistoryLimitRow[]) {
+  const state = { rows: [...rows], rawHistoryIntact: true };
+  const dialect = new PgDialect();
+  const orderIdOf = (row: HistoryLimitRow) => row.orderId ?? row.id;
+  const pendingFence = () => {
+    const pending = state.rows
+      .filter((row) => row.turnState === "pending")
+      .map(orderIdOf)
+      .sort((left, right) => left - right);
+    return pending[0];
+  };
   const tx = {
     execute: async () => undefined,
-    select: () => {
+    select: (selection: Record<string, unknown>) => {
       let limit = Number.POSITIVE_INFINITY;
+      let grouped = false;
       const query = {
         from: () => query,
         where: () => query,
+        groupBy: () => {
+          grouped = true;
+          return query;
+        },
         orderBy: () => query,
         limit: (value: number) => {
           limit = value;
@@ -950,28 +965,36 @@ function createHistoryLimitDb(messageIds: number[]) {
           onfulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
           onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
         ): PromiseLike<TResult1 | TResult2> => {
-          if (limit === Number.POSITIVE_INFINITY) {
-            return Promise.resolve([{ total: state.messageIds.length }]).then(
-              onfulfilled,
-              onrejected,
-            );
+          const fence = pendingFence();
+          let result: unknown[];
+          if (grouped) {
+            const totals = new Map<number, number>();
+            for (const row of state.rows) {
+              const orderId = orderIdOf(row);
+              if (fence !== undefined && orderId >= fence) continue;
+              totals.set(orderId, (totals.get(orderId) ?? 0) + 1);
+            }
+            result = [...totals.entries()]
+              .sort((left, right) => left[0] - right[0])
+              .slice(0, limit)
+              .map(([historyOrderId, total]) => ({ historyOrderId, total }));
+          } else if ("historyOrderId" in selection) {
+            result = fence === undefined ? [] : [{ historyOrderId: fence }];
+          } else {
+            result = [{ total: state.rows.length }];
           }
-          selectedForDeletion = state.messageIds.slice(0, limit);
-          return Promise.resolve(selectedForDeletion.map((id) => ({ id }))).then(
-            onfulfilled,
-            onrejected,
-          );
+          return Promise.resolve(result).then(onfulfilled, onrejected);
         },
       };
       return query;
     },
     delete: () => ({
-      where: () => ({
+      where: (expression: SQL) => ({
         returning: async () => {
-          const selected = new Set(selectedForDeletion);
-          const deleted = state.messageIds.filter((id) => selected.has(id));
-          state.messageIds = state.messageIds.filter((id) => !selected.has(id));
-          return deleted.map((id) => ({ id }));
+          const cutoff = Number(dialect.sqlToQuery(expression).params.at(-1));
+          const deleted = state.rows.filter((row) => orderIdOf(row) <= cutoff);
+          state.rows = state.rows.filter((row) => orderIdOf(row) > cutoff);
+          return deleted.map((row) => ({ id: row.id }));
         },
       }),
     }),
@@ -1010,7 +1033,9 @@ describe("ConversationStore.enforceHistoryLimit", () => {
   });
 
   it("prunes the oldest rows back to the 80% warning threshold at the hard limit", async () => {
-    const { db, state } = createHistoryLimitDb(Array.from({ length: 10 }, (_, index) => index + 1));
+    const { db, state } = createHistoryLimitDb(
+      Array.from({ length: 10 }, (_, index) => ({ id: index + 1 })),
+    );
     const store = new ConversationStore(db);
 
     const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 10);
@@ -1023,19 +1048,56 @@ describe("ConversationStore.enforceHistoryLimit", () => {
       prunedCount: 2,
       warning: true,
     });
-    expect(state.messageIds).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(state.rows.map((row) => row.id)).toEqual([3, 4, 5, 6, 7, 8, 9, 10]);
     expect(state.rawHistoryIntact).toBe(false);
   });
 
   it("absorbs a batch overshoot and still returns to the configured warning threshold", async () => {
-    const { db, state } = createHistoryLimitDb(Array.from({ length: 13 }, (_, index) => index + 1));
+    const { db, state } = createHistoryLimitDb(
+      Array.from({ length: 13 }, (_, index) => ({ id: index + 1 })),
+    );
     const store = new ConversationStore(db);
 
     const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 10);
 
     expect(result.prunedCount).toBe(5);
     expect(result.countAfter).toBe(8);
-    expect(state.messageIds).toEqual([6, 7, 8, 9, 10, 11, 12, 13]);
+    expect(state.rows.map((row) => row.id)).toEqual([6, 7, 8, 9, 10, 11, 12, 13]);
+  });
+
+  it("prunes complete logical turns instead of splitting rows that share a turn order", async () => {
+    const { db, state } = createHistoryLimitDb([
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
+      { id: 4 },
+      { id: 5, orderId: 1 },
+      { id: 6, orderId: 2 },
+    ]);
+    const store = new ConversationStore(db);
+
+    const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 6);
+
+    expect(result.prunedCount).toBe(2);
+    expect(result.countAfter).toBe(4);
+    expect(state.rows.map((row) => row.id)).toEqual([2, 3, 4, 6]);
+  });
+
+  it("stops pruning at the oldest pending turn even when the limit stays exceeded", async () => {
+    const { db, state } = createHistoryLimitDb([
+      { id: 1 },
+      { id: 2, turnState: "pending" },
+      ...Array.from({ length: 8 }, (_, index) => ({ id: index + 3 })),
+      { id: 11, orderId: 2 },
+    ]);
+    const store = new ConversationStore(db);
+
+    const result = await store.enforceHistoryLimit(baseParams.botId, baseParams.chatId, 10);
+
+    expect(result.countBefore).toBe(11);
+    expect(result.prunedCount).toBe(1);
+    expect(result.countAfter).toBe(10);
+    expect(state.rows.map((row) => row.id)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 });
 
@@ -1186,5 +1248,69 @@ describe("ConversationStore.getRecentUserMessagesAcrossChats", () => {
       { id: 12, content: "newest", createdAt: "2026-07-22T00:00:00.000Z" },
     ]);
     expect(limit).toHaveBeenCalledWith(5);
+  });
+
+  it("ignores messages persisted after the admission watermark", async () => {
+    const rows = [
+      { id: 11, content: "older", createdAt: new Date("2026-07-21T00:00:00.000Z") },
+      { id: 12, content: "at watermark", createdAt: new Date("2026-07-22T00:00:00.000Z") },
+      { id: 13, content: "arrived while queued", createdAt: new Date("2026-07-23T00:00:00.000Z") },
+    ];
+    const dialect = new PgDialect();
+    let whereSql = "";
+    let params: unknown[] = [];
+    const query = {
+      from: () => query,
+      where: (expression: SQL) => {
+        const compiled = dialect.sqlToQuery(expression);
+        whereSql = compiled.sql;
+        params = compiled.params;
+        return query;
+      },
+      orderBy: () => query,
+      limit: async (value: number) => {
+        const bound = whereSql.includes('"id" <=') ? Number(params.at(-1)) : undefined;
+        return rows
+          .filter((row) => bound === undefined || row.id <= bound)
+          .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
+          .slice(0, value);
+      },
+    };
+    const store = new ConversationStore({ select: () => query } as unknown as Database);
+
+    await expect(
+      store.getRecentUserMessagesAcrossChats(baseParams.botId, 42, baseParams.chatId, 5, 12),
+    ).resolves.toEqual([
+      { id: 11, content: "older", createdAt: "2026-07-21T00:00:00.000Z" },
+      { id: 12, content: "at watermark", createdAt: "2026-07-22T00:00:00.000Z" },
+    ]);
+    expect(whereSql).toContain('"id" <=');
+
+    await expect(
+      store.getRecentUserMessagesAcrossChats(baseParams.botId, 42, baseParams.chatId, 5),
+    ).resolves.toHaveLength(3);
+    expect(whereSql).not.toContain('"id" <=');
+  });
+});
+
+describe("ConversationStore.getHistoryWatermark", () => {
+  it("reports the newest persisted message id for the bot", async () => {
+    const query = {
+      from: () => query,
+      where: async () => [{ maxId: 42 }],
+    };
+    const store = new ConversationStore({ select: () => query } as unknown as Database);
+
+    await expect(store.getHistoryWatermark(baseParams.botId)).resolves.toBe(42);
+  });
+
+  it("reports no watermark for an empty history", async () => {
+    const query = {
+      from: () => query,
+      where: async () => [{ maxId: null }],
+    };
+    const store = new ConversationStore({ select: () => query } as unknown as Database);
+
+    await expect(store.getHistoryWatermark(baseParams.botId)).resolves.toBeUndefined();
   });
 });

@@ -283,7 +283,10 @@ export interface ConversationCallbacks {
     userId: number,
     excludeChatId: number,
     limit: number,
+    beforeId?: number,
   ): Promise<RecentCrossChatUserMessage[]>;
+  /** Global history watermark captured when a request is admitted, not when it runs. */
+  getHistoryWatermark?(): Promise<number | undefined>;
   addMessage(params: {
     chatId: number;
     role: ConversationRole;

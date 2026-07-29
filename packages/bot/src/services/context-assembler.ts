@@ -88,6 +88,8 @@ export interface ContextAssemblyInput {
   memory?: MemoryCallbacks;
   userId?: number;
   includeCrossChatUserHistory?: boolean;
+  /** History watermark captured at admission so queued turns ignore newer cross-chat messages. */
+  crossChatHistoryBeforeId?: number;
   memoryTools?: Record<string, Tool>;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
@@ -725,6 +727,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
         input.userId,
         input.chatId,
         5,
+        input.crossChatHistoryBeforeId,
       );
       const selected: typeof recent = [];
       let usedTokens = 0;

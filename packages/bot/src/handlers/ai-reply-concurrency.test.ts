@@ -205,6 +205,44 @@ describe("AI reply queue delivery", () => {
     });
   });
 
+  it("reads cross-chat history at the watermark captured when the turn was admitted", async () => {
+    const typingGate = deferred<void>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Active final")))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Queued final")));
+    const { api, sendChatAction } = createApi();
+    sendChatAction.mockImplementationOnce(() => typingGate.promise);
+    const watermarks = [101, 102];
+    const getHistoryWatermark = vi.fn(async () => watermarks.shift() ?? 999);
+    const getRecentUserMessagesAcrossChats = vi.fn().mockResolvedValue([]);
+    const conversation: ConversationCallbacks = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      getRecentUserMessagesAcrossChats,
+      getHistoryWatermark,
+      addMessage: vi.fn(),
+      addMessages: vi.fn().mockResolvedValue(undefined),
+      upsertUserMessage: vi.fn().mockResolvedValue({ id: 101 }),
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
+    await vi.waitFor(() => expect(sendChatAction).toHaveBeenCalledOnce());
+    await runtime.handler(createContext(api, 2, 12, "sample second"), vi.fn());
+
+    expect(getHistoryWatermark).toHaveBeenCalledTimes(2);
+    expect(getRecentUserMessagesAcrossChats).not.toHaveBeenCalled();
+
+    typingGate.resolve();
+
+    await vi.waitFor(() => expect(getRecentUserMessagesAcrossChats).toHaveBeenCalledTimes(2));
+    expect(getRecentUserMessagesAcrossChats.mock.calls.map((call) => call[3])).toEqual([101, 102]);
+  });
+
   it("links every persisted group turn row to its ingress user row", async () => {
     streamTextMock.mockImplementationOnce(() => streamResult(Promise.resolve("# Final")));
     const { api } = createApi();

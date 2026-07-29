@@ -1386,6 +1386,21 @@ export function createAiReplyHandler(
       config.conversation &&
       (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
 
+    // Taken before the turn is queued so a delayed execution cannot read cross-chat
+    // messages that arrived while it was waiting.
+    let admissionHistoryWatermark: number | undefined;
+    if (readConversation && privacyMode === "normal" && config.conversation?.getHistoryWatermark) {
+      try {
+        admissionHistoryWatermark = await config.conversation.getHistoryWatermark();
+      } catch (err) {
+        config.onLog?.({
+          level: "warn",
+          message: `Failed to capture conversation history watermark: ${err instanceof Error ? err.message : String(err)}`,
+          meta: { chatId, userId },
+        });
+      }
+    }
+
     const executeTurn = async (
       executionContext: AiRunContext,
       preserveQueuedMessage: boolean,
@@ -1696,6 +1711,7 @@ export function createAiReplyHandler(
           memory: personalizationEnabled ? config.memory : undefined,
           userId,
           includeCrossChatUserHistory: privacyMode === "normal",
+          crossChatHistoryBeforeId: admissionHistoryWatermark,
           memoryTools: requestMemoryTools,
           botMemoryConfig: config.botMemoryConfig,
           botMemory: personalizationEnabled ? config.botMemory : undefined,

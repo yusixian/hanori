@@ -750,8 +750,9 @@ export class BotPool {
       conversation = {
         getHistory: (chatId, limit, tokenBudget, options) =>
           store.getHistory(botId, chatId, limit, tokenBudget, options),
-        getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit) =>
-          store.getRecentUserMessagesAcrossChats(botId, userId, excludeChatId, limit),
+        getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit, beforeId) =>
+          store.getRecentUserMessagesAcrossChats(botId, userId, excludeChatId, limit, beforeId),
+        getHistoryWatermark: () => store.getHistoryWatermark(botId),
         addMessage: (p) => store.addMessage({ botId, ...p }),
         addMessages: async (msgs) => {
           const persisted = await store.addMessages(msgs.map((m) => ({ botId, ...m })));

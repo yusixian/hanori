@@ -569,6 +569,7 @@ export class ConversationStore {
     userId: number,
     excludeChatId: number,
     limit: number,
+    beforeId?: number,
   ) {
     const rows = await this.db
       .select({
@@ -584,6 +585,7 @@ export class ConversationStore {
           eq(conversationMessages.role, "user"),
           ne(conversationMessages.chatId, excludeChatId),
           isNotNull(conversationMessages.userAuthoredContent),
+          beforeId === undefined ? undefined : lte(conversationMessages.id, beforeId),
         ),
       )
       .orderBy(desc(conversationMessages.createdAt), desc(conversationMessages.id))
@@ -593,6 +595,15 @@ export class ConversationStore {
       content: row.content!,
       createdAt: row.createdAt.toISOString(),
     }));
+  }
+
+  /** Admission-time upper bound so a queued turn never reads messages persisted after it. */
+  async getHistoryWatermark(botId: string): Promise<number | undefined> {
+    const [row] = await this.db
+      .select({ maxId: sql<number | null>`max(${conversationMessages.id})` })
+      .from(conversationMessages)
+      .where(eq(conversationMessages.botId, botId));
+    return row?.maxId == null ? undefined : Number(row.maxId);
   }
 
   private async getActiveCompaction(botId: string, chatId: number) {
@@ -1335,17 +1346,48 @@ export class ConversationStore {
       let prunedCount = 0;
 
       if (countBefore >= limit) {
+        const historyOrderId = conversationMessageOrderId();
+        // Queued turns still write rows under their own order id, so pruning must stop
+        // before the oldest pending turn instead of orphaning its later rows.
+        const [pending] = await tx
+          .select({ historyOrderId })
+          .from(conversationMessages)
+          .where(
+            and(
+              eq(conversationMessages.botId, botId),
+              eq(conversationMessages.chatId, chatId),
+              sql`${conversationMessages.meta}->>'turnState' = 'pending'`,
+            ),
+          )
+          .orderBy(asc(historyOrderId), asc(conversationMessages.id))
+          .limit(1);
+        const pendingOrderId = pending?.historyOrderId;
+
         let remaining = countBefore - warningThreshold;
         while (remaining > 0) {
-          const oldestRows = await tx
-            .select({ id: conversationMessages.id })
+          const turns = await tx
+            .select({ historyOrderId, total: count() })
             .from(conversationMessages)
             .where(
-              and(eq(conversationMessages.botId, botId), eq(conversationMessages.chatId, chatId)),
+              and(
+                eq(conversationMessages.botId, botId),
+                eq(conversationMessages.chatId, chatId),
+                pendingOrderId === undefined ? undefined : lt(historyOrderId, pendingOrderId),
+              ),
             )
-            .orderBy(asc(conversationMessages.id))
-            .limit(Math.min(remaining, HISTORY_PRUNE_BATCH_SIZE));
-          if (oldestRows.length === 0) break;
+            .groupBy(historyOrderId)
+            .orderBy(asc(historyOrderId))
+            .limit(HISTORY_PRUNE_BATCH_SIZE);
+          if (turns.length === 0) break;
+
+          let cutoffOrderId: number | undefined;
+          let plannedRows = 0;
+          for (const turn of turns) {
+            cutoffOrderId = turn.historyOrderId;
+            plannedRows += Number(turn.total);
+            if (plannedRows >= remaining) break;
+          }
+          if (cutoffOrderId === undefined) break;
 
           const deleted = await tx
             .delete(conversationMessages)
@@ -1353,10 +1395,7 @@ export class ConversationStore {
               and(
                 eq(conversationMessages.botId, botId),
                 eq(conversationMessages.chatId, chatId),
-                inArray(
-                  conversationMessages.id,
-                  oldestRows.map((row) => row.id),
-                ),
+                lte(historyOrderId, cutoffOrderId),
               ),
             )
             .returning({ id: conversationMessages.id });
