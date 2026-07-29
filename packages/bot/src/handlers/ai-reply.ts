@@ -645,23 +645,10 @@ function describeFiles(
   return result;
 }
 
-/**
- * Reply quotes are anchors, not content: the quoted message usually already sits in the
- * history window, so inlining it verbatim duplicates it once per reply and bloats prompts.
- */
-const MAX_REPLY_QUOTE_CHARS = 160;
-
-function truncateReplyQuote(content: string): string {
-  // Code points, not UTF-16 units: slicing mid surrogate pair would emit a lone surrogate.
-  const chars = Array.from(content);
-  if (chars.length <= MAX_REPLY_QUOTE_CHARS) return content;
-  return `${chars.slice(0, MAX_REPLY_QUOTE_CHARS).join("")}…`;
-}
-
 function describeReplyQuote(replyMsg: Message | undefined, fileDesc = ""): string {
   if (!replyMsg) return "";
   const replyText = replyMsg.text ?? replyMsg.caption ?? "";
-  const content = truncateReplyQuote(`${fileDesc}${replyText}`.trim());
+  const content = `${fileDesc}${replyText}`.trim();
   if (!content) return "";
   return `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${content}]\n`;
 }
@@ -856,6 +843,7 @@ export function createAiReplyHandler(
       return 0;
     }
     aiDisabled = true;
+    turnCoalescer.clear();
     const scheduledAborted = executionCoordinator.cancelAllNow();
     const toAbort = [...activeAbortControllers];
     activeAbortControllers.clear();
@@ -1414,13 +1402,15 @@ export function createAiReplyHandler(
 
     // A rapid text-only follow-up merges into the same user's queued run instead of
     // scheduling a second model call. Media messages keep the full per-turn pipeline.
-    if (msg.text && !msg.photo && !msg.document) {
+    const followUpReplyFiles = extractFilesFromMessage(ctx.reply_to_message);
+    if (msg.text && !msg.photo && !msg.document && followUpReplyFiles.length === 0) {
       const followUpText = `${describeReplyQuote(ctx.reply_to_message)}${msg.text}`.trim();
       const merged =
         !!followUpText &&
         turnCoalescer.tryAppend(coalesceScope, {
           tgMessageId: msg.message_id,
           text: followUpText,
+          userAuthoredContent: msg.text.trim(),
           sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
         });
       if (merged) {
@@ -2414,7 +2404,7 @@ export function createAiReplyHandler(
         chatId,
         role: "user" as ConversationRole,
         content: extra.text,
-        userAuthoredContent: extra.text,
+        userAuthoredContent: extra.userAuthoredContent,
         userId,
         userName,
         sourceKey: `telegram:${extra.tgMessageId}:user`,
@@ -2427,9 +2417,9 @@ export function createAiReplyHandler(
     const rescuePrivateExtras = async () => {
       if (!isPrivate || !persistConversation || privateExtrasSaved) return;
       if (coalescedExtras.length === 0) return;
-      privateExtrasSaved = true;
       try {
         await config.conversation!.addMessages(buildPrivateExtraRows());
+        privateExtrasSaved = true;
       } catch (err) {
         config.onLog?.({
           level: "error",
@@ -2531,10 +2521,11 @@ export function createAiReplyHandler(
     if (scheduled.queued) coalesceHandle = turnCoalescer.open(coalesceScope);
     trackDetachedDelivery(
       scheduled.result
-        .finally(() => {
+        .finally(async () => {
           // A run cancelled while queued never drained; recover its extras for finalization.
           const undrained = coalesceHandle?.close();
           if (undrained?.length) coalescedExtras = [...coalescedExtras, ...undrained];
+          await rescuePrivateExtras();
         })
         .finally(finalizeGroupTurn)
         .then(
@@ -2673,7 +2664,6 @@ export function createAiReplyHandler(
     if (!destroyStarted) {
       destroyStarted = true;
       setAiEnabled(false);
-      turnCoalescer.destroy();
       clearInterval(cleanupTimer);
       clearInterval(bufferCleanupTimer);
       pendingActions.destroy();

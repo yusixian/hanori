@@ -6,7 +6,12 @@ const USER = 42;
 const SCOPE = { chatId: CHAT, userId: USER };
 
 function entry(tgMessageId: number, text = `msg-${tgMessageId}`) {
-  return { tgMessageId, text, sourceKey: `telegram:${tgMessageId}:user` };
+  return {
+    tgMessageId,
+    text,
+    userAuthoredContent: text,
+    sourceKey: `telegram:${tgMessageId}:user`,
+  };
 }
 
 describe("AiTurnCoalescer", () => {
@@ -67,7 +72,7 @@ describe("AiTurnCoalescer", () => {
     expect(second.drain().map((m) => m.tgMessageId)).toEqual([13]);
   });
 
-  it("keeps older handle's map entry intact when a newer batch closes", () => {
+  it("does not expose an older batch again when a newer batch closes", () => {
     const coalescer = new AiTurnCoalescer();
     coalescer.open(SCOPE);
     const second = coalescer.open(SCOPE);
@@ -76,11 +81,11 @@ describe("AiTurnCoalescer", () => {
     expect(coalescer.tryAppend(SCOPE, entry(12))).toBe(false);
   });
 
-  it("stops accepting appends after destroy but handles still close with their extras", () => {
+  it("stops accepting appends after clear but handles still close with their extras", () => {
     const coalescer = new AiTurnCoalescer();
     const handle = coalescer.open(SCOPE);
     coalescer.tryAppend(SCOPE, entry(12));
-    coalescer.destroy();
+    coalescer.clear();
 
     expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(false);
     expect(handle.close().map((m) => m.tgMessageId)).toEqual([12]);

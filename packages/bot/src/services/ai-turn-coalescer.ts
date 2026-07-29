@@ -1,6 +1,9 @@
 export interface CoalescedTurnMessage {
   tgMessageId: number;
+  /** Full request text, including a reply anchor when present. */
   text: string;
+  /** Content authored by this user only; safe for cross-chat personalization. */
+  userAuthoredContent: string;
   /** Group ingress turn to finalize together with the owning run; absent for private chats. */
   sourceKey?: string;
 }
@@ -88,8 +91,8 @@ export class AiTurnCoalescer {
     return true;
   }
 
-  /** Stops accepting new appends; existing handles still drain/close for turn finalization. */
-  destroy(): void {
+  /** Stops current batches accepting appends; handles still drain/close for finalization. */
+  clear(): void {
     this.batches.clear();
   }
 }
