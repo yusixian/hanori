@@ -508,7 +508,7 @@ export const DEFAULT_AI_EXECUTION_CONFIG: AiExecutionConfig = {
   maxConcurrentReplies: 4,
   queueNotice: {
     enabled: true,
-    text: "助手正在忙哦，一会儿就来陪你哦～",
+    text: "正在处理中，请稍候～",
   },
 };
 
