@@ -1145,11 +1145,8 @@ export class GitWorkspaceService {
     return workspace;
   }
 
-  /**
-   * Converts a legacy partial clone back into a full one. Lazy blob fetches happen under
-   * credential-less git commands, where they fail as authentication errors instead of missing
-   * objects, so the promised objects must be materialised up front.
-   */
+  // Legacy partial clones lazy-fetch blobs under credential-less git commands and die on auth,
+  // so promised objects must be materialised up front and the promisor config removed.
   private async repairPartialClone(
     workspace: string,
     token: string,
