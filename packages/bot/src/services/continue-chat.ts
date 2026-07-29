@@ -694,7 +694,7 @@ async function doContinueChat(
         });
       }
 
-      if (isExecutionCancelled()) {
+      if (isExecutionCancelled() && visibleDeliveryCount === 0) {
         if (successfulToolEffectCount === 0)
           requireContinuationDelivery(event, "reply was aborted");
         return false;
