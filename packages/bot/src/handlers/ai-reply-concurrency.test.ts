@@ -817,20 +817,46 @@ describe("AI reply queue delivery", () => {
   });
 });
 
+const PRIVATE_CHAT_ID = USER_ID;
+
+function createPrivateContext(
+  api: Api,
+  updateId: number,
+  messageId: number,
+  text: string,
+): BotContext {
+  const update = {
+    update_id: updateId,
+    message: {
+      message_id: messageId,
+      date: 0,
+      chat: { id: PRIVATE_CHAT_ID, type: "private", first_name: "Tester" },
+      from: { id: USER_ID, is_bot: false, first_name: "Tester" },
+      text,
+      entities: [],
+    },
+  } as Update;
+  const me = { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" } as UserFromGetMe;
+  return new WrapperContext(update, api, me) as BotContext;
+}
+
 describe("AI reply turn coalescing", () => {
   function createConversation() {
     let nextRowId = 100;
     const completeTurn = vi.fn().mockResolvedValue(undefined);
+    const addMessages = vi
+      .fn<NonNullable<ConversationCallbacks["addMessages"]>>()
+      .mockResolvedValue(undefined);
     const conversation: ConversationCallbacks = {
       getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
       addMessage: vi.fn(),
-      addMessages: vi.fn().mockResolvedValue(undefined),
+      addMessages,
       upsertUserMessage: vi.fn(async () => ({ id: nextRowId++ })),
       completeTurn,
       triggerCompression: vi.fn(),
       clearHistory: vi.fn(),
     };
-    return { conversation, completeTurn };
+    return { conversation, completeTurn, addMessages };
   }
 
   it("merges a same-user text follow-up into the queued run", async () => {
@@ -932,6 +958,69 @@ describe("AI reply turn coalescing", () => {
     expect(
       onLog.mock.calls.some(([entry]) => entry.message === "AI reply coalesced into queued turn"),
     ).toBe(false);
+  });
+
+  it("persists merged private follow-ups with the owning turn", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Merged final")));
+    const { api } = createApi();
+    const { conversation, addMessages } = createConversation();
+    const config = createConfig(true);
+    config.conversation = conversation;
+    config.privateChatWhitelist = [USER_ID];
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createPrivateContext(api, 1, 11, "first"), vi.fn());
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await runtime.handler(createPrivateContext(api, 2, 12, "queued owner"), vi.fn());
+    await runtime.handler(createPrivateContext(api, 3, 13, "follow up"), vi.fn());
+    activeReply.resolve("# Active final");
+
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(2));
+    const mergedRequest = JSON.stringify(streamTextMock.mock.calls[1]?.[0]?.messages);
+    expect(mergedRequest).toContain("queued owner");
+    expect(mergedRequest).toContain("follow up");
+
+    // Private messages are not persisted at ingress, so the owning turn must save both.
+    await vi.waitFor(() => {
+      const saved = addMessages.mock.calls.flatMap(([rows]) => rows);
+      const userRows = saved.filter((row) => row.role === "user");
+      expect(userRows.map((row) => row.sourceKey)).toEqual(
+        expect.arrayContaining(["telegram:12:user", "telegram:13:user"]),
+      );
+    });
+  });
+
+  it("rescues merged private follow-ups when the owning run fails", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => {
+        throw new Error("model exploded");
+      });
+    const { api } = createApi();
+    const { conversation, addMessages } = createConversation();
+    const config = createConfig(true);
+    config.conversation = conversation;
+    config.privateChatWhitelist = [USER_ID];
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    await runtime.handler(createPrivateContext(api, 1, 11, "first"), vi.fn());
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await runtime.handler(createPrivateContext(api, 2, 12, "queued owner"), vi.fn());
+    await runtime.handler(createPrivateContext(api, 3, 13, "follow up"), vi.fn());
+    activeReply.resolve("# Active final");
+
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(2));
+    // The failed turn never committed, but the drained follow-up must not vanish.
+    await vi.waitFor(() => {
+      const saved = addMessages.mock.calls.flatMap(([rows]) => rows);
+      expect(saved.map((row) => row.sourceKey)).toContain("telegram:13:user");
+    });
   });
 
   it("truncates long reply quotes in the model request", async () => {

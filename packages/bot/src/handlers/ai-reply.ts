@@ -62,6 +62,7 @@ import {
   AiTurnCoalescer,
   type CoalesceBatchHandle,
   type CoalescedTurnMessage,
+  type CoalesceScope,
 } from "../services/ai-turn-coalescer.js";
 import {
   createActionTools,
@@ -651,8 +652,10 @@ function describeFiles(
 const MAX_REPLY_QUOTE_CHARS = 160;
 
 function truncateReplyQuote(content: string): string {
-  if (content.length <= MAX_REPLY_QUOTE_CHARS) return content;
-  return `${content.slice(0, MAX_REPLY_QUOTE_CHARS)}…`;
+  // Code points, not UTF-16 units: slicing mid surrogate pair would emit a lone surrogate.
+  const chars = Array.from(content);
+  if (chars.length <= MAX_REPLY_QUOTE_CHARS) return content;
+  return `${chars.slice(0, MAX_REPLY_QUOTE_CHARS).join("")}…`;
 }
 
 function describeReplyQuote(replyMsg: Message | undefined, fileDesc = ""): string {
@@ -1366,6 +1369,11 @@ export function createAiReplyHandler(
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
     const groupTurnSourceKey = `telegram:${msg.message_id}:user`;
+    const coalesceScope: CoalesceScope = {
+      chatId,
+      threadId: msg.message_thread_id,
+      userId,
+    };
     const tracksGroupTurnCompletion = !!config.conversation?.completeTurn;
     if (shouldPersistPublicGroupMessage) {
       try {
@@ -1410,7 +1418,7 @@ export function createAiReplyHandler(
       const followUpText = `${describeReplyQuote(ctx.reply_to_message)}${msg.text}`.trim();
       const merged =
         !!followUpText &&
-        turnCoalescer.tryAppend(chatId, userId, {
+        turnCoalescer.tryAppend(coalesceScope, {
           tgMessageId: msg.message_id,
           text: followUpText,
           sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
@@ -2293,18 +2301,7 @@ export function createAiReplyHandler(
               meta: { tgMessageId: msg.message_id },
             });
             // Private follow-ups skipped ingress persistence; save them with this turn.
-            for (const extra of coalescedExtras) {
-              toSave.push({
-                chatId,
-                role: "user",
-                content: extra.text,
-                userAuthoredContent: extra.text,
-                userId,
-                userName,
-                sourceKey: `telegram:${extra.tgMessageId}:user`,
-                meta: { tgMessageId: extra.tgMessageId },
-              });
-            }
+            toSave.push(...buildPrivateExtraRows());
           }
 
           // Save all tool calls and results from steps
@@ -2359,6 +2356,7 @@ export function createAiReplyHandler(
           if (!executionContext.isCurrent()) return;
           try {
             await config.conversation!.addMessages(toSave);
+            privateExtrasSaved = true;
             if (isPrivate) await config.conversation!.triggerCompression(chatId);
           } catch (err) {
             config.onLog?.({
@@ -2402,6 +2400,7 @@ export function createAiReplyHandler(
         }
       } finally {
         if (manualAbort) activeAbortControllers.delete(manualAbort);
+        await rescuePrivateExtras();
       }
     };
 
@@ -2409,6 +2408,36 @@ export function createAiReplyHandler(
     let queueNotice: Promise<void> | undefined;
     let coalesceHandle: CoalesceBatchHandle | undefined;
     let coalescedExtras: CoalescedTurnMessage[] = [];
+    let privateExtrasSaved = false;
+    const buildPrivateExtraRows = () =>
+      coalescedExtras.map((extra) => ({
+        chatId,
+        role: "user" as ConversationRole,
+        content: extra.text,
+        userAuthoredContent: extra.text,
+        userId,
+        userName,
+        sourceKey: `telegram:${extra.tgMessageId}:user`,
+        meta: { tgMessageId: extra.tgMessageId } as Record<string, unknown>,
+      }));
+    /**
+     * Group follow-ups are durable from ingress, private ones only exist in memory until the
+     * reply transaction commits — so a failed or superseded run would drop them silently.
+     */
+    const rescuePrivateExtras = async () => {
+      if (!isPrivate || !persistConversation || privateExtrasSaved) return;
+      if (coalescedExtras.length === 0) return;
+      privateExtrasSaved = true;
+      try {
+        await config.conversation!.addMessages(buildPrivateExtraRows());
+      } catch (err) {
+        config.onLog?.({
+          level: "error",
+          message: `Failed to persist coalesced messages: ${err instanceof Error ? err.message : String(err)}`,
+          meta: { chatId, userId, count: coalescedExtras.length },
+        });
+      }
+    };
     let groupTurnFinalization: Promise<void> | undefined;
     const finalizeGroupTurn = () => {
       if (isPrivate || !persistConversation) return Promise.resolve();
@@ -2499,7 +2528,7 @@ export function createAiReplyHandler(
     }
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
-    if (scheduled.queued) coalesceHandle = turnCoalescer.open(chatId, userId);
+    if (scheduled.queued) coalesceHandle = turnCoalescer.open(coalesceScope);
     trackDetachedDelivery(
       scheduled.result
         .finally(() => {

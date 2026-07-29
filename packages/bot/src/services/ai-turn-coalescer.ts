@@ -5,6 +5,17 @@ export interface CoalescedTurnMessage {
   sourceKey?: string;
 }
 
+/**
+ * Identifies the conversation a batch belongs to. `threadId` keeps forum topics apart: a run
+ * replies into the thread it was triggered from, so merging across topics would answer one
+ * topic's message in another.
+ */
+export interface CoalesceScope {
+  chatId: number;
+  threadId?: number;
+  userId: number;
+}
+
 export interface CoalesceBatchHandle {
   /** Marks the run as started and returns messages merged so far. Idempotent. */
   drain(): CoalescedTurnMessage[];
@@ -12,39 +23,68 @@ export interface CoalesceBatchHandle {
   close(): CoalescedTurnMessage[];
 }
 
-interface Batch {
-  readonly userId: number;
-  extras: CoalescedTurnMessage[];
-  open: boolean;
+export interface AiTurnCoalescerOptions {
+  maxMessages?: number;
+  maxChars?: number;
 }
 
 /**
- * Merges rapid follow-up messages into an already-queued AI run for the same chat and user,
- * so one model call answers the whole burst instead of one call per message. Only the run
+ * Merged follow-ups bypass the scheduler's queue-full guard, so the batch enforces its own
+ * ceiling: past it `tryAppend` declines and the message schedules normally, where the queue
+ * limit applies again. Without this a burst would grow one prompt without bound.
+ */
+const DEFAULT_MAX_MESSAGES = 10;
+const DEFAULT_MAX_CHARS = 2000;
+
+interface Batch {
+  readonly userId: number;
+  extras: CoalescedTurnMessage[];
+  chars: number;
+  open: boolean;
+}
+
+function scopeKey(scope: CoalesceScope): string {
+  return `${scope.chatId}:${scope.threadId ?? 0}`;
+}
+
+/**
+ * Merges rapid follow-up messages into an already-queued AI run for the same conversation and
+ * user, so one model call answers the whole burst instead of one call per message. Only the run
  * owner interacts with its handle; followers go through tryAppend before scheduling.
  */
 export class AiTurnCoalescer {
-  private readonly batches = new Map<number, Batch>();
+  private readonly batches = new Map<string, Batch>();
+  private readonly maxMessages: number;
+  private readonly maxChars: number;
 
-  /** Registers a queued run as the open batch for its chat. Call before the run can start. */
-  open(chatId: number, userId: number): CoalesceBatchHandle {
-    const batch: Batch = { userId, extras: [], open: true };
-    this.batches.set(chatId, batch);
+  constructor(options: AiTurnCoalescerOptions = {}) {
+    this.maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
+    this.maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
+  }
+
+  /** Registers a queued run as the open batch for its scope. Call before the run can start. */
+  open(scope: CoalesceScope): CoalesceBatchHandle {
+    const key = scopeKey(scope);
+    const batch: Batch = { userId: scope.userId, extras: [], chars: 0, open: true };
+    this.batches.set(key, batch);
 
     const take = (): CoalescedTurnMessage[] => {
       if (!batch.open) return [];
       batch.open = false;
-      if (this.batches.get(chatId) === batch) this.batches.delete(chatId);
+      if (this.batches.get(key) === batch) this.batches.delete(key);
       return batch.extras.splice(0);
     };
     return { drain: take, close: take };
   }
 
-  /** Appends a follow-up to the chat's open batch; false means the caller must schedule normally. */
-  tryAppend(chatId: number, userId: number, message: CoalescedTurnMessage): boolean {
-    const batch = this.batches.get(chatId);
-    if (!batch?.open || batch.userId !== userId) return false;
+  /** Appends a follow-up to the scope's open batch; false means the caller must schedule normally. */
+  tryAppend(scope: CoalesceScope, message: CoalescedTurnMessage): boolean {
+    const batch = this.batches.get(scopeKey(scope));
+    if (!batch?.open || batch.userId !== scope.userId) return false;
+    if (batch.extras.length >= this.maxMessages) return false;
+    if (batch.chars + message.text.length > this.maxChars) return false;
     batch.extras.push(message);
+    batch.chars += message.text.length;
     return true;
   }
 
