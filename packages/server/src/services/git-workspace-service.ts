@@ -40,6 +40,12 @@ const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BOT_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_GIT_OUTPUT = 2 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 5 * 60 * 1000;
+const GIT_REFETCH_TIMEOUT_MS = 30 * 60 * 1000;
+const PARTIAL_CLONE_CONFIG_KEYS = [
+  "remote.origin.partialclonefilter",
+  "remote.origin.promisor",
+  "extensions.partialClone",
+] as const;
 const DEFAULT_JOB_TIMEOUT_MS = 4 * 60 * 1000;
 const MAX_RECOVERY_INDEX_BYTES = 64 * 1024 * 1024;
 const RECOVERY_CLEAN_BATCH_SIZE = 100;
@@ -1099,7 +1105,6 @@ export class GitWorkspaceService {
                 "clone",
                 "--origin",
                 "origin",
-                "--filter=blob:none",
                 "--separate-git-dir",
                 gitDir,
                 this.remoteUrl(repository),
@@ -1131,13 +1136,48 @@ export class GitWorkspaceService {
       undefined,
       signal,
     );
+    await this.repairPartialClone(workspace, token, signal);
     await this.withAuth(
       token,
-      (env) =>
-        this.git(workspace, ["fetch", "--prune", "--filter=blob:none", "origin"], env, signal),
+      (env) => this.git(workspace, ["fetch", "--prune", "origin"], env, signal),
       signal,
     );
     return workspace;
+  }
+
+  /**
+   * Converts a legacy partial clone back into a full one. Lazy blob fetches happen under
+   * credential-less git commands, where they fail as authentication errors instead of missing
+   * objects, so the promised objects must be materialised up front.
+   */
+  private async repairPartialClone(
+    workspace: string,
+    token: string,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const isPartial = (
+      await Promise.all(
+        PARTIAL_CLONE_CONFIG_KEYS.map((key) =>
+          this.gitSucceeds(workspace, ["config", "--get", key], signal),
+        ),
+      )
+    ).some(Boolean);
+    if (!isPartial) return;
+    // The filter has to go first: --refetch would otherwise reapply it and stay partial.
+    await this.gitSucceeds(
+      workspace,
+      ["config", "--unset", "remote.origin.partialclonefilter"],
+      signal,
+    );
+    await this.withAuth(
+      token,
+      (env) =>
+        this.git(workspace, ["fetch", "--refetch", "origin"], env, signal, GIT_REFETCH_TIMEOUT_MS),
+      signal,
+    );
+    for (const key of PARTIAL_CLONE_CONFIG_KEYS) {
+      await this.gitSucceeds(workspace, ["config", "--unset", key], signal);
+    }
   }
 
   private workspacePath(botId: string, repository: string): string {
@@ -1253,8 +1293,9 @@ export class GitWorkspaceService {
     args: string[],
     env?: NodeJS.ProcessEnv,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<string> {
-    return this.gitWithWorkTree(cwd, cwd, args, env, signal);
+    return this.gitWithWorkTree(cwd, cwd, args, env, signal, timeoutMs);
   }
 
   private gitWithWorkTree(
@@ -1263,6 +1304,7 @@ export class GitWorkspaceService {
     args: string[],
     env?: NodeJS.ProcessEnv,
     signal?: AbortSignal,
+    timeoutMs?: number,
   ): Promise<string> {
     signal?.throwIfAborted();
     return run(
@@ -1282,6 +1324,7 @@ export class GitWorkspaceService {
         uid: this.workspaceUid,
         gid: this.workspaceGid,
         signal,
+        timeoutMs,
       },
     );
   }
@@ -1355,6 +1398,8 @@ export class GitWorkspaceService {
       HOME: os.tmpdir(),
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
+      // Without credentials a lazy fetch surfaces as a confusing auth prompt failure.
+      GIT_NO_LAZY_FETCH: "1",
     };
     for (const name of inheritedNames) {
       if (process.env[name]) safe[name] = process.env[name];
