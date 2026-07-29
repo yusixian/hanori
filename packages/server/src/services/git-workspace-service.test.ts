@@ -159,13 +159,14 @@ describe("Git workspace input validation", () => {
     const workspace = path.join(workspaceRoot, "bot-1", "owner", "repo");
     const gitFile = await readFile(path.join(workspace, ".git"), "utf8");
     expect(gitFile).toContain(path.join(gitRoot, "bot-1", "owner", "repo.git"));
-    const partialCloneFilter = await exec("git", [
-      `--git-dir=${path.join(gitRoot, "bot-1", "owner", "repo.git")}`,
-      "config",
-      "--get",
-      "remote.origin.partialclonefilter",
-    ]);
-    expect(partialCloneFilter.stdout.trim()).toBe("blob:none");
+    await expect(
+      exec("git", [
+        `--git-dir=${path.join(gitRoot, "bot-1", "owner", "repo.git")}`,
+        "config",
+        "--get",
+        "remote.origin.partialclonefilter",
+      ]),
+    ).rejects.toThrow();
     const excludeFile = await readFile(
       path.join(gitRoot, "bot-1", "owner", "repo.git", "info", "exclude"),
       "utf8",
@@ -209,11 +210,7 @@ describe("Git workspace input validation", () => {
     });
     await vi.waitFor(() => expect(waitForFreshBoot).toHaveBeenCalledOnce());
     expect(stage).not.toHaveBeenCalled();
-    expect(
-      git.mock.calls.some(
-        (call) => call[1].join(" ") === "fetch --prune --filter=blob:none origin",
-      ),
-    ).toBe(true);
+    expect(git.mock.calls.some((call) => call[1].join(" ") === "fetch --prune origin")).toBe(true);
     releaseFreshBoot();
     await secondRun;
     expect(await readFile(path.join(workspace, ".cos-pi-cache", "cache-entry"), "utf8")).toBe(
@@ -580,5 +577,132 @@ describe("Git workspace input validation", () => {
       ]),
     ).rejects.toThrow();
     expect(runWorker).not.toHaveBeenCalled();
+  });
+
+  it("blocks lazy object fetches in the credential-less git environment", () => {
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    const service = new GitWorkspaceService("/tmp/workspaces", "/tmp/git", worker);
+    const internals = service as unknown as {
+      gitEnvironment: (extra?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv;
+    };
+    expect(internals.gitEnvironment()).toMatchObject({
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+    });
+  });
+
+  it("backfills promised objects and drops partial clone config from legacy workspaces", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "git-workspace-partial-test-"));
+    tempDirs.push(root);
+    const remote = path.join(root, "remote.git");
+    const seed = path.join(root, "seed");
+    await exec("git", ["init", "--bare", remote]);
+    await exec("git", [`--git-dir=${remote}`, "config", "uploadpack.allowFilter", "true"]);
+    await exec("git", ["init", "-b", "main", seed]);
+    await writeFile(path.join(seed, "README.md"), "before\n");
+    await exec("git", ["-C", seed, "add", "README.md"]);
+    await exec("git", [
+      "-C",
+      seed,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "initial",
+    ]);
+    await exec("git", ["-C", seed, "remote", "add", "origin", remote]);
+    await exec("git", ["-C", seed, "push", "-u", "origin", "main"]);
+    await exec("git", [`--git-dir=${remote}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+    await exec("git", ["-C", seed, "checkout", "-b", "side"]);
+    await writeFile(path.join(seed, "SIDE.md"), "side only\n");
+    await exec("git", ["-C", seed, "add", "SIDE.md"]);
+    await exec("git", [
+      "-C",
+      seed,
+      "-c",
+      "user.name=Seed",
+      "-c",
+      "user.email=seed@example.com",
+      "commit",
+      "-m",
+      "side",
+    ]);
+    await exec("git", ["-C", seed, "push", "origin", "side"]);
+
+    const workspaceRoot = path.join(root, "workspaces");
+    const gitRoot = path.join(root, "metadata");
+    const stagingRoot = path.join(root, "coding-job");
+    await Promise.all([mkdir(workspaceRoot), mkdir(gitRoot), mkdir(stagingRoot)]);
+    const workspace = path.join(workspaceRoot, "bot-1", "owner", "repo");
+    const gitDir = path.join(gitRoot, "bot-1", "owner", "repo.git");
+    await mkdir(path.dirname(workspace), { recursive: true });
+    await mkdir(path.dirname(gitDir), { recursive: true });
+    const remoteUrl = `file://${remote}`;
+    await exec("git", [
+      "clone",
+      "--origin",
+      "origin",
+      "--filter=blob:none",
+      "--separate-git-dir",
+      gitDir,
+      remoteUrl,
+      workspace,
+    ]);
+    expect(
+      (await exec("git", [`--git-dir=${gitDir}`, "config", "--get", "remote.origin.promisor"]))
+        .stdout,
+    ).toContain("true");
+    const noLazyFetch = { env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } };
+    await expect(
+      exec("git", [`--git-dir=${gitDir}`, "cat-file", "-e", "origin/side:SIDE.md"], noLazyFetch),
+    ).rejects.toThrow();
+
+    const worker = new CodingWorkerClient({ url: "", secret: "" });
+    const service = new GitWorkspaceService(
+      workspaceRoot,
+      gitRoot,
+      worker,
+      process.getuid?.() ?? 1000,
+      process.getgid?.() ?? 1000,
+      () => remoteUrl,
+      new CodingJobStager(stagingRoot),
+    );
+    const internals = service as unknown as {
+      ensureWorkspace: (
+        botId: string,
+        repository: string,
+        token: string,
+        signal?: AbortSignal,
+      ) => Promise<string>;
+      git: (
+        cwd: string,
+        args: string[],
+        env?: NodeJS.ProcessEnv,
+        signal?: AbortSignal,
+        timeoutMs?: number,
+      ) => Promise<string>;
+    };
+    const git = vi.spyOn(internals, "git");
+    await internals.ensureWorkspace("bot-1", "owner/repo", "github-secret");
+
+    expect(git.mock.calls.some((call) => call[1].includes("--refetch"))).toBe(true);
+    for (const key of [
+      "remote.origin.promisor",
+      "remote.origin.partialclonefilter",
+      "extensions.partialClone",
+    ]) {
+      await expect(exec("git", [`--git-dir=${gitDir}`, "config", "--get", key])).rejects.toThrow();
+    }
+    await exec(
+      "git",
+      [`--git-dir=${gitDir}`, "cat-file", "-e", "origin/side:SIDE.md"],
+      noLazyFetch,
+    );
+
+    git.mockClear();
+    await internals.ensureWorkspace("bot-1", "owner/repo", "github-secret");
+    expect(git.mock.calls.some((call) => call[1].includes("--refetch"))).toBe(false);
   });
 });
