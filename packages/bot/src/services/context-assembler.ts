@@ -81,11 +81,15 @@ export interface ContextAssemblyInput {
   maxContextMessages: number;
   groupHistoryMaxTokens?: number;
   historyExcludeSourceKey?: string;
+  historyBeforeId?: number;
+  historyBeforeTelegramMessageId?: number;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
   userId?: number;
   includeCrossChatUserHistory?: boolean;
+  /** History watermark captured at admission so queued turns ignore newer cross-chat messages. */
+  crossChatHistoryBeforeId?: number;
   memoryTools?: Record<string, Tool>;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
@@ -659,13 +663,25 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const useConversation =
     input.conversation && (input.isPrivate ? conversationConfig.enabled : true);
   if (useConversation) {
+    const historyOptions =
+      input.historyExcludeSourceKey ||
+      input.historyBeforeId !== undefined ||
+      input.historyBeforeTelegramMessageId !== undefined
+        ? {
+            ...(input.historyExcludeSourceKey
+              ? { excludeSourceKey: input.historyExcludeSourceKey }
+              : {}),
+            ...(input.historyBeforeId !== undefined ? { beforeId: input.historyBeforeId } : {}),
+            ...(input.historyBeforeTelegramMessageId !== undefined
+              ? { beforeTelegramMessageId: input.historyBeforeTelegramMessageId }
+              : {}),
+          }
+        : undefined;
     let history = await input.conversation!.getHistory(
       input.chatId,
       input.maxContextMessages,
       input.isPrivate ? undefined : input.groupHistoryMaxTokens,
-      input.historyExcludeSourceKey
-        ? { excludeSourceKey: input.historyExcludeSourceKey }
-        : undefined,
+      historyOptions,
     );
     if (
       !input.isPrivate &&
@@ -678,9 +694,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
           input.chatId,
           input.maxContextMessages,
           input.groupHistoryMaxTokens,
-          input.historyExcludeSourceKey
-            ? { excludeSourceKey: input.historyExcludeSourceKey }
-            : undefined,
+          historyOptions,
         );
       } catch {
         // The raw tail remains usable. The trace below marks this prompt as degraded.
@@ -713,6 +727,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
         input.userId,
         input.chatId,
         5,
+        input.crossChatHistoryBeforeId,
       );
       const selected: typeof recent = [];
       let usedTokens = 0;

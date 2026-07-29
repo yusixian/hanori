@@ -1,4 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
+import { DEFAULT_AI_EXECUTION_CONFIG } from "@cos-tool-bot/shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
@@ -98,6 +99,139 @@ function savingBotPool(): BotPool {
   } as unknown as BotPool;
 }
 
+describe("AI execution configuration", () => {
+  it("returns defaults for configurations saved before execution settings existed", async () => {
+    const response = await routeApp(
+      routeDatabase(undefined, existingAiConfig),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config");
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      data: { executionConfig: DEFAULT_AI_EXECUTION_CONFIG },
+    });
+  });
+
+  it("trims and saves valid execution settings", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        executionConfig: {
+          maxConcurrentReplies: 8,
+          queueNotice: { enabled: true, text: "  稍后就来  " },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["executionConfig"]).toEqual({
+      maxConcurrentReplies: 8,
+      queueNotice: { enabled: true, text: "稍后就来" },
+    });
+  });
+
+  it("preserves stored execution settings when an older client omits them", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const existingExecutionConfig = {
+      maxConcurrentReplies: 6,
+      queueNotice: { enabled: false, text: "保留我" },
+    };
+    const response = await routeApp(
+      routeDatabase(
+        (aiConfig) => {
+          savedAiConfig = aiConfig as Record<string, unknown>;
+        },
+        { ...existingAiConfig, executionConfig: existingExecutionConfig },
+      ),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody()),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["executionConfig"]).toEqual(existingExecutionConfig);
+  });
+
+  it.each([0, 33, 1.5])("rejects invalid max concurrency %s", async (maxConcurrentReplies) => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          executionConfig: {
+            maxConcurrentReplies,
+            queueNotice: { enabled: true, text: "稍后就来" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it.each(["   ", "太".repeat(201)])("rejects invalid enabled queue notice text", async (text) => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          executionConfig: {
+            maxConcurrentReplies: 4,
+            queueNotice: { enabled: true, text },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("allows an empty queue notice when the notice is disabled", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        executionConfig: {
+          maxConcurrentReplies: 4,
+          queueNotice: { enabled: false, text: "   " },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["executionConfig"]).toEqual({
+      maxConcurrentReplies: 4,
+      queueNotice: { enabled: false, text: "" },
+    });
+  });
+});
+
 describe("AI config GitHub coding provider contract", () => {
   it("rejects a stale full-page save before it can overwrite a newer group patch", async () => {
     const save = vi.fn();
@@ -184,11 +318,15 @@ describe("AI config GitHub coding provider contract", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody()),
       });
-      const responseBody = await response.text();
+      const responseBody = await response.json();
 
       expect(response.status).toBe(503);
-      expect(responseBody).toContain("AI 配置已保存，但 Bot 重启失败");
-      expect(responseBody).not.toContain("restart-secret-detail");
+      expect(responseBody).toMatchObject({
+        ok: false,
+        code: "saved_apply_failed",
+        error: "AI 配置已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
+      });
+      expect(JSON.stringify(responseBody)).not.toContain("restart-secret-detail");
       expect(invalidateGitHubCredentials).toHaveBeenCalledWith("bot-1");
       expect(restartBot).toHaveBeenCalledWith("bot-1");
       expect(errorSpy).toHaveBeenCalledWith("Bot restart after AI config save failed", {

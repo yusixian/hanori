@@ -72,11 +72,20 @@ export interface ContinueChatSelection {
   agentToolsFactory?: () => Record<string, Tool>;
 }
 
+export interface ContinueChatRunContext {
+  readonly signal: AbortSignal;
+  isCurrent(): boolean;
+}
+
 export interface ContinueChatConfig {
   resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
   isAiDisabled?: () => boolean;
   registerAbortController?: (c: AbortController) => void;
   unregisterAbortController?: (c: AbortController) => void;
+  runWithExecution?: <T>(
+    scope: { chatId: number; userId?: number },
+    operation: (context: ContinueChatRunContext) => Promise<T>,
+  ) => Promise<T>;
   systemPrompt: string;
   behavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
@@ -147,9 +156,6 @@ export async function continueChat(
         moodState: new Map<number, MoodInfo>(),
       }
     : config;
-  const run = () =>
-    // Shared per-chat lock: mutually exclusive with the main AI-reply handler's streamText.
-    withChatLock(event.chatId, () => doContinueChat(api, executionConfig, event));
   const eventUserId = event.userId;
   const privacy = config.privacy;
   if (eventUserId === undefined && privacy && event.chatId > 0) {
@@ -161,29 +167,41 @@ export async function continueChat(
     requireContinuationDelivery(event, "ownerless private event");
     return false;
   }
-  if (eventUserId === undefined || !privacy) {
-    return await run();
+
+  const runWithPrivacy = (executionContext?: ContinueChatRunContext): Promise<boolean> => {
+    if (eventUserId === undefined || !privacy) {
+      return doContinueChat(api, executionConfig, event, executionContext);
+    }
+
+    return privacy.runExclusive(eventUserId, async () => {
+      // Re-read under the user lock so a queued continuation cannot use a stale mode.
+      const privacyMode = await privacy.getMode(eventUserId);
+      if (privacyMode === "off") {
+        config.onLog?.({
+          level: "info",
+          message: "Personalized continuation skipped because personalization is off",
+          meta: { chatId: event.chatId, userId: eventUserId },
+        });
+        requireContinuationDelivery(event, "personalization is off");
+        return false;
+      }
+      return doContinueChat(api, executionConfig, event, executionContext);
+    });
+  };
+
+  if (config.runWithExecution) {
+    return config.runWithExecution({ chatId: event.chatId, userId: event.userId }, runWithPrivacy);
   }
 
-  return await privacy.runExclusive(eventUserId, async () => {
-    const privacyMode = await privacy.getMode(eventUserId);
-    if (privacyMode === "off") {
-      config.onLog?.({
-        level: "info",
-        message: "Personalized continuation skipped because personalization is off",
-        meta: { chatId: event.chatId, userId: eventUserId },
-      });
-      requireContinuationDelivery(event, "personalization is off");
-      return false;
-    }
-    return await run();
-  });
+  // Backward-compatible fallback preserves the same ownership-before-privacy lock order.
+  return withChatLock(event.chatId, () => runWithPrivacy());
 }
 
 async function doContinueChat(
   api: Api,
   config: ContinueChatConfig,
   event: ContinueChatEvent,
+  executionContext?: ContinueChatRunContext,
 ): Promise<boolean> {
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
@@ -210,6 +228,11 @@ async function doContinueChat(
   });
 
   let manualAbort: AbortController | null = null;
+  const isExecutionCancelled = () =>
+    !!config.isAiDisabled?.() ||
+    !!manualAbort?.signal.aborted ||
+    !!executionContext?.signal.aborted ||
+    executionContext?.isCurrent() === false;
   try {
     let memoryTools: Record<string, Tool> | undefined;
     if (memCfg.enabled && config.memory) {
@@ -423,12 +446,14 @@ async function doContinueChat(
     const requestCache = createRequestCache();
     manualAbort = new AbortController();
     config.registerAbortController?.(manualAbort);
+    const abortSignals: AbortSignal[] = [
+      AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
+      manualAbort.signal,
+    ];
+    if (executionContext) abortSignals.push(executionContext.signal);
     const perStepAbort = createPerStepAbort(
       config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
-      AbortSignal.any([
-        AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
-        manualAbort.signal,
-      ]),
+      AbortSignal.any(abortSignals),
     );
 
     // ─── streamText (ai v6 API) ───
@@ -510,7 +535,7 @@ async function doContinueChat(
     }
 
     // If /stop fired while streamText was running, drop all pending sends + saves.
-    if (config.isAiDisabled?.() || manualAbort.signal.aborted) {
+    if (isExecutionCancelled()) {
       config.onLog?.({
         level: "info",
         message: "continueChat aborted mid-reply, dropping pending sends",
@@ -549,11 +574,11 @@ async function doContinueChat(
       const threshold = msgCfg.autoSplitThreshold ?? 0;
       const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
       for (const [i, chunk] of chunks.entries()) {
-        if (config.isAiDisabled?.() || manualAbort.signal.aborted) break;
+        if (isExecutionCancelled()) break;
         if (i > 0) {
           await api.sendChatAction(chatId, "typing").catch(() => {});
           await sleep(msgCfg.splitDelayMs ?? 800);
-          if (config.isAiDisabled?.() || manualAbort.signal.aborted) break;
+          if (isExecutionCancelled()) break;
         }
         try {
           const { message } = await sendMarkdownWithFallback(
@@ -592,6 +617,11 @@ async function doContinueChat(
     let visibleDeliveryCount =
       streamedMessageCount + deliveredMultiMessages.length + deliveredFinalChunks.length;
     if (event.requireDelivery && visibleDeliveryCount === 0) {
+      if (isExecutionCancelled()) {
+        if (successfulToolEffectCount === 0)
+          requireContinuationDelivery(event, "reply was aborted");
+        return false;
+      }
       try {
         const { message } = await sendMarkdownWithFallback(
           api,
@@ -664,6 +694,11 @@ async function doContinueChat(
         });
       }
 
+      if (isExecutionCancelled() && visibleDeliveryCount === 0) {
+        if (successfulToolEffectCount === 0)
+          requireContinuationDelivery(event, "reply was aborted");
+        return false;
+      }
       try {
         await config.conversation.addMessages(toSave);
         await config.conversation.triggerCompression(chatId);

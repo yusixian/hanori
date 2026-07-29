@@ -11,12 +11,14 @@ export type TelegramCommandCategory =
   | "integrations";
 export type TelegramCommandAccess = "public" | "admin" | "contextual" | "configurable";
 export type PublicHelpVisibility = "public" | "admin-overview" | "hidden";
+export type TelegramCommandExecutionLane = "control" | "config" | "operation";
 
 export interface TelegramCommandMetadata {
   command: string;
   description: Record<TelegramCommandLocale, string>;
   category: TelegramCommandCategory;
   access: TelegramCommandAccess;
+  executionLane: TelegramCommandExecutionLane;
   capability: string;
   publicHelpVisibility: PublicHelpVisibility;
 }
@@ -32,6 +34,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "显示欢迎信息", en: "Show the welcome message" },
     category: "general",
     access: "public",
+    executionLane: "control",
     capability: "help.read",
     publicHelpVisibility: "public",
   },
@@ -40,6 +43,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "显示当前可用命令", en: "Show currently available commands" },
     category: "general",
     access: "public",
+    executionLane: "control",
     capability: "help.read",
     publicHelpVisibility: "public",
   },
@@ -51,6 +55,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     },
     category: "general",
     access: "public",
+    executionLane: "control",
     capability: "help.read",
     publicHelpVisibility: "public",
   },
@@ -62,6 +67,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     },
     category: "general",
     access: "public",
+    executionLane: "control",
     capability: "message.format",
     publicHelpVisibility: "public",
   },
@@ -70,6 +76,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看 Bot 运行状态", en: "Show bot runtime status" },
     category: "operations",
     access: "admin",
+    executionLane: "control",
     capability: "bot.status.read",
     publicHelpVisibility: "admin-overview",
   },
@@ -78,6 +85,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "重启 Bot", en: "Restart the bot" },
     category: "operations",
     access: "admin",
+    executionLane: "control",
     capability: "bot.lifecycle.manage",
     publicHelpVisibility: "admin-overview",
   },
@@ -86,6 +94,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "创建数据库备份", en: "Create a database backup" },
     category: "operations",
     access: "admin",
+    executionLane: "operation",
     capability: "backup.create",
     publicHelpVisibility: "admin-overview",
   },
@@ -94,6 +103,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "停用 AI 回复并中断当前调用", en: "Stop AI replies and active calls" },
     category: "ai",
     access: "admin",
+    executionLane: "control",
     capability: "bot.ai.toggle",
     publicHelpVisibility: "admin-overview",
   },
@@ -102,6 +112,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "恢复 AI 回复", en: "Resume AI replies" },
     category: "ai",
     access: "admin",
+    executionLane: "control",
     capability: "bot.ai.toggle",
     publicHelpVisibility: "admin-overview",
   },
@@ -113,6 +124,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     },
     category: "integrations",
     access: "admin",
+    executionLane: "config",
     capability: "credentials.manage",
     publicHelpVisibility: "hidden",
   },
@@ -121,6 +133,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或管理 MCP 服务器", en: "View or manage MCP servers" },
     category: "integrations",
     access: "admin",
+    executionLane: "config",
     capability: "mcp.manage",
     publicHelpVisibility: "admin-overview",
   },
@@ -129,6 +142,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "清除当前对话历史", en: "Clear the current conversation history" },
     category: "conversation",
     access: "contextual",
+    executionLane: "control",
     capability: "conversation.clear",
     publicHelpVisibility: "public",
   },
@@ -137,6 +151,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或切换个人化模式", en: "View or change personalization mode" },
     category: "privacy",
     access: "public",
+    executionLane: "control",
     capability: "privacy.self.manage",
     publicHelpVisibility: "public",
   },
@@ -145,6 +160,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "清理收到的文件缓存", en: "Clear received file cache" },
     category: "operations",
     access: "admin",
+    executionLane: "control",
     capability: "bot.files.clear",
     publicHelpVisibility: "admin-overview",
   },
@@ -153,6 +169,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或管理活跃定时器", en: "View or manage active timers" },
     category: "operations",
     access: "admin",
+    executionLane: "control",
     capability: "timer.manage",
     publicHelpVisibility: "admin-overview",
   },
@@ -161,6 +178,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或切换 AI 模型", en: "View or change the AI model" },
     category: "ai",
     access: "admin",
+    executionLane: "config",
     capability: "chat.ai-selection.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -169,6 +187,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或切换 AI Provider", en: "View or change the AI provider" },
     category: "ai",
     access: "admin",
+    executionLane: "config",
     capability: "chat.ai-selection.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -177,6 +196,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "切换回复模式", en: "Change the reply mode" },
     category: "ai",
     access: "admin",
+    executionLane: "config",
     capability: "bot.settings.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -185,6 +205,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "切换 AI 富文本增强", en: "Toggle enhanced AI rich text" },
     category: "ai",
     access: "admin",
+    executionLane: "config",
     capability: "bot.settings.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -193,6 +214,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "切换群组生图权限", en: "Toggle group image generation" },
     category: "media",
     access: "admin",
+    executionLane: "config",
     capability: "group.image-generation.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -201,6 +223,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "查看或修改生图配置", en: "View or change image generation settings" },
     category: "media",
     access: "admin",
+    executionLane: "config",
     capability: "bot.image-generation.write",
     publicHelpVisibility: "admin-overview",
   },
@@ -209,6 +232,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "直接生成图片", en: "Generate an image directly" },
     category: "media",
     access: "contextual",
+    executionLane: "operation",
     capability: "image.generate",
     publicHelpVisibility: "public",
   },
@@ -217,6 +241,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     description: { "zh-CN": "总结群聊消息", en: "Summarize group messages" },
     category: "conversation",
     access: "contextual",
+    executionLane: "operation",
     capability: "group.summary.run",
     publicHelpVisibility: "public",
   },
@@ -232,4 +257,8 @@ export function getTelegramCommandMetadata(command: TelegramCommandName): Telegr
   const metadata = metadataByCommand.get(command);
   if (!metadata) throw new Error(`Unknown Telegram command: ${command}`);
   return metadata;
+}
+
+export function findTelegramCommandMetadata(command: string): TelegramCommandMetadata | undefined {
+  return metadataByCommand.get(command);
 }

@@ -12,12 +12,14 @@ export {
   type MiniAppRole,
 } from "./mini-app-access.js";
 export {
+  findTelegramCommandMetadata,
   getTelegramCommandMetadata,
   TELEGRAM_COMMAND_CATALOG,
   TELEGRAM_COMMAND_LOCALES,
   type PublicHelpVisibility,
   type TelegramCommandAccess,
   type TelegramCommandCategory,
+  type TelegramCommandExecutionLane,
   type TelegramCommandLocale,
   type TelegramCommandMetadata,
   type TelegramCommandName,

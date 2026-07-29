@@ -8,6 +8,8 @@ import type { WrapperContext } from "../context.js";
 
 export interface PrivacyCommandCallbacks extends UserPrivacyCallbacks {
   waitForPendingProfileUpdate?: (userId: number) => Promise<void>;
+  beforeMutate?: (userId: number) => Promise<void>;
+  runMutation?: (userId: number, operation: () => Promise<void>) => Promise<void>;
 }
 
 export type PrivacyCommandAction =
@@ -91,15 +93,20 @@ export function createPrivacyCommand(
       return;
     }
 
-    await deps.runExclusive(userId, async () => {
-      await deps.waitForPendingProfileUpdate?.(userId);
-      if (action.kind === "set") {
-        await deps.setMode(userId, action.mode);
-        await ctx.reply(`已切换个人化模式：${describeMode(action.mode)}`);
-        return;
-      }
-      const result = await deps.forget(userId);
-      await ctx.reply(formatForgetResult(result));
-    });
+    const mutate = async () => {
+      await deps.beforeMutate?.(userId);
+      await deps.runExclusive(userId, async () => {
+        await deps.waitForPendingProfileUpdate?.(userId);
+        if (action.kind === "set") {
+          await deps.setMode(userId, action.mode);
+          await ctx.reply(`已切换个人化模式：${describeMode(action.mode)}`);
+          return;
+        }
+        const result = await deps.forget(userId);
+        await ctx.reply(formatForgetResult(result));
+      });
+    };
+    if (deps.runMutation) await deps.runMutation(userId, mutate);
+    else await mutate();
   };
 }

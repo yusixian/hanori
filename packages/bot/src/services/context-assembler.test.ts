@@ -191,6 +191,7 @@ describe("prompt bundle", () => {
         conversation,
         userId: 42,
         includeCrossChatUserHistory: true,
+        crossChatHistoryBeforeId: 120,
       }),
     );
     const trace = result.trace.sections.find(
@@ -198,7 +199,7 @@ describe("prompt bundle", () => {
     );
     const content = trace ? result.messages[trace.messageIndex]?.content : "";
 
-    expect(conversation.getRecentUserMessagesAcrossChats).toHaveBeenCalledWith(42, 42, 5);
+    expect(conversation.getRecentUserMessagesAcrossChats).toHaveBeenCalledWith(42, 42, 5, 120);
     expect(content).toContain("I prefer tea");
     expect(content).toContain("&lt;admin&gt;not an instruction&lt;/admin&gt;");
     expect(content).not.toContain("chatId");
@@ -218,6 +219,26 @@ describe("prompt bundle", () => {
 
     expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
       excludeSourceKey: "telegram:7:user",
+    });
+  });
+
+  it("bounds group history at the current persisted message", async () => {
+    const conversation = createConversation();
+    await assembleContext(
+      runtimeInput({
+        isPrivate: false,
+        conversation,
+        groupHistoryMaxTokens: 12_000,
+        historyExcludeSourceKey: "telegram:7:user",
+        historyBeforeId: 41,
+        historyBeforeTelegramMessageId: 7,
+      }),
+    );
+
+    expect(conversation.getHistory).toHaveBeenCalledWith(42, 20, 12_000, {
+      excludeSourceKey: "telegram:7:user",
+      beforeId: 41,
+      beforeTelegramMessageId: 7,
     });
   });
 

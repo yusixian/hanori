@@ -71,6 +71,12 @@ import { McpServersSection } from "./sections/mcp-servers-section";
 import { SummaryConfigSection } from "./sections/summary-config-section";
 import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
 import { WebToolsSection } from "./sections/web-tools-section";
+import { ExecutionConfigSection } from "./sections/execution-config-section";
+import {
+  createExecutionConfigDraft,
+  type AiExecutionConfigDraft,
+  toExecutionConfigUpdate,
+} from "./execution-config";
 import {
   DEFAULT_AGENT_TOOLS,
   DEFAULT_CONFIG,
@@ -80,7 +86,11 @@ import {
 import type { GlobalAiSelection, StatusMessage } from "./types";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
-import { renameProviderModelReferences, resolveManagedProviderIdAfterSave } from "./utils";
+import {
+  recoverAiConfigAfterApplyFailure,
+  renameProviderModelReferences,
+  resolveManagedProviderIdAfterSave,
+} from "./utils";
 
 const DEFAULT_SUMMARY_CONFIG: SummaryConfigStored = {
   enabled: false,
@@ -97,6 +107,7 @@ function serializeDraft(
   stickerPacksText: string,
   summaryConfig: SummaryConfigStored,
   imageOcrConfig: ImageOcrConfig,
+  executionConfig: AiExecutionConfigDraft,
 ) {
   return JSON.stringify({
     config,
@@ -104,6 +115,7 @@ function serializeDraft(
     stickerPacksText,
     summaryConfig,
     imageOcrConfig,
+    executionConfig,
   });
 }
 
@@ -169,6 +181,9 @@ export function BotAiSettingsPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
+  const [executionConfig, setExecutionConfig] = useState<AiExecutionConfigDraft>(() =>
+    createExecutionConfigDraft(DEFAULT_CONFIG.executionConfig),
+  );
   const [loadedBot, setLoadedBot] = useState<{
     id: string;
     platform: BotWithStatus["platform"];
@@ -263,46 +278,62 @@ export function BotAiSettingsPage() {
     };
   }, []);
 
-  const loadConfig = useCallback(async () => {
-    if (!botId) return;
-    try {
-      const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
-      const json = await res.json();
-      if (json.ok) {
-        revisionRef.current = json.revision;
-        const triggerText = json.data.triggerConfig.triggerWords.join(", ");
-        const stickersText = json.data.stickerPacks?.join(", ") ?? "";
-        const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
-        const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
-        setConfig(json.data);
-        setManagedProviderId((current) =>
-          json.data.providers.some((provider) => provider.id === current)
-            ? current
-            : (json.data.activeProviderId ?? json.data.providers[0]?.id),
-        );
-        setWebSearchApiKey("");
-        setWebImageApiKey("");
-        setTriggerWordsText(triggerText);
-        setStickerPacksText(stickersText);
-        setSummaryConfig(nextSummary);
-        setImageOcrConfig(nextOcr);
-        savedDraftRef.current = serializeDraft(
-          json.data,
-          triggerText,
-          stickersText,
-          nextSummary,
-          nextOcr,
-        );
+  const loadConfig = useCallback(
+    async (reportError = true): Promise<boolean> => {
+      if (!botId) return false;
+      try {
+        const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
+        const json = await res.json();
+        if (json.ok) {
+          revisionRef.current = json.revision;
+          const triggerText = json.data.triggerConfig.triggerWords.join(", ");
+          const stickersText = json.data.stickerPacks?.join(", ") ?? "";
+          const nextSummary = json.data.summaryConfig ?? DEFAULT_SUMMARY_CONFIG;
+          const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
+          const nextExecution = createExecutionConfigDraft(json.data.executionConfig);
+          setConfig(json.data);
+          setManagedProviderId((current) =>
+            json.data.providers.some((provider) => provider.id === current)
+              ? current
+              : (json.data.activeProviderId ?? json.data.providers[0]?.id),
+          );
+          setEmbeddingApiKey("");
+          setWebSearchApiKey("");
+          setWebImageApiKey("");
+          setProviderApiKeys({});
+          setTriggerWordsText(triggerText);
+          setStickerPacksText(stickersText);
+          setSummaryConfig(nextSummary);
+          setImageOcrConfig(nextOcr);
+          setExecutionConfig(nextExecution);
+          savedDraftRef.current = serializeDraft(
+            json.data,
+            triggerText,
+            stickersText,
+            nextSummary,
+            nextOcr,
+            nextExecution,
+          );
+          return true;
+        }
+        if (reportError) {
+          setMessage({ type: "error", text: i18n.t("page.loadError", { ns: "aiSettings" }) });
+        }
+        return false;
+      } catch {
+        if (reportError) {
+          setMessage({ type: "error", text: i18n.t("page.loadError", { ns: "aiSettings" }) });
+        }
+        return false;
+      } finally {
+        setLoading(false);
       }
-    } catch {
-      setMessage({ type: "error", text: i18n.t("page.loadError", { ns: "aiSettings" }) });
-    } finally {
-      setLoading(false);
-    }
-  }, [botId, i18n]);
+    },
+    [botId, i18n],
+  );
 
   useEffect(() => {
-    loadConfig();
+    void loadConfig();
   }, [loadConfig]);
 
   const loadGlobalSelection = useCallback(async () => {
@@ -360,7 +391,14 @@ export function BotAiSettingsPage() {
   const isConfigDirty =
     savedDraftRef.current !== "" &&
     (savedDraftRef.current !==
-      serializeDraft(config, triggerWordsText, stickerPacksText, summaryConfig, imageOcrConfig) ||
+      serializeDraft(
+        config,
+        triggerWordsText,
+        stickerPacksText,
+        summaryConfig,
+        imageOcrConfig,
+        executionConfig,
+      ) ||
       embeddingApiKey !== "" ||
       webSearchApiKey !== "" ||
       webImageApiKey !== "" ||
@@ -373,6 +411,7 @@ export function BotAiSettingsPage() {
       globalSelection.displayDefault !== globalSelectionDraft.displayDefault),
   );
   const isDirty = isConfigDirty || isSelectionDirty;
+  const executionConfigUpdate = toExecutionConfigUpdate(executionConfig);
 
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -385,6 +424,10 @@ export function BotAiSettingsPage() {
 
   const handleSave = async () => {
     if (!botId) return;
+    if (!executionConfigUpdate) {
+      setMessage({ type: "error", text: t("execution.validation.fixErrors") });
+      return;
+    }
     setSaving(true);
     setMessage(null);
     const providerIdsBeforeSave = config.providers.map((provider) => provider.id);
@@ -449,6 +492,7 @@ export function BotAiSettingsPage() {
           mcpServerIds: config.mcpServerIds,
           summaryConfig,
           imageOcrConfig,
+          executionConfig: executionConfigUpdate,
           stickerPacks: stickerPacksText
             .split(",")
             .map((s) => s.trim())
@@ -468,21 +512,42 @@ export function BotAiSettingsPage() {
         },
       });
       if (!res.ok) {
+        type SaveErrorResponse = {
+          code?: string;
+          error?: string | { issues?: Array<{ path: string[]; message: string }> };
+        };
+        const responseText = await res.text();
+        let errorJson: SaveErrorResponse | undefined;
+        try {
+          const parsed: unknown = JSON.parse(responseText);
+          if (parsed && typeof parsed === "object") errorJson = parsed as SaveErrorResponse;
+        } catch {
+          // The HTTP fallback below handles non-JSON responses.
+        }
+        const recovery = await recoverAiConfigAfterApplyFailure(
+          { status: res.status, code: errorJson?.code },
+          () => loadConfig(false),
+        );
+        if (recovery === "reloaded") {
+          await loadGlobalSelection();
+          setMessage({ type: "error", text: t("page.saveApplyFailed") });
+          return;
+        }
+        if (recovery === "reload-failed") {
+          setMessage({ type: "error", text: t("page.saveApplyFailedRefreshError") });
+          return;
+        }
         if (res.status === 409) {
           setMessage({ type: "error", text: t("page.saveConflict") });
           return;
         }
-        try {
-          const errorJson = JSON.parse(await res.text());
-          const detail = errorJson?.error?.issues
-            ? (errorJson.error.issues as Array<{ path: string[]; message: string }>)
-                .map(
-                  (i: { path: string[]; message: string }) => `${i.path.join(".")}: ${i.message}`,
-                )
-                .join("; ")
+        if (errorJson) {
+          const issues = typeof errorJson.error === "object" ? errorJson.error.issues : undefined;
+          const detail = issues
+            ? issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
             : JSON.stringify(errorJson);
           setMessage({ type: "error", text: t("page.saveErrorDetail", { detail }) });
-        } catch {
+        } else {
           setMessage({ type: "error", text: t("page.saveErrorHttp", { status: res.status }) });
         }
         return;
@@ -494,6 +559,7 @@ export function BotAiSettingsPage() {
         const stickersText = json.data.stickerPacks?.join(", ") ?? "";
         const nextSummary = json.data.summaryConfig ?? summaryConfig;
         const nextOcr = json.data.imageOcrConfig ?? imageOcrConfig;
+        const nextExecution = createExecutionConfigDraft(json.data.executionConfig);
         setConfig(json.data);
         setTriggerWordsText(triggerText);
         setStickerPacksText(stickersText);
@@ -501,6 +567,7 @@ export function BotAiSettingsPage() {
         setWebSearchApiKey("");
         setWebImageApiKey("");
         setProviderApiKeys({});
+        setExecutionConfig(nextExecution);
         setManagedProviderId((current) =>
           resolveManagedProviderIdAfterSave({
             currentProviderId: current,
@@ -515,6 +582,7 @@ export function BotAiSettingsPage() {
           stickersText,
           nextSummary,
           nextOcr,
+          nextExecution,
         );
         await loadGlobalSelection();
         setMessage({ type: "success", text: t("page.saveSuccess") });
@@ -838,8 +906,19 @@ export function BotAiSettingsPage() {
             </Button>
             <Button
               onClick={handleSave}
-              disabled={saving || revisionRef.current === "" || isSelectionDirty}
-              title={isSelectionDirty ? t("selection.applyBeforeCatalogSave") : undefined}
+              disabled={
+                saving ||
+                revisionRef.current === "" ||
+                isSelectionDirty ||
+                executionConfigUpdate === null
+              }
+              title={
+                isSelectionDirty
+                  ? t("selection.applyBeforeCatalogSave")
+                  : executionConfigUpdate === null
+                    ? t("execution.validation.fixErrors")
+                    : undefined
+              }
             >
               {saving ? (
                 <>
@@ -1005,6 +1084,15 @@ export function BotAiSettingsPage() {
                 description={t("disclosures.conversationContext.description")}
               >
                 <ConversationSection config={convCfg} onUpdate={updateConv} />
+              </SettingsDisclosureRow>
+              <SettingsDisclosureRow
+                title={t("disclosures.execution.title")}
+                description={t("disclosures.execution.description")}
+                summary={t("disclosures.execution.summary", {
+                  count: executionConfig.maxConcurrentReplies ?? "–",
+                })}
+              >
+                <ExecutionConfigSection config={executionConfig} onUpdate={setExecutionConfig} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
                 title={t("disclosures.messageDelivery.title")}

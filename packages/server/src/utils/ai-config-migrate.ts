@@ -1,5 +1,5 @@
 import type { AiConfigStored, AiProviderEntry } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
 
 /** Stable synthetic id used when wrapping legacy flat config into providers[0].
  *  Fixed (not random) so PUT handlers can look it up reliably across calls. */
@@ -42,6 +42,14 @@ export function migrateAiConfig(stored: AiConfigStored): AiConfigStored {
     conversationConfig: {
       ...DEFAULT_CONVERSATION_CONFIG,
       ...stored.conversationConfig,
+    },
+    executionConfig: {
+      ...DEFAULT_AI_EXECUTION_CONFIG,
+      ...stored.executionConfig,
+      queueNotice: {
+        ...DEFAULT_AI_EXECUTION_CONFIG.queueNotice,
+        ...stored.executionConfig?.queueNotice,
+      },
     },
   };
 

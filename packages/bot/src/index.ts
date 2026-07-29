@@ -53,6 +53,7 @@ import {
   type TelegramObservationCallbacks,
 } from "./middleware/telegram-observation.js";
 import { getUpdateConstraint } from "./middleware/update-constraint.js";
+import { AiIngressLock } from "./services/ai-ingress-lock.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
@@ -116,17 +117,18 @@ export interface BotConfig {
   miniAppUrl?: string;
 }
 
-const botDisposers = new WeakMap<object, () => void>();
+const botDisposers = new WeakMap<object, () => void | Promise<void>>();
 
-export function disposeBot(bot: object): void {
+export async function disposeBot(bot: object): Promise<void> {
   const dispose = botDisposers.get(bot);
   if (!dispose) return;
-  botDisposers.delete(bot);
-  dispose();
+  await dispose();
+  if (botDisposers.get(bot) === dispose) botDisposers.delete(bot);
 }
 
 export function createBot(config: BotConfig) {
   const { token, adminChatIds, logger } = config;
+  const aiIngressLock = config.aiReply ? new AiIngressLock() : undefined;
 
   // StreamFlavor adds plain and Rich Message streaming methods at runtime via stream() middleware,
   // so we need a double assertion to satisfy the type system while using our custom WrapperContext
@@ -140,10 +142,24 @@ export function createBot(config: BotConfig) {
 
   const authGuard = createAuthGuard(adminChatIds);
 
-  // Serialize updates per chat so streamText calls for the same chat don't race,
-  // but allow different chats to run concurrently. Kill-switch commands bypass
-  // the constraint; /apikey uses its own bot-global queue so it can bypass a stuck
-  // AI reply without racing another full-config API key update from a different chat.
+  // Register ordinary messages before sequentialize or any observation/stream middleware can
+  // yield. This preserves arrival order against later destructive commands while the admission
+  // remains short-lived and detaches before the long AI execution phase.
+  if (aiIngressLock) {
+    bot.use((ctx, next) => {
+      const chatId = ctx.chat?.id;
+      const userId = ctx.from?.id;
+      const isCommand = ctx.message?.entities?.some(
+        (entity) => entity.type === "bot_command" && entity.offset === 0,
+      );
+      if (chatId === undefined || userId === undefined || isCommand) return next();
+      return aiIngressLock.runAdmittedMessage(ctx, chatId, userId, next);
+    });
+  }
+
+  // Ordinary message ingress stays ordered per Chat and detaches after scheduler admission.
+  // Command lanes use independent constraints, so control and configuration work never waits
+  // for a long-running AI reply while conflicting command mutations remain serialized.
   bot.use(sequentialize(getUpdateConstraint));
   bot.use(stream());
   bot.use(
@@ -198,7 +214,11 @@ export function createBot(config: BotConfig) {
   let aiWaitForUserProfileUpdates:
     | ReturnType<typeof createAiReplyHandler>["waitForUserProfileUpdates"]
     | undefined;
-  let disposeAiRuntime: (() => void) | undefined;
+  let aiCancelChatRuns: ReturnType<typeof createAiReplyHandler>["cancelChatRuns"] | undefined;
+  let aiCancelUserRuns: ReturnType<typeof createAiReplyHandler>["cancelUserRuns"] | undefined;
+  let aiRunChatMutation: ReturnType<typeof createAiReplyHandler>["runChatMutation"] | undefined;
+  let aiRunUserMutation: ReturnType<typeof createAiReplyHandler>["runUserMutation"] | undefined;
+  let disposeAiRuntime: (() => Promise<void>) | undefined;
   let statusConfig: Parameters<typeof createStatusCommand>[0];
 
   if (config.aiReply) {
@@ -212,20 +232,24 @@ export function createBot(config: BotConfig) {
       agentToolsEnabled: !!config.aiReply.agentToolsConfig?.enabled,
       stickerPacksCount: config.aiReply.stickerPacks?.length ?? 0,
     };
-    const result = createAiReplyHandler({
-      ...config.aiReply,
-      privacy: config.privacy,
-      adminChatIds,
-      onLog: config.onLog,
-      onTokenUsage: config.onTokenUsage,
-      onGenerationTrack: config.onGenerationTrack,
-      onTimerCreate: config.timerCallbacks?.onTimerCreate,
-      onTimerCancel: config.timerCallbacks?.onTimerCancel,
-      onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
-      token,
-      initialApi: bot.api,
-      aiSelectionMutations: config.aiSelectionCallbacks,
-    });
+    const result = createAiReplyHandler(
+      {
+        ...config.aiReply,
+        privacy: config.privacy,
+        adminChatIds,
+        onLog: config.onLog,
+        onTokenUsage: config.onTokenUsage,
+        onGenerationTrack: config.onGenerationTrack,
+        onTimerCreate: config.timerCallbacks?.onTimerCreate,
+        onTimerCancel: config.timerCallbacks?.onTimerCancel,
+        onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
+        token,
+        initialApi: bot.api,
+        detachReplyExecution: true,
+        aiSelectionMutations: config.aiSelectionCallbacks,
+      },
+      { ingressLock: aiIngressLock },
+    );
     aiHandler = result.handler;
     aiState = result.state;
     aiSetModelForChat = result.setModelForChat;
@@ -248,6 +272,10 @@ export function createBot(config: BotConfig) {
     aiCanUseImageGeneration = result.canUseImageGeneration;
     aiSetAiEnabled = result.setAiEnabled;
     aiWaitForUserProfileUpdates = result.waitForUserProfileUpdates;
+    aiCancelChatRuns = result.cancelChatRuns;
+    aiCancelUserRuns = result.cancelUserRuns;
+    aiRunChatMutation = result.runChatMutation;
+    aiRunUserMutation = result.runUserMutation;
     disposeAiRuntime = result.destroy;
 
     config.aiSelectionCallbacks?.onBotReady?.({
@@ -323,12 +351,24 @@ export function createBot(config: BotConfig) {
   if (config.mcpCallbacks) {
     commandRegistry.register("mcp", authGuard, createMcpCommand(config.mcpCallbacks));
   }
-  commandRegistry.register("clear", createClearCommand(config.conversation, adminChatIds));
+  commandRegistry.register(
+    "clear",
+    createClearCommand(
+      config.conversation,
+      adminChatIds,
+      aiCancelChatRuns ? async (chatId) => void (await aiCancelChatRuns(chatId)) : undefined,
+      aiRunChatMutation,
+    ),
+  );
   if (config.privacy) {
     commandRegistry.register(
       "privacy",
       createPrivacyCommand({
         ...config.privacy,
+        beforeMutate: aiCancelUserRuns
+          ? async (userId) => void (await aiCancelUserRuns(userId))
+          : undefined,
+        runMutation: aiRunUserMutation,
         waitForPendingProfileUpdate: aiWaitForUserProfileUpdates,
       }),
     );

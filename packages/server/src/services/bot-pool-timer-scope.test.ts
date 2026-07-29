@@ -125,4 +125,36 @@ describe("BotPool timer tenant scope", () => {
     expect(internals.aiSelectionRuntimeDisposers.has(BOT_A)).toBe(false);
     expect(dispose).toHaveBeenCalledOnce();
   });
+
+  it("retains a failed manager until a later stop drains it successfully", async () => {
+    const { pool } = createPool();
+    const stop = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("AI drain timed out"))
+      .mockResolvedValueOnce(undefined);
+    const manager = { botId: BOT_A, status: "stopped", stop } as unknown as IBotManager;
+    const disposeSelectionRuntime = vi.fn();
+    const internals = pool as unknown as {
+      managers: Map<string, IBotManager>;
+      botTimerHandlers: Map<string, BotTimerHandlers>;
+      aiSelectionRuntimeDisposers: Map<string, () => void>;
+    };
+    internals.managers.set(BOT_A, manager);
+    internals.aiSelectionRuntimeDisposers.set(BOT_A, disposeSelectionRuntime);
+
+    await expect(pool.stopBot(BOT_A)).rejects.toThrow("AI drain timed out");
+
+    expect(internals.managers.get(BOT_A)).toBe(manager);
+    expect(internals.botTimerHandlers.has(BOT_A)).toBe(true);
+    expect(internals.aiSelectionRuntimeDisposers.has(BOT_A)).toBe(true);
+    expect(disposeSelectionRuntime).not.toHaveBeenCalled();
+
+    await expect(pool.stopBot(BOT_A)).resolves.toBeUndefined();
+
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(internals.managers.has(BOT_A)).toBe(false);
+    expect(internals.botTimerHandlers.has(BOT_A)).toBe(false);
+    expect(internals.aiSelectionRuntimeDisposers.has(BOT_A)).toBe(false);
+    expect(disposeSelectionRuntime).toHaveBeenCalledOnce();
+  });
 });

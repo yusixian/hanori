@@ -1,5 +1,5 @@
 import type { AiConfigStored } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
 import { describe, expect, it } from "vitest";
 import { migrateAiConfig } from "./ai-config-migrate.js";
 
@@ -58,6 +58,27 @@ describe("migrateAiConfig", () => {
     const migrated = migrateAiConfig(createStoredConfig());
 
     expect(migrated.conversationConfig).toEqual(DEFAULT_CONVERSATION_CONFIG);
+  });
+
+  it("adds the default execution settings to configurations saved before the setting existed", () => {
+    const migrated = migrateAiConfig(createStoredConfig());
+
+    expect(migrated.executionConfig).toEqual(DEFAULT_AI_EXECUTION_CONFIG);
+  });
+
+  it("preserves configured execution settings while filling nested legacy defaults", () => {
+    const stored = createStoredConfig();
+    stored.executionConfig = {
+      maxConcurrentReplies: 8,
+      queueNotice: { enabled: false, text: "稍后回复" },
+    };
+
+    const migrated = migrateAiConfig(stored);
+
+    expect(migrated.executionConfig).toEqual({
+      maxConcurrentReplies: 8,
+      queueNotice: { enabled: false, text: "稍后回复" },
+    });
   });
 
   it("adds a provider default model that is missing from its model catalog", () => {

@@ -60,6 +60,10 @@ export const aiSettings = {
     saveErrorDetail: "保存失败：{{detail}}",
     saveErrorHttp: "保存失败（HTTP {{status}}）",
     saveConflict: "配置已在其他页面更新。当前草稿尚未覆盖服务器，请刷新并重新核对后再保存。",
+    saveApplyFailed:
+      "AI 配置已保存，但 Bot 未能应用。面板已重新载入已保存的配置；请检查 Bot 状态，然后再次保存以重试应用。",
+    saveApplyFailedRefreshError:
+      "AI 配置可能已保存，但 Bot 未能应用，且面板无法重新载入最新版本。继续编辑或保存前，请先刷新页面。",
     saveSuccess: "AI 配置已保存",
     saveError: "保存失败",
     saveConfigError: "保存 AI 配置失败",
@@ -101,6 +105,11 @@ export const aiSettings = {
     conversationContext: {
       title: "对话上下文",
       description: "控制历史窗口和上下文构建方式。",
+    },
+    execution: {
+      title: "执行与排队",
+      description: "限制 AI 回复并发数，并配置等待期间的排队提示。",
+      summary: "最多 {{count}} 条并发回复",
     },
     messageDelivery: {
       title: "消息发送",
@@ -325,6 +334,26 @@ export const aiSettings = {
     autoSplitThresholdDescription: "0 = 停用。建议：1500–2500。每段上限：4096（Telegram 限制）。",
     splitDelay: "拆分消息间隔（毫秒）",
     splitDelayDescription: "拆分消息之间的延迟，期间会显示正在输入。",
+  },
+  execution: {
+    title: "执行与排队",
+    description:
+      "只有长时间运行的 AI 回复与定时续聊会占用这些执行槽；命令直接绕过，工具、子 Agent 与图片生成继续沿用各自限流。保存时会重启正在运行的 Bot，并取消当时正在执行和排队的回复。",
+    maxConcurrentReplies: "AI 回复并发数",
+    maxConcurrentRepliesDescription:
+      "此 Bot 可同时跨聊天运行的最大回复数（1–32）；同一聊天仍逐条执行。",
+    queueNotice: "排队提示",
+    queueNoticeDescription: "回复无法立即开始时，先发送一条等待消息。",
+    queueNoticeText: "等待提示文案",
+    queueNoticeTextDescription: "按纯文本发送，最多 200 个字符。",
+    validation: {
+      maxConcurrentReplies: "请输入 1 到 32 之间的整数。",
+      queueNoticeText: {
+        required: "启用排队提示时，请填写等待提示文案。",
+        tooLong: "等待提示文案不能超过 200 个字符。",
+      },
+      fixErrors: "请修正执行与排队设置后再保存。",
+    },
   },
   timeouts: {
     title: "超时配置",

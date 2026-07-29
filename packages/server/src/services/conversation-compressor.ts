@@ -231,7 +231,7 @@ async function compressWithLLM(
     newCursorId: candidate.newCursorId,
     summaryText,
     messageCount: candidate.messages.length,
-    sourceMessageIds: candidate.messages.map((message) => message.id),
+    sourceMessageIds: candidate.sourceMessageIds,
   });
   return true;
 }

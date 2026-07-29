@@ -45,6 +45,7 @@ vi.mock("grammy", async (importOriginal) => {
 import {
   buildUpdateErrorMessage,
   createBot,
+  disposeBot,
   getActiveBotCommands,
   type AiSelectionCallbacks,
   type BotAiSelectionRuntime,
@@ -52,6 +53,14 @@ import {
 
 const chatId = -100;
 const userId = 42;
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
 
 afterEach(() => {
   telegramApi.calls.length = 0;
@@ -424,6 +433,92 @@ describe("createBot Telegram observation", () => {
         title: "Test Group",
       }),
     );
+  });
+
+  it("registers a waiting second message before observation can let a later clear overtake it", async () => {
+    const ordinaryGate = deferred();
+    const commandGate = deferred();
+    const events: string[] = [];
+    const clearHistory = vi.fn(async () => {
+      events.push("clear");
+    });
+    const onChatObserved = vi.fn(async (observation: { sourceUpdateId: number }) => {
+      events.push(`observe:${observation.sourceUpdateId}:start`);
+      if (observation.sourceUpdateId === 501) await ordinaryGate.promise;
+      if (observation.sourceUpdateId === 503) await commandGate.promise;
+      events.push(`observe:${observation.sourceUpdateId}:end`);
+    });
+    const bot = createBot({
+      token: "test-token",
+      botId: "bot-ingress-order",
+      adminChatIds: [userId],
+      logger: { warn: vi.fn(), error: vi.fn() } as never,
+      telegramObservation: { onChatObserved },
+      conversation: {
+        getHistory: vi.fn(async () => ({ summary: null, messages: [] })),
+        addMessage: vi.fn(async () => undefined),
+        addMessages: vi.fn(async () => undefined),
+        triggerCompression: vi.fn(),
+        clearHistory,
+      },
+      aiReply: {
+        botId: "bot-ingress-order",
+        apiKey: "test-key",
+        baseURL: "https://example.test/v1",
+        model: "model-a",
+        systemPrompt: "test",
+        triggerConfig: {
+          replyToBot: false,
+          mentionBot: false,
+          triggerWords: [],
+          randomReplyPercent: 0,
+          randomReplyCooldown: 0,
+        },
+        groupOverrides: { [chatId]: { chatId, whitelisted: true } },
+      },
+    });
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+    const ordinaryUpdate = groupMessage({ text: "ordinary message" });
+    ordinaryUpdate.update_id = 501;
+    const waitingUpdate = groupMessage({ text: "second ordinary message" });
+    waitingUpdate.update_id = 502;
+    const clearUpdate = groupMessage({
+      text: "/clear",
+      entities: [{ type: "bot_command", offset: 0, length: 6 }],
+    });
+    clearUpdate.update_id = 503;
+
+    const ordinary = bot.handleUpdate(ordinaryUpdate as never);
+    await vi.waitFor(() => expect(onChatObserved).toHaveBeenCalledTimes(1));
+    const waiting = bot.handleUpdate(waitingUpdate as never);
+    const clear = bot.handleUpdate(clearUpdate as never);
+    await vi.waitFor(() => expect(onChatObserved).toHaveBeenCalledTimes(2));
+    expect(events).not.toContain("observe:502:start");
+
+    commandGate.resolve();
+    await commandGate.promise;
+    await Promise.resolve();
+    expect(clearHistory).not.toHaveBeenCalled();
+
+    ordinaryGate.resolve();
+    await Promise.all([ordinary, waiting, clear]);
+    expect(clearHistory).toHaveBeenCalledOnce();
+    expect(events.indexOf("observe:502:end")).toBeLessThan(events.indexOf("clear"));
+    await disposeBot(bot);
   });
 });
 

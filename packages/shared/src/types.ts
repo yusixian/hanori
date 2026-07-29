@@ -263,7 +263,11 @@ export interface ConversationCallbacks {
     chatId: number,
     limit: number,
     tokenBudget?: number,
-    options?: { excludeSourceKey?: string },
+    options?: {
+      excludeSourceKey?: string;
+      beforeId?: number;
+      beforeTelegramMessageId?: number;
+    },
   ): Promise<{
     summary: string | null;
     messages: Array<{
@@ -279,7 +283,10 @@ export interface ConversationCallbacks {
     userId: number,
     excludeChatId: number,
     limit: number,
+    beforeId?: number,
   ): Promise<RecentCrossChatUserMessage[]>;
+  /** Global history watermark captured when a request is admitted, not when it runs. */
+  getHistoryWatermark?(): Promise<number | undefined>;
   addMessage(params: {
     chatId: number;
     role: ConversationRole;
@@ -310,7 +317,8 @@ export interface ConversationCallbacks {
     userName?: string;
     sourceKey: string;
     meta?: Record<string, unknown>;
-  }): Promise<void>;
+  }): Promise<{ id: number } | void>;
+  completeTurn?(chatId: number, sourceKey: string): Promise<void>;
   ensureCompression?(chatId: number): Promise<void>;
   triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;
@@ -484,6 +492,24 @@ export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
   richMessageEnabled: true,
   autoSplitThreshold: 0, // disabled by default
   splitDelayMs: 800,
+};
+
+export interface AiExecutionConfig {
+  /** Maximum number of AI replies that may execute concurrently across chats for one Bot. */
+  maxConcurrentReplies: number;
+  queueNotice: {
+    enabled: boolean;
+    /** Plain-text notice sent when an AI reply must wait for a scheduler slot. */
+    text: string;
+  };
+}
+
+export const DEFAULT_AI_EXECUTION_CONFIG: AiExecutionConfig = {
+  maxConcurrentReplies: 4,
+  queueNotice: {
+    enabled: true,
+    text: "正在处理中，请稍候～",
+  },
 };
 
 export function isStreamReplyMode(config?: MessageConfig): boolean {
@@ -685,6 +711,7 @@ export interface AiConfigStored {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  executionConfig?: AiExecutionConfig;
   /** @deprecated migrated into providers[0].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
@@ -911,6 +938,7 @@ export interface AiConfigPublic {
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
+  executionConfig: AiExecutionConfig;
   /** @deprecated reflects providers[activeProviderId].models */
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
