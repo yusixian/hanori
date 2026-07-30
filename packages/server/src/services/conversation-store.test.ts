@@ -640,8 +640,8 @@ describe("ConversationStore.completeTurn", () => {
     ]);
   });
 
-  it("leaves a logical turn pending when any source row is missing", async () => {
-    const update = vi.fn();
+  it("completes surviving rows and reports failure when any source row is missing", async () => {
+    const updates: Array<Record<string, unknown>> = [];
     const tx = {
       select: () => {
         const query = {
@@ -658,7 +658,13 @@ describe("ConversationStore.completeTurn", () => {
         };
         return query;
       },
-      update,
+      update: () => ({
+        set: (values: { meta: Record<string, unknown> }) => ({
+          where: async () => {
+            updates.push(values.meta);
+          },
+        }),
+      }),
     };
     const db = {
       transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
@@ -673,7 +679,7 @@ describe("ConversationStore.completeTurn", () => {
         101,
       ),
     ).resolves.toBe(false);
-    expect(update).not.toHaveBeenCalled();
+    expect(updates).toEqual([{ tgMessageId: 11, turnState: "complete", turnOrderId: 101 }]);
   });
 
   it("recovers every pending turn for a bot without replacing other metadata", async () => {

@@ -394,8 +394,9 @@ export class ConversationStore {
         )
         .orderBy(asc(conversationMessages.id))
         .for("update");
-      if (rows.length !== uniqueSourceKeys.length) return false;
 
+      // Complete found rows even when some are missing (e.g. pruned by retention),
+      // so surviving rows never stay pending forever; the caller still sees false.
       for (const row of rows) {
         if (
           row.meta?.["turnState"] === "complete" &&
@@ -414,7 +415,7 @@ export class ConversationStore {
           })
           .where(eq(conversationMessages.id, row.id));
       }
-      return true;
+      return rows.length === uniqueSourceKeys.length;
     });
   }
 

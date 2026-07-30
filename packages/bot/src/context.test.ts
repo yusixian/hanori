@@ -1,4 +1,5 @@
-import type { Message } from "grammy/types";
+import type { Api } from "grammy";
+import type { Message, Update, UserFromGetMe } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import { WrapperContext } from "./context.js";
 
@@ -18,6 +19,25 @@ function createContext() {
   const deleteMessages = vi.spyOn(ctx, "deleteMessages").mockResolvedValue(true);
   return { ctx, deleteMessages, editMessageText };
 }
+
+describe("WrapperContext command parsing", () => {
+  it("parses a command from a media caption", () => {
+    const update = {
+      update_id: 1,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 1, type: "private" },
+        caption: "/model gpt",
+        caption_entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      },
+    } as Update;
+    const me = { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" } as UserFromGetMe;
+    const ctx = new WrapperContext(update, {} as Api, me);
+
+    expect(ctx.command).toMatchObject({ name: "model", args: ["gpt"] });
+  });
+});
 
 describe("WrapperContext waiting message", () => {
   it("shares one status message between concurrent waits", async () => {

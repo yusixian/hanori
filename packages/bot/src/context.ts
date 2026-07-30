@@ -25,7 +25,7 @@ export class WrapperContext extends Context {
 
   constructor(update: Update, api: Api, me: UserFromGetMe) {
     super(update, api, me);
-    this.command = parseParams(update.message?.text ?? "");
+    this.command = parseParams(update.message?.text ?? update.message?.caption ?? "");
     if (update.message?.reply_to_message) {
       this.isReply = true;
       this.reply_to_message = update.message.reply_to_message;
