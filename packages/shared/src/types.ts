@@ -318,7 +318,7 @@ export interface ConversationCallbacks {
     sourceKey: string;
     meta?: Record<string, unknown>;
   }): Promise<{ id: number } | void>;
-  completeTurn?(chatId: number, sourceKey: string): Promise<void>;
+  completeTurn?(chatId: number, sourceKey: string, turnOrderId?: number): Promise<void>;
   ensureCompression?(chatId: number): Promise<void>;
   triggerCompression(chatId: number): void | Promise<void>;
   clearHistory(chatId: number): Promise<void>;

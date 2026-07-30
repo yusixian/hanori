@@ -359,7 +359,12 @@ export class ConversationStore {
     return row ?? null;
   }
 
-  async completeTurn(botId: string, chatId: number, sourceKey: string): Promise<boolean> {
+  async completeTurn(
+    botId: string,
+    chatId: number,
+    sourceKey: string,
+    turnOrderId?: number,
+  ): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const [row] = await tx
         .select({ id: conversationMessages.id, meta: conversationMessages.meta })
@@ -374,10 +379,21 @@ export class ConversationStore {
         .limit(1)
         .for("update");
       if (!row) return false;
-      if (row.meta?.["turnState"] === "complete") return true;
+      if (
+        row.meta?.["turnState"] === "complete" &&
+        (turnOrderId === undefined || row.meta["turnOrderId"] === turnOrderId)
+      ) {
+        return true;
+      }
       await tx
         .update(conversationMessages)
-        .set({ meta: { ...row.meta, turnState: "complete" } })
+        .set({
+          meta: {
+            ...row.meta,
+            turnState: "complete",
+            ...(turnOrderId === undefined ? {} : { turnOrderId }),
+          },
+        })
         .where(eq(conversationMessages.id, row.id));
       return true;
     });

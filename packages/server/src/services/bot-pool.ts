@@ -794,8 +794,8 @@ export class BotPool {
           }
           return persisted ? { id: persisted.id } : undefined;
         },
-        completeTurn: async (chatId, sourceKey) => {
-          await store.completeTurn(botId, chatId, sourceKey);
+        completeTurn: async (chatId, sourceKey, turnOrderId) => {
+          await store.completeTurn(botId, chatId, sourceKey, turnOrderId);
         },
         ensureCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);

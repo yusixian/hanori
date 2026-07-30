@@ -277,7 +277,9 @@ describe("AI reply queue delivery", () => {
     }>;
     expect(persisted).not.toHaveLength(0);
     expect(persisted.every((message) => message.meta?.["turnOrderId"] === 101)).toBe(true);
-    await vi.waitFor(() => expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user"));
+    await vi.waitFor(() =>
+      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user", 101),
+    );
   });
 
   it("finalizes group persistence even when the ingress callback returns no row id", async () => {
@@ -301,7 +303,9 @@ describe("AI reply queue delivery", () => {
 
     await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
 
-    await vi.waitFor(() => expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user"));
+    await vi.waitFor(() =>
+      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:11:user", undefined),
+    );
     expect(triggerCompression).toHaveBeenCalledWith(CHAT_ID);
   });
 
@@ -843,6 +847,7 @@ function createPrivateContext(
 describe("AI reply turn coalescing", () => {
   function createConversation() {
     let nextRowId = 100;
+    const rowIds = new Map<string, number>();
     const completeTurn = vi.fn().mockResolvedValue(undefined);
     const addMessages = vi
       .fn<NonNullable<ConversationCallbacks["addMessages"]>>()
@@ -851,7 +856,14 @@ describe("AI reply turn coalescing", () => {
       getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
       addMessage: vi.fn(),
       addMessages,
-      upsertUserMessage: vi.fn(async () => ({ id: nextRowId++ })),
+      upsertUserMessage: vi.fn(async (message) => {
+        let id = rowIds.get(message.sourceKey);
+        if (id === undefined) {
+          id = nextRowId++;
+          rowIds.set(message.sourceKey, id);
+        }
+        return { id };
+      }),
       completeTurn,
       triggerCompression: vi.fn(),
       clearHistory: vi.fn(),
@@ -897,9 +909,163 @@ describe("AI reply turn coalescing", () => {
     expect(mergedRequest).toContain("sample follow up");
     // Both ingress rows are finalized by the owning run.
     await vi.waitFor(() => {
-      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:12:user");
-      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:13:user");
+      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:12:user", 101);
+      expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:13:user", 101);
     });
+  });
+
+  it("persists a merged group reply anchor outside the user-authored projection", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Merged final")));
+    const { api } = createApi();
+    const { conversation } = createConversation();
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+      await runtime.handler(createContext(api, 2, 12, "sample queued owner"), vi.fn());
+      const followUp = createContext(api, 3, 13, "sample follow up");
+      followUp.reply_to_message = {
+        message_id: 10,
+        date: 0,
+        chat: { id: CHAT_ID, type: "supergroup", title: "Test group" },
+        from: { id: 99, is_bot: true, first_name: "Ai" },
+        text: "assistant-only context",
+      } as Message;
+      await runtime.handler(followUp, vi.fn());
+
+      const upsertUserMessage = vi.mocked(conversation.upsertUserMessage!);
+      const persistedFollowUp = upsertUserMessage.mock.calls.find(
+        ([message]) => message.sourceKey === "telegram:13:user",
+      )?.[0];
+      expect(persistedFollowUp?.content).toContain("assistant-only context");
+      expect(persistedFollowUp?.userAuthoredContent).toBe("sample follow up");
+    } finally {
+      activeReply.resolve("# Active final");
+    }
+  });
+
+  it("finalizes a merged turn before the next queued turn starts", async () => {
+    const activeReply = deferred<string>();
+    const finalizationStarted = deferred<void>();
+    const finishFinalization = deferred<void>();
+    const order: string[] = [];
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Merged final")))
+      .mockImplementationOnce(() => {
+        order.push("next-model-started");
+        return streamResult(Promise.resolve("# Next final"));
+      });
+    const { api } = createApi();
+    const { conversation, completeTurn } = createConversation();
+    completeTurn.mockImplementation(async (_chatId, sourceKey) => {
+      if (sourceKey !== "telegram:12:user") return;
+      order.push("finalization-started");
+      finalizationStarted.resolve();
+      await finishFinalization.promise;
+      order.push("finalization-finished");
+    });
+    const config = createConfig(true);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+      await runtime.handler(createContext(api, 2, 12, "sample queued owner"), vi.fn());
+      await runtime.handler(createContext(api, 3, 13, "sample follow up"), vi.fn());
+      await runtime.handler(createContext(api, 4, 14, "sample next turn", USER_ID + 1), vi.fn());
+
+      activeReply.resolve("# Active final");
+      await finalizationStarted.promise;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(order).toEqual(["finalization-started"]);
+
+      finishFinalization.resolve();
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(3));
+      expect(order).toEqual([
+        "finalization-started",
+        "finalization-finished",
+        "next-model-started",
+      ]);
+    } finally {
+      activeReply.resolve("# Active final");
+      finishFinalization.resolve();
+    }
+  });
+
+  it("keeps persisted group turns separate without a finalization callback", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Second final")))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Third final")));
+    const onLog = vi.fn();
+    const { api, sendMessage } = createApi();
+    const { conversation } = createConversation();
+    delete conversation.completeTurn;
+    const config = createConfig(true, onLog);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+      await runtime.handler(createContext(api, 2, 12, "sample queued owner"), vi.fn());
+      await runtime.handler(createContext(api, 3, 13, "sample follow up"), vi.fn());
+
+      expect(sendMessage.mock.calls.filter(([, text]) => text === QUEUE_NOTICE)).toHaveLength(2);
+      expect(
+        onLog.mock.calls.some(([entry]) => entry.message === "AI reply coalesced into queued turn"),
+      ).toBe(false);
+
+      activeReply.resolve("# Active final");
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(3));
+    } finally {
+      activeReply.resolve("# Active final");
+    }
+  });
+
+  it("keeps persisted group turns separate without stable ingress row IDs", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Second final")))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Third final")));
+    const onLog = vi.fn();
+    const { api } = createApi();
+    const { conversation } = createConversation();
+    conversation.upsertUserMessage = vi.fn().mockResolvedValue(undefined);
+    const config = createConfig(true, onLog);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+
+    try {
+      await runtime.handler(createContext(api, 1, 11, "sample active"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+      await runtime.handler(createContext(api, 2, 12, "sample queued owner"), vi.fn());
+      await runtime.handler(createContext(api, 3, 13, "sample follow up"), vi.fn());
+
+      expect(
+        onLog.mock.calls.some(([entry]) => entry.message === "AI reply coalesced into queued turn"),
+      ).toBe(false);
+
+      activeReply.resolve("# Active final");
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(3));
+    } finally {
+      activeReply.resolve("# Active final");
+    }
   });
 
   it("finalizes merged turns when the queued owner is cancelled before starting", async () => {
@@ -924,8 +1090,8 @@ describe("AI reply turn coalescing", () => {
       await cancelPromise;
 
       await vi.waitFor(() => {
-        expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:12:user");
-        expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:13:user");
+        expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:12:user", 101);
+        expect(completeTurn).toHaveBeenCalledWith(CHAT_ID, "telegram:13:user", 101);
       });
       expect(streamTextMock).toHaveBeenCalledTimes(1);
     } finally {
@@ -938,6 +1104,7 @@ describe("AI reply turn coalescing", () => {
     streamTextMock.mockImplementationOnce(() => streamResult(activeReply.promise));
     const { api } = createApi();
     const { conversation, addMessages } = createConversation();
+    addMessages.mockRejectedValueOnce(new Error("temporary database failure"));
     const config = createConfig(true);
     config.conversation = conversation;
     config.privateChatWhitelist = [USER_ID];
@@ -954,8 +1121,10 @@ describe("AI reply turn coalescing", () => {
       activeReply.resolve("# Cancelled active final");
       await cancelPromise;
 
-      const saved = addMessages.mock.calls.flatMap(([rows]) => rows);
-      expect(saved.map((row) => row.sourceKey)).toContain("telegram:13:user");
+      expect(addMessages).toHaveBeenCalledTimes(2);
+      expect(addMessages.mock.calls[1]?.[0].map((row) => row.sourceKey)).toContain(
+        "telegram:13:user",
+      );
       expect(streamTextMock).toHaveBeenCalledTimes(1);
     } finally {
       activeReply.resolve("# Cancelled active final");

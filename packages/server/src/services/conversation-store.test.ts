@@ -534,8 +534,8 @@ describe("ConversationStore.deleteMessage", () => {
 });
 
 describe("ConversationStore.completeTurn", () => {
-  it("preserves source metadata while marking a pending turn complete", async () => {
-    const state = {
+  it("preserves source metadata while completing and linking a logical turn", async () => {
+    const state: { meta: Record<string, unknown> } = {
       meta: { tgMessageId: 11, publicGroupHistory: true, turnState: "pending" },
     };
     const tx = {
@@ -562,13 +562,14 @@ describe("ConversationStore.completeTurn", () => {
     const store = new ConversationStore(db);
 
     await expect(
-      store.completeTurn(baseParams.botId, baseParams.chatId, "telegram:11:user"),
+      store.completeTurn(baseParams.botId, baseParams.chatId, "telegram:11:user", 101),
     ).resolves.toBe(true);
 
     expect(state.meta).toEqual({
       tgMessageId: 11,
       publicGroupHistory: true,
       turnState: "complete",
+      turnOrderId: 101,
     });
   });
 
