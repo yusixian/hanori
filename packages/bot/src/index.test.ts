@@ -5,6 +5,7 @@ import {
 } from "@cos-tool-bot/shared";
 import { GrammyError } from "grammy";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AiTurnCoalescer } from "./services/ai-turn-coalescer.js";
 
 const telegramApi = vi.hoisted(() => {
   const calls: string[] = [];
@@ -308,6 +309,87 @@ describe("createBot command registry", () => {
       "admin",
       "admin",
     ]);
+  });
+
+  it("closes queued turn coalescing before a command handler consumes the message", async () => {
+    const admissionStarted = deferred();
+    const releaseAdmission = deferred();
+    const captureAdmission = vi.spyOn(AiTurnCoalescer.prototype, "capture");
+    const stopAccepting = vi.spyOn(AiTurnCoalescer.prototype, "stopAccepting");
+    const bot = createBot({
+      token: "test-token",
+      botId: "bot-command-boundary",
+      adminChatIds: [userId],
+      logger: { warn: vi.fn(), error: vi.fn() } as never,
+      aiReply: {
+        botId: "bot-command-boundary",
+        apiKey: "test-key",
+        baseURL: "https://example.test/v1",
+        model: "model-a",
+        systemPrompt: "test",
+        triggerConfig: {
+          replyToBot: false,
+          mentionBot: false,
+          triggerWords: [],
+          randomReplyPercent: 0,
+          randomReplyCooldown: 0,
+        },
+        groupOverrides: { [chatId]: { chatId, whitelisted: true } },
+      },
+      privacy: {
+        getMode: async () => {
+          admissionStarted.resolve();
+          await releaseAdmission.promise;
+          return "normal";
+        },
+        runExclusive: async (_userId, operation) => operation(),
+        setMode: async () => {},
+        forget: async () => ({ conversationMessages: 0, profiles: 0, personalMemories: 0 }),
+      },
+    });
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: true,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    try {
+      const ordinary = bot.handleUpdate(
+        groupMessage({ text: "context", message_thread_id: 77 }) as never,
+      );
+      await admissionStarted.promise;
+      const command = bot.handleUpdate(
+        groupMessage({
+          text: "/help",
+          message_thread_id: 77,
+          entities: [{ type: "bot_command", offset: 0, length: 5 }],
+        }) as never,
+      );
+      await vi.waitFor(() => expect(stopAccepting).toHaveBeenCalledWith({ chatId, threadId: 77 }));
+
+      expect(captureAdmission).toHaveBeenCalledWith({ chatId, threadId: 77 });
+      expect(captureAdmission.mock.invocationCallOrder[0]).toBeLessThan(
+        stopAccepting.mock.invocationCallOrder[0]!,
+      );
+
+      releaseAdmission.resolve();
+      await Promise.all([ordinary, command]);
+    } finally {
+      releaseAdmission.resolve();
+      captureAdmission.mockRestore();
+      stopAccepting.mockRestore();
+      await disposeBot(bot);
+    }
   });
 
   it("exposes atomic selection snapshot publishing through the Bot runtime controller", async () => {

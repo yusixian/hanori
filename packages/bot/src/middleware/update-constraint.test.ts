@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { BotContext } from "../context.js";
-import { getUpdateConstraint } from "./update-constraint.js";
+import { getUpdateConstraint, hasLeadingBotCommand } from "./update-constraint.js";
 
 function createContext(chatId: number, command?: string): BotContext {
   return {
@@ -42,6 +42,20 @@ describe("getUpdateConstraint", () => {
 
   test("normalizes commands addressed to a specific Bot username", () => {
     const ctx = createContext(42, "model@sample_bot");
+    expect(getUpdateConstraint(ctx)).toBe("command:config");
+  });
+
+  test("recognizes a command entity attached to a media caption", () => {
+    const ctx = {
+      chat: { id: 42 },
+      message: {
+        caption: "/model",
+        caption_entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      },
+      command: { name: "model", args: [], original_msg: "" },
+    } as unknown as BotContext;
+
+    expect(hasLeadingBotCommand(ctx)).toBe(true);
     expect(getUpdateConstraint(ctx)).toBe("command:config");
   });
 });

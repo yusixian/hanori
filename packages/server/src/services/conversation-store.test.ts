@@ -534,8 +534,8 @@ describe("ConversationStore.deleteMessage", () => {
 });
 
 describe("ConversationStore.completeTurn", () => {
-  it("preserves source metadata while marking a pending turn complete", async () => {
-    const state = {
+  it("preserves source metadata while completing and linking a logical turn", async () => {
+    const state: { meta: Record<string, unknown> } = {
       meta: { tgMessageId: 11, publicGroupHistory: true, turnState: "pending" },
     };
     const tx = {
@@ -543,8 +543,8 @@ describe("ConversationStore.completeTurn", () => {
         const query = {
           from: () => query,
           where: () => query,
-          limit: () => query,
-          for: async () => [{ id: 101, meta: state.meta }],
+          orderBy: () => query,
+          for: async () => [{ id: 101, sourceKey: "telegram:11:user", meta: state.meta }],
         };
         return query;
       },
@@ -562,14 +562,124 @@ describe("ConversationStore.completeTurn", () => {
     const store = new ConversationStore(db);
 
     await expect(
-      store.completeTurn(baseParams.botId, baseParams.chatId, "telegram:11:user"),
+      store.completeTurn(baseParams.botId, baseParams.chatId, "telegram:11:user", 101),
     ).resolves.toBe(true);
 
     expect(state.meta).toEqual({
       tgMessageId: 11,
       publicGroupHistory: true,
       turnState: "complete",
+      turnOrderId: 101,
     });
+  });
+
+  it("completes every source row in one transaction", async () => {
+    const rows = [
+      {
+        id: 101,
+        sourceKey: "telegram:11:user",
+        meta: { tgMessageId: 11, turnState: "pending" },
+      },
+      {
+        id: 102,
+        sourceKey: "telegram:12:user",
+        meta: { tgMessageId: 12, turnState: "pending" },
+      },
+    ];
+    const updates: Array<Record<string, unknown>> = [];
+    let transactionCount = 0;
+    let transactionOpen = false;
+    const tx = {
+      select: () => {
+        const query = {
+          from: () => query,
+          where: () => query,
+          orderBy: () => query,
+          for: async () => {
+            expect(transactionOpen).toBe(true);
+            return rows;
+          },
+        };
+        return query;
+      },
+      update: () => ({
+        set: (values: { meta: Record<string, unknown> }) => ({
+          where: async () => {
+            expect(transactionOpen).toBe(true);
+            updates.push(values.meta);
+          },
+        }),
+      }),
+    };
+    const db = {
+      transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => {
+        transactionCount++;
+        transactionOpen = true;
+        try {
+          return await operation(tx);
+        } finally {
+          transactionOpen = false;
+        }
+      },
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    await expect(
+      store.completeTurns(
+        baseParams.botId,
+        baseParams.chatId,
+        ["telegram:11:user", "telegram:12:user"],
+        101,
+      ),
+    ).resolves.toBe(true);
+
+    expect(transactionCount).toBe(1);
+    expect(updates).toEqual([
+      { tgMessageId: 11, turnState: "complete", turnOrderId: 101 },
+      { tgMessageId: 12, turnState: "complete", turnOrderId: 101 },
+    ]);
+  });
+
+  it("completes surviving rows and reports failure when any source row is missing", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const tx = {
+      select: () => {
+        const query = {
+          from: () => query,
+          where: () => query,
+          orderBy: () => query,
+          for: async () => [
+            {
+              id: 101,
+              sourceKey: "telegram:11:user",
+              meta: { tgMessageId: 11, turnState: "pending" },
+            },
+          ],
+        };
+        return query;
+      },
+      update: () => ({
+        set: (values: { meta: Record<string, unknown> }) => ({
+          where: async () => {
+            updates.push(values.meta);
+          },
+        }),
+      }),
+    };
+    const db = {
+      transaction: async <T>(operation: (transaction: typeof tx) => Promise<T>) => operation(tx),
+    } as unknown as Database;
+    const store = new ConversationStore(db);
+
+    await expect(
+      store.completeTurns(
+        baseParams.botId,
+        baseParams.chatId,
+        ["telegram:11:user", "telegram:12:user"],
+        101,
+      ),
+    ).resolves.toBe(false);
+    expect(updates).toEqual([{ tgMessageId: 11, turnState: "complete", turnOrderId: 101 }]);
   });
 
   it("recovers every pending turn for a bot without replacing other metadata", async () => {

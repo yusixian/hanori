@@ -43,6 +43,7 @@ import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
+import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
@@ -58,6 +59,13 @@ import {
 } from "../services/ai-execution-coordinator.js";
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
+import {
+  AiTurnCoalescer,
+  type CoalesceAdmission,
+  type CoalesceBatchHandle,
+  type CoalescedTurnMessage,
+  type CoalesceScope,
+} from "../services/ai-turn-coalescer.js";
 import {
   createActionTools,
   createAgentTools,
@@ -639,6 +647,14 @@ function describeFiles(
   return result;
 }
 
+function describeReplyQuote(replyMsg: Message | undefined, fileDesc = ""): string {
+  if (!replyMsg) return "";
+  const replyText = replyMsg.text ?? replyMsg.caption ?? "";
+  const content = `${fileDesc}${replyText}`.trim();
+  if (!content) return "";
+  return `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${content}]\n`;
+}
+
 function describeGroupMessageForHistory(msg: Message): string {
   if (msg.text) return msg.text;
   const caption = msg.caption?.trim();
@@ -690,7 +706,7 @@ export interface BotRuntimeState {
 }
 
 const MAX_RECENT_BOT_MESSAGES = 20;
-const TURN_FINALIZATION_RETRY_DELAYS_MS = [0, 50, 150] as const;
+const PERSISTENCE_RETRY_DELAYS_MS = [0, 50, 150] as const;
 const MOOD_EXPIRE_MS = 60 * 60 * 1000; // 1 hour
 
 export function createAiReplyHandler(
@@ -744,6 +760,8 @@ export function createAiReplyHandler(
   ) => Promise<boolean>;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  captureTurnCoalescingAdmission: (context: object, chatId: number, threadId?: number) => void;
+  stopTurnCoalescing: (chatId: number, threadId?: number) => void;
   cancelChatRuns: (chatId: number) => Promise<number>;
   cancelUserRuns: (userId: number) => Promise<number>;
   runChatMutation: <T>(chatId: number, operation: () => Promise<T>) => Promise<T>;
@@ -769,6 +787,8 @@ export function createAiReplyHandler(
     maxConcurrent: executionConfig.maxConcurrentReplies,
     maxQueued: 100,
   });
+  const turnCoalescer = new AiTurnCoalescer();
+  const turnCoalescingAdmissions = new WeakMap<object, CoalesceAdmission>();
   const ingressLock = runtime?.ingressLock ?? new AiIngressLock();
   interface DetachedDeliveryTask {
     scope: AiRunScope;
@@ -828,6 +848,7 @@ export function createAiReplyHandler(
       return 0;
     }
     aiDisabled = true;
+    turnCoalescer.clear();
     const scheduledAborted = executionCoordinator.cancelAllNow();
     const toAbort = [...activeAbortControllers];
     activeAbortControllers.clear();
@@ -1264,18 +1285,24 @@ export function createAiReplyHandler(
     const msg = ctx.message;
     if (!msg) return next();
 
+    const chatId = ctx.chat?.id;
+    if (!chatId) return next();
+    const coalesceConversationScope = { chatId, threadId: msg.message_thread_id };
+    const coalesceAdmission =
+      turnCoalescingAdmissions.get(ctx) ?? turnCoalescer.capture(coalesceConversationScope);
+
     // Skip commands
-    const entities = msg.entities ?? [];
-    if (entities.some((e) => e.type === "bot_command" && e.offset === 0)) {
+    if (hasLeadingBotCommand(ctx)) {
+      turnCoalescer.stopAccepting(coalesceConversationScope);
       return next();
     }
 
-    const chatId = ctx.chat?.id;
-    if (!chatId) return next();
-
     const isPrivate = ctx.chat?.type === "private";
     const userId = ctx.from?.id;
-    if (!userId) return next();
+    if (!userId) {
+      turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
+      return next();
+    }
 
     const isAdmin = config.adminChatIds.includes(userId);
     const userName = getDisplayName(ctx.from);
@@ -1288,11 +1315,16 @@ export function createAiReplyHandler(
     let groupTriggerConfig = config.triggerConfig;
 
     if (isPrivate) {
-      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) return next();
+      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) {
+        turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
+        return next();
+      }
     } else {
       const groupCfg = resolveGroupConfig(config, chatId);
-      if (!groupCfg.enabled) return next();
-      if (!groupCfg.whitelisted && !isAdmin) return next();
+      if (!groupCfg.enabled || (!groupCfg.whitelisted && !isAdmin)) {
+        turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
+        return next();
+      }
 
       effectivePrompt = groupCfg.systemPrompt;
       groupConversationEnabled = groupCfg.conversationEnabled;
@@ -1306,7 +1338,10 @@ export function createAiReplyHandler(
     if (personalizationEnabled && ctx.from) profileObserver?.observe(ctx.api, ctx.from);
 
     const supportsAiContent = !!(msg.text || msg.photo || msg.document);
-    if (!supportsAiContent) return next();
+    if (!supportsAiContent) {
+      turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
+      return next();
+    }
 
     // Capture API reference and track private chats for event handlers
     botApi = ctx.api;
@@ -1341,12 +1376,20 @@ export function createAiReplyHandler(
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
     const groupTurnSourceKey = `telegram:${msg.message_id}:user`;
-    const tracksGroupTurnCompletion = !!config.conversation?.completeTurn;
+    const groupHistoryContent =
+      `${describeReplyQuote(ctx.reply_to_message)}${bufferedGroupText}`.trim();
+    const coalesceScope: CoalesceScope = {
+      ...coalesceConversationScope,
+      userId,
+      privacyMode,
+    };
+    const tracksGroupTurnCompletion =
+      !!config.conversation?.completeTurns || !!config.conversation?.completeTurn;
     if (shouldPersistPublicGroupMessage) {
       try {
         const message = {
           chatId,
-          content: bufferedGroupText,
+          content: groupHistoryContent || bufferedGroupText,
           userAuthoredContent: personalizationEnabled ? bufferedGroupText : undefined,
           userId,
           userName,
@@ -1372,6 +1415,43 @@ export function createAiReplyHandler(
         });
       }
     }
+    const supportsQueuedTurnCoalescing =
+      !shouldPersistPublicGroupMessage ||
+      (!!config.conversation?.completeTurns && persistedGroupMessageId !== undefined);
+
+    // A rapid text-only follow-up merges into the same user's queued run instead of
+    // scheduling a second model call. Media messages keep the full per-turn pipeline.
+    const followUpReplyFiles = extractFilesFromMessage(ctx.reply_to_message);
+    if (
+      triggerResult &&
+      !aiDisabled &&
+      supportsQueuedTurnCoalescing &&
+      msg.text &&
+      !msg.photo &&
+      !msg.document &&
+      followUpReplyFiles.length === 0
+    ) {
+      const followUpText = `${describeReplyQuote(ctx.reply_to_message)}${msg.text}`.trim();
+      const merged =
+        !!followUpText &&
+        turnCoalescer.tryAppend(coalesceScope, {
+          tgMessageId: msg.message_id,
+          text: followUpText,
+          userAuthoredContent: msg.text.trim(),
+          sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
+        });
+      if (merged) {
+        config.onLog?.({
+          level: "info",
+          message: "AI reply coalesced into queued turn",
+          meta: { chatId, userId, ...executionCoordinator.stats },
+        });
+        return;
+      }
+    }
+    // Once a message cannot join the open batch, later messages must not cross it. The queued
+    // owner's handle still drains extras that were accepted before this boundary.
+    turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
     if (!triggerResult || aiDisabled) {
       if (shouldPersistPublicGroupMessage) {
         void config.conversation!.triggerCompression(chatId);
@@ -1449,7 +1529,6 @@ export function createAiReplyHandler(
         // Extract reply-to message metadata
         const replyMsg = ctx.reply_to_message;
         const replyFiles = extractFilesFromMessage(replyMsg);
-        const replyText = replyMsg?.text ?? replyMsg?.caption ?? "";
 
         // Create per-request telegram tools
         const telegramTools = createTelegramTools({
@@ -1640,18 +1719,20 @@ export function createAiReplyHandler(
         const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
 
         // --- Build reply-to context description ---
-        let replyContextDesc = "";
-        if (replyMsg) {
-          const replyFileDesc = describeFiles(replyFiles, "", " ");
-          const replyContent = `${replyFileDesc}${replyText}`.trim();
-          if (replyContent) {
-            replyContextDesc = `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${replyContent}]\n`;
-          }
-        }
+        const replyContextDesc = describeReplyQuote(replyMsg, describeFiles(replyFiles, "", " "));
 
         const rawContent = `${replyContextDesc}${attachmentDesc}${messageText}`.trim();
         const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
-        const textContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        // Coalesced follow-ups extend the model request only; their own history rows were
+        // written at ingress, and this run's history read is bounded before this message.
+        const coalescedLines = coalescedExtras.map((extra) =>
+          isPrivate ? extra.text : `[${userName}]: ${extra.text}`,
+        );
+        const ownContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        const textContent = [ownContent, ...coalescedLines].join("\n");
+        const retrievalQuery = [rawContent || messageText, ...coalescedExtras.map((e) => e.text)]
+          .join("\n")
+          .trim();
         const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
         const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
 
@@ -1716,7 +1797,7 @@ export function createAiReplyHandler(
           botMemoryConfig: config.botMemoryConfig,
           botMemory: personalizationEnabled ? config.botMemory : undefined,
           botMemoryTools: requestBotMemoryTools,
-          retrievalQuery: rawContent || messageText,
+          retrievalQuery,
           currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
           stickerPacks: config.stickerPacks,
           webToolsConfig: config.webToolsConfig,
@@ -2245,6 +2326,8 @@ export function createAiReplyHandler(
               sourceKey: `${sourcePrefix}:user`,
               meta: { tgMessageId: msg.message_id },
             });
+            // Private follow-ups skipped ingress persistence; save them with this turn.
+            toSave.push(...buildPrivateExtraRows());
           }
 
           // Save all tool calls and results from steps
@@ -2299,6 +2382,7 @@ export function createAiReplyHandler(
           if (!executionContext.isCurrent()) return;
           try {
             await config.conversation!.addMessages(toSave);
+            privateExtrasSettled = true;
             if (isPrivate) await config.conversation!.triggerCompression(chatId);
           } catch (err) {
             config.onLog?.({
@@ -2342,20 +2426,94 @@ export function createAiReplyHandler(
         }
       } finally {
         if (manualAbort) activeAbortControllers.delete(manualAbort);
+        await rescuePrivateExtras();
       }
     };
 
     let preserveQueuedMessage = false;
     let queueNotice: Promise<void> | undefined;
+    let coalesceHandle: CoalesceBatchHandle | undefined;
+    let coalescedExtras: CoalescedTurnMessage[] = [];
+    let privateExtrasSettled = false;
+    const buildPrivateExtraRows = () =>
+      coalescedExtras.map((extra) => ({
+        chatId,
+        role: "user" as ConversationRole,
+        content: extra.text,
+        userAuthoredContent: extra.userAuthoredContent,
+        userId,
+        userName,
+        sourceKey: `telegram:${extra.tgMessageId}:user`,
+        meta: { tgMessageId: extra.tgMessageId } as Record<string, unknown>,
+      }));
+    /**
+     * Group follow-ups are durable from ingress, private ones only exist in memory until the
+     * reply transaction commits — so a failed or superseded run would drop them silently.
+     */
+    const rescuePrivateExtras = async () => {
+      if (!isPrivate || !persistConversation || privateExtrasSettled) return;
+      if (coalescedExtras.length === 0) return;
+      if (config.privacy) {
+        let currentPrivacyMode: UserPrivacyMode;
+        try {
+          currentPrivacyMode = await config.privacy.getMode(userId);
+        } catch (error) {
+          config.onLog?.({
+            level: "error",
+            message: "Failed to verify privacy mode before persisting coalesced messages",
+            meta: {
+              chatId,
+              userId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+          return;
+        }
+        if (currentPrivacyMode !== privacyMode) {
+          privateExtrasSettled = true;
+          return;
+        }
+      }
+      let lastError: unknown;
+      for (const delayMs of PERSISTENCE_RETRY_DELAYS_MS) {
+        if (delayMs > 0) await sleep(delayMs);
+        try {
+          await config.conversation!.addMessages(buildPrivateExtraRows());
+          privateExtrasSettled = true;
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      config.onLog?.({
+        level: "error",
+        message: `Failed to persist coalesced messages: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+        meta: { chatId, userId, count: coalescedExtras.length },
+      });
+    };
     let groupTurnFinalization: Promise<void> | undefined;
     const finalizeGroupTurn = () => {
       if (isPrivate || !persistConversation) return Promise.resolve();
       groupTurnFinalization ??= (async () => {
+        const sourceKeys = [
+          groupTurnSourceKey,
+          ...coalescedExtras.flatMap((extra) => (extra.sourceKey ? [extra.sourceKey] : [])),
+        ];
         let lastError: unknown;
-        for (const delayMs of TURN_FINALIZATION_RETRY_DELAYS_MS) {
+        for (const delayMs of PERSISTENCE_RETRY_DELAYS_MS) {
           if (delayMs > 0) await sleep(delayMs);
           try {
-            await config.conversation!.completeTurn?.(chatId, groupTurnSourceKey);
+            if (config.conversation!.completeTurns) {
+              await config.conversation!.completeTurns(chatId, sourceKeys, persistedGroupMessageId);
+            } else {
+              for (const sourceKey of sourceKeys) {
+                await config.conversation!.completeTurn?.(
+                  chatId,
+                  sourceKey,
+                  persistedGroupMessageId,
+                );
+              }
+            }
             void config.conversation!.triggerCompression(chatId);
             return;
           } catch (error) {
@@ -2379,6 +2537,8 @@ export function createAiReplyHandler(
     let scheduled;
     try {
       scheduled = executionCoordinator.schedule({ chatId, userId }, async (executionContext) => {
+        // Synchronous drain: everything appended before this instant joins this turn.
+        coalescedExtras = coalesceHandle?.drain() ?? [];
         executionStartedAt = Date.now();
         config.onLog?.({
           level: "info",
@@ -2387,6 +2547,7 @@ export function createAiReplyHandler(
             chatId,
             userId,
             waitMs: Math.max(0, executionStartedAt - scheduledAt),
+            coalescedCount: coalescedExtras.length,
             ...executionCoordinator.stats,
           },
         });
@@ -2396,14 +2557,24 @@ export function createAiReplyHandler(
           }
           return executeTurn(executionContext, preserveQueuedMessage);
         };
-        if (!config.privacy) return run();
-        return config.privacy.runExclusive(userId, async () => {
-          const currentPrivacyMode = await config.privacy!.getMode(userId);
-          if (currentPrivacyMode !== privacyMode) {
-            throw new AiRunCancelledError("User privacy mode changed before AI execution");
+        try {
+          if (!config.privacy) {
+            await run();
+          } else {
+            await config.privacy.runExclusive(userId, async () => {
+              const currentPrivacyMode = await config.privacy!.getMode(userId);
+              if (currentPrivacyMode !== privacyMode) {
+                throw new AiRunCancelledError("User privacy mode changed before AI execution");
+              }
+              await run();
+            });
           }
-          return run();
-        });
+        } finally {
+          if (coalescedExtras.some((extra) => extra.sourceKey)) {
+            // Keep the Chat permit until persisted follow-ups share their final logical order.
+            await finalizeGroupTurn();
+          }
+        }
       });
     } catch (error) {
       if (error instanceof AiReplyQueueFullError) {
@@ -2428,8 +2599,17 @@ export function createAiReplyHandler(
     }
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
+    if (scheduled.queued && supportsQueuedTurnCoalescing) {
+      coalesceHandle = turnCoalescer.open(coalesceScope, coalesceAdmission);
+    }
     trackDetachedDelivery(
       scheduled.result
+        .finally(async () => {
+          // A run cancelled while queued never drained; recover its extras for finalization.
+          const undrained = coalesceHandle?.close();
+          if (undrained?.length) coalescedExtras = [...coalescedExtras, ...undrained];
+          await rescuePrivateExtras();
+        })
         .finally(finalizeGroupTurn)
         .then(
           () => {
@@ -2507,11 +2687,7 @@ export function createAiReplyHandler(
   const handler: MiddlewareFn<BotContext> = async (ctx, next) => {
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
-    const entities = ctx.message?.entities ?? [];
-    const isCommand = entities.some(
-      (entity) => entity.type === "bot_command" && entity.offset === 0,
-    );
-    if (chatId === undefined || userId === undefined || isCommand) {
+    if (chatId === undefined || userId === undefined || hasLeadingBotCommand(ctx)) {
       return handleMessage(ctx, next);
     }
     if (ingressLock.hasMessageAdmission(ctx)) {
@@ -2630,6 +2806,10 @@ export function createAiReplyHandler(
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    captureTurnCoalescingAdmission: (context, chatId, threadId) => {
+      turnCoalescingAdmissions.set(context, turnCoalescer.capture({ chatId, threadId }));
+    },
+    stopTurnCoalescing: (chatId, threadId) => turnCoalescer.stopAccepting({ chatId, threadId }),
     cancelChatRuns: async (chatId) => {
       const result = await executionCoordinator.cancelChat(chatId);
       const deliveriesSettled = await drainDetachedDeliveries({ chatId });
