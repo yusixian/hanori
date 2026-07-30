@@ -3,7 +3,7 @@ import { AiTurnCoalescer } from "./ai-turn-coalescer.js";
 
 const CHAT = -100;
 const USER = 42;
-const SCOPE = { chatId: CHAT, userId: USER };
+const SCOPE = { chatId: CHAT, userId: USER, privacyMode: "normal" as const };
 
 function entry(tgMessageId: number, text = `msg-${tgMessageId}`) {
   return {
@@ -30,6 +30,13 @@ describe("AiTurnCoalescer", () => {
 
     expect(coalescer.tryAppend({ ...SCOPE, userId: USER + 1 }, entry(12))).toBe(false);
     expect(coalescer.tryAppend({ ...SCOPE, chatId: CHAT - 1 }, entry(12))).toBe(false);
+  });
+
+  it("keeps privacy-mode admissions in separate batches", () => {
+    const coalescer = new AiTurnCoalescer();
+    coalescer.open(SCOPE);
+
+    expect(coalescer.tryAppend({ ...SCOPE, privacyMode: "off" }, entry(12))).toBe(false);
   });
 
   it("keeps forum topics apart", () => {
@@ -59,6 +66,17 @@ describe("AiTurnCoalescer", () => {
 
     expect(handle.close().map((m) => m.tgMessageId)).toEqual([12]);
     expect(handle.drain()).toHaveLength(0);
+  });
+
+  it("stops later appends without discarding extras already owned by the handle", () => {
+    const coalescer = new AiTurnCoalescer();
+    const handle = coalescer.open(SCOPE);
+    coalescer.tryAppend(SCOPE, entry(12));
+
+    coalescer.stopAccepting(SCOPE);
+
+    expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(false);
+    expect(handle.drain().map((message) => message.tgMessageId)).toEqual([12]);
   });
 
   it("routes appends to the newest open batch and keeps older handles independent", () => {

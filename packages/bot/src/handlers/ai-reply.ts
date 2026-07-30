@@ -1280,18 +1280,23 @@ export function createAiReplyHandler(
     const msg = ctx.message;
     if (!msg) return next();
 
+    const chatId = ctx.chat?.id;
+    if (!chatId) return next();
+    const coalesceConversationScope = { chatId, threadId: msg.message_thread_id };
+
     // Skip commands
     const entities = msg.entities ?? [];
     if (entities.some((e) => e.type === "bot_command" && e.offset === 0)) {
+      turnCoalescer.stopAccepting(coalesceConversationScope);
       return next();
     }
 
-    const chatId = ctx.chat?.id;
-    if (!chatId) return next();
-
     const isPrivate = ctx.chat?.type === "private";
     const userId = ctx.from?.id;
-    if (!userId) return next();
+    if (!userId) {
+      turnCoalescer.stopAccepting(coalesceConversationScope);
+      return next();
+    }
 
     const isAdmin = config.adminChatIds.includes(userId);
     const userName = getDisplayName(ctx.from);
@@ -1304,11 +1309,16 @@ export function createAiReplyHandler(
     let groupTriggerConfig = config.triggerConfig;
 
     if (isPrivate) {
-      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) return next();
+      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) {
+        turnCoalescer.stopAccepting(coalesceConversationScope);
+        return next();
+      }
     } else {
       const groupCfg = resolveGroupConfig(config, chatId);
-      if (!groupCfg.enabled) return next();
-      if (!groupCfg.whitelisted && !isAdmin) return next();
+      if (!groupCfg.enabled || (!groupCfg.whitelisted && !isAdmin)) {
+        turnCoalescer.stopAccepting(coalesceConversationScope);
+        return next();
+      }
 
       effectivePrompt = groupCfg.systemPrompt;
       groupConversationEnabled = groupCfg.conversationEnabled;
@@ -1322,7 +1332,10 @@ export function createAiReplyHandler(
     if (personalizationEnabled && ctx.from) profileObserver?.observe(ctx.api, ctx.from);
 
     const supportsAiContent = !!(msg.text || msg.photo || msg.document);
-    if (!supportsAiContent) return next();
+    if (!supportsAiContent) {
+      turnCoalescer.stopAccepting(coalesceConversationScope);
+      return next();
+    }
 
     // Capture API reference and track private chats for event handlers
     botApi = ctx.api;
@@ -1360,11 +1373,12 @@ export function createAiReplyHandler(
     const groupHistoryContent =
       `${describeReplyQuote(ctx.reply_to_message)}${bufferedGroupText}`.trim();
     const coalesceScope: CoalesceScope = {
-      chatId,
-      threadId: msg.message_thread_id,
+      ...coalesceConversationScope,
       userId,
+      privacyMode,
     };
-    const tracksGroupTurnCompletion = !!config.conversation?.completeTurn;
+    const tracksGroupTurnCompletion =
+      !!config.conversation?.completeTurns || !!config.conversation?.completeTurn;
     if (shouldPersistPublicGroupMessage) {
       try {
         const message = {
@@ -1397,18 +1411,14 @@ export function createAiReplyHandler(
     }
     const supportsQueuedTurnCoalescing =
       !shouldPersistPublicGroupMessage ||
-      (tracksGroupTurnCompletion && persistedGroupMessageId !== undefined);
-    if (!triggerResult || aiDisabled) {
-      if (shouldPersistPublicGroupMessage) {
-        void config.conversation!.triggerCompression(chatId);
-      }
-      return next();
-    }
+      (!!config.conversation?.completeTurns && persistedGroupMessageId !== undefined);
 
     // A rapid text-only follow-up merges into the same user's queued run instead of
     // scheduling a second model call. Media messages keep the full per-turn pipeline.
     const followUpReplyFiles = extractFilesFromMessage(ctx.reply_to_message);
     if (
+      triggerResult &&
+      !aiDisabled &&
       supportsQueuedTurnCoalescing &&
       msg.text &&
       !msg.photo &&
@@ -1432,6 +1442,15 @@ export function createAiReplyHandler(
         });
         return;
       }
+    }
+    // Once a message cannot join the open batch, later messages must not cross it. The queued
+    // owner's handle still drains extras that were accepted before this boundary.
+    turnCoalescer.stopAccepting(coalesceConversationScope);
+    if (!triggerResult || aiDisabled) {
+      if (shouldPersistPublicGroupMessage) {
+        void config.conversation!.triggerCompression(chatId);
+      }
+      return next();
     }
 
     const readConversation =
@@ -2357,7 +2376,7 @@ export function createAiReplyHandler(
           if (!executionContext.isCurrent()) return;
           try {
             await config.conversation!.addMessages(toSave);
-            privateExtrasSaved = true;
+            privateExtrasSettled = true;
             if (isPrivate) await config.conversation!.triggerCompression(chatId);
           } catch (err) {
             config.onLog?.({
@@ -2409,7 +2428,7 @@ export function createAiReplyHandler(
     let queueNotice: Promise<void> | undefined;
     let coalesceHandle: CoalesceBatchHandle | undefined;
     let coalescedExtras: CoalescedTurnMessage[] = [];
-    let privateExtrasSaved = false;
+    let privateExtrasSettled = false;
     const buildPrivateExtraRows = () =>
       coalescedExtras.map((extra) => ({
         chatId,
@@ -2426,14 +2445,35 @@ export function createAiReplyHandler(
      * reply transaction commits — so a failed or superseded run would drop them silently.
      */
     const rescuePrivateExtras = async () => {
-      if (!isPrivate || !persistConversation || privateExtrasSaved) return;
+      if (!isPrivate || !persistConversation || privateExtrasSettled) return;
       if (coalescedExtras.length === 0) return;
+      if (config.privacy) {
+        let currentPrivacyMode: UserPrivacyMode;
+        try {
+          currentPrivacyMode = await config.privacy.getMode(userId);
+        } catch (error) {
+          config.onLog?.({
+            level: "error",
+            message: "Failed to verify privacy mode before persisting coalesced messages",
+            meta: {
+              chatId,
+              userId,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+          return;
+        }
+        if (currentPrivacyMode !== privacyMode) {
+          privateExtrasSettled = true;
+          return;
+        }
+      }
       let lastError: unknown;
       for (const delayMs of PERSISTENCE_RETRY_DELAYS_MS) {
         if (delayMs > 0) await sleep(delayMs);
         try {
           await config.conversation!.addMessages(buildPrivateExtraRows());
-          privateExtrasSaved = true;
+          privateExtrasSettled = true;
           return;
         } catch (error) {
           lastError = error;
@@ -2457,8 +2497,16 @@ export function createAiReplyHandler(
         for (const delayMs of PERSISTENCE_RETRY_DELAYS_MS) {
           if (delayMs > 0) await sleep(delayMs);
           try {
-            for (const sourceKey of sourceKeys) {
-              await config.conversation!.completeTurn?.(chatId, sourceKey, persistedGroupMessageId);
+            if (config.conversation!.completeTurns) {
+              await config.conversation!.completeTurns(chatId, sourceKeys, persistedGroupMessageId);
+            } else {
+              for (const sourceKey of sourceKeys) {
+                await config.conversation!.completeTurn?.(
+                  chatId,
+                  sourceKey,
+                  persistedGroupMessageId,
+                );
+              }
             }
             void config.conversation!.triggerCompression(chatId);
             return;

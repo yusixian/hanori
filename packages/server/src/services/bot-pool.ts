@@ -795,7 +795,20 @@ export class BotPool {
           return persisted ? { id: persisted.id } : undefined;
         },
         completeTurn: async (chatId, sourceKey, turnOrderId) => {
-          await store.completeTurn(botId, chatId, sourceKey, turnOrderId);
+          const completed = await store.completeTurn(botId, chatId, sourceKey, turnOrderId);
+          if (!completed) {
+            throw new Error(
+              `Failed to complete conversation turn for chat=${chatId}: source row missing`,
+            );
+          }
+        },
+        completeTurns: async (chatId, sourceKeys, turnOrderId) => {
+          const completed = await store.completeTurns(botId, chatId, sourceKeys, turnOrderId);
+          if (!completed) {
+            throw new Error(
+              `Failed to complete logical conversation turn for chat=${chatId}: source rows missing`,
+            );
+          }
         },
         ensureCompression: async (chatId) => {
           this.triggerConversationCleanup(botId, conversationCfg.retentionDays);

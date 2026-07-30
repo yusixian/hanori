@@ -365,36 +365,55 @@ export class ConversationStore {
     sourceKey: string,
     turnOrderId?: number,
   ): Promise<boolean> {
+    return this.completeTurns(botId, chatId, [sourceKey], turnOrderId);
+  }
+
+  async completeTurns(
+    botId: string,
+    chatId: number,
+    sourceKeys: readonly string[],
+    turnOrderId?: number,
+  ): Promise<boolean> {
+    const uniqueSourceKeys = [...new Set(sourceKeys)];
+    if (uniqueSourceKeys.length === 0) return true;
+
     return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select({ id: conversationMessages.id, meta: conversationMessages.meta })
+      const rows = await tx
+        .select({
+          id: conversationMessages.id,
+          sourceKey: conversationMessages.sourceKey,
+          meta: conversationMessages.meta,
+        })
         .from(conversationMessages)
         .where(
           and(
             eq(conversationMessages.botId, botId),
             eq(conversationMessages.chatId, chatId),
-            eq(conversationMessages.sourceKey, sourceKey),
+            inArray(conversationMessages.sourceKey, uniqueSourceKeys),
           ),
         )
-        .limit(1)
+        .orderBy(asc(conversationMessages.id))
         .for("update");
-      if (!row) return false;
-      if (
-        row.meta?.["turnState"] === "complete" &&
-        (turnOrderId === undefined || row.meta["turnOrderId"] === turnOrderId)
-      ) {
-        return true;
+      if (rows.length !== uniqueSourceKeys.length) return false;
+
+      for (const row of rows) {
+        if (
+          row.meta?.["turnState"] === "complete" &&
+          (turnOrderId === undefined || row.meta["turnOrderId"] === turnOrderId)
+        ) {
+          continue;
+        }
+        await tx
+          .update(conversationMessages)
+          .set({
+            meta: {
+              ...row.meta,
+              turnState: "complete",
+              ...(turnOrderId === undefined ? {} : { turnOrderId }),
+            },
+          })
+          .where(eq(conversationMessages.id, row.id));
       }
-      await tx
-        .update(conversationMessages)
-        .set({
-          meta: {
-            ...row.meta,
-            turnState: "complete",
-            ...(turnOrderId === undefined ? {} : { turnOrderId }),
-          },
-        })
-        .where(eq(conversationMessages.id, row.id));
       return true;
     });
   }

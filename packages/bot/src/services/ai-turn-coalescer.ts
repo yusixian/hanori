@@ -1,3 +1,5 @@
+import type { UserPrivacyMode } from "@cos-tool-bot/shared";
+
 export interface CoalescedTurnMessage {
   tgMessageId: number;
   /** Full request text, including a reply anchor when present. */
@@ -17,6 +19,7 @@ export interface CoalesceScope {
   chatId: number;
   threadId?: number;
   userId: number;
+  privacyMode: UserPrivacyMode;
 }
 
 export interface CoalesceBatchHandle {
@@ -41,12 +44,13 @@ const DEFAULT_MAX_CHARS = 2000;
 
 interface Batch {
   readonly userId: number;
+  readonly privacyMode: UserPrivacyMode;
   extras: CoalescedTurnMessage[];
   chars: number;
   open: boolean;
 }
 
-function scopeKey(scope: CoalesceScope): string {
+function scopeKey(scope: Pick<CoalesceScope, "chatId" | "threadId">): string {
   return `${scope.chatId}:${scope.threadId ?? 0}`;
 }
 
@@ -68,7 +72,13 @@ export class AiTurnCoalescer {
   /** Registers a queued run as the open batch for its scope. Call before the run can start. */
   open(scope: CoalesceScope): CoalesceBatchHandle {
     const key = scopeKey(scope);
-    const batch: Batch = { userId: scope.userId, extras: [], chars: 0, open: true };
+    const batch: Batch = {
+      userId: scope.userId,
+      privacyMode: scope.privacyMode,
+      extras: [],
+      chars: 0,
+      open: true,
+    };
     this.batches.set(key, batch);
 
     const take = (): CoalescedTurnMessage[] => {
@@ -83,12 +93,22 @@ export class AiTurnCoalescer {
   /** Appends a follow-up to the scope's open batch; false means the caller must schedule normally. */
   tryAppend(scope: CoalesceScope, message: CoalescedTurnMessage): boolean {
     const batch = this.batches.get(scopeKey(scope));
-    if (!batch?.open || batch.userId !== scope.userId) return false;
+    if (!batch?.open || batch.userId !== scope.userId || batch.privacyMode !== scope.privacyMode) {
+      return false;
+    }
     if (batch.extras.length >= this.maxMessages) return false;
     if (batch.chars + message.text.length > this.maxChars) return false;
     batch.extras.push(message);
     batch.chars += message.text.length;
     return true;
+  }
+
+  /**
+   * Prevents later messages in this conversation from crossing an intervening message. Existing
+   * handles remain drainable so extras already accepted by the queued owner are not lost.
+   */
+  stopAccepting(scope: Pick<CoalesceScope, "chatId" | "threadId">): void {
+    this.batches.delete(scopeKey(scope));
   }
 
   /** Stops current batches accepting appends; handles still drain/close for finalization. */
