@@ -29,9 +29,14 @@ export interface CoalesceBatchHandle {
   close(): CoalescedTurnMessage[];
 }
 
+export interface CoalesceAdmission {
+  readonly sequence: number;
+}
+
 export interface AiTurnCoalescerOptions {
   maxMessages?: number;
   maxChars?: number;
+  maxScopes?: number;
 }
 
 /**
@@ -41,6 +46,7 @@ export interface AiTurnCoalescerOptions {
  */
 const DEFAULT_MAX_MESSAGES = 10;
 const DEFAULT_MAX_CHARS = 2000;
+const DEFAULT_MAX_SCOPES = 10_000;
 
 interface Batch {
   readonly userId: number;
@@ -61,16 +67,26 @@ function scopeKey(scope: Pick<CoalesceScope, "chatId" | "threadId">): string {
  */
 export class AiTurnCoalescer {
   private readonly batches = new Map<string, Batch>();
+  private readonly boundarySequences = new Map<string, number>();
   private readonly maxMessages: number;
   private readonly maxChars: number;
+  private readonly maxScopes: number;
+  private nextSequence = 1;
+  private clearSequence = 0;
 
   constructor(options: AiTurnCoalescerOptions = {}) {
     this.maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
     this.maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
+    this.maxScopes = options.maxScopes ?? DEFAULT_MAX_SCOPES;
+  }
+
+  /** Captures message arrival before asynchronous ingress work can be overtaken by a boundary. */
+  capture(_scope: Pick<CoalesceScope, "chatId" | "threadId">): CoalesceAdmission {
+    return { sequence: this.nextSequence++ };
   }
 
   /** Registers a queued run as the open batch for its scope. Call before the run can start. */
-  open(scope: CoalesceScope): CoalesceBatchHandle {
+  open(scope: CoalesceScope, admission = this.capture(scope)): CoalesceBatchHandle {
     const key = scopeKey(scope);
     const batch: Batch = {
       userId: scope.userId,
@@ -79,7 +95,10 @@ export class AiTurnCoalescer {
       chars: 0,
       open: true,
     };
-    this.batches.set(key, batch);
+    const isCurrentAdmission =
+      admission.sequence >= this.clearSequence &&
+      admission.sequence >= (this.boundarySequences.get(key) ?? 0);
+    if (isCurrentAdmission) this.batches.set(key, batch);
 
     const take = (): CoalescedTurnMessage[] => {
       if (!batch.open) return [];
@@ -108,11 +127,34 @@ export class AiTurnCoalescer {
    * handles remain drainable so extras already accepted by the queued owner are not lost.
    */
   stopAccepting(scope: Pick<CoalesceScope, "chatId" | "threadId">): void {
-    this.batches.delete(scopeKey(scope));
+    const key = scopeKey(scope);
+    if (!this.reserveBoundaryScope(key)) return;
+    this.boundarySequences.set(key, this.nextSequence++);
+    this.batches.delete(key);
+  }
+
+  /** Applies a message boundary only if no later-arriving boundary has already overtaken it. */
+  advance(scope: Pick<CoalesceScope, "chatId" | "threadId">, admission: CoalesceAdmission): void {
+    const key = scopeKey(scope);
+    const latestBoundary = Math.max(this.clearSequence, this.boundarySequences.get(key) ?? 0);
+    if (latestBoundary > admission.sequence) return;
+    if (!this.reserveBoundaryScope(key)) return;
+    this.boundarySequences.set(key, admission.sequence);
+    this.batches.delete(key);
+  }
+
+  /** Bounds inactive scope metadata; a global boundary is the safest overflow fallback. */
+  private reserveBoundaryScope(key: string): boolean {
+    if (this.boundarySequences.has(key) || this.boundarySequences.size < this.maxScopes)
+      return true;
+    this.clear();
+    return false;
   }
 
   /** Stops current batches accepting appends; handles still drain/close for finalization. */
   clear(): void {
+    this.clearSequence = this.nextSequence++;
+    this.boundarySequences.clear();
     this.batches.clear();
   }
 }

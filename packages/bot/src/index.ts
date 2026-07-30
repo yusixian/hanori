@@ -52,7 +52,7 @@ import {
   createTelegramObservationMiddleware,
   type TelegramObservationCallbacks,
 } from "./middleware/telegram-observation.js";
-import { getUpdateConstraint } from "./middleware/update-constraint.js";
+import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
 
 export type AiReplyBotConfig = Omit<
@@ -141,6 +141,12 @@ export function createBot(config: BotConfig) {
   const commandRegistry = new ActiveCommandRegistry(bot);
 
   const authGuard = createAuthGuard(adminChatIds);
+  let captureAiTurnCoalescingAdmission:
+    | ReturnType<typeof createAiReplyHandler>["captureTurnCoalescingAdmission"]
+    | undefined;
+  let stopAiTurnCoalescing:
+    | ReturnType<typeof createAiReplyHandler>["stopTurnCoalescing"]
+    | undefined;
 
   // Register ordinary messages before sequentialize or any observation/stream middleware can
   // yield. This preserves arrival order against later destructive commands while the admission
@@ -149,10 +155,13 @@ export function createBot(config: BotConfig) {
     bot.use((ctx, next) => {
       const chatId = ctx.chat?.id;
       const userId = ctx.from?.id;
-      const isCommand = ctx.message?.entities?.some(
-        (entity) => entity.type === "bot_command" && entity.offset === 0,
-      );
-      if (chatId === undefined || userId === undefined || isCommand) return next();
+      if (chatId === undefined) return next();
+      if (hasLeadingBotCommand(ctx)) {
+        stopAiTurnCoalescing?.(chatId, ctx.message?.message_thread_id);
+        return next();
+      }
+      if (userId === undefined) return next();
+      captureAiTurnCoalescingAdmission?.(ctx, chatId, ctx.message?.message_thread_id);
       return aiIngressLock.runAdmittedMessage(ctx, chatId, userId, next);
     });
   }
@@ -271,6 +280,8 @@ export function createBot(config: BotConfig) {
     aiDirectGenerate = result.directGenerate;
     aiCanUseImageGeneration = result.canUseImageGeneration;
     aiSetAiEnabled = result.setAiEnabled;
+    captureAiTurnCoalescingAdmission = result.captureTurnCoalescingAdmission;
+    stopAiTurnCoalescing = result.stopTurnCoalescing;
     aiWaitForUserProfileUpdates = result.waitForUserProfileUpdates;
     aiCancelChatRuns = result.cancelChatRuns;
     aiCancelUserRuns = result.cancelUserRuns;

@@ -43,6 +43,7 @@ import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
+import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
 import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
@@ -60,6 +61,7 @@ import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
   AiTurnCoalescer,
+  type CoalesceAdmission,
   type CoalesceBatchHandle,
   type CoalescedTurnMessage,
   type CoalesceScope,
@@ -758,6 +760,8 @@ export function createAiReplyHandler(
   ) => Promise<boolean>;
   isAiEnabled: () => boolean;
   setAiEnabled: (enabled: boolean) => number;
+  captureTurnCoalescingAdmission: (context: object, chatId: number, threadId?: number) => void;
+  stopTurnCoalescing: (chatId: number, threadId?: number) => void;
   cancelChatRuns: (chatId: number) => Promise<number>;
   cancelUserRuns: (userId: number) => Promise<number>;
   runChatMutation: <T>(chatId: number, operation: () => Promise<T>) => Promise<T>;
@@ -784,6 +788,7 @@ export function createAiReplyHandler(
     maxQueued: 100,
   });
   const turnCoalescer = new AiTurnCoalescer();
+  const turnCoalescingAdmissions = new WeakMap<object, CoalesceAdmission>();
   const ingressLock = runtime?.ingressLock ?? new AiIngressLock();
   interface DetachedDeliveryTask {
     scope: AiRunScope;
@@ -1283,10 +1288,11 @@ export function createAiReplyHandler(
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
     const coalesceConversationScope = { chatId, threadId: msg.message_thread_id };
+    const coalesceAdmission =
+      turnCoalescingAdmissions.get(ctx) ?? turnCoalescer.capture(coalesceConversationScope);
 
     // Skip commands
-    const entities = msg.entities ?? [];
-    if (entities.some((e) => e.type === "bot_command" && e.offset === 0)) {
+    if (hasLeadingBotCommand(ctx)) {
       turnCoalescer.stopAccepting(coalesceConversationScope);
       return next();
     }
@@ -1294,7 +1300,7 @@ export function createAiReplyHandler(
     const isPrivate = ctx.chat?.type === "private";
     const userId = ctx.from?.id;
     if (!userId) {
-      turnCoalescer.stopAccepting(coalesceConversationScope);
+      turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
       return next();
     }
 
@@ -1310,13 +1316,13 @@ export function createAiReplyHandler(
 
     if (isPrivate) {
       if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) {
-        turnCoalescer.stopAccepting(coalesceConversationScope);
+        turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
     } else {
       const groupCfg = resolveGroupConfig(config, chatId);
       if (!groupCfg.enabled || (!groupCfg.whitelisted && !isAdmin)) {
-        turnCoalescer.stopAccepting(coalesceConversationScope);
+        turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
 
@@ -1333,7 +1339,7 @@ export function createAiReplyHandler(
 
     const supportsAiContent = !!(msg.text || msg.photo || msg.document);
     if (!supportsAiContent) {
-      turnCoalescer.stopAccepting(coalesceConversationScope);
+      turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
       return next();
     }
 
@@ -1445,7 +1451,7 @@ export function createAiReplyHandler(
     }
     // Once a message cannot join the open batch, later messages must not cross it. The queued
     // owner's handle still drains extras that were accepted before this boundary.
-    turnCoalescer.stopAccepting(coalesceConversationScope);
+    turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
     if (!triggerResult || aiDisabled) {
       if (shouldPersistPublicGroupMessage) {
         void config.conversation!.triggerCompression(chatId);
@@ -2594,7 +2600,7 @@ export function createAiReplyHandler(
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
     if (scheduled.queued && supportsQueuedTurnCoalescing) {
-      coalesceHandle = turnCoalescer.open(coalesceScope);
+      coalesceHandle = turnCoalescer.open(coalesceScope, coalesceAdmission);
     }
     trackDetachedDelivery(
       scheduled.result
@@ -2681,11 +2687,7 @@ export function createAiReplyHandler(
   const handler: MiddlewareFn<BotContext> = async (ctx, next) => {
     const chatId = ctx.chat?.id;
     const userId = ctx.from?.id;
-    const entities = ctx.message?.entities ?? [];
-    const isCommand = entities.some(
-      (entity) => entity.type === "bot_command" && entity.offset === 0,
-    );
-    if (chatId === undefined || userId === undefined || isCommand) {
+    if (chatId === undefined || userId === undefined || hasLeadingBotCommand(ctx)) {
       return handleMessage(ctx, next);
     }
     if (ingressLock.hasMessageAdmission(ctx)) {
@@ -2804,6 +2806,10 @@ export function createAiReplyHandler(
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,
+    captureTurnCoalescingAdmission: (context, chatId, threadId) => {
+      turnCoalescingAdmissions.set(context, turnCoalescer.capture({ chatId, threadId }));
+    },
+    stopTurnCoalescing: (chatId, threadId) => turnCoalescer.stopAccepting({ chatId, threadId }),
     cancelChatRuns: async (chatId) => {
       const result = await executionCoordinator.cancelChat(chatId);
       const deliveriesSettled = await drainDetachedDeliveries({ chatId });

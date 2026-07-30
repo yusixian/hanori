@@ -79,6 +79,37 @@ describe("AiTurnCoalescer", () => {
     expect(handle.drain().map((message) => message.tgMessageId)).toEqual([12]);
   });
 
+  it("does not publish a queued batch admitted before an intervening boundary", () => {
+    const coalescer = new AiTurnCoalescer();
+    const admission = coalescer.capture(SCOPE);
+
+    coalescer.stopAccepting(SCOPE);
+    const staleHandle = coalescer.open(SCOPE, admission);
+
+    expect(coalescer.tryAppend(SCOPE, entry(12))).toBe(false);
+    expect(staleHandle.close()).toHaveLength(0);
+
+    const currentHandle = coalescer.open(SCOPE);
+    expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(true);
+    expect(currentHandle.drain().map((message) => message.tgMessageId)).toEqual([13]);
+  });
+
+  it("does not move the boundary backwards when an earlier admission finishes later", () => {
+    const coalescer = new AiTurnCoalescer();
+    const earlierAdmission = coalescer.capture(SCOPE);
+    const laterAdmission = coalescer.capture(SCOPE);
+
+    coalescer.advance(SCOPE, laterAdmission);
+    coalescer.advance(SCOPE, earlierAdmission);
+
+    coalescer.open(SCOPE, earlierAdmission);
+    expect(coalescer.tryAppend(SCOPE, entry(12))).toBe(false);
+
+    const laterHandle = coalescer.open(SCOPE, laterAdmission);
+    expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(true);
+    expect(laterHandle.drain().map((message) => message.tgMessageId)).toEqual([13]);
+  });
+
   it("routes appends to the newest open batch and keeps older handles independent", () => {
     const coalescer = new AiTurnCoalescer();
     const first = coalescer.open(SCOPE);
@@ -107,6 +138,20 @@ describe("AiTurnCoalescer", () => {
 
     expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(false);
     expect(handle.close().map((m) => m.tgMessageId)).toEqual([12]);
+  });
+
+  it("uses a global boundary when remembered scope metadata reaches its limit", () => {
+    const coalescer = new AiTurnCoalescer({ maxScopes: 1 });
+    const staleAdmission = coalescer.capture(SCOPE);
+    coalescer.stopAccepting(SCOPE);
+
+    coalescer.stopAccepting({ ...SCOPE, chatId: CHAT - 1 });
+    coalescer.open(SCOPE, staleAdmission);
+
+    expect(coalescer.tryAppend(SCOPE, entry(12))).toBe(false);
+    const currentHandle = coalescer.open(SCOPE);
+    expect(coalescer.tryAppend(SCOPE, entry(13))).toBe(true);
+    expect(currentHandle.drain().map((message) => message.tgMessageId)).toEqual([13]);
   });
 
   it("declines past the message-count ceiling so overflow hits the scheduler queue", () => {
