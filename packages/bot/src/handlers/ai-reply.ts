@@ -10,6 +10,7 @@ import type {
   BotMemoryConfig,
   ConversationCallbacks,
   ConversationConfig,
+  ConversationForwardOrigin,
   ConversationRole,
   GitHubToolsRuntimeConfig,
   ImageOcrConfig,
@@ -34,6 +35,7 @@ import {
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
+  formatConversationForwardOrigin,
   inferCapabilities,
   isRichMessageEnabled,
   isStreamReplyMode,
@@ -98,6 +100,7 @@ import {
 import { VISIBLE_EFFECT_TOOL_NAMES } from "../tools/visible-effects.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
+import { normalizeTelegramForwardOrigin } from "../utils/forward-origin.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { RingBuffer } from "../utils/ring-buffer.js";
 import { splitMessage } from "../utils/split-message.js";
@@ -301,6 +304,7 @@ interface BufferedMessage {
   userName: string;
   text: string;
   timestamp: number;
+  forwardOrigin?: ConversationForwardOrigin;
 }
 
 interface ToolResultEntry {
@@ -667,7 +671,20 @@ function describeGroupMessageForHistory(msg: Message): string {
 }
 
 function formatGroupContextMessages(messages: BufferedMessage[]): string {
-  return messages.map((m) => `[${m.userName}]: ${m.text}`).join("\n");
+  return messages
+    .map(
+      (message) =>
+        `[${message.userName}]: ${withForwardOrigin(message.text, message.forwardOrigin)}`,
+    )
+    .join("\n");
+}
+
+function withForwardOrigin(
+  content: string,
+  forwardOrigin: ConversationForwardOrigin | undefined,
+): string {
+  const attribution = formatConversationForwardOrigin(forwardOrigin);
+  return attribution ? `${attribution}\n${content}` : content;
 }
 
 async function loadStickerPacks(
@@ -1351,6 +1368,8 @@ export function createAiReplyHandler(
     let bufferedGroupText = "";
     let groupBufferSnapshot: BufferedMessage[] = [];
     let persistedGroupMessageId: number | undefined;
+    const hasForwardOrigin = msg.forward_origin != null;
+    const forwardOrigin = normalizeTelegramForwardOrigin(msg.forward_origin);
     if (!isPrivate) {
       const buffer = getOrCreateBuffer(chatId);
       bufferedGroupText = describeGroupMessageForHistory(msg);
@@ -1361,6 +1380,7 @@ export function createAiReplyHandler(
           userName,
           text: bufferedGroupText,
           timestamp: Date.now(),
+          ...(forwardOrigin ? { forwardOrigin } : {}),
         });
       }
       groupBufferSnapshot = buffer.getAll();
@@ -1390,13 +1410,15 @@ export function createAiReplyHandler(
         const message = {
           chatId,
           content: groupHistoryContent || bufferedGroupText,
-          userAuthoredContent: personalizationEnabled ? bufferedGroupText : undefined,
+          userAuthoredContent:
+            personalizationEnabled && !hasForwardOrigin ? bufferedGroupText : undefined,
           userId,
           userName,
           sourceKey: groupTurnSourceKey,
           meta: {
             tgMessageId: msg.message_id,
             publicGroupHistory: true,
+            ...(forwardOrigin ? { forwardOrigin } : {}),
             turnState:
               triggerResult && !aiDisabled && tracksGroupTurnCompletion ? "pending" : "complete",
           },
@@ -1437,8 +1459,9 @@ export function createAiReplyHandler(
         turnCoalescer.tryAppend(coalesceScope, {
           tgMessageId: msg.message_id,
           text: followUpText,
-          userAuthoredContent: msg.text.trim(),
+          ...(!hasForwardOrigin ? { userAuthoredContent: msg.text.trim() } : {}),
           sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
+          ...(forwardOrigin ? { forwardOrigin } : {}),
         });
       if (merged) {
         config.onLog?.({
@@ -1725,10 +1748,14 @@ export function createAiReplyHandler(
         const userAuthoredContent = `${attachmentDesc}${messageText}`.trim();
         // Coalesced follow-ups extend the model request only; their own history rows were
         // written at ingress, and this run's history read is bounded before this message.
-        const coalescedLines = coalescedExtras.map((extra) =>
-          isPrivate ? extra.text : `[${userName}]: ${extra.text}`,
-        );
-        const ownContent = !isPrivate ? `[${userName}]: ${rawContent}` : rawContent;
+        const coalescedLines = coalescedExtras.map((extra) => {
+          const content = withForwardOrigin(extra.text, extra.forwardOrigin);
+          return isPrivate ? content : `[${userName}]: ${content}`;
+        });
+        const attributedRawContent = withForwardOrigin(rawContent, forwardOrigin);
+        const ownContent = !isPrivate
+          ? `[${userName}]: ${attributedRawContent}`
+          : attributedRawContent;
         const textContent = [ownContent, ...coalescedLines].join("\n");
         const retrievalQuery = [rawContent || messageText, ...coalescedExtras.map((e) => e.text)]
           .join("\n")
@@ -1741,15 +1768,17 @@ export function createAiReplyHandler(
             const message = {
               chatId,
               content: rawContent || bufferedGroupText || messageText,
-              userAuthoredContent: personalizationEnabled
-                ? userAuthoredContent || bufferedGroupText || messageText
-                : undefined,
+              userAuthoredContent:
+                personalizationEnabled && !hasForwardOrigin
+                  ? userAuthoredContent || bufferedGroupText || messageText
+                  : undefined,
               userId,
               userName,
               sourceKey: groupTurnSourceKey,
               meta: {
                 tgMessageId: msg.message_id,
                 publicGroupHistory: true,
+                ...(forwardOrigin ? { forwardOrigin } : {}),
                 turnState: tracksGroupTurnCompletion ? "pending" : "complete",
               },
             };
@@ -2320,11 +2349,16 @@ export function createAiReplyHandler(
               chatId,
               role: "user",
               content: rawContent || messageText,
-              userAuthoredContent: userAuthoredContent || messageText,
+              userAuthoredContent: hasForwardOrigin
+                ? undefined
+                : userAuthoredContent || messageText,
               userId,
               userName,
               sourceKey: `${sourcePrefix}:user`,
-              meta: { tgMessageId: msg.message_id },
+              meta: {
+                tgMessageId: msg.message_id,
+                ...(forwardOrigin ? { forwardOrigin } : {}),
+              },
             });
             // Private follow-ups skipped ingress persistence; save them with this turn.
             toSave.push(...buildPrivateExtraRows());
@@ -2444,7 +2478,10 @@ export function createAiReplyHandler(
         userId,
         userName,
         sourceKey: `telegram:${extra.tgMessageId}:user`,
-        meta: { tgMessageId: extra.tgMessageId } as Record<string, unknown>,
+        meta: {
+          tgMessageId: extra.tgMessageId,
+          ...(extra.forwardOrigin ? { forwardOrigin: extra.forwardOrigin } : {}),
+        } as Record<string, unknown>,
       }));
     /**
      * Group follow-ups are durable from ingress, private ones only exist in memory until the

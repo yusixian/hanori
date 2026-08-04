@@ -40,6 +40,9 @@ describe("ConversationStore.getHistory", () => {
         userName: "A",
         createdAt: new Date("2026-07-29T00:00:01.000Z"),
         turnOrderId: 101,
+        meta: {
+          forwardOrigin: { type: "hidden_user", name: "Forwarded Alice" },
+        },
       },
       {
         id: 102,
@@ -48,6 +51,7 @@ describe("ConversationStore.getHistory", () => {
         userName: "B",
         createdAt: new Date("2026-07-29T00:00:02.000Z"),
         turnOrderId: 102,
+        meta: null,
       },
       {
         id: 104,
@@ -56,6 +60,7 @@ describe("ConversationStore.getHistory", () => {
         userName: null,
         createdAt: new Date("2026-07-29T00:00:04.000Z"),
         turnOrderId: 101,
+        meta: null,
       },
       {
         id: 105,
@@ -64,6 +69,7 @@ describe("ConversationStore.getHistory", () => {
         userName: null,
         createdAt: new Date("2026-07-29T00:00:05.000Z"),
         turnOrderId: 102,
+        meta: null,
       },
     ];
     const dialect = new PgDialect();
@@ -112,6 +118,11 @@ describe("ConversationStore.getHistory", () => {
       "B user",
       "B assistant",
     ]);
+    expect(history.messages[0]?.forwardOrigin).toEqual({
+      type: "hidden_user",
+      name: "Forwarded Alice",
+    });
+    expect(history.messages[1]).not.toHaveProperty("forwardOrigin");
     expect(orderSql).toContain("turnOrderId");
   });
 
@@ -126,6 +137,7 @@ describe("ConversationStore.getHistory", () => {
           userName: `User ${index + 1}`,
           createdAt: new Date(1_700_000_000_000 + index),
           historyOrderId: userId,
+          meta: index === 100 ? { forwardOrigin: { type: "channel", name: "Daily News" } } : null,
         },
         {
           id: userId + 101,
@@ -134,6 +146,7 @@ describe("ConversationStore.getHistory", () => {
           userName: null,
           createdAt: new Date(1_700_000_100_000 + index),
           historyOrderId: userId,
+          meta: null,
         },
       ];
     }).flat();
@@ -186,6 +199,9 @@ describe("ConversationStore.getHistory", () => {
       "user 2",
       "assistant 2",
     ]);
+    expect(
+      history.messages.find((message) => message.content === "user 101")?.forwardOrigin,
+    ).toEqual({ type: "channel", name: "Daily News" });
     expect(historyWhereSql[1]).toContain("turnOrderId");
   });
 });
@@ -206,6 +222,25 @@ describe("selectHistoryWithinTokenBudget", () => {
     expect(selected.trace.completeRawHistory).toBe(true);
     expect(selected.trace.earliestMessageId).toBe(1);
     expect(selected.trace.latestMessageId).toBe(21);
+  });
+
+  it("charges rendered forwarding attribution against the history token budget", () => {
+    const plain = selectHistoryWithinTokenBudget(rows.slice(0, 1), undefined, 12_000);
+    const forwarded = selectHistoryWithinTokenBudget(
+      [
+        {
+          ...rows[0]!,
+          forwardOrigin: {
+            type: "channel",
+            name: "Daily News With A Visible Source Name",
+          },
+        },
+      ],
+      undefined,
+      12_000,
+    );
+
+    expect(forwarded.trace.usedTokens).toBeGreaterThan(plain.trace.usedTokens);
   });
 
   it("marks a compacted summary as degraded when the raw tail is also truncated", () => {
@@ -723,6 +758,7 @@ function createCandidateDb(
     userName: string | null;
     historyOrderId?: number;
     turnState?: "pending" | "complete";
+    meta?: Record<string, unknown> | null;
   }>,
 ) {
   const state: {
@@ -863,7 +899,14 @@ describe("ConversationStore.getCompactionCandidate", () => {
 
   it("keeps recent complete turns while compacting older interleaved source rows", async () => {
     const { db } = createCandidateDb([
-      { id: 1, role: "user", content: "user-a", userName: "Alice", historyOrderId: 1 },
+      {
+        id: 1,
+        role: "user",
+        content: "user-a",
+        userName: "Alice",
+        historyOrderId: 1,
+        meta: { forwardOrigin: { type: "hidden_user", name: "Forwarded Alice" } },
+      },
       { id: 2, role: "user", content: "user-b", userName: "Bob", historyOrderId: 2 },
       { id: 3, role: "assistant", content: "assistant-a", userName: null, historyOrderId: 1 },
       { id: 4, role: "assistant", content: "assistant-b", userName: null, historyOrderId: 2 },
@@ -878,6 +921,10 @@ describe("ConversationStore.getCompactionCandidate", () => {
     ]);
     expect(candidate?.sourceMessageIds).toEqual([1, 3]);
     expect(candidate?.newCursorId).toBe(1);
+    expect(candidate?.messages[0]?.forwardOrigin).toEqual({
+      type: "hidden_user",
+      name: "Forwarded Alice",
+    });
   });
 
   it("does not advance compaction across a pending reply turn", async () => {

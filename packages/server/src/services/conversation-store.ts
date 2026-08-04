@@ -4,8 +4,13 @@ import {
   conversationMessages,
   conversationSummaries,
 } from "@cos-tool-bot/database";
-import type { ConversationRole } from "@cos-tool-bot/shared";
-import type { ConversationHistoryBudgetTrace } from "@cos-tool-bot/shared";
+import {
+  formatConversationForwardOrigin,
+  parseConversationForwardOrigin,
+  type ConversationForwardOrigin,
+  type ConversationHistoryBudgetTrace,
+  type ConversationRole,
+} from "@cos-tool-bot/shared";
 import { countTokens } from "gpt-tokenizer";
 import {
   and,
@@ -68,6 +73,7 @@ export interface CompactionCandidate {
     role: string;
     content: string;
     userName: string | null;
+    forwardOrigin?: ConversationForwardOrigin;
   }>;
   sourceMessageIds: number[];
   newCursorId: number;
@@ -172,12 +178,21 @@ function estimateHistoryMessageTokens(message: {
   role: string;
   content: string;
   userName: string | null;
+  forwardOrigin?: ConversationForwardOrigin;
 }): number {
+  const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+  const content = attribution ? `${attribution}\n${message.content}` : message.content;
   return (
-    countTokens(
-      `${message.role === "assistant" ? "AI" : message.userName || "User"}: ${message.content}`,
-    ) + HISTORY_MESSAGE_TOKEN_OVERHEAD
+    countTokens(`${message.role === "assistant" ? "AI" : message.userName || "User"}: ${content}`) +
+    HISTORY_MESSAGE_TOKEN_OVERHEAD
   );
+}
+
+function projectForwardOrigin(meta: Record<string, unknown> | null | undefined): {
+  forwardOrigin?: ConversationForwardOrigin;
+} {
+  const forwardOrigin = parseConversationForwardOrigin(meta?.["forwardOrigin"]);
+  return forwardOrigin ? { forwardOrigin } : {};
 }
 
 function truncateToTokenBudget(content: string, budget: number): string {
@@ -202,6 +217,7 @@ export function selectHistoryWithinTokenBudget(
     userName: string | null;
     createdAt: Date;
     historyOrderId?: number;
+    forwardOrigin?: ConversationForwardOrigin;
   }>,
   active:
     | {
@@ -255,7 +271,12 @@ export function selectHistoryWithinTokenBudget(
     const messageTokens = estimateHistoryMessageTokens(message);
     if (reversed.length > 0 && tailTokens + messageTokens > tailBudget) break;
     if (messageTokens > tailBudget) {
-      const contentBudget = Math.max(1, tailBudget - HISTORY_MESSAGE_TOKEN_OVERHEAD);
+      const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+      const attributionTokens = attribution ? countTokens(`${attribution}\n`) : 0;
+      const contentBudget = Math.max(
+        1,
+        tailBudget - HISTORY_MESSAGE_TOKEN_OVERHEAD - attributionTokens,
+      );
       reversed.push({
         ...message,
         content: truncateToTokenBudget(message.content, contentBudget),
@@ -473,6 +494,7 @@ export class ConversationStore {
         userName: string | null;
         createdAt: Date;
         historyOrderId: number;
+        forwardOrigin?: ConversationForwardOrigin;
       }> = [];
       let pageBeforeOrderId: number | undefined;
       let pageBeforeId: number | undefined;
@@ -509,6 +531,7 @@ export class ConversationStore {
             userName: conversationMessages.userName,
             createdAt: conversationMessages.createdAt,
             historyOrderId,
+            meta: conversationMessages.meta,
           })
           .from(conversationMessages)
           .where(and(...conditions))
@@ -518,8 +541,12 @@ export class ConversationStore {
           scannedAllHistory = true;
           break;
         }
-        newestFirst.push(...batch);
-        scannedTokens += batch.reduce(
+        const projectedBatch = batch.map(({ meta, ...message }) => ({
+          ...message,
+          ...projectForwardOrigin(meta),
+        }));
+        newestFirst.push(...projectedBatch);
+        scannedTokens += projectedBatch.reduce(
           (total, message) => total + estimateHistoryMessageTokens(message),
           0,
         );
@@ -555,6 +582,7 @@ export class ConversationStore {
           content: message.content,
           userName: message.userName,
           createdAt: message.createdAt.toISOString(),
+          ...(message.forwardOrigin ? { forwardOrigin: message.forwardOrigin } : {}),
         })),
         budgetTrace: selected.trace,
       };
@@ -568,6 +596,7 @@ export class ConversationStore {
         userName: conversationMessages.userName,
         createdAt: conversationMessages.createdAt,
         historyOrderId,
+        meta: conversationMessages.meta,
       })
       .from(conversationMessages)
       .where(
@@ -590,12 +619,13 @@ export class ConversationStore {
 
     return {
       summary: active?.content ?? null,
-      messages: messages.reverse().map((message) => ({
+      messages: messages.reverse().map(({ meta, ...message }) => ({
         id: message.id,
         role: message.role,
         content: message.content,
         userName: message.userName,
         createdAt: message.createdAt.toISOString(),
+        ...projectForwardOrigin(meta),
       })),
     };
   }
@@ -747,7 +777,7 @@ export class ConversationStore {
           ? retainedOrderId
           : Math.min(retainedOrderId, pending.historyOrderId);
 
-    const messages = await this.db
+    const storedMessages = await this.db
       .select({
         id: conversationMessages.id,
         role: conversationMessages.role,
@@ -760,6 +790,7 @@ export class ConversationStore {
         end`,
         userName: conversationMessages.userName,
         historyOrderId,
+        meta: conversationMessages.meta,
       })
       .from(conversationMessages)
       .where(
@@ -772,6 +803,10 @@ export class ConversationStore {
       )
       .orderBy(asc(historyOrderId), asc(conversationMessages.id))
       .limit(COMPACTION_MAX_BATCH_MESSAGES + 1);
+    const messages = storedMessages.map(({ meta, ...message }) => ({
+      ...message,
+      ...projectForwardOrigin(meta),
+    }));
 
     if (messages.length === 0) return null;
     let completeMessages = messages.slice(0, COMPACTION_MAX_BATCH_MESSAGES);
@@ -806,6 +841,7 @@ export class ConversationStore {
             id: message.id,
             role: message.role,
             userName: message.userName,
+            forwardOrigin: message.forwardOrigin,
             content: "",
           }).length +
           1,
@@ -843,7 +879,13 @@ export class ConversationStore {
     if (!lastMessage) return null;
     const sourceMessageIds = sourceBatch.map((message) => message.id).sort((a, b) => a - b);
     const orderedBatch = orderConversationMessagesByTurn(sourceBatch).map(
-      ({ id, role, content, userName }) => ({ id, role, content, userName }),
+      ({ id, role, content, userName, forwardOrigin }) => ({
+        id,
+        role,
+        content,
+        userName,
+        ...(forwardOrigin ? { forwardOrigin } : {}),
+      }),
     );
     return {
       activeSummaryId: active?.summaryId ?? null,

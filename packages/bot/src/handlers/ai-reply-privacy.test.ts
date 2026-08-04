@@ -5,6 +5,7 @@ import type {
   MemoryCallbacks,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
+import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
@@ -117,6 +118,241 @@ describe("AI reply group capture and privacy", () => {
         sourceKey: "telegram:7:user",
       }),
     );
+    runtime.destroy();
+  });
+
+  it("attributes a forwarded group request immediately and in ingress metadata", async () => {
+    async function* textStream() {
+      yield "answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = Object.assign(context("sample forwarded question"), {
+      message: {
+        message_id: 7,
+        text: "sample forwarded question",
+        entities: [],
+        forward_origin: {
+          type: "user",
+          date: 1,
+          sender_user: {
+            id: 77,
+            is_bot: false,
+            first_name: "Alice",
+            username: "alice",
+          },
+        },
+      },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    });
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(JSON.stringify(streamTextMock.mock.calls.at(-1)?.[0]?.messages)).toContain(
+      "[Forwarded from user: Alice (@alice)]",
+    );
+    expect(history.upsertUserMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: "sample forwarded question",
+        userAuthoredContent: undefined,
+        meta: expect.objectContaining({
+          forwardOrigin: { type: "user", name: "Alice", username: "alice" },
+        }),
+      }),
+    );
+    runtime.destroy();
+  });
+
+  it("fails closed when a group forward origin cannot be normalized", async () => {
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = context("ambient future forward") as unknown as { message: unknown };
+    ctx.message = {
+      message_id: 7,
+      text: "ambient future forward",
+      entities: [],
+      forward_origin: { type: "future_origin", opaque: true },
+    };
+
+    await runtime.handler(ctx as BotContext, vi.fn());
+
+    expect(history.upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: "ambient future forward",
+        userAuthoredContent: undefined,
+        meta: { tgMessageId: 7, publicGroupHistory: true, turnState: "complete" },
+      }),
+    );
+    runtime.destroy();
+  });
+
+  it("attributes and persists a forwarded private request", async () => {
+    async function* textStream() {
+      yield "private answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("private answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = {
+      update: { update_id: 3 },
+      message: {
+        message_id: 10,
+        text: "private forwarded question",
+        entities: [],
+        forward_origin: {
+          type: "channel",
+          date: 2,
+          chat: {
+            id: -101,
+            type: "channel",
+            title: "Daily News",
+            username: "daily_news",
+          },
+          message_id: 9,
+          author_signature: "Editor",
+        },
+      },
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "Tester" },
+      me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+      api: { sendChatAction: vi.fn() },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    } as unknown as BotContext;
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(JSON.stringify(streamTextMock.mock.calls.at(-1)?.[0]?.messages)).toContain(
+      "[Forwarded from channel: Daily News (@daily_news), author: Editor]",
+    );
+    expect(history.addMessages).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: "private forwarded question",
+          userAuthoredContent: undefined,
+          meta: {
+            tgMessageId: 10,
+            forwardOrigin: {
+              type: "channel",
+              name: "Daily News",
+              username: "daily_news",
+              authorSignature: "Editor",
+            },
+          },
+        }),
+      ]),
+    );
+    runtime.destroy();
+  });
+
+  it("fails closed when a private forward origin is incomplete", async () => {
+    async function* textStream() {
+      yield "private answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("private answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const history = conversation();
+    const runtime = createAiReplyHandler(config(history, privacy("normal")));
+    const ctx = {
+      update: { update_id: 4 },
+      message: {
+        message_id: 11,
+        text: "incomplete forwarded question",
+        entities: [],
+        forward_origin: { type: "user" },
+      },
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "Tester" },
+      me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+      api: { sendChatAction: vi.fn() },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    } as unknown as BotContext;
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(history.addMessages).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: "incomplete forwarded question",
+          userAuthoredContent: undefined,
+          meta: { tgMessageId: 11 },
+        }),
+      ]),
+    );
+    runtime.destroy();
+  });
+
+  it("retains forwarded attribution in non-persistent group ring-buffer context", async () => {
+    async function* textStream() {
+      yield "ring answer";
+    }
+    streamTextMock.mockReturnValue({
+      textStream: textStream(),
+      text: Promise.resolve("ring answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      finishReason: Promise.resolve("stop"),
+    });
+    const runtimeConfig = config(conversation(), privacy("normal"));
+    runtimeConfig.conversation = undefined;
+    runtimeConfig.conversationConfig = {
+      ...DEFAULT_CONVERSATION_CONFIG,
+      groupContextMode: "all",
+    };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    const forwarded = context("ambient forwarded words") as unknown as { message: unknown };
+    forwarded.message = {
+      message_id: 7,
+      text: "ambient forwarded words",
+      entities: [],
+      forward_origin: {
+        type: "hidden_user",
+        date: 1,
+        sender_user_name: "Hidden Alice",
+      },
+    };
+
+    await runtime.handler(forwarded as BotContext, vi.fn());
+    const triggered = Object.assign(context("sample use recent context"), {
+      message: { message_id: 8, text: "sample use recent context", entities: [] },
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    });
+    await runtime.handler(triggered, vi.fn());
+
+    const serialized = JSON.stringify(streamTextMock.mock.calls.at(-1)?.[0]?.messages);
+    expect(serialized).toContain("[Forwarded from hidden user: Hidden Alice]");
+    expect(serialized).toContain("ambient forwarded words");
     runtime.destroy();
   });
 

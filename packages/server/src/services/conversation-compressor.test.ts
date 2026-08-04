@@ -24,7 +24,13 @@ function createStore(overrides: Partial<ConversationStore> = {}) {
       oldCursorId: 10,
       existingSummary: "Earlier summary",
       messages: [
-        { id: 11, role: "user", content: "Keep this fact", userName: "Alice" },
+        {
+          id: 11,
+          role: "user",
+          content: "Keep this fact",
+          userName: "Alice",
+          forwardOrigin: { type: "channel", name: "Daily News" },
+        },
         { id: 12, role: "tool_result", content: "Tool output", userName: null },
       ],
       sourceMessageIds: [11, 12],
@@ -117,6 +123,16 @@ describe("compressConversation", () => {
           role: "user",
           content: expect.stringContaining(
             '{"id":12,"role":"tool_result","userName":null,"content":"Tool output"}',
+          ),
+        }),
+      ]),
+    );
+    expect(request.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining(
+            '"forwardOrigin":{"type":"channel","name":"Daily News"}',
           ),
         }),
       ]),
