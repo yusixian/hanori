@@ -1,11 +1,13 @@
-import type { UserPrivacyMode } from "@cos-tool-bot/shared";
+import type { ConversationForwardOrigin, UserPrivacyMode } from "@cos-tool-bot/shared";
 
 export interface CoalescedTurnMessage {
   tgMessageId: number;
   /** Full request text, including a reply anchor when present. */
   text: string;
   /** Content authored by this user only; safe for cross-chat personalization. */
-  userAuthoredContent: string;
+  userAuthoredContent?: string;
+  /** Telegram-visible forwarding attribution retained for request and history rendering. */
+  forwardOrigin?: ConversationForwardOrigin;
   /** Group ingress turn to finalize together with the owning run; absent for private chats. */
   sourceKey?: string;
 }

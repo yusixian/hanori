@@ -21,6 +21,7 @@ import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
+  formatConversationForwardOrigin,
   isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, Tool, UserModelMessage } from "ai";
@@ -523,6 +524,10 @@ function historySections(
   const historyRefs = history.messages
     .map((message) => message.id)
     .filter((id): id is number => id !== undefined);
+  const historyContent = (message: (typeof history.messages)[number]) => {
+    const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+    return attribution ? `${attribution}\n${message.content}` : message.content;
+  };
   if (historyFormat === "prompt") {
     const combined: RawSection[] = [];
     if (history.summary) {
@@ -539,8 +544,9 @@ function historySections(
     }
     if (history.messages.length > 0) {
       const lines = history.messages.map((message) => {
-        if (message.role === "context") return `[群聊上下文]\n${message.content}`;
-        return `${message.role === "assistant" ? "AI" : message.userName || "User"}: ${message.content}`;
+        const content = historyContent(message);
+        if (message.role === "context") return `[群聊上下文]\n${content}`;
+        return `${message.role === "assistant" ? "AI" : message.userName || "User"}: ${content}`;
       });
       combined.push(
         section(
@@ -589,17 +595,18 @@ function historySections(
           "conversation.message",
           "volatile",
           "user-derived",
-          `[近期群聊消息]\n${message.content}`,
+          `[近期群聊消息]\n${historyContent(message)}`,
           { role: "user" },
         ),
       ]);
       continue;
     }
     const role = message.role === "assistant" ? "assistant" : "user";
+    const attributedContent = historyContent(message);
     const content =
       !isPrivate && message.userName && message.role === "user"
-        ? `[${message.userName}]: ${message.content}`
-        : message.content;
+        ? `[${message.userName}]: ${attributedContent}`
+        : attributedContent;
     groups.push([
       section(
         `history.message:${index}`,
@@ -709,6 +716,15 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     }
     for (const group of historySections(
       history,
+      historyFormat,
+      input.isPrivate,
+      input.ringBufferContext,
+    )) {
+      appendMessage(messages, traces, group);
+    }
+  } else if (input.ringBufferContext) {
+    for (const group of historySections(
+      { summary: null, messages: [] },
       historyFormat,
       input.isPrivate,
       input.ringBufferContext,

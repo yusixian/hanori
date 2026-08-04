@@ -3,6 +3,10 @@ export { parseParams } from "./param-parser.js";
 export { inferCapabilities } from "./model-capabilities.js";
 export { formatDuration } from "./format.js";
 export {
+  formatConversationForwardOrigin,
+  parseConversationForwardOrigin,
+} from "./forward-origin.js";
+export {
   getMiniAppCapabilities,
   hasMiniAppCapability,
   MINI_APP_CAPABILITIES,

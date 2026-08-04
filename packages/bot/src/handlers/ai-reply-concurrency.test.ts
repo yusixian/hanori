@@ -1283,7 +1283,7 @@ describe("AI reply turn coalescing", () => {
     }
   });
 
-  it("persists merged private follow-ups with the owning turn", async () => {
+  it("persists merged private follow-ups and fails closed for an unknown origin", async () => {
     const activeReply = deferred<string>();
     streamTextMock
       .mockImplementationOnce(() => streamResult(activeReply.promise))
@@ -1299,7 +1299,9 @@ describe("AI reply turn coalescing", () => {
     await runtime.handler(createPrivateContext(api, 1, 11, "first"), vi.fn());
     await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
     await runtime.handler(createPrivateContext(api, 2, 12, "queued owner"), vi.fn());
-    await runtime.handler(createPrivateContext(api, 3, 13, "follow up"), vi.fn());
+    const followUp = createPrivateContext(api, 3, 13, "follow up");
+    Object.assign(followUp.message!, { forward_origin: { type: "future_origin" } });
+    await runtime.handler(followUp, vi.fn());
     activeReply.resolve("# Active final");
 
     await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(2));
@@ -1314,6 +1316,9 @@ describe("AI reply turn coalescing", () => {
       expect(userRows.map((row) => row.sourceKey)).toEqual(
         expect.arrayContaining(["telegram:12:user", "telegram:13:user"]),
       );
+      expect(
+        userRows.find((row) => row.sourceKey === "telegram:13:user")?.userAuthoredContent,
+      ).toBe(undefined);
     });
   });
 

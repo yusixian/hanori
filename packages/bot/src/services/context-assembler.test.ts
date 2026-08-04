@@ -292,6 +292,66 @@ describe("prompt bundle", () => {
     });
   });
 
+  it.each(["prompt", "messages"] as const)(
+    "renders forwarded history in %s format while preserving assistant identity",
+    async (historyFormat) => {
+      const conversation = createConversation();
+      vi.mocked(conversation.getHistory).mockResolvedValue({
+        summary: null,
+        messages: [
+          {
+            role: "user",
+            content: "Forwarded words",
+            userName: "Nahida",
+            forwardOrigin: { type: "user", name: "Alice", username: "alice" },
+          },
+          { role: "assistant", content: "Earlier answer", userName: null },
+        ],
+      });
+
+      const result = await assembleContext(
+        runtimeInput({ isPrivate: false, historyFormat, conversation }),
+      );
+      const serialized = JSON.stringify(result.messages);
+
+      expect(serialized).toContain("[Forwarded from user: Alice (@alice)]");
+      expect(serialized).toContain("Forwarded words");
+      if (historyFormat === "prompt") {
+        expect(serialized).toContain("AI: Earlier answer");
+      } else {
+        const assistantTrace = result.trace.sections.find(
+          (section) => section.id === "history.message:1",
+        );
+        expect(assistantTrace).toBeDefined();
+        expect(result.messages[assistantTrace!.messageIndex]).toEqual({
+          role: "assistant",
+          content: "Earlier answer",
+        });
+      }
+    },
+  );
+
+  it.each(["prompt", "messages"] as const)(
+    "leaves ordinary history unchanged in %s format",
+    async (historyFormat) => {
+      const conversation = createConversation();
+      vi.mocked(conversation.getHistory).mockResolvedValue({
+        summary: null,
+        messages: [{ role: "user", content: "Ordinary words", userName: "Nahida" }],
+      });
+
+      const result = await assembleContext(
+        runtimeInput({ isPrivate: false, historyFormat, conversation }),
+      );
+      const serialized = JSON.stringify(result.messages);
+
+      expect(serialized).toContain(
+        historyFormat === "prompt" ? "Nahida: Ordinary words" : "[Nahida]: Ordinary words",
+      );
+      expect(serialized).not.toContain("Forwarded from");
+    },
+  );
+
   it("attributes all text tokens and hashes only the static prefix", async () => {
     const first = await assembleContext(
       runtimeInput({ currentMood: { mood: "calm", timestamp: 1 } }),

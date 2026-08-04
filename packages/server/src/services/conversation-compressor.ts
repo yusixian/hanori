@@ -203,6 +203,7 @@ async function compressWithLLM(
       id: msg.id,
       role: msg.role,
       userName: msg.userName,
+      forwardOrigin: msg.forwardOrigin,
       content: msg.content,
     })}\n`;
   }

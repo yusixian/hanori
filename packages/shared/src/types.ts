@@ -239,6 +239,16 @@ export type ConversationRole =
 
 export type UserPrivacyMode = "normal" | "isolated" | "off";
 
+export type ConversationForwardOrigin =
+  | { type: "user"; name: string; username?: string }
+  | { type: "hidden_user"; name: string }
+  | {
+      type: "chat" | "channel";
+      name: string;
+      username?: string;
+      authorSignature?: string;
+    };
+
 export interface ConversationHistoryBudgetTrace {
   configuredTokens: number;
   usedTokens: number;
@@ -275,6 +285,7 @@ export interface ConversationCallbacks {
       role: string;
       content: string;
       userName: string | null;
+      forwardOrigin?: ConversationForwardOrigin;
       createdAt?: string;
     }>;
     budgetTrace?: ConversationHistoryBudgetTrace;
