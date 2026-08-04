@@ -382,6 +382,11 @@ export class RssFeedService {
     return rows.map(mapFeedRecord);
   }
 
+  async getFeed(feedId: number): Promise<RssFeedRecord | null> {
+    const [row] = await this.db.select().from(rssFeeds).where(eq(rssFeeds.id, feedId)).limit(1);
+    return row ? mapFeedRecord(row) : null;
+  }
+
   async addFeed(
     collectionId: number,
     feedUrl: string,

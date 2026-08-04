@@ -1,12 +1,21 @@
 import type { RssCollectionRecord, RssFeedRecord, RssItemRecord } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
+import type { Api } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { z } from "zod";
+import type {
+  AdminActionKind,
+  PendingAdminActionRegistry,
+} from "../services/pending-github-actions.js";
 import { zodToAiSchema } from "./utils.js";
 
 export interface RssToolsOptions {
   chatId: number;
+  userId?: number;
   adminChatIds: number[];
+  api: Api;
+  pendingActions: PendingAdminActionRegistry;
   forceAdmin?: boolean;
   allowWrites?: boolean;
   onListCollections: () => Promise<RssCollectionRecord[]>;
@@ -14,6 +23,7 @@ export interface RssToolsOptions {
     collectionId: number,
     limit?: number,
   ) => Promise<{ collection: RssCollectionRecord; items: RssItemRecord[]; totalCount: number }>;
+  onListFeeds: (collectionId: number) => Promise<RssFeedRecord[]>;
   onMarkDigested: (collectionId: number) => Promise<void>;
   onAddFeed: (collectionId: number, feedUrl: string) => Promise<RssFeedRecord>;
   onRemoveFeed: (feedId: number) => Promise<void>;
@@ -26,9 +36,75 @@ export interface RssToolsOptions {
   }) => Promise<RssCollectionRecord>;
 }
 
+export function redactRssFeedUrl(feedUrl: string): string {
+  const normalizedUrl = feedUrl.trim();
+  const isProtocolRelative = normalizedUrl.startsWith("//");
+  try {
+    const url = new URL(isProtocolRelative ? `https:${normalizedUrl}` : normalizedUrl);
+    const displayPath = url.pathname === "/" ? "/" : "/…";
+    const prefix = isProtocolRelative ? "//" : `${url.protocol}//`;
+    const base = `${prefix}${url.host}${displayPath}`;
+    return url.search ? `${base}?…` : base;
+  } catch {
+    return "[已隐藏的 URL]";
+  }
+}
+
+function redactRssFeedTitle(title: string, feedUrl: string): string {
+  const normalizedTitle = title.trim();
+  if (normalizedTitle === feedUrl.trim()) {
+    return redactRssFeedUrl(normalizedTitle);
+  }
+
+  const isProtocolRelative = normalizedTitle.startsWith("//");
+  try {
+    const url = new URL(isProtocolRelative ? `https:${normalizedTitle}` : normalizedTitle);
+    if (
+      url.hostname &&
+      (isProtocolRelative || url.protocol === "http:" || url.protocol === "https:")
+    ) {
+      return redactRssFeedUrl(normalizedTitle);
+    }
+  } catch {
+    return title;
+  }
+  return title;
+}
+
 export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
-  const { chatId, adminChatIds } = options;
-  const isAdmin = options.forceAdmin || adminChatIds.includes(chatId);
+  const { chatId, userId, adminChatIds } = options;
+  const requesterIsAdmin = userId != null && adminChatIds.includes(userId);
+  const canListFeeds = options.forceAdmin || requesterIsAdmin;
+  const canWrite = requesterIsAdmin && options.allowWrites !== false;
+
+  async function proposeAction(
+    kind: Exclude<AdminActionKind, "github">,
+    description: string,
+    execute: (signal?: AbortSignal) => Promise<{ summary: string }>,
+  ) {
+    if (userId == null) throw new Error("RSS write confirmation requires an administrator");
+    const pending = options.pendingActions.register({
+      kind,
+      chatId,
+      userId,
+      description,
+      execute,
+    });
+    const keyboard = new InlineKeyboard()
+      .text("确认执行", `cos:rss:${pending.id}:yes`)
+      .text("取消", `cos:rss:${pending.id}:no`);
+    try {
+      await options.api.sendMessage(
+        chatId,
+        `🔐 RSS 管理员确认\n\n${description}\n\n此请求 10 分钟后过期。`,
+        { reply_markup: keyboard },
+      );
+    } catch (error) {
+      options.pendingActions.remove(pending.id);
+      throw error;
+    }
+    return { pending_confirmation: true, action_id: pending.id, description };
+  }
 
   const tools: Record<string, Tool> = {
     check_rss: tool({
@@ -65,11 +141,10 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     }),
   };
 
-  // Admin-only tools
-  if (isAdmin && options.allowWrites !== false) {
-    tools.mark_rss_read = tool({
+  if (canListFeeds) {
+    tools.list_rss_feeds = tool({
       description:
-        "标记某个 RSS 合集的所有未读条目为已读。完成 RSS 摘要后必须调用此工具确认已处理。",
+        "列出指定 RSS 合集中的订阅源，包括可用于 remove_rss_feed 的 Feed ID、标题和脱敏 URL。",
       inputSchema: zodToAiSchema(
         z.object({
           collection_id: z.number().describe("合集 ID"),
@@ -77,8 +152,41 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
       ),
       execute: async ({ collection_id }) => {
         try {
-          await options.onMarkDigested(collection_id);
-          return { success: true };
+          const feeds = await options.onListFeeds(collection_id);
+          return {
+            feeds: feeds.map((feed) => ({
+              id: feed.id,
+              title: redactRssFeedTitle(feed.title, feed.feedUrl),
+              feedUrl: redactRssFeedUrl(feed.feedUrl),
+            })),
+          };
+        } catch (err) {
+          return { error: String(err) };
+        }
+      },
+    });
+  }
+
+  // Admin-only tools
+  if (canWrite) {
+    tools.mark_rss_read = tool({
+      description: "申请标记某个 RSS 合集的所有未读条目为已读；发送管理员确认按钮，确认后才执行。",
+      inputSchema: zodToAiSchema(
+        z.object({
+          collection_id: z.number().describe("合集 ID"),
+        }),
+      ),
+      execute: async ({ collection_id }) => {
+        try {
+          return await proposeAction(
+            "rss:mark_rss_read",
+            `标记 RSS 合集 ${collection_id} 的所有未读条目为已读`,
+            async (signal) => {
+              signal?.throwIfAborted();
+              await options.onMarkDigested(collection_id);
+              return { summary: `已标记 RSS 合集 ${collection_id} 为已读` };
+            },
+          );
         } catch (err) {
           return { error: String(err) };
         }
@@ -86,7 +194,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     });
 
     tools.add_rss_feed = tool({
-      description: "向指定 RSS 合集添加一条新的 feed 订阅源。",
+      description: "申请向指定 RSS 合集添加订阅源；发送管理员确认按钮，确认后才执行。",
       inputSchema: zodToAiSchema(
         z.object({
           collection_id: z.number().describe("合集 ID"),
@@ -95,8 +203,16 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
       ),
       execute: async ({ collection_id, feed_url }) => {
         try {
-          const feed = await options.onAddFeed(collection_id, feed_url);
-          return { success: true, feed };
+          const displayUrl = redactRssFeedUrl(feed_url);
+          return await proposeAction(
+            "rss:add_rss_feed",
+            `向 RSS 合集 ${collection_id} 添加订阅源：${displayUrl}`,
+            async (signal) => {
+              signal?.throwIfAborted();
+              await options.onAddFeed(collection_id, feed_url);
+              return { summary: `已向 RSS 合集 ${collection_id} 添加订阅源：${displayUrl}` };
+            },
+          );
         } catch (err) {
           return { error: String(err) };
         }
@@ -104,7 +220,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     });
 
     tools.remove_rss_feed = tool({
-      description: "从合集中移除一条 feed 订阅源。",
+      description: "申请从合集中移除订阅源；发送管理员确认按钮，确认后才执行。",
       inputSchema: zodToAiSchema(
         z.object({
           feed_id: z.number().describe("Feed ID"),
@@ -112,8 +228,15 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
       ),
       execute: async ({ feed_id }) => {
         try {
-          await options.onRemoveFeed(feed_id);
-          return { success: true };
+          return await proposeAction(
+            "rss:remove_rss_feed",
+            `移除 RSS 订阅源 ${feed_id}`,
+            async (signal) => {
+              signal?.throwIfAborted();
+              await options.onRemoveFeed(feed_id);
+              return { summary: `已移除 RSS 订阅源 ${feed_id}` };
+            },
+          );
         } catch (err) {
           return { error: String(err) };
         }
@@ -122,7 +245,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
 
     tools.create_rss_collection = tool({
       description:
-        "创建一个新的 RSS 合集。合集用于将多条 feed 归组，到达指定时间时会触发 AI 总结。",
+        "申请创建 RSS 合集；发送管理员确认按钮，确认后才执行。合集会按指定时间触发 AI 总结。",
       inputSchema: zodToAiSchema(
         z.object({
           name: z.string().describe("合集名称"),
@@ -143,14 +266,23 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
       ),
       execute: async ({ name, description, digest_hour, digest_minute }) => {
         try {
-          const collection = await options.onCreateCollection({
+          const params = {
             name,
             chatId,
             description,
             digestHour: digest_hour,
             digestMinute: digest_minute,
-          });
-          return { success: true, collection };
+          };
+          const schedule = `${digest_hour ?? 9}:${String(digest_minute ?? 0).padStart(2, "0")} UTC`;
+          return await proposeAction(
+            "rss:create_rss_collection",
+            `在当前聊天创建 RSS 合集「${name}」（推送时间 ${schedule}）`,
+            async (signal) => {
+              signal?.throwIfAborted();
+              await options.onCreateCollection(params);
+              return { summary: `已创建 RSS 合集「${name}」` };
+            },
+          );
         } catch (err) {
           return { error: String(err) };
         }

@@ -23,7 +23,10 @@ function sentMessage(messageId: number, text: string): Message.TextMessage {
   } as Message.TextMessage;
 }
 
-function createContext() {
+function createContext(options: { chatId?: number; userId?: number } = {}) {
+  const chatId = options.chatId ?? 123;
+  const userId = options.userId ?? 123;
+  const isGroup = chatId < 0;
   const replies: string[] = [];
   const streamError = new Error("Rich Message content cannot be empty");
   const api = {
@@ -38,8 +41,11 @@ function createContext() {
   ctx = {
     update: { update_id: 42 },
     message: { message_id: 7, text: "hello" },
-    chat: { id: 123, type: "private" },
-    from: { id: 123, is_bot: false, first_name: "Tester" },
+    chat: isGroup
+      ? { id: chatId, type: "supergroup", title: "Test group" }
+      : { id: chatId, type: "private" },
+    from: { id: userId, is_bot: false, first_name: "Tester" },
+    me: { id: 999, is_bot: true, first_name: "Test Bot", username: "test_bot" },
     api,
     replyWithChatAction: vi.fn().mockResolvedValue(true),
     replyWithMarkdownStream: vi.fn(async (stream: AsyncIterable<string>) => {
@@ -88,7 +94,107 @@ function createConfig(onLog: (entry: BotLogEntry) => void): AiReplyConfig {
   };
 }
 
+function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
+  return {
+    onListCollections: vi.fn(),
+    onGetNewItems: vi.fn(),
+    onListFeeds: vi.fn(),
+    onMarkDigested: vi.fn(),
+    onAddFeed: vi.fn(),
+    onRemoveFeed: vi.fn(),
+    onCreateCollection: vi.fn(),
+  };
+}
+
 describe("AI reply streaming", () => {
+  it.each([
+    { name: "admin", userId: 123, hasAdminTools: true },
+    { name: "ordinary member", userId: 456, hasAdminTools: false },
+  ])("uses the requester identity for RSS tools in a group $name request", async (testCase) => {
+    const { ctx } = createContext({ chatId: -100, userId: testCase.userId });
+    streamTextMock.mockImplementation((options: any) => {
+      expect(options.tools.check_rss).toBeDefined();
+      if (testCase.hasAdminTools) {
+        expect(options.tools.list_rss_feeds).toBeDefined();
+        expect(options.tools.mark_rss_read).toBeDefined();
+        expect(options.tools.add_rss_feed).toBeDefined();
+        expect(options.tools.remove_rss_feed).toBeDefined();
+        expect(options.tools.create_rss_collection).toBeDefined();
+      } else {
+        expect(options.tools.list_rss_feeds).toBeUndefined();
+        expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
+      }
+      async function* textStream() {
+        yield "Complete";
+      }
+      return {
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.triggerConfig.triggerWords = ["hello"];
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+  });
+
+  it.each([
+    { name: "admin", userId: 123, hasAdminTools: true },
+    { name: "ordinary member", userId: 456, hasAdminTools: false },
+  ])("preserves requester RSS permissions in a group $name continuation", async (testCase) => {
+    const { ctx } = createContext();
+    streamTextMock.mockImplementation((options: any) => {
+      expect(options.tools.check_rss).toBeDefined();
+      if (testCase.hasAdminTools) {
+        expect(options.tools.list_rss_feeds).toBeDefined();
+        expect(options.tools.mark_rss_read).toBeDefined();
+        expect(options.tools.add_rss_feed).toBeDefined();
+        expect(options.tools.remove_rss_feed).toBeDefined();
+        expect(options.tools.create_rss_collection).toBeDefined();
+      } else {
+        expect(options.tools.list_rss_feeds).toBeUndefined();
+        expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
+      }
+      async function* textStream() {
+        yield "Complete";
+      }
+      return {
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.initialApi = ctx.api;
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(
+        -100,
+        `rss-${testCase.name}`,
+        "continue RSS task",
+        testCase.userId,
+        false,
+        true,
+      ),
+    ).resolves.toBe(true);
+  });
+
   it("uses one selection snapshot for request execution and usage", async () => {
     async function* textStream() {
       yield "Complete";
@@ -294,7 +400,11 @@ describe("AI reply streaming", () => {
       const onMarkDigested = vi.fn();
       streamTextMock.mockImplementation((options: any) => {
         expect(options.tools.check_rss).toBeDefined();
+        expect(options.tools.list_rss_feeds).toBeDefined();
         expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
         async function* digestStream() {
           yield "digest";
         }
@@ -317,6 +427,7 @@ describe("AI reply streaming", () => {
       config.rssCallbacks = {
         onListCollections: vi.fn(),
         onGetNewItems: vi.fn(),
+        onListFeeds: vi.fn(),
         onMarkDigested,
         onAddFeed: vi.fn(),
         onRemoveFeed: vi.fn(),

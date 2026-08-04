@@ -1,7 +1,7 @@
 import type { Api } from "grammy";
 import type { PollAnswer } from "grammy/types";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
-import type { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
+import type { PendingAdminActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
 
@@ -163,13 +163,15 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
   };
 }
 
-export interface GitHubCallbackQueryHandlerOptions {
+export interface AdminActionCallbackQueryHandlerOptions {
   api: Api;
-  pendingActions: PendingGitHubActionRegistry;
+  pendingActions: PendingAdminActionRegistry;
   adminIds: readonly number[];
 }
 
-export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHandlerOptions) {
+export function createAdminActionCallbackQueryHandler(
+  options: AdminActionCallbackQueryHandlerOptions,
+) {
   return async (ctx: {
     callbackQuery: {
       id: string;
@@ -179,16 +181,20 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
     };
   }): Promise<boolean> => {
     const data = ctx.callbackQuery.data;
-    if (!data?.startsWith("cos:gh:")) return false;
-    const [, , actionId, decision] = data.split(":");
+    if (!data?.startsWith("cos:gh:") && !data?.startsWith("cos:rss:")) return false;
+    const [, namespace, actionId, decision] = data.split(":");
     if (!actionId || (decision !== "yes" && decision !== "no")) return true;
 
     const action = options.pendingActions.get(actionId);
     const callbackChatId = ctx.callbackQuery.message?.chat.id;
-    if (!action) {
+    const kindMatches =
+      action &&
+      ((namespace === "gh" && action.kind === "github") ||
+        (namespace === "rss" && action.kind.startsWith("rss:")));
+    if (!action || !kindMatches) {
       await options.api.raw.answerCallbackQuery({
         callback_query_id: ctx.callbackQuery.id,
-        text: "该 GitHub 请求已过期或已处理",
+        text: "该管理员请求已过期或已处理",
         show_alert: true,
       });
       return true;
@@ -206,7 +212,17 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
       return true;
     }
 
-    options.pendingActions.take(actionId);
+    const claimedAction = options.pendingActions.take(actionId);
+    if (!claimedAction) {
+      await options.api.raw.answerCallbackQuery({
+        callback_query_id: ctx.callbackQuery.id,
+        text: "该管理员请求已过期或已处理",
+        show_alert: true,
+      });
+      return true;
+    }
+    const isGitHub = claimedAction.kind === "github";
+    const title = isGitHub ? "GitHub 管理员确认" : "RSS 管理员确认";
     if (decision === "no") {
       await options.api.raw.answerCallbackQuery({
         callback_query_id: ctx.callbackQuery.id,
@@ -215,9 +231,9 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
       if (ctx.callbackQuery.message) {
         await options.api
           .editMessageText(
-            action.chatId,
+            claimedAction.chatId,
             ctx.callbackQuery.message.message_id,
-            `🔐 GitHub 管理员确认\n\n${action.description}\n\n❌ 已取消`,
+            `🔐 ${title}\n\n${claimedAction.description}\n\n❌ 已取消`,
           )
           .catch(() => {});
       }
@@ -226,28 +242,32 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
 
     await options.api.raw.answerCallbackQuery({
       callback_query_id: ctx.callbackQuery.id,
-      text: "正在执行 GitHub 操作",
+      text: isGitHub ? "正在执行 GitHub 操作" : "正在执行 RSS 操作",
     });
     try {
-      const result = await options.pendingActions.run(action);
-      const url = result.url ? `\n${result.url}` : "";
+      const result = await options.pendingActions.run(claimedAction);
+      const url = isGitHub && result.url ? `\n${result.url}` : "";
       if (ctx.callbackQuery.message) {
         await options.api
           .editMessageText(
-            action.chatId,
+            claimedAction.chatId,
             ctx.callbackQuery.message.message_id,
-            `🔐 GitHub 管理员确认\n\n${action.description}\n\n✅ ${result.summary}${url}`,
+            `🔐 ${title}\n\n${claimedAction.description}\n\n✅ ${result.summary}${url}`,
           )
           .catch(() => {});
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = isGitHub
+        ? error instanceof Error
+          ? error.message
+          : String(error)
+        : "执行失败，请稍后重试";
       if (ctx.callbackQuery.message) {
         await options.api
           .editMessageText(
-            action.chatId,
+            claimedAction.chatId,
             ctx.callbackQuery.message.message_id,
-            `🔐 GitHub 管理员确认\n\n${action.description}\n\n❌ 执行失败：${message}`,
+            `🔐 ${title}\n\n${claimedAction.description}\n\n❌ 执行失败：${message}`,
           )
           .catch(() => {});
       }
@@ -255,3 +275,6 @@ export function createGitHubCallbackQueryHandler(options: GitHubCallbackQueryHan
     return true;
   };
 }
+
+export const createGitHubCallbackQueryHandler = createAdminActionCallbackQueryHandler;
+export type GitHubCallbackQueryHandlerOptions = AdminActionCallbackQueryHandlerOptions;

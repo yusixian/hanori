@@ -1934,20 +1934,35 @@ export class BotPool {
 
   private buildRssCallbacks(botId: string) {
     const rss = this.rssFeedService!;
+    const requireCollection = async (collectionId: number) => {
+      const collection = await rss.getCollection(collectionId);
+      if (!collection || collection.botId !== botId) throw new Error("Collection not found");
+      return collection;
+    };
     return {
       onListCollections: () => rss.listCollections(botId),
       onGetNewItems: async (collectionId: number, limit?: number) => {
-        const [collection, { items, totalCount }] = await Promise.all([
-          rss.getCollection(collectionId),
-          rss.getUndigestedItems(collectionId, limit),
-        ]);
-        if (!collection) throw new Error("Collection not found");
+        const collection = await requireCollection(collectionId);
+        const { items, totalCount } = await rss.getUndigestedItems(collectionId, limit);
         return { collection, items, totalCount };
       },
-      onMarkDigested: (collectionId: number) => rss.markDigested(collectionId),
-      onAddFeed: (collectionId: number, feedUrl: string) => rss.addFeed(collectionId, feedUrl),
+      onListFeeds: async (collectionId: number) => {
+        await requireCollection(collectionId);
+        return rss.listFeeds(collectionId);
+      },
+      onMarkDigested: async (collectionId: number) => {
+        await requireCollection(collectionId);
+        await rss.markDigested(collectionId);
+      },
+      onAddFeed: async (collectionId: number, feedUrl: string) => {
+        await requireCollection(collectionId);
+        return rss.addFeed(collectionId, feedUrl);
+      },
       onRemoveFeed: async (feedId: number) => {
-        const ok = await rss.removeFeed(feedId);
+        const feed = await rss.getFeed(feedId);
+        if (!feed) throw new Error(`Feed ${feedId} not found`);
+        await requireCollection(feed.collectionId);
+        const ok = await rss.removeFeed(feedId, feed.collectionId);
         if (!ok) throw new Error(`Feed ${feedId} not found`);
       },
       onCreateCollection: (params: {

@@ -45,7 +45,7 @@ import type { AiSelectionMutations, AiSelectionSnapshot } from "./handlers/ai-se
 import {
   createPollAnswerHandler,
   createCallbackQueryHandler,
-  createGitHubCallbackQueryHandler,
+  createAdminActionCallbackQueryHandler,
 } from "./handlers/event-handlers.js";
 import { createLogMiddleware } from "./middleware/log.js";
 import {
@@ -523,9 +523,9 @@ export function createBot(config: BotConfig) {
       pendingActions,
       getContinueChatConfig: (chatId) => aiState!.getContinueChatConfig(chatId),
     });
-    const githubCallbackQueryHandler = createGitHubCallbackQueryHandler({
+    const adminActionCallbackQueryHandler = createAdminActionCallbackQueryHandler({
       api: bot.api,
-      pendingActions: aiState.getPendingGitHubActions(),
+      pendingActions: aiState.getPendingAdminActions(),
       adminIds: adminChatIds,
     });
 
@@ -558,7 +558,7 @@ export function createBot(config: BotConfig) {
           return;
         }
       }
-      if (await githubCallbackQueryHandler(ctx)) return;
+      if (await adminActionCallbackQueryHandler(ctx)) return;
       await callbackQueryHandler(ctx);
     });
 

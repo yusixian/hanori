@@ -46,7 +46,7 @@ import type { BotContext, WrapperContext } from "../context.js";
 import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
-import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
+import { PendingAdminActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
 import {
@@ -231,7 +231,10 @@ export interface AiReplyConfig {
   }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
-  rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
+  rssCallbacks?: Omit<
+    RssToolsOptions,
+    "chatId" | "userId" | "adminChatIds" | "api" | "pendingActions" | "forceAdmin" | "allowWrites"
+  >;
   mcpTools?: McpToolsOptions;
   initialApi?: Api;
 }
@@ -700,7 +703,9 @@ export interface BotRuntimeState {
   getActiveGroupCount(): number;
   getPendingActions(): PendingActionRegistry;
   getAiExecutionStats(): AiExecutionCoordinatorStats;
-  getPendingGitHubActions(): PendingGitHubActionRegistry;
+  getPendingAdminActions(): PendingAdminActionRegistry;
+  /** @deprecated Use getPendingAdminActions. */
+  getPendingGitHubActions(): PendingAdminActionRegistry;
   getContinueChatConfig(chatId?: number): ContinueChatConfig;
   isPrivateChat(chatId: number): boolean;
 }
@@ -1029,7 +1034,7 @@ export function createAiReplyHandler(
 
   // Pending actions registry for interactive tools
   const pendingActions = new PendingActionRegistry();
-  const pendingGitHubActions = new PendingGitHubActionRegistry();
+  const pendingAdminActions = new PendingAdminActionRegistry();
 
   // Track known private chats
   const knownPrivateChats = new Set<number>();
@@ -1191,6 +1196,7 @@ export function createAiReplyHandler(
       webTools,
       dataFiles: config.dataFiles,
       pendingActions,
+      pendingAdminActions,
       recentBotMessageIds,
       moodState,
       stickerPacks: config.stickerPacks,
@@ -1276,7 +1282,8 @@ export function createAiReplyHandler(
     getActiveGroupCount: () => groupBuffers.size,
     getPendingActions: () => pendingActions,
     getAiExecutionStats: () => executionCoordinator.stats,
-    getPendingGitHubActions: () => pendingGitHubActions,
+    getPendingAdminActions: () => pendingAdminActions,
+    getPendingGitHubActions: () => pendingAdminActions,
     getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
@@ -1596,7 +1603,7 @@ export function createAiReplyHandler(
             userId,
             chatId,
             api: ctx.api,
-            pendingActions: pendingGitHubActions,
+            pendingActions: pendingAdminActions,
             codeCallbacks: config.githubCodeCallbacks,
             codingModel: resolveGitHubCodingModelConfig(
               config.githubToolsConfig,
@@ -1847,7 +1854,10 @@ export function createAiReplyHandler(
           const rssTools = createRssTools({
             ...config.rssCallbacks,
             chatId,
+            userId,
             adminChatIds: config.adminChatIds,
+            api: ctx.api,
+            pendingActions: pendingAdminActions,
           });
           Object.assign(allTools, rssTools);
         }
@@ -2746,7 +2756,7 @@ export function createAiReplyHandler(
       clearInterval(cleanupTimer);
       clearInterval(bufferCleanupTimer);
       pendingActions.destroy();
-      pendingGitHubActions.destroy();
+      pendingAdminActions.destroy();
       cooldownMap.clear();
       recentReceivedFiles.clear();
       recentBotMessageIds.clear();

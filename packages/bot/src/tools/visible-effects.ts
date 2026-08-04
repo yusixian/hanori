@@ -33,6 +33,7 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "fetch_webpage",
   "read_file",
   "check_rss",
+  "list_rss_feeds",
   "get_profile",
   "search_profiles",
   "search_history",
