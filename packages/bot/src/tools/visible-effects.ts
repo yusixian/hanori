@@ -44,6 +44,7 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "github_list_tree",
   "github_list_issues",
   "github_inspect_workspace",
+  "delegate_task",
 ]);
 
 function succeeded(output: unknown): boolean {

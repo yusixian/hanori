@@ -18,6 +18,7 @@ describe("trackSuccessfulToolEffects", () => {
         get_chat_info: executable({ id: -100, title: "read only" }),
         web_search: executable({ result: "read only" }),
         list_rss_feeds: executable({ feeds: [] }),
+        delegate_task: executable({ agent: "translator", result: "translated", steps: 1 }),
         generate_image: executable({ success: true, generationId: "generation-1" }),
         mark_rss_read: executable({ success: true, count: 3 }),
         write_file: executable({ success: true, path: "report.md" }),
@@ -33,6 +34,7 @@ describe("trackSuccessfulToolEffects", () => {
     await tools.get_chat_info!.execute!({}, {} as never);
     await tools.web_search!.execute!({}, {} as never);
     await tools.list_rss_feeds!.execute!({}, {} as never);
+    await tools.delegate_task!.execute!({}, {} as never);
     await tools.generate_image!.execute!({}, {} as never);
     await tools.mark_rss_read!.execute!({}, {} as never);
     await tools.write_file!.execute!({}, {} as never);

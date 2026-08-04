@@ -45,4 +45,79 @@ describe("PendingAdminActionRegistry", () => {
     expect(registry.get(action.id)).toBeUndefined();
     registry.destroy();
   });
+
+  it("aborts active actions and drains their tracked promises", async () => {
+    const registry = new PendingAdminActionRegistry();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let actionSignal: AbortSignal | undefined;
+    const action = registry.register({
+      kind: "rss:add_rss_feed",
+      chatId: -100,
+      userId: 7,
+      description: "add feed",
+      execute: async (signal) => {
+        actionSignal = signal;
+        started();
+        await gate;
+        signal?.throwIfAborted();
+        return { summary: "done" };
+      },
+    });
+    const run = registry.run(action);
+    const runResult = expect(run).rejects.toThrow("Admin action registry was destroyed");
+    await didStart;
+
+    const drain = registry.destroyAndDrain();
+    let drained = false;
+    void drain.then(() => {
+      drained = true;
+    });
+    await Promise.resolve();
+    expect(actionSignal?.aborted).toBe(true);
+    expect(drained).toBe(false);
+
+    release();
+    await runResult;
+    await expect(drain).resolves.toEqual({ settled: true, timedOut: false });
+  });
+
+  it("bounds draining when an active action ignores cancellation", async () => {
+    const registry = new PendingAdminActionRegistry();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const action = registry.register({
+      chatId: -100,
+      userId: 7,
+      description: "legacy GitHub action",
+      execute: async () => {
+        started();
+        await gate;
+        return { summary: "done" };
+      },
+    });
+    const run = registry.run(action);
+    await didStart;
+
+    await expect(registry.destroyAndDrain(5)).resolves.toEqual({
+      settled: false,
+      timedOut: true,
+    });
+
+    release();
+    await expect(run).resolves.toEqual({ summary: "done" });
+    await expect(registry.drain()).resolves.toEqual({ settled: true, timedOut: false });
+  });
 });

@@ -95,7 +95,7 @@ import {
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
-import { VISIBLE_EFFECT_TOOL_NAMES } from "../tools/visible-effects.js";
+import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
@@ -427,17 +427,14 @@ export async function sendFormattedChunks(
 /** Handle the case when AI returned empty text and no multi_message was used */
 async function handleEmptyText(
   ctx: WrapperContext,
-  steps: Array<{ toolCalls: Array<{ toolName: string }> }>,
+  successfulToolEffectCount: number,
   config: { onLog?: (entry: BotLogEntry) => void | Promise<void> },
   chatBotMsgIds: number[],
   chatId: number,
   userId: number,
   finishReason: string,
 ): Promise<void> {
-  const hasVisibleAction = steps.some((s) =>
-    s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
-  );
-  if (hasVisibleAction) {
+  if (successfulToolEffectCount > 0) {
     await ctx.deleteWaiting();
   } else {
     config.onLog?.({
@@ -1961,9 +1958,15 @@ export function createAiReplyHandler(
         });
 
         let stepCounter = 0;
+        let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
         const wrappedTools = wrapToolsWithStatus(
-          wrapToolsWithCache(stableTools, requestCache),
+          wrapToolsWithCache(
+            trackSuccessfulToolEffects(stableTools, () => {
+              successfulToolEffectCount += 1;
+            }),
+            requestCache,
+          ),
           ctx,
         );
         manualAbort = new AbortController();
@@ -2209,7 +2212,15 @@ export function createAiReplyHandler(
             streamStarted = messageIds.length > 0;
             sentFinalText = streamStarted;
           } else {
-            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+            await handleEmptyText(
+              ctx,
+              successfulToolEffectCount,
+              config,
+              chatBotMsgIds,
+              chatId,
+              userId,
+              finishReason,
+            );
             capturedStreamError = undefined;
           }
         } else if (!isStreamMode) {
@@ -2227,7 +2238,15 @@ export function createAiReplyHandler(
             chatBotMsgIds.push(...messageIds);
             sentFinalText = messageIds.length > 0;
           } else {
-            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+            await handleEmptyText(
+              ctx,
+              successfulToolEffectCount,
+              config,
+              chatBotMsgIds,
+              chatId,
+              userId,
+              finishReason,
+            );
           }
         }
 
@@ -2768,9 +2787,18 @@ export function createAiReplyHandler(
     let attempt!: Promise<void>;
     attempt = (async () => {
       try {
-        const result = await executionCoordinator.destroyAndDrain();
-        const deliveriesSettled = await drainDetachedDeliveries();
-        if (!result.settled || result.timedOut || !deliveriesSettled) {
+        const [result, adminActionsResult, deliveriesSettled] = await Promise.all([
+          executionCoordinator.destroyAndDrain(),
+          pendingAdminActions.destroyAndDrain(),
+          drainDetachedDeliveries(),
+        ]);
+        if (
+          !result.settled ||
+          result.timedOut ||
+          !adminActionsResult.settled ||
+          adminActionsResult.timedOut ||
+          !deliveriesSettled
+        ) {
           throw new AiRunDrainTimeoutError("Timed out draining AI runs during Bot shutdown");
         }
       } finally {

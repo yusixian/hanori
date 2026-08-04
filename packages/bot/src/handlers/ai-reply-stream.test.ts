@@ -5,12 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
 
-const { streamTextMock } = vi.hoisted(() => ({
+const { generateTextMock, streamTextMock } = vi.hoisted(() => ({
+  generateTextMock: vi.fn(),
   streamTextMock: vi.fn(),
 }));
 
 vi.mock("ai", async (importOriginal) => ({
   ...(await importOriginal<typeof import("ai")>()),
+  generateText: generateTextMock,
   streamText: streamTextMock,
 }));
 
@@ -48,6 +50,11 @@ function createContext(options: { chatId?: number; userId?: number } = {}) {
     me: { id: 999, is_bot: true, first_name: "Test Bot", username: "test_bot" },
     api,
     replyWithChatAction: vi.fn().mockResolvedValue(true),
+    wait: vi.fn(async (text: string) => {
+      replies.push(text);
+      ctx.waiting_message = sentMessage(23, text);
+      return 23;
+    }),
     replyWithMarkdownStream: vi.fn(async (stream: AsyncIterable<string>) => {
       let text = "";
       for await (const chunk of stream) text += chunk;
@@ -279,6 +286,155 @@ describe("AI reply streaming", () => {
     expect(onLog).not.toHaveBeenCalledWith(
       expect.objectContaining({ level: "error", message: expect.stringContaining("failed") }),
     );
+  });
+
+  it.each([
+    ["mark_rss_read", { collection_id: 7 }],
+    ["add_rss_feed", { collection_id: 7, feed_url: "https://example.com/feed.xml?token=secret" }],
+    ["remove_rss_feed", { feed_id: 21 }],
+    [
+      "create_rss_collection",
+      { name: "Frontend", description: "Focus", digest_hour: 8, digest_minute: 30 },
+    ],
+  ] as const)(
+    "treats a successful %s confirmation as the visible result of an empty ordinary reply",
+    async (toolName, input) => {
+      const { ctx, replies } = createContext();
+      ctx.waiting_message = sentMessage(30, "waiting");
+      streamTextMock.mockImplementation((options: any) => {
+        async function* toolOnlyStream() {
+          await options.tools[toolName].execute(input, {});
+          yield* [] as string[];
+        }
+        return {
+          textStream: toolOnlyStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          finishReason: Promise.resolve("tool-calls"),
+        };
+      });
+      const config = createConfig(vi.fn());
+      config.rssCallbacks = createRssCallbacks();
+      const result = createAiReplyHandler(config);
+
+      if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+      await result.handler(ctx, vi.fn());
+
+      expect(ctx.api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(ctx.api.sendMessage).toHaveBeenCalledWith(
+        123,
+        expect.stringContaining("RSS 管理员确认"),
+        expect.any(Object),
+      );
+      expect(replies).toEqual([]);
+      expect(ctx.deleteWaiting).toHaveBeenCalled();
+      await result.destroy();
+    },
+  );
+
+  it("does not count a failed RSS confirmation send as a visible ordinary reply", async () => {
+    const { ctx, replies } = createContext();
+    vi.mocked(ctx.api.sendMessage).mockRejectedValueOnce(new Error("Telegram unavailable"));
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        await options.tools.add_rss_feed.execute(
+          { collection_id: 7, feed_url: "https://example.com/feed.xml" },
+          {},
+        );
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+
+    expect(replies).toEqual(["(AI 未生成回复内容)"]);
+    await result.destroy();
+  });
+
+  it("still delivers the empty fallback after a result-only delegated task", async () => {
+    generateTextMock.mockResolvedValue({ text: "delegated answer", steps: [] });
+    const { ctx, replies } = createContext();
+    ctx.waiting_message = sentMessage(30, "waiting");
+    let delegatedOutput: unknown;
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        delegatedOutput = await options.tools.delegate_task.execute(
+          { agent: "translator", task: "translate this" },
+          {},
+        );
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.agentToolsConfig = { enabled: true };
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+
+    expect(replies.at(-1)).toBe("(AI 未生成回复内容)");
+    expect(delegatedOutput).toEqual({ agent: "translator", result: "delegated answer", steps: 0 });
+    expect(generateTextMock).toHaveBeenCalled();
+    await result.destroy();
+  });
+
+  it("waits for active administrator actions while destroying the AI runtime", async () => {
+    const result = createAiReplyHandler(createConfig(vi.fn()));
+    const registry = result.state.getPendingAdminActions();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const action = registry.register({
+      kind: "rss:add_rss_feed",
+      chatId: 123,
+      userId: 123,
+      description: "add feed",
+      execute: async (signal) => {
+        started();
+        await gate;
+        signal?.throwIfAborted();
+        return { summary: "done" };
+      },
+    });
+    const run = registry.run(action);
+    const runResult = expect(run).rejects.toThrow("Admin action registry was destroyed");
+    await didStart;
+
+    const destroy = result.destroy();
+    let destroyed = false;
+    void destroy.then(() => {
+      destroyed = true;
+    });
+    await Promise.resolve();
+    expect(destroyed).toBe(false);
+
+    release();
+    await runResult;
+    await expect(destroy).resolves.toBeUndefined();
   });
 
   it.each(["stream", "segment"] as const)(

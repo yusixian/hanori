@@ -16,16 +16,23 @@ interface RssCallbacks {
     limit?: number,
   ) => Promise<{ collection: RssCollectionRecord; items: unknown[]; totalCount: number }>;
   onListFeeds: (collectionId: number) => Promise<RssFeedRecord[]>;
-  onMarkDigested: (collectionId: number) => Promise<void>;
-  onAddFeed: (collectionId: number, feedUrl: string) => Promise<RssFeedRecord>;
-  onRemoveFeed: (feedId: number) => Promise<void>;
-  onCreateCollection: (params: {
-    name: string;
-    chatId: number;
-    description?: string;
-    digestHour?: number;
-    digestMinute?: number;
-  }) => Promise<RssCollectionRecord>;
+  onMarkDigested: (collectionId: number, signal?: AbortSignal) => Promise<void>;
+  onAddFeed: (
+    collectionId: number,
+    feedUrl: string,
+    signal?: AbortSignal,
+  ) => Promise<RssFeedRecord>;
+  onRemoveFeed: (feedId: number, signal?: AbortSignal) => Promise<void>;
+  onCreateCollection: (
+    params: {
+      name: string;
+      chatId: number;
+      description?: string;
+      digestHour?: number;
+      digestMinute?: number;
+    },
+    signal?: AbortSignal,
+  ) => Promise<RssCollectionRecord>;
 }
 
 interface RssPoolInternals {
@@ -133,16 +140,23 @@ describe("BotPool RSS callback tenant scope", () => {
 
   it("revalidates Bot ownership for mark, add and remove at execution time", async () => {
     const { callbacks, markDigested, addFeed, removeFeed, getFeed } = createCallbacks(BOT_A);
+    const signal = new AbortController().signal;
 
-    await expect(callbacks.onMarkDigested(7)).resolves.toBeUndefined();
-    await expect(callbacks.onAddFeed(7, "https://example.com/feed.xml")).resolves.toMatchObject({
-      id: 21,
-    });
-    await expect(callbacks.onRemoveFeed(21)).resolves.toBeUndefined();
-    expect(markDigested).toHaveBeenCalledWith(7);
-    expect(addFeed).toHaveBeenCalledWith(7, "https://example.com/feed.xml");
+    await expect(callbacks.onMarkDigested(7, signal)).resolves.toBeUndefined();
+    await expect(
+      callbacks.onAddFeed(7, "https://example.com/feed.xml", signal),
+    ).resolves.toMatchObject({ id: 21 });
+    await expect(callbacks.onRemoveFeed(21, signal)).resolves.toBeUndefined();
+    expect(markDigested).toHaveBeenCalledWith(7, signal);
+    expect(addFeed).toHaveBeenCalledWith(
+      7,
+      "https://example.com/feed.xml",
+      undefined,
+      undefined,
+      signal,
+    );
     expect(getFeed).toHaveBeenCalledWith(21);
-    expect(removeFeed).toHaveBeenCalledWith(21, 7);
+    expect(removeFeed).toHaveBeenCalledWith(21, 7, signal);
   });
 
   it("does not mutate mark, add or remove for another Bot's collection", async () => {
@@ -167,21 +181,42 @@ describe("BotPool RSS callback tenant scope", () => {
 
   it("binds collection creation to the current Bot and chat", async () => {
     const { callbacks, createCollection } = createCallbacks(BOT_A);
+    const signal = new AbortController().signal;
 
-    await callbacks.onCreateCollection({
-      name: "Frontend",
-      chatId: -100,
-      description: "Focus",
-      digestHour: 8,
-      digestMinute: 30,
+    await callbacks.onCreateCollection(
+      {
+        name: "Frontend",
+        chatId: -100,
+        description: "Focus",
+        digestHour: 8,
+        digestMinute: 30,
+      },
+      signal,
+    );
+    expect(createCollection).toHaveBeenCalledWith(
+      {
+        botId: BOT_A,
+        name: "Frontend",
+        chatId: -100,
+        description: "Focus",
+        digestHour: 8,
+        digestMinute: 30,
+      },
+      signal,
+    );
+  });
+
+  it("stops after ownership validation when an RSS mutation is aborted", async () => {
+    const { callbacks, getCollection, addFeed } = createCallbacks(BOT_A);
+    const controller = new AbortController();
+    getCollection.mockImplementationOnce(async () => {
+      controller.abort(new Error("RSS mutation cancelled"));
+      return collection(BOT_A);
     });
-    expect(createCollection).toHaveBeenCalledWith({
-      botId: BOT_A,
-      name: "Frontend",
-      chatId: -100,
-      description: "Focus",
-      digestHour: 8,
-      digestMinute: 30,
-    });
+
+    await expect(
+      callbacks.onAddFeed(7, "https://example.com/feed.xml", controller.signal),
+    ).rejects.toThrow("RSS mutation cancelled");
+    expect(addFeed).not.toHaveBeenCalled();
   });
 });

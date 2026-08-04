@@ -24,16 +24,23 @@ export interface RssToolsOptions {
     limit?: number,
   ) => Promise<{ collection: RssCollectionRecord; items: RssItemRecord[]; totalCount: number }>;
   onListFeeds: (collectionId: number) => Promise<RssFeedRecord[]>;
-  onMarkDigested: (collectionId: number) => Promise<void>;
-  onAddFeed: (collectionId: number, feedUrl: string) => Promise<RssFeedRecord>;
-  onRemoveFeed: (feedId: number) => Promise<void>;
-  onCreateCollection: (params: {
-    name: string;
-    chatId: number;
-    description?: string;
-    digestHour?: number;
-    digestMinute?: number;
-  }) => Promise<RssCollectionRecord>;
+  onMarkDigested: (collectionId: number, signal?: AbortSignal) => Promise<void>;
+  onAddFeed: (
+    collectionId: number,
+    feedUrl: string,
+    signal?: AbortSignal,
+  ) => Promise<RssFeedRecord>;
+  onRemoveFeed: (feedId: number, signal?: AbortSignal) => Promise<void>;
+  onCreateCollection: (
+    params: {
+      name: string;
+      chatId: number;
+      description?: string;
+      digestHour?: number;
+      digestMinute?: number;
+    },
+    signal?: AbortSignal,
+  ) => Promise<RssCollectionRecord>;
 }
 
 export function redactRssFeedUrl(feedUrl: string): string {
@@ -183,7 +190,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
             `标记 RSS 合集 ${collection_id} 的所有未读条目为已读`,
             async (signal) => {
               signal?.throwIfAborted();
-              await options.onMarkDigested(collection_id);
+              await options.onMarkDigested(collection_id, signal);
               return { summary: `已标记 RSS 合集 ${collection_id} 为已读` };
             },
           );
@@ -209,7 +216,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
             `向 RSS 合集 ${collection_id} 添加订阅源：${displayUrl}`,
             async (signal) => {
               signal?.throwIfAborted();
-              await options.onAddFeed(collection_id, feed_url);
+              await options.onAddFeed(collection_id, feed_url, signal);
               return { summary: `已向 RSS 合集 ${collection_id} 添加订阅源：${displayUrl}` };
             },
           );
@@ -233,7 +240,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
             `移除 RSS 订阅源 ${feed_id}`,
             async (signal) => {
               signal?.throwIfAborted();
-              await options.onRemoveFeed(feed_id);
+              await options.onRemoveFeed(feed_id, signal);
               return { summary: `已移除 RSS 订阅源 ${feed_id}` };
             },
           );
@@ -279,7 +286,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
             `在当前聊天创建 RSS 合集「${name}」（推送时间 ${schedule}）`,
             async (signal) => {
               signal?.throwIfAborted();
-              await options.onCreateCollection(params);
+              await options.onCreateCollection(params, signal);
               return { summary: `已创建 RSS 合集「${name}」` };
             },
           );

@@ -319,16 +319,20 @@ export class RssFeedService {
     return row ? mapCollectionRecord(row) : null;
   }
 
-  async createCollection(params: {
-    botId: string;
-    chatId: number;
-    name: string;
-    description?: string;
-    digestPrompt?: string;
-    digestHour?: number;
-    digestMinute?: number;
-    maxDigestItems?: number | null;
-  }): Promise<RssCollectionRecord> {
+  async createCollection(
+    params: {
+      botId: string;
+      chatId: number;
+      name: string;
+      description?: string;
+      digestPrompt?: string;
+      digestHour?: number;
+      digestMinute?: number;
+      maxDigestItems?: number | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<RssCollectionRecord> {
+    signal?.throwIfAborted();
     const [row] = await this.db
       .insert(rssCollections)
       .values({
@@ -392,7 +396,9 @@ export class RssFeedService {
     feedUrl: string,
     title?: string,
     maxDigestItems?: number | null,
+    signal?: AbortSignal,
   ): Promise<RssFeedRecord> {
+    signal?.throwIfAborted();
     let feedTitle = title ?? feedUrl;
     if (!title) {
       try {
@@ -403,6 +409,8 @@ export class RssFeedService {
       }
     }
 
+    // rss-parser has no AbortSignal option; re-check after parsing before the insert.
+    signal?.throwIfAborted();
     const [row] = await this.db
       .insert(rssFeeds)
       .values({
@@ -428,7 +436,8 @@ export class RssFeedService {
     return row ? mapFeedRecord(row) : null;
   }
 
-  async removeFeed(feedId: number, collectionId?: number): Promise<boolean> {
+  async removeFeed(feedId: number, collectionId?: number, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
     const conditions = [eq(rssFeeds.id, feedId)];
     if (collectionId != null) conditions.push(eq(rssFeeds.collectionId, collectionId));
     const deleted = await this.db
@@ -480,7 +489,8 @@ export class RssFeedService {
     };
   }
 
-  async markDigested(collectionId: number) {
+  async markDigested(collectionId: number, signal?: AbortSignal) {
+    signal?.throwIfAborted();
     const feeds = await this.db
       .select({ id: rssFeeds.id })
       .from(rssFeeds)
@@ -488,6 +498,7 @@ export class RssFeedService {
 
     if (feeds.length === 0) return;
 
+    signal?.throwIfAborted();
     await this.db
       .update(rssItems)
       .set({ digestedAt: new Date() })

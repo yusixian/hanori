@@ -25,12 +25,23 @@ export interface PendingAdminAction {
 export type GitHubActionResult = AdminActionResult;
 export type PendingGitHubAction = PendingAdminAction;
 
+export interface AdminActionDrainResult {
+  readonly settled: boolean;
+  readonly timedOut: boolean;
+}
+
 export const PENDING_ADMIN_ACTION_TTL_MS = 10 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 60 * 1000;
+const DEFAULT_DRAIN_WAIT_MS = 5_000;
+
+interface ActiveAdminAction {
+  controller: AbortController;
+  settled: Promise<void>;
+}
 
 export class PendingAdminActionRegistry {
   private readonly actions = new Map<string, PendingAdminAction>();
-  private readonly active = new Map<string, AbortController>();
+  private readonly active = new Map<string, ActiveAdminAction>();
   private readonly cleanupHandle: ReturnType<typeof setInterval>;
   private destroyed = false;
 
@@ -78,12 +89,20 @@ export class PendingAdminActionRegistry {
     if (this.destroyed) throw new Error("Admin action registry was destroyed");
     if (this.active.has(action.id)) throw new Error("Admin action is already running");
     const controller = new AbortController();
-    this.active.set(action.id, controller);
-    try {
-      return await action.execute(controller.signal);
-    } finally {
-      this.active.delete(action.id);
-    }
+    const execution = Promise.resolve().then(() => action.execute(controller.signal));
+    const active: ActiveAdminAction = {
+      controller,
+      settled: execution
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          if (this.active.get(action.id) === active) this.active.delete(action.id);
+        }),
+    };
+    this.active.set(action.id, active);
+    return execution;
   }
 
   destroy(): void {
@@ -91,10 +110,34 @@ export class PendingAdminActionRegistry {
     this.destroyed = true;
     clearInterval(this.cleanupHandle);
     this.actions.clear();
-    for (const controller of this.active.values()) {
-      controller.abort(new Error("Admin action registry was destroyed"));
+    for (const action of this.active.values()) {
+      action.controller.abort(new Error("Admin action registry was destroyed"));
     }
-    this.active.clear();
+  }
+
+  async drain(waitMs = DEFAULT_DRAIN_WAIT_MS): Promise<AdminActionDrainResult> {
+    const actions = [...this.active.values()];
+    if (actions.length === 0) return Object.freeze({ settled: true, timedOut: false });
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const allSettled = Promise.all(actions.map((action) => action.settled)).then(() => {
+      settled = true;
+    });
+    await Promise.race([
+      allSettled,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, waitMs);
+        timeout.unref?.();
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+    return Object.freeze({ settled, timedOut: !settled });
+  }
+
+  async destroyAndDrain(waitMs = DEFAULT_DRAIN_WAIT_MS): Promise<AdminActionDrainResult> {
+    this.destroy();
+    return this.drain(waitMs);
   }
 
   private cleanExpired(): void {

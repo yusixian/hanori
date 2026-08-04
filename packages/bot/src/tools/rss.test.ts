@@ -222,16 +222,19 @@ describe("createRssTools", () => {
     }
     expect(JSON.stringify(actionResults)).not.toContain("password");
     expect(JSON.stringify(actionResults)).not.toContain("secret");
-    expect(onMarkDigested).toHaveBeenCalledWith(7);
-    expect(onAddFeed).toHaveBeenCalledWith(7, secretUrl);
-    expect(onRemoveFeed).toHaveBeenCalledWith(22);
-    expect(onCreateCollection).toHaveBeenCalledWith({
-      name: "Frontend",
-      chatId: -100,
-      description: "Focus",
-      digestHour: 8,
-      digestMinute: 30,
-    });
+    expect(onMarkDigested).toHaveBeenCalledWith(7, expect.any(AbortSignal));
+    expect(onAddFeed).toHaveBeenCalledWith(7, secretUrl, expect.any(AbortSignal));
+    expect(onRemoveFeed).toHaveBeenCalledWith(22, expect.any(AbortSignal));
+    expect(onCreateCollection).toHaveBeenCalledWith(
+      {
+        name: "Frontend",
+        chatId: -100,
+        description: "Focus",
+        digestHour: 8,
+        digestMinute: 30,
+      },
+      expect.any(AbortSignal),
+    );
     registry.destroy();
   });
 
@@ -279,7 +282,53 @@ describe("createRssTools", () => {
     const action = registry.take(pending.action_id);
 
     await expect(registry.run(action!)).resolves.toEqual({ summary: "已移除 RSS 订阅源 22" });
-    expect(onRemoveFeed).toHaveBeenCalledWith(22);
+    expect(onRemoveFeed).toHaveBeenCalledWith(22, expect.any(AbortSignal));
+  });
+
+  it("aborts a deferred add callback before its final insert boundary", async () => {
+    const registry = new PendingAdminActionRegistry();
+    let releaseParse!: () => void;
+    const parsed = new Promise<void>((resolve) => {
+      releaseParse = resolve;
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const insert = vi.fn();
+    const onAddFeed = vi.fn(
+      async (_collectionId: number, _feedUrl: string, signal?: AbortSignal) => {
+        started();
+        await parsed;
+        signal?.throwIfAborted();
+        insert();
+        return { id: 22 } as RssFeedRecord;
+      },
+    );
+    const tools = createRssTools(
+      createOptions({
+        chatId: -100,
+        userId: 123,
+        adminChatIds: [123],
+        pendingActions: registry,
+        onAddFeed,
+      }),
+    );
+    const pending = (await tools.add_rss_feed!.execute!(
+      { collection_id: 7, feed_url: "https://example.com/feed.xml" },
+      {} as never,
+    )) as { action_id: string };
+    const action = registry.take(pending.action_id);
+    const run = registry.run(action!);
+    const runResult = expect(run).rejects.toThrow("Admin action registry was destroyed");
+    await didStart;
+
+    registry.destroy();
+    releaseParse();
+
+    await runResult;
+    await expect(registry.drain()).resolves.toEqual({ settled: true, timedOut: false });
+    expect(insert).not.toHaveBeenCalled();
   });
 
   it("exposes only read-only RSS tools to a trusted forced-admin run", () => {
