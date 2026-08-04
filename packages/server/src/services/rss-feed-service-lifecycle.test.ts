@@ -87,4 +87,39 @@ describe("RssFeedService Bot lifecycle", () => {
     await expect(service.triggerDigest(COLLECTION.id)).resolves.toBe(false);
     expect(updates).toEqual([]);
   });
+
+  it("does not insert a feed when cancellation arrives during URL parsing", async () => {
+    const insert = vi.fn();
+    const db = { insert } as unknown as Database;
+    const service = new RssFeedService(db, logger);
+    let releaseParse!: (value: { title: string }) => void;
+    const parseResult = new Promise<{ title: string }>((resolve) => {
+      releaseParse = resolve;
+    });
+    let parsingStarted!: () => void;
+    const didStartParsing = new Promise<void>((resolve) => {
+      parsingStarted = resolve;
+    });
+    const parseURL = vi.fn(() => {
+      parsingStarted();
+      return parseResult;
+    });
+    (service as unknown as { parser: { parseURL: typeof parseURL } }).parser = { parseURL };
+    const controller = new AbortController();
+
+    const add = service.addFeed(
+      COLLECTION.id,
+      "https://example.com/feed.xml",
+      undefined,
+      undefined,
+      controller.signal,
+    );
+    const addResult = expect(add).rejects.toThrow("RSS add cancelled");
+    await didStartParsing;
+    controller.abort(new Error("RSS add cancelled"));
+    releaseParse({ title: "Example feed" });
+
+    await addResult;
+    expect(insert).not.toHaveBeenCalled();
+  });
 });

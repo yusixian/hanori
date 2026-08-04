@@ -177,6 +177,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
     execute: (signal?: AbortSignal) => Promise<{ summary: string; url?: string }>,
   ) {
     const pending = options.pendingActions.register({
+      kind: "github",
       chatId: options.chatId,
       userId: options.userId,
       description,

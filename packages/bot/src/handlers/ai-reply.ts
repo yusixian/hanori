@@ -48,7 +48,7 @@ import type { BotContext, WrapperContext } from "../context.js";
 import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
-import { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
+import { PendingAdminActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
 import { continueChat } from "../services/continue-chat.js";
 import {
@@ -97,7 +97,7 @@ import {
   createRequestCache,
   wrapToolsWithCache,
 } from "../tools/utils.js";
-import { VISIBLE_EFFECT_TOOL_NAMES } from "../tools/visible-effects.js";
+import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { normalizeTelegramForwardOrigin } from "../utils/forward-origin.js";
@@ -234,7 +234,10 @@ export interface AiReplyConfig {
   }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
-  rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
+  rssCallbacks?: Omit<
+    RssToolsOptions,
+    "chatId" | "userId" | "adminChatIds" | "api" | "pendingActions" | "forceAdmin" | "allowWrites"
+  >;
   mcpTools?: McpToolsOptions;
   initialApi?: Api;
 }
@@ -428,17 +431,14 @@ export async function sendFormattedChunks(
 /** Handle the case when AI returned empty text and no multi_message was used */
 async function handleEmptyText(
   ctx: WrapperContext,
-  steps: Array<{ toolCalls: Array<{ toolName: string }> }>,
+  successfulToolEffectCount: number,
   config: { onLog?: (entry: BotLogEntry) => void | Promise<void> },
   chatBotMsgIds: number[],
   chatId: number,
   userId: number,
   finishReason: string,
 ): Promise<void> {
-  const hasVisibleAction = steps.some((s) =>
-    s.toolCalls.some((tc) => VISIBLE_EFFECT_TOOL_NAMES.has(tc.toolName)),
-  );
-  if (hasVisibleAction) {
+  if (successfulToolEffectCount > 0) {
     await ctx.deleteWaiting();
   } else {
     config.onLog?.({
@@ -717,7 +717,9 @@ export interface BotRuntimeState {
   getActiveGroupCount(): number;
   getPendingActions(): PendingActionRegistry;
   getAiExecutionStats(): AiExecutionCoordinatorStats;
-  getPendingGitHubActions(): PendingGitHubActionRegistry;
+  getPendingAdminActions(): PendingAdminActionRegistry;
+  /** @deprecated Use getPendingAdminActions. */
+  getPendingGitHubActions(): PendingAdminActionRegistry;
   getContinueChatConfig(chatId?: number): ContinueChatConfig;
   isPrivateChat(chatId: number): boolean;
 }
@@ -1046,7 +1048,7 @@ export function createAiReplyHandler(
 
   // Pending actions registry for interactive tools
   const pendingActions = new PendingActionRegistry();
-  const pendingGitHubActions = new PendingGitHubActionRegistry();
+  const pendingAdminActions = new PendingAdminActionRegistry();
 
   // Track known private chats
   const knownPrivateChats = new Set<number>();
@@ -1208,6 +1210,7 @@ export function createAiReplyHandler(
       webTools,
       dataFiles: config.dataFiles,
       pendingActions,
+      pendingAdminActions,
       recentBotMessageIds,
       moodState,
       stickerPacks: config.stickerPacks,
@@ -1293,7 +1296,8 @@ export function createAiReplyHandler(
     getActiveGroupCount: () => groupBuffers.size,
     getPendingActions: () => pendingActions,
     getAiExecutionStats: () => executionCoordinator.stats,
-    getPendingGitHubActions: () => pendingGitHubActions,
+    getPendingAdminActions: () => pendingAdminActions,
+    getPendingGitHubActions: () => pendingAdminActions,
     getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
@@ -1619,7 +1623,7 @@ export function createAiReplyHandler(
             userId,
             chatId,
             api: ctx.api,
-            pendingActions: pendingGitHubActions,
+            pendingActions: pendingAdminActions,
             codeCallbacks: config.githubCodeCallbacks,
             codingModel: resolveGitHubCodingModelConfig(
               config.githubToolsConfig,
@@ -1876,7 +1880,10 @@ export function createAiReplyHandler(
           const rssTools = createRssTools({
             ...config.rssCallbacks,
             chatId,
+            userId,
             adminChatIds: config.adminChatIds,
+            api: ctx.api,
+            pendingActions: pendingAdminActions,
           });
           Object.assign(allTools, rssTools);
         }
@@ -1980,9 +1987,15 @@ export function createAiReplyHandler(
         });
 
         let stepCounter = 0;
+        let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
         const wrappedTools = wrapToolsWithStatus(
-          wrapToolsWithCache(stableTools, requestCache),
+          wrapToolsWithCache(
+            trackSuccessfulToolEffects(stableTools, () => {
+              successfulToolEffectCount += 1;
+            }),
+            requestCache,
+          ),
           ctx,
         );
         manualAbort = new AbortController();
@@ -2228,7 +2241,15 @@ export function createAiReplyHandler(
             streamStarted = messageIds.length > 0;
             sentFinalText = streamStarted;
           } else {
-            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+            await handleEmptyText(
+              ctx,
+              successfulToolEffectCount,
+              config,
+              chatBotMsgIds,
+              chatId,
+              userId,
+              finishReason,
+            );
             capturedStreamError = undefined;
           }
         } else if (!isStreamMode) {
@@ -2246,7 +2267,15 @@ export function createAiReplyHandler(
             chatBotMsgIds.push(...messageIds);
             sentFinalText = messageIds.length > 0;
           } else {
-            await handleEmptyText(ctx, steps, config, chatBotMsgIds, chatId, userId, finishReason);
+            await handleEmptyText(
+              ctx,
+              successfulToolEffectCount,
+              config,
+              chatBotMsgIds,
+              chatId,
+              userId,
+              finishReason,
+            );
           }
         }
 
@@ -2783,7 +2812,7 @@ export function createAiReplyHandler(
       clearInterval(cleanupTimer);
       clearInterval(bufferCleanupTimer);
       pendingActions.destroy();
-      pendingGitHubActions.destroy();
+      pendingAdminActions.destroy();
       cooldownMap.clear();
       recentReceivedFiles.clear();
       recentBotMessageIds.clear();
@@ -2795,9 +2824,18 @@ export function createAiReplyHandler(
     let attempt!: Promise<void>;
     attempt = (async () => {
       try {
-        const result = await executionCoordinator.destroyAndDrain();
-        const deliveriesSettled = await drainDetachedDeliveries();
-        if (!result.settled || result.timedOut || !deliveriesSettled) {
+        const [result, adminActionsResult, deliveriesSettled] = await Promise.all([
+          executionCoordinator.destroyAndDrain(),
+          pendingAdminActions.destroyAndDrain(),
+          drainDetachedDeliveries(),
+        ]);
+        if (
+          !result.settled ||
+          result.timedOut ||
+          !adminActionsResult.settled ||
+          adminActionsResult.timedOut ||
+          !deliveriesSettled
+        ) {
           throw new AiRunDrainTimeoutError("Timed out draining AI runs during Bot shutdown");
         }
       } finally {

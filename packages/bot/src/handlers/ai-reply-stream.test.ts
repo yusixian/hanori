@@ -5,12 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
 
-const { streamTextMock } = vi.hoisted(() => ({
+const { generateTextMock, streamTextMock } = vi.hoisted(() => ({
+  generateTextMock: vi.fn(),
   streamTextMock: vi.fn(),
 }));
 
 vi.mock("ai", async (importOriginal) => ({
   ...(await importOriginal<typeof import("ai")>()),
+  generateText: generateTextMock,
   streamText: streamTextMock,
 }));
 
@@ -23,7 +25,10 @@ function sentMessage(messageId: number, text: string): Message.TextMessage {
   } as Message.TextMessage;
 }
 
-function createContext() {
+function createContext(options: { chatId?: number; userId?: number } = {}) {
+  const chatId = options.chatId ?? 123;
+  const userId = options.userId ?? 123;
+  const isGroup = chatId < 0;
   const replies: string[] = [];
   const streamError = new Error("Rich Message content cannot be empty");
   const api = {
@@ -38,10 +43,18 @@ function createContext() {
   ctx = {
     update: { update_id: 42 },
     message: { message_id: 7, text: "hello" },
-    chat: { id: 123, type: "private" },
-    from: { id: 123, is_bot: false, first_name: "Tester" },
+    chat: isGroup
+      ? { id: chatId, type: "supergroup", title: "Test group" }
+      : { id: chatId, type: "private" },
+    from: { id: userId, is_bot: false, first_name: "Tester" },
+    me: { id: 999, is_bot: true, first_name: "Test Bot", username: "test_bot" },
     api,
     replyWithChatAction: vi.fn().mockResolvedValue(true),
+    wait: vi.fn(async (text: string) => {
+      replies.push(text);
+      ctx.waiting_message = sentMessage(23, text);
+      return 23;
+    }),
     replyWithMarkdownStream: vi.fn(async (stream: AsyncIterable<string>) => {
       let text = "";
       for await (const chunk of stream) text += chunk;
@@ -88,7 +101,107 @@ function createConfig(onLog: (entry: BotLogEntry) => void): AiReplyConfig {
   };
 }
 
+function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
+  return {
+    onListCollections: vi.fn(),
+    onGetNewItems: vi.fn(),
+    onListFeeds: vi.fn(),
+    onMarkDigested: vi.fn(),
+    onAddFeed: vi.fn(),
+    onRemoveFeed: vi.fn(),
+    onCreateCollection: vi.fn(),
+  };
+}
+
 describe("AI reply streaming", () => {
+  it.each([
+    { name: "admin", userId: 123, hasAdminTools: true },
+    { name: "ordinary member", userId: 456, hasAdminTools: false },
+  ])("uses the requester identity for RSS tools in a group $name request", async (testCase) => {
+    const { ctx } = createContext({ chatId: -100, userId: testCase.userId });
+    streamTextMock.mockImplementation((options: any) => {
+      expect(options.tools.check_rss).toBeDefined();
+      if (testCase.hasAdminTools) {
+        expect(options.tools.list_rss_feeds).toBeDefined();
+        expect(options.tools.mark_rss_read).toBeDefined();
+        expect(options.tools.add_rss_feed).toBeDefined();
+        expect(options.tools.remove_rss_feed).toBeDefined();
+        expect(options.tools.create_rss_collection).toBeDefined();
+      } else {
+        expect(options.tools.list_rss_feeds).toBeUndefined();
+        expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
+      }
+      async function* textStream() {
+        yield "Complete";
+      }
+      return {
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.triggerConfig.triggerWords = ["hello"];
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+  });
+
+  it.each([
+    { name: "admin", userId: 123, hasAdminTools: true },
+    { name: "ordinary member", userId: 456, hasAdminTools: false },
+  ])("preserves requester RSS permissions in a group $name continuation", async (testCase) => {
+    const { ctx } = createContext();
+    streamTextMock.mockImplementation((options: any) => {
+      expect(options.tools.check_rss).toBeDefined();
+      if (testCase.hasAdminTools) {
+        expect(options.tools.list_rss_feeds).toBeDefined();
+        expect(options.tools.mark_rss_read).toBeDefined();
+        expect(options.tools.add_rss_feed).toBeDefined();
+        expect(options.tools.remove_rss_feed).toBeDefined();
+        expect(options.tools.create_rss_collection).toBeDefined();
+      } else {
+        expect(options.tools.list_rss_feeds).toBeUndefined();
+        expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
+      }
+      async function* textStream() {
+        yield "Complete";
+      }
+      return {
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.initialApi = ctx.api;
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    await expect(
+      result.fireTimerEvent(
+        -100,
+        `rss-${testCase.name}`,
+        "continue RSS task",
+        testCase.userId,
+        false,
+        true,
+      ),
+    ).resolves.toBe(true);
+  });
+
   it("uses one selection snapshot for request execution and usage", async () => {
     async function* textStream() {
       yield "Complete";
@@ -173,6 +286,155 @@ describe("AI reply streaming", () => {
     expect(onLog).not.toHaveBeenCalledWith(
       expect.objectContaining({ level: "error", message: expect.stringContaining("failed") }),
     );
+  });
+
+  it.each([
+    ["mark_rss_read", { collection_id: 7 }],
+    ["add_rss_feed", { collection_id: 7, feed_url: "https://example.com/feed.xml?token=secret" }],
+    ["remove_rss_feed", { feed_id: 21 }],
+    [
+      "create_rss_collection",
+      { name: "Frontend", description: "Focus", digest_hour: 8, digest_minute: 30 },
+    ],
+  ] as const)(
+    "treats a successful %s confirmation as the visible result of an empty ordinary reply",
+    async (toolName, input) => {
+      const { ctx, replies } = createContext();
+      ctx.waiting_message = sentMessage(30, "waiting");
+      streamTextMock.mockImplementation((options: any) => {
+        async function* toolOnlyStream() {
+          await options.tools[toolName].execute(input, {});
+          yield* [] as string[];
+        }
+        return {
+          textStream: toolOnlyStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          finishReason: Promise.resolve("tool-calls"),
+        };
+      });
+      const config = createConfig(vi.fn());
+      config.rssCallbacks = createRssCallbacks();
+      const result = createAiReplyHandler(config);
+
+      if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+      await result.handler(ctx, vi.fn());
+
+      expect(ctx.api.sendMessage).toHaveBeenCalledTimes(1);
+      expect(ctx.api.sendMessage).toHaveBeenCalledWith(
+        123,
+        expect.stringContaining("RSS 管理员确认"),
+        expect.any(Object),
+      );
+      expect(replies).toEqual([]);
+      expect(ctx.deleteWaiting).toHaveBeenCalled();
+      await result.destroy();
+    },
+  );
+
+  it("does not count a failed RSS confirmation send as a visible ordinary reply", async () => {
+    const { ctx, replies } = createContext();
+    vi.mocked(ctx.api.sendMessage).mockRejectedValueOnce(new Error("Telegram unavailable"));
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        await options.tools.add_rss_feed.execute(
+          { collection_id: 7, feed_url: "https://example.com/feed.xml" },
+          {},
+        );
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.rssCallbacks = createRssCallbacks();
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+
+    expect(replies).toEqual(["(AI 未生成回复内容)"]);
+    await result.destroy();
+  });
+
+  it("still delivers the empty fallback after a result-only delegated task", async () => {
+    generateTextMock.mockResolvedValue({ text: "delegated answer", steps: [] });
+    const { ctx, replies } = createContext();
+    ctx.waiting_message = sentMessage(30, "waiting");
+    let delegatedOutput: unknown;
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        delegatedOutput = await options.tools.delegate_task.execute(
+          { agent: "translator", task: "translate this" },
+          {},
+        );
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const config = createConfig(vi.fn());
+    config.agentToolsConfig = { enabled: true };
+    const result = createAiReplyHandler(config);
+
+    if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
+    await result.handler(ctx, vi.fn());
+
+    expect(replies.at(-1)).toBe("(AI 未生成回复内容)");
+    expect(delegatedOutput).toEqual({ agent: "translator", result: "delegated answer", steps: 0 });
+    expect(generateTextMock).toHaveBeenCalled();
+    await result.destroy();
+  });
+
+  it("waits for active administrator actions while destroying the AI runtime", async () => {
+    const result = createAiReplyHandler(createConfig(vi.fn()));
+    const registry = result.state.getPendingAdminActions();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const action = registry.register({
+      kind: "rss:add_rss_feed",
+      chatId: 123,
+      userId: 123,
+      description: "add feed",
+      execute: async (signal) => {
+        started();
+        await gate;
+        signal?.throwIfAborted();
+        return { summary: "done" };
+      },
+    });
+    const run = registry.run(action);
+    const runResult = expect(run).rejects.toThrow("Admin action registry was destroyed");
+    await didStart;
+
+    const destroy = result.destroy();
+    let destroyed = false;
+    void destroy.then(() => {
+      destroyed = true;
+    });
+    await Promise.resolve();
+    expect(destroyed).toBe(false);
+
+    release();
+    await runResult;
+    await expect(destroy).resolves.toBeUndefined();
   });
 
   it.each(["stream", "segment"] as const)(
@@ -294,7 +556,11 @@ describe("AI reply streaming", () => {
       const onMarkDigested = vi.fn();
       streamTextMock.mockImplementation((options: any) => {
         expect(options.tools.check_rss).toBeDefined();
+        expect(options.tools.list_rss_feeds).toBeDefined();
         expect(options.tools.mark_rss_read).toBeUndefined();
+        expect(options.tools.add_rss_feed).toBeUndefined();
+        expect(options.tools.remove_rss_feed).toBeUndefined();
+        expect(options.tools.create_rss_collection).toBeUndefined();
         async function* digestStream() {
           yield "digest";
         }
@@ -317,6 +583,7 @@ describe("AI reply streaming", () => {
       config.rssCallbacks = {
         onListCollections: vi.fn(),
         onGetNewItems: vi.fn(),
+        onListFeeds: vi.fn(),
         onMarkDigested,
         onAddFeed: vi.fn(),
         onRemoveFeed: vi.fn(),

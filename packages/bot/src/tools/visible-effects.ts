@@ -33,6 +33,7 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "fetch_webpage",
   "read_file",
   "check_rss",
+  "list_rss_feeds",
   "get_profile",
   "search_profiles",
   "search_history",
@@ -43,6 +44,7 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "github_list_tree",
   "github_list_issues",
   "github_inspect_workspace",
+  "delegate_task",
 ]);
 
 function succeeded(output: unknown): boolean {

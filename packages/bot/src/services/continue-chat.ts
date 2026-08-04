@@ -60,6 +60,7 @@ import {
 } from "../utils/prompt-cache.js";
 import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
+import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
 import { withChatLock } from "./chat-lock.js";
 
 export interface ContinueChatSelection {
@@ -103,6 +104,7 @@ export interface ContinueChatConfig {
   webTools?: Record<string, Tool>;
   dataFiles?: DataFilesConfig;
   pendingActions: PendingActionRegistry;
+  pendingAdminActions: PendingAdminActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
   moodState: Map<number, MoodInfo>;
   stickerPacks?: string[];
@@ -123,7 +125,10 @@ export interface ContinueChatConfig {
   imageGenerationAllowed?: boolean;
   rateLimiter?: PixAIRateLimiter;
   adminIds?: number[];
-  rssCallbacks?: Omit<RssToolsOptions, "chatId" | "adminChatIds">;
+  rssCallbacks?: Omit<
+    RssToolsOptions,
+    "chatId" | "userId" | "adminChatIds" | "api" | "pendingActions" | "forceAdmin" | "allowWrites"
+  >;
 }
 
 export interface ContinueChatEvent {
@@ -406,9 +411,12 @@ async function doContinueChat(
       const rssTools = createRssTools({
         ...config.rssCallbacks,
         chatId: event.chatId,
+        userId: event.userId,
         adminChatIds: config.adminIds ?? [],
+        api,
+        pendingActions: config.pendingAdminActions,
         forceAdmin: event.userId == null,
-        allowWrites: event.allowRssWrites !== false,
+        allowWrites: event.userId != null && event.allowRssWrites !== false,
       });
       Object.assign(allTools, rssTools);
     }
