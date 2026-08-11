@@ -65,12 +65,12 @@ ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 
 生产环境必须设置 `BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` 和 `AUTH_OWNER_EMAIL`；`PANEL_PASSWORD` 只用于首次创建 owner，首次启动成功后即可删除。
 
-GitHub App 的创建、Callback URL、仓库权限和私钥安全写入方式见 [GitHub App 配置指南](docs/GITHUB_APP.md)。生产环境的隔离 Pi worker 通过 `.env` 中的 `COMPOSE_PROFILES=coding` 启用，并要求同时配置 `CODING_WORKER_SECRET`；不需要编码功能的老部署可以保持两项为空。
+GitHub App 的创建、Callback URL、仓库权限和私钥安全写入方式见 [GitHub App 配置指南](docs/GITHUB_APP.md)。旧服务器的隔离 Pi worker 通过 `.env` 中的 `COMPOSE_PROFILES=coding` 启用；Dokploy 使用 `COMPOSE_PROFILES=dokploy,coding`。两种部署都要求同时配置 `CODING_WORKER_SECRET`。
 
 ## 部署
 
 ```bash
-docker compose -p cos-bot-prod up -d --build
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
 ```
 
 后续更新可以使用自动备份、拉取、构建和健康检查脚本：
