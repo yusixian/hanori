@@ -207,7 +207,11 @@ else
   fi
 fi
 
-COMPOSE=(docker compose -p "$PROJECT_NAME")
+COMPOSE=(
+  docker compose -p "$PROJECT_NAME"
+  -f docker-compose.yml
+  -f docker-compose.direct.yml
+)
 "${COMPOSE[@]}" config --quiet
 COMPOSE_ENVIRONMENT="$(compose_environment)"
 validate_optional_github_app "$COMPOSE_ENVIRONMENT"
@@ -252,7 +256,8 @@ if [[ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]]; then
   git merge --ff-only "origin/$BRANCH"
 fi
 
-git diff --quiet "$CHANGE_BASE" "$TARGET_COMMIT" -- docker-compose.yml || INFRA_CHANGED=1
+git diff --quiet "$CHANGE_BASE" "$TARGET_COMMIT" -- \
+  docker-compose.yml docker-compose.direct.yml || INFRA_CHANGED=1
 
 [[ "$(git rev-parse HEAD)" == "$TARGET_COMMIT" ]] || fail "代码没有更新到预期版本。"
 

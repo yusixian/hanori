@@ -212,8 +212,8 @@ GitHub 会在安装页面显示 App 请求的权限和仓库范围。安装与�
 服务器侧可以检查容器和日志，但不要输出 `.env`：
 
 ```bash
-docker compose -p cos-bot-prod ps app
-docker compose -p cos-bot-prod logs --tail=200 app
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml ps app
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs --tail=200 app
 ```
 
 ## 七、断开与彻底撤销

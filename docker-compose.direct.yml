@@ -1,0 +1,10 @@
+# Direct host ports are only for the legacy server workflow. Dokploy routes the
+# base Compose services through Traefik without publishing these ports.
+services:
+  app:
+    ports:
+      - "${PORT:-9600}:3000"
+
+  nsfw-api:
+    ports:
+      - "${NSFW_API_PORT:-9601}:3000"

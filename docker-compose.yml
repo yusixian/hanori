@@ -1,8 +1,8 @@
 services:
   app:
     build: .
-    ports:
-      - "${PORT:-9600}:3000"
+    expose:
+      - "3000"
     environment:
       - DATABASE_URL=postgresql://bot:${DB_PASSWORD}@db:5432/cos_tool_bot
       - BOT_TOKEN=${BOT_TOKEN}
@@ -41,6 +41,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      db-backup:
+        condition: service_completed_successfully
+        required: false
     restart: unless-stopped
     deploy:
       resources:
@@ -170,10 +173,38 @@ services:
         max-file: "3"
     stop_grace_period: 20s
 
+  db-backup:
+    profiles: ["dokploy"]
+    image: pgvector/pgvector:pg17
+    environment:
+      - PGPASSWORD=${DB_PASSWORD}
+    volumes:
+      - backups:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        backup="/backups/cos_tool_bot_before_deploy_$$(date +%Y%m%d_%H%M%S).dump"
+        trap 'rm -f "$$backup"' EXIT
+        pg_dump -h db -U bot -d cos_tool_bot -Fc -f "$$backup"
+        test -s "$$backup"
+        pg_restore --list "$$backup" >/dev/null
+        trap - EXIT
+        printf 'Verified database backup: %s\n' "$$backup"
+    restart: "no"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+
   nsfw-api:
     image: ghcr.io/arnidan/nsfw-api:latest
-    ports:
-      - "${NSFW_API_PORT:-9601}:3000"
+    expose:
+      - "3000"
     restart: unless-stopped
     deploy:
       resources:

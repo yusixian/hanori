@@ -104,10 +104,11 @@ chmod 600 .env
 
 The command expects `.env` to contain the two keys from `.env.example`; if either key was removed,
 add `COMPOSE_PROFILES=coding` and the generated `CODING_WORKER_SECRET` with your editor instead.
-Then start the production Compose project. Compose enables the profile from `.env`:
+Dokploy deployments use `COMPOSE_PROFILES=dokploy,coding` so the database backup gate remains
+enabled. On the legacy server, start the direct-port production Compose project with:
 
 ```bash
-docker compose -p cos-bot-prod up -d --build
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
 ```
 
 Then enable **GitHub identity and code access** and **Pi coding agent** in the bot's AI settings.
