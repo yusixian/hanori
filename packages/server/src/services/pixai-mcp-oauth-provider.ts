@@ -95,7 +95,13 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.onAuthorizationUrl(new URL(authorizationUrl));
+    const ownerAuthorizationUrl = new URL(authorizationUrl);
+    const requestedScopes = new Set(
+      (ownerAuthorizationUrl.searchParams.get("scope") ?? "").split(/\s+/).filter(Boolean),
+    );
+    for (const scope of PIXAI_MCP_OAUTH_SCOPES) requestedScopes.add(scope);
+    ownerAuthorizationUrl.searchParams.set("scope", [...requestedScopes].join(" "));
+    await this.onAuthorizationUrl(ownerAuthorizationUrl);
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {

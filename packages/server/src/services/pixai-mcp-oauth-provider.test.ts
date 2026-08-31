@@ -76,6 +76,25 @@ describe("PixaiMcpOAuthProvider", () => {
     expect(memory.current().codeVerifier).toBe("verifier");
   });
 
+  it("requests the full owner grant while preserving authorization-server scopes", async () => {
+    const onAuthorizationUrl = vi.fn();
+    const provider = new PixaiMcpOAuthProvider({
+      store: memoryStore().store,
+      redirectUrl: "https://bot.example/callback",
+      onAuthorizationUrl,
+    });
+
+    await provider.redirectToAuthorization(
+      new URL("https://auth.example/authorize?scope=openid%20mcp%3Apixai%3Aread"),
+    );
+
+    const authorizationUrl = onAuthorizationUrl.mock.calls[0]![0] as URL;
+    expect(authorizationUrl.searchParams.get("scope")?.split(" ")).toEqual([
+      "openid",
+      ...PIXAI_MCP_OAUTH_SCOPES,
+    ]);
+  });
+
   it("replaces secret-bearing storage errors with a fixed error", async () => {
     const provider = new PixaiMcpOAuthProvider({
       store: {
