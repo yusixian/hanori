@@ -7,7 +7,12 @@ import type {
   TelegramObservationCallbacks,
   TimerCallbacks,
 } from "@cos-tool-bot/bot";
-import { createBot, disposeBot, recoverPixAIGeneration } from "@cos-tool-bot/bot";
+import {
+  createBot,
+  disposeBot,
+  recoverPixAIGeneration,
+  sendLocalImageFiles,
+} from "@cos-tool-bot/bot";
 import { run, type FetchOptions, type RunnerHandle } from "@grammyjs/runner";
 import type {
   AiGroupOverride,
@@ -60,6 +65,7 @@ interface BotManagerOptions {
   timerCallbacks?: TimerCallbacks;
   mcpCallbacks?: McpCommandConfig;
   summary?: SummaryCallbacks;
+  quota?: BotConfig["quota"];
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
 }
@@ -70,6 +76,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
   private runnerHandle: RunnerHandle | null = null;
   private botConfig: BotConfig;
   private dbLogger: DbLogger;
+  private readonly onGenerationTrack?: BotManagerOptions["onGenerationTrack"];
   private _status: BotStatus = "stopped";
   private startedAt: number | null = null;
   private shutdownAttempt: {
@@ -80,6 +87,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
   constructor(options: BotManagerOptions) {
     this.botId = options.botId;
     this.dbLogger = options.dbLogger;
+    this.onGenerationTrack = options.onGenerationTrack;
     this.botConfig = {
       token: options.token,
       botId: options.botId,
@@ -89,7 +97,6 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       onBackup: options.onBackup,
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
       onTokenUsage: options.onTokenUsage,
-      onGenerationTrack: options.onGenerationTrack,
       timerCallbacks: options.timerCallbacks,
       aiSelectionCallbacks: options.aiSelectionCallbacks,
       mcpCallbacks: options.mcpCallbacks,
@@ -97,6 +104,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       conversation: options.conversation,
       privacy: options.privacy,
       summary: options.summary,
+      quota: options.quota,
       telegramObservation: options.telegramObservation,
       miniAppUrl: options.miniAppUrl,
     };
@@ -204,6 +212,20 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
   }
 
+  async sendImageFiles(chatId: number, files: string[], caption: string): Promise<number[]> {
+    if (!this.bot) throw new Error(`Bot ${this.botId} is not running`);
+    return sendLocalImageFiles(this.bot.api, chatId, files, caption);
+  }
+
+  async getTelegramMemberRole(
+    chatId: number,
+    userId: number,
+  ): Promise<"creator" | "administrator" | "member" | "restricted" | "left" | "kicked"> {
+    const bot = this.requireRunningBot();
+    const member = await bot.api.getChatMember(chatId, userId);
+    return member.status;
+  }
+
   async getTelegramProfile(): Promise<TelegramBotPublicProfile> {
     const bot = this.requireRunningBot();
     const profile = await bot.api.getMe();
@@ -269,6 +291,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     return { messageId: sent.message_id, chatId: sent.chat.id, format };
   }
 
+  /** Legacy completed-history recovery hook. Production startup no longer schedules it. */
   async recoverPixaiGeneration(
     record: PixAIGenerationRecord,
     apiKey: string,
@@ -276,10 +299,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     createdAtMs: number,
     signal?: AbortSignal,
   ): Promise<void> {
-    if (!this.bot) {
-      throw new Error(`Bot ${this.botId} is not running`);
-    }
-
+    if (!this.bot) throw new Error(`Bot ${this.botId} is not running`);
     await recoverPixAIGeneration({
       apiKey,
       api: this.bot.api,
@@ -287,8 +307,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       timeoutMs,
       createdAtMs,
       onLog: this.botConfig.onLog,
-      onGenerationTrack: this.botConfig.onGenerationTrack,
-      nsfwChecker: this.botConfig.aiReply?.nsfwChecker,
+      onGenerationTrack: this.onGenerationTrack,
       signal,
     });
   }

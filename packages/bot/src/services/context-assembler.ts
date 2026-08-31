@@ -101,6 +101,7 @@ export interface ContextAssemblyInput {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   webTools?: Record<string, Tool>;
+  hasImageGeneration?: boolean;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -169,6 +170,7 @@ interface StaticPromptInput {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   hasSearchTool: boolean;
+  hasImageGeneration?: boolean;
   agentToolsConfig?: AgentToolsConfig;
   hasBotMemoryTool: boolean;
   artworkToolsEnabled?: boolean;
@@ -280,8 +282,8 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
         hasTTS: false,
         hasWebTools: !!input.webToolsConfig?.enabled,
         hasSearchTool: input.hasSearchTool,
-        hasImageGeneration: !!input.webToolsConfig?.imageGeneration,
-        imageGenerationProvider: input.webToolsConfig?.imageGeneration?.provider,
+        hasImageGeneration:
+          input.hasImageGeneration === true || !!input.webToolsConfig?.imageGeneration,
         hasAgentTools: !!input.agentToolsConfig?.enabled,
         availableAgents,
         hasBotMemory: input.hasBotMemoryTool,
@@ -659,6 +661,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
       hasSearchTool: !!input.webTools?.web_search,
+      hasImageGeneration: input.hasImageGeneration,
       agentToolsConfig: input.agentToolsConfig,
       hasBotMemoryTool: !!input.botMemoryTools,
       artworkToolsEnabled: input.artworkToolsEnabled,
@@ -1019,6 +1022,7 @@ export interface ContinueChatContextInput {
   moodState: Map<number, MoodInfo>;
   webToolsConfig?: WebToolsConfig;
   webTools?: Record<string, Tool>;
+  hasImageGeneration?: boolean;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -1054,6 +1058,7 @@ export async function buildContinueChatPromptBundle(
       stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
       hasSearchTool: !!input.webTools?.web_search,
+      hasImageGeneration: input.hasImageGeneration,
       agentToolsConfig: input.agentToolsConfig,
       hasBotMemoryTool: !!input.botMemoryTools,
       artworkToolsEnabled: input.artworkToolsEnabled,

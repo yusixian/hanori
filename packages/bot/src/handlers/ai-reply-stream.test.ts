@@ -605,7 +605,7 @@ describe("AI reply streaming", () => {
     },
   );
 
-  it("does not replay a visible tool when trailing text delivery fails", async () => {
+  it("accepts a visible tool effect without replay when trailing text delivery fails", async () => {
     const { ctx } = createContext();
     vi.mocked(ctx.api.sendMessage).mockRejectedValue(new Error("Telegram unavailable"));
     streamTextMock.mockImplementation((options: any) => {
@@ -633,7 +633,8 @@ describe("AI reply streaming", () => {
 
     await expect(
       result.fireTimerEvent(-100, "timer-tool-text", "tool event", undefined, true),
-    ).resolves.toBe(false);
+    ).resolves.toBe(true);
+    expect(ctx.api.sendPhoto).toHaveBeenCalledOnce();
   });
 
   it("cleans a waiting status created after the final streamed chunk", async () => {

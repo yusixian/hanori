@@ -1,4 +1,12 @@
-import type { AiConfigStored, EmailForwardConfig, LarkWebhookConfig } from "@cos-tool-bot/shared";
+import type {
+  AiConfigStored,
+  EmailForwardConfig,
+  ImageArtifact,
+  ImageGovernanceConfig,
+  LarkWebhookConfig,
+  UsageBucketCharge,
+  UsageLimits,
+} from "@cos-tool-bot/shared";
 import { sql } from "drizzle-orm";
 import {
   bigint,
@@ -579,6 +587,94 @@ export const pixaiGenerations = pgTable(
   ],
 );
 
+/** New provider-neutral image operations. pixai_generations remains read-only legacy history. */
+export const imageGenerations = pgTable(
+  "image_generations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    provider: text("provider").notNull(),
+    purpose: text("purpose").notNull(),
+    presetKey: text("preset_key"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    providerOperationId: text("provider_operation_id"),
+    state: text("state").notNull().default("preparing"),
+    providerState: text("provider_state"),
+    approvalState: text("approval_state").notNull().default("not_required"),
+    prompt: text("prompt").notNull(),
+    negativePrompt: text("negative_prompt"),
+    seed: bigint("seed", { mode: "number" }),
+    providerMetadata: json("provider_metadata").$type<Record<string, unknown>>(),
+    artifacts: json("artifacts").$type<ImageArtifact[]>().notNull().default([]),
+    localFiles: json("local_files").$type<string[]>().notNull().default([]),
+    deliveryMessageIds: json("delivery_message_ids").$type<number[]>().notNull().default([]),
+    usageReservationId: uuid("usage_reservation_id"),
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+    completedAt: timestamp("completed_at"),
+    deliveryClaimedAt: timestamp("delivery_claimed_at"),
+    deliveredAt: timestamp("delivered_at"),
+  },
+  (t) => [
+    uniqueIndex("image_generations_idempotency_uniq").on(t.idempotencyKey),
+    uniqueIndex("image_generations_provider_operation_uniq").on(t.provider, t.providerOperationId),
+    index("image_generations_bot_chat_idx").on(t.botId, t.chatId, t.createdAt),
+    index("image_generations_recovery_idx").on(t.state, t.updatedAt),
+    check(
+      "image_generations_provider_check",
+      sql`${t.provider} in ('mcp_pixai', 'general_backend')`,
+    ),
+    check(
+      "image_generations_purpose_check",
+      sql`${t.purpose} in ('anime_illustration', 'general_image')`,
+    ),
+    check(
+      "image_generations_state_check",
+      sql`${t.state} in ('preparing', 'awaiting_approval', 'queued', 'running', 'succeeded', 'failed', 'waiting_stopped', 'cancel_rejected', 'cancel_requested', 'attention_required', 'cancelled')`,
+    ),
+    check(
+      "image_generations_approval_check",
+      sql`${t.approvalState} in ('not_required', 'required', 'approved', 'rejected')`,
+    ),
+  ],
+);
+
+export const imageGenerationConfigs = pgTable("image_generation_configs", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  config: json("config").$type<ImageGovernanceConfig>().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
+/** Singleton instance-wide OAuth grant. encryptedState contains tokens, DCR data and PKCE state. */
+export const pixaiMcpConnections = pgTable("pixai_mcp_connections", {
+  id: text("id").primaryKey().default("default"),
+  encryptedState: text("encrypted_state"),
+  status: text("status").notNull().default("disconnected"),
+  grantedScopes: json("granted_scopes").$type<string[]>().notNull().default([]),
+  ownerUserId: text("owner_user_id"),
+  authorizationExpiresAt: timestamp("authorization_expires_at"),
+  lastErrorCode: text("last_error_code"),
+  connectedAt: timestamp("connected_at"),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => new Date())
+    .notNull(),
+});
+
 export const timers = pgTable(
   "timers",
   {
@@ -685,6 +781,155 @@ export const tokenUsage = pgTable(
     index("token_usage_bot_id_idx").on(t.botId),
     index("token_usage_created_at_idx").on(t.createdAt),
     index("token_usage_bot_created_idx").on(t.botId, t.createdAt),
+  ],
+);
+
+export const usageGovernancePolicies = pgTable(
+  "usage_governance_policies",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    resource: text("resource").notNull(),
+    scope: text("scope").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    limits: json("limits").$type<UsageLimits>().notNull(),
+    updatedByKind: text("updated_by_kind").notNull().default("system"),
+    updatedById: text("updated_by_id"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => new Date())
+      .notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.resource, t.scope, t.subjectKey] }),
+    index("usage_policies_bot_resource_idx").on(t.botId, t.resource),
+    check(
+      "usage_policies_resource_check",
+      sql`${t.resource} in ('ai_reply', 'image', 'proactive_reply')`,
+    ),
+    check(
+      "usage_policies_scope_check",
+      sql`${t.scope} in ('bot', 'chat', 'user_global', 'chat_user')`,
+    ),
+    check("usage_policies_subject_check", sql`length(btrim(${t.subjectKey})) > 0`),
+    check(
+      "usage_policies_actor_kind_check",
+      sql`${t.updatedByKind} in ('owner', 'group_admin', 'system')`,
+    ),
+  ],
+);
+
+export const usageGovernanceReservations = pgTable(
+  "usage_governance_reservations",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    resource: text("resource").notNull(),
+    chatKind: text("chat_kind").notNull(),
+    chatId: bigint("chat_id", { mode: "number" }),
+    userId: bigint("user_id", { mode: "number" }),
+    reservedUnits: integer("reserved_units").notNull(),
+    settledUnits: integer("settled_units"),
+    status: text("status").notNull().default("reserved"),
+    bucketCharges: json("bucket_charges").$type<UsageBucketCharge[]>().notNull().default([]),
+    reservedAt: timestamp("reserved_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    settledAt: timestamp("settled_at"),
+    refundedAt: timestamp("refunded_at"),
+  },
+  (t) => [
+    index("usage_reservations_bot_resource_time_idx").on(t.botId, t.resource, t.reservedAt),
+    index("usage_reservations_chat_time_idx").on(t.botId, t.resource, t.chatId, t.reservedAt),
+    index("usage_reservations_user_time_idx").on(t.botId, t.resource, t.userId, t.reservedAt),
+    index("usage_reservations_active_idx").on(t.botId, t.resource, t.status, t.expiresAt),
+    check(
+      "usage_reservations_resource_check",
+      sql`${t.resource} in ('ai_reply', 'image', 'proactive_reply')`,
+    ),
+    check("usage_reservations_chat_kind_check", sql`${t.chatKind} in ('private', 'group')`),
+    check(
+      "usage_reservations_status_check",
+      sql`${t.status} in ('reserved', 'settled', 'refunded')`,
+    ),
+    check("usage_reservations_units_check", sql`${t.reservedUnits} > 0`),
+    check(
+      "usage_reservations_settled_units_check",
+      sql`${t.settledUnits} is null or (${t.settledUnits} >= 0 and ${t.settledUnits} <= ${t.reservedUnits})`,
+    ),
+    check(
+      "usage_reservations_chat_id_check",
+      sql`${t.chatId} is null or (${t.chatId} <> 0 and ${t.chatId} between -9007199254740991 and 9007199254740991)`,
+    ),
+    check(
+      "usage_reservations_user_id_check",
+      sql`${t.userId} is null or (${t.userId} > 0 and ${t.userId} <= 9007199254740991)`,
+    ),
+  ],
+);
+
+export const usageGovernanceBuckets = pgTable(
+  "usage_governance_buckets",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    resource: text("resource").notNull(),
+    scope: text("scope").notNull(),
+    subjectKey: text("subject_key").notNull(),
+    window: text("window").notNull(),
+    windowKey: text("window_key").notNull(),
+    timezone: text("timezone").notNull(),
+    usedUnits: integer("used_units").notNull().default(0),
+    closesAt: timestamp("closes_at").notNull(),
+    retentionUntil: timestamp("retention_until").notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({
+      columns: [t.botId, t.resource, t.scope, t.subjectKey, t.window, t.windowKey, t.timezone],
+    }),
+    index("usage_buckets_retention_idx").on(t.retentionUntil),
+    check(
+      "usage_buckets_resource_check",
+      sql`${t.resource} in ('ai_reply', 'image', 'proactive_reply')`,
+    ),
+    check(
+      "usage_buckets_scope_check",
+      sql`${t.scope} in ('bot', 'chat', 'user_global', 'chat_user')`,
+    ),
+    check("usage_buckets_window_check", sql`${t.window} in ('day', 'month')`),
+    check("usage_buckets_used_check", sql`${t.usedUnits} >= 0`),
+  ],
+);
+
+export const usageGovernanceEvents = pgTable(
+  "usage_governance_events",
+  {
+    id: serial("id").primaryKey(),
+    reservationId: uuid("reservation_id")
+      .references(() => usageGovernanceReservations.id, { onDelete: "cascade" })
+      .notNull(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    resource: text("resource").notNull(),
+    eventType: text("event_type").notNull(),
+    units: integer("units").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("usage_events_bot_created_idx").on(t.botId, t.createdAt),
+    index("usage_events_reservation_idx").on(t.reservationId, t.createdAt),
+    check(
+      "usage_events_resource_check",
+      sql`${t.resource} in ('ai_reply', 'image', 'proactive_reply')`,
+    ),
+    check("usage_events_type_check", sql`${t.eventType} in ('reserved', 'settled', 'refunded')`),
+    check("usage_events_units_check", sql`${t.units} >= 0`),
   ],
 );
 

@@ -25,6 +25,8 @@ import { rssRoutes } from "./routes/rss.js";
 import { summaryRoutes } from "./routes/summary.js";
 import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
+import { governanceRoutes } from "./routes/governance.js";
+import { imageMcpRoutes } from "./routes/image-mcp.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
 import { botGitHubAppRoutes, githubAppCallbackRoutes } from "./routes/github-app.js";
@@ -46,6 +48,9 @@ import type { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import type { BotSettingsService } from "./services/bot-settings-service.js";
 import { MiniAppLogService } from "./services/mini-app-log-service.js";
 import type { TelegramDirectoryService } from "./services/telegram-directory-service.js";
+import type { ImageGenerationService } from "./services/image-generation-service.js";
+import type { ImageMcpConnectionService } from "./services/image-mcp-connection-service.js";
+import type { UsageGovernor } from "./services/usage-governor.js";
 import { securityHeaders, staticCacheControl } from "./http-policy.js";
 
 interface AppOptions {
@@ -70,6 +75,9 @@ interface AppOptions {
   chatAiSelectionService: ChatAiSelectionService;
   botLifecycleService: BotLifecycleService;
   botSettingsService: BotSettingsService;
+  imageGenerationService: ImageGenerationService;
+  imageMcpConnectionService: ImageMcpConnectionService;
+  usageGovernor: UsageGovernor;
 }
 
 export function createApp(options: AppOptions) {
@@ -95,6 +103,8 @@ export function createApp(options: AppOptions) {
     chatAiSelectionService,
     botLifecycleService,
     botSettingsService,
+    imageGenerationService,
+    imageMcpConnectionService,
   } = options;
 
   const app = new Hono()
@@ -136,6 +146,13 @@ export function createApp(options: AppOptions) {
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
+    .use("/api/image-mcp/status", requireAppAccess(auth, db))
+    .use("/api/image-mcp/status", requireRoles(ownerOrAdmin))
+    .use("/api/image-mcp/oauth/start", requireAppAccess(auth, db))
+    .use("/api/image-mcp/oauth/start", requireRoles(ownerOnly))
+    .use("/api/image-mcp", requireAppAccess(auth, db))
+    .use("/api/image-mcp", requireRoles(ownerOnly))
+    .route("/api/image-mcp", imageMcpRoutes(imageMcpConnectionService, baseURL))
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
@@ -147,6 +164,8 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/start", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/stop", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/governance", requireRoles(ownerOnly))
+    .route("/api/bots", governanceRoutes(db, imageGenerationService, imageMcpConnectionService))
     .route(
       "/api/bots",
       botsRoutes(db, botPool, modelCapabilityService, botLifecycleService, chatAiSelectionService),

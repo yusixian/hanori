@@ -1,7 +1,9 @@
 export * from "./types.js";
+export * from "./image-generation.js";
 export { parseParams } from "./param-parser.js";
 export { inferCapabilities } from "./model-capabilities.js";
 export { formatDuration } from "./format.js";
+export * from "./usage-governance.js";
 export {
   formatConversationForwardOrigin,
   parseConversationForwardOrigin,

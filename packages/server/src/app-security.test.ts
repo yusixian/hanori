@@ -62,6 +62,9 @@ describe("production HTTP policy", () => {
       chatAiSelectionService: {} as never,
       botLifecycleService: {} as never,
       botSettingsService: {} as never,
+      imageGenerationService: {} as never,
+      imageMcpConnectionService: {} as never,
+      usageGovernor: {} as never,
     });
 
     const response = await app.request("/api/not-a-real-route");

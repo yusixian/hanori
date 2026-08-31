@@ -240,8 +240,6 @@ export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
   const { config, timeoutConfig } = options;
   const searchMs = timeoutConfig?.searchMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs;
   const fetchPageMs = timeoutConfig?.fetchPageMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs;
-  const imageGenerationMs =
-    timeoutConfig?.imageGenerationMs ?? DEFAULT_TIMEOUT_CONFIG.imageGenerationMs;
   const tools: Record<string, Tool> = {};
 
   // Always include get_current_time
@@ -306,52 +304,6 @@ export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
       }
     },
   });
-
-  // Image generation tool (skip for pixai — handled by per-request createPixAITool)
-  if (config.imageGeneration && config.imageGeneration.provider !== "pixai") {
-    const imgCfg = config.imageGeneration;
-    tools.generate_image = tool({
-      description: "使用 AI 生成图片。返回图片 URL。如需发送给用户，可配合 send_photo 工具使用。",
-      inputSchema: zodToAiSchema(
-        z.object({
-          prompt: z.string().describe("图片描述/提示词（建议英文）"),
-          size: z.enum(["1024x1024", "1024x1792", "1792x1024"]).optional().describe("图片尺寸"),
-        }),
-      ),
-      execute: async ({ prompt, size }) => {
-        try {
-          const baseURL = (imgCfg.baseURL || "https://api.openai.com/v1").replace(/\/+$/, "");
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (imgCfg.apiKey) headers["Authorization"] = `Bearer ${imgCfg.apiKey}`;
-
-          const res = await fetch(`${baseURL}/images/generations`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              model: imgCfg.model || "dall-e-3",
-              prompt,
-              n: 1,
-              size: size || imgCfg.size || "1024x1024",
-            }),
-            signal: AbortSignal.timeout(imageGenerationMs),
-          });
-
-          if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            throw new Error(`Image generation failed: HTTP ${res.status} ${text}`);
-          }
-
-          const data = (await res.json()) as { data: Array<{ url?: string; b64_json?: string }> };
-          const imageUrl = data.data[0]?.url;
-          if (!imageUrl) throw new Error("No image URL returned");
-
-          return { url: imageUrl, prompt };
-        } catch (err) {
-          return { error: String(err) };
-        }
-      },
-    });
-  }
 
   return tools;
 }

@@ -14,16 +14,17 @@ import type {
   ConversationRole,
   GitHubToolsRuntimeConfig,
   ImageOcrConfig,
+  ImageGenerationPort,
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
   ModelEntry,
   GitHubCodingModelConfig,
-  PixAIConfig,
-  PixAIGenerationRecord,
   ReplyMode,
   TimeoutConfig,
   TokenUsageRecord,
+  UsageGovernancePort,
+  UsageResource,
   UserPrivacyCallbacks,
   UserPrivacyMode,
   WebToolsConfig,
@@ -77,20 +78,17 @@ import {
   createMemoryTools,
   createMcpTools,
   createGitHubTools,
+  createImageGenerationTools,
   type GitHubCodeCallbacks,
   type McpToolsOptions,
   createRssTools,
   createTelegramTools,
   createWebTools,
-  directPixAIGenerate,
-  injectPixAITool,
 } from "../tools/index.js";
-import type { DirectGenerateResult, DrawOverrides, RssToolsOptions } from "../tools/index.js";
+import type { RssToolsOptions } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
-import { PixAIRateLimiter } from "../services/pixai-rate-limiter.js";
-import type { RateLimitStats } from "../services/pixai-rate-limiter.js";
 import {
   createOnceGuard,
   createPerStepAbort,
@@ -107,7 +105,6 @@ import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml, showRichThinkingDraft } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
-import type { NsfwChecker } from "../services/nsfw-checker.js";
 import { describeImages } from "../services/image-ocr.js";
 import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
@@ -196,6 +193,9 @@ export interface AiReplyConfig {
   memory?: MemoryCallbacks;
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
+  imageGenerationPort?: ImageGenerationPort;
+  isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
+  usageGovernance?: UsageGovernancePort;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsRuntimeConfig;
   githubCodeCallbacks?: GitHubCodeCallbacks;
@@ -209,19 +209,13 @@ export interface AiReplyConfig {
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
-  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
   privateChatWhitelist?: number[];
-  nsfwChecker?: NsfwChecker;
   token: string;
   onGroupOverrideUpdate?: (chatId: number, override: AiGroupOverride) => void | Promise<void>;
-  onPixaiConfigUpdate?: (updates: {
-    model?: string;
-    pixaiConfig?: Partial<PixAIConfig>;
-  }) => void | Promise<void>;
   onMessageConfigUpdate?: (updates: Partial<MessageConfig>) => void | Promise<void>;
   onWebToolApiKeyUpdate?: (target: "image" | "search", apiKey: string) => void | Promise<void>;
   onTimerCreate?: (params: {
@@ -755,20 +749,7 @@ export function createAiReplyHandler(
   setRichMessageEnabled: (enabled: boolean) => Promise<void>;
   getImageGenEnabled: (chatId: number) => boolean;
   setImageGenEnabled: (chatId: number, enabled: boolean) => void;
-  getPixaiFullConfig: () => { model: string | undefined; pixaiConfig: PixAIConfig };
-  updatePixaiConfig: (updates: {
-    model?: string;
-    pixaiConfig?: Partial<PixAIConfig>;
-  }) => void | Promise<void>;
   updateWebToolApiKey: (target: "image" | "search", apiKey: string) => Promise<boolean>;
-  getPixaiRateLimitStats: () => RateLimitStats;
-  canUseImageGeneration: (isPrivate: boolean, isAdmin: boolean, chatId: number) => boolean;
-  directGenerate: (
-    rawPrompt: string,
-    overrides: DrawOverrides,
-    chatId: number,
-    userId?: number,
-  ) => Promise<DirectGenerateResult>;
   fireTimerEvent: (
     chatId: number,
     timerId: string,
@@ -789,6 +770,7 @@ export function createAiReplyHandler(
   destroy: () => Promise<void>;
 } {
   const cooldownMap = new Map<number, number>();
+  const governanceNoticeAt = new Map<string, number>();
 
   // Bot-wide AI kill switch (in-memory). /stop flips aiDisabled=true and aborts
   // all in-flight streamText calls via the registered controllers.
@@ -897,12 +879,6 @@ export function createAiReplyHandler(
     };
   }
 
-  function canUseImageGeneration(isPrivate: boolean, isAdmin: boolean, chatId: number): boolean {
-    if (isAdmin) return true;
-    if (isPrivate) return false;
-    return getImageGenEnabled(chatId);
-  }
-
   function getImageGenEnabled(chatId: number): boolean {
     return config.groupOverrides[String(chatId)]?.imageGenerationEnabled === true;
   }
@@ -916,39 +892,6 @@ export function createAiReplyHandler(
       config.groupOverrides[key] = { chatId, whitelisted: false, imageGenerationEnabled: enabled };
     }
     config.onGroupOverrideUpdate?.(chatId, config.groupOverrides[key]!);
-  }
-
-  function getPixaiFullConfig(): { model: string | undefined; pixaiConfig: PixAIConfig } {
-    const imgCfg = config.webToolsConfig?.imageGeneration;
-    return {
-      model: imgCfg?.model,
-      pixaiConfig: imgCfg?.pixaiConfig ?? {},
-    };
-  }
-
-  // PixAI rate limiter (per-bot singleton, must be declared before updatePixaiConfig)
-  const pixaiRateLimiter = new PixAIRateLimiter(
-    config.webToolsConfig?.imageGeneration?.pixaiConfig?.rateLimit,
-  );
-
-  async function updatePixaiConfig(updates: {
-    model?: string;
-    pixaiConfig?: Partial<PixAIConfig>;
-  }): Promise<void> {
-    const imgCfg = config.webToolsConfig?.imageGeneration;
-    if (!imgCfg) return;
-
-    if (updates.model !== undefined) imgCfg.model = updates.model;
-    if (updates.pixaiConfig) {
-      // Deep-merge rateLimit to preserve existing fields
-      const { rateLimit: rlUpdate, ...rest } = updates.pixaiConfig;
-      imgCfg.pixaiConfig = { ...imgCfg.pixaiConfig, ...rest };
-      if (rlUpdate) {
-        imgCfg.pixaiConfig.rateLimit = { ...imgCfg.pixaiConfig.rateLimit, ...rlUpdate };
-        pixaiRateLimiter.updateConfig(rlUpdate);
-      }
-    }
-    await config.onPixaiConfigUpdate?.(updates);
   }
 
   async function updateWebToolApiKey(target: "image" | "search", apiKey: string): Promise<boolean> {
@@ -1072,7 +1015,7 @@ export function createAiReplyHandler(
   ): Promise<boolean> => {
     if (!botApi) return Promise.reject(new Error("Bot API is not ready for timer delivery"));
     const eventDescription = `定时器到期 (ID: ${timerId}): ${reason}\n请根据定时器的用途继续对话。`;
-    return continueChat(botApi, buildContinueChatConfig(timerChatId), {
+    return continueChat(botApi, buildContinueChatConfig(), {
       chatId: timerChatId,
       eventDescription,
       userId: timerUserId,
@@ -1111,17 +1054,9 @@ export function createAiReplyHandler(
     return { custom: { thinking } };
   }
 
-  function buildContinueChatConfig(chatId?: number): ContinueChatConfig {
-    // Telegram: private chat IDs are positive, group/supergroup IDs are negative
-    const imageGenerationAllowed =
-      chatId != null
-        ? canUseImageGeneration(
-            chatId > 0 || knownPrivateChats.has(chatId),
-            config.adminChatIds.includes(chatId),
-            chatId,
-          )
-        : false;
+  function buildContinueChatConfig(): ContinueChatConfig {
     return {
+      botId: config.botId,
       resolveSelection: (selectionChatId) => {
         const selection = selectionRuntime.resolve(selectionChatId);
         return Object.freeze({
@@ -1208,6 +1143,9 @@ export function createAiReplyHandler(
       artworkToolsConfig: config.artworkToolsConfig,
       timeoutConfig: config.timeoutConfig,
       webTools,
+      imageGenerationPort: config.imageGenerationPort,
+      isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
+      usageGovernance: config.usageGovernance,
       dataFiles: config.dataFiles,
       pendingActions,
       pendingAdminActions,
@@ -1222,9 +1160,6 @@ export function createAiReplyHandler(
       onTimerFiredPersist: config.onTimerFiredPersist,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
-      onGenerationTrack: config.onGenerationTrack,
-      imageGenerationAllowed,
-      rateLimiter: pixaiRateLimiter,
       adminIds: config.adminChatIds,
       rssCallbacks: config.rssCallbacks,
     };
@@ -1236,12 +1171,13 @@ export function createAiReplyHandler(
     for (const [chatId, lastTime] of cooldownMap) {
       if (now - lastTime > maxCooldown * 2) cooldownMap.delete(chatId);
     }
+    for (const [key, lastTime] of governanceNoticeAt) {
+      if (now - lastTime > 10 * 60_000) governanceNoticeAt.delete(key);
+    }
     // Clean expired moods
     for (const [chatId, mood] of moodState) {
       if (now - mood.timestamp > MOOD_EXPIRE_MS) moodState.delete(chatId);
     }
-    // Clean rate limiter expired state
-    pixaiRateLimiter.cleanup();
   }, COOLDOWN_CLEANUP_INTERVAL);
   cleanupTimer.unref();
 
@@ -1298,7 +1234,7 @@ export function createAiReplyHandler(
     getAiExecutionStats: () => executionCoordinator.stats,
     getPendingAdminActions: () => pendingAdminActions,
     getPendingGitHubActions: () => pendingAdminActions,
-    getContinueChatConfig: (cid) => buildContinueChatConfig(cid),
+    getContinueChatConfig: () => buildContinueChatConfig(),
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
 
@@ -1486,6 +1422,93 @@ export function createAiReplyHandler(
       return next();
     }
 
+    const usageResource: UsageResource =
+      triggerResult === "random" ? "proactive_reply" : "ai_reply";
+    const usageReservation = await config.usageGovernance?.reserve({
+      botId: config.botId,
+      resource: usageResource,
+      chatKind: isPrivate ? "private" : "group",
+      chatId,
+      userId: usageResource === "proactive_reply" ? undefined : userId,
+    });
+    if (usageReservation && !usageReservation.allowed) {
+      if (shouldPersistPublicGroupMessage) {
+        try {
+          if (config.conversation?.completeTurns) {
+            await config.conversation.completeTurns(
+              chatId,
+              [groupTurnSourceKey],
+              persistedGroupMessageId,
+            );
+          } else {
+            await config.conversation?.completeTurn?.(
+              chatId,
+              groupTurnSourceKey,
+              persistedGroupMessageId,
+            );
+          }
+          void config.conversation?.triggerCompression(chatId);
+        } catch (error) {
+          config.onLog?.({
+            level: "warn",
+            message: "Failed to finalize rate-limited group turn",
+            meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
+          });
+        }
+      }
+      if (usageResource !== "proactive_reply") {
+        const noticeKey = isPrivate
+          ? `private:${chatId}:${userId}:${usageResource}`
+          : `group:${chatId}:${usageResource}`;
+        const now = Date.now();
+        const shouldNotify =
+          isPrivate || now - (governanceNoticeAt.get(noticeKey) ?? 0) >= 5 * 60_000;
+        if (shouldNotify) {
+          governanceNoticeAt.set(noticeKey, now);
+          const retry = usageReservation.retryAt
+            ? `，请在 ${usageReservation.retryAt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 后再试`
+            : "，请稍后再试";
+          await ctx.directlyReply(`本次 AI 回复已触发用量限制${retry}。`).catch(() => {});
+        }
+      }
+      return;
+    }
+    const usageReservationId = usageReservation?.allowed
+      ? usageReservation.reservationId
+      : undefined;
+    let usageFinalization: Promise<void> | undefined;
+    const finalizeUsage = (succeeded: boolean): Promise<void> => {
+      if (!usageReservationId || !config.usageGovernance) return Promise.resolve();
+      if (usageFinalization) return usageFinalization;
+      const operation = succeeded
+        ? config.usageGovernance.settle({
+            reservationId: usageReservationId,
+            botId: config.botId,
+            resource: usageResource,
+          })
+        : config.usageGovernance.refund({
+            reservationId: usageReservationId,
+            botId: config.botId,
+            resource: usageResource,
+          });
+      usageFinalization = operation.then(
+        () => undefined,
+        (error) => {
+          config.onLog?.({
+            level: "error",
+            message: "Failed to finalize AI usage reservation",
+            meta: {
+              chatId,
+              userId,
+              resource: usageResource,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        },
+      );
+      return usageFinalization;
+    };
+
     const readConversation =
       config.conversation &&
       (isPrivate ? conversationCfg.enabled && personalizationEnabled : groupConversationEnabled);
@@ -1514,6 +1537,7 @@ export function createAiReplyHandler(
     ): Promise<void> => {
       // Hoisted so the outer finally can unregister even on early errors.
       let manualAbort: AbortController | null = null;
+      let usageSucceeded = false;
       try {
         if (!executionContext.isCurrent()) throw new AiRunCancelledError();
         const turnMessageConfig = Object.freeze({ ...getEffectiveMessageConfig() });
@@ -1835,6 +1859,7 @@ export function createAiReplyHandler(
           stickerPacks: config.stickerPacks,
           webToolsConfig: config.webToolsConfig,
           webTools,
+          hasImageGeneration: !!config.imageGenerationPort,
           agentToolsConfig: config.agentToolsConfig,
           artworkToolsEnabled: config.artworkToolsConfig?.enabled,
           hasFileTools: !!fileTools,
@@ -1906,21 +1931,26 @@ export function createAiReplyHandler(
           }
         }
 
-        // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
-        injectPixAITool(allTools, {
-          allowed: canUseImageGeneration(isPrivate, isAdmin, chatId),
-          webToolsConfig: config.webToolsConfig,
-          api: ctx.api,
-          chatId,
-          userId: ctx.from?.id,
-          recentBotMessageIds: chatBotMsgIds,
-          timeoutConfig: config.timeoutConfig,
-          onLog: config.onLog,
-          onGenerationTrack: config.onGenerationTrack,
-          rateLimiter: pixaiRateLimiter,
-          adminIds: config.adminChatIds,
-          nsfwChecker: config.nsfwChecker,
-        });
+        if (config.imageGenerationPort) {
+          const isDelegatedGroupAdmin =
+            !isPrivate && !isAdmin
+              ? (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true
+              : false;
+          Object.assign(
+            allTools,
+            createImageGenerationTools({
+              port: config.imageGenerationPort,
+              getActor: () => ({
+                botId: config.botId,
+                chatId,
+                userId,
+                chatType: isPrivate ? "private" : "supergroup",
+                isBotAdmin: isAdmin,
+                isDelegatedGroupAdmin,
+              }),
+            }),
+          );
+        }
 
         // Stream mode and segment mode are mutually exclusive:
         // - Stream: multi_message is removed; private chats use the configured draft format
@@ -2470,6 +2500,8 @@ export function createAiReplyHandler(
             conversationEnabled: !!persistConversation,
           },
         });
+        usageSucceeded =
+          streamStarted || sentViaMultiMessage || sentFinalText || successfulToolEffectCount > 0;
       } catch (err) {
         if (!executionContext.isCurrent()) {
           await ctx.deleteWaiting().catch(() => {});
@@ -2488,6 +2520,7 @@ export function createAiReplyHandler(
           await directlyReplyAndCleanup(ctx, errorReply);
         }
       } finally {
+        await finalizeUsage(usageSucceeded);
         if (manualAbort) activeAbortControllers.delete(manualAbort);
         await rescuePrivateExtras();
       }
@@ -2643,6 +2676,7 @@ export function createAiReplyHandler(
         }
       });
     } catch (error) {
+      await finalizeUsage(false);
       if (error instanceof AiReplyQueueFullError) {
         config.onLog?.({
           level: "warn",
@@ -2694,6 +2728,7 @@ export function createAiReplyHandler(
             });
           },
           async (error) => {
+            await finalizeUsage(false);
             await queueNotice;
             if (error instanceof AiRunCancelledError) {
               config.onLog?.({
@@ -2764,44 +2799,6 @@ export function createAiReplyHandler(
     });
   };
 
-  function buildDirectGenerate() {
-    return (
-      rawPrompt: string,
-      overrides: DrawOverrides,
-      chatId: number,
-      userId?: number,
-    ): Promise<DirectGenerateResult> => {
-      if (!botApi) {
-        return Promise.resolve({ ok: false, error: "Bot 尚未就绪，请稍后再试" });
-      }
-      const imgCfg = config.webToolsConfig?.imageGeneration;
-      if (!imgCfg || imgCfg.provider !== "pixai" || !imgCfg.apiKey) {
-        return Promise.resolve({ ok: false, error: "生图未配置或未启用" });
-      }
-
-      let chatBotMsgIds = recentBotMessageIds.get(chatId);
-      if (!chatBotMsgIds) {
-        chatBotMsgIds = [];
-        recentBotMessageIds.set(chatId, chatBotMsgIds);
-      }
-      while (chatBotMsgIds.length > MAX_RECENT_BOT_MESSAGES) chatBotMsgIds.shift();
-
-      return directPixAIGenerate(rawPrompt, overrides, {
-        getImageGenConfig: () => imgCfg,
-        api: botApi,
-        chatId,
-        userId,
-        recentBotMessageIds: chatBotMsgIds,
-        timeoutConfig: config.timeoutConfig,
-        onLog: config.onLog,
-        onGenerationTrack: config.onGenerationTrack,
-        rateLimiter: pixaiRateLimiter,
-        adminIds: config.adminChatIds,
-        nsfwChecker: config.nsfwChecker,
-      });
-    };
-  }
-
   let destroyStarted = false;
   let destroyPromise: Promise<void> | undefined;
   function destroy(): Promise<void> {
@@ -2814,6 +2811,7 @@ export function createAiReplyHandler(
       pendingActions.destroy();
       pendingAdminActions.destroy();
       cooldownMap.clear();
+      governanceNoticeAt.clear();
       recentReceivedFiles.clear();
       recentBotMessageIds.clear();
       moodState.clear();
@@ -2872,12 +2870,7 @@ export function createAiReplyHandler(
     setRichMessageEnabled,
     getImageGenEnabled,
     setImageGenEnabled,
-    getPixaiFullConfig,
-    updatePixaiConfig,
     updateWebToolApiKey,
-    getPixaiRateLimitStats: () => pixaiRateLimiter.getStats(),
-    canUseImageGeneration,
-    directGenerate: buildDirectGenerate(),
     fireTimerEvent: onTimerFired,
     isAiEnabled,
     setAiEnabled,

@@ -218,7 +218,11 @@ describe("createBot command registry", () => {
       supports_join_request_queries: false,
     };
     const activeNames = getActiveBotCommands(bot).map(({ command }) => command);
-    expect(activeNames).toEqual(TELEGRAM_COMMAND_CATALOG.map(({ command }) => command));
+    expect(activeNames).toEqual(
+      TELEGRAM_COMMAND_CATALOG.filter(
+        ({ command }) => !["image", "quota", "draw"].includes(command),
+      ).map(({ command }) => command),
+    );
 
     await bot.handleUpdate(
       groupMessage({

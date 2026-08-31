@@ -10,13 +10,13 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
-  PixAIGenerationRecord,
+  ImageGenerationPort,
   TimeoutConfig,
   TokenUsageRecord,
+  UsageGovernancePort,
   UserPrivacyCallbacks,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
-import type { PixAIRateLimiter } from "./pixai-rate-limiter.js";
 import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
@@ -31,9 +31,9 @@ import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
 import {
   createBehaviorTools,
+  createImageGenerationTools,
   createRssTools,
   createTelegramTools,
-  injectPixAITool,
 } from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
@@ -79,6 +79,7 @@ export interface ContinueChatRunContext {
 }
 
 export interface ContinueChatConfig {
+  botId: string;
   resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
   isAiDisabled?: () => boolean;
   registerAbortController?: (c: AbortController) => void;
@@ -102,6 +103,9 @@ export interface ContinueChatConfig {
   artworkToolsConfig?: ArtworkToolsConfig;
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
+  imageGenerationPort?: ImageGenerationPort;
+  isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
+  usageGovernance?: UsageGovernancePort;
   dataFiles?: DataFilesConfig;
   pendingActions: PendingActionRegistry;
   pendingAdminActions: PendingAdminActionRegistry;
@@ -121,9 +125,6 @@ export interface ContinueChatConfig {
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
-  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
-  imageGenerationAllowed?: boolean;
-  rateLimiter?: PixAIRateLimiter;
   adminIds?: number[];
   rssCallbacks?: Omit<
     RssToolsOptions,
@@ -173,6 +174,41 @@ export async function continueChat(
     return false;
   }
 
+  // Admit continuations before they enter the per-chat execution queue. Only the
+  // scheduler's concurrency policy is allowed to queue work; usage ceilings reject
+  // immediately and the reservation spans cancellation/privacy re-checks as well.
+  if (config.isAiDisabled?.()) {
+    config.onLog?.({
+      level: "info",
+      message: "continueChat skipped — AI disabled",
+      meta: { chatId: event.chatId },
+    });
+    requireContinuationDelivery(event, "AI is disabled");
+    return false;
+  }
+  const usageReservation = await config.usageGovernance?.reserve({
+    botId: config.botId,
+    resource: "ai_reply",
+    chatKind: event.chatId > 0 ? "private" : "group",
+    chatId: event.chatId,
+    // System continuations count against Bot/chat ceilings, never an individual user.
+    userId: undefined,
+  });
+  if (usageReservation && !usageReservation.allowed) {
+    config.onLog?.({
+      level: "info",
+      message: "continueChat skipped by usage governance",
+      meta: {
+        chatId: event.chatId,
+        reason: usageReservation.reason,
+        scope: usageReservation.scope,
+      },
+    });
+    requireContinuationDelivery(event, "usage limit reached");
+    return false;
+  }
+  const usageReservationId = usageReservation?.allowed ? usageReservation.reservationId : undefined;
+
   const runWithPrivacy = (executionContext?: ContinueChatRunContext): Promise<boolean> => {
     if (eventUserId === undefined || !privacy) {
       return doContinueChat(api, executionConfig, event, executionContext);
@@ -194,12 +230,41 @@ export async function continueChat(
     });
   };
 
-  if (config.runWithExecution) {
-    return config.runWithExecution({ chatId: event.chatId, userId: event.userId }, runWithPrivacy);
+  let succeeded = false;
+  try {
+    const result = config.runWithExecution
+      ? await config.runWithExecution(
+          { chatId: event.chatId, userId: event.userId },
+          runWithPrivacy,
+        )
+      : await withChatLock(event.chatId, () => runWithPrivacy());
+    succeeded = result;
+    return result;
+  } finally {
+    if (usageReservationId && config.usageGovernance) {
+      const operation = succeeded
+        ? config.usageGovernance.settle({
+            reservationId: usageReservationId,
+            botId: config.botId,
+            resource: "ai_reply",
+          })
+        : config.usageGovernance.refund({
+            reservationId: usageReservationId,
+            botId: config.botId,
+            resource: "ai_reply",
+          });
+      await operation.catch((error) => {
+        config.onLog?.({
+          level: "error",
+          message: "Failed to finalize continuation usage reservation",
+          meta: {
+            chatId: event.chatId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+      });
+    }
   }
-
-  // Backward-compatible fallback preserves the same ownership-before-privacy lock order.
-  return withChatLock(event.chatId, () => runWithPrivacy());
 }
 
 async function doContinueChat(
@@ -213,16 +278,6 @@ async function doContinueChat(
   const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
   const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
 
-  // Global AI kill switch check — skip entirely if /stop is active
-  if (config.isAiDisabled?.()) {
-    config.onLog?.({
-      level: "info",
-      message: "continueChat skipped — AI disabled",
-      meta: { chatId },
-    });
-    requireContinuationDelivery(event, "AI is disabled");
-    return false;
-  }
   const selection = config.resolveSelection(chatId);
   let successfulToolEffectCount = 0;
 
@@ -261,6 +316,7 @@ async function doContinueChat(
       moodState: config.moodState,
       webToolsConfig: config.webToolsConfig,
       webTools: config.webTools,
+      hasImageGeneration: !!config.imageGenerationPort,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsEnabled: config.artworkToolsConfig?.enabled,
       hasFileTools: !!config.dataFiles,
@@ -375,20 +431,29 @@ async function doContinueChat(
     if (memoryTools) Object.assign(allTools, memoryTools);
     if (botMemoryTools) Object.assign(allTools, botMemoryTools);
 
-    // PixAI image generation (per-request, fire-and-forget) + permission control + rate limiting
-    injectPixAITool(allTools, {
-      allowed: !!config.imageGenerationAllowed,
-      webToolsConfig: config.webToolsConfig,
-      api,
-      chatId,
-      userId: event.userId,
-      recentBotMessageIds: chatBotMsgIds,
-      timeoutConfig: config.timeoutConfig,
-      onLog: config.onLog,
-      onGenerationTrack: config.onGenerationTrack,
-      rateLimiter: config.rateLimiter,
-      adminIds: config.adminIds,
-    });
+    if (config.imageGenerationPort && event.userId !== undefined) {
+      const eventUserId = event.userId;
+      const isPrivate = chatId > 0;
+      const isBotAdmin = config.adminIds?.includes(eventUserId) === true;
+      const isDelegatedGroupAdmin =
+        !isPrivate && !isBotAdmin
+          ? (await config.isDelegatedGroupAdmin?.(chatId, eventUserId)) === true
+          : false;
+      Object.assign(
+        allTools,
+        createImageGenerationTools({
+          port: config.imageGenerationPort,
+          getActor: () => ({
+            botId: config.botId,
+            chatId,
+            userId: eventUserId,
+            chatType: isPrivate ? "private" : "supergroup",
+            isBotAdmin,
+            isDelegatedGroupAdmin,
+          }),
+        }),
+      );
+    }
 
     // Artwork tools
     if (config.artworkToolsConfig?.enabled) {
@@ -729,7 +794,7 @@ async function doContinueChat(
         multiMessageSentCount: deliveredMultiMessages.length,
       },
     });
-    return visibleDeliveryCount > 0;
+    return visibleDeliveryCount > 0 || successfulToolEffectCount > 0;
   } catch (err) {
     config.onLog?.({
       level: "error",

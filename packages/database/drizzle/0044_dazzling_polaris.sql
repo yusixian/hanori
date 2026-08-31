@@ -1,0 +1,2 @@
+ALTER TABLE "image_generations" DROP CONSTRAINT "image_generations_state_check";--> statement-breakpoint
+ALTER TABLE "image_generations" ADD CONSTRAINT "image_generations_state_check" CHECK ("image_generations"."state" in ('preparing', 'awaiting_approval', 'queued', 'running', 'succeeded', 'failed', 'waiting_stopped', 'cancel_rejected', 'cancel_requested', 'attention_required', 'cancelled'));

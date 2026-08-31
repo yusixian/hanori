@@ -2,7 +2,12 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { Database } from "@cos-tool-bot/database";
 import { chatSummaries, conversationMessages, tokenUsage } from "@cos-tool-bot/database";
-import type { AiConfigStored, SummaryMode, SummaryTrigger } from "@cos-tool-bot/shared";
+import type {
+  AiConfigStored,
+  SummaryMode,
+  SummaryTrigger,
+  UsageGovernancePort,
+} from "@cos-tool-bot/shared";
 import { generateText } from "ai";
 import { and, between, desc, eq, inArray } from "drizzle-orm";
 import { countTokens } from "gpt-tokenizer";
@@ -22,7 +27,12 @@ import {
 } from "./summary-prompts.js";
 import { conversationMessageOrderId } from "./conversation-store.js";
 
-export type RunError = "too_few_messages" | "llm_failed" | "disabled" | "no_provider";
+export type RunError =
+  | "too_few_messages"
+  | "llm_failed"
+  | "disabled"
+  | "no_provider"
+  | "rate_limited";
 
 export const SUMMARY_INPUT_TOKEN_BUDGET = 24_000;
 const SUMMARY_CHUNK_OUTPUT_TOKENS = 2_048;
@@ -205,6 +215,7 @@ export class SummaryRunner {
     private logger: Logger,
     private encryptionKey: string,
     private getAiConfig: (botId: string) => Promise<AiConfigStored | null>,
+    private usageGovernance?: UsageGovernancePort,
   ) {}
 
   async run(opts: RunOptions): Promise<RunResult> {
@@ -315,6 +326,20 @@ export class SummaryRunner {
       cfg.summaryConfig?.systemPrompt ??
       DEFAULT_SUMMARY_SYSTEM_PROMPT;
 
+    const usageReservation = await this.usageGovernance?.reserve({
+      botId: opts.botId,
+      resource: "ai_reply",
+      chatKind: "group",
+      chatId: opts.chatId,
+      userId: undefined,
+    });
+    if (usageReservation && !usageReservation.allowed) {
+      return { ok: false, error: "rate_limited", messageCount: msgs.length };
+    }
+    const usageReservationId = usageReservation?.allowed
+      ? usageReservation.reservationId
+      : undefined;
+
     const chunks = chunkSummaryMessages(
       msgs.map((message) => ({
         userName: message.userName,
@@ -377,6 +402,21 @@ export class SummaryRunner {
       });
       await this.writeTokenUsage(opts, modelId, aggregateUsage, durationMs);
 
+      if (usageReservationId && this.usageGovernance) {
+        await this.usageGovernance
+          .settle({
+            reservationId: usageReservationId,
+            botId: opts.botId,
+            resource: "ai_reply",
+          })
+          .catch((error) =>
+            this.logger.error(
+              { error, botId: opts.botId, chatId: opts.chatId },
+              "Failed to settle summary usage",
+            ),
+          );
+      }
+
       return {
         ok: true,
         summaryId: sumRow.id,
@@ -385,6 +425,20 @@ export class SummaryRunner {
         messageCount: msgs.length,
       };
     } catch (err) {
+      if (usageReservationId && this.usageGovernance) {
+        await this.usageGovernance
+          .refund({
+            reservationId: usageReservationId,
+            botId: opts.botId,
+            resource: "ai_reply",
+          })
+          .catch((error) =>
+            this.logger.error(
+              { error, botId: opts.botId, chatId: opts.chatId },
+              "Failed to refund summary usage",
+            ),
+          );
+      }
       const durationMs = Date.now() - startedAt;
       const detail = err instanceof Error ? err.message : String(err);
       this.logger.warn({ err, botId: opts.botId, chatId: opts.chatId }, "Summary LLM call failed");

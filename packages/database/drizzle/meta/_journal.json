@@ -302,6 +302,20 @@
       "when": 1785243461161,
       "tag": "0042_shocking_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788191105956,
+      "tag": "0043_crazy_tusk",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788193954583,
+      "tag": "0044_dazzling_polaris",
+      "breakpoints": true
     }
   ]
 }

@@ -1,7 +1,6 @@
 import type {
   BotLogEntry,
   ConversationCallbacks,
-  PixAIGenerationRecord,
   TokenUsageRecord,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
@@ -9,14 +8,17 @@ import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bo
 import { autoRetry } from "@grammyjs/auto-retry";
 import { sequentialize } from "@grammyjs/runner";
 import { stream } from "@grammyjs/stream";
-import { Bot, GrammyError, HttpError } from "grammy";
+import { Bot, GrammyError, HttpError, InputFile, type Api } from "grammy";
+import type { InputMediaPhoto } from "grammy/types";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
 import { createApiKeyCommand } from "./commands/api-key.js";
 import { createClearCommand } from "./commands/clear.js";
 import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
-import { createDrawCommand } from "./commands/draw.js";
+import { createDrawV2Command } from "./commands/draw-v2.js";
+import { createImageCommand } from "./commands/image.js";
+import { createQuotaCommand, type QuotaCommandConfig } from "./commands/quota.js";
 import { createHelpCommand } from "./commands/help.js";
 import { createMd2tgCommand } from "./commands/md2tg.js";
 import { createModelCommand } from "./commands/model.js";
@@ -24,7 +26,6 @@ import { createProviderCommand } from "./commands/provider.js";
 import { createPrivacyCommand } from "./commands/privacy.js";
 import { createImageGenCommand } from "./commands/imagegen.js";
 import { type McpCommandConfig, createMcpCommand } from "./commands/mcp.js";
-import { createImgCfgCommand } from "./commands/imgcfg.js";
 import { createReplyModeCommand } from "./commands/reply-mode.js";
 import { createRichTextCommand } from "./commands/rich-text.js";
 import { createRestartCommand } from "./commands/restart.js";
@@ -57,7 +58,7 @@ import { AiIngressLock } from "./services/ai-ingress-lock.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
-  "adminChatIds" | "onLog" | "onTokenUsage" | "onGenerationTrack" | "token" | "aiSelectionMutations"
+  "adminChatIds" | "onLog" | "onTokenUsage" | "token" | "aiSelectionMutations"
 >;
 
 export interface BotAiSelectionRuntime {
@@ -105,7 +106,6 @@ export interface BotConfig {
   onBackup?: () => Promise<BackupResult>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
-  onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
   timerCallbacks?: TimerCallbacks;
   aiSelectionCallbacks?: AiSelectionCallbacks;
   mcpCallbacks?: McpCommandConfig;
@@ -113,8 +113,29 @@ export interface BotConfig {
   conversation?: ConversationCallbacks;
   privacy?: UserPrivacyCallbacks;
   summary?: SummaryCallbacks;
+  quota?: QuotaCommandConfig;
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
+}
+
+export async function sendLocalImageFiles(
+  api: Api,
+  chatId: number,
+  files: string[],
+  caption: string,
+): Promise<number[]> {
+  if (files.length === 0) return [];
+  if (files.length === 1) {
+    const message = await api.sendPhoto(chatId, new InputFile(files[0]!), { caption });
+    return [message.message_id];
+  }
+  const media: InputMediaPhoto[] = files.map((file, index) => ({
+    type: "photo",
+    media: new InputFile(file),
+    ...(index === 0 ? { caption } : {}),
+  }));
+  const messages = await api.sendMediaGroup(chatId, media);
+  return messages.map((message) => message.message_id);
 }
 
 const botDisposers = new WeakMap<object, () => void | Promise<void>>();
@@ -205,19 +226,8 @@ export function createBot(config: BotConfig) {
   let aiSetImageGenEnabled:
     | ReturnType<typeof createAiReplyHandler>["setImageGenEnabled"]
     | undefined;
-  let aiGetPixaiFullConfig:
-    | ReturnType<typeof createAiReplyHandler>["getPixaiFullConfig"]
-    | undefined;
-  let aiUpdatePixaiConfig: ReturnType<typeof createAiReplyHandler>["updatePixaiConfig"] | undefined;
   let aiUpdateWebToolApiKey:
     | ReturnType<typeof createAiReplyHandler>["updateWebToolApiKey"]
-    | undefined;
-  let aiGetPixaiRateLimitStats:
-    | ReturnType<typeof createAiReplyHandler>["getPixaiRateLimitStats"]
-    | undefined;
-  let aiDirectGenerate: ReturnType<typeof createAiReplyHandler>["directGenerate"] | undefined;
-  let aiCanUseImageGeneration:
-    | ReturnType<typeof createAiReplyHandler>["canUseImageGeneration"]
     | undefined;
   let aiSetAiEnabled: ReturnType<typeof createAiReplyHandler>["setAiEnabled"] | undefined;
   let aiWaitForUserProfileUpdates:
@@ -248,7 +258,6 @@ export function createBot(config: BotConfig) {
         adminChatIds,
         onLog: config.onLog,
         onTokenUsage: config.onTokenUsage,
-        onGenerationTrack: config.onGenerationTrack,
         onTimerCreate: config.timerCallbacks?.onTimerCreate,
         onTimerCancel: config.timerCallbacks?.onTimerCancel,
         onTimerFiredPersist: config.timerCallbacks?.onTimerFired,
@@ -273,12 +282,7 @@ export function createBot(config: BotConfig) {
     aiSetRichMessageEnabled = result.setRichMessageEnabled;
     aiGetImageGenEnabled = result.getImageGenEnabled;
     aiSetImageGenEnabled = result.setImageGenEnabled;
-    aiGetPixaiFullConfig = result.getPixaiFullConfig;
-    aiUpdatePixaiConfig = result.updatePixaiConfig;
     aiUpdateWebToolApiKey = result.updateWebToolApiKey;
-    aiGetPixaiRateLimitStats = result.getPixaiRateLimitStats;
-    aiDirectGenerate = result.directGenerate;
-    aiCanUseImageGeneration = result.canUseImageGeneration;
     aiSetAiEnabled = result.setAiEnabled;
     captureAiTurnCoalescingAdmission = result.captureTurnCoalescingAdmission;
     stopAiTurnCoalescing = result.stopTurnCoalescing;
@@ -470,38 +474,67 @@ export function createBot(config: BotConfig) {
     );
   }
 
-  // Register /imgcfg command (admin only, requires pixai provider)
-  if (
-    config.aiReply?.webToolsConfig?.imageGeneration?.provider === "pixai" &&
-    aiGetPixaiFullConfig &&
-    aiUpdatePixaiConfig
-  ) {
+  const imagePort = config.aiReply?.imageGenerationPort;
+  const buildImageActor = imagePort
+    ? async (chatId: number, userId: number, chatType: "private" | "group" | "supergroup") => {
+        const isBotAdmin = adminChatIds.includes(userId);
+        return {
+          botId: config.botId,
+          chatId,
+          userId,
+          chatType,
+          isBotAdmin,
+          isDelegatedGroupAdmin:
+            chatType !== "private" && !isBotAdmin
+              ? (await config.aiReply?.isDelegatedGroupAdmin?.(chatId, userId)) === true
+              : false,
+        } as const;
+      }
+    : undefined;
+  if (imagePort && buildImageActor) {
     commandRegistry.register(
-      "imgcfg",
-      authGuard,
-      createImgCfgCommand({
-        getFullConfig: aiGetPixaiFullConfig,
-        updateConfig: aiUpdatePixaiConfig,
-        getRateLimitStats: aiGetPixaiRateLimitStats,
+      "draw",
+      createDrawV2Command({
+        port: imagePort,
+        getActor: (ctx) =>
+          buildImageActor(
+            ctx.chat!.id,
+            ctx.from!.id,
+            ctx.chat!.type === "private"
+              ? "private"
+              : ctx.chat!.type === "group"
+                ? "group"
+                : "supergroup",
+          ),
+      }),
+    );
+    commandRegistry.register(
+      "image",
+      createImageCommand({
+        listPresets: async (input) =>
+          imagePort.listPresets(
+            await buildImageActor(input.chatId, input.userId, input.chatType),
+            input.purpose,
+          ),
+        getGeneration: async (input) =>
+          imagePort.get(
+            await buildImageActor(input.chatId, input.userId, input.chatType),
+            input.generationId,
+          ),
+        cancelGeneration: async (input) => {
+          const result = await imagePort.cancel(
+            await buildImageActor(input.chatId, input.userId, input.chatType),
+            input.generationId,
+          );
+          return result.ok
+            ? { ok: true, generation: result.generation }
+            : { ok: false, generation: result.generation, message: result.message };
+        },
       }),
     );
   }
 
-  // Register /draw command (requires pixai provider + directGenerate)
-  if (
-    config.aiReply?.webToolsConfig?.imageGeneration?.provider === "pixai" &&
-    aiDirectGenerate &&
-    aiCanUseImageGeneration
-  ) {
-    commandRegistry.register(
-      "draw",
-      createDrawCommand({
-        directGenerate: aiDirectGenerate,
-        canUseImageGeneration: aiCanUseImageGeneration,
-        adminIds: adminChatIds,
-      }),
-    );
-  }
+  if (config.quota) commandRegistry.register("quota", createQuotaCommand(config.quota));
 
   if (config.summary) {
     commandRegistry.register("summary", createSummaryCommand(config.summary));

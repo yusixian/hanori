@@ -25,6 +25,7 @@ import {
   Plug,
   Rss,
   ScrollText,
+  ShieldCheck,
   Settings,
   Users,
   FileText,
@@ -83,6 +84,11 @@ export function AppLayout() {
         { label: t("navigation.overview"), path: `/bots/${botId}`, icon: Bot },
         { label: t("navigation.edit"), path: `/bots/${botId}/edit`, icon: Pencil },
         { label: t("navigation.aiSettings"), path: `/bots/${botId}/ai`, icon: Brain },
+        {
+          label: t("navigation.governance"),
+          path: `/bots/${botId}/governance`,
+          icon: ShieldCheck,
+        },
         { label: t("navigation.debugger"), path: `/bots/${botId}/debugger`, icon: Bug },
         {
           label: t("navigation.conversations"),

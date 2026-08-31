@@ -267,6 +267,13 @@ COMPOSE_ENVIRONMENT="$(compose_environment)"
 validate_optional_github_app "$COMPOSE_ENVIRONMENT"
 detect_coding_profile "$COMPOSE_ENVIRONMENT"
 
+LEGACY_PIXAI_PENDING="$("${COMPOSE[@]}" exec -T db \
+  psql -U bot -d cos_tool_bot -Atc \
+  "SELECT CASE WHEN to_regclass('public.pixai_generations') IS NULL THEN 0 ELSE (SELECT count(*) FROM pixai_generations WHERE status = 'pending') END" \
+  2>/dev/null)" || fail "无法检查旧 PixAI pending 任务，部署已停止。"
+[[ "$LEGACY_PIXAI_PENDING" == "0" ]] || \
+  fail "检测到 $LEGACY_PIXAI_PENDING 个旧 PixAI pending 任务。请先处理这些任务，再部署 MCP 生图版本。"
+
 step 5 "构建应用与已启用的附加服务"
 BUILD_SERVICES=(app)
 if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then

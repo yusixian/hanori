@@ -19,7 +19,9 @@ describe("trackSuccessfulToolEffects", () => {
         web_search: executable({ result: "read only" }),
         list_rss_feeds: executable({ feeds: [] }),
         delegate_task: executable({ agent: "translator", result: "translated", steps: 1 }),
-        generate_image: executable({ success: true, generationId: "generation-1" }),
+        create_image: executable({ accepted: true, generation: { id: "generation-1" } }),
+        failed_create_image: executable({ accepted: false, reason: "rate_limited" }),
+        failed_cancel_image: executable({ ok: false, reason: "provider_rejected" }),
         mark_rss_read: executable({ success: true, count: 3 }),
         write_file: executable({ success: true, path: "report.md" }),
         save_memory: executable({ success: true, id: "memory-1" }),
@@ -35,7 +37,9 @@ describe("trackSuccessfulToolEffects", () => {
     await tools.web_search!.execute!({}, {} as never);
     await tools.list_rss_feeds!.execute!({}, {} as never);
     await tools.delegate_task!.execute!({}, {} as never);
-    await tools.generate_image!.execute!({}, {} as never);
+    await tools.create_image!.execute!({}, {} as never);
+    await tools.failed_create_image!.execute!({}, {} as never);
+    await tools.failed_cancel_image!.execute!({}, {} as never);
     await tools.mark_rss_read!.execute!({}, {} as never);
     await tools.write_file!.execute!({}, {} as never);
     await tools.save_memory!.execute!({}, {} as never);
@@ -44,7 +48,7 @@ describe("trackSuccessfulToolEffects", () => {
       ["send_photo"],
       ["set_timer"],
       ["send_poll"],
-      ["generate_image"],
+      ["create_image"],
       ["mark_rss_read"],
       ["write_file"],
       ["save_memory"],

@@ -21,6 +21,8 @@ export const VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "pin_message",
   "set_mood",
   "send_artwork",
+  "create_image",
+  "cancel_image_generation",
 ]);
 
 // Only tools that are known to be safe to replay belong here. New and dynamic
@@ -39,6 +41,8 @@ export const READ_ONLY_TOOL_NAMES = new Set([
   "search_history",
   "recall_memories",
   "fetch_artwork_info",
+  "list_image_presets",
+  "get_image_generation",
   "github_repository",
   "github_read_file",
   "github_list_tree",
@@ -50,7 +54,13 @@ export const READ_ONLY_TOOL_NAMES = new Set([
 function succeeded(output: unknown): boolean {
   if (output === null || typeof output !== "object" || Array.isArray(output)) return true;
   const record = output as Record<string, unknown>;
-  return !("error" in record) && record["blocked"] !== true && record["success"] !== false;
+  return (
+    !("error" in record) &&
+    record["blocked"] !== true &&
+    record["success"] !== false &&
+    record["accepted"] !== false &&
+    record["ok"] !== false
+  );
 }
 
 export function trackSuccessfulToolEffects(

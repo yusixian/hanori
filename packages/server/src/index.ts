@@ -1,5 +1,7 @@
 import { createDb, runMigrations } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
+import path from "node:path";
+import { getDataDir } from "@cos-tool-bot/shared";
 import { serve } from "@hono/node-server";
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -34,6 +36,10 @@ import { GroupConfigService } from "./services/group-config-service.js";
 import { ChatAiSelectionService } from "./services/chat-ai-selection-service.js";
 import { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import { BotSettingsService } from "./services/bot-settings-service.js";
+import { UsageGovernor } from "./services/usage-governor.js";
+import { ImageMcpConnectionService } from "./services/image-mcp-connection-service.js";
+import { ImageGenerationService } from "./services/image-generation-service.js";
+import { BotConfiguredGeneralImageBackend } from "./services/general-image-backend.js";
 import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
 
 export type { AppType } from "./app.js";
@@ -143,6 +149,38 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const usageGovernor = new UsageGovernor(db);
+const imageMcpConnectionService = new ImageMcpConnectionService({
+  db,
+  encryptionKey: env.ENCRYPTION_KEY,
+  baseURL: env.BETTER_AUTH_URL,
+  logger,
+  environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
+  endpointOverride: env.PIXAI_MCP_URL || undefined,
+});
+const imageGenerationService = new ImageGenerationService({
+  db,
+  usageGovernor,
+  pixai: imageMcpConnectionService.adapter,
+  artifacts: imageMcpConnectionService.artifacts,
+  generalBackend: new BotConfiguredGeneralImageBackend(db),
+  logger,
+  isGroupEnabled: async (botId, chatId) => {
+    const [row] = await db.select({ aiConfig: bots.aiConfig }).from(bots).where(eq(bots.id, botId));
+    return row?.aiConfig?.groupOverrides?.[String(chatId)]?.imageGenerationEnabled === true;
+  },
+  delivery: {
+    deliver: ({ botId, chatId, prompt, localFiles }) =>
+      botPool.sendImageFiles(
+        botId,
+        chatId,
+        localFiles.map((file) => path.join(getDataDir(botId), "generations", file)),
+        prompt.length > 200 ? `${prompt.slice(0, 200)}…` : prompt,
+      ),
+  },
+});
+botPool.setImageGenerationPort(imageGenerationService);
+botPool.setUsageGovernance(usageGovernor);
 const telegramDirectoryService = new TelegramDirectoryService(db);
 const chatIdentityMigrationService = new ChatIdentityMigrationService(db);
 const telegramRuntime = new BotPoolTelegramRuntimeAdapter(botPool);
@@ -263,16 +301,22 @@ botPool.setMcpClientManager(mcpClientManager);
 // Summary Services
 const summaryConfigService = new SummaryConfigService(db);
 
-const summaryRunner = new SummaryRunner(db, logger, env.ENCRYPTION_KEY, async (botId) => {
-  const [row] = await db
-    .select({ aiConfig: bots.aiConfig, isActive: bots.isActive })
-    .from(bots)
-    .where(eq(bots.id, botId));
-  if (!row?.isActive) return null;
-  const cfg = row.aiConfig;
-  if (!cfg) return null;
-  return migrateAiConfig(cfg);
-});
+const summaryRunner = new SummaryRunner(
+  db,
+  logger,
+  env.ENCRYPTION_KEY,
+  async (botId) => {
+    const [row] = await db
+      .select({ aiConfig: bots.aiConfig, isActive: bots.isActive })
+      .from(bots)
+      .where(eq(bots.id, botId));
+    if (!row?.isActive) return null;
+    const cfg = row.aiConfig;
+    if (!cfg) return null;
+    return migrateAiConfig(cfg);
+  },
+  usageGovernor,
+);
 
 const summaryService = new ChatSummaryService(
   db,
@@ -319,6 +363,9 @@ const app = createApp({
   chatAiSelectionService,
   botLifecycleService,
   botSettingsService,
+  imageGenerationService,
+  imageMcpConnectionService,
+  usageGovernor,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -334,9 +381,24 @@ serve(
 
 // Connect MCP servers before bots so tools are available at bot startup
 await mcpClientManager.connectAll();
+await imageMcpConnectionService.initialize();
+await usageGovernor.reclaimExpiredReservations();
+await usageGovernor.pruneExpiredDetails();
 
 // Start all active bots
 await botPool.startAll();
+await imageGenerationService.recoverPending();
+
+const usageGovernanceCleanupTimer = setInterval(
+  () => void usageGovernor.pruneExpiredDetails().catch((error) => logger.error(error)),
+  24 * 60 * 60 * 1000,
+);
+usageGovernanceCleanupTimer.unref();
+const usageGovernanceReclaimTimer = setInterval(
+  () => void usageGovernor.reclaimExpiredReservations().catch((error) => logger.error(error)),
+  60_000,
+);
+usageGovernanceReclaimTimer.unref();
 
 // Start RSS feed service (after bots so digest triggers have handlers)
 rssFeedService.start();
@@ -365,6 +427,9 @@ for (const [name, svc] of scheduledServices) {
 const shutdown = async (signal: string) => {
   await dbLogger.info(`[${signal}] Shutting down...`);
   await mcpClientManager.destroyAll();
+  await imageMcpConnectionService.close();
+  clearInterval(usageGovernanceCleanupTimer);
+  clearInterval(usageGovernanceReclaimTimer);
   rssFeedService.stop();
   summaryService.stop();
   timerRegistry.destroy();

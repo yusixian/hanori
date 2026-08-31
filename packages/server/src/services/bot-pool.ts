@@ -8,13 +8,15 @@ import type {
   BotTimerHandlers,
   TelegramObservationCallbacks,
 } from "@cos-tool-bot/bot";
-import { NsfwChecker, removeProfileAvatarFile } from "@cos-tool-bot/bot";
+import { removeProfileAvatarFile } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
   EMBEDDING_DIMENSIONS,
   bots,
   mcpServers,
+  miniAppChatGrants,
+  miniAppOperatorGrants,
   pixaiGenerations,
   tokenUsage,
 } from "@cos-tool-bot/database";
@@ -25,12 +27,17 @@ import type {
   IBotManager,
   MemoryCallbacks,
   ModelEntry,
+  ImageGenerationPort,
   PixAIConfig,
   PixAIGenerationRecord,
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
   TokenUsageRecord,
+  UsageGovernancePort,
+  UsageResource,
+  UsageScope,
+  UsageWindow,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import {
@@ -101,6 +108,26 @@ const GENERATION_RECOVERY_BATCH_SIZE = GENERATION_RECOVERY_CONCURRENCY;
 const GENERATION_RECOVERY_SWEEP_INTERVAL_MS = 60_000;
 const GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
 
+function usageSnapshotLabel(resource: UsageResource, scope: UsageScope): string {
+  const resourceLabel = resource === "image" ? "图片生成" : "AI 回复";
+  const scopeLabel =
+    scope === "bot"
+      ? "Bot"
+      : scope === "chat"
+        ? "当前群聊"
+        : scope === "user_global"
+          ? "你的跨群用量"
+          : "你在当前群聊";
+  return `${resourceLabel} · ${scopeLabel}`;
+}
+
+function usageWindowLabel(window: UsageWindow): string {
+  if (window === "minute") return "近 1 分钟";
+  if (window === "hour") return "近 1 小时";
+  if (window === "day") return "今日";
+  return "本月";
+}
+
 function toBotAiSelectionSnapshot(snapshot: ChatAiSelectionRuntimeSnapshot): AiSelectionSnapshot {
   return {
     global: {
@@ -169,6 +196,8 @@ export class BotPool {
   private backupService?: BackupService;
   private rssFeedService?: RssFeedService;
   private mcpClientManager?: McpClientManager;
+  private imageGenerationPort?: ImageGenerationPort;
+  private usageGovernance?: UsageGovernancePort;
   private timerRegistry: TimerRegistry;
   private summaryService?: ChatSummaryService;
   private summaryConfigService?: SummaryConfigService;
@@ -207,6 +236,14 @@ export class BotPool {
 
   setMcpClientManager(manager: McpClientManager) {
     this.mcpClientManager = manager;
+  }
+
+  setImageGenerationPort(port: ImageGenerationPort) {
+    this.imageGenerationPort = port;
+  }
+
+  setUsageGovernance(port: UsageGovernancePort) {
+    this.usageGovernance = port;
   }
 
   setRssFeedService(service: RssFeedService) {
@@ -259,6 +296,51 @@ export class BotPool {
       return;
     }
     await manager.sendHtml(chatId, html);
+  }
+
+  async sendImageFiles(
+    botId: string,
+    chatId: number,
+    files: string[],
+    caption: string,
+  ): Promise<number[]> {
+    const manager = this.managers.get(botId);
+    if (!manager) throw new Error(`Bot ${botId} is not running`);
+    if (!(manager instanceof BotManager)) throw new Error(`Bot ${botId} does not support images`);
+    return manager.sendImageFiles(chatId, files, caption);
+  }
+
+  private async isDelegatedGroupAdmin(
+    botId: string,
+    chatId: number,
+    userId: number,
+  ): Promise<boolean> {
+    const [grant] = await this.db
+      .select({ userId: miniAppOperatorGrants.telegramUserId })
+      .from(miniAppOperatorGrants)
+      .innerJoin(
+        miniAppChatGrants,
+        and(
+          eq(miniAppChatGrants.botId, miniAppOperatorGrants.botId),
+          eq(miniAppChatGrants.chatId, chatId),
+        ),
+      )
+      .where(
+        and(
+          eq(miniAppOperatorGrants.botId, botId),
+          eq(miniAppOperatorGrants.telegramUserId, userId),
+        ),
+      )
+      .limit(1);
+    if (!grant) return false;
+    const manager = this.managers.get(botId);
+    if (!(manager instanceof BotManager) || manager.status !== "running") return false;
+    try {
+      const role = await manager.getTelegramMemberRole(chatId, userId);
+      return role === "creator" || role === "administrator";
+    } catch {
+      return false;
+    }
   }
 
   async sendRichMessage(
@@ -968,18 +1050,6 @@ export class BotPool {
         maxTotalSize: dataFilesConfig?.maxTotalSize,
       });
 
-      let nsfwChecker: NsfwChecker | undefined;
-      if (env.NSFW_API_URL) {
-        const threshold = aiConfig.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold;
-        nsfwChecker = new NsfwChecker({
-          apiUrl: env.NSFW_API_URL,
-          threshold,
-          logger: (level, message, meta) => {
-            this.logger[level]({ ...meta }, `[NsfwChecker] ${message}`);
-          },
-        });
-      }
-
       aiReply = {
         botId,
         apiKey,
@@ -1003,6 +1073,10 @@ export class BotPool {
         memory,
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
+        imageGenerationPort: this.imageGenerationPort,
+        isDelegatedGroupAdmin: (chatId, userId) =>
+          this.isDelegatedGroupAdmin(botId, chatId, userId),
+        usageGovernance: this.usageGovernance,
         agentToolsConfig: aiConfig.agentToolsConfig,
         githubToolsConfig,
         githubCodeCallbacks:
@@ -1085,7 +1159,6 @@ export class BotPool {
         modelCommandAccess: aiConfig.modelCommandAccess,
         dataFiles,
         privateChatWhitelist: aiConfig.privateChatWhitelist,
-        nsfwChecker,
         onGroupOverrideUpdate: async (chatId, override) => {
           try {
             await this.withAiConfigLock(botId, () =>
@@ -1108,28 +1181,6 @@ export class BotPool {
             );
           } catch (err) {
             this.logger.error(err, "Failed to persist group override update");
-          }
-        },
-        onPixaiConfigUpdate: async (updates) => {
-          try {
-            await this.withAiConfigLock(botId, () =>
-              this.db.transaction(async (tx) => {
-                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-                if (!current?.aiConfig) return;
-                const imgGen = current.aiConfig.webToolsConfig?.imageGeneration;
-                if (!imgGen) return;
-                if (updates.model !== undefined) imgGen.model = updates.model;
-                if (updates.pixaiConfig) {
-                  imgGen.pixaiConfig = { ...imgGen.pixaiConfig, ...updates.pixaiConfig };
-                }
-                await tx
-                  .update(bots)
-                  .set({ aiConfig: { ...current.aiConfig } })
-                  .where(eq(bots.id, botId));
-              }),
-            );
-          } catch (err) {
-            this.logger.error(err, "Failed to persist pixai config update");
           }
         },
         onMessageConfigUpdate: async (updates) => {
@@ -1159,7 +1210,6 @@ export class BotPool {
           }
         },
         onWebToolApiKeyUpdate: async (target, apiKey) => {
-          let shouldRecoverPending = false;
           await this.withAiConfigLock(botId, () =>
             this.db.transaction(async (tx) => {
               const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
@@ -1175,39 +1225,12 @@ export class BotPool {
               }
 
               targetConfig.apiKey = apiKey;
-              shouldRecoverPending =
-                target === "image" && webToolsConfig.imageGeneration?.provider === "pixai";
               await tx
                 .update(bots)
                 .set({ aiConfig: { ...current.aiConfig, webToolsConfig: { ...webToolsConfig } } })
                 .where(eq(bots.id, botId));
             }),
           );
-
-          if (shouldRecoverPending) {
-            const preexistingPendingCutoff = new Date();
-            await this.cancelGenerationRecoveries(botId, "PixAI API key updated");
-            const currentManager = this.managers.get(botId);
-            if (currentManager instanceof BotManager) {
-              const timeoutMs = pixaiTaskTimeoutMs;
-              this.generationRecoveryConfigs.set(botId, {
-                manager: currentManager,
-                apiKey,
-                timeoutMs,
-                preexistingPendingCutoff,
-              });
-              this.startGenerationRecoveryScheduler();
-              void this.schedulePendingGenerationRecovery(
-                botId,
-                currentManager,
-                apiKey,
-                timeoutMs,
-                preexistingPendingCutoff,
-              ).catch((err) => {
-                this.logger.error(err, "Failed to schedule pending generation recovery");
-              });
-            }
-          }
         },
         rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
         mcpTools: this.buildMcpToolsConfig(aiConfig.mcpServerIds),
@@ -1422,11 +1445,68 @@ export class BotPool {
       timerCallbacks,
       mcpCallbacks,
       summary: summaryCallbacks,
+      quota: this.usageGovernance
+        ? {
+            getUsage: async ({ chatId, userId, chatType }) => {
+              const snapshot = await this.usageGovernance!.getSnapshot({
+                botId,
+                chatKind: chatType === "private" ? "private" : "group",
+                chatId,
+                userId,
+                resources: ["ai_reply", "image"],
+              });
+              return {
+                timezone: snapshot.timezone,
+                resources: snapshot.resources.map((resource) => ({
+                  label: usageSnapshotLabel(resource.resource, resource.scope),
+                  windows: resource.windows.map((window) => ({
+                    label: usageWindowLabel(window.window),
+                    used: window.used,
+                    limit: window.limit,
+                    resetsAt: window.resetsAt?.toISOString(),
+                  })),
+                  active: resource.active,
+                  concurrencyLimit: resource.concurrencyLimit,
+                })),
+              };
+            },
+            tighten: async (input) => {
+              const authorized =
+                bot.adminChatIds.includes(input.actorUserId) ||
+                (await this.isDelegatedGroupAdmin(botId, input.chatId, input.actorUserId));
+              if (!authorized) {
+                return { ok: false, message: "需要 Bot 管理员授权且当前仍是 Telegram 群管理员。" };
+              }
+              if (!this.usageGovernance?.tightenGroupPolicy) {
+                return { ok: false, message: "用量治理服务不可用。" };
+              }
+              try {
+                await this.usageGovernance.tightenGroupPolicy({
+                  botId,
+                  chatId: input.chatId,
+                  actorUserId: input.actorUserId,
+                  resource: input.resource,
+                  targetUserId: input.targetUserId,
+                  limits: {
+                    hour: input.hourly,
+                    day: input.daily,
+                    cooldownMs:
+                      input.cooldownSeconds === undefined
+                        ? undefined
+                        : input.cooldownSeconds * 1_000,
+                  },
+                });
+                return { ok: true };
+              } catch {
+                return { ok: false, message: "新设置只能比现有上限更严格，且只能作用于当前群聊。" };
+              }
+            },
+          }
+        : undefined,
       telegramObservation: this.telegramObservation,
       miniAppUrl,
     });
 
-    const preexistingPendingCutoff = new Date();
     this.managers.set(botId, manager);
     try {
       await manager.start();
@@ -1477,27 +1557,6 @@ export class BotPool {
         `Initial conversation history governance failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-
-    const imageGeneration = aiConfig?.webToolsConfig?.imageGeneration;
-    if (imageGeneration?.provider === "pixai" && imageGeneration.apiKey) {
-      const timeoutMs = pixaiTaskTimeoutMs;
-      this.generationRecoveryConfigs.set(botId, {
-        manager,
-        apiKey: imageGeneration.apiKey,
-        timeoutMs,
-        preexistingPendingCutoff,
-      });
-      this.startGenerationRecoveryScheduler();
-      void this.schedulePendingGenerationRecovery(
-        botId,
-        manager,
-        imageGeneration.apiKey,
-        timeoutMs,
-        preexistingPendingCutoff,
-      ).catch((err) => {
-        this.logger.error(err, "Failed to schedule startup generation recovery");
-      });
-    }
   }
 
   private async persistTerminalGeneration(
