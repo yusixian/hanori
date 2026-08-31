@@ -1,5 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  UnauthorizedError,
+  type OAuthClientProvider,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -297,7 +300,7 @@ function createConnection(
 }
 
 function isUnauthorizedError(error: unknown): boolean {
-  return error instanceof Error && error.name === "UnauthorizedError";
+  return error instanceof UnauthorizedError;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

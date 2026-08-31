@@ -1,5 +1,8 @@
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  UnauthorizedError,
+  type OAuthClientProvider,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { describe, expect, it, vi } from "vitest";
 import {
   PIXAI_MCP_PRODUCTION_ENDPOINT,
@@ -109,5 +112,24 @@ describe("PixaiMcpClient", () => {
     expect(first.connect).toHaveBeenCalledOnce();
     expect(first.close).toHaveBeenCalledOnce();
     expect(second.connect).toHaveBeenCalledOnce();
+  });
+
+  it("classifies the SDK authorization redirect as authorization required", async () => {
+    const sdkClient = {
+      connect: vi.fn().mockRejectedValue(new UnauthorizedError()),
+      close: vi.fn().mockResolvedValue(undefined),
+      callTool: vi.fn(),
+    };
+    const client = new PixaiMcpClient({
+      authProvider,
+      connectionFactory: (endpoint, provider) => ({
+        client: sdkClient,
+        transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
+      }),
+    });
+
+    await expect(client.connect()).rejects.toEqual(
+      new PixaiMcpClientError("AUTHORIZATION_REQUIRED"),
+    );
   });
 });
