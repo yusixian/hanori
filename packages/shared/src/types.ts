@@ -216,6 +216,8 @@ export interface ConversationConfig {
   saveGroupContext: "random_only" | "all" | "none";
   autoSummarize: boolean;
   summarizeThreshold: number;
+  /** Provider used for conversation compression. Missing values inherit the active Provider. */
+  compressionProviderId?: string;
   retentionDays: number;
   maxRawMessagesPerChat: number;
 }

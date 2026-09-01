@@ -2,17 +2,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Switch } from "@/components/ui/switch";
-import type { ConversationConfig } from "@cos-tool-bot/shared";
+import type { AiProviderEntryPublic, ConversationConfig } from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function ConversationSection({
   config,
+  providers,
+  activeProviderId,
   onUpdate,
 }: {
   config: ConversationConfig;
+  providers: AiProviderEntryPublic[];
+  activeProviderId?: string;
   onUpdate: (updates: Partial<ConversationConfig>) => void;
 }) {
   const { t } = useTranslation("aiSettings");
+  const activeProviderLabel =
+    providers.find((provider) => provider.id === activeProviderId)?.label ??
+    t("conversation.activeProvider");
 
   return (
     <Card>
@@ -192,6 +199,33 @@ export function ConversationSection({
             <span className="text-muted-foreground text-xs">
               {t("conversation.autoSummarizeOff")}
             </span>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">{t("conversation.compressionProvider")}</label>
+            <SelectMenu
+              className="border-input flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm disabled:opacity-50"
+              disabled={!config.enabled || !config.autoSummarize}
+              value={config.compressionProviderId ?? "default"}
+              onValueChange={(value) =>
+                onUpdate({ compressionProviderId: value === "default" ? undefined : value })
+              }
+              ariaLabel={t("conversation.compressionProvider")}
+              options={[
+                {
+                  value: "default",
+                  label: t("conversation.defaultCompressionProvider", {
+                    provider: activeProviderLabel,
+                  }),
+                },
+                ...providers.map((provider) => ({
+                  value: provider.id,
+                  label: `${provider.label} (${provider.defaultModel})`,
+                })),
+              ]}
+            />
+            <p className="text-muted-foreground text-xs">
+              {t("conversation.compressionProviderDescription")}
+            </p>
           </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{t("conversation.summarizeThreshold")}</label>

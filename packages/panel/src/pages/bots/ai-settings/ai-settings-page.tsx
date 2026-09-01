@@ -1001,7 +1001,20 @@ export function BotAiSettingsPage() {
                 managedProviderId={managedProvider?.id}
                 draftApiKeys={providerApiKeys}
                 canChangeActiveProvider={canManageAiSelection && globalSelectionDraft !== null}
-                onProvidersChange={(providers) => setConfig((prev) => ({ ...prev, providers }))}
+                onProvidersChange={(providers) =>
+                  setConfig((prev) => ({
+                    ...prev,
+                    providers,
+                    conversationConfig:
+                      prev.conversationConfig?.compressionProviderId &&
+                      !providers.some(
+                        (provider) =>
+                          provider.id === prev.conversationConfig?.compressionProviderId,
+                      )
+                        ? { ...prev.conversationConfig, compressionProviderId: undefined }
+                        : prev.conversationConfig,
+                  }))
+                }
                 onActiveProviderChange={(providerId) => {
                   const provider = globalSelection?.options.find(
                     (option) => option.id === providerId,
@@ -1085,7 +1098,12 @@ export function BotAiSettingsPage() {
                 title={t("disclosures.conversationContext.title")}
                 description={t("disclosures.conversationContext.description")}
               >
-                <ConversationSection config={convCfg} onUpdate={updateConv} />
+                <ConversationSection
+                  config={convCfg}
+                  providers={config.providers}
+                  activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
+                  onUpdate={updateConv}
+                />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
                 title={t("disclosures.execution.title")}

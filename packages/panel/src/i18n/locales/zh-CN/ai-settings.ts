@@ -314,6 +314,11 @@ export const aiSettings = {
     compressionSettings: "压缩设置",
     autoSummarize: "使用 LLM 自动总结",
     autoSummarizeOff: "（关闭后不生成 LLM 摘要，按保留天数和消息数量上限清理）",
+    compressionProvider: "压缩 Provider",
+    activeProvider: "当前 Provider",
+    defaultCompressionProvider: "跟随当前 Provider（{{provider}}）",
+    compressionProviderDescription:
+      "可为会话压缩单独选择 Provider；未指定时跟随当前聊天 Provider，并使用该 Provider 的默认模型。",
     summarizeThreshold: "总结阈值",
     summarizeThresholdDescription: "消息数量超过此值时触发压缩",
   },

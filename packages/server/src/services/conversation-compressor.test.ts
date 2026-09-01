@@ -158,9 +158,50 @@ describe("compressConversation", () => {
 
     expect(store.commitCompaction).not.toHaveBeenCalled();
     expect(options.logger.warn).toHaveBeenCalledWith(
-      expect.any(Error),
+      { errorName: "Error", message: "provider unavailable" },
       expect.stringContaining("raw history retained"),
     );
+  });
+
+  it("logs only sanitized provider diagnostics when summarization fails", async () => {
+    const store = createStore();
+    const options = createOptions(store);
+    vi.mocked(generateText).mockRejectedValueOnce({
+      name: "AI_APICallError",
+      message: "The request was rejected because it was considered high risk",
+      statusCode: 400,
+      responseBody: JSON.stringify({
+        error: {
+          code: 400,
+          message: "The request was rejected because it was considered high risk",
+          param: "prompt",
+          type: "content_filter",
+        },
+      }),
+      requestBodyValues: { messages: [{ content: "private group history" }] },
+      responseHeaders: {
+        "set-cookie": "session=secret-cookie",
+        "x-request-id": "trace-123",
+      },
+    });
+
+    await compressConversation(options);
+
+    expect(options.logger.warn).toHaveBeenCalledWith(
+      {
+        errorName: "AI_APICallError",
+        message: "The request was rejected because it was considered high risk",
+        statusCode: 400,
+        providerCode: 400,
+        providerType: "content_filter",
+        providerParam: "prompt",
+        traceId: "trace-123",
+      },
+      expect.stringContaining("raw history retained"),
+    );
+    const logged = JSON.stringify(vi.mocked(options.logger.warn).mock.calls);
+    expect(logged).not.toContain("private group history");
+    expect(logged).not.toContain("secret-cookie");
   });
 
   it("backs off after a failed summary before allowing another attempt", async () => {

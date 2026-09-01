@@ -1,5 +1,9 @@
 import type { Database } from "@cos-tool-bot/database";
-import type { BotStatus, IBotManager } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_CONVERSATION_CONFIG,
+  type BotStatus,
+  type IBotManager,
+} from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimerRegistry } from "./timer-registry.js";
@@ -11,6 +15,9 @@ interface FakeManager extends IBotManager {
 }
 
 interface FakeManagerOptions {
+  conversation?: {
+    ensureCompression: (chatId: number) => Promise<void>;
+  };
   timerCallbacks?: {
     onBotReady?: (handlers: {
       fireTimer: () => Promise<boolean>;
@@ -22,6 +29,10 @@ interface FakeManagerOptions {
 const managerMocks = vi.hoisted(() => ({
   factories: [] as Array<(options: FakeManagerOptions) => FakeManager>,
   created: [] as FakeManager[],
+}));
+
+const compressorMocks = vi.hoisted(() => ({
+  compressConversation: vi.fn(async () => undefined),
 }));
 
 vi.mock("../env.js", () => ({
@@ -45,18 +56,20 @@ vi.mock("./bot-manager.js", () => ({
   },
 }));
 
+vi.mock("./conversation-compressor.js", () => compressorMocks);
+
 import { BotPool } from "./bot-pool.js";
 
 const BOT_ID = "00000000-0000-4000-8000-000000000001";
 
-function botRow() {
+function botRow(aiConfig: unknown = null) {
   return {
     id: BOT_ID,
     name: "Lifecycle Bot",
     platform: "telegram",
     encryptedToken: "encrypted-token",
     adminChatIds: [],
-    aiConfig: null,
+    aiConfig,
     larkWebhookConfig: null,
     emailForwardConfig: null,
     isActive: true,
@@ -66,8 +79,8 @@ function botRow() {
   };
 }
 
-function createPool(resumeBot = vi.fn(async () => 0)) {
-  const where = vi.fn(async () => [botRow()]);
+function createPool(resumeBot = vi.fn(async () => 0), row: ReturnType<typeof botRow> = botRow()) {
+  const where = vi.fn(async () => [row]);
   const db = {
     select: vi.fn(() => ({ from: vi.fn(() => ({ where })) })),
   } as unknown as Database;
@@ -118,9 +131,76 @@ function fakeManager(
 beforeEach(() => {
   managerMocks.factories.length = 0;
   managerMocks.created.length = 0;
+  compressorMocks.compressConversation.mockClear();
 });
 
 describe("BotPool failed runtime cleanup", () => {
+  it("uses the dedicated conversation compression Provider at runtime", async () => {
+    let conversation: FakeManagerOptions["conversation"];
+    managerMocks.factories.push((options) => {
+      conversation = options.conversation;
+      return fakeManager(options, (manager) => {
+        manager.start.mockImplementation(async () => {
+          manager.status = "running";
+        });
+      });
+    });
+    const aiConfig = {
+      enabled: true,
+      encryptedApiKey: null,
+      baseURL: "",
+      model: "",
+      systemPrompt: "Be helpful.",
+      triggerConfig: {
+        replyToBot: true,
+        mentionBot: true,
+        triggerWords: [],
+        randomReplyPercent: 0,
+        randomReplyCooldown: 60,
+      },
+      groupOverrides: {},
+      providers: [
+        {
+          id: "chat-provider",
+          label: "Chat Provider",
+          encryptedApiKey: "encrypted-chat",
+          baseURL: "https://chat.example/v1",
+          providerFormat: "openai" as const,
+          defaultModel: "chat-model",
+        },
+        {
+          id: "compression-provider",
+          label: "Compression Provider",
+          encryptedApiKey: "encrypted-compression",
+          baseURL: "https://compression.example/v1",
+          providerFormat: "openai" as const,
+          defaultModel: "summary-model",
+        },
+      ],
+      activeProviderId: "chat-provider",
+      conversationConfig: {
+        ...DEFAULT_CONVERSATION_CONFIG,
+        maxRawMessagesPerChat: 0,
+        compressionProviderId: "compression-provider",
+      },
+    };
+    const { pool } = createPool(
+      vi.fn(async () => 0),
+      botRow(aiConfig),
+    );
+
+    await pool.startBot(BOT_ID);
+    await conversation!.ensureCompression(42);
+
+    expect(compressorMocks.compressConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatId: 42,
+        baseURL: "https://compression.example/v1",
+        model: "summary-model",
+      }),
+    );
+  });
+
   it("recovers pending conversation turns before accepting Telegram updates", async () => {
     managerMocks.factories.push((options) =>
       fakeManager(options, (manager) => {

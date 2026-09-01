@@ -736,6 +736,55 @@ describe("AI provider model configuration", () => {
     ]);
   });
 
+  it("remaps the optional conversation compression Provider when saving a new Provider", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        providers: [
+          {
+            id: "__new_compression",
+            label: "Compression Provider",
+            apiKey: "compression-secret",
+            baseURL: "https://compression.example/v1",
+            providerFormat: "openai",
+            defaultModel: "safe-summary-model",
+          },
+        ],
+        activeProviderId: "__new_compression",
+        conversationConfig: {
+          enabled: true,
+          maxContextMessages: 20,
+          groupHistoryMaxTokens: 12_000,
+          historyFormat: "prompt",
+          groupBufferSize: 50,
+          groupContextMode: "all",
+          saveGroupContext: "random_only",
+          autoSummarize: true,
+          summarizeThreshold: 30,
+          retentionDays: 30,
+          maxRawMessagesPerChat: 50_000,
+          compressionProviderId: "__new_compression",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const providers = savedAiConfig?.providers as Array<{ id: string }>;
+    const conversationConfig = savedAiConfig?.conversationConfig as {
+      compressionProviderId?: string;
+    };
+    expect(providers[0]?.id).not.toBe("__new_compression");
+    expect(conversationConfig.compressionProviderId).toBe(providers[0]?.id);
+  });
+
   it("rejects enabling AI when any saved provider has no resolvable default model", async () => {
     const save = vi.fn();
     const botPool = {

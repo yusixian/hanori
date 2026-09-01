@@ -756,6 +756,19 @@ export class BotPool {
         ...DEFAULT_CONVERSATION_CONFIG,
         ...aiConfig.conversationConfig,
       };
+      const compressionProvider = conversationCfg.compressionProviderId
+        ? (providersRuntime.find(
+            (provider) => provider.id === conversationCfg.compressionProviderId,
+          ) ?? activeProvider)
+        : activeProvider;
+      if (
+        conversationCfg.compressionProviderId &&
+        compressionProvider.id !== conversationCfg.compressionProviderId
+      ) {
+        dbLogger.warn(
+          `Conversation compression Provider ${conversationCfg.compressionProviderId} is unavailable; using the active Provider`,
+        );
+      }
       const store = this.conversationStore;
       const historyGovernor = new ConversationHistoryGovernor(store, {
         warn: (meta: unknown, message?: string) => {
@@ -774,10 +787,10 @@ export class BotPool {
               chatId,
               store,
               conversationConfig: conversationCfg,
-              apiKey: activeProvider.apiKey,
-              baseURL: activeProvider.baseURL,
-              model: activeProvider.defaultModel,
-              providerFormat: activeProvider.providerFormat,
+              apiKey: compressionProvider.apiKey,
+              baseURL: compressionProvider.baseURL,
+              model: compressionProvider.defaultModel,
+              providerFormat: compressionProvider.providerFormat,
               logger: this.logger,
               abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
             }),
@@ -788,10 +801,10 @@ export class BotPool {
           chatId,
           store,
           conversationConfig: conversationCfg,
-          apiKey: activeProvider.apiKey,
-          baseURL: activeProvider.baseURL,
-          model: activeProvider.defaultModel,
-          providerFormat: activeProvider.providerFormat,
+          apiKey: compressionProvider.apiKey,
+          baseURL: compressionProvider.baseURL,
+          model: compressionProvider.defaultModel,
+          providerFormat: compressionProvider.providerFormat,
           logger: this.logger,
           force: true,
           keepRecent: 1,

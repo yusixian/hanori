@@ -114,6 +114,34 @@ test.describe("bot-scoped pages", () => {
     await acceptance.checkpoint("bot-ai-expanded-agent-limits");
   });
 
+  test("bot-ai-compression-provider", async ({ page, acceptance }) => {
+    acceptance.meta({
+      id: "bot-ai-compression-provider",
+      feature: "Conversation compression Provider",
+      severity: "P1",
+      steps: [
+        "Open Bot AI reply settings",
+        "Expand conversation history settings",
+        "Choose an explicit Provider for compression",
+      ],
+      expected: [
+        "Compression follows the active Provider by default",
+        "A dedicated Provider can be selected independently",
+        "The control remains readable without horizontal overflow",
+      ],
+    });
+
+    await page.goto(`/bots/${botId}/ai?section=replies`);
+    await page.getByRole("button", { name: /Conversation context/ }).click();
+    const provider = page.getByRole("combobox", { name: "Compression Provider" });
+    await expect(provider).toHaveText(/Follow active Provider/);
+    await provider.click();
+    await page.getByRole("option", { name: /Default \(acceptance-model\)/ }).click();
+    await expect(provider).toHaveText("Default (acceptance-model)");
+    await provider.scrollIntoViewIfNeeded();
+    await acceptance.checkpoint("compression-provider-selected");
+  });
+
   test("bot-ai-owner-friendly-controls", async ({ page, acceptance }) => {
     acceptance.meta({
       id: "bot-ai-owner-friendly-controls",

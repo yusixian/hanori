@@ -323,6 +323,11 @@ export const aiSettings = {
     compressionSettings: "Compression Settings",
     autoSummarize: "Auto-summarize with LLM",
     autoSummarizeOff: "(off = no LLM summaries; age and message-count retention still apply)",
+    compressionProvider: "Compression Provider",
+    activeProvider: "Active Provider",
+    defaultCompressionProvider: "Follow active Provider ({{provider}})",
+    compressionProviderDescription:
+      "Optionally use a dedicated Provider for conversation compression. Otherwise, compression follows the active chat Provider and uses its default model.",
     summarizeThreshold: "Summarize Threshold",
     summarizeThresholdDescription: "Trigger compression when message count exceeds this",
   },

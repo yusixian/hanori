@@ -93,6 +93,76 @@ interface CompressOptions {
   abortSignal?: AbortSignal;
 }
 
+type ProviderErrorDiagnostics = Record<string, string | number>;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function boundedString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value.slice(0, 500) : undefined;
+}
+
+function parseResponseBody(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string") return asRecord(value);
+  try {
+    return asRecord(JSON.parse(value));
+  } catch {
+    return undefined;
+  }
+}
+
+function getTraceId(headersValue: unknown): string | undefined {
+  const traceHeaders = ["x-request-id", "x-trace-id", "x-log-id", "cf-ray"];
+  if (headersValue instanceof Headers) {
+    for (const name of traceHeaders) {
+      const value = headersValue.get(name);
+      if (value) return value.slice(0, 200);
+    }
+    return undefined;
+  }
+  const headers = asRecord(headersValue);
+  if (!headers) return undefined;
+  const normalized = new Map(
+    Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]),
+  );
+  for (const name of traceHeaders) {
+    const value = boundedString(normalized.get(name));
+    if (value) return value.slice(0, 200);
+  }
+  return undefined;
+}
+
+function sanitizeProviderError(error: unknown): ProviderErrorDiagnostics {
+  const source = asRecord(error);
+  const response = parseResponseBody(source?.["responseBody"]);
+  const providerError = asRecord(response?.["error"]);
+  const diagnostics: ProviderErrorDiagnostics = {};
+  const errorName = boundedString(source?.["name"]);
+  const message = boundedString(source?.["message"] ?? providerError?.["message"]);
+  const statusCode = source?.["statusCode"];
+  const providerCode = providerError?.["code"];
+  const providerType = boundedString(providerError?.["type"]);
+  const providerParam = boundedString(providerError?.["param"]);
+  const traceId = getTraceId(source?.["responseHeaders"]);
+
+  if (errorName) diagnostics["errorName"] = errorName;
+  if (message) diagnostics["message"] = message;
+  if (typeof statusCode === "number" && Number.isFinite(statusCode)) {
+    diagnostics["statusCode"] = statusCode;
+  }
+  if (typeof providerCode === "string" || typeof providerCode === "number") {
+    diagnostics["providerCode"] = providerCode;
+  }
+  if (providerType) diagnostics["providerType"] = providerType;
+  if (providerParam) diagnostics["providerParam"] = providerParam;
+  if (traceId) diagnostics["traceId"] = traceId;
+  if (Object.keys(diagnostics).length === 0) diagnostics["errorName"] = "UnknownError";
+  return diagnostics;
+}
+
 export function compressConversation(options: CompressOptions): Promise<void> {
   if (
     !(options.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG).autoSummarize &&
@@ -171,7 +241,7 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
     return "complete";
   } catch (err) {
     logger.warn(
-      err,
+      sanitizeProviderError(err),
       `LLM summarization failed for bot=${botId} chat=${chatId}; raw history retained`,
     );
     return "failed";

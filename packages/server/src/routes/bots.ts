@@ -477,6 +477,7 @@ const aiConfigSchema = z
         saveGroupContext: z.enum(["random_only", "all", "none"]),
         autoSummarize: z.boolean(),
         summarizeThreshold: z.number().min(10).max(200),
+        compressionProviderId: z.string().trim().min(1).max(100).optional(),
         retentionDays: z.number().min(0).max(365),
         maxRawMessagesPerChat: z
           .number()
@@ -1601,6 +1602,25 @@ export function botsRoutes(
                 : undefined,
             }
           : bot.aiConfig?.imageOcrConfig;
+        const conversationConfig = body.conversationConfig
+          ? {
+              ...body.conversationConfig,
+              compressionProviderId: body.conversationConfig.compressionProviderId
+                ? (providerIdMap.get(body.conversationConfig.compressionProviderId) ??
+                  body.conversationConfig.compressionProviderId)
+                : undefined,
+            }
+          : undefined;
+        if (
+          conversationConfig?.compressionProviderId &&
+          !effectiveProviders.some(
+            (provider) => provider.id === conversationConfig.compressionProviderId,
+          )
+        ) {
+          throw new HTTPException(400, {
+            message: "The conversation compression Provider does not exist",
+          });
+        }
 
         const updatedAiConfig: AiConfigStored = {
           enabled: body.enabled,
@@ -1618,7 +1638,7 @@ export function botsRoutes(
           groupBehavioralPrompt: body.groupBehavioralPrompt,
           triggerConfig: body.triggerConfig,
           groupOverrides: body.groupOverrides,
-          conversationConfig: body.conversationConfig,
+          conversationConfig,
           memoryConfig: body.memoryConfig,
           stickerPacks: body.stickerPacks ?? bot.aiConfig?.stickerPacks,
           webToolsConfig: mergeWebToolsApiKeys(
