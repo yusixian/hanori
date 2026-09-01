@@ -99,6 +99,18 @@ export interface ImageGenerationView {
   message?: string;
 }
 
+/** Full generation provenance restored when a Telegram delivery message is replied to. */
+export interface ImageGenerationReplyContext extends ImageGenerationView {
+  creatorUserId: number;
+  prompt: string;
+  negativePrompt?: string;
+  seed?: number;
+  providerOperationId?: string;
+  providerMetadata?: Record<string, unknown>;
+  providerDetails?: Record<string, unknown>;
+  artifactOrdinal?: number;
+}
+
 export type ImageGenerationAdmission =
   | { accepted: true; generation: ImageGenerationView }
   | {
@@ -132,6 +144,10 @@ export interface ImageGenerationPort {
     request: CreateImageRequest,
   ): Promise<ImageGenerationAdmission>;
   get(actor: ImageGenerationActor, generationId: string): Promise<ImageGenerationView | null>;
+  findByDeliveryMessage(
+    actor: ImageGenerationActor,
+    telegramMessageId: number,
+  ): Promise<ImageGenerationReplyContext | null>;
   listPresets(actor: ImageGenerationActor, purpose?: ImagePurpose): Promise<ImagePreset[]>;
   cancel(actor: ImageGenerationActor, generationId: string): Promise<ImageCancellationResult>;
 }

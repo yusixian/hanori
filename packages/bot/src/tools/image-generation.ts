@@ -8,6 +8,7 @@ export interface ImageGenerationToolOptions {
   port: ImageGenerationPort;
   getActor: () => ImageGenerationActor;
   description?: string;
+  replyMessageId?: number;
 }
 
 const purposeSchema = z
@@ -20,8 +21,9 @@ export function createImageGenerationTools({
   port,
   getActor,
   description,
+  replyMessageId,
 }: ImageGenerationToolOptions): Record<string, Tool> {
-  return {
+  const tools: Record<string, Tool> = {
     create_image: tool({
       description:
         description ??
@@ -79,4 +81,18 @@ export function createImageGenerationTools({
       execute: async ({ generationId }) => port.cancel(getActor(), generationId),
     }),
   };
+
+  if (replyMessageId !== undefined) {
+    tools.inspect_replied_image_generation = tool({
+      description:
+        "读取当前回复图片的完整生成上下文，包括原始提示词、负面提示词、seed、preset、MCP operation 与供应商解析后的请求细节。分析图片或提示词问题时优先调用；同一聊天内所有用户均可查看。",
+      inputSchema: zodToAiSchema(z.object({})),
+      execute: async () => {
+        const generation = await port.findByDeliveryMessage(getActor(), replyMessageId);
+        return generation ? { found: true, generation } : { found: false };
+      },
+    });
+  }
+
+  return tools;
 }

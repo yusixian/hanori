@@ -12,6 +12,7 @@ import {
   type ImageGenerationActor,
   type ImageGenerationAdmission,
   type ImageGenerationPort,
+  type ImageGenerationReplyContext,
   type ImageGenerationState,
   type ImageGenerationView,
   type ImageGovernanceConfig,
@@ -19,7 +20,7 @@ import {
   type ImageProviderRoute,
   type ImageRouteCapabilities,
 } from "@cos-tool-bot/shared";
-import { and, eq, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { PixaiMcpAdapter, PixaiGenerationOperation } from "./pixai-mcp-adapter.js";
 import type { PixaiMcpArtifactData, PixaiMcpArtifactReader } from "./pixai-mcp-artifacts.js";
@@ -299,6 +300,51 @@ export class ImageGenerationService implements ImageGenerationPort {
     generationId: string,
   ): Promise<ImageGenerationView | null> {
     return this.getOwned(actor, generationId);
+  }
+
+  async findByDeliveryMessage(
+    actor: ImageGenerationActor,
+    telegramMessageId: number,
+  ): Promise<ImageGenerationReplyContext | null> {
+    const [row] = await this.db
+      .select()
+      .from(imageGenerations)
+      .where(
+        and(
+          eq(imageGenerations.botId, actor.botId),
+          eq(imageGenerations.chatId, actor.chatId),
+          sql`${imageGenerations.deliveryMessageIds}::jsonb @> ${JSON.stringify([telegramMessageId])}::jsonb`,
+        ),
+      )
+      .orderBy(desc(imageGenerations.deliveredAt))
+      .limit(1);
+    if (!row) return null;
+
+    let providerDetails: Record<string, unknown> | undefined;
+    if (row.provider === "mcp_pixai" && row.providerOperationId) {
+      providerDetails = await this.pixai
+        .getGenerationDetails(row.providerOperationId)
+        .catch((error: unknown) => {
+          this.logger.warn(
+            { code: sanitizedProviderErrorCode(error), generationId: row.id },
+            "PixAI MCP generation detail lookup failed",
+          );
+          return undefined;
+        });
+    }
+
+    const artifactOrdinal = row.deliveryMessageIds.indexOf(telegramMessageId);
+    return {
+      ...toView(row),
+      creatorUserId: row.userId,
+      prompt: row.prompt,
+      negativePrompt: row.negativePrompt ?? undefined,
+      seed: row.seed ?? undefined,
+      providerOperationId: row.providerOperationId ?? undefined,
+      providerMetadata: row.providerMetadata ?? undefined,
+      providerDetails,
+      artifactOrdinal: artifactOrdinal >= 0 ? artifactOrdinal : undefined,
+    };
   }
 
   async cancel(

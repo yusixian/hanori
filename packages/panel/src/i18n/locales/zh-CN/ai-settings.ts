@@ -341,13 +341,13 @@ export const aiSettings = {
       "只有长时间运行的 AI 回复与定时续聊会占用这些执行槽；命令直接绕过，工具、子 Agent 与图片生成继续沿用各自限流。保存时会重启正在运行的 Bot，并取消当时正在执行和排队的回复。",
     maxConcurrentReplies: "AI 回复并发数",
     maxConcurrentRepliesDescription:
-      "此 Bot 可同时跨聊天运行的最大回复数（1–32）；同一聊天仍逐条执行。",
+      "此 Bot 可同时跨聊天运行的最大回复数（1–128）；同一聊天仍逐条执行。默认 32。",
     queueNotice: "排队提示",
     queueNoticeDescription: "回复无法立即开始时，先发送一条等待消息。",
     queueNoticeText: "等待提示文案",
     queueNoticeTextDescription: "按纯文本发送，最多 200 个字符。",
     validation: {
-      maxConcurrentReplies: "请输入 1 到 32 之间的整数。",
+      maxConcurrentReplies: "请输入 1 到 128 之间的整数。",
       queueNoticeText: {
         required: "启用排队提示时，请填写等待提示文案。",
         tooLong: "等待提示文案不能超过 200 个字符。",
@@ -381,7 +381,7 @@ export const aiSettings = {
     enable: "启用记忆系统",
     description: "启用后，AI Agent 可以通过工具调用自主维护人物档案并搜索对话历史。",
     maxSteps: "最大步骤数",
-    maxStepsDescription: "每次回复可执行的最大工具调用轮数（最小为 1）",
+    maxStepsDescription: "每次回复可执行的最大模型/工具轮数（最小为 1，默认 128）",
     toolChoice: "工具选择",
     autoRecommended: "自动（推荐）",
     required: "必须调用",
@@ -438,7 +438,7 @@ export const aiSettings = {
     modelPlaceholder: "留空以使用主模型",
     modelDescription: "子 Agent 可选模型。留空则使用与主 AI 相同的模型。",
     maxSteps: "子 Agent 最大步骤数",
-    maxStepsDescription: "每个子 Agent 的最大工具调用轮数（1–15）",
+    maxStepsDescription: "每个子 Agent 的最大工具调用轮数（1–128，默认 64）",
   },
   githubTools: {
     enable: "启用 GitHub 工具",

@@ -3,6 +3,7 @@ import { Label } from "@/components/ui/label";
 import { NumberInput } from "@/components/ui/number-input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { MAX_CONCURRENT_AI_REPLIES } from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 import { type AiExecutionConfigDraft, validateExecutionConfig } from "../execution-config";
 
@@ -31,7 +32,7 @@ export function ExecutionConfigSection({
             id="max-concurrent-replies"
             name="maxConcurrentReplies"
             min={1}
-            max={32}
+            max={MAX_CONCURRENT_AI_REPLIES}
             value={config.maxConcurrentReplies ?? ""}
             onValueChange={(maxConcurrentReplies) => onUpdate({ ...config, maxConcurrentReplies })}
             aria-invalid={errors.maxConcurrentReplies ? true : undefined}

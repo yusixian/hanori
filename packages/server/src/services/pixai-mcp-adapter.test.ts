@@ -64,6 +64,19 @@ describe("PixaiMcpAdapter", () => {
     expect(result.operation.operationId).toBe("operation-1");
   });
 
+  it("returns the provider's redacted generation detail record", async () => {
+    const client = {
+      getGenerationDetails: vi.fn().mockResolvedValue({
+        result: { prompt: "test", requestBody: { samplingSteps: 28 } },
+      }),
+    } as unknown as PixaiMcpClient;
+
+    await expect(new PixaiMcpAdapter(client).getGenerationDetails("operation-1")).resolves.toEqual({
+      prompt: "test",
+      requestBody: { samplingSteps: 28 },
+    });
+  });
+
   it("fails closed when required identifiers are absent", async () => {
     const client = {
       prepareGeneration: vi.fn().mockResolvedValue({ result: { approval: { required: false } } }),

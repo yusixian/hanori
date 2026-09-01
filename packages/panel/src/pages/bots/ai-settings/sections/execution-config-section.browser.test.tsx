@@ -20,7 +20,7 @@ test("shows the defaults and reports concurrency and queue-notice edits", async 
   const queueNotice = page.getByRole("switch", { name: "Queue notice" });
   const waitingMessage = page.getByRole("textbox", { name: "Waiting message" });
 
-  await expect.element(concurrency).toHaveValue(4);
+  await expect.element(concurrency).toHaveValue(32);
   await expect.element(queueNotice).toBeChecked();
   await expect.element(waitingMessage).toHaveValue(DEFAULT_EXECUTION_CONFIG.queueNotice.text);
 
@@ -45,7 +45,7 @@ test("shows actionable errors for invalid execution settings", async () => {
     />,
   );
 
-  await expect.element(page.getByText("Enter a whole number from 1 to 32.")).toBeVisible();
+  await expect.element(page.getByText("Enter a whole number from 1 to 128.")).toBeVisible();
   await expect
     .element(page.getByText("Enter a waiting message while queue notices are enabled."))
     .toBeVisible();

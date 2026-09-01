@@ -1,7 +1,11 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { AgentToolsConfig } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_SUB_AGENT_MAX_STEPS,
+  MAX_SUB_AGENT_STEPS,
+  type AgentToolsConfig,
+} from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function AgentToolsSection({
@@ -32,8 +36,11 @@ export function AgentToolsSection({
         <p className="text-muted-foreground text-xs">{t("agentTools.description")}</p>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">{t("agentTools.model")}</label>
+          <label htmlFor="sub-agent-model" className="text-sm font-medium">
+            {t("agentTools.model")}
+          </label>
           <Input
+            id="sub-agent-model"
             disabled={!config.enabled}
             value={config.subAgentModel ?? ""}
             onChange={(e) => onUpdate({ subAgentModel: e.target.value || undefined })}
@@ -43,13 +50,16 @@ export function AgentToolsSection({
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-sm font-medium">{t("agentTools.maxSteps")}</label>
+          <label htmlFor="max-sub-agent-steps" className="text-sm font-medium">
+            {t("agentTools.maxSteps")}
+          </label>
           <Input
+            id="max-sub-agent-steps"
             type="number"
             min={1}
-            max={15}
+            max={MAX_SUB_AGENT_STEPS}
             disabled={!config.enabled}
-            value={config.maxSubAgentSteps ?? 5}
+            value={config.maxSubAgentSteps ?? DEFAULT_SUB_AGENT_MAX_STEPS}
             onChange={(e) => onUpdate({ maxSubAgentSteps: Number(e.target.value) })}
           />
           <p className="text-muted-foreground text-xs">{t("agentTools.maxStepsDescription")}</p>

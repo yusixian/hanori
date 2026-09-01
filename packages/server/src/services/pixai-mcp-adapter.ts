@@ -119,6 +119,14 @@ export class PixaiMcpAdapter {
     return toOperation(response.result, operationId);
   }
 
+  async getGenerationDetails(
+    operationId: string,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const response = await this.client.getGenerationDetails(operationId, signal);
+    return expectRecord(response.result, "result");
+  }
+
   async waitForGeneration(
     operationId: string,
     timeoutMs = 5_000,

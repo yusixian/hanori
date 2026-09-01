@@ -14,6 +14,8 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   IMAGE_MAX_SIZE,
   IMAGE_MIN_SIZE,
+  MAX_CONCURRENT_AI_REPLIES,
+  MAX_SUB_AGENT_STEPS,
 } from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
@@ -400,7 +402,7 @@ const modelDiscoveryPathSchema = z
 
 const aiExecutionConfigSchema = z
   .object({
-    maxConcurrentReplies: z.number().int().min(1).max(32),
+    maxConcurrentReplies: z.number().int().min(1).max(MAX_CONCURRENT_AI_REPLIES),
     queueNotice: z.object({
       enabled: z.boolean(),
       text: z.string().trim().max(200),
@@ -546,7 +548,7 @@ const aiConfigSchema = z
       .object({
         enabled: z.boolean(),
         subAgentModel: z.string().optional(),
-        maxSubAgentSteps: z.number().min(1).max(15).optional(),
+        maxSubAgentSteps: z.number().int().min(1).max(MAX_SUB_AGENT_STEPS).optional(),
         agents: z
           .record(
             z.string(),

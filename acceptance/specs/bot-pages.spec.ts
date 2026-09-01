@@ -80,4 +80,37 @@ test.describe("bot-scoped pages", () => {
       await acceptance.checkpoint(p.id);
     });
   }
+
+  test("bot-ai-expanded-execution-limits", async ({ page, acceptance }) => {
+    acceptance.meta({
+      id: "bot-ai-expanded-execution-limits",
+      feature: "Bot AI execution limits",
+      severity: "P1",
+      steps: [
+        "Open Bot AI reply settings",
+        "Expand execution settings",
+        "Open tools and expand Agent settings",
+      ],
+      expected: [
+        "Concurrent replies default to 32 and accept values up to 128",
+        "Sub-agent steps default to 64 and accept values up to 128",
+        "Controls remain readable without horizontal overflow on desktop and mobile",
+      ],
+      allowHttpStatuses: [422],
+    });
+
+    await page.goto(`/bots/${botId}/ai?section=replies`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByRole("button", { name: /Execution & queueing/ }).click();
+    await expect(page.getByRole("spinbutton", { name: "Concurrent AI replies" })).toHaveValue("32");
+    await expect(page.getByText(/1–128; default 32/)).toBeVisible();
+    await acceptance.checkpoint("bot-ai-expanded-execution-limits");
+
+    await page.goto(`/bots/${botId}/ai?section=tools`);
+    await page.waitForLoadState("domcontentloaded");
+    await page.getByRole("button", { name: /Agent tools/ }).click();
+    await expect(page.getByRole("spinbutton", { name: "Max Sub-agent Steps" })).toHaveValue("64");
+    await expect(page.getByText(/1–128; default 64/)).toBeVisible();
+    await acceptance.checkpoint("bot-ai-expanded-agent-limits");
+  });
 });

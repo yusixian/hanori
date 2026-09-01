@@ -31,6 +31,7 @@ import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
 import {
   createBehaviorTools,
+  createDanbooruTools,
   createImageGenerationTools,
   createRssTools,
   createTelegramTools,
@@ -410,6 +411,7 @@ async function doContinueChat(
       ...telegramTools,
       ...behaviorTools,
       ...config.webTools,
+      ...createDanbooruTools({ timeoutConfig: config.timeoutConfig }),
       ...createSkillTools({
         skills: config.skills ?? [],
         hasImageGeneration: !!config.imageGenerationPort && event.userId !== undefined,
@@ -548,7 +550,7 @@ async function doContinueChat(
         }),
         requestCache,
       ),
-      stopWhen: stepCountIs((config.skills?.length ?? 0) > 0 ? 8 : 5),
+      stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,
       temperature: selection.temperature,

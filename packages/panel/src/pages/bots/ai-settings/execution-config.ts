@@ -1,4 +1,4 @@
-import type { AiExecutionConfig } from "@cos-tool-bot/shared";
+import { MAX_CONCURRENT_AI_REPLIES, type AiExecutionConfig } from "@cos-tool-bot/shared";
 import { DEFAULT_EXECUTION_CONFIG } from "./types";
 
 export interface AiExecutionConfigDraft {
@@ -29,7 +29,7 @@ export function validateExecutionConfig(config: AiExecutionConfigDraft): AiExecu
     concurrency == null ||
     !Number.isInteger(concurrency) ||
     concurrency < 1 ||
-    concurrency > 32
+    concurrency > MAX_CONCURRENT_AI_REPLIES
   ) {
     errors.maxConcurrentReplies = "range";
   }

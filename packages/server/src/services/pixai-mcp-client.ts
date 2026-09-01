@@ -13,6 +13,7 @@ export const PIXAI_MCP_TOOL_NAMES = [
   "prepare_generation",
   "generate",
   "get_task",
+  "get_generation_details",
   "list_tasks",
   "wait_for_result",
   "get_result",
@@ -116,7 +117,7 @@ export class PixaiMcpClient {
       environment: options.environment ?? "production",
       endpointOverride: options.endpointOverride,
     });
-    this.callTimeoutMs = options.callTimeoutMs ?? 30_000;
+    this.callTimeoutMs = options.callTimeoutMs ?? 5 * 60 * 1000;
     this.connectionFactory = options.connectionFactory ?? createConnection;
     this.authProvider = options.authProvider;
     this.fetchFn = options.fetch;
@@ -196,6 +197,13 @@ export class PixaiMcpClient {
     signal?: AbortSignal,
   ): Promise<PixaiMcpToolResponse<T>> {
     return this.call<T>("get_task", { operationId }, signal);
+  }
+
+  getGenerationDetails<T = unknown>(
+    operationId: string,
+    signal?: AbortSignal,
+  ): Promise<PixaiMcpToolResponse<T>> {
+    return this.call<T>("get_generation_details", { operationId }, signal);
   }
 
   listTasks<T = unknown>(limit = 20, signal?: AbortSignal): Promise<PixaiMcpToolResponse<T>> {

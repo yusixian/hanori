@@ -255,6 +255,8 @@ export { createBehaviorTools } from "./behavior.js";
 export type { BehaviorToolsOptions, MoodInfo } from "./behavior.js";
 export { createWebTools } from "./web.js";
 export type { WebToolsOptions } from "./web.js";
+export { createDanbooruTools, searchDanbooruCharacterTags } from "./danbooru.js";
+export type { DanbooruCharacterTag, DanbooruToolOptions } from "./danbooru.js";
 export { createImageGenerationTools } from "./image-generation.js";
 export type { ImageGenerationToolOptions } from "./image-generation.js";
 export { createSkillTools } from "./skills.js";

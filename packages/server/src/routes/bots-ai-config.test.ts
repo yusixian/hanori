@@ -294,7 +294,7 @@ describe("AI execution configuration", () => {
     expect(savedAiConfig?.["executionConfig"]).toEqual(existingExecutionConfig);
   });
 
-  it.each([0, 33, 1.5])("rejects invalid max concurrency %s", async (maxConcurrentReplies) => {
+  it.each([0, 129, 1.5])("rejects invalid max concurrency %s", async (maxConcurrentReplies) => {
     const save = vi.fn();
     const response = await routeApp(routeDatabase(save), savingBotPool()).request(
       "/api/bots/bot-1/ai-config",

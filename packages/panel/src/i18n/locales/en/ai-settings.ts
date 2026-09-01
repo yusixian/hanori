@@ -350,13 +350,13 @@ export const aiSettings = {
       "Only long-running AI replies and scheduled continuations use these slots. Commands bypass them; tools, sub-agents, and image generation keep their existing limits. Saving restarts a running Bot and cancels its active and queued replies.",
     maxConcurrentReplies: "Concurrent AI replies",
     maxConcurrentRepliesDescription:
-      "Maximum replies running across chats for this Bot (1–32). Replies in the same chat still run one at a time.",
+      "Maximum replies running across chats for this Bot (1–128; default 32). Replies in the same chat still run one at a time.",
     queueNotice: "Queue notice",
     queueNoticeDescription: "Send a waiting message when a reply cannot start immediately.",
     queueNoticeText: "Waiting message",
     queueNoticeTextDescription: "Sent as plain text and limited to 200 characters.",
     validation: {
-      maxConcurrentReplies: "Enter a whole number from 1 to 32.",
+      maxConcurrentReplies: "Enter a whole number from 1 to 128.",
       queueNoticeText: {
         required: "Enter a waiting message while queue notices are enabled.",
         tooLong: "Keep the waiting message within 200 characters.",
@@ -417,7 +417,7 @@ export const aiSettings = {
     description:
       "When enabled, the AI agent can autonomously manage per-person profiles and search conversation history via tool calls.",
     maxSteps: "Max Steps",
-    maxStepsDescription: "Maximum tool-calling rounds per reply (minimum 1)",
+    maxStepsDescription: "Maximum model/tool rounds per reply (minimum 1; default 128)",
     toolChoice: "Tool Choice",
     autoRecommended: "Auto (Recommended)",
     required: "Required",
@@ -478,7 +478,7 @@ export const aiSettings = {
     modelDescription:
       "Optional model for sub-agents. Leave empty to use the same model as the main AI.",
     maxSteps: "Max Sub-agent Steps",
-    maxStepsDescription: "Maximum tool-calling rounds per sub-agent (1–15)",
+    maxStepsDescription: "Maximum tool-calling rounds per sub-agent (1–128; default 64)",
   },
   githubTools: {
     enable: "Enable GitHub tools",

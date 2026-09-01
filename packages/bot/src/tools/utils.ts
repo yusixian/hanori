@@ -1,3 +1,4 @@
+import { MAX_TOOL_CALLS_PER_REQUEST } from "@cos-tool-bot/shared";
 import type { Tool, JSONValue } from "ai";
 import { jsonSchema } from "ai";
 import { z } from "zod";
@@ -42,11 +43,13 @@ export interface RequestCache {
   getCachedResult(key: string): unknown;
   setCachedResult(key: string, result: unknown): void;
   incrementCallCount(toolName: string): number;
+  incrementTotalCallCount(): number;
 }
 
 export function createRequestCache(): RequestCache {
   const cache = new Map<string, unknown>();
   const callCounts = new Map<string, number>();
+  let totalCallCount = 0;
   return {
     getCachedResult: (key) => cache.get(key),
     setCachedResult: (key, result) => {
@@ -57,6 +60,7 @@ export function createRequestCache(): RequestCache {
       callCounts.set(toolName, count);
       return count;
     },
+    incrementTotalCallCount: () => ++totalCallCount,
   };
 }
 
@@ -98,12 +102,14 @@ export function normalizeUrlForCache(url: string): string {
 }
 
 const TOOL_CALL_LIMITS: Record<string, number> = {
-  fetch_webpage: 4,
-  web_search: 3,
-  fetch_artwork_info: 3,
+  fetch_webpage: 128,
+  web_search: 64,
+  fetch_artwork_info: 64,
+  delegate_task: 64,
+  search_danbooru_character_tags: 64,
 };
 
-const CACHEABLE_TOOLS = new Set(Object.keys(TOOL_CALL_LIMITS));
+const CACHEABLE_TOOLS = new Set(["fetch_webpage", "web_search", "fetch_artwork_info"]);
 
 function buildCacheKey(toolName: string, args: Record<string, unknown>): string {
   if (toolName === "fetch_artwork_info" || toolName === "fetch_webpage") {
@@ -120,8 +126,8 @@ function buildCacheKey(toolName: string, args: Record<string, unknown>): string 
 }
 
 /**
- * Wraps cacheable tools with per-request deduplication and call-count limits.
- * Non-cacheable tools pass through unchanged.
+ * Wraps every executable tool with a generous total request budget. Selected
+ * read-only tools additionally receive deduplication and per-tool limits.
  */
 export function wrapToolsWithCache(
   tools: Record<string, Tool>,
@@ -129,7 +135,7 @@ export function wrapToolsWithCache(
 ): Record<string, Tool> {
   const wrapped: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
-    if (!CACHEABLE_TOOLS.has(name) || !("execute" in tool) || typeof tool.execute !== "function") {
+    if (!("execute" in tool) || typeof tool.execute !== "function") {
       wrapped[name] = tool;
       continue;
     }
@@ -137,14 +143,28 @@ export function wrapToolsWithCache(
     wrapped[name] = {
       ...tool,
       execute: async (toolArgs: any, options: any) => {
-        const args = (toolArgs ?? {}) as Record<string, unknown>;
+        const totalCount = cache.incrementTotalCallCount();
+        if (totalCount > MAX_TOOL_CALLS_PER_REQUEST) {
+          return {
+            blocked: true,
+            reason: `已达到本次请求的工具调用总上限 (${MAX_TOOL_CALLS_PER_REQUEST})，请使用已有信息完成回复。`,
+          };
+        }
 
-        const key = buildCacheKey(name, args);
-        const cached = cache.getCachedResult(key);
-        if (cached !== undefined) {
-          return typeof cached === "object" && cached !== null && !Array.isArray(cached)
-            ? { ...(cached as Record<string, unknown>), _cached: true, _note: "已获取过相同内容" }
-            : { result: cached, _cached: true, _note: "已获取过相同内容" };
+        if (!CACHEABLE_TOOLS.has(name) && !(name in TOOL_CALL_LIMITS)) {
+          return originalExecute(toolArgs, options);
+        }
+
+        const args = (toolArgs ?? {}) as Record<string, unknown>;
+        const cacheable = CACHEABLE_TOOLS.has(name);
+        const key = cacheable ? buildCacheKey(name, args) : undefined;
+        if (key) {
+          const cached = cache.getCachedResult(key);
+          if (cached !== undefined) {
+            return typeof cached === "object" && cached !== null && !Array.isArray(cached)
+              ? { ...(cached as Record<string, unknown>), _cached: true, _note: "已获取过相同内容" }
+              : { result: cached, _cached: true, _note: "已获取过相同内容" };
+          }
         }
 
         const limit = TOOL_CALL_LIMITS[name] ?? Infinity;
@@ -157,7 +177,7 @@ export function wrapToolsWithCache(
         }
 
         const result = await originalExecute(toolArgs, options);
-        cache.setCachedResult(key, result);
+        if (key) cache.setCachedResult(key, result);
         return result;
       },
     };

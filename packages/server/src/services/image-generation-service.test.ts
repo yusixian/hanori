@@ -21,10 +21,12 @@ function query<T>(limitRows: T[], awaitedRows: unknown[] = limitRows) {
   const builder = Promise.resolve(awaitedRows) as Promise<unknown[]> & {
     from: ReturnType<typeof vi.fn>;
     where: ReturnType<typeof vi.fn>;
+    orderBy: ReturnType<typeof vi.fn>;
     limit: ReturnType<typeof vi.fn>;
   };
   builder.from = vi.fn(() => builder);
   builder.where = vi.fn((_condition?: unknown) => builder);
+  builder.orderBy = vi.fn((_order?: unknown) => builder);
   builder.limit = vi.fn(async () => limitRows);
   return builder;
 }
@@ -55,6 +57,7 @@ function createDependencies() {
       .mockResolvedValue([{ key: "anime-default", label: "Anime", approvalRequired: false }]),
     waitForGeneration: vi.fn(),
     startGeneration: vi.fn(),
+    getGenerationDetails: vi.fn(),
   };
   return {
     usageGovernor,
@@ -98,6 +101,42 @@ function generationRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ImageGenerationService failure accounting", () => {
+  it("restores full generation provenance for any user in the delivery chat", async () => {
+    const dependencies = createDependencies();
+    const row = generationRow({
+      userId: 7,
+      prompt: "hakurei_reimu, shrine",
+      negativePrompt: "low quality",
+      seed: 42,
+      deliveryMessageIds: [7389, 7390],
+      providerMetadata: { planId: "plan-1" },
+      deliveredAt: new Date("2026-09-01T01:00:00.000Z"),
+    });
+    dependencies.pixai.getGenerationDetails.mockResolvedValue({
+      requestBody: { samplingSteps: 28 },
+    });
+    const db = { select: vi.fn(() => query([row])) } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+    const viewer = { ...ACTOR, userId: 99, isBotAdmin: false };
+
+    await expect(service.findByDeliveryMessage(viewer, 7390)).resolves.toMatchObject({
+      creatorUserId: 7,
+      prompt: "hakurei_reimu, shrine",
+      negativePrompt: "low quality",
+      seed: 42,
+      providerOperationId: "operation-1",
+      artifactOrdinal: 1,
+      providerDetails: { requestBody: { samplingSteps: 28 } },
+    });
+    expect(dependencies.pixai.getGenerationDetails).toHaveBeenCalledWith("operation-1");
+  });
+
   it("reports a sanitized MCP capability failure before reserving image usage", async () => {
     const dependencies = createDependencies();
     dependencies.pixai.listPresets.mockRejectedValue(

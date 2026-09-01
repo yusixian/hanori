@@ -38,6 +38,7 @@ export const DEFAULT_WEB_TOOLS: WebToolsConfigPublic = {
 
 export const DEFAULT_AGENT_TOOLS: AgentToolsConfig = {
   enabled: false,
+  maxSubAgentSteps: 64,
 };
 
 export const DEFAULT_GITHUB_TOOLS: GitHubToolsConfigPublic = {

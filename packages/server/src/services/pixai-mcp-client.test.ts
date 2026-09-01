@@ -82,7 +82,35 @@ describe("PixaiMcpClient", () => {
     expect(callTool).toHaveBeenCalledWith(
       { name: "get_task", arguments: { operationId: "operation-1" } },
       undefined,
-      expect.objectContaining({ timeout: 30_000, maxTotalTimeout: 30_000 }),
+      expect.objectContaining({ timeout: 300_000, maxTotalTimeout: 300_000 }),
+    );
+  });
+
+  it("calls the dedicated generation detail tool", async () => {
+    const callTool = vi
+      .fn()
+      .mockResolvedValue({ structuredContent: { result: { prompt: "test" } } });
+    const sdkClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      callTool,
+    };
+    const client = new PixaiMcpClient({
+      authProvider,
+      connectionFactory: (endpoint, provider) => ({
+        client: sdkClient,
+        transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
+      }),
+    });
+    await client.connect();
+
+    await expect(client.getGenerationDetails("operation-1")).resolves.toMatchObject({
+      result: { prompt: "test" },
+    });
+    expect(callTool).toHaveBeenCalledWith(
+      { name: "get_generation_details", arguments: { operationId: "operation-1" } },
+      undefined,
+      expect.any(Object),
     );
   });
 

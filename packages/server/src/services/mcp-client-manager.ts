@@ -31,7 +31,7 @@ interface McpToolEntry {
 }
 
 const MAX_RETRIES = 10;
-const CALL_TOOL_TIMEOUT_MS = 30_000;
+const CALL_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
 
 export class McpClientManager {
   private clients = new Map<number, McpClientEntry>();

@@ -4,12 +4,13 @@ import type {
   TimeoutConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_SUB_AGENT_MAX_STEPS, DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { LanguageModel, Tool } from "ai";
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
 import { createWebTools } from "./web.js";
+import { createDanbooruTools } from "./danbooru.js";
 
 interface AgentDefinition {
   systemPrompt: string;
@@ -23,9 +24,9 @@ function buildAgentDefinitions(
   timeoutConfig?: TimeoutConfig,
 ): Record<string, AgentDefinition> {
   // Build web tools for researcher if available
-  let webTools: Record<string, Tool> = {};
+  let webTools: Record<string, Tool> = { ...createDanbooruTools({ timeoutConfig }) };
   if (webToolsConfig?.enabled) {
-    webTools = createWebTools({ config: webToolsConfig, timeoutConfig });
+    Object.assign(webTools, createWebTools({ config: webToolsConfig, timeoutConfig }));
   }
 
   const defaults: Record<string, AgentDefinition> = {
@@ -33,23 +34,23 @@ function buildAgentDefinitions(
       systemPrompt:
         "你是一个研究助手。使用搜索和网页获取工具来回答问题。先搜索，再深入阅读相关页面，最后总结发现。输出简洁的研究结果。",
       tools: { ...webTools },
-      maxSteps: 5,
+      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },
     creative_writer: {
       systemPrompt: "你是一个创意写作助手。擅长诗歌、故事、文案、对联等创意内容。直接输出成品。",
       tools: {},
-      maxSteps: 3,
+      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },
     code_helper: {
       systemPrompt: "你是一个代码助手。擅长代码分析、解释、生成和调试。",
       tools: {},
-      maxSteps: 3,
+      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },
     translator: {
       systemPrompt:
         "你是一个专业翻译。提供准确、自然的翻译，保留原文的语气和风格。如果原文是中文则翻译为英文，反之亦然，除非另有指示。",
       tools: {},
-      maxSteps: 2,
+      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },
   };
 
@@ -67,7 +68,7 @@ function buildAgentDefinitions(
   return defaults;
 }
 
-const MAX_SUB_AGENT_RESULT_LENGTH = 3000;
+const MAX_SUB_AGENT_RESULT_LENGTH = 64_000;
 
 export function getAvailableAgentNames(
   agentConfig?: AgentToolsConfig,

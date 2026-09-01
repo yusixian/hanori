@@ -49,10 +49,15 @@ export interface DataFilesInjectionConfig {
 
 export const DEFAULT_INJECTABLE_FILES = ["IDENTITY.md", "SOUL.md"];
 export const DEFAULT_MAX_INJECTION_SIZE = 8192; // 8KB
+export const DEFAULT_AI_MAX_STEPS = 128;
+export const MAX_TOOL_CALLS_PER_REQUEST = 512;
+export const DEFAULT_SUB_AGENT_MAX_STEPS = 64;
+export const MAX_SUB_AGENT_STEPS = 128;
+export const MAX_CONCURRENT_AI_REPLIES = 128;
 
 export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
   enabled: false,
-  maxSteps: 3,
+  maxSteps: DEFAULT_AI_MAX_STEPS,
   autoReadProfile: true,
   autoUpdateLastSeen: true,
   toolChoice: "auto",
@@ -163,15 +168,15 @@ export interface TimeoutConfig {
 }
 
 export const DEFAULT_TIMEOUT_CONFIG: Required<TimeoutConfig> = {
-  aiReplyMs: 300_000,
-  perStepMs: 60_000,
-  searchMs: 30_000,
-  fetchPageMs: 20_000,
-  imageGenerationMs: 120_000,
-  researcherAgentMs: 120_000,
-  defaultAgentMs: 60_000,
-  imageDownloadMs: 60_000,
-  pixaiTaskMs: 600_000,
+  aiReplyMs: 60 * 60 * 1000,
+  perStepMs: 5 * 60 * 1000,
+  searchMs: 2 * 60 * 1000,
+  fetchPageMs: 2 * 60 * 1000,
+  imageGenerationMs: 60 * 60 * 1000,
+  researcherAgentMs: 30 * 60 * 1000,
+  defaultAgentMs: 30 * 60 * 1000,
+  imageDownloadMs: 5 * 60 * 1000,
+  pixaiTaskMs: 6 * 60 * 60 * 1000,
 };
 
 /** Keeps PixAI polling below the bounded pending-insert fallback retention window. */
@@ -521,7 +526,7 @@ export interface AiExecutionConfig {
 }
 
 export const DEFAULT_AI_EXECUTION_CONFIG: AiExecutionConfig = {
-  maxConcurrentReplies: 4,
+  maxConcurrentReplies: 32,
   queueNotice: {
     enabled: true,
     text: "正在处理中，请稍候～",
