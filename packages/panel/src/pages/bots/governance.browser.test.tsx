@@ -9,6 +9,7 @@ const loadedDraft = {
   timezone: "UTC",
   connection: { status: "connected", scopes: ["mcp:pixai:generate"] },
   generalRouteMode: "semantic_auto",
+  privateChatUserIds: [73],
   routes: [
     {
       purpose: "anime_illustration",
@@ -86,6 +87,13 @@ test("resets the complete governance draft to the raised defaults before saving"
   await expect.element(page.getByRole("status")).toHaveTextContent("Defaults restored");
   await expect.element(page.getByLabelText("Budget timezone")).toHaveValue("Asia/Shanghai");
   await expect.element(page.getByLabelText("General image backend")).toHaveValue("off");
+  await expect
+    .element(
+      page.getByText(
+        "No non-admin users are authorized. Private-chat image generation is off by default.",
+      ),
+    )
+    .toBeVisible();
   await expect.element(page.getByLabelText("Image · Bot total hourly")).toHaveValue(500);
   await expect.element(page.getByLabelText("Image · group user cooldownSeconds")).toHaveValue(5);
   await expect.element(page.getByLabelText("Image · group user hourly")).toHaveValue(30);
@@ -102,10 +110,42 @@ test("resets the complete governance draft to the raised defaults before saving"
   expect(body).toMatchObject({
     timezone: "Asia/Shanghai",
     generalRouteMode: "off",
+    privateChatUserIds: [],
     overrides: [],
   });
   expect(body.limits.find((limit) => limit.key === "image_bot")).toMatchObject({
     hourly: 500,
     daily: 5_000,
   });
+});
+
+test("adds a private-chat image user and includes it in the saved governance config", async () => {
+  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const data =
+      init?.method === "PUT"
+        ? { ...JSON.parse(String(init.body)), connection: loadedDraft.connection }
+        : loadedDraft;
+    return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect
+    .element(page.getByRole("heading", { name: "Private-chat image access" }))
+    .toBeVisible();
+  await expect.element(page.getByLabelText("Telegram user ID")).toHaveValue(73);
+  await page.getByRole("button", { name: "Add user" }).click();
+  await page.getByLabelText("Telegram user ID").nth(1).fill("4242");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  const request = fetchMock.mock.calls[1]?.[1];
+  const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
+  expect(body.privateChatUserIds).toEqual([73, 4242]);
 });

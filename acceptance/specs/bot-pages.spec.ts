@@ -81,6 +81,43 @@ test.describe("bot-scoped pages", () => {
     });
   }
 
+  test("bot-private-image-access", async ({ page, acceptance }, testInfo) => {
+    acceptance.meta({
+      id: "bot-private-image-access",
+      feature: "Private-chat image access",
+      severity: "P1",
+      steps: [
+        "Open the Bot governance page",
+        "Add a Telegram user ID to private-chat image access",
+        "Save and reload the governance settings",
+      ],
+      expected: [
+        "The user ID can be added without granting Bot administration",
+        "The saved user ID remains visible after reload",
+        "The form has no horizontal overflow on desktop or mobile",
+      ],
+    });
+
+    const userId = testInfo.project.name === "mobile" ? "900000002" : "900000001";
+    await page.goto(`/bots/${botId}/governance`);
+    await expect(page.getByRole("heading", { name: "Private-chat image access" })).toBeVisible();
+    await page.getByRole("button", { name: "Add user" }).click();
+    await page.getByLabel("Telegram user ID").last().fill(userId);
+    await acceptance.checkpoint("private-image-user-added");
+
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("status")).toHaveText("Governance settings saved.");
+    await page.reload();
+    await expect
+      .poll(() =>
+        page
+          .getByLabel("Telegram user ID")
+          .evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value)),
+      )
+      .toContain(userId);
+    await acceptance.checkpoint("private-image-user-saved");
+  });
+
   test("bot-ai-expanded-execution-limits", async ({ page, acceptance }) => {
     acceptance.meta({
       id: "bot-ai-expanded-execution-limits",

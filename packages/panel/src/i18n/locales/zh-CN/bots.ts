@@ -439,6 +439,15 @@ export const bots = {
         semantic_auto: "按语义自动路由",
       },
     },
+    privateImages: {
+      title: "私聊生图授权",
+      description: "仅这里列出的普通用户可以在私聊中生图；Bot 管理员始终允许。",
+      add: "添加用户",
+      empty: "尚未授权任何普通用户，私聊生图默认关闭。",
+      userId: "Telegram 用户 ID",
+      remove: "移除这位用户",
+      hint: "授权只开放生图，不会授予 Bot 管理权限；用户仍受全局生图额度限制。",
+    },
     limits: {
       title: "默认硬限制",
       description: "即使用户或群聊没有单独设置，也会应用默认限制；Token 数只统计，不设硬预算。",

@@ -460,6 +460,16 @@ export const bots = {
         semantic_auto: "Semantic auto-routing",
       },
     },
+    privateImages: {
+      title: "Private-chat image access",
+      description:
+        "Only listed non-admin users can generate images in private chats. Bot administrators are always allowed.",
+      add: "Add user",
+      empty: "No non-admin users are authorized. Private-chat image generation is off by default.",
+      userId: "Telegram user ID",
+      remove: "Remove user",
+      hint: "This grants image generation only, not Bot administration. User-wide image limits still apply.",
+    },
     limits: {
       title: "Default hard limits",
       description:

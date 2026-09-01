@@ -62,6 +62,7 @@ export interface ImageRouteConfig {
 export interface ImageGovernanceConfig {
   timezone: string;
   generalRouteMode: GeneralImageRouteMode;
+  privateChatUserIds: number[];
   routes: ImageRouteConfig[];
 }
 

@@ -88,6 +88,10 @@ const updateSchema = z
         }
       }, "invalid timezone"),
     generalRouteMode: z.enum(["off", "explicit_only", "semantic_auto"]),
+    privateChatUserIds: z
+      .array(z.number().int().positive().max(Number.MAX_SAFE_INTEGER))
+      .max(1_000)
+      .default([]),
     routes: z.array(routeSchema).length(2),
     limits: z.array(limitSchema).max(LIMIT_KEYS.length),
     overrides: z.array(overrideSchema).max(200).default([]),
@@ -104,6 +108,13 @@ const updateSchema = z
     };
     if (hasDuplicate(value.routes, (route) => route.purpose)) {
       ctx.addIssue({ code: "custom", path: ["routes"], message: "duplicate route purpose" });
+    }
+    if (hasDuplicate(value.privateChatUserIds, String)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["privateChatUserIds"],
+        message: "duplicate private chat user",
+      });
     }
     if (hasDuplicate(value.limits, (limit) => limit.key)) {
       ctx.addIssue({ code: "custom", path: ["limits"], message: "duplicate limit key" });
@@ -195,6 +206,7 @@ export function governanceRoutes(
       const config: ImageGovernanceConfig = {
         timezone: body.timezone,
         generalRouteMode: body.generalRouteMode,
+        privateChatUserIds: body.privateChatUserIds,
         routes: body.routes,
       };
       await db.transaction(async (tx) => {

@@ -76,6 +76,7 @@ export interface ImageGenerationServiceOptions {
 export const DEFAULT_IMAGE_GOVERNANCE_CONFIG: ImageGovernanceConfig = {
   timezone: "Asia/Shanghai",
   generalRouteMode: "off",
+  privateChatUserIds: [],
   routes: [
     {
       purpose: "anime_illustration",
@@ -172,8 +173,8 @@ export class ImageGenerationService implements ImageGenerationPort {
     actor: ImageGenerationActor,
     request: CreateImageRequest,
   ): Promise<ImageGenerationAdmission> {
-    if (!(await this.canCreate(actor))) return { accepted: false, reason: "not_allowed" };
     const config = await this.getConfig(actor.botId);
+    if (!(await this.canCreate(actor, config))) return { accepted: false, reason: "not_allowed" };
     const route = config.routes.find((candidate) => candidate.purpose === request.purpose);
     if (!route?.enabled) return { accepted: false, reason: "disabled" };
     if (request.purpose === "general_image") {
@@ -489,7 +490,11 @@ export class ImageGenerationService implements ImageGenerationPort {
       .from(imageGenerationConfigs)
       .where(eq(imageGenerationConfigs.botId, botId))
       .limit(1);
-    return row?.config ?? structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG);
+    if (!row) return structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG);
+    return {
+      ...row.config,
+      privateChatUserIds: [...new Set(row.config.privateChatUserIds ?? [])],
+    };
   }
 
   async setConfig(botId: string, config: ImageGovernanceConfig): Promise<void> {
@@ -795,9 +800,12 @@ export class ImageGenerationService implements ImageGenerationPort {
       .where(and(eq(imageGenerations.id, row.id), isNull(imageGenerations.deliveredAt)));
   }
 
-  private async canCreate(actor: ImageGenerationActor): Promise<boolean> {
+  private async canCreate(
+    actor: ImageGenerationActor,
+    config: ImageGovernanceConfig,
+  ): Promise<boolean> {
     if (actor.isBotAdmin || actor.isDelegatedGroupAdmin) return true;
-    if (actor.chatType === "private") return false;
+    if (actor.chatType === "private") return config.privateChatUserIds.includes(actor.userId);
     return this.isGroupEnabled(actor.botId, actor.chatId);
   }
 

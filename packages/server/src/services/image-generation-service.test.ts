@@ -2,6 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import type { ImageGenerationActor } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_IMAGE_GOVERNANCE_CONFIG,
   ImageGenerationService,
   normalizeImageOperationState,
   projectPixaiPreset,
@@ -101,6 +102,89 @@ function generationRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ImageGenerationService failure accounting", () => {
+  it("denies private-chat image generation for an ordinary user by default", async () => {
+    const dependencies = createDependencies();
+    const db = { select: vi.fn(() => query([])) } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(
+      service.create(
+        { ...ACTOR, chatId: 42, chatType: "private", isBotAdmin: false },
+        {
+          purpose: "anime_illustration",
+          routingIntent: "semantic",
+          prompt: "draw a cat",
+        },
+      ),
+    ).resolves.toEqual({ accepted: false, reason: "not_allowed" });
+
+    expect(dependencies.pixai.listPresets).not.toHaveBeenCalled();
+    expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
+  });
+
+  it("admits an explicitly authorized private-chat user to the normal quota path", async () => {
+    const dependencies = createDependencies();
+    const config = { ...DEFAULT_IMAGE_GOVERNANCE_CONFIG, privateChatUserIds: [42] };
+    const db = {
+      select: vi.fn(() => query([{ config }])),
+      insert: vi.fn(() => ({
+        values: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      })),
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(
+      service.create(
+        { ...ACTOR, chatId: 42, chatType: "private", isBotAdmin: false },
+        {
+          purpose: "anime_illustration",
+          routingIntent: "semantic",
+          prompt: "draw a cat",
+        },
+      ),
+    ).resolves.toEqual({ accepted: false, reason: "provider_unavailable" });
+
+    expect(dependencies.usageGovernor.reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        botId: BOT_ID,
+        resource: "image",
+        chatKind: "private",
+        chatId: 42,
+        userId: 42,
+      }),
+    );
+  });
+
+  it("treats saved governance configs from before private grants as an empty allowlist", async () => {
+    const dependencies = createDependencies();
+    const legacyConfig = { ...DEFAULT_IMAGE_GOVERNANCE_CONFIG } as Record<string, unknown>;
+    delete legacyConfig.privateChatUserIds;
+    const db = {
+      select: vi.fn(() => query([{ config: legacyConfig }])),
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(service.getConfig(BOT_ID)).resolves.toMatchObject({ privateChatUserIds: [] });
+  });
+
   it("restores full generation provenance for any user in the delivery chat", async () => {
     const dependencies = createDependencies();
     const row = generationRow({

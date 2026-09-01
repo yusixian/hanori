@@ -55,6 +55,7 @@ interface GovernanceDraft {
   timezone: string;
   connection: ConnectionView;
   generalRouteMode: GeneralRouteMode;
+  privateChatUserIds: Array<number | "">;
   routes: RouteDraft[];
   limits: LimitDraft[];
   overrides: PolicyDraft[];
@@ -84,6 +85,7 @@ const DEFAULT_DRAFT: GovernanceDraft = {
   timezone: "Asia/Shanghai",
   connection: { status: "disconnected", scopes: [] },
   generalRouteMode: "off",
+  privateChatUserIds: [],
   routes: [
     {
       purpose: "anime_illustration",
@@ -116,6 +118,7 @@ function createDefaultDraft(connection = DEFAULT_DRAFT.connection): GovernanceDr
   return {
     ...DEFAULT_DRAFT,
     connection: { ...connection, scopes: [...connection.scopes] },
+    privateChatUserIds: [],
     routes: DEFAULT_DRAFT.routes.map((route) => ({
       ...route,
       examples: [...route.examples],
@@ -175,6 +178,9 @@ export function BotGovernancePage() {
         body: JSON.stringify({
           timezone: draft.timezone,
           generalRouteMode: draft.generalRouteMode,
+          privateChatUserIds: draft.privateChatUserIds.filter(
+            (userId): userId is number => userId !== "",
+          ),
           routes: draft.routes,
           limits: draft.limits,
           overrides: draft.overrides,
@@ -282,6 +288,83 @@ export function BotGovernancePage() {
               ? t("governance.connection.reconnect")
               : t("governance.connection.connect")}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle>{t("governance.privateImages.title")}</CardTitle>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t("governance.privateImages.description")}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="w-full shrink-0 sm:w-auto"
+            onClick={() =>
+              setDraft((current) => ({
+                ...current,
+                privateChatUserIds: [...current.privateChatUserIds, ""],
+              }))
+            }
+          >
+            <Plus className="size-4" aria-hidden="true" />
+            {t("governance.privateImages.add")}
+          </Button>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {draft.privateChatUserIds.length === 0 ? (
+            <p className="text-muted-foreground text-sm">{t("governance.privateImages.empty")}</p>
+          ) : (
+            draft.privateChatUserIds.map((userId, userIndex) => (
+              <div
+                key={`${userId}:${userIndex}`}
+                className="flex flex-col gap-2 rounded-xl border p-3 sm:flex-row sm:items-end"
+              >
+                <div className="grid flex-1 gap-2">
+                  <Label htmlFor={`private-image-user-${userIndex}`}>
+                    {t("governance.privateImages.userId")}
+                  </Label>
+                  <Input
+                    id={`private-image-user-${userIndex}`}
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="123456789"
+                    value={userId}
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        privateChatUserIds: current.privateChatUserIds.map((item, index) =>
+                          index === userIndex
+                            ? event.target.value === ""
+                              ? ""
+                              : Number(event.target.value)
+                            : item,
+                        ),
+                      }))
+                    }
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  aria-label={t("governance.privateImages.remove")}
+                  onClick={() =>
+                    setDraft((current) => ({
+                      ...current,
+                      privateChatUserIds: current.privateChatUserIds.filter(
+                        (_, index) => index !== userIndex,
+                      ),
+                    }))
+                  }
+                >
+                  <Trash2 className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+            ))
+          )}
+          <p className="text-muted-foreground text-xs">{t("governance.privateImages.hint")}</p>
         </CardContent>
       </Card>
 
