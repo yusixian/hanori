@@ -245,9 +245,9 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-const MAX_VISION_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_MODEL_INPUT_IMAGE_BYTES = 5 * 1024 * 1024;
 
-async function downloadImagesForVision(
+async function downloadMessageImages(
   api: Api,
   token: string,
   files: ReceivedFile[],
@@ -265,14 +265,15 @@ async function downloadImagesForVision(
       const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > MAX_VISION_IMAGE_BYTES) return null;
+      if (buf.length > MAX_MODEL_INPUT_IMAGE_BYTES) return null;
       return { buffer: buf, mimeType: f.mime_type ?? "image/jpeg", sourceIndex: idx };
     }),
   );
   const results: Array<{ buffer: Buffer; mimeType: string; sourceIndex: number }> = [];
   for (const r of settled) {
     if (r.status === "fulfilled" && r.value != null) results.push(r.value);
-    else if (r.status === "rejected") console.debug("[vision] image download failed:", r.reason);
+    else if (r.status === "rejected")
+      console.debug("[image-input] image download failed:", r.reason);
   }
   return results;
 }
@@ -1698,18 +1699,16 @@ export function createAiReplyHandler(
           }
         }
 
-        // --- Download images for vision / OCR ---
-        const hasVision = inferCapabilities(currentModel).includes("vision");
+        // --- Download images for model input and optional OCR ---
         const ocrEnabled = !!config.imageOcrConfig?.enabled;
-        const needImages = hasVision || ocrEnabled;
         const imageDownloadTimeout =
           config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
         const [imageBuffers, replyImageBuffers] = await Promise.all([
-          needImages && receivedFiles.length
-            ? downloadImagesForVision(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
+          receivedFiles.length
+            ? downloadMessageImages(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
             : [],
-          needImages && replyFiles.length
-            ? downloadImagesForVision(ctx.api, config.token, replyFiles, imageDownloadTimeout)
+          replyFiles.length
+            ? downloadMessageImages(ctx.api, config.token, replyFiles, imageDownloadTimeout)
             : [],
         ]);
 
@@ -1776,7 +1775,7 @@ export function createAiReplyHandler(
           }
         }
 
-        // --- Build text description (always needed for history and non-vision) ---
+        // --- Build text metadata and optional OCR context for history and the model ---
         const attachmentDesc = describeFiles(receivedFiles, "收到", "\n", ocrDescriptions);
 
         // --- Build reply-to context description ---
@@ -1885,7 +1884,7 @@ export function createAiReplyHandler(
           const parts: UserModelMessage["content"] = allImageBuffers.map((img) => ({
             type: "image" as const,
             image: img.buffer,
-            mimeType: img.mimeType,
+            mediaType: img.mimeType,
           }));
           parts.push({ type: "text" as const, text: textContent || "用户发送了一张图片" });
           currentRequest = { role: "user", content: parts };
@@ -2058,8 +2057,7 @@ export function createAiReplyHandler(
         );
 
         // ─── streamText (ai v6 API) ───
-        const currentProviderModels = currentProviderRuntime.models ?? config.models;
-        const modelEntry = currentProviderModels?.find((m) => m.id === currentModel);
+        const modelEntry = currentSelection.modelEntry;
         const result = streamText({
           model: currentProviderFactory(currentModel),
           messages,
