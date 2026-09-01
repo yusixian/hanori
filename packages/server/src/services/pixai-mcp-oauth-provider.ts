@@ -10,6 +10,9 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 
 export const PIXAI_MCP_OAUTH_SCOPES = [
+  "openid",
+  "profile",
+  "offline_access",
   "mcp:pixai:read",
   "mcp:pixai:generate",
   "mcp:pixai:cancel",
@@ -91,7 +94,13 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await this.patch({ tokens });
+    const current = (await this.read()).tokens;
+    await this.patch({
+      tokens:
+        tokens.refresh_token || !current?.refresh_token
+          ? tokens
+          : { ...tokens, refresh_token: current.refresh_token },
+    });
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {

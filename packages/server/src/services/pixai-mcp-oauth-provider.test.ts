@@ -46,6 +46,14 @@ describe("PixaiMcpOAuthProvider", () => {
     await provider.redirectToAuthorization(new URL("https://auth.example/authorize?secret=nope"));
 
     expect(provider.clientMetadata.scope).toBe(PIXAI_MCP_OAUTH_SCOPES.join(" "));
+    expect(PIXAI_MCP_OAUTH_SCOPES).toEqual([
+      "openid",
+      "profile",
+      "offline_access",
+      "mcp:pixai:read",
+      "mcp:pixai:generate",
+      "mcp:pixai:cancel",
+    ]);
     expect(await provider.codeVerifier()).toBe("verifier-secret");
     expect((await provider.tokens())?.access_token).toBe("access-secret");
     expect(onAuthorizationUrl).toHaveBeenCalledOnce();
@@ -54,6 +62,28 @@ describe("PixaiMcpOAuthProvider", () => {
     expect(await provider.consumeAuthorizationState(state)).toBe(true);
     expect(await provider.consumeAuthorizationState(state)).toBe(false);
     expect(memory.current().authorizationState).toBeUndefined();
+  });
+
+  it("keeps the durable refresh token when a refresh response rotates only the access token", async () => {
+    const memory = memoryStore({
+      tokens: {
+        access_token: "old-access",
+        refresh_token: "durable-refresh",
+        token_type: "Bearer",
+      },
+    });
+    const provider = new PixaiMcpOAuthProvider({
+      store: memory.store,
+      redirectUrl: "https://bot.example/callback",
+      onAuthorizationUrl: vi.fn(),
+    });
+
+    await provider.saveTokens({ access_token: "new-access", token_type: "Bearer" });
+
+    expect(await provider.tokens()).toMatchObject({
+      access_token: "new-access",
+      refresh_token: "durable-refresh",
+    });
   });
 
   it("invalidates only the requested credential class", async () => {
@@ -89,10 +119,9 @@ describe("PixaiMcpOAuthProvider", () => {
     );
 
     const authorizationUrl = onAuthorizationUrl.mock.calls[0]![0] as URL;
-    expect(authorizationUrl.searchParams.get("scope")?.split(" ")).toEqual([
-      "openid",
-      ...PIXAI_MCP_OAUTH_SCOPES,
-    ]);
+    const scopes = authorizationUrl.searchParams.get("scope")?.split(" ") ?? [];
+    expect(new Set(scopes)).toEqual(new Set(PIXAI_MCP_OAUTH_SCOPES));
+    expect(scopes).toHaveLength(PIXAI_MCP_OAUTH_SCOPES.length);
   });
 
   it("replaces secret-bearing storage errors with a fixed error", async () => {

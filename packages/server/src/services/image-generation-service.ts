@@ -135,7 +135,13 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!purpose || purpose === "anime_illustration") {
       const route = config.routes.find((candidate) => candidate.purpose === "anime_illustration");
       if (route?.enabled) {
-        const raw = await this.pixai.listPresets().catch(() => []);
+        const raw = await this.pixai.listPresets().catch((error: unknown) => {
+          this.logger.warn(
+            { code: sanitizedProviderErrorCode(error) },
+            "PixAI MCP preset discovery failed",
+          );
+          return [];
+        });
         for (const item of raw) {
           const preset = projectPixaiPreset(item);
           if (!preset) continue;
@@ -835,6 +841,19 @@ export class ImageGenerationService implements ImageGenerationPort {
       })
       .where(and(eq(imageGenerations.id, id), eq(imageGenerations.state, "cancel_requested")));
   }
+}
+
+function sanitizedProviderErrorCode(error: unknown): string {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    /^[A-Z][A-Z0-9_]{0,63}$/.test(error.code)
+  ) {
+    return error.code;
+  }
+  return "UNKNOWN_PROVIDER_ERROR";
 }
 
 type GenerationRow = NonNullable<Awaited<ReturnType<ImageGenerationService["getRow"]>>>;

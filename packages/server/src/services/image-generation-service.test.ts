@@ -98,6 +98,37 @@ function generationRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ImageGenerationService failure accounting", () => {
+  it("reports a sanitized MCP capability failure before reserving image usage", async () => {
+    const dependencies = createDependencies();
+    dependencies.pixai.listPresets.mockRejectedValue(
+      Object.assign(new Error("secret upstream detail"), { code: "AUTHORIZATION_REQUIRED" }),
+    );
+    const db = {
+      select: vi.fn(() => query([])),
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(
+      service.create(ACTOR, {
+        purpose: "anime_illustration",
+        routingIntent: "semantic",
+        prompt: "draw a cat",
+      }),
+    ).resolves.toEqual({ accepted: false, reason: "provider_unavailable" });
+
+    expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
+    expect(dependencies.logger.warn).toHaveBeenCalledWith(
+      { code: "AUTHORIZATION_REQUIRED" },
+      "PixAI MCP preset discovery failed",
+    );
+  });
+
   it("refunds the image reservation when the durable generation insert fails", async () => {
     const dependencies = createDependencies();
     const db = {

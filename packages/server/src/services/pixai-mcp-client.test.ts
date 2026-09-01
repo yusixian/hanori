@@ -132,4 +132,39 @@ describe("PixaiMcpClient", () => {
       new PixaiMcpClientError("AUTHORIZATION_REQUIRED"),
     );
   });
+
+  it("marks an unauthorized tool call as disconnected and reports only its sanitized code", async () => {
+    const onCallError = vi.fn();
+    const callTool = vi.fn().mockRejectedValue(new UnauthorizedError());
+    const sdkClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+      callTool,
+    };
+    const client = new PixaiMcpClient({
+      authProvider,
+      onCallError,
+      connectionFactory: (endpoint, provider) => ({
+        client: sdkClient,
+        transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
+      }),
+    });
+    await client.connect();
+
+    await expect(client.getCapabilities()).rejects.toEqual(
+      new PixaiMcpClientError("AUTHORIZATION_REQUIRED"),
+    );
+    await expect(client.getCapabilities()).rejects.toEqual(
+      new PixaiMcpClientError("NOT_CONNECTED"),
+    );
+    expect(callTool).toHaveBeenCalledOnce();
+    expect(onCallError).toHaveBeenNthCalledWith(1, {
+      toolName: "get_capabilities",
+      code: "AUTHORIZATION_REQUIRED",
+    });
+    expect(onCallError).toHaveBeenNthCalledWith(2, {
+      toolName: "get_capabilities",
+      code: "NOT_CONNECTED",
+    });
+  });
 });

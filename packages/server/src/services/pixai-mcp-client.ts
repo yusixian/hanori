@@ -79,6 +79,10 @@ export interface PixaiMcpClientOptions {
   endpointOverride?: string | URL;
   fetch?: typeof fetch;
   callTimeoutMs?: number;
+  onCallError?: (failure: {
+    toolName: PixaiMcpToolName;
+    code: PixaiMcpClientErrorCode;
+  }) => void | Promise<void>;
   connectionFactory?: (
     endpoint: URL,
     authProvider: OAuthClientProvider,
@@ -103,6 +107,7 @@ export class PixaiMcpClient {
   private readonly connectionFactory: NonNullable<PixaiMcpClientOptions["connectionFactory"]>;
   private readonly authProvider: OAuthClientProvider;
   private readonly fetchFn?: typeof fetch;
+  private readonly onCallError?: PixaiMcpClientOptions["onCallError"];
   private connection: PixaiMcpConnection;
   private connected = false;
 
@@ -115,6 +120,7 @@ export class PixaiMcpClient {
     this.connectionFactory = options.connectionFactory ?? createConnection;
     this.authProvider = options.authProvider;
     this.fetchFn = options.fetch;
+    this.onCallError = options.onCallError;
     this.connection = this.createConnection();
   }
 
@@ -224,7 +230,11 @@ export class PixaiMcpClient {
     signal?: AbortSignal,
     timeoutMs = this.callTimeoutMs,
   ): Promise<PixaiMcpToolResponse<T>> {
-    if (!this.connected) throw new PixaiMcpClientError("NOT_CONNECTED");
+    if (!this.connected) {
+      const error = new PixaiMcpClientError("NOT_CONNECTED");
+      await this.notifyCallError(name, error.code);
+      throw error;
+    }
     try {
       const rawValue = await this.connection.client.callTool({ name, arguments: args }, undefined, {
         signal,
@@ -237,8 +247,26 @@ export class PixaiMcpClient {
       if (raw.isError) throw new PixaiMcpClientError("TOOL_CALL_FAILED");
       return normalizePixaiMcpToolResponse<T>(raw);
     } catch (error) {
-      if (error instanceof PixaiMcpClientError) throw error;
-      throw new PixaiMcpClientError("TOOL_CALL_FAILED");
+      const mapped =
+        error instanceof PixaiMcpClientError
+          ? error
+          : new PixaiMcpClientError(
+              isUnauthorizedError(error) ? "AUTHORIZATION_REQUIRED" : "TOOL_CALL_FAILED",
+            );
+      if (mapped.code === "AUTHORIZATION_REQUIRED") this.connected = false;
+      await this.notifyCallError(name, mapped.code);
+      throw mapped;
+    }
+  }
+
+  private async notifyCallError(
+    toolName: PixaiMcpToolName,
+    code: PixaiMcpClientErrorCode,
+  ): Promise<void> {
+    try {
+      await this.onCallError?.({ toolName, code });
+    } catch {
+      // Connection diagnostics must never replace the sanitized MCP failure.
     }
   }
 }

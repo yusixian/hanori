@@ -56,6 +56,17 @@ export class ImageMcpConnectionService {
       authProvider: this.provider,
       environment: options.environment,
       endpointOverride: options.endpointOverride,
+      onCallError: async ({ toolName, code }) => {
+        if (
+          toolName === "get_capabilities" ||
+          code === "AUTHORIZATION_REQUIRED" ||
+          code === "NOT_CONNECTED"
+        ) {
+          await this.recordError(
+            code === "AUTHORIZATION_REQUIRED" ? code : `MCP_${toolName.toUpperCase()}_${code}`,
+          );
+        }
+      },
     });
     this.adapter = new PixaiMcpAdapter(this.client);
     this.artifacts = new PixaiMcpArtifactReader({ endpoint, authProvider: this.provider });
@@ -64,6 +75,10 @@ export class ImageMcpConnectionService {
   async initialize(): Promise<void> {
     const state = await this.provider.tokens().catch(() => undefined);
     if (!state) return;
+    if (!state.refresh_token) {
+      await this.recordError("OFFLINE_ACCESS_REQUIRED");
+      return;
+    }
     try {
       await this.client.connect();
       await this.recordConnected();
@@ -133,11 +148,15 @@ export class ImageMcpConnectionService {
     }
     try {
       await this.client.finishAuthorization(code);
-      await this.recordConnected();
     } catch {
       await this.recordError("OAUTH_CALLBACK_FAILED");
       throw new Error("PixAI MCP authorization failed");
     }
+    if (!(await this.provider.tokens())?.refresh_token) {
+      await this.recordError("OFFLINE_ACCESS_REQUIRED");
+      throw new Error("PixAI MCP offline access was not granted");
+    }
+    await this.recordConnected();
   }
 
   async disconnect(): Promise<void> {
