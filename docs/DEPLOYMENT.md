@@ -4,72 +4,11 @@
 
 > 永远不要执行 `docker compose down -v`。其中的 `-v` 会删除数据库存储卷。
 
-## Dokploy：推送 main 自动部署
+## Dokploy 新服务器迁移
 
-Dokploy 直接使用仓库中的 `docker-compose.yml`。这份基础配置默认不会发布主机端口，并提供 `dokploy` profile；旧服务器需要的 `9600/9601` 映射单独保存在 `docker-compose.direct.yml`，由更新脚本自动叠加。
+Dokploy 直接使用仓库中的 `docker-compose.yml`；旧服务器继续由 `docker-compose.direct.yml` 和原更新脚本管理。完整的新服务器准备、原域名切换、数据库与文件卷迁移、S3 备份、验收和回滚步骤见 [Dokploy 新服务器迁移部署教程](DOKPLOY_DEPLOYMENT.md)。
 
-Dokploy 部署包含两个边界：
-
-1. 基础 Compose 不发布 `app` 和 `nsfw-api` 的主机端口，只允许 Dokploy 通过 Traefik 访问 `app:3000`。
-2. `dokploy` profile 在每次更新 app 前运行一次 `pg_dump`，将经过 `pg_restore --list` 验证的备份写入持久化 `backups` volume。备份失败时 app 不会更新，未完成的备份文件会被删除。
-
-### 1. 创建 Compose 服务
-
-在 Dokploy 中创建 Project 和 Production Environment，然后添加 Compose 服务：
-
-- Compose Type：`Docker Compose`
-- Provider：`GitHub`
-- Repository：`example-owner/cos-tool-bot`
-- Branch：`main`
-- Compose Path：`./docker-compose.yml`
-- Auto Deploy：开启
-- Isolated Deployments：开启
-- Advanced Command：保持默认
-
-不要覆盖 Advanced Command。Dokploy 的默认 Deploy 和 Stop/Start 都会读取同一个 Compose Path，避免某次手工重启绕过端口和备份规则。
-
-### 2. 配置环境变量和域名
-
-在 Environment 中按 `.env.example` 填写变量。生产环境至少需要：
-
-```env
-DB_PASSWORD=<固定的随机密码>
-BETTER_AUTH_SECRET=<至少 32 字符的随机值>
-BETTER_AUTH_URL=https://bot.example.com
-AUTH_OWNER_EMAIL=<owner 邮箱>
-PANEL_PASSWORD=<仅首次初始化需要>
-ENCRYPTION_KEY=<固定的随机密钥>
-ADMIN_CHAT_IDS=[]
-COMPOSE_PROFILES=dokploy
-CODING_WORKER_SECRET=
-```
-
-注意：
-
-- `BETTER_AUTH_URL` 必须替换成正式 HTTPS 域名，结尾不能有 `/`。
-- 已有生产数据迁移到 Dokploy 时必须保留原 `ENCRYPTION_KEY`。
-- 启用 Pi worker 时设置 `COMPOSE_PROFILES=dokploy,coding` 和非空 `CODING_WORKER_SECRET`。
-- 五个 `GITHUB_APP_*` 变量必须全部填写或全部留空。
-- 不要为 Dokploy 设置 `PORT` 或 `NSFW_API_PORT`；基础 Compose 不发布主机端口。
-
-在 Domains 中只添加：
-
-- Service：`app`
-- Container Port：`3000`
-- HTTPS：开启
-
-不要为 `db`、`nsfw-api`、`coding-worker` 或 `coding-egress-proxy` 添加域名或 Advanced Port。
-
-### 3. 首次部署与验证
-
-首次部署时数据库还没有业务表，`db-backup` 仍会生成并验证一个空库备份，然后 app 启动并执行数据库迁移。部署完成后检查：
-
-1. `db` 和 `app` 为 healthy；启用 coding profile 时 worker 和出口代理也为 healthy。
-2. `db-backup` 以退出码 `0` 完成，日志包含 `Verified database backup`，`backups` volume 中存在非空 `.dump` 文件。
-3. app 日志包含 `Database migrated`、`Database connected` 和 `Server running`。
-4. `https://<正式域名>/api/health` 返回 `{"ok":true}`，面板可以登录，并完成一次真实 Bot 业务 smoke。
-
-Dokploy 的部署记录、健康接口或绿色构建都不能单独证明 Bot 已正常启动。
+基础 Compose 不发布 app、数据库、NSFW 或 worker 主机端口。Dokploy Advanced Command 必须在默认命令末尾追加 `--force-recreate`，确保每次完整部署都重新运行 `db-backup`；app 容器则使用 `/api/health/ready` 判断迁移、认证、MCP 与 Bot 启动是否完成。启用 Pi worker 时只需设置 `COMPOSE_PROFILES=coding`。
 
 ## 一、首次部署
 

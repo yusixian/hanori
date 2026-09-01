@@ -41,6 +41,7 @@ import { ImageMcpConnectionService } from "./services/image-mcp-connection-servi
 import { ImageGenerationService } from "./services/image-generation-service.js";
 import { BotConfiguredGeneralImageBackend } from "./services/general-image-backend.js";
 import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
+import { resolveDeploymentVersion, RuntimeHealth } from "./runtime-health.js";
 
 export type { AppType } from "./app.js";
 
@@ -50,6 +51,9 @@ const logger = pino({
     options: { colorize: true },
   },
 });
+const runtimeHealth = new RuntimeHealth(
+  resolveDeploymentVersion({ environmentValue: env.APP_VERSION }),
+);
 
 // Uncaught exception / unhandled rejection — log and exit, let Docker restart
 process.on("uncaughtException", (err) => {
@@ -366,6 +370,7 @@ const app = createApp({
   imageGenerationService,
   imageMcpConnectionService,
   usageGovernor,
+  runtimeHealth,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -422,9 +427,12 @@ for (const [name, svc] of scheduledServices) {
     timerRegistry.registerSystem({ name, intervalMs: svc.getIntervalMs(), handle });
   }
 }
+runtimeHealth.markReady();
+logger.info({ version: runtimeHealth.snapshot().version }, "Application ready");
 
 // Graceful shutdown
 const shutdown = async (signal: string) => {
+  runtimeHealth.markStopping();
   await dbLogger.info(`[${signal}] Shutting down...`);
   await mcpClientManager.destroyAll();
   await imageMcpConnectionService.close();

@@ -1,7 +1,16 @@
 node_modules
 **/node_modules
 **/dist
+.acceptance
+acceptance
+coverage
 .git
+!.git/
+.git/*
+!.git/HEAD
+!.git/packed-refs
+!.git/refs/
+!.git/refs/**
 .env
 .env.*
 !.env.example

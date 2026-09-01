@@ -52,6 +52,7 @@ import type { ImageGenerationService } from "./services/image-generation-service
 import type { ImageMcpConnectionService } from "./services/image-mcp-connection-service.js";
 import type { UsageGovernor } from "./services/usage-governor.js";
 import { securityHeaders, staticCacheControl } from "./http-policy.js";
+import type { RuntimeHealthReader } from "./runtime-health.js";
 
 interface AppOptions {
   db: Database;
@@ -78,6 +79,7 @@ interface AppOptions {
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
   usageGovernor: UsageGovernor;
+  runtimeHealth: RuntimeHealthReader;
 }
 
 export function createApp(options: AppOptions) {
@@ -105,6 +107,7 @@ export function createApp(options: AppOptions) {
     botSettingsService,
     imageGenerationService,
     imageMcpConnectionService,
+    runtimeHealth,
   } = options;
 
   const app = new Hono()
@@ -204,6 +207,20 @@ export function createApp(options: AppOptions) {
     .use("/api/mcp-servers/*", requireAppAccess(auth, db))
     .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
     .get("/api/health", (c) => c.json({ ok: true as const }))
+    .get("/api/health/live", (c) => {
+      const { version } = runtimeHealth.snapshot();
+      return c.json({ ok: true as const, status: "live" as const, version });
+    })
+    .get("/api/health/ready", (c) => {
+      const snapshot = runtimeHealth.snapshot();
+      if (snapshot.status !== "ready") {
+        return c.json(
+          { ok: false as const, status: snapshot.status, version: snapshot.version },
+          503,
+        );
+      }
+      return c.json({ ok: true as const, status: snapshot.status, version: snapshot.version });
+    })
     .all("/api/*", (c) => c.json({ ok: false as const, error: "Not found" }, 404));
 
   // Serve panel static files in production (not chained - doesn't affect API types)

@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        - APP_VERSION=${APP_VERSION:-}
     expose:
       - "3000"
     environment:
@@ -21,8 +24,13 @@ services:
       - ADMIN_CHAT_IDS=${ADMIN_CHAT_IDS}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       - EMBEDDING_DIMENSIONS=${EMBEDDING_DIMENSIONS:-}
+      - LOG_RETENTION_DAYS=${LOG_RETENTION_DAYS:-30}
+      - LOG_RETENTION_DAYS_ERROR=${LOG_RETENTION_DAYS_ERROR:-90}
+      - LOG_CLEANUP_INTERVAL_HOURS=${LOG_CLEANUP_INTERVAL_HOURS:-24}
+      - GENERATION_RETENTION_DAYS=${GENERATION_RETENTION_DAYS:-30}
       - BACKUP_DIR=/data/backups
       - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
+      - PIXAI_MCP_URL=${PIXAI_MCP_URL:-}
       - CODING_WORKER_URL=
       - CODING_WORKER_SOCKET=/coding-control/worker.sock
       - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
@@ -43,7 +51,6 @@ services:
         condition: service_healthy
       db-backup:
         condition: service_completed_successfully
-        required: false
     restart: unless-stopped
     deploy:
       resources:
@@ -54,7 +61,7 @@ services:
           cpus: "0.5"
           memory: 256M
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health/ready"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -174,8 +181,7 @@ services:
     stop_grace_period: 20s
 
   db-backup:
-    profiles: ["dokploy"]
-    image: pgvector/pgvector:pg17
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
     environment:
       - PGPASSWORD=${DB_PASSWORD}
     volumes:
@@ -202,7 +208,7 @@ services:
         max-file: "2"
 
   nsfw-api:
-    image: ghcr.io/arnidan/nsfw-api:latest
+    image: ${NSFW_API_IMAGE:-ghcr.io/arnidan/nsfw-api:latest}
     expose:
       - "3000"
     restart: unless-stopped
@@ -227,7 +233,7 @@ services:
         max-file: "2"
 
   db:
-    image: pgvector/pgvector:pg17
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg17}
     environment:
       - POSTGRES_USER=bot
       - POSTGRES_PASSWORD=${DB_PASSWORD}

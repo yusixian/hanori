@@ -45,6 +45,8 @@ COPY --from=deps /app/packages/server/node_modules ./packages/server/node_module
 COPY --from=deps /app/packages/panel/node_modules ./packages/panel/node_modules
 COPY --from=deps /app/packages/coding-worker/node_modules ./packages/coding-worker/node_modules
 COPY . .
+ARG APP_VERSION=""
+RUN APP_VERSION="$APP_VERSION" node scripts/write-deployment-version.mjs
 RUN pnpm -r build
 
 # Production
@@ -67,6 +69,7 @@ COPY --from=builder /app/packages/bot/package.json ./packages/bot/
 COPY --from=builder /app/packages/bot/dist ./packages/bot/dist
 COPY --from=builder /app/packages/server/package.json ./packages/server/
 COPY --from=builder /app/packages/server/dist ./packages/server/dist
+COPY --from=builder /app/deployment-version ./deployment-version
 
 # Copy panel build output as static files for Hono to serve
 COPY --from=builder /app/packages/panel/dist ./public

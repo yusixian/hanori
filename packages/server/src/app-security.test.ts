@@ -5,12 +5,14 @@ import {
   securityHeaders,
   staticCacheControl,
 } from "./http-policy.js";
+import { RuntimeHealth } from "./runtime-health.js";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
 process.env.BETTER_AUTH_SECRET ??= "test-secret";
 process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
 
 let createApp: (typeof import("./app.js"))["createApp"];
+const TEST_SHA = "0123456789abcdef0123456789abcdef01234567";
 
 beforeAll(async () => {
   ({ createApp } = await import("./app.js"));
@@ -65,6 +67,7 @@ describe("production HTTP policy", () => {
       imageGenerationService: {} as never,
       imageMcpConnectionService: {} as never,
       usageGovernor: {} as never,
+      runtimeHealth: new RuntimeHealth(TEST_SHA),
     });
 
     const response = await app.request("/api/not-a-real-route");
@@ -75,5 +78,69 @@ describe("production HTTP policy", () => {
       APP_SECURITY_HEADERS["Content-Security-Policy"],
     );
     await expect(response.json()).resolves.toEqual({ ok: false, error: "Not found" });
+  });
+
+  it("reports liveness separately from runtime readiness", async () => {
+    const runtimeHealth = new RuntimeHealth(TEST_SHA);
+    const app = createApp({
+      db: {} as never,
+      auth: { handler: vi.fn() } as never,
+      baseURL: "https://bot.example.test",
+      botPool: {} as never,
+      encryptionKey: "test-key",
+      backupService: {} as never,
+      modelCapabilityService: {} as never,
+      timerRegistry: {} as never,
+      rssFeedService: {} as never,
+      mcpClientManager: {} as never,
+      summaryService: {} as never,
+      summaryConfigService: {} as never,
+      githubAppService: {} as never,
+      miniAppSessionSecret: "x".repeat(32),
+      telegramDirectoryService: {} as never,
+      telegramMembershipVerifier: {} as never,
+      miniAppAccessService: {} as never,
+      groupConfigService: {} as never,
+      chatAiSelectionService: {} as never,
+      botLifecycleService: {} as never,
+      botSettingsService: {} as never,
+      imageGenerationService: {} as never,
+      imageMcpConnectionService: {} as never,
+      usageGovernor: {} as never,
+      runtimeHealth,
+    });
+
+    await expect((await app.request("/api/health")).json()).resolves.toEqual({ ok: true });
+    await expect((await app.request("/api/health/live")).json()).resolves.toEqual({
+      ok: true,
+      status: "live",
+      version: TEST_SHA,
+    });
+
+    const starting = await app.request("/api/health/ready");
+    expect(starting.status).toBe(503);
+    await expect(starting.json()).resolves.toEqual({
+      ok: false,
+      status: "starting",
+      version: TEST_SHA,
+    });
+
+    runtimeHealth.markReady();
+    const ready = await app.request("/api/health/ready");
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toEqual({
+      ok: true,
+      status: "ready",
+      version: TEST_SHA,
+    });
+
+    runtimeHealth.markStopping();
+    const stopping = await app.request("/api/health/ready");
+    expect(stopping.status).toBe(503);
+    await expect(stopping.json()).resolves.toEqual({
+      ok: false,
+      status: "stopping",
+      version: TEST_SHA,
+    });
   });
 });

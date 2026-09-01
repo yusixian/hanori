@@ -23,6 +23,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Validate Dokploy Compose
+        run: pnpm deploy:dokploy:check
+
       - name: Lint
         run: pnpm lint
 

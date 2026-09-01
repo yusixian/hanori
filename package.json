@@ -19,6 +19,7 @@
     "docker:down": "docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml down",
     "docker:logs": "docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs -f app",
     "docker:prune": "docker image prune -f",
+    "deploy:dokploy:check": "node scripts/check-dokploy-compose.mjs",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint .",
