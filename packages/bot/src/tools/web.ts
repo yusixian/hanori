@@ -126,9 +126,22 @@ function createSearchProvider(config: NonNullable<WebToolsConfig["search"]>): Se
   }
 }
 
-// --- URL validation (SSRF protection) ---
+function normalizeHostname(hostname: string): string {
+  return hostname.replace(/^\[|\]$/g, "").toLowerCase();
+}
 
-function isPrivateUrl(urlStr: string): boolean {
+function isTrustedPrivateHost(hostname: string, trustedHosts: string[]): boolean {
+  const normalized = normalizeHostname(hostname);
+  return trustedHosts.some((entry) => {
+    const rule = normalizeHostname(entry.trim());
+    if (!rule) return false;
+    return rule.startsWith("*.")
+      ? normalized.endsWith(rule.slice(1)) && normalized !== rule.slice(2)
+      : normalized === rule;
+  });
+}
+
+export function isWebpageUrlBlocked(urlStr: string, trustedHosts: string[] = []): boolean {
   let parsed: URL;
   try {
     parsed = new URL(urlStr);
@@ -139,24 +152,24 @@ function isPrivateUrl(urlStr: string): boolean {
   // Only allow http(s)
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return true;
 
-  const hostname = parsed.hostname.toLowerCase();
+  const hostname = normalizeHostname(parsed.hostname);
+  const trusted = isTrustedPrivateHost(hostname, trustedHosts);
 
-  // Block localhost
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return true;
+  if (hostname === "metadata.google.internal") return true;
+  if (hostname === "localhost" || hostname === "::1") return !trusted;
 
   // Block private/reserved IP ranges
   const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
   if (ipv4Match) {
     const [, a, b] = ipv4Match.map(Number) as [number, number, number, number, number];
-    if (a === 10) return true; // 10.0.0.0/8
-    if (a === 172 && b! >= 16 && b! <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 (link-local / cloud metadata)
-    if (a === 0) return true; // 0.0.0.0/8
+    if (a === 169 && b === 254) return true;
+    if (a === 10 || a === 127 || (a === 172 && b! >= 16 && b! <= 31)) return !trusted;
+    if (a === 192 && b === 168) return !trusted;
+    if (a === 0) return true;
   }
 
-  // Block IPv6 private/link-local (simplified)
-  if (hostname.startsWith("[") || hostname.includes(":")) return true;
+  if (hostname.startsWith("fe80:") || hostname === "fd00:ec2::254") return true;
+  if (hostname.includes(":")) return !trusted;
 
   return false;
 }
@@ -169,9 +182,10 @@ const MAX_HTML_SIZE = 2 * 1024 * 1024; // 2MB
 async function extractPageContent(
   url: string,
   timeoutMs?: number,
+  trustedHosts: string[] = [],
 ): Promise<{ title: string; content: string; url: string }> {
-  if (isPrivateUrl(url)) {
-    throw new Error("Access to private/internal URLs is not allowed");
+  if (isWebpageUrlBlocked(url, trustedHosts)) {
+    throw new Error("Access to this private/internal URL is not configured");
   }
 
   const res = await fetch(url, {
@@ -298,7 +312,7 @@ export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
     ),
     execute: async ({ url }) => {
       try {
-        return await extractPageContent(url, fetchPageMs);
+        return await extractPageContent(url, fetchPageMs, config.trustedPrivateHosts);
       } catch (err) {
         return { error: String(err) };
       }

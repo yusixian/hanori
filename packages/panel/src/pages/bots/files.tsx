@@ -6,7 +6,11 @@ import { Switch } from "@/components/ui/switch";
 import { Popover } from "@/components/ui/popover";
 import { authFetch, client } from "@/lib/client";
 import { triggerDownload } from "@/lib/download";
-import { IMAGE_EXTENSIONS, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_MAX_INJECTION_SIZE,
+  IMAGE_EXTENSIONS,
+  TEXT_EXTENSIONS,
+} from "@cos-tool-bot/shared";
 import Editor from "@monaco-editor/react";
 import {
   Archive,
@@ -115,7 +119,7 @@ export function BotFilesPage() {
   // Injection config state
   const [injection, setInjection] = useState<InjectionConfig>({
     injectableFiles: [],
-    maxTotalSize: 8192,
+    maxTotalSize: DEFAULT_MAX_INJECTION_SIZE,
   });
   const [editingMaxSize, setEditingMaxSize] = useState(false);
   const [maxSizeInput, setMaxSizeInput] = useState("");

@@ -42,6 +42,28 @@ export function WebToolsSection({
           </label>
         </div>
 
+        <div className="space-y-1.5">
+          <label htmlFor="trusted-private-hosts" className="text-sm font-medium">
+            {t("webTools.trustedPrivateHosts")}
+          </label>
+          <Textarea
+            id="trusted-private-hosts"
+            disabled={!config.enabled}
+            rows={3}
+            value={config.trustedPrivateHosts?.join("\n") ?? ""}
+            onChange={(event) =>
+              onUpdate({
+                trustedPrivateHosts: event.target.value
+                  .split(/[\n,]/)
+                  .map((host) => host.trim())
+                  .filter(Boolean),
+              })
+            }
+            placeholder={t("webTools.trustedPrivateHostsPlaceholder")}
+          />
+          <p className="text-muted-foreground text-xs">{t("webTools.trustedPrivateHostsHelp")}</p>
+        </div>
+
         {/* Search */}
         <div className="space-y-4 border-t pt-4">
           <p className="text-muted-foreground text-xs font-medium tracking-wider uppercase">

@@ -77,7 +77,7 @@ export function ApiTestPage() {
     const ep = overrideEndpoint ?? endpoint;
     const b = overrideBody ?? body;
 
-    if (!baseURL || !apiKey) return;
+    if (!ep.trim() || (!baseURL && !/^https?:\/\//i.test(ep.trim()))) return;
 
     setLoading(true);
     const entry: HistoryEntry = {
@@ -178,7 +178,7 @@ export function ApiTestPage() {
                 key={p.labelKey}
                 variant="outline"
                 size="sm"
-                disabled={loading || !baseURL || !apiKey}
+                disabled={loading || !baseURL}
                 onClick={() => {
                   setMethod(p.method);
                   setEndpoint(p.endpoint);
@@ -191,29 +191,40 @@ export function ApiTestPage() {
             ))}
           </div>
 
-          <div className="flex gap-2">
-            <Select
-              className="border-input flex h-9 w-24 rounded-md border bg-transparent px-2 py-1 text-sm"
-              value={method}
-              onChange={(e) => setMethod(e.target.value as "GET" | "POST")}
-            >
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-            </Select>
-            <Input
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder="/models"
-              className="flex-1"
-            />
-            <Button onClick={() => handleSend()} disabled={loading || !baseURL || !apiKey}>
-              {loading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-              {t("apiTest.send")}
-            </Button>
+          <div className="space-y-1.5">
+            <label htmlFor="api-endpoint" className="text-sm font-medium">
+              {t("apiTest.endpoint")}
+            </label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Select
+                className="border-input flex h-9 w-full rounded-md border bg-transparent px-2 py-1 text-sm sm:w-24"
+                value={method}
+                onChange={(e) => setMethod(e.target.value as "GET" | "POST")}
+              >
+                <option value="GET">GET</option>
+                <option value="POST">POST</option>
+              </Select>
+              <Input
+                id="api-endpoint"
+                value={endpoint}
+                onChange={(e) => setEndpoint(e.target.value)}
+                placeholder="/models"
+                className="min-w-0 flex-1"
+              />
+              <Button
+                className="w-full sm:w-auto"
+                onClick={() => handleSend()}
+                disabled={loading || (!baseURL && !/^https?:\/\//i.test(endpoint.trim()))}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Play className="h-4 w-4" />
+                )}
+                {t("apiTest.send")}
+              </Button>
+            </div>
+            <p className="text-muted-foreground text-xs">{t("apiTest.endpointHelp")}</p>
           </div>
 
           {method === "POST" && (

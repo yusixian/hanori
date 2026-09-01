@@ -165,9 +165,9 @@ export const aiSettings = {
       description: "在图片进入主模型前生成描述。",
     },
     privateWhitelist: {
-      title: "私聊白名单",
-      description: "控制哪些用户可以私聊使用 Bot。",
-      summary: "{{count}} 位用户",
+      title: "私聊访问",
+      description: "控制私聊是否向所有人开放；个人实例默认开放。",
+      summary: "{{mode}}",
     },
     groupOverrides: {
       title: "群组覆盖设置",
@@ -537,15 +537,20 @@ export const aiSettings = {
     cooldownDescription: "同一群组两次 OCR 请求之间的间隔。设为 0 表示不限流。",
     maxDescriptionLength: "最大描述长度",
     timeout: "请求超时（毫秒）",
+    maxInputImageSize: "主模型单张图片上限（MB）",
+    maxInputImageSizeDescription: "超过上限时会跳过图片并写入明确的警告日志，不再静默丢弃。",
     systemPrompt: "系统提示词（可选）",
     viewDefault: "查看默认值",
     defaultPromptHelp: "留空以使用默认提示词。",
   },
   privateWhitelist: {
-    title: "私聊白名单",
-    description:
-      "允许指定用户通过私聊使用 Bot。白名单用户可以使用 AI 回复，但不会获得重启、备份等管理员命令权限。",
-    removeConfirm: "确定将用户 {{user}} 移出白名单吗？",
+    title: "私聊访问",
+    description: "管理员始终可以使用。选择白名单时，可在下方添加额外用户。",
+    accessMode: "访问模式",
+    accessAll: "所有人",
+    accessAdmin: "仅管理员",
+    accessAllowlist: "管理员和白名单",
+    removeConfirm: "确定从私聊白名单移除 {{user}} 吗？",
     removeAria: "移除用户 {{user}}",
     userIdPlaceholder: "Telegram 用户 ID",
     addAria: "添加用户",
@@ -601,6 +606,9 @@ export const aiSettings = {
   webTools: {
     title: "联网工具",
     enable: "启用联网工具",
+    trustedPrivateHosts: "可信内网主机",
+    trustedPrivateHostsPlaceholder: "localhost\n192.168.1.20\n*.home.arpa",
+    trustedPrivateHostsHelp: "每行一个主机名或 IP；支持 *.example.local。云元数据地址始终禁止。",
     search: {
       title: "联网搜索",
       providerAria: "搜索服务商",

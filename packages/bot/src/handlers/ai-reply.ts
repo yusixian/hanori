@@ -33,6 +33,7 @@ import {
   DEFAULT_AI_EXECUTION_CONFIG,
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
@@ -219,6 +220,7 @@ export interface AiReplyConfig {
   modelCommandAccess?: "admin" | "all";
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
+  privateChatAccess?: "all" | "admin" | "allowlist";
   privateChatWhitelist?: number[];
   token: string;
   onGroupOverrideUpdate?: (chatId: number, override: AiGroupOverride) => void | Promise<void>;
@@ -248,13 +250,13 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
-const MAX_MODEL_INPUT_IMAGE_BYTES = 5 * 1024 * 1024;
-
 async function downloadMessageImages(
   api: Api,
   token: string,
   files: ReceivedFile[],
   timeoutMs: number,
+  maxImageBytes: number,
+  onSkipped?: (details: { fileId: string; size: number; limit: number }) => void,
 ): Promise<Array<{ buffer: Buffer; mimeType: string; sourceIndex: number }>> {
   const indexed = files
     .map((f, idx) => ({ f, idx }))
@@ -268,7 +270,10 @@ async function downloadMessageImages(
       const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
       if (!res.ok) return null;
       const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > MAX_MODEL_INPUT_IMAGE_BYTES) return null;
+      if (buf.length > maxImageBytes) {
+        onSkipped?.({ fileId: f.file_id, size: buf.length, limit: maxImageBytes });
+        return null;
+      }
       return { buffer: buf, mimeType: f.mime_type ?? "image/jpeg", sourceIndex: idx };
     }),
   );
@@ -431,7 +436,7 @@ async function handleEmptyText(
   finishReason: string,
 ): Promise<void> {
   if (successfulToolEffectCount > 0) {
-    await ctx.deleteWaiting();
+    await ctx.resolveWait("✅ 操作完成").catch(() => ctx.deleteWaiting());
   } else {
     config.onLog?.({
       level: "warn",
@@ -1278,7 +1283,12 @@ export function createAiReplyHandler(
     let groupTriggerConfig = config.triggerConfig;
 
     if (isPrivate) {
-      if (!isAdmin && !config.privateChatWhitelist?.includes(userId)) {
+      const privateChatAccess = config.privateChatAccess ?? "all";
+      const privateChatAllowed =
+        privateChatAccess === "all" ||
+        isAdmin ||
+        (privateChatAccess === "allowlist" && config.privateChatWhitelist?.includes(userId));
+      if (!privateChatAllowed) {
         turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
@@ -1720,12 +1730,34 @@ export function createAiReplyHandler(
         const ocrEnabled = !!config.imageOcrConfig?.enabled;
         const imageDownloadTimeout =
           config.timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
+        const maxInputImageBytes =
+          config.imageOcrConfig?.maxInputImageBytes ?? DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES;
+        const onImageSkipped = (details: { fileId: string; size: number; limit: number }) =>
+          config.onLog?.({
+            level: "warn",
+            message: "Model input image skipped because it exceeds the configured size limit",
+            meta: details,
+          });
         const [imageBuffers, replyImageBuffers] = await Promise.all([
           receivedFiles.length
-            ? downloadMessageImages(ctx.api, config.token, receivedFiles, imageDownloadTimeout)
+            ? downloadMessageImages(
+                ctx.api,
+                config.token,
+                receivedFiles,
+                imageDownloadTimeout,
+                maxInputImageBytes,
+                onImageSkipped,
+              )
             : [],
           replyFiles.length
-            ? downloadMessageImages(ctx.api, config.token, replyFiles, imageDownloadTimeout)
+            ? downloadMessageImages(
+                ctx.api,
+                config.token,
+                replyFiles,
+                imageDownloadTimeout,
+                maxInputImageBytes,
+                onImageSkipped,
+              )
             : [],
         ]);
 

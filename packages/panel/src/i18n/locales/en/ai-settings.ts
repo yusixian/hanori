@@ -167,9 +167,10 @@ export const aiSettings = {
       description: "Describe images before they reach the main model.",
     },
     privateWhitelist: {
-      title: "Private chat whitelist",
-      description: "Control who can use the bot in private chats.",
-      summary: "{{count}} users",
+      title: "Private chat access",
+      description:
+        "Choose who may use the bot in private chats; personal instances default to all.",
+      summary: "{{mode}}",
     },
     groupOverrides: {
       title: "Group overrides",
@@ -582,15 +583,21 @@ export const aiSettings = {
     cooldownDescription: "Time between OCR requests in the same group. Use 0 for no rate limit.",
     maxDescriptionLength: "Maximum description length",
     timeout: "Request timeout (milliseconds)",
+    maxInputImageSize: "Per-image main-model limit (MB)",
+    maxInputImageSizeDescription:
+      "Oversized images are skipped with an explicit warning log instead of being dropped silently.",
     systemPrompt: "System prompt (optional)",
     viewDefault: "View default",
     defaultPromptHelp: "Leave empty to use the default.",
   },
   privateWhitelist: {
-    title: "Private Chat Whitelist",
-    description:
-      "Allow specific users to chat with the bot in private messages. Whitelisted users can use AI replies but do not receive access to admin commands.",
-    removeConfirm: "Remove user {{user}} from the whitelist?",
+    title: "Private chat access",
+    description: "Administrators always have access. Add extra users below in allowlist mode.",
+    accessMode: "Access mode",
+    accessAll: "Everyone",
+    accessAdmin: "Administrators only",
+    accessAllowlist: "Administrators and allowlist",
+    removeConfirm: "Remove {{user}} from the private chat allowlist?",
     removeAria: "Remove user {{user}}",
     userIdPlaceholder: "Telegram User ID",
     addAria: "Add user",
@@ -648,6 +655,10 @@ export const aiSettings = {
   webTools: {
     title: "Web Tools",
     enable: "Enable Web Tools",
+    trustedPrivateHosts: "Trusted private-network hosts",
+    trustedPrivateHostsPlaceholder: "localhost\n192.168.1.20\n*.home.arpa",
+    trustedPrivateHostsHelp:
+      "One hostname or IP per line; *.example.local is supported. Cloud metadata stays blocked.",
     search: {
       title: "Web Search",
       providerAria: "Search provider",

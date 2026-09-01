@@ -113,4 +113,49 @@ test.describe("bot-scoped pages", () => {
     await expect(page.getByText(/1–128; default 64/)).toBeVisible();
     await acceptance.checkpoint("bot-ai-expanded-agent-limits");
   });
+
+  test("bot-ai-owner-friendly-controls", async ({ page, acceptance }) => {
+    acceptance.meta({
+      id: "bot-ai-owner-friendly-controls",
+      feature: "Owner-friendly AI access and tool controls",
+      severity: "P1",
+      steps: [
+        "Open private-chat access settings and select allowlist mode",
+        "Open Web tools and configure trusted private hosts",
+        "Open Image OCR and inspect the model image-size limit",
+      ],
+      expected: [
+        "Private chats default to Everyone and expose the allowlist only in allowlist mode",
+        "Trusted private hosts accept one hostname or IP per line",
+        "The default per-image main-model limit is 20 MB",
+        "Controls remain readable without horizontal overflow",
+      ],
+    });
+
+    await page.goto(`/bots/${botId}/ai?section=access`);
+    await page.getByRole("button", { name: /Private chat access/ }).click();
+    const accessMode = page.getByRole("combobox", { name: "Access mode" });
+    await expect(accessMode).toHaveText("Everyone");
+    await accessMode.click();
+    await page.getByRole("option", { name: "Administrators and allowlist" }).click();
+    await expect(page.getByPlaceholder("Telegram User ID")).toBeVisible();
+    await acceptance.checkpoint("private-chat-allowlist-mode");
+
+    await page.goto(`/bots/${botId}/ai?section=tools`);
+    await page.getByRole("button", { name: /Web tools/ }).click();
+    await page.getByLabel("Enable Web Tools").check();
+    await page
+      .getByLabel("Trusted private-network hosts")
+      .fill("localhost\n192.168.1.20\n*.home.arpa");
+    await expect(page.getByLabel("Trusted private-network hosts")).toHaveValue(
+      "localhost\n192.168.1.20\n*.home.arpa",
+    );
+    await acceptance.checkpoint("trusted-private-hosts");
+
+    await page.getByRole("button", { name: /Image OCR/ }).click();
+    const imageLimit = page.getByLabel("Per-image main-model limit (MB)");
+    await expect(imageLimit).toHaveAttribute("placeholder", /20/);
+    await imageLimit.scrollIntoViewIfNeeded();
+    await acceptance.checkpoint("model-image-size-limit");
+  });
 });

@@ -127,6 +127,7 @@ function toWebToolsConfigUpdate(
   if (!config) return undefined;
   return {
     enabled: config.enabled,
+    trustedPrivateHosts: config.trustedPrivateHosts,
     search: config.search
       ? {
           provider: config.search.provider,
@@ -489,6 +490,7 @@ export function BotAiSettingsPage() {
               }
             : undefined,
           privateChatWhitelist: config.privateChatWhitelist,
+          privateChatAccess: config.privateChatAccess ?? "all",
           mcpServerIds: config.mcpServerIds,
           summaryConfig,
           imageOcrConfig,
@@ -1238,11 +1240,23 @@ export function BotAiSettingsPage() {
                 title={t("disclosures.privateWhitelist.title")}
                 description={t("disclosures.privateWhitelist.description")}
                 summary={t("disclosures.privateWhitelist.summary", {
-                  count: config.privateChatWhitelist?.length ?? 0,
+                  mode: t(
+                    `privateWhitelist.access${
+                      config.privateChatAccess === "admin"
+                        ? "Admin"
+                        : config.privateChatAccess === "allowlist"
+                          ? "Allowlist"
+                          : "All"
+                    }`,
+                  ),
                 })}
               >
                 <PrivateChatWhitelistSection
                   whitelist={config.privateChatWhitelist ?? []}
+                  accessMode={config.privateChatAccess ?? "all"}
+                  onAccessModeChange={(privateChatAccess) =>
+                    setConfig((prev) => ({ ...prev, privateChatAccess }))
+                  }
                   onAdd={addWhitelistUser}
                   onRemove={removeWhitelistUser}
                 />

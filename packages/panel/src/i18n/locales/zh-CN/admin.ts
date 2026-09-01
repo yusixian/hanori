@@ -3,8 +3,10 @@ export const admin = {
     title: "API 测试",
     connection: "连接配置",
     baseUrl: "基础 URL",
-    apiKey: "API 密钥",
+    apiKey: "API 密钥（可选）",
     request: "请求",
+    endpoint: "Endpoint 或完整 URL",
+    endpointHelp: "可填写相对路径，也可直接填写 http(s) 完整地址，包括无需密钥的本机服务。",
     presets: {
       listModels: "列出模型",
       chatCompletions: "聊天补全",

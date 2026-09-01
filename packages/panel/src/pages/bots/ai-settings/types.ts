@@ -65,6 +65,7 @@ export const DEFAULT_CONFIG: AiConfigPublic = {
   executionConfig: DEFAULT_EXECUTION_CONFIG,
   groupOverrides: {},
   providers: [],
+  privateChatAccess: "all",
 };
 
 export interface StatusMessage {

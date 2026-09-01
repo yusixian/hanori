@@ -1159,6 +1159,7 @@ export class BotPool {
         models: activeProvider.models ?? aiConfig.models,
         modelCommandAccess: aiConfig.modelCommandAccess,
         dataFiles,
+        privateChatAccess: aiConfig.privateChatAccess,
         privateChatWhitelist: aiConfig.privateChatWhitelist,
         onGroupOverrideUpdate: async (chatId, override) => {
           try {

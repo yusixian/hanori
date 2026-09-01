@@ -306,16 +306,21 @@ describe("AI reply streaming", () => {
   });
 
   it.each([
-    ["mark_rss_read", { collection_id: 7 }],
-    ["add_rss_feed", { collection_id: 7, feed_url: "https://example.com/feed.xml?token=secret" }],
-    ["remove_rss_feed", { feed_id: 21 }],
+    ["mark_rss_read", { collection_id: 7 }, "onMarkDigested"],
+    [
+      "add_rss_feed",
+      { collection_id: 7, feed_url: "https://example.com/feed.xml?token=secret" },
+      "onAddFeed",
+    ],
+    ["remove_rss_feed", { feed_id: 21 }, "onRemoveFeed"],
     [
       "create_rss_collection",
       { name: "Frontend", description: "Focus", digest_hour: 8, digest_minute: 30 },
+      "onCreateCollection",
     ],
   ] as const)(
-    "treats a successful %s confirmation as the visible result of an empty ordinary reply",
-    async (toolName, input) => {
+    "executes %s immediately and leaves a completion status when the model reply is empty",
+    async (toolName, input, callbackName) => {
       const { ctx, replies } = createContext();
       ctx.waiting_message = sentMessage(30, "waiting");
       streamTextMock.mockImplementation((options: any) => {
@@ -338,21 +343,15 @@ describe("AI reply streaming", () => {
       if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
       await result.handler(ctx, vi.fn());
 
-      expect(ctx.api.sendMessage).toHaveBeenCalledTimes(1);
-      expect(ctx.api.sendMessage).toHaveBeenCalledWith(
-        123,
-        expect.stringContaining("RSS 管理员确认"),
-        expect.any(Object),
-      );
-      expect(replies).toEqual(["🛠️ 使用工具中..."]);
-      expect(ctx.deleteWaiting).toHaveBeenCalled();
+      expect(config.rssCallbacks[callbackName]).toHaveBeenCalledOnce();
+      expect(ctx.api.sendMessage).not.toHaveBeenCalled();
+      expect(replies).toEqual(["🛠️ 使用工具中...", "✅ 操作完成"]);
       await result.destroy();
     },
   );
 
-  it("does not count a failed RSS confirmation send as a visible ordinary reply", async () => {
+  it("uses the empty fallback when an immediate RSS action fails", async () => {
     const { ctx, replies } = createContext();
-    vi.mocked(ctx.api.sendMessage).mockRejectedValueOnce(new Error("Telegram unavailable"));
     streamTextMock.mockImplementation((options: any) => {
       async function* toolOnlyStream() {
         await options.tools.add_rss_feed.execute(
@@ -371,6 +370,7 @@ describe("AI reply streaming", () => {
     });
     const config = createConfig(vi.fn());
     config.rssCallbacks = createRssCallbacks();
+    vi.mocked(config.rssCallbacks.onAddFeed).mockRejectedValueOnce(new Error("RSS unavailable"));
     const result = createAiReplyHandler(config);
 
     if (typeof result.handler !== "function") throw new Error("Expected a middleware function");

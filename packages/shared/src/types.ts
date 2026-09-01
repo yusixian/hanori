@@ -48,7 +48,7 @@ export interface DataFilesInjectionConfig {
 }
 
 export const DEFAULT_INJECTABLE_FILES = ["IDENTITY.md", "SOUL.md"];
-export const DEFAULT_MAX_INJECTION_SIZE = 8192; // 8KB
+export const DEFAULT_MAX_INJECTION_SIZE = 256 * 1024;
 export const DEFAULT_AI_MAX_STEPS = 128;
 export const MAX_TOOL_CALLS_PER_REQUEST = 512;
 export const DEFAULT_SUB_AGENT_MAX_STEPS = 64;
@@ -420,6 +420,8 @@ export interface PixAIConfig {
 
 export interface WebToolsConfig {
   enabled: boolean;
+  /** Explicit hostnames/IPs that fetch_webpage may access on private networks. */
+  trustedPrivateHosts?: string[];
   search?: {
     provider: "tavily" | "searxng" | "brave" | "custom";
     apiKey?: string;
@@ -437,6 +439,7 @@ export interface WebToolsConfig {
 
 export interface WebToolsConfigPublic {
   enabled: boolean;
+  trustedPrivateHosts?: string[];
   search?: {
     provider: "tavily" | "searxng" | "brave" | "custom";
     hasApiKey?: boolean;
@@ -738,6 +741,7 @@ export interface AiConfigStored {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfig;
   dataFilesConfig?: DataFilesInjectionConfig;
+  privateChatAccess?: "all" | "admin" | "allowlist";
   privateChatWhitelist?: number[];
   timeoutConfig?: TimeoutConfig;
   mcpServerIds?: number[];
@@ -773,7 +777,11 @@ export interface ImageOcrConfig {
   cooldownSeconds?: number;
   maxDescriptionLength?: number;
   timeoutMs?: number;
+  /** Maximum size of each Telegram image forwarded to the main model. */
+  maxInputImageBytes?: number;
 }
+
+export const DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES = 20 * 1024 * 1024;
 
 export const DEFAULT_OCR_PROMPT = `你在为一个中文聊天机器人描述用户发来的图片，帮它理解后续对话。请用中文输出一段 2-4 句的自然描述，覆盖以下要素（有则描述，没有的略过，不要编造）：
 
@@ -982,6 +990,7 @@ export interface AiConfigPublic {
   modelCommandAccess?: "admin" | "all";
   embeddingConfig?: EmbeddingConfigPublic;
   dataFilesConfig?: DataFilesInjectionConfig;
+  privateChatAccess?: "all" | "admin" | "allowlist";
   privateChatWhitelist?: number[];
   timeoutConfig?: TimeoutConfig;
   mcpServerIds?: number[];

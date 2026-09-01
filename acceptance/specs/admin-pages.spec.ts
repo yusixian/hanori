@@ -99,4 +99,40 @@ test.describe("admin pages", () => {
       await acceptance.checkpoint(p.id);
     });
   }
+
+  test("admin-api-test-full-url", async ({ page, acceptance }) => {
+    acceptance.meta({
+      id: "admin-api-test-full-url",
+      feature: "API test full URL",
+      severity: "P1",
+      steps: [
+        "Open API Test",
+        "Leave Base URL and API key empty",
+        "Enter a complete localhost URL and send",
+      ],
+      expected: [
+        "The full URL can be sent without a Base URL or API key",
+        "The response is rendered",
+        "The layout has no horizontal overflow",
+      ],
+    });
+    await page.route("**/api/api-test/proxy", async (route) => {
+      const payload = route.request().postDataJSON() as Record<string, unknown>;
+      expect(payload).toMatchObject({
+        baseURL: "",
+        apiKey: "",
+        endpoint: "http://localhost:11434/api/tags",
+        method: "GET",
+      });
+      await route.fulfill({ status: 200, json: { ok: true, status: 200, data: { models: [] } } });
+    });
+
+    await page.goto("/api-test");
+    await page.getByLabel("Base URL").fill("");
+    await page.getByLabel("API Key (optional)").fill("");
+    await page.getByLabel("Endpoint or full URL").fill("http://localhost:11434/api/tags");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.getByRole("treeitem", { name: /models:\[\]/ })).toBeVisible();
+    await acceptance.checkpoint("api-test-full-url-response");
+  });
 });

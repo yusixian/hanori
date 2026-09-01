@@ -46,6 +46,7 @@ function config(): AiReplyConfig {
     },
     groupOverrides: {},
     adminChatIds: [],
+    privateChatAccess: "allowlist",
     privateChatWhitelist: [42],
     token: "token",
   };
@@ -115,6 +116,55 @@ describe("AI reply vision input", () => {
           ]),
         }),
       ]),
+    );
+  });
+
+  it("allows private chats by default without an allowlist", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "photos/example.jpg" });
+    const runtimeConfig = config();
+    runtimeConfig.privateChatAccess = undefined;
+    runtimeConfig.privateChatWhitelist = [];
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(photoContext(getFile), vi.fn());
+
+    expect(streamTextMock).toHaveBeenCalledOnce();
+  });
+
+  it("can restrict private chats to administrators", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "photos/example.jpg" });
+    const runtimeConfig = config();
+    runtimeConfig.privateChatAccess = "admin";
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(photoContext(getFile), vi.fn());
+
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(getFile).not.toHaveBeenCalled();
+  });
+
+  it("logs when a configured image size limit skips model input", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "photos/example.jpg" });
+    const onLog = vi.fn();
+    const runtimeConfig = config();
+    runtimeConfig.imageOcrConfig = { enabled: false, maxInputImageBytes: 2 };
+    runtimeConfig.onLog = onLog;
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(photoContext(getFile), vi.fn());
+
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: "warn",
+        message: expect.stringContaining("image skipped"),
+        meta: { fileId: "photo-large", size: 3, limit: 2 },
+      }),
+    );
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      '"type":"image"',
     );
   });
 

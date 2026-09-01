@@ -18,6 +18,8 @@ export interface RssToolsOptions {
   pendingActions: PendingAdminActionRegistry;
   forceAdmin?: boolean;
   allowWrites?: boolean;
+  /** Owner deployments execute immediately by default; set true to require Telegram confirmation. */
+  confirmWrites?: boolean;
   onListCollections: () => Promise<RssCollectionRecord[]>;
   onGetNewItems: (
     collectionId: number,
@@ -90,6 +92,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     execute: (signal?: AbortSignal) => Promise<{ summary: string }>,
   ) {
     if (userId == null) throw new Error("RSS write confirmation requires an administrator");
+    if (options.confirmWrites !== true) return execute();
     const pending = options.pendingActions.register({
       kind,
       chatId,
@@ -177,7 +180,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
   // Admin-only tools
   if (canWrite) {
     tools.mark_rss_read = tool({
-      description: "申请标记某个 RSS 合集的所有未读条目为已读；发送管理员确认按钮，确认后才执行。",
+      description: "标记某个 RSS 合集的所有未读条目为已读。",
       inputSchema: zodToAiSchema(
         z.object({
           collection_id: z.number().describe("合集 ID"),
@@ -201,7 +204,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     });
 
     tools.add_rss_feed = tool({
-      description: "申请向指定 RSS 合集添加订阅源；发送管理员确认按钮，确认后才执行。",
+      description: "向指定 RSS 合集添加订阅源。",
       inputSchema: zodToAiSchema(
         z.object({
           collection_id: z.number().describe("合集 ID"),
@@ -227,7 +230,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     });
 
     tools.remove_rss_feed = tool({
-      description: "申请从合集中移除订阅源；发送管理员确认按钮，确认后才执行。",
+      description: "从合集中移除订阅源。",
       inputSchema: zodToAiSchema(
         z.object({
           feed_id: z.number().describe("Feed ID"),
@@ -251,8 +254,7 @@ export function createRssTools(options: RssToolsOptions): Record<string, Tool> {
     });
 
     tools.create_rss_collection = tool({
-      description:
-        "申请创建 RSS 合集；发送管理员确认按钮，确认后才执行。合集会按指定时间触发 AI 总结。",
+      description: "创建 RSS 合集。合集会按指定时间触发 AI 总结。",
       inputSchema: zodToAiSchema(
         z.object({
           name: z.string().describe("合集名称"),

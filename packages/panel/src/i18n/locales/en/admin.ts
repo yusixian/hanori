@@ -3,8 +3,11 @@ export const admin = {
     title: "API Test",
     connection: "Connection",
     baseUrl: "Base URL",
-    apiKey: "API Key",
+    apiKey: "API Key (optional)",
     request: "Request",
+    endpoint: "Endpoint or full URL",
+    endpointHelp:
+      "Enter a relative path or a complete http(s) URL, including local services without API keys.",
     presets: {
       listModels: "List Models",
       chatCompletions: "Chat Completions",

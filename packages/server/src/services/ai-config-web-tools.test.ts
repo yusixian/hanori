@@ -4,6 +4,7 @@ import { mergeWebToolsApiKeys, toWebToolsConfigPublic } from "./ai-config-web-to
 
 const storedConfig: WebToolsConfig = {
   enabled: true,
+  trustedPrivateHosts: ["localhost", "*.home.arpa"],
   search: {
     provider: "brave",
     apiKey: "search-secret",
@@ -22,6 +23,7 @@ describe("web tool API key config", () => {
 
     expect(publicConfig).toEqual({
       enabled: true,
+      trustedPrivateHosts: ["localhost", "*.home.arpa"],
       search: {
         provider: "brave",
         hasApiKey: true,

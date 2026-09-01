@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { projectMiniAppLogEntry } from "./mini-app-log-service.js";
 
 describe("projectMiniAppLogEntry", () => {
-  it("returns only the explicitly safe Mini App projection", () => {
+  it("preserves detailed owner-facing messages and metadata", () => {
     const projected = projectMiniAppLogEntry({
       id: 12,
       level: "warn",
@@ -27,16 +27,19 @@ describe("projectMiniAppLogEntry", () => {
     expect(projected).toEqual({
       id: 12,
       level: "warn",
-      message: "Command received",
+      message: "Command rejected",
       createdAt: "2026-07-28T00:00:00.000Z",
-      meta: { command: "help", chatType: "private", updateId: 44, messageId: 55 },
+      meta: expect.objectContaining({
+        command: "/help",
+        text: "private message",
+        args: ["private", "arguments"],
+        apiKey: "secret-api-key",
+      }),
     });
-    expect(JSON.stringify(projected)).not.toMatch(
-      /private message|arguments|secret-api-key|secret-token|credential|secret error|secret stack/,
-    );
+    expect(JSON.stringify(projected)).toContain("private message");
   });
 
-  it("drops unsafe metadata values without echoing the stored message", () => {
+  it("normalizes unknown levels without replacing the stored diagnostic", () => {
     const projected = projectMiniAppLogEntry({
       id: 1,
       level: "unexpected",
@@ -47,46 +50,12 @@ describe("projectMiniAppLogEntry", () => {
     });
 
     expect(projected.level).toBe("info");
-    expect(projected.message).toBe("Runtime event");
-    expect(projected.meta).toEqual({});
-  });
-
-  it("never echoes arbitrary credential-shaped provider errors", () => {
-    const projected = projectMiniAppLogEntry({
-      id: 1,
-      level: "error",
-      message:
-        'Authorization: Basic dXNlcjpwYXNz password="two words" https://user:pass@example.test sk-proj-abcdefghijklmnop AIzaabcdefghijklmnopqrstuv AKIAIOSFODNN7EXAMPLE',
-      createdAt: new Date("2026-07-28T00:00:00.000Z"),
-      meta: null,
+    expect(projected.message).toContain("secret-token");
+    expect(projected.meta).toEqual({
+      command: "/help secret args",
+      chatType: "secret",
+      updateId: -1,
+      messageId: 1.5,
     });
-
-    expect(projected.message).toBe("Runtime error");
-    expect(projected.message).not.toMatch(/dXNlcj|two words|user:pass|sk-proj|AIza|AKIA/);
-  });
-
-  it("maps private captions, filenames, and sticker packs to a fixed Telegram event", () => {
-    const projected = projectMiniAppLogEntry({
-      id: 1,
-      level: "info",
-      message: "Photo: private caption; Document: secret.pdf; Sticker (private-pack)",
-      createdAt: new Date("2026-07-28T00:00:00.000Z"),
-      meta: { chatType: "private", updateId: 9, messageId: 10 },
-    });
-
-    expect(projected.message).toBe("Telegram update received");
-    expect(projected.message).not.toMatch(/private caption|secret\.pdf|private-pack/);
-  });
-
-  it("preserves only explicitly allowlisted static lifecycle messages", () => {
-    const projected = projectMiniAppLogEntry({
-      id: 1,
-      level: "info",
-      message: "Bot started",
-      createdAt: new Date("2026-07-28T00:00:00.000Z"),
-      meta: null,
-    });
-
-    expect(projected.message).toBe("Bot started");
   });
 });

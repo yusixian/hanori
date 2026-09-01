@@ -375,6 +375,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
         }
       : undefined,
     dataFilesConfig: migrated.dataFilesConfig,
+    privateChatAccess: migrated.privateChatAccess ?? "all",
     privateChatWhitelist: migrated.privateChatWhitelist,
     timeoutConfig:
       migrated.timeoutConfig?.pixaiTaskMs === undefined
@@ -497,6 +498,7 @@ const aiConfigSchema = z
     webToolsConfig: z
       .object({
         enabled: z.boolean(),
+        trustedPrivateHosts: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
         search: z
           .object({
             provider: z.enum(["tavily", "searxng", "brave", "custom"]),
@@ -643,6 +645,7 @@ const aiConfigSchema = z
       .optional(),
     modelCommandAccess: z.enum(["admin", "all"]).optional(),
     privateChatWhitelist: z.array(z.number().int()).optional(),
+    privateChatAccess: z.enum(["all", "admin", "allowlist"]).optional(),
     mcpServerIds: z.array(z.number().int()).optional(),
     summaryConfig: z
       .object({
@@ -668,6 +671,12 @@ const aiConfigSchema = z
         cooldownSeconds: z.number().int().min(0).optional(),
         maxDescriptionLength: z.number().int().min(10).optional(),
         timeoutMs: z.number().int().min(1000).optional(),
+        maxInputImageBytes: z
+          .number()
+          .int()
+          .min(1024)
+          .max(50 * 1024 * 1024)
+          .optional(),
       })
       .optional(),
     providers: z
@@ -1636,6 +1645,7 @@ export function botsRoutes(
           modelCommandAccess: body.modelCommandAccess,
           embeddingConfig,
           dataFilesConfig: body.dataFilesConfig ?? bot.aiConfig?.dataFilesConfig,
+          privateChatAccess: body.privateChatAccess ?? bot.aiConfig?.privateChatAccess ?? "all",
           privateChatWhitelist: body.privateChatWhitelist,
           mcpServerIds: body.mcpServerIds,
           summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,

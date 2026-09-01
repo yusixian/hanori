@@ -172,10 +172,27 @@ function encryptToken(plaintext) {
 // purpose: BotPool must never dial Telegram from the acceptance environment.
 function seedBot() {
   const token = encryptToken("123456:acceptance-fake-token");
+  const providerApiKey = encryptToken("acceptance-fake-provider-key");
+  const aiConfig = JSON.stringify({
+    enabled: false,
+    encryptedApiKey: providerApiKey,
+    baseURL: "https://api.example.test/v1",
+    model: "acceptance-model",
+    systemPrompt: "You are the acceptance bot.",
+    triggerConfig: {
+      replyToBot: true,
+      mentionBot: true,
+      triggerWords: [],
+      randomReplyPercent: 0,
+      randomReplyCooldown: 60,
+    },
+    groupOverrides: {},
+    privateChatAccess: "all",
+  }).replaceAll("'", "''");
   const sql = `DELETE FROM bots WHERE name = 'Acceptance Bot';
     WITH b AS (
-      INSERT INTO bots (name, platform, encrypted_token, is_active, mini_app_enabled)
-      VALUES ('Acceptance Bot', 'telegram', '${token}', false, true)
+      INSERT INTO bots (name, platform, encrypted_token, is_active, mini_app_enabled, ai_config)
+      VALUES ('Acceptance Bot', 'telegram', '${token}', false, true, '${aiConfig}'::jsonb)
       RETURNING id
     )
     INSERT INTO telegram_bot_profiles (bot_id, telegram_user_id, username, display_name)

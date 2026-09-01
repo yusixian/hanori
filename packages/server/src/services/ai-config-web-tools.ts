@@ -7,6 +7,7 @@ export function toWebToolsConfigPublic(
 
   return {
     enabled: config.enabled,
+    trustedPrivateHosts: config.trustedPrivateHosts,
     search: config.search
       ? {
           provider: config.search.provider,

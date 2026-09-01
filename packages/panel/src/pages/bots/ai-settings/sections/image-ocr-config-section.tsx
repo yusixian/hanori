@@ -9,6 +9,7 @@ import { CodeBlock } from "@/components/ui/code-block";
 import type { AiProviderEntryPublic, ImageOcrConfig } from "@cos-tool-bot/shared";
 import {
   DEFAULT_MAX_IMAGES_PER_MESSAGE,
+  DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES,
   DEFAULT_OCR_COOLDOWN_SECONDS,
   DEFAULT_OCR_MAX_DESCRIPTION_LENGTH,
   DEFAULT_OCR_PROMPT,
@@ -87,6 +88,31 @@ export function ImageOcrConfigSection({
               onChange={(e) => onUpdate({ modelId: e.target.value || undefined })}
             />
           </div>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="model-input-image-limit">{t("imageOcr.maxInputImageSize")}</Label>
+          <NumberInput
+            id="model-input-image-limit"
+            name="modelInputImageLimitMb"
+            min={1}
+            max={50}
+            placeholder={t("common.defaultValue", {
+              value: DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES / (1024 * 1024),
+            })}
+            value={
+              config.maxInputImageBytes == null ? "" : config.maxInputImageBytes / (1024 * 1024)
+            }
+            onValueChange={(megabytes) =>
+              onUpdate({
+                maxInputImageBytes:
+                  megabytes == null ? undefined : Math.round(megabytes * 1024 * 1024),
+              })
+            }
+          />
+          <p className="text-muted-foreground text-xs">
+            {t("imageOcr.maxInputImageSizeDescription")}
+          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

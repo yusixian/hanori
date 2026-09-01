@@ -5,33 +5,30 @@ import { z } from "zod";
 const MAX_RESPONSE_SIZE = 1024 * 1024; // 1MB
 
 const proxySchema = z.object({
-  baseURL: z.string().url(),
-  apiKey: z.string().min(1),
+  baseURL: z.union([z.literal(""), z.string().url()]),
+  apiKey: z.string().optional(),
   endpoint: z.string().min(1),
   method: z.enum(["GET", "POST"]),
   body: z.unknown().optional(),
 });
 
+export function resolveApiTestUrl(baseURL: string, endpoint: string): string {
+  const target = endpoint.trim();
+  if (/^https?:\/\//i.test(target)) return new URL(target).toString();
+  if (!baseURL) throw new Error("A base URL is required for relative endpoints");
+  return `${baseURL.replace(/\/+$/, "")}/${target.replace(/^\/+/, "")}`;
+}
+
 export function apiTestRoutes() {
   return new Hono().post("/proxy", zValidator("json", proxySchema), async (c) => {
     const { baseURL, apiKey, endpoint, method, body } = c.req.valid("json");
 
-    // Validate endpoint is a relative path (prevent SSRF)
-    if (
-      endpoint.startsWith("http://") ||
-      endpoint.startsWith("https://") ||
-      endpoint.includes("://")
-    ) {
-      return c.json({ ok: false as const, error: "endpoint must be a relative path" }, 400);
-    }
-
-    const url = `${baseURL.replace(/\/+$/, "")}/${endpoint.replace(/^\/+/, "")}`;
-
     try {
+      const url = resolveApiTestUrl(baseURL, endpoint);
       const headers: Record<string, string> = {
-        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       };
+      if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
 
       const init: RequestInit = { method, headers };
       if (method === "POST" && body !== undefined) {

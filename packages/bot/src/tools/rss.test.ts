@@ -159,7 +159,19 @@ describe("createRssTools", () => {
     expect(memberTools.create_rss_collection).toBeUndefined();
   });
 
-  it("queues every RSS mutation with exact arguments and performs no immediate writes", async () => {
+  it("executes owner RSS mutations immediately by default", async () => {
+    const onMarkDigested = vi.fn().mockResolvedValue(undefined);
+    const tools = createRssTools(
+      createOptions({ userId: 123, adminChatIds: [123], onMarkDigested }),
+    );
+
+    await expect(tools.mark_rss_read!.execute!({ collection_id: 7 }, {} as never)).resolves.toEqual(
+      { summary: "已标记 RSS 合集 7 为已读" },
+    );
+    expect(onMarkDigested).toHaveBeenCalledWith(7, undefined);
+  });
+
+  it("can queue every RSS mutation when confirmations are enabled", async () => {
     const registry = new PendingAdminActionRegistry();
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
     const api = { sendMessage } as unknown as Api;
@@ -174,6 +186,7 @@ describe("createRssTools", () => {
         adminChatIds: [123],
         api,
         pendingActions: registry,
+        confirmWrites: true,
         onMarkDigested,
         onAddFeed,
         onRemoveFeed,
@@ -250,6 +263,7 @@ describe("createRssTools", () => {
           sendMessage: vi.fn().mockRejectedValue(new Error("Telegram unavailable")),
         } as unknown as Api,
         pendingActions: registry,
+        confirmWrites: true,
       }),
     );
 
@@ -273,6 +287,7 @@ describe("createRssTools", () => {
         userId: 123,
         adminChatIds: [123],
         pendingActions: registry,
+        confirmWrites: true,
         onRemoveFeed,
       }),
     );
@@ -311,6 +326,7 @@ describe("createRssTools", () => {
         userId: 123,
         adminChatIds: [123],
         pendingActions: registry,
+        confirmWrites: true,
         onAddFeed,
       }),
     );
