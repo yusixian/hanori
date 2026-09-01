@@ -81,7 +81,11 @@ export function AcceptInvitationPage() {
   };
 
   if (!invitationId)
-    return <div className="p-8 text-center text-sm text-red-600">{t("invitation.missingId")}</div>;
+    return (
+      <div className="flex min-h-screen items-center justify-center p-5">
+        <p className="max-w-md text-center text-sm text-red-600">{t("invitation.missingId")}</p>
+      </div>
+    );
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-5">

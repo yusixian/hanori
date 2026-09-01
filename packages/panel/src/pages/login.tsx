@@ -2,20 +2,44 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { authClient } from "@/lib/auth-client";
-import { useLogin } from "@refinedev/core";
+import { authFetch } from "@/lib/client";
 import { Bot, LockKeyhole, Mail } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { useNavigate } from "react-router";
 
 export function LoginPage() {
   const { t } = useTranslation("auth");
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { mutate: login, isLoading } = useLogin();
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: FormEvent) => {
+  // Sign in directly instead of via refine's useLogin: a failed attempt triggers an
+  // auth-check refetch that remounts this page, which would discard the error state.
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    login({ email, password });
+    setError("");
+    setLoading(true);
+    try {
+      const result = await authClient.signIn.email({ email, password });
+      if ("error" in result && result.error) {
+        setError(result.error.message || t("errors.loginFailed"));
+        return;
+      }
+      const membership = await authFetch("/api/authz/me");
+      if (!membership.ok) {
+        await authClient.signOut().catch(() => undefined);
+        setError(t("errors.membershipRequired"));
+        return;
+      }
+      navigate("/", { replace: true });
+    } catch {
+      setError(t("errors.loginFailed"));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -31,6 +55,11 @@ export function LoginPage() {
         </CardHeader>
         <CardContent className="px-7 pb-8">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {error && (
+              <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                {error}
+              </div>
+            )}
             <label className="space-y-2">
               <span className="text-sm font-medium">{t("login.emailLabel")}</span>
               <div className="relative">
@@ -60,8 +89,8 @@ export function LoginPage() {
                 />
               </div>
             </label>
-            <Button type="submit" disabled={isLoading || !email || !password}>
-              {isLoading ? t("login.submitting") : t("login.submit")}
+            <Button type="submit" disabled={loading || !email || !password}>
+              {loading ? t("login.submitting") : t("login.submit")}
             </Button>
             <div className="text-muted-foreground flex items-center gap-3 text-xs">
               <div className="bg-border h-px flex-1" />

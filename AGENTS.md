@@ -47,6 +47,10 @@ pnpm i18n:check              # en / zh-CN resources aligned
 pnpm test                    # Vitest unit tests
 pnpm test:browser            # Chromium browser tests for the panel
 pnpm build                   # build every package
+pnpm acceptance              # isolated UI acceptance run (Playwright, desktop + mobile)
+pnpm acceptance:report       # regenerate report for the latest run
+pnpm acceptance:open         # open the latest HTML report
+pnpm acceptance:clean        # prune old runs (keeps newest ACCEPTANCE_KEEP_RUNS, default 10)
 ```
 
 Focused runs: `pnpm --filter @cos-tool-bot/<pkg> <script>`,
@@ -79,6 +83,15 @@ alongside manually started server/panel/tunnel. Details:
   not a sandbox. GitHub credentials, push, and PR creation stay in the trusted server with explicit
   confirmation flows — never in the worker. Preserve cancellation, bounded timeouts,
   one-job-per-boot, clean-worktree checks, and exact-state confirmation.
+
+- **Acceptance harness**: `acceptance/` holds the Playwright harness (config, fixtures, specs,
+  report scripts). `pnpm acceptance` spins up an isolated environment — dedicated database
+  `cos_tool_bot_acceptance`, server on :3100 with throwaway credentials, no `BOT_TOKEN` — builds
+  the panel, and runs `acceptance/specs/` against desktop (1440×900) and mobile (390×844)
+  projects. Run artifacts land in `.acceptance/runs/<run>/` (gitignored); cases declare
+  `acceptance.meta({ id, feature, severity, steps, expected })` and capture
+  `acceptance.checkpoint()` screenshots. `.acceptance/plan.md` tracks prioritized UI findings.
+  Do not point the harness at a dev/prod database or a real bot token.
 
 ## Privacy and Security Invariants
 

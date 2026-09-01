@@ -199,15 +199,17 @@ export function BotMemoriesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">{t("memories.title")}</h1>
-        <span className="text-muted-foreground text-sm">
-          {t("common.total", { value: numberFormatter.format(total) })}
-        </span>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold">{t("memories.title")}</h1>
+          <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
+            {t("common.total", { value: numberFormatter.format(total) })}
+          </span>
+        </div>
         <Button
           variant="outline"
           size="sm"
-          className="ml-auto"
+          className="w-full shrink-0 sm:ml-auto sm:w-auto"
           onClick={() => setShowCreate(!showCreate)}
         >
           <Plus className="h-4 w-4" />

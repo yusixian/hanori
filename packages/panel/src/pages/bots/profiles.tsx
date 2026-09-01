@@ -239,15 +239,17 @@ export function BotProfilesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <h1 className="text-2xl font-bold">{t("profiles.title")}</h1>
-        <span className="text-muted-foreground text-sm">
-          {t("common.total", { value: numberFormatter.format(total) })}
-        </span>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-2xl font-bold">{t("profiles.title")}</h1>
+          <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
+            {t("common.total", { value: numberFormatter.format(total) })}
+          </span>
+        </div>
         <Button
           variant="outline"
           size="sm"
-          className="ml-auto"
+          className="w-full shrink-0 sm:ml-auto sm:w-auto"
           onClick={() => setShowCreate(!showCreate)}
         >
           <Plus className="h-4 w-4" />
@@ -369,15 +371,15 @@ export function BotProfilesPage() {
         </Card>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row">
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           placeholder={t("profiles.searchPlaceholder")}
-          className="max-w-sm"
+          className="w-full sm:max-w-sm"
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
-        <Button variant="outline" size="sm" onClick={handleSearch}>
+        <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleSearch}>
           <Search className="h-4 w-4" />
           {t("common.search")}
         </Button>
@@ -385,6 +387,7 @@ export function BotProfilesPage() {
           <Button
             variant="ghost"
             size="sm"
+            className="w-full sm:w-auto"
             onClick={() => {
               setSearch("");
               setSearchInput("");

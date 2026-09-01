@@ -539,7 +539,7 @@ export function BotFilesPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t("files.title")}</h1>
           <p className="text-muted-foreground mt-0.5 text-sm">{t("files.description")}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           {selectedFiles.size > 0 && (
             <Button variant="destructive" size="sm" onClick={deleteBatch} disabled={deleting}>
               {deleting ? (

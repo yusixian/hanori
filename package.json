@@ -28,9 +28,14 @@
     "test:coverage": "vitest run --config vitest.config.ts --coverage",
     "test:browser": "pnpm --filter @cos-tool-bot/panel test:browser",
     "i18n:check": "tsx packages/panel/scripts/check-i18n.ts",
+    "acceptance": "node acceptance/scripts/run.mjs",
+    "acceptance:report": "node acceptance/scripts/report.mjs",
+    "acceptance:open": "node acceptance/scripts/open.mjs",
+    "acceptance:clean": "node acceptance/scripts/clean.mjs",
     "prepare": "simple-git-hooks"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/node": "^22.13.5",
     "@vitest/coverage-v8": "^4.0.0",
     "concurrently": "^9.1.2",

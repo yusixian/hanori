@@ -885,7 +885,7 @@ export function BotAiSettingsPage() {
 
   return (
     <div className="mx-auto max-w-[1180px] space-y-5">
-      <div className="sticky top-0 z-20 -mx-2 space-y-3 rounded-b-2xl bg-slate-50/95 px-2 pt-1 pb-3 shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)] backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85">
+      <div className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]">
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>

@@ -42,3 +42,6 @@ data/
 # Misc
 temp/
 downloads/
+
+# Acceptance harness runtime output
+.acceptance/

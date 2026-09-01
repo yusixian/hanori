@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Acceptance visual review",
+  "type": "object",
+  "required": ["runId", "reviewedAt", "cases"],
+  "properties": {
+    "runId": { "type": "string" },
+    "reviewedAt": { "type": "string" },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "project", "status", "confidence"],
+        "properties": {
+          "id": { "type": "string" },
+          "project": { "type": "string", "enum": ["desktop", "mobile"] },
+          "status": { "type": "string", "enum": ["pass", "fail", "uncertain", "blocked"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "notes": { "type": "string" },
+          "defects": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
