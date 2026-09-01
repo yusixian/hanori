@@ -107,10 +107,12 @@ import { RingBuffer } from "../utils/ring-buffer.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml, showRichThinkingDraft } from "../utils/stream-reply.js";
+import { wrapToolsWithLogging } from "../utils/tool-log.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { describeImages } from "../services/image-ocr.js";
 import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
+import { startChatActionHeartbeat } from "../utils/chat-action-heartbeat.js";
 import {
   createCacheFingerprint,
   createToolSchemaHash,
@@ -315,15 +317,6 @@ interface ToolResultEntry {
   toolCallId: string;
 }
 
-function serializedLength(value: unknown): number {
-  if (typeof value === "string") return value.length;
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
 const COOLDOWN_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_CLEANUP_INTERVAL = 5 * 60 * 1000;
 const BUFFER_STALE_MS = 30 * 60 * 1000;
@@ -474,6 +467,7 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   // Web tools
   web_search: "🌐 搜索中...",
   fetch_webpage: "📄 看看这个网页...",
+  search_danbooru_character_tags: "🏷️ 查找角色标签...",
   get_current_time: "🕐 获取时间...",
   generate_image: "🎨 画画中...",
   github_repository: "🐙 查看 GitHub 仓库...",
@@ -505,17 +499,17 @@ const TOOL_STATUS_MAP: Record<string, string> = {
   save_received_file: "💾 保存文件...",
 };
 
-function wrapToolsWithStatus(
+export function wrapToolsWithStatus(
   tools: Record<string, Tool>,
   ctx: WrapperContext,
 ): Record<string, Tool> {
   const wrapped: Record<string, Tool> = {};
   for (const [name, t] of Object.entries(tools)) {
-    const status = TOOL_STATUS_MAP[name];
-    if (!status || !("execute" in t) || typeof t.execute !== "function") {
+    if (!("execute" in t) || typeof t.execute !== "function") {
       wrapped[name] = t;
       continue;
     }
+    const status = TOOL_STATUS_MAP[name] ?? "🛠️ 使用工具中...";
     const originalExecute = t.execute;
     wrapped[name] = {
       ...t,
@@ -1549,11 +1543,13 @@ export function createAiReplyHandler(
     ): Promise<void> => {
       // Hoisted so the outer finally can unregister even on early errors.
       let manualAbort: AbortController | null = null;
+      let stopChatActionHeartbeat: (() => void) | undefined;
       let usageSucceeded = false;
       try {
         if (!executionContext.isCurrent()) throw new AiRunCancelledError();
         const turnMessageConfig = Object.freeze({ ...getEffectiveMessageConfig() });
         await ctx.replyWithChatAction("typing");
+        stopChatActionHeartbeat = startChatActionHeartbeat(() => ctx.replyWithChatAction("typing"));
 
         // Lazy-load sticker packs (deduped via shared promise)
         if (!stickerCachePromise && config.stickerPacks?.length) {
@@ -2053,11 +2049,14 @@ export function createAiReplyHandler(
         let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
         const wrappedTools = wrapToolsWithStatus(
-          wrapToolsWithCache(
-            trackSuccessfulToolEffects(stableTools, () => {
-              successfulToolEffectCount += 1;
-            }),
-            requestCache,
+          wrapToolsWithLogging(
+            wrapToolsWithCache(
+              trackSuccessfulToolEffects(stableTools, () => {
+                successfulToolEffectCount += 1;
+              }),
+              requestCache,
+            ),
+            { onLog: config.onLog, getStep: () => stepCounter + 1 },
           ),
           ctx,
         );
@@ -2088,36 +2087,10 @@ export function createAiReplyHandler(
           providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
           experimental_onToolCallStart: () => perStepAbort.pause(),
           experimental_onToolCallFinish: () => perStepAbort.resume(),
-          onStepFinish: ({ toolCalls, toolResults }) => {
+          onStepFinish: ({ toolResults }) => {
             stepCounter++;
             perStepAbort.reset();
-            if (toolCalls?.length) {
-              for (const tc of toolCalls) {
-                config.onLog?.({
-                  level: "debug",
-                  message: "AI tool call",
-                  meta: {
-                    step: stepCounter,
-                    toolName: tc.toolName,
-                    argsLength: serializedLength(tc.input),
-                    toolCallId: tc.toolCallId,
-                  },
-                });
-              }
-            }
             if (toolResults?.length) {
-              for (const tr of toolResults as ToolResultEntry[]) {
-                config.onLog?.({
-                  level: "debug",
-                  message: "AI tool result",
-                  meta: {
-                    step: stepCounter,
-                    toolName: tr.toolName,
-                    resultLength: serializedLength(tr.output),
-                    toolCallId: tr.toolCallId,
-                  },
-                });
-              }
               if (ctx.waiting_message) {
                 ctx.resolveWait("💭 回复中...").catch(() => {});
               }
@@ -2284,6 +2257,8 @@ export function createAiReplyHandler(
         const steps = await result.steps;
         const usage = await result.usage;
         const finishReason = await result.finishReason;
+        stopChatActionHeartbeat();
+        stopChatActionHeartbeat = undefined;
         let sentFinalText = false;
 
         // ─── Send final reply (when streaming/multi_message didn't handle it) ───
@@ -2552,6 +2527,7 @@ export function createAiReplyHandler(
           await directlyReplyAndCleanup(ctx, errorReply);
         }
       } finally {
+        stopChatActionHeartbeat?.();
         await finalizeUsage(usageSucceeded);
         if (manualAbort) activeAbortControllers.delete(manualAbort);
         await rescuePrivateExtras();

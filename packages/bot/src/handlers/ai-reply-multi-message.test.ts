@@ -169,6 +169,7 @@ describe("AI reply multi_message delivery", () => {
       me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
       api,
       replyWithChatAction: vi.fn().mockResolvedValue(true),
+      wait: vi.fn().mockResolvedValue(10),
       deleteWaiting: vi.fn(),
       resolveWait: vi.fn().mockResolvedValue(10),
       directlyReply: vi.fn(),
@@ -207,7 +208,10 @@ describe("AI reply multi_message delivery", () => {
       expect.objectContaining({
         message: "AI tool call",
         meta: expect.objectContaining({
+          step: 1,
+          call: 1,
           toolName: "multi_message",
+          input: firstInput,
           argsLength: expect.any(Number),
         }),
       }),
@@ -216,13 +220,18 @@ describe("AI reply multi_message delivery", () => {
       expect.objectContaining({
         message: "AI tool result",
         meta: expect.objectContaining({
+          step: 1,
+          call: 1,
           toolName: "multi_message",
+          success: true,
+          durationMs: expect.any(Number),
+          output: { sent: 2 },
           resultLength: expect.any(Number),
         }),
       }),
     );
-    expect(JSON.stringify(logs)).not.toContain("ack one");
-    expect(JSON.stringify(logs)).not.toContain(trailing);
+    expect(JSON.stringify(logs)).toContain("ack one");
+    expect(JSON.stringify(logs)).toContain("result two");
     runtime.destroy();
   });
 });

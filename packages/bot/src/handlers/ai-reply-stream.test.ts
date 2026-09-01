@@ -1,9 +1,10 @@
 import type { BotLogEntry } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
+import type { Tool } from "ai";
 import type { Message } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
-import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
+import { createAiReplyHandler, type AiReplyConfig, wrapToolsWithStatus } from "./ai-reply.js";
 
 const { generateTextMock, streamTextMock } = vi.hoisted(() => ({
   generateTextMock: vi.fn(),
@@ -32,6 +33,7 @@ function createContext(options: { chatId?: number; userId?: number } = {}) {
   const replies: string[] = [];
   const streamError = new Error("Rich Message content cannot be empty");
   const api = {
+    sendChatAction: vi.fn().mockResolvedValue(true),
     sendRichMessageDraft: vi.fn().mockResolvedValue(true),
     sendPhoto: vi.fn().mockResolvedValue(sentMessage(31, "photo")),
     sendMessage: vi.fn().mockResolvedValue(sentMessage(33, "fallback")),
@@ -114,6 +116,21 @@ function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
 }
 
 describe("AI reply streaming", () => {
+  it.each([
+    ["web_search", "🌐 搜索中..."],
+    ["search_danbooru_character_tags", "🏷️ 查找角色标签..."],
+    ["mcp7_lookup", "🛠️ 使用工具中..."],
+  ])("shows a waiting status for the %s tool", async (toolName, expectedStatus) => {
+    const { ctx, replies } = createContext();
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    const tools = wrapToolsWithStatus({ [toolName]: { execute } as unknown as Tool }, ctx);
+
+    await tools[toolName]!.execute!({}, {} as never);
+
+    expect(replies).toEqual([expectedStatus]);
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { name: "admin", userId: 123, hasAdminTools: true },
     { name: "ordinary member", userId: 456, hasAdminTools: false },
@@ -327,7 +344,7 @@ describe("AI reply streaming", () => {
         expect.stringContaining("RSS 管理员确认"),
         expect.any(Object),
       );
-      expect(replies).toEqual([]);
+      expect(replies).toEqual(["🛠️ 使用工具中..."]);
       expect(ctx.deleteWaiting).toHaveBeenCalled();
       await result.destroy();
     },
@@ -359,7 +376,7 @@ describe("AI reply streaming", () => {
     if (typeof result.handler !== "function") throw new Error("Expected a middleware function");
     await result.handler(ctx, vi.fn());
 
-    expect(replies).toEqual(["(AI 未生成回复内容)"]);
+    expect(replies).toEqual(["🛠️ 使用工具中...", "(AI 未生成回复内容)"]);
     await result.destroy();
   });
 

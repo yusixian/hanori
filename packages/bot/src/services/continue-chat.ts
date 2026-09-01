@@ -56,6 +56,8 @@ import { createSkillTools } from "../tools/skills.js";
 import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
+import { startChatActionHeartbeat } from "../utils/chat-action-heartbeat.js";
+import { wrapToolsWithLogging } from "../utils/tool-log.js";
 import {
   createCacheFingerprint,
   createToolSchemaHash,
@@ -292,6 +294,7 @@ async function doContinueChat(
   });
 
   let manualAbort: AbortController | null = null;
+  let stopChatActionHeartbeat: (() => void) | undefined;
   const isExecutionCancelled = () =>
     !!config.isAiDisabled?.() ||
     !!manualAbort?.signal.aborted ||
@@ -527,6 +530,7 @@ async function doContinueChat(
 
     const startTime = Date.now();
     let streamedMessageCount = 0;
+    let stepCounter = 0;
     const requestCache = createRequestCache();
     manualAbort = new AbortController();
     config.registerAbortController?.(manualAbort);
@@ -540,15 +544,21 @@ async function doContinueChat(
       AbortSignal.any(abortSignals),
     );
 
+    await api.sendChatAction(chatId, "typing").catch(() => {});
+    stopChatActionHeartbeat = startChatActionHeartbeat(() => api.sendChatAction(chatId, "typing"));
+
     // ─── streamText (ai v6 API) ───
     const result = streamText({
       model: selection.model,
       messages,
-      tools: wrapToolsWithCache(
-        trackSuccessfulToolEffects(stableTools, () => {
-          successfulToolEffectCount += 1;
-        }),
-        requestCache,
+      tools: wrapToolsWithLogging(
+        wrapToolsWithCache(
+          trackSuccessfulToolEffects(stableTools, () => {
+            successfulToolEffectCount += 1;
+          }),
+          requestCache,
+        ),
+        { onLog: config.onLog, getStep: () => stepCounter + 1 },
       ),
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
@@ -559,6 +569,7 @@ async function doContinueChat(
       experimental_onToolCallStart: () => perStepAbort.pause(),
       experimental_onToolCallFinish: () => perStepAbort.resume(),
       onStepFinish: () => {
+        stepCounter++;
         perStepAbort.reset();
       },
     });
@@ -646,6 +657,8 @@ async function doContinueChat(
         meta: { chatId },
       });
     });
+    stopChatActionHeartbeat();
+    stopChatActionHeartbeat = undefined;
     const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
     const sentViaMultiMessage = deliveredMultiMessages.length > 0;
     const trailingTextCovered =
@@ -815,6 +828,7 @@ async function doContinueChat(
     if (event.requireDelivery && successfulToolEffectCount === 0) throw err;
     return false;
   } finally {
+    stopChatActionHeartbeat?.();
     if (manualAbort) config.unregisterAbortController?.(manualAbort);
   }
 }

@@ -95,13 +95,15 @@ alongside manually started server/panel/tunnel. Details:
 
 ## Privacy and Security Invariants
 
-- Generic persistent Bot logs must not contain group message text, captions, media filenames,
-  sticker-pack names, AI prompts/responses, tool arguments/results, or raw Telegram updates. Log
-  structured identifiers, kinds, lengths, timings, and outcomes instead. Content may enter only a
-  purpose-specific store whose retention rules require it.
-- Keep authorization server-side even when the UI hides a control; scope reads/writes by Bot or
-  tenant. Never weaken security headers, cookie attributes, Telegram signature validation, or
-  SSRF/network restrictions to make a test pass.
+- This is an owner-operated personal deployment, so owner-facing Bot logs may include bounded AI
+  and tool diagnostics when they materially help debugging, including tool inputs and outputs.
+  Preserve useful content such as search queries, but redact credentials, authorization headers,
+  tokens, cookies, and secrets; summarize binary data and mark truncated oversized values.
+- Do not dump raw Telegram updates wholesale. Prefer the specific message/tool fields needed for a
+  diagnosis so logs remain usable and bounded.
+- Keep authorization server-side even when the UI hides a control, and preserve Telegram signature
+  validation. Owner-configured tools may explicitly allow trusted private-network targets; keep
+  request bounds and block cloud metadata endpoints and accidental credential forwarding by default.
 
 ## Verification
 
