@@ -29,6 +29,9 @@ const BotAiSettingsPage = lazy(() =>
 const BotGovernancePage = lazy(() =>
   import("@/pages/bots/governance").then((m) => ({ default: m.BotGovernancePage })),
 );
+const BotSkillsPage = lazy(() =>
+  import("@/pages/bots/skills").then((m) => ({ default: m.BotSkillsPage })),
+);
 const BotConversationsPage = lazy(() =>
   import("@/pages/bots/conversations").then((m) => ({ default: m.BotConversationsPage })),
 );
@@ -135,6 +138,7 @@ export function AdminPanelApp() {
               <Route path="/bots/:botId/edit" element={<BotEditPage />} />
               <Route path="/bots/:botId/ai" element={<BotAiSettingsPage />} />
               <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+              <Route path="/bots/:botId/skills" element={<BotSkillsPage />} />
               <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
               <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
               <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />

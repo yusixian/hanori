@@ -99,6 +99,137 @@ function savingBotPool(): BotPool {
   } as unknown as BotPool;
 }
 
+describe("Bot Skill configuration", () => {
+  it("returns the three bundled Skills enabled for legacy configurations", async () => {
+    const response = await routeApp(
+      routeDatabase(undefined, existingAiConfig),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/skills");
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: { builtIns: Array<{ id: string; enabled: boolean }>; customSkills: unknown[] };
+    };
+    expect(body.data.builtIns.map((skill) => [skill.id, skill.enabled])).toEqual([
+      ["guide-image-prompts", true],
+      ["prompt-atelier", true],
+      ["tsubaki-prompt-expander", true],
+    ]);
+    expect(body.data.customSkills).toEqual([]);
+  });
+
+  it("saves an explicit built-in selection and a custom Skill", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const customSkill = {
+      id: "8b0f5899-71d9-44ef-a2ab-87275d2328ed",
+      name: "cinematic-portrait",
+      displayName: "Cinematic Portrait",
+      description: "Use for cinematic portrait prompts.",
+      instructions: "# Cinematic Portrait\n\nBuild the prompt in three passes.",
+      resources: { "references/palette.md": "Use a limited blue and amber palette." },
+      enabled: true,
+    };
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/skills", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revision: "0",
+        enabledBuiltInIds: ["prompt-atelier"],
+        customSkills: [customSkill],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.skillConfig).toEqual({
+      enabledBuiltInIds: ["prompt-atelier"],
+      customSkills: [customSkill],
+    });
+    expect(await response.json()).toMatchObject({
+      ok: true,
+      data: {
+        builtIns: [
+          { id: "guide-image-prompts", enabled: false },
+          { id: "prompt-atelier", enabled: true },
+          { id: "tsubaki-prompt-expander", enabled: false },
+        ],
+        customSkills: [customSkill],
+      },
+    });
+  });
+
+  it("rejects unknown built-ins and unsafe custom resource paths", async () => {
+    const save = vi.fn();
+    const base = {
+      revision: "0",
+      enabledBuiltInIds: ["not-installed"],
+      customSkills: [],
+    };
+    const unknown = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/skills",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(base),
+      },
+    );
+    expect(unknown.status).toBe(400);
+
+    const unsafe = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/skills",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...base,
+          enabledBuiltInIds: [],
+          customSkills: [
+            {
+              id: "8b0f5899-71d9-44ef-a2ab-87275d2328ed",
+              name: "unsafe",
+              displayName: "Unsafe",
+              description: "Unsafe resource test",
+              instructions: "Test",
+              resources: { "../secret": "nope" },
+              enabled: true,
+            },
+          ],
+        }),
+      },
+    );
+    expect(unsafe.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("preserves Skill configuration when the full AI settings page saves", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const skillConfig = {
+      enabledBuiltInIds: [],
+      customSkills: [],
+    };
+    const response = await routeApp(
+      routeDatabase(
+        (aiConfig) => {
+          savedAiConfig = aiConfig as Record<string, unknown>;
+        },
+        { ...existingAiConfig, skillConfig },
+      ),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody()),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.skillConfig).toEqual(skillConfig);
+  });
+});
+
 describe("AI execution configuration", () => {
   it("returns defaults for configurations saved before execution settings existed", async () => {
     const response = await routeApp(

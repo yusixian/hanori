@@ -3,6 +3,9 @@ import {
   assemblePromptPreview,
   cleanupBotAvatarFiles,
   cleanupProfileAvatarFiles,
+  isBuiltInSkillId,
+  listBotSkills,
+  resolveBotSkills,
 } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
@@ -124,6 +127,96 @@ const globalAiSelectionSchema = z
     displayDefault: z.enum(["show", "hide"]),
   })
   .strict();
+
+const skillNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9][a-z0-9-]*$/, "Skill name must use lowercase letters, numbers, and hyphens");
+const skillResourceNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(200)
+  .refine(
+    (name) =>
+      !name.startsWith("/") &&
+      !name.includes("\\") &&
+      !name.split("/").some((part) => part === ".." || part === ""),
+    "Resource names must be safe relative paths",
+  );
+const customSkillSchema = z
+  .object({
+    id: z.string().uuid(),
+    name: skillNameSchema,
+    displayName: z.string().trim().min(1).max(100),
+    description: z.string().trim().min(1).max(1_000),
+    instructions: z.string().trim().min(1).max(100_000),
+    resources: z.record(skillResourceNameSchema, z.string().max(100_000)),
+    enabled: z.boolean(),
+  })
+  .strict();
+const skillConfigSchema = z
+  .object({
+    revision: z.string().min(1).max(100),
+    enabledBuiltInIds: z.array(z.string().trim().min(1).max(100)).max(50),
+    customSkills: z.array(customSkillSchema).max(20),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const builtInIds = new Set<string>();
+    for (const [index, id] of value.enabledBuiltInIds.entries()) {
+      if (!isBuiltInSkillId(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Unknown built-in Skill",
+          path: ["enabledBuiltInIds", index],
+        });
+      }
+      if (builtInIds.has(id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Duplicate built-in Skill",
+          path: ["enabledBuiltInIds", index],
+        });
+      }
+      builtInIds.add(id);
+    }
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    let totalChars = 0;
+    for (const [index, skill] of value.customSkills.entries()) {
+      if (ids.has(skill.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Duplicate custom Skill id",
+          path: ["customSkills", index, "id"],
+        });
+      }
+      if (names.has(skill.name) || isBuiltInSkillId(skill.name)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Skill names must be unique and cannot shadow a built-in Skill",
+          path: ["customSkills", index, "name"],
+        });
+      }
+      ids.add(skill.id);
+      names.add(skill.name);
+      totalChars += skill.instructions.length;
+      totalChars += Object.values(skill.resources).reduce(
+        (sum, content) => sum + content.length,
+        0,
+      );
+    }
+    if (totalChars > 500_000) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Custom Skill content exceeds the 500,000 character limit",
+        path: ["customSkills"],
+      });
+    }
+  });
 
 function canManageAiSelection(role: string): boolean {
   return ownerOrAdmin.has(role);
@@ -1122,6 +1215,8 @@ export function botsRoutes(
           hasFileTools: !!dataFiles,
           dataFiles,
           messageConfig: body.messageConfig,
+          hasImageGeneration: true,
+          skills: resolveBotSkills(bot?.aiConfig?.skillConfig),
         });
 
         // Keep the public RPC response structurally named inside the server package. Returning
@@ -1229,6 +1324,93 @@ export function botsRoutes(
         ok: true as const,
         data: toAiConfigPublic(bot.aiConfig),
         revision: aiConfigRevision(bot.updatedAt),
+      });
+    })
+    .get("/:botId/skills", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限管理 Skill" }, 403);
+      }
+      const botId = c.req.param("botId");
+      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      return c.json({
+        ok: true as const,
+        data: listBotSkills(bot.aiConfig?.skillConfig),
+        revision: aiConfigRevision(bot.updatedAt),
+      });
+    })
+    .put("/:botId/skills", zValidator("json", skillConfigSchema), async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role)) {
+        return c.json({ ok: false as const, error: "当前角色没有权限管理 Skill" }, 403);
+      }
+      const botId = c.req.param("botId");
+      const body = c.req.valid("json");
+      const saveResult = await botPool.withAiConfigLock(botId, async () => {
+        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        if (!bot) return { kind: "not_found" as const };
+        if (!bot.aiConfig) return { kind: "ai_not_configured" as const };
+        const currentRevision = aiConfigRevision(bot.updatedAt);
+        if (body.revision !== currentRevision) {
+          return {
+            kind: "conflict" as const,
+            data: listBotSkills(bot.aiConfig.skillConfig),
+            revision: currentRevision,
+          };
+        }
+        const skillConfig = {
+          enabledBuiltInIds: body.enabledBuiltInIds,
+          customSkills: body.customSkills.map((skill) => ({
+            ...skill,
+            resources: { ...skill.resources },
+          })),
+        };
+        const changedAt = new Date(Math.max(Date.now(), (bot.updatedAt?.getTime() ?? 0) + 1));
+        await db
+          .update(bots)
+          .set({ aiConfig: { ...bot.aiConfig, skillConfig }, updatedAt: changedAt })
+          .where(eq(bots.id, botId));
+        return { kind: "saved" as const, skillConfig, revision: aiConfigRevision(changedAt) };
+      });
+
+      if (saveResult.kind === "not_found") {
+        return c.json({ ok: false as const, error: "Bot not found" }, 404);
+      }
+      if (saveResult.kind === "ai_not_configured") {
+        return c.json({ ok: false as const, error: "请先完成 AI 配置" }, 409);
+      }
+      if (saveResult.kind === "conflict") {
+        return c.json(
+          {
+            ok: false as const,
+            code: "stale_revision" as const,
+            error: "Skill configuration changed since it was loaded",
+            latest: { data: saveResult.data, revision: saveResult.revision },
+          },
+          409,
+        );
+      }
+
+      if (botPool.getManager(botId)) {
+        try {
+          await botPool.restartBot(botId);
+        } catch (error) {
+          console.error("Bot restart after Skill config save failed", { botId, error });
+          return c.json(
+            {
+              ok: false as const,
+              code: "saved_apply_failed" as const,
+              error: "Skill 已保存，但 Bot 重启失败。请检查服务端日志并手动重启 Bot",
+              revision: saveResult.revision,
+            },
+            503,
+          );
+        }
+      }
+
+      return c.json({
+        ok: true as const,
+        data: listBotSkills(saveResult.skillConfig),
+        revision: saveResult.revision,
       });
     })
     .put("/:botId/ai-config", zValidator("json", aiConfigSchema), async (c) => {
@@ -1456,6 +1638,7 @@ export function botsRoutes(
           mcpServerIds: body.mcpServerIds,
           summaryConfig: body.summaryConfig ?? bot.aiConfig?.summaryConfig,
           imageOcrConfig,
+          skillConfig: existingMigrated?.skillConfig,
         };
 
         const changedAt = new Date(Math.max(Date.now(), (bot.updatedAt?.getTime() ?? 0) + 1));

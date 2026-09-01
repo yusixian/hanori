@@ -355,6 +355,63 @@ export const bots = {
     allLevels: "All Levels",
     empty: "No logs found",
   },
+  skills: {
+    eyebrow: "Bot capabilities",
+    title: "Skill management",
+    description:
+      "Choose workflows that this Bot can load on demand. Skills guide the AI; actual image creation still uses create_image, MCP authorization, and existing governance rules.",
+    loading: "Loading Skills…",
+    loadError: "Skill configuration could not be loaded.",
+    saveError:
+      "Skill configuration could not be saved. Check names, resource paths, and content limits.",
+    saved: "Skill configuration saved and applied.",
+    savedApplyFailed:
+      "Skill configuration was saved, but the Bot could not restart automatically. Check server logs and restart it manually.",
+    conflict: "The configuration changed elsewhere. Refresh before saving again.",
+    refresh: "Refresh",
+    save: "Save and apply",
+    toggle: "Enable or disable {{name}}",
+    bundled: "Bundled",
+    resourceCount_one: "{{count}} resource",
+    resourceCount_other: "{{count}} resources",
+    builtIns: {
+      title: "Bundled Skills",
+      description:
+        "Shipped with the application and read-only. Bots without a saved selection start with these three image Skills enabled.",
+    },
+    custom: {
+      title: "Custom Skills",
+      description:
+        "Maintained by administrators and scoped to this Bot. A running Bot restarts after the page is saved.",
+      add: "New Skill",
+      empty: "No custom Skills yet",
+      emptyHint: "Paste a SKILL.md workflow and add named reference resources when needed.",
+      edit: "Edit",
+      delete: "Delete Skill",
+      confirmDelete: "Delete “{{name}}”? The change takes effect after the page is saved.",
+    },
+    editor: {
+      createTitle: "Create custom Skill",
+      editTitle: "Edit custom Skill",
+      description:
+        "The trigger description stays in the system prompt. Full instructions and resources load only after the AI calls load_skill.",
+      name: "Skill name",
+      nameHint: "Use lowercase letters, numbers, and hyphens. Built-in names are reserved.",
+      displayName: "Display name",
+      triggerDescription: "Trigger description",
+      triggerHint:
+        "State clearly when this Skill must be used; the AI uses this text to decide whether to load it.",
+      instructions: "SKILL.md instructions",
+      resources: "Reference resources",
+      resourcesHint: "Instructions can ask the AI to load these relative paths through load_skill.",
+      addResource: "Add resource",
+      resourcePath: "Resource relative path",
+      resourceContent: "Resource content",
+      removeResource: "Remove resource",
+      cancel: "Cancel",
+      apply: "Apply to draft",
+    },
+  },
   governance: {
     eyebrow: "Control plane",
     title: "Usage & image governance",

@@ -29,6 +29,7 @@ import { getAvailableAgentNames } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { buildExtendedToolsPrompt } from "../utils/tools-prompt.js";
+import { buildSkillsCatalogPrompt, type BotSkillDefinition } from "../skills/catalog.js";
 
 export type PromptStability = "static" | "append-only" | "volatile";
 export type PromptTrust = "developer" | "application" | "user-derived";
@@ -102,6 +103,7 @@ export interface ContextAssemblyInput {
   webToolsConfig?: WebToolsConfig;
   webTools?: Record<string, Tool>;
   hasImageGeneration?: boolean;
+  skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -171,6 +173,7 @@ interface StaticPromptInput {
   webToolsConfig?: WebToolsConfig;
   hasSearchTool: boolean;
   hasImageGeneration?: boolean;
+  skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
   hasBotMemoryTool: boolean;
   artworkToolsEnabled?: boolean;
@@ -294,6 +297,15 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
       }),
     ),
   );
+
+  const skillsPrompt = buildSkillsCatalogPrompt(input.skills ?? []);
+  if (skillsPrompt) {
+    sections.push(
+      section("static.skills", "skills.catalog", "static", "developer", skillsPrompt, {
+        refs: input.skills!.map((skill) => skill.name),
+      }),
+    );
+  }
 
   if ((input.messageConfig?.autoSplitThreshold ?? 0) > 0) {
     sections.push(
@@ -662,6 +674,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       webToolsConfig: input.webToolsConfig,
       hasSearchTool: !!input.webTools?.web_search,
       hasImageGeneration: input.hasImageGeneration,
+      skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       hasBotMemoryTool: !!input.botMemoryTools,
       artworkToolsEnabled: input.artworkToolsEnabled,
@@ -894,6 +907,8 @@ export interface PromptPreviewInput {
   webToolsConfig?: WebToolsConfig;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
+  hasImageGeneration?: boolean;
+  skills?: readonly BotSkillDefinition[];
   hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
@@ -931,6 +946,8 @@ export async function assemblePromptPreview(
       stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
       hasSearchTool: !!input.webToolsConfig?.enabled && !!input.webToolsConfig.search,
+      hasImageGeneration: input.hasImageGeneration,
+      skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       hasBotMemoryTool: input.botMemoryEnabled,
       artworkToolsEnabled: input.artworkToolsEnabled,
@@ -1023,6 +1040,7 @@ export interface ContinueChatContextInput {
   webToolsConfig?: WebToolsConfig;
   webTools?: Record<string, Tool>;
   hasImageGeneration?: boolean;
+  skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -1059,6 +1077,7 @@ export async function buildContinueChatPromptBundle(
       webToolsConfig: input.webToolsConfig,
       hasSearchTool: !!input.webTools?.web_search,
       hasImageGeneration: input.hasImageGeneration,
+      skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       hasBotMemoryTool: !!input.botMemoryTools,
       artworkToolsEnabled: input.artworkToolsEnabled,

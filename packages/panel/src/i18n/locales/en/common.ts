@@ -51,6 +51,7 @@ export const common = {
     overview: "Overview",
     edit: "Edit",
     aiSettings: "AI Settings",
+    skills: "Skills",
     governance: "Usage & Images",
     debugger: "Debugger",
     conversations: "Conversations",

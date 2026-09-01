@@ -257,6 +257,8 @@ export { createWebTools } from "./web.js";
 export type { WebToolsOptions } from "./web.js";
 export { createImageGenerationTools } from "./image-generation.js";
 export type { ImageGenerationToolOptions } from "./image-generation.js";
+export { createSkillTools } from "./skills.js";
+export type { SkillToolsOptions } from "./skills.js";
 export { createPixAITool, injectPixAITool, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";
 export type { PixAIToolsOptions } from "./pixai.js";
 export { directPixAIGenerate, VALID_PROFILES } from "./pixai-direct.js";

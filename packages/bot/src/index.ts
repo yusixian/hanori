@@ -655,6 +655,14 @@ export {
 } from "./middleware/telegram-observation.js";
 export type { DataFilesConfig } from "./utils/data-files.js";
 export { createUsageAwareOpenAICompatible } from "./utils/openai-compatible.js";
+export {
+  DEFAULT_BOT_SKILL_IDS,
+  isBuiltInSkillId,
+  listBotSkills,
+  resolveBotSkills,
+  type BotSkillDefinition,
+  type BotSkillSummary,
+} from "./skills/catalog.js";
 export type {
   AiProviderRuntime,
   AiSelectionMutations,

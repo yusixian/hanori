@@ -51,6 +51,7 @@ export const common = {
     overview: "概览",
     edit: "编辑",
     aiSettings: "AI 设置",
+    skills: "Skills",
     governance: "用量与生图",
     debugger: "调试器",
     conversations: "对话",

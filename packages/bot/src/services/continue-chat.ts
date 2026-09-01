@@ -50,6 +50,8 @@ import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
 import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
+import type { BotSkillDefinition } from "../skills/catalog.js";
+import { createSkillTools } from "../tools/skills.js";
 import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
@@ -104,6 +106,7 @@ export interface ContinueChatConfig {
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
   imageGenerationPort?: ImageGenerationPort;
+  skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   usageGovernance?: UsageGovernancePort;
   dataFiles?: DataFilesConfig;
@@ -317,6 +320,7 @@ async function doContinueChat(
       webToolsConfig: config.webToolsConfig,
       webTools: config.webTools,
       hasImageGeneration: !!config.imageGenerationPort,
+      skills: config.skills,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsEnabled: config.artworkToolsConfig?.enabled,
       hasFileTools: !!config.dataFiles,
@@ -406,6 +410,11 @@ async function doContinueChat(
       ...telegramTools,
       ...behaviorTools,
       ...config.webTools,
+      ...createSkillTools({
+        skills: config.skills ?? [],
+        hasImageGeneration: !!config.imageGenerationPort && event.userId !== undefined,
+        hasWebSearch: !!config.webTools?.web_search,
+      }),
     };
 
     // File tools
@@ -539,7 +548,7 @@ async function doContinueChat(
         }),
         requestCache,
       ),
-      stopWhen: stepCountIs(5),
+      stopWhen: stepCountIs((config.skills?.length ?? 0) > 0 ? 8 : 5),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,
       temperature: selection.temperature,

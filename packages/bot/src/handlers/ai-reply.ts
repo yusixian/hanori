@@ -46,6 +46,7 @@ import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
+import type { BotSkillDefinition } from "../skills/catalog.js";
 import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
 import { PendingActionRegistry } from "../services/pending-actions.js";
@@ -82,6 +83,7 @@ import {
   type GitHubCodeCallbacks,
   type McpToolsOptions,
   createRssTools,
+  createSkillTools,
   createTelegramTools,
   createWebTools,
 } from "../tools/index.js";
@@ -194,6 +196,7 @@ export interface AiReplyConfig {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   imageGenerationPort?: ImageGenerationPort;
+  skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   usageGovernance?: UsageGovernancePort;
   agentToolsConfig?: AgentToolsConfig;
@@ -971,6 +974,12 @@ export function createAiReplyHandler(
     });
   }
 
+  const skillTools = createSkillTools({
+    skills: config.skills ?? [],
+    hasImageGeneration: !!config.imageGenerationPort,
+    hasWebSearch: !!webTools?.web_search,
+  });
+
   // File tools setup (singleton, not per-request)
   let fileTools: Record<string, Tool> | undefined;
   if (config.dataFiles) {
@@ -1141,6 +1150,7 @@ export function createAiReplyHandler(
       webToolsConfig: config.webToolsConfig,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsConfig: config.artworkToolsConfig,
+      skills: config.skills,
       timeoutConfig: config.timeoutConfig,
       webTools,
       imageGenerationPort: config.imageGenerationPort,
@@ -1860,6 +1870,7 @@ export function createAiReplyHandler(
           webToolsConfig: config.webToolsConfig,
           webTools,
           hasImageGeneration: !!config.imageGenerationPort,
+          skills: config.skills,
           agentToolsConfig: config.agentToolsConfig,
           artworkToolsEnabled: config.artworkToolsConfig?.enabled,
           hasFileTools: !!fileTools,
@@ -1898,6 +1909,7 @@ export function createAiReplyHandler(
           ...githubTools,
           ...artworkTools,
           ...fileTools,
+          ...skillTools,
         };
 
         // RSS tools (per-request: depends on chatId)
@@ -1969,7 +1981,11 @@ export function createAiReplyHandler(
           config.githubToolsConfig?.enabled ||
           config.webToolsConfig?.enabled ||
           config.artworkToolsConfig?.enabled;
-        const maxSteps = Math.max(hasAdvancedTools ? Math.max(baseMaxSteps, 8) : baseMaxSteps, 2);
+        const hasSkills = (config.skills?.length ?? 0) > 0;
+        const maxSteps = Math.max(
+          hasAdvancedTools || hasSkills ? Math.max(baseMaxSteps, 8) : baseMaxSteps,
+          2,
+        );
         const toolChoice = memoryCfg.toolChoice ?? "auto";
         const stableTools = sortToolsForPromptCache(allTools);
         const toolSchemaHash = createToolSchemaHash(stableTools);

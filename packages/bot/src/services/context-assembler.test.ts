@@ -1,5 +1,6 @@
 import type { BotMemory, BotMemoryCallbacks, ConversationCallbacks } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
+import { resolveBuiltInSkills } from "../skills/catalog.js";
 import {
   appendCurrentRequest,
   assembleContext,
@@ -75,6 +76,22 @@ function staticTrace(sections: PromptSectionTrace[]) {
 }
 
 describe("prompt bundle", () => {
+  it("adds only the enabled Skill catalog to the static prompt trace", async () => {
+    const skills = resolveBuiltInSkills(["prompt-atelier"]);
+    const result = await assembleContext(runtimeInput({ skills }));
+    const trace = result.trace.sections.find((section) => section.id === "static.skills");
+    expect(trace).toMatchObject({
+      source: "skills.catalog",
+      stability: "static",
+      trust: "developer",
+      refs: ["prompt-atelier"],
+    });
+    const content = result.messages[trace!.messageIndex]!.content;
+    expect(content).toContain("prompt-atelier");
+    expect(content).toContain("load_skill");
+    expect(content).not.toContain("六要素解剖");
+  });
+
   it("uses the same static sections for runtime, preview, and continuation", async () => {
     const input = runtimeInput();
     const runtime = await assembleContext(input);

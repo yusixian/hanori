@@ -8,7 +8,7 @@ import type {
   BotTimerHandlers,
   TelegramObservationCallbacks,
 } from "@cos-tool-bot/bot";
-import { removeProfileAvatarFile } from "@cos-tool-bot/bot";
+import { removeProfileAvatarFile, resolveBotSkills } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
@@ -1074,6 +1074,7 @@ export class BotPool {
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
         imageGenerationPort: this.imageGenerationPort,
+        skills: resolveBotSkills(aiConfig.skillConfig),
         isDelegatedGroupAdmin: (chatId, userId) =>
           this.isDelegatedGroupAdmin(botId, chatId, userId),
         usageGovernance: this.usageGovernance,
