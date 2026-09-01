@@ -37,10 +37,7 @@ export const env = {
   PANEL_PASSWORD: optional("PANEL_PASSWORD"),
   MINI_APP_SESSION_SECRET: optional("MINI_APP_SESSION_SECRET"),
   ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],
-  ENCRYPTION_KEY:
-    process.env.NODE_ENV === "production"
-      ? required("ENCRYPTION_KEY")
-      : optional("ENCRYPTION_KEY", DEFAULT_ENCRYPTION_KEY),
+  ENCRYPTION_KEY: optional("ENCRYPTION_KEY", DEFAULT_ENCRYPTION_KEY),
   USING_DEFAULT_ENCRYPTION_KEY: !process.env.ENCRYPTION_KEY,
   APP_VERSION: optional("APP_VERSION"),
   PORT: optionalInt("PORT", 3000),
