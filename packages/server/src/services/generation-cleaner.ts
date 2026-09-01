@@ -3,7 +3,7 @@ import path from "node:path";
 import type { Database } from "@cos-tool-bot/database";
 import { imageGenerations, pixaiGenerations } from "@cos-tool-bot/database";
 import { getDataDir } from "@cos-tool-bot/shared";
-import { and, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { Logger } from "pino";
 
 interface GenerationCleanerOptions {
@@ -59,7 +59,7 @@ export class GenerationCleaner {
     try {
       const cutoff = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000);
 
-      // Query expired records to get local file paths before deletion
+      // Generation metadata is an archive. Retention only purges expired binaries.
       const [expiredLegacy, expiredCurrent] = await Promise.all([
         this.db
           .select({
@@ -68,7 +68,13 @@ export class GenerationCleaner {
             localFiles: pixaiGenerations.localFiles,
           })
           .from(pixaiGenerations)
-          .where(lt(pixaiGenerations.createdAt, cutoff)),
+          .where(
+            and(
+              lt(pixaiGenerations.createdAt, cutoff),
+              inArray(pixaiGenerations.status, ["completed", "failed"]),
+              isNull(pixaiGenerations.filesPurgedAt),
+            ),
+          ),
         this.db
           .select({
             id: imageGenerations.id,
@@ -86,6 +92,7 @@ export class GenerationCleaner {
                 "attention_required",
                 "cancelled",
               ]),
+              isNull(imageGenerations.filesPurgedAt),
             ),
           ),
       ]);
@@ -109,27 +116,27 @@ export class GenerationCleaner {
         }
       }
 
-      // Delete DB records
       const recordCount = expired.length;
+      const purgedAt = new Date();
       await Promise.all([
-        this.db.delete(pixaiGenerations).where(lt(pixaiGenerations.createdAt, cutoff)),
-        this.db
-          .delete(imageGenerations)
-          .where(
-            and(
-              lt(imageGenerations.createdAt, cutoff),
-              inArray(imageGenerations.state, [
-                "succeeded",
-                "failed",
-                "waiting_stopped",
-                "attention_required",
-                "cancelled",
-              ]),
-            ),
-          ),
+        ...expiredLegacy.map((record) =>
+          this.db
+            .update(pixaiGenerations)
+            .set({ localFiles: null, filesPurgedAt: purgedAt })
+            .where(eq(pixaiGenerations.id, record.id)),
+        ),
+        ...expiredCurrent.map((record) =>
+          this.db
+            .update(imageGenerations)
+            .set({ localFiles: [], filesPurgedAt: purgedAt })
+            .where(eq(imageGenerations.id, record.id)),
+        ),
       ]);
 
-      this.logger.info({ records: recordCount, filesDeleted }, "Generation cleanup completed");
+      this.logger.info(
+        { recordsPurged: recordCount, filesDeleted },
+        "Generation cleanup completed",
+      );
     } catch (err) {
       this.logger.error(err, "Generation cleanup failed");
     }

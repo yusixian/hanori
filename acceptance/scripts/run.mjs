@@ -17,6 +17,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 import { pruneRuns } from "./clean.mjs";
 import { ACCEPTANCE_ENCRYPTION_KEY, createAcceptanceServerEnvironment } from "./environment.mjs";
 
@@ -38,6 +39,7 @@ const OWNER_EMAIL = "owner@acceptance.test";
 const OWNER_PASSWORD = "acceptance-password-123";
 const BETTER_AUTH_SECRET = "acceptance-only-secret-not-used-in-production";
 const APP_DIR = ".acceptance/app";
+const UNIFIED_GENERATION_ID = "5b3d1f77-e6c8-4bd0-b97c-0de9d4a37165";
 const COMPOSE_ARGS = ["compose", "-p", "cos-bot-acceptance", "-f", "docker-compose.dev.yml"];
 
 const runsRoot = path.join(root, ".acceptance", "runs");
@@ -168,6 +170,53 @@ function encryptToken(plaintext) {
   return `${iv.toString("base64")}:${cipher.getAuthTag().toString("base64")}:${encrypted.toString("base64")}`;
 }
 
+function createAcceptancePng(width, height, variant = 0) {
+  const rows = Buffer.alloc((width * 4 + 1) * height);
+  for (let y = 0; y < height; y++) {
+    const row = y * (width * 4 + 1);
+    rows[row] = 0;
+    for (let x = 0; x < width; x++) {
+      const nx = x / Math.max(1, width - 1);
+      const ny = y / Math.max(1, height - 1);
+      const glow = Math.max(0, 1 - Math.hypot(nx - 0.72, ny - 0.32) * 5);
+      const offset = row + 1 + x * 4;
+      rows[offset] = Math.round(18 + 80 * nx + glow * (variant ? 70 : 150));
+      rows[offset + 1] = Math.round(28 + 65 * ny + glow * (variant ? 120 : 95));
+      rows[offset + 2] = Math.round(72 + 105 * (1 - nx) + glow * (variant ? 110 : 30));
+      rows[offset + 3] = 255;
+    }
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  return Buffer.concat([
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", deflateSync(rows)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
+}
+
+function pngChunk(type, data) {
+  const typeBuffer = Buffer.from(type, "ascii");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const checksum = Buffer.alloc(4);
+  checksum.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])));
+  return Buffer.concat([length, typeBuffer, data, checksum]);
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
 // Inserts one inactive demo bot so bot-scoped pages are reachable. Inactive on
 // purpose: BotPool must never dial Telegram from the acceptance environment.
 function seedBot() {
@@ -218,7 +267,70 @@ function seedBot() {
     .map((line) => line.trim())
     .find((line) => /^[0-9a-f-]{36}$/i.test(line));
   if (!botId) throw new Error(`Failed to parse seeded bot id from:\n${result.stdout}`);
-  fs.writeFileSync(path.join(runDir, "seed.json"), JSON.stringify({ botId }, null, 2));
+  const imageDir = path.join(root, APP_DIR, "data", botId, "generations");
+  fs.mkdirSync(imageDir, { recursive: true });
+  fs.writeFileSync(path.join(imageDir, "acceptance-current.png"), createAcceptancePng(960, 570));
+  fs.writeFileSync(path.join(imageDir, "acceptance-legacy.png"), createAcceptancePng(640, 640, 1));
+  const generationSql = `
+    INSERT INTO image_generations (
+      id, bot_id, chat_id, user_id, provider, purpose, preset_key, idempotency_key,
+      provider_operation_id, state, provider_state, prompt, negative_prompt, seed,
+      request_snapshot, artifacts, local_files, completed_at, delivered_at
+    ) VALUES (
+      '${UNIFIED_GENERATION_ID}', '${botId}', -100001, 900001, 'mcp_pixai',
+      'anime_illustration', 'wallpaper-night', 'acceptance:${botId}:generation',
+      'operation-acceptance', 'succeeded', 'completed',
+      'character: sakayori_iroha, character: kaguya_(cho_kaguya-hime!), 2girls, cozy bedroom, late night, composing music, MIDI keyboard, sheet music, warm desk lamp, moonlight, detailed anime illustration',
+      'low quality, blurry, malformed hands', 20260902,
+      '{"presetKey":"wallpaper-night","modelVersionId":"model-version-acceptance","width":1536,"height":912,"batchSize":1,"samplingSteps":28,"cfgScale":6.5,"sampler":"Euler a","promptHelper":true}'::jsonb,
+      '[{"ordinal":0,"mimeType":"image/png","filename":"acceptance-current.png"}]'::jsonb,
+      '["acceptance-current.png"]'::jsonb, now() - interval '2 minutes', now() - interval '1 minute'
+    );
+    INSERT INTO image_generation_events (generation_id, bot_id, kind, state, provider_state, created_at)
+    VALUES
+      ('${UNIFIED_GENERATION_ID}', '${botId}', 'created', 'preparing', null, now() - interval '5 minutes'),
+      ('${UNIFIED_GENERATION_ID}', '${botId}', 'submitted', 'queued', 'queued', now() - interval '4 minutes'),
+      ('${UNIFIED_GENERATION_ID}', '${botId}', 'artifacts_saved', 'succeeded', 'completed', now() - interval '2 minutes'),
+      ('${UNIFIED_GENERATION_ID}', '${botId}', 'delivered', 'succeeded', 'completed', now() - interval '1 minute');
+    INSERT INTO pixai_generations (
+      bot_id, chat_id, user_id, task_id, prompt, negative_prompt, model_id, width,
+      height, batch_size, status, local_files, sampling_steps, cfg_scale,
+      prompt_helper, completed_at
+    ) VALUES (
+      '${botId}', -100002, 900002, 'legacy-acceptance-task',
+      'legacy anime portrait, starlight, intricate costume, cinematic lighting',
+      'low quality', 'legacy-model', 1024, 1024, 1, 'completed',
+      '["acceptance-legacy.png"]'::jsonb, 24, 7, true, now() - interval '1 day'
+    ) RETURNING id;`;
+  const generationResult = docker(
+    ...COMPOSE_ARGS,
+    "exec",
+    "-T",
+    "db",
+    "psql",
+    "-U",
+    "bot",
+    "-d",
+    DB_NAME,
+    "-At",
+    "-c",
+    generationSql,
+  );
+  if (generationResult.status !== 0) {
+    throw new Error(`Failed to seed generations:\n${generationResult.stderr}`);
+  }
+  const legacyGenerationId = generationResult.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => /^\d+$/.test(line));
+  fs.writeFileSync(
+    path.join(runDir, "seed.json"),
+    JSON.stringify(
+      { botId, unifiedGenerationId: UNIFIED_GENERATION_ID, legacyGenerationId },
+      null,
+      2,
+    ),
+  );
   console.log(`[acceptance] seeded bot ${botId}`);
 }
 

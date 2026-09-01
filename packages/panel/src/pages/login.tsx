@@ -6,11 +6,13 @@ import { authFetch } from "@/lib/client";
 import { Bot, LockKeyhole, Mail } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { useNavigate } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 export function LoginPage() {
   const { t } = useTranslation("auth");
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const returnTo = safeReturnTo(searchParams.get("returnTo"));
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -34,7 +36,7 @@ export function LoginPage() {
         setError(t("errors.membershipRequired"));
         return;
       }
-      navigate("/", { replace: true });
+      navigate(returnTo, { replace: true });
     } catch {
       setError(t("errors.loginFailed"));
     } finally {
@@ -103,7 +105,7 @@ export function LoginPage() {
               onClick={() =>
                 authClient.signIn.social({
                   provider: "google",
-                  callbackURL: `${window.location.origin}/`,
+                  callbackURL: `${window.location.origin}${returnTo}`,
                 })
               }
             >
@@ -114,4 +116,15 @@ export function LoginPage() {
       </Card>
     </div>
   );
+}
+
+function safeReturnTo(value: string | null): string {
+  if (!value || !value.startsWith("/")) return "/";
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.origin !== window.location.origin) return "/";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/";
+  }
 }

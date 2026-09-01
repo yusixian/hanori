@@ -1,7 +1,7 @@
 import type { AuthProvider } from "@refinedev/core";
 import { i18n } from "@/i18n";
 import { authClient } from "@/lib/auth-client";
-import { authFetch } from "@/lib/client";
+import { authFetch, loginPathFor } from "@/lib/client";
 
 export const authProvider: AuthProvider = {
   login: async ({ email, password }: { email: string; password: string }) => {
@@ -34,12 +34,12 @@ export const authProvider: AuthProvider = {
   check: async () => {
     const result = await authClient.getSession();
     if (!("data" in result) || !result.data?.user) {
-      return { authenticated: false, redirectTo: "/login" };
+      return { authenticated: false, redirectTo: loginPathFor(window.location) };
     }
     const membership = await authFetch("/api/authz/me");
     if (!membership.ok) {
       await authClient.signOut();
-      return { authenticated: false, redirectTo: "/login" };
+      return { authenticated: false, redirectTo: loginPathFor(window.location) };
     }
     return { authenticated: true };
   },

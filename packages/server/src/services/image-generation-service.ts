@@ -2,7 +2,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Database } from "@cos-tool-bot/database";
-import { imageGenerationConfigs, imageGenerations } from "@cos-tool-bot/database";
+import {
+  imageGenerationConfigs,
+  imageGenerationEvents,
+  imageGenerations,
+} from "@cos-tool-bot/database";
 import {
   DEFAULT_IMAGE_ROUTE_COPY,
   getDataDir,
@@ -13,6 +17,7 @@ import {
   type ImageGenerationAdmission,
   type ImageGenerationPort,
   type ImageGenerationReplyContext,
+  type ImageGenerationRequestSnapshot,
   type ImageGenerationState,
   type ImageGenerationView,
   type ImageGovernanceConfig,
@@ -38,6 +43,13 @@ const RECOVERABLE_STATES: ImageGenerationState[] = [...PENDING_STATES, "succeede
 const COMPLETABLE_STATES: ImageGenerationState[] = PENDING_STATES.filter(
   (state) => state !== "cancel_requested",
 );
+const DELETABLE_STATES: ImageGenerationState[] = [
+  "succeeded",
+  "failed",
+  "waiting_stopped",
+  "attention_required",
+  "cancelled",
+];
 const DELIVERY_CLAIM_LEASE_MS = 15 * 60 * 1000;
 
 export interface GeneralImageBackend {
@@ -58,6 +70,8 @@ export interface ImageGenerationDelivery {
     chatId: number;
     userId: number;
     prompt: string;
+    presetKey?: string;
+    requestSnapshot?: ImageGenerationRequestSnapshot;
     localFiles: string[];
   }): Promise<number[]>;
 }
@@ -223,6 +237,9 @@ export class ImageGenerationService implements ImageGenerationPort {
     const id = randomUUID();
     const provider = providerForPurpose(request.purpose);
     const idempotencyKey = `cos-tool-bot:${actor.botId}:${id}`;
+    const initialSnapshot: ImageGenerationRequestSnapshot = {
+      presetKey,
+    };
     try {
       await this.db.insert(imageGenerations).values({
         id,
@@ -236,12 +253,14 @@ export class ImageGenerationService implements ImageGenerationPort {
         prompt,
         negativePrompt: request.negativePrompt,
         seed: request.seed,
+        requestSnapshot: initialSnapshot,
         usageReservationId,
       });
     } catch {
       await this.refund(actor.botId, usageReservationId).catch(() => {});
       return { accepted: false, reason: "provider_unavailable" };
     }
+    await this.recordEvent(actor.botId, id, "created", "preparing");
 
     if (provider === "general_backend") {
       void this.runGeneral(id);
@@ -271,14 +290,22 @@ export class ImageGenerationService implements ImageGenerationPort {
       return { accepted: false, reason: "approval_required" };
     }
     try {
+      const requestSnapshot = extractImageGenerationRequestSnapshot(
+        prepared.value,
+        initialSnapshot,
+      );
       await this.db
         .update(imageGenerations)
         .set({
           providerMetadata: { planId: prepared.planId },
+          requestSnapshot,
           approvalState: prepared.approvalRequired ? "required" : "not_required",
           updatedAt: new Date(),
         })
         .where(eq(imageGenerations.id, id));
+      await this.recordEvent(actor.botId, id, "planned", "preparing", undefined, {
+        approvalRequired: prepared.approvalRequired,
+      });
     } catch {
       await this.markFailed(id, "PLAN_PERSIST_FAILED", "Image plan could not be persisted").catch(
         () => {},
@@ -289,7 +316,7 @@ export class ImageGenerationService implements ImageGenerationPort {
 
     try {
       const operation = await this.pixai.startGeneration(prepared.planId, idempotencyKey);
-      await this.persistStartedOperation(id, prepared.planId, operation);
+      await this.persistStartedOperation(id, prepared.planId, operation, undefined, actor.botId);
       void this.advance(id);
       return { accepted: true, generation: (await this.getOwned(actor, id))! };
     } catch {
@@ -352,6 +379,49 @@ export class ImageGenerationService implements ImageGenerationPort {
     };
   }
 
+  async getAdminRequestSnapshot(
+    botId: string,
+    generationId: string,
+  ): Promise<ImageGenerationRequestSnapshot | undefined> {
+    const row = await this.getRow(generationId);
+    if (!row || row.botId !== botId) return undefined;
+    if (hasUsefulRequestSnapshot(row.requestSnapshot)) return row.requestSnapshot ?? undefined;
+    if (row.provider !== "mcp_pixai" || !row.providerOperationId) {
+      return row.requestSnapshot ?? undefined;
+    }
+    const details = await Promise.resolve()
+      .then(() => this.pixai.getGenerationDetails(row.providerOperationId!))
+      .catch(() => null);
+    if (!details) return row.requestSnapshot ?? undefined;
+    const snapshot = extractImageGenerationRequestSnapshot(details, row.requestSnapshot ?? {});
+    await this.db
+      .update(imageGenerations)
+      .set({ requestSnapshot: snapshot, updatedAt: new Date() })
+      .where(and(eq(imageGenerations.id, generationId), eq(imageGenerations.botId, botId)));
+    return snapshot;
+  }
+
+  async deleteAdminGeneration(
+    botId: string,
+    generationId: string,
+  ): Promise<"deleted" | "not_found" | "not_terminal"> {
+    const row = await this.getRow(generationId);
+    if (!row || row.botId !== botId) return "not_found";
+    if (!DELETABLE_STATES.includes(row.state as ImageGenerationState)) return "not_terminal";
+    const [deleted] = await this.db
+      .delete(imageGenerations)
+      .where(and(eq(imageGenerations.id, generationId), eq(imageGenerations.botId, botId)))
+      .returning({ id: imageGenerations.id, localFiles: imageGenerations.localFiles });
+    if (!deleted) return "not_found";
+    const dir = path.join(getDataDir(botId), "generations");
+    await Promise.allSettled(
+      deleted.localFiles
+        .filter((filename) => path.basename(filename) === filename)
+        .map((filename) => unlink(path.join(dir, filename))),
+    );
+    return "deleted";
+  }
+
   async cancel(
     actor: ImageGenerationActor,
     generationId: string,
@@ -387,6 +457,7 @@ export class ImageGenerationService implements ImageGenerationPort {
             ? { ok: false, reason: "terminal", generation: latest }
             : { ok: false, reason: "not_found" };
         }
+        await this.recordEvent(row.botId, generationId, "cancel_requested", "cancel_requested");
         void this.advance(generationId);
         return { ok: true, generation: (await this.getOwned(actor, generationId))! };
       }
@@ -409,6 +480,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           ? { ok: false, reason: "terminal", generation: latest }
           : { ok: false, reason: "not_found" };
       }
+      await this.recordEvent(row.botId, generationId, "cancel_resolved", "waiting_stopped");
       if (row.usageReservationId) await this.refund(row.botId, row.usageReservationId);
       return { ok: true, generation: (await this.getOwned(actor, generationId))! };
     }
@@ -432,6 +504,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         ? { ok: false, reason: "terminal", generation: latest }
         : { ok: false, reason: "not_found" };
     }
+    await this.recordEvent(row.botId, generationId, "cancel_requested", "cancel_requested");
     try {
       const operation = await this.pixai.cancelGeneration(row.providerOperationId);
       const state = normalizeCancelState(operation);
@@ -453,6 +526,9 @@ export class ImageGenerationService implements ImageGenerationPort {
       if (claimed && state === "cancelled" && row.usageReservationId) {
         await this.refund(row.botId, row.usageReservationId);
       }
+      if (claimed) {
+        await this.recordEvent(row.botId, generationId, "cancel_resolved", state, operation.state);
+      }
       return { ok: true, generation: (await this.getOwned(actor, generationId))! };
     } catch {
       await this.db
@@ -468,6 +544,7 @@ export class ImageGenerationService implements ImageGenerationPort {
             eq(imageGenerations.state, "cancel_requested"),
           ),
         );
+      await this.recordEvent(row.botId, generationId, "cancel_resolved", "cancel_rejected");
       return {
         ok: false,
         reason: "provider_rejected",
@@ -552,7 +629,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       }
       try {
         const operation = await this.pixai.startGeneration(planId, row.idempotencyKey);
-        await this.persistStartedOperation(id, planId, operation, row.providerMetadata);
+        await this.persistStartedOperation(id, planId, operation, row.providerMetadata, row.botId);
         this.scheduleAdvance(id, 0);
       } catch {
         this.logger.warn({ generationId: id }, "Image operation start recovery deferred");
@@ -575,6 +652,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           .where(and(eq(imageGenerations.id, id), eq(imageGenerations.state, "cancel_requested")))
           .returning({ id: imageGenerations.id });
         if (!claimed) return;
+        await this.recordEvent(row.botId, id, "cancel_resolved", state, operation.state);
         if (state === "cancelled" && row.usageReservationId) {
           await this.refund(row.botId, row.usageReservationId);
           return;
@@ -589,6 +667,7 @@ export class ImageGenerationService implements ImageGenerationPort {
             updatedAt: new Date(),
           })
           .where(and(eq(imageGenerations.id, id), eq(imageGenerations.state, "cancel_requested")));
+        await this.recordEvent(row.botId, id, "cancel_resolved", "cancel_rejected");
         this.scheduleAdvance(id, 15_000);
       }
       return;
@@ -615,6 +694,9 @@ export class ImageGenerationService implements ImageGenerationPort {
         )
         .returning({ id: imageGenerations.id });
       if (!observed) return;
+      if (row.state !== persistedState || row.providerState !== operation.state) {
+        await this.recordEvent(row.botId, id, "state_changed", persistedState, operation.state);
+      }
       if (state === "failed") {
         if (row.usageReservationId) await this.refund(row.botId, row.usageReservationId);
         return;
@@ -657,6 +739,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         .where(and(eq(imageGenerations.id, id), eq(imageGenerations.state, "preparing")))
         .returning({ id: imageGenerations.id });
       if (!claimed) return;
+      await this.recordEvent(row.botId, id, "state_changed", "running");
       const data = await this.generalBackend.create({
         botId: row.botId,
         prompt: row.prompt,
@@ -733,6 +816,9 @@ export class ImageGenerationService implements ImageGenerationPort {
         await Promise.allSettled(createdFiles.map((filename) => unlink(path.join(dir, filename))));
         return;
       }
+      await this.recordEvent(row.botId, row.id, "artifacts_saved", "succeeded", undefined, {
+        artifactCount: artifacts.length,
+      });
     } catch (error) {
       await Promise.allSettled(createdFiles.map((filename) => unlink(path.join(dir, filename))));
       throw error;
@@ -774,6 +860,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       )
       .returning({ id: imageGenerations.id });
     if (!claimed) return;
+    await this.recordEvent(row.botId, row.id, "delivery_started", "succeeded");
     let messageIds: number[];
     try {
       messageIds = await this.delivery.deliver({
@@ -782,6 +869,8 @@ export class ImageGenerationService implements ImageGenerationPort {
         chatId: row.chatId,
         userId: row.userId,
         prompt: row.prompt,
+        presetKey: row.presetKey ?? undefined,
+        requestSnapshot: row.requestSnapshot ?? undefined,
         localFiles: row.localFiles,
       });
     } catch (error) {
@@ -789,6 +878,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         .update(imageGenerations)
         .set({ deliveryClaimedAt: null, updatedAt: new Date() })
         .where(and(eq(imageGenerations.id, row.id), isNull(imageGenerations.deliveredAt)));
+      await this.recordEvent(row.botId, row.id, "delivery_failed", "succeeded");
       throw error;
     }
     // Persisting Telegram's returned message ids is separate from sending. If this
@@ -798,6 +888,9 @@ export class ImageGenerationService implements ImageGenerationPort {
       .update(imageGenerations)
       .set({ deliveryMessageIds: messageIds, deliveredAt: new Date(), updatedAt: new Date() })
       .where(and(eq(imageGenerations.id, row.id), isNull(imageGenerations.deliveredAt)));
+    await this.recordEvent(row.botId, row.id, "delivered", "succeeded", undefined, {
+      deliveryMessageCount: messageIds.length,
+    });
   }
 
   private async canCreate(
@@ -827,7 +920,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   }
 
   private async markFailed(id: string, errorCode: string, errorMessage: string): Promise<void> {
-    await this.db
+    const [failed] = await this.db
       .update(imageGenerations)
       .set({
         state: "failed",
@@ -836,7 +929,11 @@ export class ImageGenerationService implements ImageGenerationPort {
         completedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(imageGenerations.id, id), inArray(imageGenerations.state, COMPLETABLE_STATES)));
+      .where(and(eq(imageGenerations.id, id), inArray(imageGenerations.state, COMPLETABLE_STATES)))
+      .returning({ botId: imageGenerations.botId });
+    if (failed) {
+      await this.recordEvent(failed.botId, id, "failed", "failed", undefined, { errorCode });
+    }
   }
 
   private async removeUntrackedGenerationFiles(botId: string, generationId: string): Promise<void> {
@@ -872,6 +969,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     planId: string,
     operation: PixaiGenerationOperation,
     existingMetadata?: Record<string, unknown> | null,
+    botId?: string,
   ): Promise<void> {
     const observedState = normalizeImageOperationState(operation);
     const normalState = observedState === "succeeded" ? "running" : observedState;
@@ -899,6 +997,53 @@ export class ImageGenerationService implements ImageGenerationPort {
         updatedAt: new Date(),
       })
       .where(and(eq(imageGenerations.id, id), eq(imageGenerations.state, "cancel_requested")));
+    if (botId) {
+      await this.recordEvent(botId, id, "submitted", normalState, operation.state);
+      void this.refreshRequestSnapshot(botId, id, operation.operationId);
+    }
+  }
+
+  private async refreshRequestSnapshot(
+    botId: string,
+    id: string,
+    operationId: string,
+  ): Promise<void> {
+    const details = await Promise.resolve()
+      .then(() => this.pixai.getGenerationDetails(operationId))
+      .catch(() => null);
+    if (!details) return;
+    const row = await this.getRow(id);
+    if (!row || row.botId !== botId) return;
+    const snapshot = extractImageGenerationRequestSnapshot(details, row.requestSnapshot ?? {});
+    await this.db
+      .update(imageGenerations)
+      .set({ requestSnapshot: snapshot, updatedAt: new Date() })
+      .where(and(eq(imageGenerations.id, id), eq(imageGenerations.botId, botId)));
+  }
+
+  private async recordEvent(
+    botId: string,
+    generationId: string,
+    kind: typeof imageGenerationEvents.$inferInsert.kind,
+    state?: ImageGenerationState,
+    providerState?: string,
+    metadata?: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.db.insert(imageGenerationEvents).values({
+        botId,
+        generationId,
+        kind,
+        state,
+        providerState,
+        metadata,
+      });
+    } catch (error) {
+      this.logger.warn(
+        { generationId, kind, code: sanitizedProviderErrorCode(error) },
+        "Image generation event persistence failed",
+      );
+    }
   }
 }
 
@@ -922,6 +1067,87 @@ function canAccess(actor: ImageGenerationActor, row: GenerationRow): boolean {
   if (actor.isBotAdmin) return true;
   if (actor.userId === row.userId) return true;
   return actor.isDelegatedGroupAdmin && actor.chatId === row.chatId;
+}
+
+export function extractImageGenerationRequestSnapshot(
+  value: unknown,
+  fallback: ImageGenerationRequestSnapshot = {},
+): ImageGenerationRequestSnapshot {
+  const candidates = collectSnapshotCandidates(value);
+  const firstString = (...keys: string[]) => readSnapshotValue(candidates, keys, "string");
+  const firstNumber = (...keys: string[]) => readSnapshotValue(candidates, keys, "number");
+  const firstBoolean = (...keys: string[]) => readSnapshotValue(candidates, keys, "boolean");
+  return compactSnapshot({
+    ...fallback,
+    presetKey: firstString("presetKey", "preset_key") ?? fallback.presetKey,
+    modelId: firstString("modelId", "model_id") ?? fallback.modelId,
+    modelVersionId:
+      firstString("modelVersionId", "model_version_id", "modelVersion") ?? fallback.modelVersionId,
+    width: firstNumber("width") ?? fallback.width,
+    height: firstNumber("height") ?? fallback.height,
+    aspectRatio: firstString("aspectRatio", "aspect_ratio") ?? fallback.aspectRatio,
+    batchSize: firstNumber("batchSize", "batch_size") ?? fallback.batchSize,
+    samplingSteps:
+      firstNumber("steps", "samplingSteps", "sampling_steps") ?? fallback.samplingSteps,
+    cfgScale: firstNumber("cfgScale", "cfg_scale") ?? fallback.cfgScale,
+    sampler: firstString("sampler", "samplingMethod", "sampling_method") ?? fallback.sampler,
+    promptHelper: firstBoolean("promptHelper", "prompt_helper") ?? fallback.promptHelper,
+  });
+}
+
+function hasUsefulRequestSnapshot(
+  value: ImageGenerationRequestSnapshot | null | undefined,
+): boolean {
+  if (!value) return false;
+  return Object.entries(value).some(([key, item]) => key !== "presetKey" && item !== undefined);
+}
+
+function collectSnapshotCandidates(value: unknown): Record<string, unknown>[] {
+  if (!isPlainRecord(value)) return [];
+  const candidates: Record<string, unknown>[] = [];
+  const queue: Array<{ value: Record<string, unknown>; depth: number }> = [{ value, depth: 0 }];
+  const seen = new Set<object>();
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (seen.has(current.value)) continue;
+    seen.add(current.value);
+    candidates.push(current.value);
+    if (current.depth >= 5) continue;
+    for (const nested of Object.values(current.value)) {
+      if (isPlainRecord(nested)) queue.push({ value: nested, depth: current.depth + 1 });
+    }
+  }
+  return candidates;
+}
+
+function readSnapshotValue<T extends "string" | "number" | "boolean">(
+  candidates: Record<string, unknown>[],
+  keys: string[],
+  expectedType: T,
+): T extends "string"
+  ? string | undefined
+  : T extends "number"
+    ? number | undefined
+    : boolean | undefined {
+  for (const candidate of candidates) {
+    for (const key of keys) {
+      const item = candidate[key];
+      if (typeof item === expectedType) {
+        if (expectedType !== "number" || Number.isFinite(item)) return item as never;
+      }
+    }
+  }
+  return undefined as never;
+}
+
+function compactSnapshot(value: ImageGenerationRequestSnapshot): ImageGenerationRequestSnapshot {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined),
+  ) as ImageGenerationRequestSnapshot;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function toView(row: GenerationRow): ImageGenerationView {

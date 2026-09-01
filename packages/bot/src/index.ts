@@ -1,6 +1,7 @@
 import type {
   BotLogEntry,
   ConversationCallbacks,
+  ImageGenerationRequestSnapshot,
   TokenUsageRecord,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
@@ -8,7 +9,7 @@ import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bo
 import { autoRetry } from "@grammyjs/auto-retry";
 import { sequentialize } from "@grammyjs/runner";
 import { stream } from "@grammyjs/stream";
-import { Bot, GrammyError, HttpError, InputFile, type Api } from "grammy";
+import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, type Api } from "grammy";
 import type { InputMediaPhoto } from "grammy/types";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
@@ -55,6 +56,7 @@ import {
 } from "./middleware/telegram-observation.js";
 import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
+import { formatImageGenerationCaption } from "./utils/image-generation-delivery.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
@@ -122,19 +124,46 @@ export async function sendLocalImageFiles(
   api: Api,
   chatId: number,
   files: string[],
-  caption: string,
+  input: {
+    prompt: string;
+    detailUrl: string;
+    presetKey?: string;
+    requestSnapshot?: ImageGenerationRequestSnapshot;
+  },
 ): Promise<number[]> {
   if (files.length === 0) return [];
+  const caption = formatImageGenerationCaption({
+    prompt: input.prompt,
+    imageCount: files.length,
+    presetKey: input.presetKey,
+    requestSnapshot: input.requestSnapshot,
+  }).html;
+  const detailButton = new InlineKeyboard().url("查看任务详情", input.detailUrl);
   if (files.length === 1) {
-    const message = await api.sendPhoto(chatId, new InputFile(files[0]!), { caption });
+    const message = await api.sendPhoto(chatId, new InputFile(files[0]!), {
+      caption,
+      parse_mode: "HTML",
+      reply_markup: detailButton,
+    });
     return [message.message_id];
   }
   const media: InputMediaPhoto[] = files.map((file, index) => ({
     type: "photo",
     media: new InputFile(file),
-    ...(index === 0 ? { caption } : {}),
+    ...(index === 0 ? { caption, parse_mode: "HTML" as const } : {}),
   }));
   const messages = await api.sendMediaGroup(chatId, media);
+  await api.sendMessage(chatId, "🔎 完整 Prompt、生成参数与任务进度", {
+    reply_markup: detailButton,
+    ...(messages[0]
+      ? {
+          reply_parameters: {
+            message_id: messages[0].message_id,
+            allow_sending_without_reply: true,
+          },
+        }
+      : {}),
+  });
   return messages.map((message) => message.message_id);
 }
 

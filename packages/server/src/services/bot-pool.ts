@@ -28,6 +28,7 @@ import type {
   MemoryCallbacks,
   ModelEntry,
   ImageGenerationPort,
+  ImageGenerationRequestSnapshot,
   PixAIConfig,
   PixAIGenerationRecord,
   TelegramRichMessageFormat,
@@ -302,12 +303,17 @@ export class BotPool {
     botId: string,
     chatId: number,
     files: string[],
-    caption: string,
+    input: {
+      prompt: string;
+      detailUrl: string;
+      presetKey?: string;
+      requestSnapshot?: ImageGenerationRequestSnapshot;
+    },
   ): Promise<number[]> {
     const manager = this.managers.get(botId);
     if (!manager) throw new Error(`Bot ${botId} is not running`);
     if (!(manager instanceof BotManager)) throw new Error(`Bot ${botId} does not support images`);
-    return manager.sendImageFiles(chatId, files, caption);
+    return manager.sendImageFiles(chatId, files, input);
   }
 
   private async isDelegatedGroupAdmin(

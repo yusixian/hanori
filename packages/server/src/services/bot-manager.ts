@@ -20,6 +20,7 @@ import type {
   ConversationCallbacks,
   IBotManager,
   PixAIGenerationRecord,
+  ImageGenerationRequestSnapshot,
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
@@ -212,9 +213,18 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
   }
 
-  async sendImageFiles(chatId: number, files: string[], caption: string): Promise<number[]> {
+  async sendImageFiles(
+    chatId: number,
+    files: string[],
+    input: {
+      prompt: string;
+      detailUrl: string;
+      presetKey?: string;
+      requestSnapshot?: ImageGenerationRequestSnapshot;
+    },
+  ): Promise<number[]> {
     if (!this.bot) throw new Error(`Bot ${this.botId} is not running`);
-    return sendLocalImageFiles(this.bot.api, chatId, files, caption);
+    return sendLocalImageFiles(this.bot.api, chatId, files, input);
   }
 
   async getTelegramMemberRole(

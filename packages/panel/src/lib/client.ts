@@ -6,7 +6,7 @@ export const authFetch: typeof fetch = async (input, init) => {
   const response = await fetch(input, { ...init, headers, credentials: "include" });
   if (response.status === 401) {
     if (window.location.pathname !== "/login") {
-      window.location.assign("/login");
+      window.location.assign(loginPathFor(window.location));
     }
     const error = new Error("Unauthorized");
     (error as Error & { statusCode: number }).statusCode = 401;
@@ -14,5 +14,10 @@ export const authFetch: typeof fetch = async (input, init) => {
   }
   return response;
 };
+
+export function loginPathFor(location: Pick<Location, "pathname" | "search" | "hash">): string {
+  const returnTo = `${location.pathname}${location.search}${location.hash}`;
+  return `/login?returnTo=${encodeURIComponent(returnTo)}`;
+}
 
 export const client: ReturnType<typeof hc<AppType>> = hc<AppType>("/", { fetch: authFetch });

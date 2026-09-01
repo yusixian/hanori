@@ -2,6 +2,8 @@ import type {
   AiConfigStored,
   EmailForwardConfig,
   ImageArtifact,
+  ImageGenerationEventKind,
+  ImageGenerationRequestSnapshot,
   ImageGovernanceConfig,
   LarkWebhookConfig,
   UsageBucketCharge,
@@ -579,6 +581,7 @@ export const pixaiGenerations = pgTable(
     durationMs: integer("duration_ms"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     completedAt: timestamp("completed_at"),
+    filesPurgedAt: timestamp("files_purged_at"),
   },
   (t) => [
     index("pixai_gen_bot_id_idx").on(t.botId),
@@ -609,6 +612,7 @@ export const imageGenerations = pgTable(
     negativePrompt: text("negative_prompt"),
     seed: bigint("seed", { mode: "number" }),
     providerMetadata: json("provider_metadata").$type<Record<string, unknown>>(),
+    requestSnapshot: json("request_snapshot").$type<ImageGenerationRequestSnapshot>(),
     artifacts: json("artifacts").$type<ImageArtifact[]>().notNull().default([]),
     localFiles: json("local_files").$type<string[]>().notNull().default([]),
     deliveryMessageIds: json("delivery_message_ids").$type<number[]>().notNull().default([]),
@@ -623,6 +627,7 @@ export const imageGenerations = pgTable(
     completedAt: timestamp("completed_at"),
     deliveryClaimedAt: timestamp("delivery_claimed_at"),
     deliveredAt: timestamp("delivered_at"),
+    filesPurgedAt: timestamp("files_purged_at"),
   },
   (t) => [
     uniqueIndex("image_generations_idempotency_uniq").on(t.idempotencyKey),
@@ -644,6 +649,33 @@ export const imageGenerations = pgTable(
     check(
       "image_generations_approval_check",
       sql`${t.approvalState} in ('not_required', 'required', 'approved', 'rejected')`,
+    ),
+  ],
+);
+
+/** Append-only lifecycle history for provider-neutral image operations. */
+export const imageGenerationEvents = pgTable(
+  "image_generation_events",
+  {
+    id: serial("id").primaryKey(),
+    generationId: uuid("generation_id")
+      .references(() => imageGenerations.id, { onDelete: "cascade" })
+      .notNull(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").$type<ImageGenerationEventKind>().notNull(),
+    state: text("state"),
+    providerState: text("provider_state"),
+    metadata: json("metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("image_generation_events_generation_idx").on(t.generationId, t.createdAt),
+    index("image_generation_events_bot_idx").on(t.botId, t.createdAt),
+    check(
+      "image_generation_events_kind_check",
+      sql`${t.kind} in ('created', 'planned', 'submitted', 'state_changed', 'artifacts_saved', 'delivery_started', 'delivered', 'delivery_failed', 'cancel_requested', 'cancel_resolved', 'failed')`,
     ),
   ],
 );

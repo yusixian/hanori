@@ -5,8 +5,11 @@ import { AUTH_STATE_PATH, expect, test } from "../fixtures";
 test.use({ storageState: AUTH_STATE_PATH });
 
 const RUN_DIR = process.env.ACCEPTANCE_RUN_DIR ?? ".acceptance/runs/local";
-const { botId } = JSON.parse(readFileSync(join(RUN_DIR, "seed.json"), "utf8")) as {
+const { botId, unifiedGenerationId } = JSON.parse(
+  readFileSync(join(RUN_DIR, "seed.json"), "utf8"),
+) as {
   botId: string;
+  unifiedGenerationId: string;
 };
 
 const PAGES = [
@@ -116,6 +119,46 @@ test.describe("bot-scoped pages", () => {
       )
       .toContain(userId);
     await acceptance.checkpoint("private-image-user-saved");
+  });
+
+  test("bot-generation-archive-detail", async ({ page, acceptance }) => {
+    acceptance.meta({
+      id: "bot-generation-archive-detail",
+      feature: "Generation archive and task detail",
+      severity: "P1",
+      steps: [
+        "Open the generation archive",
+        "Confirm current and legacy records are merged",
+        "Open a current generation detail",
+        "Inspect the full Prompt, parameters, images, and timeline",
+      ],
+      expected: [
+        "Current and legacy records are visually distinguished",
+        "The full Prompt is available without caption truncation",
+        "Generation parameters and lifecycle events are readable",
+        "Telegram user and chat identifiers are not exposed",
+        "The layout has no horizontal overflow on desktop or mobile",
+      ],
+    });
+
+    await page.goto(`/bots/${botId}/generations`);
+    await expect(page.getByText("Current record").first()).toBeVisible();
+    await expect(page.getByText("Legacy record").first()).toBeVisible();
+    await acceptance.checkpoint("generation-archive-mixed-sources");
+
+    await page.goto(`/bots/${botId}/generations/unified/${unifiedGenerationId}`);
+    await expect(page.getByRole("heading", { name: "Task details" })).toBeVisible();
+    await expect(
+      page.getByText(
+        "character: sakayori_iroha, character: kaguya_(cho_kaguya-hime!), 2girls, cozy bedroom, late night, composing music, MIDI keyboard, sheet music, warm desk lamp, moonlight, detailed anime illustration",
+        { exact: true },
+      ),
+    ).toBeVisible();
+    await expect(page.getByText("1536×912", { exact: true })).toBeVisible();
+    await expect(page.getByText("Delivered to Telegram")).toBeVisible();
+    await expect(page.getByText("900001", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("-100001", { exact: true })).toHaveCount(0);
+    await acceptance.checkpoint("generation-task-detail");
   });
 
   test("bot-ai-expanded-execution-limits", async ({ page, acceptance }) => {

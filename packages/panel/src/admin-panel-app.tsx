@@ -47,6 +47,11 @@ const BotExportPage = lazy(() =>
 const BotGenerationsPage = lazy(() =>
   import("@/pages/bots/generations").then((m) => ({ default: m.BotGenerationsPage })),
 );
+const BotGenerationDetailPage = lazy(() =>
+  import("@/pages/bots/generation-detail").then((m) => ({
+    default: m.BotGenerationDetailPage,
+  })),
+);
 const BotFilesPage = lazy(() =>
   import("@/pages/bots/files").then((m) => ({ default: m.BotFilesPage })),
 );
@@ -143,6 +148,10 @@ export function AdminPanelApp() {
               <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />
               <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
               <Route path="/bots/:botId/generations" element={<BotGenerationsPage />} />
+              <Route
+                path="/bots/:botId/generations/:source/:generationId"
+                element={<BotGenerationDetailPage />}
+              />
               <Route path="/bots/:botId/files" element={<BotFilesPage />} />
               <Route path="/bots/:botId/rss" element={<BotRssPage />} />
               <Route path="/bots/:botId/summary" element={<BotSummaryPage />} />

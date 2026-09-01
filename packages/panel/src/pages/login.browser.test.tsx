@@ -1,6 +1,6 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
 
@@ -45,4 +45,27 @@ test("recovers and shows an error when the post-login membership request fails",
 
   await expect.element(page.getByRole("alert")).toHaveTextContent("Sign-in failed");
   await expect.element(page.getByRole("button", { name: "Sign in" })).toBeEnabled();
+});
+
+test("returns to the requested generation detail after login", async () => {
+  authMocks.authFetch.mockReset().mockResolvedValue({ ok: true });
+  render(
+    <MemoryRouter
+      initialEntries={["/login?returnTo=%2Fbots%2Fbot-a%2Fgenerations%2Funified%2Fgeneration-a"]}
+    >
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/bots/:botId/generations/:source/:generationId"
+          element={<div>Generation detail restored</div>}
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await page.getByLabelText("Email").fill("owner@example.com");
+  await page.getByLabelText("Password").fill("correct-password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect.element(page.getByText("Generation detail restored")).toBeVisible();
 });

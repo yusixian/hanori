@@ -169,6 +169,9 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/governance", requireRoles(ownerOnly))
     .use("/api/bots/:botId/skills", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/generations", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/generations/*", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/files-raw/generations/*", requireRoles(ownerOrAdmin))
     .route("/api/bots", governanceRoutes(db, imageGenerationService, imageMcpConnectionService))
     .route(
       "/api/bots",
@@ -177,7 +180,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
-    .route("/api/bots", generationRoutes(db, botPool))
+    .route("/api/bots", generationRoutes(db, botPool, imageGenerationService))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))

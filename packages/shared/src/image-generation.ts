@@ -83,6 +83,34 @@ export interface ImageArtifact {
   sha256?: string;
 }
 
+/** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
+export interface ImageGenerationRequestSnapshot {
+  presetKey?: string;
+  modelId?: string;
+  modelVersionId?: string;
+  width?: number;
+  height?: number;
+  aspectRatio?: string;
+  batchSize?: number;
+  samplingSteps?: number;
+  cfgScale?: number;
+  sampler?: string;
+  promptHelper?: boolean;
+}
+
+export type ImageGenerationEventKind =
+  | "created"
+  | "planned"
+  | "submitted"
+  | "state_changed"
+  | "artifacts_saved"
+  | "delivery_started"
+  | "delivered"
+  | "delivery_failed"
+  | "cancel_requested"
+  | "cancel_resolved"
+  | "failed";
+
 export interface ImageGenerationView {
   id: string;
   purpose: ImagePurpose;

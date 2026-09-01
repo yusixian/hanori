@@ -3,10 +3,55 @@ import type { ImageGenerationActor } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_IMAGE_GOVERNANCE_CONFIG,
+  extractImageGenerationRequestSnapshot,
   ImageGenerationService,
   normalizeImageOperationState,
   projectPixaiPreset,
 } from "./image-generation-service.js";
+
+describe("extractImageGenerationRequestSnapshot", () => {
+  it("extracts stable parameters from nested MCP request details", () => {
+    expect(
+      extractImageGenerationRequestSnapshot({
+        generation: {
+          providerRequest: {
+            body: {
+              modelVersionId: "model-version-1",
+              width: 1536,
+              height: 912,
+              batchSize: 2,
+              samplingSteps: 28,
+              cfgScale: 6.5,
+              sampler: "Euler a",
+              promptHelper: false,
+            },
+          },
+        },
+      }),
+    ).toEqual({
+      modelVersionId: "model-version-1",
+      width: 1536,
+      height: 912,
+      batchSize: 2,
+      samplingSteps: 28,
+      cfgScale: 6.5,
+      sampler: "Euler a",
+      promptHelper: false,
+    });
+  });
+
+  it("keeps the local fallback when MCP details omit a field", () => {
+    expect(
+      extractImageGenerationRequestSnapshot(
+        { request: { width: 1024 } },
+        {
+          presetKey: "wallpaper",
+          height: 768,
+        },
+      ),
+    ).toEqual({ presetKey: "wallpaper", width: 1024, height: 768 });
+  });
+});
 
 const BOT_ID = "00000000-0000-4000-8000-000000000017";
 const ACTOR: ImageGenerationActor = {
