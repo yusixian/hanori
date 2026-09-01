@@ -163,7 +163,12 @@ describe("usage governance defaults", () => {
       hour: 20,
       day: 100,
     });
-    expect(getDefaultUsageLimits("image", "chat", "group")).toEqual({ hour: 20, day: 100 });
+    expect(getDefaultUsageLimits("image", "chat", "group")).toEqual({ hour: 120, day: 1_000 });
+    expect(getDefaultUsageLimits("image", "chat_user", "group")).toEqual({
+      cooldownMs: 5_000,
+      hour: 30,
+      day: 120,
+    });
     expect(getDefaultUsageLimits("proactive_reply", "bot", "group")).toEqual({ hour: 30 });
     expect(getDefaultUsageLimits("ai_reply", "chat_user", "private")).toBeUndefined();
   });

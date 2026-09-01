@@ -402,6 +402,8 @@ export const bots = {
     saveError: "无法保存治理设置。",
     saved: "治理设置已保存。",
     refresh: "刷新",
+    reset: "重置为默认值",
+    resetReady: "已恢复为默认值，点击保存后生效。",
     save: "保存",
     connection: {
       title: "PixAI MCP 连接",
@@ -447,7 +449,8 @@ export const bots = {
       daily: "每日",
       monthly: "每月",
       concurrency: "并发",
-      tightenOnly: "受委派的群管理员还必须是当前 Telegram 管理员，并且只能收紧群范围限制。",
+      tightenOnly:
+        "Bot 管理员不受生图额度限制；受委派的群管理员还必须是当前 Telegram 管理员，并且只能收紧群范围限制。",
     },
     overrides: {
       title: "群聊与个人覆盖",

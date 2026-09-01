@@ -422,6 +422,8 @@ export const bots = {
     saveError: "Governance settings could not be saved.",
     saved: "Governance settings saved.",
     refresh: "Refresh",
+    reset: "Reset to defaults",
+    resetReady: "Defaults restored. Save to apply them.",
     save: "Save",
     connection: {
       title: "PixAI MCP connection",
@@ -470,7 +472,7 @@ export const bots = {
       monthly: "Per month",
       concurrency: "Concurrency",
       tightenOnly:
-        "Delegated group administrators must also be current Telegram administrators and can only tighten group-scoped limits.",
+        "Bot administrators bypass image quotas. Delegated group administrators must also be current Telegram administrators and can only tighten group-scoped limits.",
     },
     overrides: {
       title: "Group and user overrides",

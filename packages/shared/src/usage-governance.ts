@@ -148,10 +148,10 @@ const DEFAULT_LIMITS: Readonly<
     chat_user: Object.freeze({ cooldownMs: 10_000, hour: 20, day: 100 }),
   }),
   image: Object.freeze({
-    bot: Object.freeze({ hour: 100, day: 500 }),
-    chat: Object.freeze({ hour: 20, day: 100 }),
-    user_global: Object.freeze({ hour: 10, day: 30 }),
-    chat_user: Object.freeze({ cooldownMs: 60_000, hour: 5, day: 20 }),
+    bot: Object.freeze({ hour: 500, day: 5_000 }),
+    chat: Object.freeze({ hour: 120, day: 1_000 }),
+    user_global: Object.freeze({ hour: 60, day: 300 }),
+    chat_user: Object.freeze({ cooldownMs: 5_000, hour: 30, day: 120 }),
   }),
   proactive_reply: Object.freeze({
     bot: Object.freeze({ hour: 30 }),

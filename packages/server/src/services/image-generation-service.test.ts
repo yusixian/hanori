@@ -151,14 +151,18 @@ describe("ImageGenerationService failure accounting", () => {
       pixai: dependencies.pixai as never,
       artifacts: dependencies.artifacts as never,
       logger: dependencies.logger as never,
+      isGroupEnabled: async () => true,
     });
 
     await expect(
-      service.create(ACTOR, {
-        purpose: "anime_illustration",
-        routingIntent: "semantic",
-        prompt: "draw a cat",
-      }),
+      service.create(
+        { ...ACTOR, isBotAdmin: false },
+        {
+          purpose: "anime_illustration",
+          routingIntent: "semantic",
+          prompt: "draw a cat",
+        },
+      ),
     ).resolves.toEqual({ accepted: false, reason: "provider_unavailable" });
 
     expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
@@ -184,6 +188,41 @@ describe("ImageGenerationService failure accounting", () => {
       pixai: dependencies.pixai as never,
       artifacts: dependencies.artifacts as never,
       logger: dependencies.logger as never,
+      isGroupEnabled: async () => true,
+    });
+
+    await expect(
+      service.create(
+        { ...ACTOR, isBotAdmin: false },
+        {
+          purpose: "anime_illustration",
+          routingIntent: "semantic",
+          prompt: "draw a cat",
+        },
+      ),
+    ).resolves.toEqual({ accepted: false, reason: "provider_unavailable" });
+
+    expect(dependencies.usageGovernor.refund).toHaveBeenCalledWith({
+      reservationId: "99e9ca86-72ca-48c2-8606-a7ebfe501ea2",
+      botId: BOT_ID,
+      resource: "image",
+    });
+  });
+
+  it("lets Bot administrators bypass image usage limits", async () => {
+    const dependencies = createDependencies();
+    const db = {
+      select: vi.fn(() => query([])),
+      insert: vi.fn(() => ({
+        values: vi.fn().mockRejectedValue(new Error("database unavailable")),
+      })),
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
     });
 
     await expect(
@@ -194,11 +233,8 @@ describe("ImageGenerationService failure accounting", () => {
       }),
     ).resolves.toEqual({ accepted: false, reason: "provider_unavailable" });
 
-    expect(dependencies.usageGovernor.refund).toHaveBeenCalledWith({
-      reservationId: "99e9ca86-72ca-48c2-8606-a7ebfe501ea2",
-      botId: BOT_ID,
-      resource: "image",
-    });
+    expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
+    expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
   it("keeps cancel_rejected operations in recovery and refunds when recovery confirms failure", async () => {

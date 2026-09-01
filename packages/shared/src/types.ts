@@ -365,20 +365,20 @@ export interface UserPrivacyCallbacks {
 }
 
 export interface PixAIRateLimitConfig {
-  maxConcurrentTasks?: number; // 全局并发上限，默认 3
-  maxQueueDepth?: number; // 排队深度，默认 5
-  userCooldownSec?: number; // 用户冷却秒数，默认 60
-  chatCooldownSec?: number; // 群聊冷却秒数，默认 30
-  hourlyLimit?: number; // 每小时限额（非管理员），默认 30
+  maxConcurrentTasks?: number; // 全局并发上限，默认 6
+  maxQueueDepth?: number; // 排队深度，默认 10
+  userCooldownSec?: number; // 用户冷却秒数，默认 10
+  chatCooldownSec?: number; // 群聊冷却秒数，默认 5
+  hourlyLimit?: number; // 每小时限额（非管理员），默认 100
   adminBypass?: boolean; // 管理员绕过，默认 true
 }
 
 export const DEFAULT_PIXAI_RATE_LIMIT: Required<PixAIRateLimitConfig> = {
-  maxConcurrentTasks: 3,
-  maxQueueDepth: 5,
-  userCooldownSec: 60,
-  chatCooldownSec: 30,
-  hourlyLimit: 30,
+  maxConcurrentTasks: 6,
+  maxQueueDepth: 10,
+  userCooldownSec: 10,
+  chatCooldownSec: 5,
+  hourlyLimit: 100,
   adminBypass: true,
 };
 

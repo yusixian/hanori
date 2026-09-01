@@ -5,7 +5,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { authFetch } from "@/lib/client";
-import { Loader2, Plus, RefreshCw, Save, ShieldCheck, Trash2 } from "lucide-react";
+import {
+  DEFAULT_IMAGE_ROUTE_COPY,
+  getDefaultUsageLimits,
+  type UsageResource,
+  type UsageScope,
+} from "@cos-tool-bot/shared";
+import { Loader2, Plus, RefreshCw, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -54,7 +60,27 @@ interface GovernanceDraft {
   overrides: PolicyDraft[];
 }
 
-const EMPTY_DRAFT: GovernanceDraft = {
+function defaultLimitDraft(
+  key: string,
+  label: string,
+  resource: UsageResource,
+  scope: UsageScope,
+): LimitDraft {
+  const limits = getDefaultUsageLimits(resource, scope, "group");
+  if (!limits) throw new Error(`Missing governance defaults for ${resource}:${scope}`);
+  return {
+    key,
+    label,
+    cooldownSeconds:
+      limits.cooldownMs === undefined ? undefined : Math.floor(limits.cooldownMs / 1_000),
+    hourly: limits.hour,
+    daily: limits.day,
+    monthly: limits.month,
+    concurrency: limits.maxConcurrent,
+  };
+}
+
+const DEFAULT_DRAFT: GovernanceDraft = {
   timezone: "Asia/Shanghai",
   connection: { status: "disconnected", scopes: [] },
   generalRouteMode: "off",
@@ -62,41 +88,43 @@ const EMPTY_DRAFT: GovernanceDraft = {
     {
       purpose: "anime_illustration",
       enabled: true,
-      label: "Anime illustration",
-      useWhen: "Anime, manga, character art, or stylized illustration is requested.",
-      avoidWhen: "The request explicitly requires the general image backend.",
-      examples: [],
+      ...DEFAULT_IMAGE_ROUTE_COPY.anime_illustration,
       allowedPresetKeys: [],
     },
     {
       purpose: "general_image",
       enabled: false,
-      label: "General image",
-      useWhen: "The user explicitly asks for a general-purpose image.",
-      avoidWhen: "The request is ambiguous or anime-oriented.",
-      examples: [],
+      ...DEFAULT_IMAGE_ROUTE_COPY.general_image,
       allowedPresetKeys: [],
     },
   ],
   limits: [
-    { key: "ai_bot", label: "AI · Bot total", hourly: 500, daily: 5_000 },
-    { key: "ai_chat_user", label: "AI · group user", cooldownSeconds: 10, hourly: 20, daily: 100 },
-    { key: "ai_user_global", label: "AI · user across groups", hourly: 50, daily: 200 },
-    { key: "ai_chat", label: "AI · group total", hourly: 120, daily: 1000 },
-    { key: "image_bot", label: "Image · Bot total", hourly: 100, daily: 500 },
-    {
-      key: "image_chat_user",
-      label: "Image · group user",
-      cooldownSeconds: 60,
-      hourly: 5,
-      daily: 20,
-    },
-    { key: "image_user_global", label: "Image · user across groups", hourly: 10, daily: 30 },
-    { key: "image_chat", label: "Image · group total", hourly: 20, daily: 100 },
-    { key: "proactive_bot", label: "Proactive replies · Bot", hourly: 30 },
+    defaultLimitDraft("ai_bot", "AI · Bot total", "ai_reply", "bot"),
+    defaultLimitDraft("ai_chat_user", "AI · group user", "ai_reply", "chat_user"),
+    defaultLimitDraft("ai_user_global", "AI · user across groups", "ai_reply", "user_global"),
+    defaultLimitDraft("ai_chat", "AI · group total", "ai_reply", "chat"),
+    defaultLimitDraft("image_bot", "Image · Bot total", "image", "bot"),
+    defaultLimitDraft("image_chat_user", "Image · group user", "image", "chat_user"),
+    defaultLimitDraft("image_user_global", "Image · user across groups", "image", "user_global"),
+    defaultLimitDraft("image_chat", "Image · group total", "image", "chat"),
+    defaultLimitDraft("proactive_bot", "Proactive replies · Bot", "proactive_reply", "bot"),
   ],
   overrides: [],
 };
+
+function createDefaultDraft(connection = DEFAULT_DRAFT.connection): GovernanceDraft {
+  return {
+    ...DEFAULT_DRAFT,
+    connection: { ...connection, scopes: [...connection.scopes] },
+    routes: DEFAULT_DRAFT.routes.map((route) => ({
+      ...route,
+      examples: [...route.examples],
+      allowedPresetKeys: [...route.allowedPresetKeys],
+    })),
+    limits: DEFAULT_DRAFT.limits.map((limit) => ({ ...limit })),
+    overrides: [],
+  };
+}
 
 function statusVariant(status: ConnectionView["status"]): "default" | "muted" | "destructive" {
   if (status === "connected") return "default";
@@ -107,7 +135,7 @@ function statusVariant(status: ConnectionView["status"]): "default" | "muted" | 
 export function BotGovernancePage() {
   const { botId } = useParams<{ botId: string }>();
   const { t } = useTranslation("bots");
-  const [draft, setDraft] = useState<GovernanceDraft>(EMPTY_DRAFT);
+  const [draft, setDraft] = useState<GovernanceDraft>(() => createDefaultDraft());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -194,10 +222,20 @@ export function BotGovernancePage() {
             {t("governance.description")}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => void load()}>
             <RefreshCw className="size-4" aria-hidden="true" />
             {t("governance.refresh")}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setDraft((current) => createDefaultDraft(current.connection));
+              setMessage(t("governance.resetReady"));
+            }}
+          >
+            <RotateCcw className="size-4" aria-hidden="true" />
+            {t("governance.reset")}
           </Button>
           <Button onClick={() => void save()} disabled={saving}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

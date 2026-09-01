@@ -196,23 +196,27 @@ export class ImageGenerationService implements ImageGenerationPort {
       return { accepted: false, reason: "invalid_request", message: "Select an allowed preset" };
     }
 
-    const reservation = await this.usageGovernor.reserve({
-      botId: actor.botId,
-      resource: "image",
-      chatKind: actor.chatType === "private" ? "private" : "group",
-      chatId: actor.chatId,
-      userId: actor.userId,
-      units: 1,
-      reservationTtlMs: 24 * 60 * 60 * 1000,
-    });
-    if (!reservation.allowed) {
-      return {
-        accepted: false,
-        reason: reservation.reason === "concurrency" ? "concurrency_limited" : "rate_limited",
-        retryAfterSeconds: reservation.retryAt
-          ? Math.max(1, Math.ceil((reservation.retryAt.getTime() - Date.now()) / 1_000))
-          : undefined,
-      };
+    let usageReservationId: string | undefined;
+    if (!actor.isBotAdmin) {
+      const reservation = await this.usageGovernor.reserve({
+        botId: actor.botId,
+        resource: "image",
+        chatKind: actor.chatType === "private" ? "private" : "group",
+        chatId: actor.chatId,
+        userId: actor.userId,
+        units: 1,
+        reservationTtlMs: 24 * 60 * 60 * 1000,
+      });
+      if (!reservation.allowed) {
+        return {
+          accepted: false,
+          reason: reservation.reason === "concurrency" ? "concurrency_limited" : "rate_limited",
+          retryAfterSeconds: reservation.retryAt
+            ? Math.max(1, Math.ceil((reservation.retryAt.getTime() - Date.now()) / 1_000))
+            : undefined,
+        };
+      }
+      usageReservationId = reservation.reservationId;
     }
 
     const id = randomUUID();
@@ -231,10 +235,10 @@ export class ImageGenerationService implements ImageGenerationPort {
         prompt,
         negativePrompt: request.negativePrompt,
         seed: request.seed,
-        usageReservationId: reservation.reservationId,
+        usageReservationId,
       });
     } catch {
-      await this.refund(actor.botId, reservation.reservationId).catch(() => {});
+      await this.refund(actor.botId, usageReservationId).catch(() => {});
       return { accepted: false, reason: "provider_unavailable" };
     }
 
@@ -257,12 +261,12 @@ export class ImageGenerationService implements ImageGenerationPort {
         "PROVIDER_PREPARE_FAILED",
         "Image provider could not prepare the operation",
       );
-      await this.refund(actor.botId, reservation.reservationId);
+      await this.refund(actor.botId, usageReservationId);
       return { accepted: false, reason: "provider_unavailable" };
     }
     if (prepared.approvalRequired && !actor.isBotAdmin && !actor.isDelegatedGroupAdmin) {
       await this.markFailed(id, "APPROVAL_REQUIRED", "This preset requires administrator approval");
-      await this.refund(actor.botId, reservation.reservationId);
+      await this.refund(actor.botId, usageReservationId);
       return { accepted: false, reason: "approval_required" };
     }
     try {
@@ -278,7 +282,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       await this.markFailed(id, "PLAN_PERSIST_FAILED", "Image plan could not be persisted").catch(
         () => {},
       );
-      await this.refund(actor.botId, reservation.reservationId).catch(() => {});
+      await this.refund(actor.botId, usageReservationId).catch(() => {});
       return { accepted: false, reason: "provider_unavailable" };
     }
 
@@ -841,7 +845,8 @@ export class ImageGenerationService implements ImageGenerationPort {
     );
   }
 
-  private async refund(botId: string, reservationId: string): Promise<void> {
+  private async refund(botId: string, reservationId: string | undefined): Promise<void> {
+    if (!reservationId) return;
     await this.usageGovernor.refund({ reservationId, botId, resource: "image" });
   }
 
