@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+// Load the Pi dependency during collection, outside the runtime behavior test timeout.
+import "@earendil-works/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createCodingWorkerHandler,
@@ -270,25 +272,47 @@ describe("coding worker boundary", () => {
 
   it("starts the job timeout before Pi initialization and disposes a late session", async () => {
     const root = await workspaceRoot();
+    let initializationStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      initializationStarted = resolve;
+    });
     let resolveInitialization!: (value: { session: LateSession }) => void;
     const initialization = new Promise<{ session: LateSession }>((resolve) => {
       resolveInitialization = resolve;
     });
     const session = lateSession();
-    const initializeSession = vi.fn(() => initialization);
+    let sessionDisposed!: () => void;
+    const disposed = new Promise<void>((resolve) => {
+      sessionDisposed = resolve;
+    });
+    session.dispose.mockImplementation(sessionDisposed);
+    const initializeSession = vi.fn(() => {
+      initializationStarted();
+      return initialization;
+    });
     const runWithDependencies = runPiJob as unknown as RunPiJobWithDependencies;
 
-    const running = runWithDependencies(
-      { ...job(), timeoutMs: 20 },
-      path.join(root, "workspace"),
-      undefined,
-      { initializeSession },
-    );
+    vi.useFakeTimers();
+    try {
+      const running = runWithDependencies(
+        { ...job(), timeoutMs: 20 },
+        path.join(root, "workspace"),
+        undefined,
+        { initializeSession },
+      );
 
-    await expect(running).rejects.toThrow("Pi coding job timed out after 20ms");
-    expect(initializeSession).toHaveBeenCalledOnce();
-    resolveInitialization({ session });
-    await vi.waitFor(() => expect(session.dispose).toHaveBeenCalledOnce());
+      const timedOut = expect(running).rejects.toThrow("Pi coding job timed out after 20ms");
+      expect(vi.getTimerCount()).toBe(1);
+      await started;
+      expect(initializeSession).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(20);
+      await timedOut;
+      resolveInitialization({ session });
+      await disposed;
+      expect(session.dispose).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("cancels during Pi initialization promptly and disposes a late session", async () => {

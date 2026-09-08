@@ -19,7 +19,8 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("Git workspace input validation", () => {
+// Integration cases spawn real Git processes; allow for shared-runner I/O contention.
+describe("Git workspace input validation", { timeout: 30_000 }, () => {
   it("accepts normal repositories and feature branches", () => {
     expect(() => validateRepository("owner/repository.js")).not.toThrow();
     expect(() => validateGitBranch("feat/ai-chan-fix")).not.toThrow();
