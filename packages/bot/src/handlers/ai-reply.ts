@@ -2001,7 +2001,7 @@ export function createAiReplyHandler(
         if (config.imageGenerationPort) {
           Object.assign(
             allTools,
-            createImageGenerationTools({
+            await createImageGenerationTools({
               port: config.imageGenerationPort,
               getActor: () => imageGenerationActor!,
               replyMessageId: replyMsg?.message_id,

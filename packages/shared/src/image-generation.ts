@@ -167,7 +167,10 @@ export type ImageCancellationResult =
     };
 
 export interface ImageGenerationPort {
-  listRoutes(actor: ImageGenerationActor): Promise<ImageRouteCapabilities[]>;
+  listRoutes(
+    actor: ImageGenerationActor,
+    options?: { includePresets?: boolean },
+  ): Promise<ImageRouteCapabilities[]>;
   create(
     actor: ImageGenerationActor,
     request: CreateImageRequest,

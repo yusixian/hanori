@@ -113,6 +113,14 @@ function createDependencies() {
   };
 }
 
+function generalImageConfig() {
+  const config = structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG);
+  config.generalRouteMode = "semantic_auto";
+  const route = config.routes.find((candidate) => candidate.purpose === "general_image")!;
+  route.enabled = true;
+  return config;
+}
+
 function generationRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "8e75c468-746b-4b9b-850d-17e29d669a3a",
@@ -147,6 +155,79 @@ function generationRow(overrides: Record<string, unknown> = {}) {
 }
 
 describe("ImageGenerationService failure accounting", () => {
+  it("marks an unconfigured general backend unavailable without discovering presets", async () => {
+    const dependencies = createDependencies();
+    const config = generalImageConfig();
+    const generalBackend = { isConfigured: vi.fn().mockResolvedValue(false), create: vi.fn() };
+    const db = { select: vi.fn(() => query([{ config }])) } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      generalBackend,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(service.listRoutes(ACTOR, { includePresets: false })).resolves.toEqual([
+      expect.objectContaining({ purpose: "anime_illustration", enabled: true, presets: [] }),
+      expect.objectContaining({ purpose: "general_image", enabled: false, presets: [] }),
+    ]);
+    expect(generalBackend.isConfigured).toHaveBeenCalledWith(BOT_ID);
+    expect(dependencies.pixai.listPresets).not.toHaveBeenCalled();
+  });
+
+  it("only lists the general preset when its route and backend are available", async () => {
+    const dependencies = createDependencies();
+    const config = generalImageConfig();
+    const generalBackend = { isConfigured: vi.fn().mockResolvedValue(false), create: vi.fn() };
+    const db = { select: vi.fn(() => query([{ config }])) } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      generalBackend,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(service.listPresets(ACTOR, "general_image")).resolves.toEqual([]);
+    generalBackend.isConfigured.mockResolvedValue(true);
+    await expect(service.listPresets(ACTOR, "general_image")).resolves.toEqual([
+      expect.objectContaining({ key: "general-default", provider: "general_backend" }),
+    ]);
+
+    config.routes.find((candidate) => candidate.purpose === "general_image")!.enabled = false;
+    generalBackend.isConfigured.mockClear();
+    await expect(service.listPresets(ACTOR, "general_image")).resolves.toEqual([]);
+    expect(generalBackend.isConfigured).not.toHaveBeenCalled();
+  });
+
+  it("rejects general image creation when the Bot backend is not configured", async () => {
+    const dependencies = createDependencies();
+    const config = generalImageConfig();
+    const generalBackend = { isConfigured: vi.fn().mockResolvedValue(false), create: vi.fn() };
+    const db = { select: vi.fn(() => query([{ config }])) } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      generalBackend,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(
+      service.create(ACTOR, {
+        purpose: "general_image",
+        routingIntent: "explicit",
+        prompt: "a lighthouse",
+      }),
+    ).resolves.toEqual({ accepted: false, reason: "disabled" });
+    expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
+    expect(generalBackend.create).not.toHaveBeenCalled();
+  });
+
   it("denies private-chat image generation for an ordinary user by default", async () => {
     const dependencies = createDependencies();
     const db = { select: vi.fn(() => query([])) } as unknown as Database;

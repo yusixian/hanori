@@ -14,6 +14,10 @@ const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp
 export class BotConfiguredGeneralImageBackend implements GeneralImageBackend {
   constructor(private readonly db: Database) {}
 
+  async isConfigured(botId: string): Promise<boolean> {
+    return (await this.getConfiguredImageGeneration(botId)) !== null;
+  }
+
   async create(input: {
     botId: string;
     prompt: string;
@@ -22,13 +26,8 @@ export class BotConfiguredGeneralImageBackend implements GeneralImageBackend {
     seed?: number;
     signal?: AbortSignal;
   }) {
-    const [bot] = await this.db
-      .select({ aiConfig: bots.aiConfig })
-      .from(bots)
-      .where(eq(bots.id, input.botId))
-      .limit(1);
-    const config = bot?.aiConfig?.webToolsConfig?.imageGeneration;
-    if (!config || config.provider === "pixai") {
+    const config = await this.getConfiguredImageGeneration(input.botId);
+    if (!config) {
       throw new Error("General image backend is not configured");
     }
     const baseURL = new URL(config.baseURL || "https://api.openai.com/v1");
@@ -77,6 +76,16 @@ export class BotConfiguredGeneralImageBackend implements GeneralImageBackend {
     }
     if (!first.url) throw new Error("General image backend returned no supported artifact");
     return [await downloadPublicImage(first.url, signal)];
+  }
+
+  private async getConfiguredImageGeneration(botId: string) {
+    const [bot] = await this.db
+      .select({ aiConfig: bots.aiConfig })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .limit(1);
+    const config = bot?.aiConfig?.webToolsConfig?.imageGeneration;
+    return !config || config.provider === "pixai" ? null : config;
   }
 }
 

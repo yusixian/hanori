@@ -6,7 +6,7 @@ const { lookupMock } = vi.hoisted(() => ({ lookupMock: vi.fn() }));
 
 vi.mock("node:dns/promises", () => ({ lookup: lookupMock }));
 
-function configuredDb() {
+function imageConfigDb(imageGeneration: Record<string, unknown> | undefined) {
   const builder = {
     from: vi.fn(() => builder),
     where: vi.fn(() => builder),
@@ -14,13 +14,7 @@ function configuredDb() {
       {
         aiConfig: {
           webToolsConfig: {
-            imageGeneration: {
-              provider: "openai",
-              apiKey: "test-secret",
-              baseURL: "https://images.example.com/v1",
-              model: "gpt-image-test",
-              size: "1024x1024",
-            },
+            imageGeneration,
           },
         },
       },
@@ -29,10 +23,34 @@ function configuredDb() {
   return { select: vi.fn(() => builder) } as unknown as Database;
 }
 
+function configuredDb() {
+  return imageConfigDb({
+    provider: "openai",
+    apiKey: "test-secret",
+    baseURL: "https://images.example.com/v1",
+    model: "gpt-image-test",
+    size: "1024x1024",
+  });
+}
+
 describe("BotConfiguredGeneralImageBackend artifact safety", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     lookupMock.mockReset();
+  });
+
+  it("reports whether the Bot has a non-PixAI general image backend", async () => {
+    await expect(
+      new BotConfiguredGeneralImageBackend(configuredDb()).isConfigured("configured-bot"),
+    ).resolves.toBe(true);
+    await expect(
+      new BotConfiguredGeneralImageBackend(imageConfigDb(undefined)).isConfigured("missing-bot"),
+    ).resolves.toBe(false);
+    await expect(
+      new BotConfiguredGeneralImageBackend(imageConfigDb({ provider: "pixai" })).isConfigured(
+        "pixai-bot",
+      ),
+    ).resolves.toBe(false);
   });
 
   it("decodes an inline b64 artifact without making a second network request", async () => {

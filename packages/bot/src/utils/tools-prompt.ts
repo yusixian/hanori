@@ -70,9 +70,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   if (opts.hasImageGeneration) {
     lines.push("");
     lines.push("异步生图工具:");
-    lines.push("- list_image_presets: 创建前列出管理员允许的预设");
+    lines.push("- list_image_presets（可用时）: 创建前列出管理员允许的预设");
     lines.push(
-      "- create_image: 创建异步任务；含糊请求使用 anime_illustration，且不得自动跨供应商降级",
+      "- create_image（可用时）: 仅从工具参数枚举中的可用路由选择；anime_illustration 可用时为默认，且不得自动跨供应商降级",
     );
     lines.push("- get_image_generation / cancel_image_generation: 查询或请求取消任务");
     if (opts.hasBotMemory) {

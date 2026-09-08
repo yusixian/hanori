@@ -455,7 +455,7 @@ async function doContinueChat(
           : false;
       Object.assign(
         allTools,
-        createImageGenerationTools({
+        await createImageGenerationTools({
           port: config.imageGenerationPort,
           getActor: () => ({
             botId: config.botId,
