@@ -191,7 +191,14 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
     const freshBoot = new Promise<void>((resolve) => {
       releaseFreshBoot = resolve;
     });
-    const waitForFreshBoot = vi.spyOn(worker, "waitForFreshBoot").mockReturnValueOnce(freshBoot);
+    let notifyWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      notifyWaiting = resolve;
+    });
+    const waitForFreshBoot = vi.spyOn(worker, "waitForFreshBoot").mockImplementationOnce(() => {
+      notifyWaiting();
+      return freshBoot;
+    });
     const stage = vi.spyOn(stager, "stage");
     const secondRun = service.runCodeTask({
       botId: "bot-1",
@@ -209,7 +216,8 @@ describe("Git workspace input validation", { timeout: 30_000 }, () => {
         capabilities: ["tool_calling", "code"],
       },
     });
-    await vi.waitFor(() => expect(waitForFreshBoot).toHaveBeenCalledOnce());
+    await Promise.race([waiting, secondRun]);
+    expect(waitForFreshBoot).toHaveBeenCalledOnce();
     expect(stage).not.toHaveBeenCalled();
     expect(git.mock.calls.some((call) => call[1].join(" ") === "fetch --prune origin")).toBe(true);
     releaseFreshBoot();

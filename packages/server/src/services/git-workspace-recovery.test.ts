@@ -111,7 +111,8 @@ async function commitNegatedProtectedIgnores(workspace: string): Promise<void> {
   await exec("git", ["-C", workspace, "commit", "-m", "expose protected local paths"]);
 }
 
-describe("Git workspace recovery", () => {
+// Recovery cases use real Git repositories and subprocesses on the shared CI runner.
+describe("Git workspace recovery", { timeout: 30_000 }, () => {
   it("inspects clean state and fingerprints branch, HEAD, index, content, and metadata", async () => {
     const { service, workspace } = await fixture();
     const clean = await service.inspectWorkspace(inspectOptions);
@@ -305,10 +306,15 @@ describe("Git workspace recovery", () => {
     const inspection = await service.inspectWorkspace(inspectOptions);
     const controller = new AbortController();
     const reason = new Error("cancelled while waiting for fresh worker");
+    let notifyWaiting!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      notifyWaiting = resolve;
+    });
     const waitForFreshBoot = vi.spyOn(worker, "waitForFreshBoot").mockImplementation(
       async (signal) =>
         await new Promise<void>((_resolve, reject) => {
           signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          notifyWaiting();
         }),
     );
     const stage = vi.spyOn(stager, "stageRecoverySnapshot");
@@ -324,7 +330,8 @@ describe("Git workspace recovery", () => {
       inspection,
       controller.signal,
     );
-    await vi.waitFor(() => expect(waitForFreshBoot).toHaveBeenCalledWith(controller.signal));
+    await Promise.race([waiting, resuming]);
+    expect(waitForFreshBoot).toHaveBeenCalledWith(controller.signal);
     expect(stage).not.toHaveBeenCalled();
     controller.abort(reason);
 
