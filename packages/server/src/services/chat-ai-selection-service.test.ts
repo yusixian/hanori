@@ -9,7 +9,10 @@ import {
   listUsableAiSelectionOptions,
   validateAiSelectionPair,
 } from "./chat-ai-selection-service.js";
-import { ChatAiSelectionRuntimeRegistry } from "./chat-ai-selection-runtime-registry.js";
+import {
+  ChatAiSelectionRuntimeRegistry,
+  type ChatAiSelectionRuntimeSnapshot,
+} from "./chat-ai-selection-runtime-registry.js";
 
 const BOT_ID = "00000000-0000-4000-8000-000000000001";
 const OTHER_BOT_ID = "00000000-0000-4000-8000-000000000002";
@@ -224,10 +227,13 @@ describe("ChatAiSelectionService persistence boundary", () => {
 
   it("resolves, writes, and resets private selections without entering the group directory", async () => {
     const { db, selectionRows, telegramChatReads } = createSelectionDatabase();
+    const runtime = new ChatAiSelectionRuntimeRegistry();
+    const apply = vi.fn(async (_snapshot: ChatAiSelectionRuntimeSnapshot) => undefined);
+    runtime.register(BOT_ID, { apply });
     const service = new ChatAiSelectionService(
       db,
       KEY,
-      new ChatAiSelectionRuntimeRegistry(),
+      runtime,
       async (_botId, operation) => operation(),
       () => new Date("2026-07-28T01:00:00.000Z"),
     );
@@ -239,9 +245,17 @@ describe("ChatAiSelectionService persistence boundary", () => {
       providerId: "provider-b",
       modelId: null,
     });
+    expect(apply.mock.calls.at(-1)?.[0].chats.get(42)).toEqual({
+      providerId: "provider-b",
+      modelId: null,
+    });
 
     await service.setModelFromTelegram(BOT_ID, 42, "b-fast", 42);
     expect(selectionRows.get(`${BOT_ID}:42`)).toMatchObject({
+      providerId: "provider-b",
+      modelId: "b-fast",
+    });
+    expect(apply.mock.calls.at(-1)?.[0].chats.get(42)).toEqual({
       providerId: "provider-b",
       modelId: "b-fast",
     });
@@ -260,6 +274,7 @@ describe("ChatAiSelectionService persistence boundary", () => {
     await service.resetProviderFromTelegram(BOT_ID, 42, 42);
     expect(selectionRows.has(`${BOT_ID}:42`)).toBe(false);
     expect(selectionRows.has(`${OTHER_BOT_ID}:42`)).toBe(true);
+    expect(apply.mock.calls.at(-1)?.[0].chats.has(42)).toBe(false);
     expect(telegramChatReads()).toBe(0);
   });
 });

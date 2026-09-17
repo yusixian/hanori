@@ -11,10 +11,10 @@ describe("TELEGRAM_COMMAND_CATALOG", () => {
     }
   });
 
-  it("keeps model and provider selection Admin-only", () => {
+  it("keeps model and provider selection configurable", () => {
     for (const command of ["model", "provider"]) {
       expect(TELEGRAM_COMMAND_CATALOG.find((entry) => entry.command === command)?.access).toBe(
-        "admin",
+        "configurable",
       );
     }
   });

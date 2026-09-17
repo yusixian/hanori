@@ -363,6 +363,44 @@ describe("AI execution configuration", () => {
   });
 });
 
+describe("model command access configuration", () => {
+  it("reads and saves public access before restarting a running Bot", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const restartBot = vi.fn(async () => undefined);
+    const botPool = {
+      withAiConfigLock: async (_botId: string, operation: () => Promise<unknown>) => operation(),
+      invalidateGitHubCredentials: vi.fn(),
+      getManager: () => ({}),
+      restartBot,
+    } as unknown as BotPool;
+    const app = routeApp(
+      routeDatabase(
+        (aiConfig) => {
+          savedAiConfig = aiConfig as Record<string, unknown>;
+        },
+        { ...existingAiConfig, modelCommandAccess: "all" },
+      ),
+      botPool,
+    );
+
+    const loaded = await app.request("/api/bots/bot-1/ai-config");
+    expect(await loaded.json()).toMatchObject({
+      ok: true,
+      data: { modelCommandAccess: "all" },
+    });
+
+    const saved = await app.request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...requestBody(), modelCommandAccess: "all" }),
+    });
+
+    expect(saved.status).toBe(200);
+    expect(savedAiConfig?.modelCommandAccess).toBe("all");
+    expect(restartBot).toHaveBeenCalledWith("bot-1");
+  });
+});
+
 describe("AI config GitHub coding provider contract", () => {
   it("rejects a stale full-page save before it can overwrite a newer group patch", async () => {
     const save = vi.fn();

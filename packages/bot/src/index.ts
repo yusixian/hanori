@@ -46,7 +46,7 @@ import {
   parseTimerCancelId,
 } from "./commands/timers.js";
 import { WrapperContext, type BotContext } from "./context.js";
-import { createAuthGuard } from "./guards/auth.js";
+import { createAiSelectionGuard, createAuthGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
 import type { AiSelectionMutations, AiSelectionSnapshot } from "./handlers/ai-selection.js";
 import {
@@ -203,6 +203,9 @@ export function createBot(config: BotConfig) {
   const commandRegistry = new ActiveCommandRegistry(bot);
 
   const authGuard = createAuthGuard(adminChatIds);
+  const aiSelectionGuard = config.aiReply
+    ? createAiSelectionGuard(adminChatIds, config.aiReply)
+    : authGuard;
   let captureAiTurnCoalescingAdmission:
     | ReturnType<typeof createAiReplyHandler>["captureTurnCoalescingAdmission"]
     | undefined;
@@ -455,7 +458,12 @@ export function createBot(config: BotConfig) {
       setModelForChat: aiSetModelForChat,
       resetModelForChat: aiResetModelForChat!,
     });
-    commandRegistry.register("model", authGuard, modelCmd);
+    commandRegistry.registerConfigurable(
+      "model",
+      config.aiReply.modelCommandAccess === "all" ? "public" : "admin",
+      aiSelectionGuard,
+      modelCmd,
+    );
   }
 
   // Register /provider command if providers are configured
@@ -473,7 +481,12 @@ export function createBot(config: BotConfig) {
       resetProviderForChat: aiResetProviderForChat,
       providers: providersList,
     });
-    commandRegistry.register("provider", authGuard, providerCmd);
+    commandRegistry.registerConfigurable(
+      "provider",
+      config.aiReply?.modelCommandAccess === "all" ? "public" : "admin",
+      aiSelectionGuard,
+      providerCmd,
+    );
   }
 
   // Register /replymode command (admin only)

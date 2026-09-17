@@ -47,6 +47,7 @@ import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
+import { canAccessAiChat } from "../guards/ai-chat-access.js";
 import type { BotSkillDefinition } from "../skills/catalog.js";
 import { hasLeadingBotCommand } from "../middleware/update-constraint.js";
 import { appendCurrentRequest, assembleContext } from "../services/context-assembler.js";
@@ -1404,18 +1405,27 @@ export function createAiReplyHandler(
     let groupTriggerConfig = config.triggerConfig;
 
     if (isPrivate) {
-      const privateChatAccess = config.privateChatAccess ?? "all";
-      const privateChatAllowed =
-        privateChatAccess === "all" ||
-        isAdmin ||
-        (privateChatAccess === "allowlist" && config.privateChatWhitelist?.includes(userId));
-      if (!privateChatAllowed) {
+      if (
+        !canAccessAiChat(config, {
+          chatId,
+          userId,
+          isPrivate: true,
+          isBotAdmin: isAdmin,
+        })
+      ) {
         turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
     } else {
       const groupCfg = resolveGroupConfig(config, chatId);
-      if (!groupCfg.enabled || (!groupCfg.whitelisted && !isAdmin)) {
+      if (
+        !canAccessAiChat(config, {
+          chatId,
+          userId,
+          isPrivate: false,
+          isBotAdmin: isAdmin,
+        })
+      ) {
         turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }

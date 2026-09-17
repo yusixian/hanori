@@ -72,6 +72,12 @@ function createCommandTestBot(
   configuration: "minimal" | "complete" = "minimal",
   modelCommandAccess?: "admin" | "all",
   aiSelectionCallbacks?: AiSelectionCallbacks,
+  access: {
+    groupWhitelisted?: boolean;
+    groupEnabled?: boolean;
+    privateChatAccess?: "all" | "admin" | "allowlist";
+    privateChatWhitelist?: number[];
+  } = {},
 ) {
   const complete = configuration === "complete";
   return createBot({
@@ -94,7 +100,13 @@ function createCommandTestBot(
             randomReplyPercent: 0,
             randomReplyCooldown: 0,
           },
-          groupOverrides: {},
+          groupOverrides: {
+            [chatId]: {
+              chatId,
+              whitelisted: access.groupWhitelisted ?? true,
+              enabled: access.groupEnabled ?? true,
+            },
+          },
           models: [{ id: "model-a", label: "Model A" }],
           providers: [
             {
@@ -121,6 +133,8 @@ function createCommandTestBot(
           ],
           activeProviderId: "provider-a",
           modelCommandAccess,
+          privateChatAccess: access.privateChatAccess,
+          privateChatWhitelist: access.privateChatWhitelist,
           webToolsConfig: {
             enabled: true,
             imageGeneration: {
@@ -163,6 +177,19 @@ function createCommandTestBot(
         }
       : undefined,
   });
+}
+
+function privateMessage(content: Record<string, unknown>, senderId = userId) {
+  return {
+    update_id: Math.floor(Math.random() * 1_000_000),
+    message: {
+      message_id: Math.floor(Math.random() * 1_000_000),
+      date: 1_700_000_000,
+      chat: { id: senderId, type: "private", first_name: "User" },
+      from: { id: senderId, is_bot: false, first_name: "User" },
+      ...content,
+    },
+  };
 }
 
 describe("createBot command registry", () => {
@@ -302,7 +329,7 @@ describe("createBot command registry", () => {
     });
   });
 
-  it("keeps model and provider Admin-only when legacy config requests public access", () => {
+  it("publishes model and provider as public when config allows all users", () => {
     const bot = createCommandTestBot("complete", "all");
     const selectionCommands = getActiveBotCommands(bot).filter(
       ({ command }) => command === "model" || command === "provider",
@@ -310,8 +337,8 @@ describe("createBot command registry", () => {
 
     expect(selectionCommands).toHaveLength(2);
     expect(selectionCommands.map(({ effectiveAccess }) => effectiveAccess)).toEqual([
-      "admin",
-      "admin",
+      "public",
+      "public",
     ]);
   });
 
@@ -439,8 +466,14 @@ describe("createBot command registry", () => {
     expect((replies.at(-1)!.body as { text: string }).text).toContain("当前模型: `model-a-2`");
   });
 
-  it("guards model and provider execution when legacy config requests public access", async () => {
-    const bot = createCommandTestBot("complete", "all");
+  it("allows an ordinary user to change only the current chat selection when configured", async () => {
+    const callbacks: AiSelectionCallbacks = {
+      setModel: vi.fn(async () => {}),
+      resetModel: vi.fn(async () => {}),
+      setProvider: vi.fn(async () => {}),
+      resetProvider: vi.fn(async () => {}),
+    };
+    const bot = createCommandTestBot("complete", "all", callbacks);
     bot.botInfo = {
       id: 999,
       is_bot: true,
@@ -457,11 +490,11 @@ describe("createBot command registry", () => {
       supports_join_request_queries: false,
     };
 
-    for (const command of ["model", "provider"]) {
+    for (const command of ["model", "provider"] as const) {
       await bot.handleUpdate(
         groupMessage(
           {
-            text: `/${command} 1`,
+            text: `/${command} 2`,
             entities: [{ type: "bot_command", offset: 0, length: command.length + 1 }],
           },
           userId + 1,
@@ -469,16 +502,118 @@ describe("createBot command registry", () => {
       );
     }
 
-    await vi.waitFor(() =>
-      expect(telegramApi.requests.filter(({ method }) => method === "sendMessage")).toHaveLength(2),
+    expect(callbacks.setModel).toHaveBeenCalledWith(chatId, "model-a-2", userId + 1);
+    expect(callbacks.setProvider).toHaveBeenCalledWith(chatId, "provider-b", userId + 1);
+  });
+
+  it("allows an authorized private user to change only their own selection", async () => {
+    const callbacks: AiSelectionCallbacks = {
+      setModel: vi.fn(async () => {}),
+      resetModel: vi.fn(async () => {}),
+      setProvider: vi.fn(async () => {}),
+      resetProvider: vi.fn(async () => {}),
+    };
+    const privateUserId = userId + 1;
+    const bot = createCommandTestBot("complete", "all", callbacks);
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+
+    await bot.handleUpdate(
+      privateMessage(
+        {
+          text: "/model 2",
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        },
+        privateUserId,
+      ) as never,
     );
-    const replies = telegramApi.requests
-      .filter(({ method }) => method === "sendMessage")
-      .map(({ body }) => (body as { text: string }).text);
-    expect(replies).toEqual([
-      "[权限不足] 这种事人家确实帮不上忙呢，可以找管理员试试哟～",
-      "[权限不足] 这种事人家确实帮不上忙呢，可以找管理员试试哟～",
-    ]);
+
+    expect(callbacks.setModel).toHaveBeenCalledWith(privateUserId, "model-a-2", privateUserId);
+  });
+
+  it("keeps unauthorized chats and admin-only selection commands restricted", async () => {
+    const callbacks: AiSelectionCallbacks = {
+      setModel: vi.fn(async () => {}),
+      resetModel: vi.fn(async () => {}),
+      setProvider: vi.fn(async () => {}),
+      resetProvider: vi.fn(async () => {}),
+    };
+    const bot = createCommandTestBot("complete", "all", callbacks, {
+      groupWhitelisted: false,
+      privateChatAccess: "admin",
+    });
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: false,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+    const ordinaryUserId = userId + 1;
+
+    await bot.handleUpdate(
+      groupMessage(
+        {
+          text: "/model 2",
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        },
+        ordinaryUserId,
+      ) as never,
+    );
+    await bot.handleUpdate(
+      privateMessage(
+        {
+          text: "/provider 2",
+          entities: [{ type: "bot_command", offset: 0, length: 9 }],
+        },
+        ordinaryUserId,
+      ) as never,
+    );
+
+    expect(callbacks.setModel).not.toHaveBeenCalled();
+    expect(callbacks.setProvider).not.toHaveBeenCalled();
+
+    const adminOnlyBot = createCommandTestBot("complete", "admin", callbacks);
+    adminOnlyBot.botInfo = bot.botInfo;
+    await adminOnlyBot.handleUpdate(
+      groupMessage(
+        {
+          text: "/model 2",
+          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+        },
+        ordinaryUserId,
+      ) as never,
+    );
+    expect(callbacks.setModel).not.toHaveBeenCalled();
+
+    await adminOnlyBot.handleUpdate(
+      groupMessage({
+        text: "/model 2",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }) as never,
+    );
+    expect(callbacks.setModel).toHaveBeenCalledWith(chatId, "model-a-2", userId);
   });
 });
 

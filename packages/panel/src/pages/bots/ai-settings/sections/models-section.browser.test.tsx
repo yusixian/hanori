@@ -77,6 +77,15 @@ test("blocks removing the default model and rejects a conflicting rename", async
   expect(onModelRename).not.toHaveBeenCalled();
 });
 
+test("reports the all-users command access selection to the settings form", async () => {
+  const onModelCommandAccessChange = vi.fn();
+  await renderModels({ onModelCommandAccessChange });
+
+  await page.getByText("All Users", { exact: true }).click();
+
+  expect(onModelCommandAccessChange).toHaveBeenCalledWith("all");
+});
+
 test("fetches for the explicit target and tolerates a missing owner", async () => {
   const fetchMock = vi.fn<typeof fetch>(
     async (_input, _init) =>
