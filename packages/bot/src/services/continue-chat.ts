@@ -146,11 +146,114 @@ export interface ContinueChatEvent {
   timerDepth?: number;
   memoryless?: boolean;
   requireDelivery?: boolean;
+  failureMessage?: string;
   allowRssWrites?: boolean;
 }
 
-function requireContinuationDelivery(event: ContinueChatEvent, reason: string): void {
-  if (event.requireDelivery) throw new Error(`Continuation was not delivered: ${reason}`);
+export type ContinuationNotDeliveredReason =
+  | "ownerless_private_event"
+  | "ai_disabled"
+  | "usage_denied"
+  | "privacy_off"
+  | "execution_cancelled";
+
+const CONTINUATION_NOT_DELIVERED_MESSAGES: Record<ContinuationNotDeliveredReason, string> = {
+  ownerless_private_event: "ownerless private event",
+  ai_disabled: "AI is disabled",
+  usage_denied: "usage limit reached",
+  privacy_off: "personalization is off",
+  execution_cancelled: "reply was aborted",
+};
+
+export class ContinuationNotDeliveredError extends Error {
+  readonly code = "CONTINUATION_NOT_DELIVERED";
+
+  constructor(readonly reason: ContinuationNotDeliveredReason) {
+    super(`Continuation was not delivered: ${CONTINUATION_NOT_DELIVERED_MESSAGES[reason]}`);
+    this.name = "ContinuationNotDeliveredError";
+  }
+}
+
+function requireContinuationDelivery(
+  event: ContinueChatEvent,
+  reason: ContinuationNotDeliveredReason,
+): void {
+  if (event.requireDelivery) throw new ContinuationNotDeliveredError(reason);
+}
+
+async function sendContinuationFailureNotice(
+  api: Api,
+  config: ContinueChatConfig,
+  event: ContinueChatEvent,
+  executionContext?: ContinueChatRunContext,
+): Promise<boolean> {
+  if (!event.failureMessage || config.isAiDisabled?.()) return false;
+  if (
+    executionContext?.signal.aborted ||
+    executionContext?.isCurrent() === false ||
+    config.isAiDisabled?.()
+  ) {
+    return false;
+  }
+  try {
+    await api.sendMessage(event.chatId, event.failureMessage);
+    return true;
+  } catch (error) {
+    config.onLog?.({
+      level: "error",
+      message: "Failed to deliver continuation error",
+      meta: {
+        chatId: event.chatId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    return false;
+  }
+}
+
+async function scheduleContinuationFailureNotice(
+  api: Api,
+  config: ContinueChatConfig,
+  event: ContinueChatEvent,
+): Promise<boolean> {
+  if (!event.failureMessage || config.isAiDisabled?.()) return false;
+  const eventUserId = event.userId;
+  const privacy = config.privacy;
+  const sendWithPrivacy = (executionContext?: ContinueChatRunContext): Promise<boolean> => {
+    if (eventUserId === undefined || !privacy) {
+      return sendContinuationFailureNotice(api, config, event, executionContext);
+    }
+    return privacy.runExclusive(eventUserId, async () => {
+      if ((await privacy.getMode(eventUserId)) === "off") {
+        config.onLog?.({
+          level: "info",
+          message: "Continuation error delivery skipped because personalization is off",
+          meta: { chatId: event.chatId, userId: eventUserId },
+        });
+        return false;
+      }
+      return sendContinuationFailureNotice(api, config, event, executionContext);
+    });
+  };
+  try {
+    if (config.runWithExecution) {
+      return await config.runWithExecution(
+        { chatId: event.chatId, userId: event.userId },
+        sendWithPrivacy,
+      );
+    }
+    return await withChatLock(event.chatId, () => sendWithPrivacy());
+  } catch (error) {
+    config.onLog?.({
+      level: "info",
+      message: "Continuation error delivery cancelled",
+      meta: {
+        chatId: event.chatId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    return false;
+  }
 }
 
 export async function continueChat(
@@ -176,7 +279,7 @@ export async function continueChat(
       message: "Ownerless private continuation skipped because privacy cannot be evaluated",
       meta: { chatId: event.chatId },
     });
-    requireContinuationDelivery(event, "ownerless private event");
+    requireContinuationDelivery(event, "ownerless_private_event");
     return false;
   }
 
@@ -189,7 +292,7 @@ export async function continueChat(
       message: "continueChat skipped — AI disabled",
       meta: { chatId: event.chatId },
     });
-    requireContinuationDelivery(event, "AI is disabled");
+    requireContinuationDelivery(event, "ai_disabled");
     return false;
   }
   const usageReservation = await config.usageGovernance?.reserve({
@@ -210,7 +313,8 @@ export async function continueChat(
         scope: usageReservation.scope,
       },
     });
-    requireContinuationDelivery(event, "usage limit reached");
+    if (await scheduleContinuationFailureNotice(api, executionConfig, event)) return true;
+    requireContinuationDelivery(event, "usage_denied");
     return false;
   }
   const usageReservationId = usageReservation?.allowed ? usageReservation.reservationId : undefined;
@@ -229,7 +333,7 @@ export async function continueChat(
           message: "Personalized continuation skipped because personalization is off",
           meta: { chatId: event.chatId, userId: eventUserId },
         });
-        requireContinuationDelivery(event, "personalization is off");
+        requireContinuationDelivery(event, "privacy_off");
         return false;
       }
       return doContinueChat(api, executionConfig, event, executionContext);
@@ -284,8 +388,8 @@ async function doContinueChat(
   const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
   const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
 
-  const selection = config.resolveSelection(chatId);
   let successfulToolEffectCount = 0;
+  let visibleDeliveryCount = 0;
 
   config.onLog?.({
     level: "info",
@@ -301,6 +405,7 @@ async function doContinueChat(
     !!executionContext?.signal.aborted ||
     executionContext?.isCurrent() === false;
   try {
+    const selection = config.resolveSelection(chatId);
     let memoryTools: Record<string, Tool> | undefined;
     if (memCfg.enabled && config.memory) {
       const { createMemoryTools } = await import("../tools/index.js");
@@ -407,7 +512,10 @@ async function doContinueChat(
       moodState: config.moodState,
       richMessageEnabled: isRichMessageEnabled(config.messageConfig),
       onLog: config.onLog,
-      onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
+      onMultiMessageSent: (text) => {
+        deliveredMultiMessages.push(text);
+        visibleDeliveryCount += 1;
+      },
     });
 
     const allTools: Record<string, Tool> = {
@@ -628,6 +736,7 @@ async function doContinueChat(
     } finally {
       perStepAbort.cleanup();
     }
+    visibleDeliveryCount += streamedMessageCount;
 
     // If /stop fired while streamText was running, drop all pending sends + saves.
     if (isExecutionCancelled()) {
@@ -636,8 +745,10 @@ async function doContinueChat(
         message: "continueChat aborted mid-reply, dropping pending sends",
         meta: { chatId },
       });
-      if (successfulToolEffectCount === 0) requireContinuationDelivery(event, "reply was aborted");
-      return false;
+      if (successfulToolEffectCount === 0 && visibleDeliveryCount === 0) {
+        requireContinuationDelivery(event, "execution_cancelled");
+      }
+      return successfulToolEffectCount > 0 || visibleDeliveryCount > 0;
     }
 
     const afterThink = stripThinkingContent(
@@ -697,13 +808,20 @@ async function doContinueChat(
           );
           chatBotMsgIds.push(message.message_id);
           deliveredFinalChunks.push(chunk);
+          visibleDeliveryCount += 1;
         } catch (sendError) {
           config.onLog?.({
             level: "error",
             message: `Rich Message fallbacks failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`,
             meta: { chatId },
           });
-          if (event.requireDelivery && successfulToolEffectCount === 0) throw sendError;
+          if (
+            event.requireDelivery &&
+            successfulToolEffectCount === 0 &&
+            visibleDeliveryCount === 0
+          ) {
+            throw sendError;
+          }
         }
       }
     }
@@ -711,13 +829,12 @@ async function doContinueChat(
       ? [deliveredMultiMessageContent, ...deliveredFinalChunks].filter(Boolean).join("\n")
       : text;
 
-    let visibleDeliveryCount =
-      streamedMessageCount + deliveredMultiMessages.length + deliveredFinalChunks.length;
     if (event.requireDelivery && visibleDeliveryCount === 0) {
       if (isExecutionCancelled()) {
-        if (successfulToolEffectCount === 0)
-          requireContinuationDelivery(event, "reply was aborted");
-        return false;
+        if (successfulToolEffectCount === 0) {
+          requireContinuationDelivery(event, "execution_cancelled");
+        }
+        return true;
       }
       try {
         const { message } = await sendMarkdownWithFallback(
@@ -792,9 +909,10 @@ async function doContinueChat(
       }
 
       if (isExecutionCancelled() && visibleDeliveryCount === 0) {
-        if (successfulToolEffectCount === 0)
-          requireContinuationDelivery(event, "reply was aborted");
-        return false;
+        if (successfulToolEffectCount === 0) {
+          requireContinuationDelivery(event, "execution_cancelled");
+        }
+        return true;
       }
       try {
         await config.conversation.addMessages(toSave);
@@ -825,7 +943,17 @@ async function doContinueChat(
       message: `continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
       meta: { chatId },
     });
-    if (event.requireDelivery && successfulToolEffectCount === 0) throw err;
+    if (successfulToolEffectCount > 0 || visibleDeliveryCount > 0) return true;
+    if (isExecutionCancelled()) {
+      requireContinuationDelivery(event, "execution_cancelled");
+      return false;
+    }
+    if (await sendContinuationFailureNotice(api, config, event, executionContext)) return true;
+    if (isExecutionCancelled()) {
+      requireContinuationDelivery(event, "execution_cancelled");
+      return false;
+    }
+    if (event.requireDelivery) throw err;
     return false;
   } finally {
     stopChatActionHeartbeat?.();

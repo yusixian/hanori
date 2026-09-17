@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WrapperContext, type BotContext } from "../context.js";
 import { AiRunCancelledError } from "../services/ai-execution-coordinator.js";
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
+import { continueChat } from "../services/continue-chat.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
 
 const { streamTextMock } = vi.hoisted(() => ({ streamTextMock: vi.fn() }));
@@ -147,6 +148,35 @@ function streamResult(text: Promise<string>) {
 }
 
 describe("AI reply queue delivery", () => {
+  it("runs a rapid choice continuation after the turn that created the choice", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("已按选择继续。")));
+    const { api } = createApi();
+    const runtime = createAiReplyHandler(createConfig(true));
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample 给我几个头像选项"), vi.fn());
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledOnce());
+
+    const continuation = continueChat(api, runtime.state.getContinueChatConfig(), {
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      userName: "Tester",
+      eventDescription: "用户 Tester 选择了: 侧脸少年",
+      requireDelivery: true,
+    });
+    await Promise.resolve();
+    expect(streamTextMock).toHaveBeenCalledOnce();
+
+    activeReply.resolve("选项已发送。");
+
+    await expect(continuation).resolves.toBe(true);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(streamTextMock.mock.calls[1]?.[0]?.messages)).toContain("侧脸少年");
+  });
+
   it("freezes ring-buffer context at ingress so an active turn cannot see later messages", async () => {
     const typingGate = deferred<void>();
     streamTextMock

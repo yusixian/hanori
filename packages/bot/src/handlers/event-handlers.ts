@@ -3,11 +3,22 @@ import type { PollAnswer } from "grammy/types";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
 import type { PendingAdminActionRegistry } from "../services/pending-github-actions.js";
 import type { ContinueChatConfig } from "../services/continue-chat.js";
-import { continueChat } from "../services/continue-chat.js";
+import { ContinuationNotDeliveredError, continueChat } from "../services/continue-chat.js";
+import { AiRunCancelledError } from "../services/ai-execution-coordinator.js";
 
 // Debounce durations
 const PRIVATE_DEBOUNCE_MS = 500;
 const GROUP_DEBOUNCE_MS = 5000;
+
+function isExpectedContinuationCancellation(error: unknown): boolean {
+  if (error instanceof AiRunCancelledError) return true;
+  if (!(error instanceof ContinuationNotDeliveredError)) return false;
+  return (
+    error.reason === "ai_disabled" ||
+    error.reason === "privacy_off" ||
+    error.reason === "execution_cancelled"
+  );
+}
 
 export interface PollAnswerHandlerOptions {
   api: Api;
@@ -116,14 +127,28 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
       return;
     }
 
+    const continuationConfig = getContinueChatConfig(choice.chatId);
     choice.resolved = true;
     const selectedOption = choice.options[optionIndex] ?? `选项${optionIndex}`;
 
-    // Answer callback query
-    await api.raw.answerCallbackQuery({
-      callback_query_id: ctx.callbackQuery.id,
-      text: `你选择了: ${selectedOption}`,
-    });
+    // Telegram acknowledgement is best-effort. The choice has already been claimed, so a stale
+    // callback query must not prevent the durable continuation from running.
+    try {
+      await api.raw.answerCallbackQuery({
+        callback_query_id: ctx.callbackQuery.id,
+        text: `你选择了: ${selectedOption}`,
+      });
+    } catch (error) {
+      continuationConfig.onLog?.({
+        level: "warn",
+        message: "Failed to acknowledge send_choice callback",
+        meta: {
+          chatId: choice.chatId,
+          userId: ctx.callbackQuery.from.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
 
     // Edit message to remove inline keyboard and show result
     if (ctx.callbackQuery.message) {
@@ -133,8 +158,16 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
           ctx.callbackQuery.message.message_id,
           `${choice.prompt}\n\n> 已选择: ${selectedOption}`,
         );
-      } catch {
-        // ignore edit errors (message may have been deleted)
+      } catch (error) {
+        continuationConfig.onLog?.({
+          level: "warn",
+          message: "Failed to update resolved send_choice message",
+          meta: {
+            chatId: choice.chatId,
+            userId: ctx.callbackQuery.from.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
       }
     }
 
@@ -151,14 +184,34 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     ].join("\n");
 
     try {
-      await continueChat(api, getContinueChatConfig(choice.chatId), {
+      const delivered = await continueChat(api, continuationConfig, {
         chatId: choice.chatId,
         eventDescription,
         userId: ctx.callbackQuery.from.id,
         userName,
+        requireDelivery: true,
+        failureMessage: `已记录你的选择「${selectedOption}」，但暂时无法继续处理，请稍后再试。`,
       });
-    } catch {
-      // logged inside continueChat
+      if (!delivered) {
+        continuationConfig.onLog?.({
+          level: "warn",
+          message: "send_choice continuation completed without delivery",
+          meta: { chatId: choice.chatId, userId: ctx.callbackQuery.from.id },
+        });
+      }
+    } catch (error) {
+      const cancelled = isExpectedContinuationCancellation(error);
+      continuationConfig.onLog?.({
+        level: cancelled ? "info" : "error",
+        message: cancelled
+          ? "send_choice continuation cancelled"
+          : "send_choice continuation failed",
+        meta: {
+          chatId: choice.chatId,
+          userId: ctx.callbackQuery.from.id,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   };
 }
