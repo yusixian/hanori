@@ -1,3 +1,4 @@
+import type { BotLogEntry } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { PollAnswer } from "grammy/types";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
@@ -85,10 +86,11 @@ export interface CallbackQueryHandlerOptions {
   api: Api;
   pendingActions: PendingActionRegistry;
   getContinueChatConfig: (chatId?: number) => ContinueChatConfig;
+  onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
 export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions) {
-  const { api, pendingActions, getContinueChatConfig } = options;
+  const { api, pendingActions, getContinueChatConfig, onLog } = options;
 
   return async (ctx: {
     callbackQuery: {
@@ -108,8 +110,25 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     const optionIndex = Number.parseInt(parts[3]!, 10);
     if (Number.isNaN(optionIndex)) return;
 
+    const callbackMeta = {
+      chatId: ctx.callbackQuery.message?.chat.id,
+      userId: ctx.callbackQuery.from.id,
+      choiceId,
+      optionIndex,
+    };
+    onLog?.({
+      level: "info",
+      message: "send_choice callback received",
+      meta: callbackMeta,
+    });
+
     const choice = pendingActions.getChoice(choiceId);
     if (!choice || choice.resolved) {
+      onLog?.({
+        level: "info",
+        message: "send_choice callback expired",
+        meta: callbackMeta,
+      });
       await api.raw.answerCallbackQuery({
         callback_query_id: ctx.callbackQuery.id,
         text: "该选择已过期",
@@ -119,6 +138,11 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
 
     // Check target user restriction
     if (choice.targetUserId && ctx.callbackQuery.from.id !== choice.targetUserId) {
+      onLog?.({
+        level: "info",
+        message: "send_choice callback rejected for non-target user",
+        meta: { ...callbackMeta, targetUserId: choice.targetUserId },
+      });
       await api.raw.answerCallbackQuery({
         callback_query_id: ctx.callbackQuery.id,
         text: "这个选择不是给你的哦",

@@ -215,6 +215,7 @@ export function createBot(config: BotConfig) {
   // remains short-lived and detaches before the long AI execution phase.
   if (aiIngressLock) {
     bot.use((ctx, next) => {
+      if (!ctx.message) return next();
       const chatId = ctx.chat?.id;
       const userId = ctx.from?.id;
       if (chatId === undefined) return next();
@@ -596,6 +597,7 @@ export function createBot(config: BotConfig) {
       api: bot.api,
       pendingActions,
       getContinueChatConfig: (chatId) => aiState!.getContinueChatConfig(chatId),
+      onLog: config.onLog,
     });
     const adminActionCallbackQueryHandler = createAdminActionCallbackQueryHandler({
       api: bot.api,

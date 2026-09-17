@@ -71,6 +71,7 @@ function createHandler(api: Api, pendingActions: PendingActionRegistry, onLog = 
     api,
     pendingActions,
     getContinueChatConfig: vi.fn().mockReturnValue({ onLog } as unknown as ContinueChatConfig),
+    onLog,
   });
 }
 
@@ -146,7 +147,8 @@ describe("send_choice callback continuation", () => {
   it("rejects a non-target user without consuming the choice", async () => {
     const pendingActions = createRegistry(TARGET_USER_ID);
     const { api, answerCallbackQuery, sendMessage } = createApi();
-    const handler = createHandler(api, pendingActions);
+    const onLog = vi.fn();
+    const handler = createHandler(api, pendingActions, onLog);
 
     await handler(callback(99));
 
@@ -158,6 +160,27 @@ describe("send_choice callback continuation", () => {
     expect(pendingActions.getChoice("choice-1")?.resolved).toBe(false);
     expect(continueChatMock).not.toHaveBeenCalled();
     expect(sendMessage).not.toHaveBeenCalled();
+    expect(onLog).toHaveBeenCalledWith({
+      level: "info",
+      message: "send_choice callback received",
+      meta: {
+        chatId: CHAT_ID,
+        userId: 99,
+        choiceId: "choice-1",
+        optionIndex: 0,
+      },
+    });
+    expect(onLog).toHaveBeenCalledWith({
+      level: "info",
+      message: "send_choice callback rejected for non-target user",
+      meta: {
+        chatId: CHAT_ID,
+        userId: 99,
+        choiceId: "choice-1",
+        optionIndex: 0,
+        targetUserId: TARGET_USER_ID,
+      },
+    });
   });
 
   it("claims a choice once when the same button is clicked repeatedly", async () => {
@@ -169,7 +192,8 @@ describe("send_choice callback continuation", () => {
     );
     const pendingActions = createRegistry();
     const { api, answerCallbackQuery } = createApi();
-    const handler = createHandler(api, pendingActions);
+    const onLog = vi.fn();
+    const handler = createHandler(api, pendingActions, onLog);
 
     const first = handler(callback(TARGET_USER_ID, "callback-1"));
     await vi.waitFor(() => expect(continueChatMock).toHaveBeenCalledOnce());
@@ -181,6 +205,16 @@ describe("send_choice callback continuation", () => {
     expect(answerCallbackQuery).toHaveBeenCalledWith({
       callback_query_id: "callback-2",
       text: "该选择已过期",
+    });
+    expect(onLog).toHaveBeenCalledWith({
+      level: "info",
+      message: "send_choice callback expired",
+      meta: {
+        chatId: CHAT_ID,
+        userId: TARGET_USER_ID,
+        choiceId: "choice-1",
+        optionIndex: 0,
+      },
     });
   });
 
