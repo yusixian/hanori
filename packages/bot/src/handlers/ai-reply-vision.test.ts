@@ -2,8 +2,9 @@ import type { BotContext } from "../context.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
 
-const { describeImagesMock, streamTextMock } = vi.hoisted(() => ({
+const { describeImagesMock, prepareVideoStickerMock, streamTextMock } = vi.hoisted(() => ({
   describeImagesMock: vi.fn(),
+  prepareVideoStickerMock: vi.fn(),
   streamTextMock: vi.fn(),
 }));
 
@@ -13,6 +14,10 @@ vi.mock("ai", async (importOriginal) => ({
 }));
 
 vi.mock("../services/image-ocr.js", () => ({ describeImages: describeImagesMock }));
+vi.mock("../services/video-sticker-media.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/video-sticker-media.js")>()),
+  prepareTelegramVideoSticker: prepareVideoStickerMock,
+}));
 
 const runtimes: Array<ReturnType<typeof createAiReplyHandler>> = [];
 
@@ -127,13 +132,16 @@ function stickerContext(
   } as unknown as BotContext;
 }
 
-function stickerReplyContext(getFile: ReturnType<typeof vi.fn>): BotContext {
+function stickerReplyContext(
+  getFile: ReturnType<typeof vi.fn>,
+  format: "static" | "animated" | "video" = "static",
+): BotContext {
   return {
     message: { message_id: 9, text: "看看这个贴纸" },
     reply_to_message: {
       message_id: 7,
       from: { id: 7, is_bot: false, first_name: "Friend" },
-      sticker: sticker(),
+      sticker: sticker(format),
     },
     chat: { id: 42, type: "private" },
     from: { id: 42, is_bot: false, first_name: "Tester" },
@@ -150,6 +158,11 @@ function stickerReplyContext(getFile: ReturnType<typeof vi.fn>): BotContext {
 describe("AI reply vision input", () => {
   beforeEach(() => {
     describeImagesMock.mockReset();
+    prepareVideoStickerMock.mockReset();
+    prepareVideoStickerMock.mockResolvedValue({
+      status: "unavailable",
+      reason: "dependency_missing",
+    });
     streamTextMock.mockReset();
     streamTextMock.mockReturnValue(streamResult());
     vi.stubGlobal(
@@ -345,22 +358,142 @@ describe("AI reply vision input", () => {
     );
   });
 
-  it.each([
-    ["animated" as const, "动态 TGS"],
-    ["video" as const, "视频 WEBM"],
-  ])("keeps %s stickers as metadata without downloading them", async (format, label) => {
+  it("keeps dynamic TGS stickers as metadata without downloading them", async () => {
     const getFile = vi.fn();
     const runtime = createAiReplyHandler(visionConfig());
     runtimes.push(runtime);
 
-    await runtime.handler(stickerContext(getFile, format), vi.fn());
+    await runtime.handler(stickerContext(getFile, "animated"), vi.fn());
 
     expect(getFile).not.toHaveBeenCalled();
+    expect(prepareVideoStickerMock).not.toHaveBeenCalled();
     const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
     expect(JSON.stringify(messages)).not.toContain('"type":"image"');
     expect(JSON.stringify(messages)).toContain(
-      `emoji: 😭 | set: \\"sample_reactions\\" | 格式: ${label}`,
+      'emoji: 😭 | set: \\"sample_reactions\\" | 格式: 动态 TGS',
     );
+  });
+
+  it("passes direct video sticker first and last frames in order and aggregates their OCR", async () => {
+    const firstFrame = Buffer.from("first-frame");
+    const lastFrame = Buffer.from("last-frame");
+    prepareVideoStickerMock.mockResolvedValue({
+      status: "ok",
+      frames: [
+        { buffer: firstFrame, mimeType: "image/png", position: "first" },
+        { buffer: lastFrame, mimeType: "image/png", position: "last" },
+      ],
+    });
+    describeImagesMock.mockResolvedValue([
+      { description: "角色举起左手。" },
+      { description: "角色放下左手。" },
+    ]);
+    const runtimeConfig = visionConfig();
+    runtimeConfig.imageOcrConfig = { enabled: true };
+    const addMessages = vi.fn().mockResolvedValue(undefined);
+    runtimeConfig.conversation = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn().mockResolvedValue(undefined),
+      addMessages,
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn().mockResolvedValue(undefined),
+    };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(vi.fn(), "video"), vi.fn());
+
+    expect(prepareVideoStickerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fileId: "video-sticker-id",
+        fileSize: 24 * 1024,
+        token: "token",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(describeImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        images: [
+          { buffer: firstFrame, mimeType: "image/png" },
+          { buffer: lastFrame, mimeType: "image/png" },
+        ],
+      }),
+    );
+    const currentRequest = streamTextMock.mock.calls[0]?.[0]?.messages?.at(-1);
+    expect(currentRequest?.content?.slice(0, 2)).toEqual([
+      expect.objectContaining({ type: "image", image: firstFrame }),
+      expect.objectContaining({ type: "image", image: lastFrame }),
+    ]);
+    const currentRequestText = JSON.stringify(currentRequest);
+    expect(currentRequestText).toContain("已附视频贴纸首帧/尾帧（抽帧，非完整视频）");
+    expect(currentRequestText).toContain("视频贴纸首帧: 角色举起左手。");
+    expect(currentRequestText).toContain("视频贴纸尾帧: 角色放下左手。");
+    expect(
+      addMessages.mock.calls.flatMap(([rows]) => rows).find((row) => row.role === "user")?.content,
+    ).toContain("抽帧，非完整视频");
+  });
+
+  it("passes quoted video sticker frames without extending OCR to reply attachments", async () => {
+    const firstFrame = Buffer.from("quoted-first");
+    const lastFrame = Buffer.from("quoted-last");
+    prepareVideoStickerMock.mockResolvedValue({
+      status: "ok",
+      frames: [
+        { buffer: firstFrame, mimeType: "image/png", position: "first" },
+        { buffer: lastFrame, mimeType: "image/png", position: "last" },
+      ],
+    });
+    const runtimeConfig = visionConfig();
+    runtimeConfig.imageOcrConfig = { enabled: true };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerReplyContext(vi.fn(), "video"), vi.fn());
+
+    expect(describeImagesMock).not.toHaveBeenCalled();
+    const currentRequest = streamTextMock.mock.calls[0]?.[0]?.messages?.at(-1);
+    expect(currentRequest?.content?.slice(0, 2)).toEqual([
+      expect.objectContaining({ type: "image", image: firstFrame }),
+      expect.objectContaining({ type: "image", image: lastFrame }),
+    ]);
+    expect(JSON.stringify(currentRequest)).toContain("已附视频贴纸首帧/尾帧（抽帧，非完整视频）");
+  });
+
+  it("states that video visuals were unavailable when extraction falls back to metadata", async () => {
+    prepareVideoStickerMock.mockResolvedValue({ status: "unavailable", reason: "timeout" });
+    const onLog = vi.fn();
+    const runtimeConfig = visionConfig();
+    runtimeConfig.onLog = onLog;
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(vi.fn(), "video"), vi.fn());
+
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(JSON.stringify(messages)).not.toContain('"type":"image"');
+    expect(JSON.stringify(messages)).toContain("画面: 未获得视频画面，请勿声称已看见视频内容");
+    expect(JSON.stringify(messages)).not.toContain("ffmpeg");
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: expect.objectContaining({ reason: "timeout" }) }),
+    );
+  });
+
+  it("cancels video preprocessing when the AI run is destroyed", async () => {
+    prepareVideoStickerMock.mockImplementation(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const runtime = createAiReplyHandler(visionConfig());
+    runtimes.push(runtime);
+
+    const handling = runtime.handler(stickerContext(vi.fn(), "video"), vi.fn());
+    await vi.waitFor(() => expect(prepareVideoStickerMock).toHaveBeenCalledOnce());
+    await runtime.destroy();
+    await Promise.allSettled([handling]);
+
+    expect(streamTextMock).not.toHaveBeenCalled();
   });
 
   it("handles a sticker with no emoji or set name", async () => {

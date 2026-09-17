@@ -7,7 +7,15 @@
 - Node.js 22 或更高版本
 - pnpm 10+
 - PostgreSQL 17，并启用 pgvector
+- ffmpeg 和 ffprobe（用于 Telegram WEBM 视频贴纸抽取首尾帧；Docker app 镜像已内置）
 - 生产环境建议使用随机生成的加密密钥，不要使用示例值
+
+Bot 以兼容模式处理 Telegram 视频贴纸：下载受大小限制的本地临时 WEBM，使用
+ffmpeg/ffprobe 抽取首帧和尾帧后作为图片交给模型，处理结束后删除临时文件。当前使用的
+AI SDK OpenAI-compatible 适配器不支持 `video/webm` file part，因此不会把原视频直接发送给
+模型。抽帧失败时只保留贴纸的 emoji、贴纸包和格式信息，并明确标记未获得视频画面。
+本地直接运行前可用 `ffmpeg -version` 和 `ffprobe -version` 检查依赖；macOS 可通过
+`brew install ffmpeg` 安装。
 
 ## 2. 最小配置
 

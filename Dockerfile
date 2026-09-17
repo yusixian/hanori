@@ -53,7 +53,7 @@ RUN pnpm -r build
 FROM base AS runner
 ENV NODE_ENV=production
 RUN corepack disable 2>/dev/null; rm -rf /root/.cache /tmp/*
-RUN apk add --no-cache git postgresql17-client && mkdir -p /data/backups /app/data /workspaces /git-metadata && chown node:node /workspaces /git-metadata
+RUN apk add --no-cache ffmpeg git postgresql17-client && mkdir -p /data/backups /app/data /workspaces /git-metadata && chown node:node /workspaces /git-metadata
 
 COPY --from=app-runtime-deps /app/node_modules ./node_modules
 COPY --from=app-runtime-deps /app/packages/database/node_modules ./packages/database/node_modules
