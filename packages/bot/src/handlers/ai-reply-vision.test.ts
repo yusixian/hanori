@@ -52,6 +52,32 @@ function config(): AiReplyConfig {
   };
 }
 
+function visionConfig(): AiReplyConfig {
+  const result = config();
+  result.models = [{ id: "text-only-model-id", capabilities: ["vision", "tool_calling"] }];
+  return result;
+}
+
+function sticker(
+  format: "static" | "animated" | "video" = "static",
+  metadata: { emoji?: string; setName?: string } | null = {},
+) {
+  const emoji = metadata === null ? undefined : (metadata.emoji ?? "😭");
+  const setName = metadata === null ? undefined : (metadata.setName ?? "sample_reactions");
+  return {
+    file_id: `${format}-sticker-id`,
+    file_unique_id: `${format}-sticker-unique-id`,
+    type: "regular" as const,
+    width: 512,
+    height: 512,
+    file_size: 24 * 1024,
+    is_animated: format === "animated",
+    is_video: format === "video",
+    ...(emoji ? { emoji } : {}),
+    ...(setName ? { set_name: setName } : {}),
+  };
+}
+
 function photoContext(getFile: ReturnType<typeof vi.fn>): BotContext {
   return {
     message: {
@@ -72,6 +98,49 @@ function photoContext(getFile: ReturnType<typeof vi.fn>): BotContext {
     me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
     api: { getFile },
     replyWithChatAction: vi.fn(),
+    wait: vi.fn().mockResolvedValue(undefined),
+    resolveWait: vi.fn().mockResolvedValue(20),
+    deleteWaiting: vi.fn(),
+    directlyReply: vi.fn(),
+  } as unknown as BotContext;
+}
+
+function stickerContext(
+  getFile: ReturnType<typeof vi.fn>,
+  format: "static" | "animated" | "video" = "static",
+  metadata: { emoji?: string; setName?: string } | null = {},
+): BotContext {
+  return {
+    message: {
+      message_id: 8,
+      sticker: sticker(format, metadata),
+    },
+    chat: { id: 42, type: "private" },
+    from: { id: 42, is_bot: false, first_name: "Tester" },
+    me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+    api: { getFile },
+    replyWithChatAction: vi.fn(),
+    wait: vi.fn().mockResolvedValue(undefined),
+    resolveWait: vi.fn().mockResolvedValue(20),
+    deleteWaiting: vi.fn(),
+    directlyReply: vi.fn(),
+  } as unknown as BotContext;
+}
+
+function stickerReplyContext(getFile: ReturnType<typeof vi.fn>): BotContext {
+  return {
+    message: { message_id: 9, text: "看看这个贴纸" },
+    reply_to_message: {
+      message_id: 7,
+      from: { id: 7, is_bot: false, first_name: "Friend" },
+      sticker: sticker(),
+    },
+    chat: { id: 42, type: "private" },
+    from: { id: 42, is_bot: false, first_name: "Tester" },
+    me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+    api: { getFile },
+    replyWithChatAction: vi.fn(),
+    wait: vi.fn().mockResolvedValue(undefined),
     resolveWait: vi.fn().mockResolvedValue(20),
     deleteWaiting: vi.fn(),
     directlyReply: vi.fn(),
@@ -201,5 +270,159 @@ describe("AI reply vision input", () => {
         }),
       ]),
     );
+  });
+
+  it("passes a directly sent static sticker through vision and OCR with its metadata", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "stickers/reaction.webp" });
+    const runtimeConfig = visionConfig();
+    runtimeConfig.imageOcrConfig = { enabled: true };
+    const addMessages = vi.fn().mockResolvedValue(undefined);
+    runtimeConfig.conversation = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn().mockResolvedValue(undefined),
+      addMessages,
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn().mockResolvedValue(undefined),
+    };
+    describeImagesMock.mockResolvedValue([{ description: "角色流泪并捂住脸。" }]);
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(getFile), vi.fn());
+
+    expect(getFile).toHaveBeenCalledWith("static-sticker-id");
+    expect(describeImagesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        images: [expect.objectContaining({ mimeType: "image/webp" })],
+      }),
+    );
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "image", mediaType: "image/webp" }),
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining(
+                '[收到贴纸 24KB | emoji: 😭 | set: "sample_reactions" | 格式: 静态 WEBP | 描述: 角色流泪并捂住脸。]',
+              ),
+            }),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      addMessages.mock.calls.flatMap(([rows]) => rows).find((row) => row.role === "user")?.content,
+    ).toContain('emoji: 😭 | set: "sample_reactions" | 格式: 静态 WEBP');
+  });
+
+  it("passes a quoted static sticker to vision and keeps its metadata in the reply quote", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "stickers/reaction.webp" });
+    const runtime = createAiReplyHandler(visionConfig());
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerReplyContext(getFile), vi.fn());
+
+    expect(getFile).toHaveBeenCalledWith("static-sticker-id");
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.arrayContaining([
+            expect.objectContaining({ type: "image", mediaType: "image/webp" }),
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining(
+                '[回复 Friend 的消息: [贴纸 24KB | emoji: 😭 | set: "sample_reactions" | 格式: 静态 WEBP]]',
+              ),
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it.each([
+    ["animated" as const, "动态 TGS"],
+    ["video" as const, "视频 WEBM"],
+  ])("keeps %s stickers as metadata without downloading them", async (format, label) => {
+    const getFile = vi.fn();
+    const runtime = createAiReplyHandler(visionConfig());
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(getFile, format), vi.fn());
+
+    expect(getFile).not.toHaveBeenCalled();
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(JSON.stringify(messages)).not.toContain('"type":"image"');
+    expect(JSON.stringify(messages)).toContain(
+      `emoji: 😭 | set: \\"sample_reactions\\" | 格式: ${label}`,
+    );
+  });
+
+  it("handles a sticker with no emoji or set name", async () => {
+    const getFile = vi.fn();
+    const runtime = createAiReplyHandler(visionConfig());
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(getFile, "animated", null), vi.fn());
+
+    expect(getFile).not.toHaveBeenCalled();
+    const currentRequest = JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages?.at(-1));
+    expect(currentRequest).toContain("[收到贴纸 24KB | 格式: 动态 TGS]");
+    expect(currentRequest).not.toContain("emoji:");
+    expect(currentRequest).not.toContain("set:");
+  });
+
+  it("passes a static sticker to the model even without a vision capability flag", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "stickers/reaction.webp" });
+    const runtime = createAiReplyHandler(config());
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(getFile), vi.fn());
+
+    expect(getFile).toHaveBeenCalledWith("static-sticker-id");
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(JSON.stringify(messages)).toContain('"type":"image"');
+    expect(JSON.stringify(messages)).toContain("emoji: 😭");
+    expect(JSON.stringify(messages)).toContain("格式: 静态 WEBP");
+  });
+
+  it("does not expose the previous photo as the current attachment after a sticker", async () => {
+    const getFile = vi.fn().mockResolvedValue({ file_path: "photos/example.jpg" });
+    const runtimeConfig = config();
+    runtimeConfig.dataFiles = {
+      dataDir: "/tmp/cos-tool-bot-sticker-test",
+      injectableFiles: new Set(),
+      loadFiles: vi.fn().mockResolvedValue([]),
+    };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(photoContext(getFile), vi.fn());
+    await runtime.handler(stickerContext(getFile), vi.fn());
+
+    expect(getFile).toHaveBeenCalledTimes(2);
+    expect(getFile).toHaveBeenLastCalledWith("static-sticker-id");
+    const saveReceivedFile = streamTextMock.mock.calls[1]?.[0]?.tools?.save_received_file;
+    await expect(
+      saveReceivedFile?.execute?.({ index: 0, filename: "stale.jpg" }, {} as never),
+    ).resolves.toEqual({ error: "当前没有收到文件附件" });
+  });
+
+  it("falls back to sticker metadata when the static image download fails", async () => {
+    const getFile = vi.fn().mockRejectedValue(new Error("Telegram unavailable"));
+    const runtime = createAiReplyHandler(visionConfig());
+    runtimes.push(runtime);
+
+    await runtime.handler(stickerContext(getFile), vi.fn());
+
+    const messages = streamTextMock.mock.calls[0]?.[0]?.messages;
+    expect(JSON.stringify(messages)).not.toContain('"type":"image"');
+    expect(JSON.stringify(messages)).toContain("emoji: 😭");
+    expect(streamTextMock).toHaveBeenCalledOnce();
   });
 });

@@ -12,11 +12,17 @@ import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
 
 export interface ReceivedFile {
-  type: "photo" | "document";
+  type: "photo" | "document" | "sticker";
   file_id: string;
   file_name?: string;
   file_size?: number;
   mime_type?: string;
+  sticker?: {
+    emoji?: string;
+    setName?: string;
+    type: "regular" | "mask" | "custom_emoji";
+    format: "static_webp" | "animated_tgs" | "video_webm";
+  };
 }
 
 export interface TelegramToolsOptions {

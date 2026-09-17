@@ -302,6 +302,30 @@ function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
       mime_type: msg.document.mime_type ?? undefined,
     });
   }
+  if (msg.sticker) {
+    const format = msg.sticker.is_video
+      ? ("video_webm" as const)
+      : msg.sticker.is_animated
+        ? ("animated_tgs" as const)
+        : ("static_webp" as const);
+    files.push({
+      type: "sticker",
+      file_id: msg.sticker.file_id,
+      file_size: msg.sticker.file_size,
+      mime_type:
+        format === "static_webp"
+          ? "image/webp"
+          : format === "animated_tgs"
+            ? "application/x-tgsticker"
+            : "video/webm",
+      sticker: {
+        emoji: msg.sticker.emoji,
+        setName: msg.sticker.set_name,
+        type: msg.sticker.type,
+        format,
+      },
+    });
+  }
   return files;
 }
 
@@ -630,6 +654,25 @@ function describeFiles(
   for (let i = 0; i < files.length; i++) {
     const f = files[i]!;
     const sizeStr = f.file_size ? ` ${formatFileSize(f.file_size)}` : "";
+    if (f.type === "sticker" && f.sticker) {
+      const parts = [`${prefix}贴纸${sizeStr}`];
+      if (f.sticker.emoji) parts.push(`emoji: ${f.sticker.emoji}`);
+      if (f.sticker.setName) parts.push(`set: "${f.sticker.setName}"`);
+      if (f.sticker.type !== "regular") parts.push(`类型: ${f.sticker.type}`);
+      parts.push(
+        `格式: ${
+          f.sticker.format === "static_webp"
+            ? "静态 WEBP"
+            : f.sticker.format === "animated_tgs"
+              ? "动态 TGS"
+              : "视频 WEBM"
+        }`,
+      );
+      const desc = descriptionsByIndex?.get(i);
+      if (desc) parts.push(`描述: ${desc}`);
+      result += `[${parts.join(" | ")}]${separator}`;
+      continue;
+    }
     if (f.type === "photo" || f.mime_type?.startsWith("image/")) {
       const desc = descriptionsByIndex?.get(i);
       const descStr = desc ? ` | 描述: ${desc}` : "";
@@ -649,10 +692,11 @@ function describeFiles(
   return result;
 }
 
-function describeReplyQuote(replyMsg: Message | undefined, fileDesc = ""): string {
+function describeReplyQuote(replyMsg: Message | undefined, fileDesc?: string): string {
   if (!replyMsg) return "";
   const replyText = replyMsg.text ?? replyMsg.caption ?? "";
-  const content = `${fileDesc}${replyText}`.trim();
+  const attachmentDesc = fileDesc ?? describeFiles(extractFilesFromMessage(replyMsg), "", " ");
+  const content = `${attachmentDesc}${replyText}`.trim();
   if (!content) return "";
   return `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${content}]\n`;
 }
@@ -664,7 +708,7 @@ function describeGroupMessageForHistory(msg: Message): string {
   if (msg.photo) attachment = "[图片]";
   else if (msg.document) {
     attachment = `[文件: ${msg.document.file_name ?? "unknown"}]`;
-  }
+  } else if (msg.sticker) attachment = describeFiles(extractFilesFromMessage(msg), "", "").trim();
   return [attachment, caption].filter(Boolean).join("\n");
 }
 
@@ -1310,7 +1354,7 @@ export function createAiReplyHandler(
     const personalizationEnabled = privacyMode !== "off";
     if (personalizationEnabled && ctx.from) profileObserver?.observe(ctx.api, ctx.from);
 
-    const supportsAiContent = !!(msg.text || msg.photo || msg.document);
+    const supportsAiContent = !!(msg.text || msg.photo || msg.document || msg.sticker);
     if (!supportsAiContent) {
       turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
       return next();
@@ -1590,8 +1634,9 @@ export function createAiReplyHandler(
 
         // Extract received files metadata
         const receivedFiles = extractFilesFromMessage(msg);
+        const reusableReceivedFiles = receivedFiles.filter((file) => file.type !== "sticker");
         if (receivedFiles.length) {
-          recentReceivedFiles.set(chatId, receivedFiles);
+          recentReceivedFiles.set(chatId, reusableReceivedFiles);
         }
         const messageText = msg.text ?? msg.caption ?? "";
 

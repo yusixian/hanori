@@ -857,24 +857,27 @@ describe("AI reply turn coalescing", () => {
     const addMessages = vi
       .fn<NonNullable<ConversationCallbacks["addMessages"]>>()
       .mockResolvedValue(undefined);
-    const conversation: ConversationCallbacks = {
-      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
-      addMessage: vi.fn(),
-      addMessages,
-      upsertUserMessage: vi.fn(async (message) => {
+    const upsertUserMessage = vi.fn<NonNullable<ConversationCallbacks["upsertUserMessage"]>>(
+      async (message) => {
         let id = rowIds.get(message.sourceKey);
         if (id === undefined) {
           id = nextRowId++;
           rowIds.set(message.sourceKey, id);
         }
         return { id };
-      }),
+      },
+    );
+    const conversation: ConversationCallbacks = {
+      getHistory: vi.fn().mockResolvedValue({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages,
+      upsertUserMessage,
       completeTurn,
       completeTurns,
       triggerCompression: vi.fn(),
       clearHistory: vi.fn(),
     };
-    return { conversation, completeTurn, completeTurns, addMessages };
+    return { conversation, completeTurn, completeTurns, addMessages, upsertUserMessage };
   }
 
   it("merges a same-user text follow-up into the queued run", async () => {
@@ -1394,6 +1397,137 @@ describe("AI reply turn coalescing", () => {
     activeReply.resolve("# Active final");
     await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(3));
     expect(JSON.stringify(streamTextMock.mock.calls[2]?.[0]?.messages)).toContain("notes.txt");
+  });
+
+  it("does not merge a text reply to a sticker because its quoted metadata must be preserved", async () => {
+    const activeReply = deferred<string>();
+    streamTextMock
+      .mockImplementationOnce(() => streamResult(activeReply.promise))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Second final")))
+      .mockImplementationOnce(() => streamResult(Promise.resolve("# Third final")));
+    const onLog = vi.fn();
+    const { api, sendMessage } = createApi();
+    const runtime = createAiReplyHandler(createConfig(true, onLog));
+    runtimes.push(runtime);
+
+    await runtime.handler(createContext(api, 1, 11, "sample first"), vi.fn());
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(1));
+    await runtime.handler(createContext(api, 2, 12, "sample queued owner"), vi.fn());
+    const stickerReply = createContext(api, 3, 13, "sample inspect the sticker");
+    stickerReply.reply_to_message = {
+      message_id: 10,
+      date: 0,
+      chat: { id: CHAT_ID, type: "supergroup", title: "Test group" },
+      from: { id: USER_ID, is_bot: false, first_name: "Tester" },
+      sticker: {
+        file_id: "sticker-id",
+        file_unique_id: "sticker-unique-id",
+        type: "regular",
+        width: 512,
+        height: 512,
+        is_animated: false,
+        is_video: false,
+        emoji: "😭",
+        set_name: "sample_reactions",
+      },
+    } as Message;
+    await runtime.handler(stickerReply, vi.fn());
+
+    expect(sendMessage.mock.calls.filter(([, text]) => text === QUEUE_NOTICE)).toHaveLength(2);
+    expect(
+      onLog.mock.calls.some(([entry]) => entry.message === "AI reply coalesced into queued turn"),
+    ).toBe(false);
+
+    activeReply.resolve("# Active final");
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalledTimes(3));
+    expect(JSON.stringify(streamTextMock.mock.calls[2]?.[0]?.messages)).toContain("emoji: 😭");
+    expect(JSON.stringify(streamTextMock.mock.calls[2]?.[0]?.messages)).toContain(
+      "sample_reactions",
+    );
+  });
+
+  it("persists quoted dynamic sticker metadata during group ingress", async () => {
+    streamTextMock.mockImplementationOnce(() => streamResult(Promise.resolve("# Final")));
+    const { api } = createApi();
+    const { conversation, upsertUserMessage } = createConversation();
+    const config = createConfig(false);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+    const stickerReply = createContext(api, 1, 11, "sample inspect the sticker");
+    stickerReply.reply_to_message = {
+      message_id: 10,
+      date: 0,
+      chat: { id: CHAT_ID, type: "supergroup", title: "Test group" },
+      from: { id: USER_ID, is_bot: false, first_name: "Tester" },
+      sticker: {
+        file_id: "animated-sticker-id",
+        file_unique_id: "animated-sticker-unique-id",
+        type: "regular",
+        width: 512,
+        height: 512,
+        is_animated: true,
+        is_video: false,
+        emoji: "😭",
+        set_name: "sample_reactions",
+      },
+    } as Message;
+
+    await runtime.handler(stickerReply, vi.fn());
+
+    expect(upsertUserMessage.mock.calls[0]?.[0].content).toContain(
+      '[回复 Tester 的消息: [贴纸 | emoji: 😭 | set: "sample_reactions" | 格式: 动态 TGS]]',
+    );
+  });
+
+  it("persists an untriggered group sticker without starting an AI reply", async () => {
+    const { api } = createApi();
+    const { conversation, upsertUserMessage } = createConversation();
+    const config = createConfig(false);
+    config.conversation = conversation;
+    const runtime = createAiReplyHandler(config);
+    runtimes.push(runtime);
+    const context = new WrapperContext(
+      {
+        update_id: 1,
+        message: {
+          message_id: 12,
+          date: 0,
+          chat: { id: CHAT_ID, type: "supergroup", title: "Test group" },
+          from: { id: USER_ID, is_bot: false, first_name: "Tester" },
+          sticker: {
+            file_id: "ambient-sticker-id",
+            file_unique_id: "ambient-sticker-unique-id",
+            type: "regular",
+            width: 512,
+            height: 512,
+            is_animated: false,
+            is_video: false,
+            emoji: "🙂",
+            set_name: "ambient_reactions",
+          },
+        },
+      } as Update,
+      api,
+      {
+        id: 99,
+        is_bot: true,
+        first_name: "Ai",
+        username: "sample_bot",
+      } as UserFromGetMe,
+    ) as BotContext;
+    const next = vi.fn();
+
+    await runtime.handler(context, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: '[贴纸 | emoji: 🙂 | set: "ambient_reactions" | 格式: 静态 WEBP]',
+        meta: expect.objectContaining({ turnState: "complete" }),
+      }),
+    );
   });
 
   it("rescues merged private follow-ups when the owning run fails", async () => {

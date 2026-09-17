@@ -690,7 +690,7 @@ function groupMessage(content: Record<string, unknown>, senderId = userId) {
 }
 
 describe("createBot profile observation", () => {
-  it("observes an authorized sticker without sending it to AI", async () => {
+  it("observes an authorized sticker while sending it to AI", async () => {
     const { bot, touchProfile, apiCalls } = createProfileBot();
 
     await bot.handleUpdate(
@@ -708,7 +708,7 @@ describe("createBot profile observation", () => {
     );
 
     await vi.waitFor(() => expect(touchProfile).toHaveBeenCalledTimes(1));
-    expect(apiCalls).not.toContain("sendChatAction");
+    expect(apiCalls).toContain("sendChatAction");
   });
 
   it("continues observing normal messages after /stop disables AI replies", async () => {
