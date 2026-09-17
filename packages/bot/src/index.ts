@@ -1,11 +1,16 @@
 import type {
   BotLogEntry,
   ConversationCallbacks,
+  ImageGenerationReceiptConfig,
   ImageGenerationRequestSnapshot,
   TokenUsageRecord,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_CONVERSATION_CONFIG, DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_MEMORY_CONFIG,
+  resolveImageGenerationReceiptConfig,
+} from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { sequentialize } from "@grammyjs/runner";
 import { stream } from "@grammyjs/stream";
@@ -129,14 +134,19 @@ export async function sendLocalImageFiles(
     detailUrl: string;
     presetKey?: string;
     requestSnapshot?: ImageGenerationRequestSnapshot;
+    receiptConfig?: ImageGenerationReceiptConfig;
   },
 ): Promise<number[]> {
   if (files.length === 0) return [];
+  const receiptConfig = resolveImageGenerationReceiptConfig(input.receiptConfig);
   const caption = formatImageGenerationCaption({
     prompt: input.prompt,
     imageCount: files.length,
     presetKey: input.presetKey,
     requestSnapshot: input.requestSnapshot,
+    receiptConfig: input.receiptConfig,
+    truncationNoticeUrl:
+      files.length > 1 && !receiptConfig.albumNoticeEnabled ? input.detailUrl : undefined,
   }).html;
   const detailButton = new InlineKeyboard().url("查看任务详情", input.detailUrl);
   if (files.length === 1) {
@@ -153,17 +163,19 @@ export async function sendLocalImageFiles(
     ...(index === 0 ? { caption, parse_mode: "HTML" as const } : {}),
   }));
   const messages = await api.sendMediaGroup(chatId, media);
-  await api.sendMessage(chatId, "🔎 完整 Prompt、生成参数与任务进度", {
-    reply_markup: detailButton,
-    ...(messages[0]
-      ? {
-          reply_parameters: {
-            message_id: messages[0].message_id,
-            allow_sending_without_reply: true,
-          },
-        }
-      : {}),
-  });
+  if (receiptConfig.albumNoticeEnabled) {
+    await api.sendMessage(chatId, receiptConfig.albumNoticeText, {
+      reply_markup: detailButton,
+      ...(messages[0]
+        ? {
+            reply_parameters: {
+              message_id: messages[0].message_id,
+              allow_sending_without_reply: true,
+            },
+          }
+        : {}),
+    });
+  }
   return messages.map((message) => message.message_id);
 }
 

@@ -8,6 +8,7 @@ import type {
   ArtworkToolsConfig,
   BotMemoryConfig,
   ConversationConfig,
+  ImageGenerationReceiptConfig,
   ImageOcrConfig,
   MemoryConfig,
   MessageConfig,
@@ -25,6 +26,7 @@ import {
   DEFAULT_EMBEDDING_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
+  resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
 import {
   Brain,
@@ -70,6 +72,7 @@ import { TriggerSettingsSection } from "./sections/trigger-settings-section";
 import { McpServersSection } from "./sections/mcp-servers-section";
 import { SummaryConfigSection } from "./sections/summary-config-section";
 import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
+import { ImageGenerationReceiptSection } from "./sections/image-generation-receipt-section";
 import { WebToolsSection } from "./sections/web-tools-section";
 import { ExecutionConfigSection } from "./sections/execution-config-section";
 import {
@@ -463,6 +466,7 @@ export function BotAiSettingsPage() {
             webSearchApiKey,
             webImageApiKey,
           ),
+          imageGenerationReceiptConfig: config.imageGenerationReceiptConfig,
           agentToolsConfig: config.agentToolsConfig,
           githubToolsConfig: config.githubToolsConfig
             ? {
@@ -725,6 +729,19 @@ export function BotAiSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       webToolsConfig: { ...webCfg, ...prev.webToolsConfig, ...updates },
+    }));
+  };
+
+  const imageGenerationReceiptConfig = resolveImageGenerationReceiptConfig(
+    config.imageGenerationReceiptConfig,
+  );
+  const updateImageGenerationReceiptConfig = (updates: Partial<ImageGenerationReceiptConfig>) => {
+    setConfig((prev) => ({
+      ...prev,
+      imageGenerationReceiptConfig: {
+        ...resolveImageGenerationReceiptConfig(prev.imageGenerationReceiptConfig),
+        ...updates,
+      },
     }));
   };
 
@@ -1193,6 +1210,18 @@ export function BotAiSettingsPage() {
                   onSearchApiKeyChange={setWebSearchApiKey}
                   onImageApiKeyChange={setWebImageApiKey}
                   onUpdate={updateWebTools}
+                />
+              </SettingsDisclosureRow>
+              <SettingsDisclosureRow
+                title={t("disclosures.imageGenerationReceipt.title")}
+                description={t("disclosures.imageGenerationReceipt.description")}
+                summary={t("disclosures.imageGenerationReceipt.summary", {
+                  count: imageGenerationReceiptConfig.promptPreviewLength,
+                })}
+              >
+                <ImageGenerationReceiptSection
+                  config={imageGenerationReceiptConfig}
+                  onUpdate={updateImageGenerationReceiptConfig}
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow

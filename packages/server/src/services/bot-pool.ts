@@ -1466,6 +1466,7 @@ export class BotPool {
       timerCallbacks,
       mcpCallbacks,
       summary: summaryCallbacks,
+      imageGenerationReceiptConfig: aiConfig?.imageGenerationReceiptConfig,
       quota: this.usageGovernance
         ? {
             getUsage: async ({ chatId, userId, chatType }) => {

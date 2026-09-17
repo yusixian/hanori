@@ -12,10 +12,13 @@ import { EMBEDDING_DIMENSIONS, bots } from "@cos-tool-bot/database";
 import {
   DEFAULT_AI_EXECUTION_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
+  IMAGE_GENERATION_PROMPT_PREVIEW_MAX_LENGTH,
+  IMAGE_GENERATION_RECEIPT_TEXT_MAX_LENGTH,
   IMAGE_MAX_SIZE,
   IMAGE_MIN_SIZE,
   MAX_CONCURRENT_AI_REPLIES,
   MAX_SUB_AGENT_STEPS,
+  resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
@@ -342,6 +345,7 @@ function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPu
     memoryConfig: migrated.memoryConfig,
     stickerPacks: migrated.stickerPacks,
     webToolsConfig: toWebToolsConfigPublic(migrated.webToolsConfig),
+    imageGenerationReceiptConfig: migrated.imageGenerationReceiptConfig,
     agentToolsConfig: migrated.agentToolsConfig,
     githubToolsConfig: migrated.githubToolsConfig
       ? {
@@ -544,6 +548,30 @@ const aiConfigSchema = z
               })
               .optional(),
           })
+          .optional(),
+      })
+      .optional(),
+    imageGenerationReceiptConfig: z
+      .object({
+        promptPreviewLength: z
+          .number()
+          .int()
+          .min(0)
+          .max(IMAGE_GENERATION_PROMPT_PREVIEW_MAX_LENGTH)
+          .optional(),
+        truncationNoticeEnabled: z.boolean().optional(),
+        truncationNoticeText: z
+          .string()
+          .trim()
+          .max(IMAGE_GENERATION_RECEIPT_TEXT_MAX_LENGTH)
+          .refine((value) => !/[\r\n]/.test(value), "Notice text must be a single line")
+          .optional(),
+        albumNoticeEnabled: z.boolean().optional(),
+        albumNoticeText: z
+          .string()
+          .trim()
+          .max(IMAGE_GENERATION_RECEIPT_TEXT_MAX_LENGTH)
+          .refine((value) => !/[\r\n]/.test(value), "Notice text must be a single line")
           .optional(),
       })
       .optional(),
@@ -1645,6 +1673,10 @@ export function botsRoutes(
             existingMigrated?.webToolsConfig,
             body.webToolsConfig,
           ),
+          imageGenerationReceiptConfig:
+            body.imageGenerationReceiptConfig === undefined
+              ? existingMigrated?.imageGenerationReceiptConfig
+              : resolveImageGenerationReceiptConfig(body.imageGenerationReceiptConfig),
           agentToolsConfig: body.agentToolsConfig,
           githubToolsConfig,
           artworkToolsConfig: body.artworkToolsConfig,

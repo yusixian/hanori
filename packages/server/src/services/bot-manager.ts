@@ -19,6 +19,7 @@ import type {
   BotStatus,
   ConversationCallbacks,
   IBotManager,
+  ImageGenerationReceiptConfig,
   PixAIGenerationRecord,
   ImageGenerationRequestSnapshot,
   TelegramRichMessageFormat,
@@ -69,6 +70,7 @@ interface BotManagerOptions {
   quota?: BotConfig["quota"];
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
+  imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
 }
 
 export class BotManager implements IBotManager, TelegramRichMessageSender {
@@ -78,6 +80,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
   private botConfig: BotConfig;
   private dbLogger: DbLogger;
   private readonly onGenerationTrack?: BotManagerOptions["onGenerationTrack"];
+  private readonly imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
   private _status: BotStatus = "stopped";
   private startedAt: number | null = null;
   private shutdownAttempt: {
@@ -89,6 +92,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     this.botId = options.botId;
     this.dbLogger = options.dbLogger;
     this.onGenerationTrack = options.onGenerationTrack;
+    this.imageGenerationReceiptConfig = options.imageGenerationReceiptConfig;
     this.botConfig = {
       token: options.token,
       botId: options.botId,
@@ -224,7 +228,10 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     },
   ): Promise<number[]> {
     if (!this.bot) throw new Error(`Bot ${this.botId} is not running`);
-    return sendLocalImageFiles(this.bot.api, chatId, files, input);
+    return sendLocalImageFiles(this.bot.api, chatId, files, {
+      ...input,
+      receiptConfig: this.imageGenerationReceiptConfig,
+    });
   }
 
   async getTelegramMemberRole(

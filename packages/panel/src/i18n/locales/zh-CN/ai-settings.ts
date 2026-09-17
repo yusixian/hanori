@@ -143,6 +143,11 @@ export const aiSettings = {
       title: "联网工具",
       description: "在线搜索、浏览和调研信息。",
     },
+    imageGenerationReceipt: {
+      title: "图片生成回执",
+      description: "配置生成图片随附的 Prompt 预览和任务详情提示。",
+      summary: "预览 {{count}} 个字符",
+    },
     githubTools: {
       title: "GitHub 身份与代码访问",
       description: "配置助手的独立身份、仓库白名单和确认权限。",
@@ -635,6 +640,19 @@ export const aiSettings = {
       pixaiKeyHelp: "获取 API 密钥和模型 ID。",
       size: "尺寸",
     },
+  },
+  imageGenerationReceipt: {
+    title: "图片生成回执",
+    promptPreviewLength: "Prompt 预览长度",
+    promptPreviewLengthDescription:
+      "Telegram 图片说明中显示 0–{{max}} 个字符；设为 0 时不显示 Prompt 预览。",
+    truncationNotice: "Prompt 截断提示",
+    truncationNoticeDescription: "完整 Prompt 超过预览长度时显示。",
+    truncationNoticeText: "Prompt 截断提示文案",
+    albumNotice: "相册任务详情提示",
+    albumNoticeDescription: "发送多图相册后，额外发送一条任务详情消息。",
+    albumNoticeText: "相册任务详情提示文案",
+    defaultFallback: "仅支持纯文本，最多 {{max}} 个字符；启用后留空，保存时会恢复默认文案。",
   },
   pixai: {
     modelRecommendations:

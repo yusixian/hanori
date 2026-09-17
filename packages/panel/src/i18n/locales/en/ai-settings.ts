@@ -145,6 +145,11 @@ export const aiSettings = {
       title: "Web tools",
       description: "Search, browse, and research information online.",
     },
+    imageGenerationReceipt: {
+      title: "Image generation receipts",
+      description: "Control Prompt previews and task-detail notices sent with generated images.",
+      summary: "{{count}}-character preview",
+    },
     githubTools: {
       title: "GitHub identity and code access",
       description: "Configure Ai-chan's identity, repository allowlist, and confirmations.",
@@ -685,6 +690,21 @@ export const aiSettings = {
       pixaiKeyHelp: "to get an API key and model ID.",
       size: "Size",
     },
+  },
+  imageGenerationReceipt: {
+    title: "Image Generation Receipts",
+    promptPreviewLength: "Prompt Preview Length",
+    promptPreviewLengthDescription:
+      "Show 0–{{max}} characters in Telegram image captions. Set 0 to hide the Prompt preview.",
+    truncationNotice: "Prompt truncation notice",
+    truncationNoticeDescription:
+      "Shown when the complete Prompt is longer than the configured preview.",
+    truncationNoticeText: "Prompt truncation notice text",
+    albumNotice: "Album task-details notice",
+    albumNoticeDescription: "Send a separate task-details message after a multi-image album.",
+    albumNoticeText: "Album task-details notice text",
+    defaultFallback:
+      "Plain text only, up to {{max}} characters. An empty enabled notice uses the default text after saving.",
   },
   pixai: {
     modelRecommendations:

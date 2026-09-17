@@ -1133,4 +1133,98 @@ describe("AI provider model configuration", () => {
     });
     expect(providers[0]?.id).not.toBe("__new_ocr");
   });
+
+  it("normalizes and saves image generation receipt settings", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        imageGenerationReceiptConfig: {
+          promptPreviewLength: 0,
+          truncationNoticeEnabled: false,
+          truncationNoticeText: "",
+          albumNoticeEnabled: true,
+          albumNoticeText: "  Album details  ",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.imageGenerationReceiptConfig).toEqual({
+      promptPreviewLength: 0,
+      truncationNoticeEnabled: false,
+      truncationNoticeText: "⚠️ Prompt 已截断，完整内容见任务详情。",
+      albumNoticeEnabled: true,
+      albumNoticeText: "Album details",
+    });
+  });
+
+  it.each([-1, 801])("rejects a Prompt preview length of %s", async (promptPreviewLength) => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          imageGenerationReceiptConfig: { promptPreviewLength },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("rejects multiline receipt text", async () => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          imageGenerationReceiptConfig: { albumNoticeText: "first line\nsecond line" },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("preserves receipt settings omitted by older clients", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const existing = {
+      ...existingAiConfig,
+      imageGenerationReceiptConfig: {
+        promptPreviewLength: 50,
+        albumNoticeEnabled: false,
+      },
+    };
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }, existing),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestBody()),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.imageGenerationReceiptConfig).toEqual(
+      existing.imageGenerationReceiptConfig,
+    );
+  });
 });

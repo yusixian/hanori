@@ -1,4 +1,9 @@
-import type { ImageGenerationRequestSnapshot } from "@cos-tool-bot/shared";
+import {
+  resolveImageGenerationReceiptConfig,
+  type ImageGenerationReceiptConfig,
+  type ImageGenerationRequestSnapshot,
+} from "@cos-tool-bot/shared";
+import { escapeHtml } from "./format.js";
 
 export const TELEGRAM_MEDIA_CAPTION_LIMIT = 1024;
 
@@ -7,6 +12,8 @@ export interface ImageGenerationCaptionInput {
   imageCount: number;
   presetKey?: string;
   requestSnapshot?: ImageGenerationRequestSnapshot;
+  receiptConfig?: ImageGenerationReceiptConfig;
+  truncationNoticeUrl?: string;
 }
 
 export interface FormattedImageGenerationCaption {
@@ -15,12 +22,10 @@ export interface FormattedImageGenerationCaption {
   truncated: boolean;
 }
 
-const TRUNCATION_NOTICE =
-  "⚠️ Prompt 过长，当前内容已截断。点击下方「查看任务详情」查看并复制完整 Prompt。";
-
 export function formatImageGenerationCaption(
   input: ImageGenerationCaptionInput,
 ): FormattedImageGenerationCaption {
+  const receiptConfig = resolveImageGenerationReceiptConfig(input.receiptConfig);
   const headerParts = [`🎨 生成完成 · ${input.imageCount} 张`];
   const width = input.requestSnapshot?.width;
   const height = input.requestSnapshot?.height;
@@ -32,20 +37,43 @@ export function formatImageGenerationCaption(
   const header = headerParts.join(" · ");
   const prompt = input.prompt.trim();
   const fullPlainLength = header.length + 2 + prompt.length;
-  if (fullPlainLength <= TELEGRAM_MEDIA_CAPTION_LIMIT) {
+  if (
+    prompt.length <= receiptConfig.promptPreviewLength &&
+    fullPlainLength <= TELEGRAM_MEDIA_CAPTION_LIMIT
+  ) {
     return {
-      html: `<b>${escapeTelegramHtml(header)}</b>\n\n<blockquote expandable>${escapeTelegramHtml(prompt)}</blockquote>`,
+      html: `<b>${escapeHtml(header)}</b>\n\n<blockquote expandable>${escapeHtml(prompt)}</blockquote>`,
       plainTextLength: fullPlainLength,
       truncated: false,
     };
   }
 
-  const fixedLength = header.length + 2 + 1 + 2 + TRUNCATION_NOTICE.length;
-  const promptBudget = Math.max(0, TELEGRAM_MEDIA_CAPTION_LIMIT - fixedLength);
-  const excerpt = takeUtf16(prompt, promptBudget);
+  const notice = receiptConfig.truncationNoticeEnabled ? receiptConfig.truncationNoticeText : "";
+  const promptDecorationsLength = receiptConfig.promptPreviewLength > 0 ? 3 : 0;
+  const noticeLength = notice ? 2 + notice.length : 0;
+  const promptBudget = Math.max(
+    0,
+    TELEGRAM_MEDIA_CAPTION_LIMIT - header.length - promptDecorationsLength - noticeLength,
+  );
+  const excerpt = takeUtf16(prompt, Math.min(receiptConfig.promptPreviewLength, promptBudget));
+  const htmlParts = [`<b>${escapeHtml(header)}</b>`];
+  let plainTextLength = header.length;
+  if (excerpt) {
+    htmlParts.push(`<blockquote expandable>${escapeHtml(excerpt)}…</blockquote>`);
+    plainTextLength += 2 + excerpt.length + 1;
+  }
+  if (notice) {
+    const noticeHtml = escapeHtml(notice);
+    htmlParts.push(
+      input.truncationNoticeUrl
+        ? `<a href="${escapeHtml(input.truncationNoticeUrl)}">${noticeHtml}</a>`
+        : noticeHtml,
+    );
+    plainTextLength += 2 + notice.length;
+  }
   return {
-    html: `<b>${escapeTelegramHtml(header)}</b>\n\n<blockquote expandable>${escapeTelegramHtml(excerpt)}…</blockquote>\n\n${escapeTelegramHtml(TRUNCATION_NOTICE)}`,
-    plainTextLength: header.length + 2 + excerpt.length + 1 + 2 + TRUNCATION_NOTICE.length,
+    html: htmlParts.join("\n\n"),
+    plainTextLength,
     truncated: true,
   };
 }
@@ -57,8 +85,4 @@ function takeUtf16(value: string, maxUnits: number): string {
     result += character;
   }
   return result;
-}
-
-function escapeTelegramHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
