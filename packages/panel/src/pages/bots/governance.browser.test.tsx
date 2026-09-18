@@ -1,5 +1,6 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
+import { StrictMode } from "react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
@@ -62,7 +63,10 @@ afterEach(() => {
 });
 
 test("resets the complete governance draft to the raised defaults before saving", async () => {
-  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/governance/subjects")) {
+      return new Response(JSON.stringify({ ok: true, subjects: [] }), { status: 200 });
+    }
     const data =
       init?.method === "PUT"
         ? { ...JSON.parse(String(init.body)), connection: loadedDraft.connection }
@@ -101,11 +105,8 @@ test("resets the complete governance draft to the raised defaults before saving"
   await expect.element(page.getByLabelText("Image · user across groups daily")).toHaveValue(300);
   await expect.element(page.getByLabelText("Image · group total daily")).toHaveValue(1_000);
   await expect.element(page.getByText("No exact overrides are configured.")).toBeVisible();
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-
   await page.getByRole("button", { name: "Save" }).click();
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  const request = fetchMock.mock.calls[1]?.[1];
+  const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
   const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
   expect(body).toMatchObject({
     timezone: "Asia/Shanghai",
@@ -120,7 +121,10 @@ test("resets the complete governance draft to the raised defaults before saving"
 });
 
 test("adds a private-chat image user and includes it in the saved governance config", async () => {
-  const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/governance/subjects")) {
+      return new Response(JSON.stringify({ ok: true, subjects: [] }), { status: 200 });
+    }
     const data =
       init?.method === "PUT"
         ? { ...JSON.parse(String(init.body)), connection: loadedDraft.connection }
@@ -145,7 +149,254 @@ test("adds a private-chat image user and includes it in the saved governance con
   await page.getByLabelText("Telegram user ID").nth(1).fill("4242");
   await page.getByRole("button", { name: "Save" }).click();
 
-  const request = fetchMock.mock.calls[1]?.[1];
+  const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
   const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
   expect(body.privateChatUserIds).toEqual([73, 4242]);
+});
+
+test("selects a recognized group instead of requiring a raw chat ID", async () => {
+  const draft = { ...loadedDraft, overrides: [] };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    if (String(input).includes("/governance/subjects")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          subjects: [{ id: "-100001", name: "Acceptance Art Group", username: "art_group" }],
+        }),
+        { status: 200 },
+      );
+    }
+    const data =
+      init?.method === "PUT"
+        ? { ...JSON.parse(String(init.body)), connection: draft.connection }
+        : draft;
+    return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByRole("button", { name: "Add override" })).toBeVisible();
+  await page.getByRole("button", { name: "Add override" }).click();
+  await page.getByRole("combobox", { name: "Group" }).click();
+  await page.getByRole("option", { name: /Acceptance Art Group/ }).click();
+  await page.getByRole("button", { name: "Save" }).click();
+
+  const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
+  const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
+  expect(body.overrides).toMatchObject([
+    { resource: "ai_reply", scope: "chat", subjectKey: "-100001" },
+  ]);
+});
+
+test.each([
+  {
+    name: "person",
+    scope: "user_global" as const,
+    expectedSubjectKey: "900001",
+  },
+  {
+    name: "person in a group",
+    scope: "chat_user" as const,
+    expectedSubjectKey: "-100001:900001",
+  },
+])(
+  "builds the $name subject key from recognized selections",
+  async ({ scope, expectedSubjectKey }) => {
+    const draft = {
+      ...loadedDraft,
+      overrides: [{ resource: "ai_reply" as const, scope, subjectKey: "", daily: 10 }],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/governance/subjects")) {
+        const subjects = url.includes("kind=chat")
+          ? [{ id: "-100001", name: "Acceptance Art Group", username: "art_group" }]
+          : [{ id: "900001", name: "Acceptance Artist", username: "acceptance_artist" }];
+        return new Response(JSON.stringify({ ok: true, subjects }), { status: 200 });
+      }
+      const data =
+        init?.method === "PUT"
+          ? { ...JSON.parse(String(init.body)), connection: draft.connection }
+          : draft;
+      return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+        <Routes>
+          <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    if (scope === "chat_user") {
+      await expect.element(page.getByRole("combobox", { name: "Group" })).toBeVisible();
+      await page.getByRole("combobox", { name: "Group" }).click();
+      await page.getByRole("option", { name: /Acceptance Art Group/ }).click();
+    }
+    await page.getByRole("combobox", { name: "Person" }).click();
+    await page.getByRole("option", { name: /Acceptance Artist/ }).click();
+    await page.getByRole("button", { name: "Save" }).click();
+
+    const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
+    const body = JSON.parse(String(request?.body)) as typeof loadedDraft;
+    expect(body.overrides).toMatchObject([{ scope, subjectKey: expectedSubjectKey }]);
+  },
+);
+
+test("blocks a positive user ID selected as a group with an actionable error", async () => {
+  const draft = {
+    ...loadedDraft,
+    overrides: [
+      { resource: "image" as const, scope: "chat" as const, subjectKey: "3522396394", daily: 10 },
+    ],
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    if (String(input).includes("/governance/subjects")) {
+      return new Response(JSON.stringify({ ok: true, subjects: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true, data: draft }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect
+    .element(page.getByRole("combobox", { name: "Group" }))
+    .toHaveTextContent("Unknown group (ID 3522396394)");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("does not match the selected target type");
+  expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT")).toBe(false);
+});
+
+test("resolves saved group and person IDs to recognized names", async () => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("kind=chat")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          subjects: [{ id: "-100", name: "Saved Art Group", username: null }],
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("kind=user")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          subjects: [{ id: "42", name: "Saved Artist", username: "saved_artist" }],
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, data: loadedDraft }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <StrictMode>
+      <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+        <Routes>
+          <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+        </Routes>
+      </MemoryRouter>
+    </StrictMode>,
+  );
+
+  await expect
+    .element(page.getByRole("combobox", { name: "Group" }))
+    .toHaveTextContent("Saved Art Group");
+  await expect
+    .element(page.getByRole("combobox", { name: "Person" }))
+    .toHaveTextContent("Saved Artist");
+});
+
+test("refresh resolves saved IDs again instead of keeping stale names", async () => {
+  let groupName = "Original Art Group";
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("kind=chat")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          subjects: [{ id: "-100", name: groupName, username: null }],
+        }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("kind=user")) {
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          subjects: [{ id: "42", name: "Saved Artist", username: "saved_artist" }],
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(JSON.stringify({ ok: true, data: loadedDraft }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect
+    .element(page.getByRole("combobox", { name: "Group" }))
+    .toHaveTextContent("Original Art Group");
+  groupName = "Renamed Art Group";
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect
+    .element(page.getByRole("combobox", { name: "Group" }))
+    .toHaveTextContent("Renamed Art Group");
+});
+
+test("blocks duplicate resource and target overrides before sending the update", async () => {
+  const draft = {
+    ...loadedDraft,
+    overrides: [loadedDraft.overrides[0], { ...loadedDraft.overrides[0], daily: 9 }],
+  };
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
+    if (String(input).includes("/governance/subjects")) {
+      return new Response(JSON.stringify({ ok: true, subjects: [] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ ok: true, data: draft }), { status: 200 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+      <Routes>
+        <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect.element(page.getByRole("button", { name: "Save" })).toBeVisible();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("already has an override for this target");
+  expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT")).toBe(false);
 });

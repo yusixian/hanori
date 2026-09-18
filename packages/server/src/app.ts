@@ -168,6 +168,7 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/stop", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/governance", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/governance/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/skills", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations/*", requireRoles(ownerOrAdmin))

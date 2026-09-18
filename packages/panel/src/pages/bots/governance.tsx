@@ -12,9 +12,11 @@ import {
   type UsageScope,
 } from "@cos-tool-bot/shared";
 import { Loader2, Plus, RefreshCw, RotateCcw, Save, ShieldCheck, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
+import { GovernanceSubjectPicker, type GovernanceSubjectOption } from "./governance-subject-picker";
+import { createGovernanceSubjectResolver } from "./governance-subject-resolver";
 
 type GeneralRouteMode = "off" | "explicit_only" | "semantic_auto";
 interface ConnectionView {
@@ -50,6 +52,12 @@ interface PolicyDraft {
   daily?: number;
   monthly?: number;
   concurrency?: number;
+}
+type SubjectKind = "chat" | "user";
+interface SubjectSearchResult {
+  id: string;
+  name: string | null;
+  username: string | null;
 }
 interface GovernanceDraft {
   timezone: string;
@@ -135,6 +143,22 @@ function statusVariant(status: ConnectionView["status"]): "default" | "muted" | 
   return "muted";
 }
 
+function isValidPolicySubject(policy: PolicyDraft): boolean {
+  if (policy.scope === "chat") return /^-\d+$/.test(policy.subjectKey);
+  if (policy.scope === "user_global") return /^\d+$/.test(policy.subjectKey);
+  return /^-\d+:\d+$/.test(policy.subjectKey);
+}
+
+function splitChatUserSubject(subjectKey: string): { chatId: string; userId: string } {
+  const separatorIndex = subjectKey.indexOf(":");
+  if (separatorIndex < 0)
+    return { chatId: subjectKey.startsWith("-") ? subjectKey : "", userId: "" };
+  return {
+    chatId: subjectKey.slice(0, separatorIndex),
+    userId: subjectKey.slice(separatorIndex + 1),
+  };
+}
+
 export function BotGovernancePage() {
   const { botId } = useParams<{ botId: string }>();
   const { t } = useTranslation("bots");
@@ -142,9 +166,77 @@ export function BotGovernancePage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string>();
+  const [overrideErrors, setOverrideErrors] = useState<Record<number, string>>({});
+  const [directoryRevision, setDirectoryRevision] = useState(0);
+
+  const searchSubjects = useCallback(
+    async (
+      kind: SubjectKind,
+      query: string,
+      signal: AbortSignal,
+    ): Promise<GovernanceSubjectOption[]> => {
+      if (!botId) return [];
+      const params = new URLSearchParams({ kind, query });
+      const response = await authFetch(
+        `/api/bots/${encodeURIComponent(botId)}/governance/subjects?${params.toString()}`,
+        { signal },
+      );
+      const body = (await response.json()) as {
+        ok?: boolean;
+        subjects?: SubjectSearchResult[];
+      };
+      if (!response.ok || !body.ok || !body.subjects) throw new Error("subject_search_failed");
+      return body.subjects.map((subject) => {
+        const fallback =
+          kind === "chat"
+            ? t("governance.overrides.groupWithId", { id: subject.id })
+            : t("governance.overrides.personWithId", { id: subject.id });
+        const label = subject.name || (subject.username ? `@${subject.username}` : fallback);
+        const details = [
+          subject.name && subject.username ? `@${subject.username}` : undefined,
+          `ID ${subject.id}`,
+        ].filter(Boolean);
+        return { value: subject.id, label, detail: details.join(" · ") };
+      });
+    },
+    [botId, t],
+  );
+  const loadChats = useCallback(
+    (query: string, signal: AbortSignal) => searchSubjects("chat", query, signal),
+    [searchSubjects],
+  );
+  const loadUsers = useCallback(
+    (query: string, signal: AbortSignal) => searchSubjects("user", query, signal),
+    [searchSubjects],
+  );
+  const subjectResolver = useMemo(
+    () => createGovernanceSubjectResolver(searchSubjects),
+    [directoryRevision, searchSubjects],
+  );
+  useEffect(() => {
+    subjectResolver.retain();
+    return () => subjectResolver.release();
+  }, [subjectResolver]);
+  const resolveChat = useCallback(
+    (value: string, signal: AbortSignal) => subjectResolver.resolve("chat", value, signal),
+    [subjectResolver],
+  );
+  const resolveUser = useCallback(
+    (value: string, signal: AbortSignal) => subjectResolver.resolve("user", value, signal),
+    [subjectResolver],
+  );
+  const clearOverrideError = (index: number) => {
+    setOverrideErrors((current) => {
+      if (!(index in current)) return current;
+      const next = { ...current };
+      delete next[index];
+      return next;
+    });
+  };
 
   const load = useCallback(async () => {
     if (!botId) return;
+    setDirectoryRevision((revision) => revision + 1);
     setLoading(true);
     setMessage(undefined);
     try {
@@ -169,6 +261,32 @@ export function BotGovernancePage() {
 
   const save = async () => {
     if (!botId) return;
+    const nextOverrideErrors = Object.fromEntries(
+      draft.overrides.flatMap((policy, index) =>
+        isValidPolicySubject(policy)
+          ? []
+          : [[index, t("governance.overrides.invalidSubject")] as const],
+      ),
+    );
+    if (Object.keys(nextOverrideErrors).length > 0) {
+      setOverrideErrors(nextOverrideErrors);
+      setMessage(t("governance.overrides.invalidSubjectSummary"));
+      return;
+    }
+    const seenOverrides = new Set<string>();
+    for (const [index, policy] of draft.overrides.entries()) {
+      const key = `${policy.resource}:${policy.scope}:${policy.subjectKey}`;
+      if (seenOverrides.has(key)) {
+        nextOverrideErrors[index] = t("governance.overrides.duplicateSubject");
+      }
+      seenOverrides.add(key);
+    }
+    if (Object.keys(nextOverrideErrors).length > 0) {
+      setOverrideErrors(nextOverrideErrors);
+      setMessage(t("governance.overrides.duplicateSubjectSummary"));
+      return;
+    }
+    setOverrideErrors({});
     setSaving(true);
     setMessage(undefined);
     try {
@@ -194,8 +312,12 @@ export function BotGovernancePage() {
       if (!response.ok || !body.ok || !body.data) throw new Error(body.error ?? "save_failed");
       setDraft(body.data);
       setMessage(t("governance.saved"));
-    } catch {
-      setMessage(t("governance.saveError"));
+    } catch (error) {
+      setMessage(
+        error instanceof Error && error.message === "invalid_override_subject"
+          ? t("governance.overrides.invalidSubjectSummary")
+          : t("governance.saveError"),
+      );
     } finally {
       setSaving(false);
     }
@@ -236,6 +358,7 @@ export function BotGovernancePage() {
           <Button
             variant="outline"
             onClick={() => {
+              setDirectoryRevision((revision) => revision + 1);
               setDraft((current) => createDefaultDraft(current.connection));
               setMessage(t("governance.resetReady"));
             }}
@@ -602,8 +725,8 @@ export function BotGovernancePage() {
       </Card>
 
       <Card>
-        <CardHeader className="flex-row items-start justify-between gap-4">
-          <div>
+        <CardHeader className="flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
             <CardTitle>{t("governance.overrides.title")}</CardTitle>
             <p className="text-muted-foreground mt-1 text-sm">
               {t("governance.overrides.description")}
@@ -611,6 +734,7 @@ export function BotGovernancePage() {
           </div>
           <Button
             variant="outline"
+            className="w-full shrink-0 sm:w-auto"
             onClick={() =>
               setDraft((current) => ({
                 ...current,
@@ -618,7 +742,7 @@ export function BotGovernancePage() {
                   ...current.overrides,
                   {
                     resource: "ai_reply",
-                    scope: "chat_user",
+                    scope: "chat",
                     subjectKey: "",
                     hourly: 10,
                     daily: 50,
@@ -635,116 +759,221 @@ export function BotGovernancePage() {
           {draft.overrides.length === 0 ? (
             <p className="text-muted-foreground text-sm">{t("governance.overrides.empty")}</p>
           ) : (
-            draft.overrides.map((policy, policyIndex) => (
-              <section
-                key={`${policy.resource}:${policy.scope}:${policy.subjectKey}:${policyIndex}`}
-                className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[10rem_10rem_minmax(12rem,1fr)_repeat(3,8rem)_auto] lg:items-end"
-              >
-                <div className="grid gap-2">
-                  <Label>{t("governance.overrides.resource")}</Label>
-                  <select
-                    className="border-input bg-background h-10 rounded-md border px-3 text-sm"
-                    value={policy.resource}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        overrides: current.overrides.map((item, index) =>
-                          index === policyIndex
-                            ? { ...item, resource: event.target.value as PolicyDraft["resource"] }
-                            : item,
-                        ),
-                      }))
-                    }
-                  >
-                    <option value="ai_reply">AI</option>
-                    <option value="image">Image</option>
-                  </select>
-                </div>
-                <div className="grid gap-2">
-                  <Label>{t("governance.overrides.scope")}</Label>
-                  <select
-                    className="border-input bg-background h-10 rounded-md border px-3 text-sm"
-                    value={policy.scope}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        overrides: current.overrides.map((item, index) =>
-                          index === policyIndex
-                            ? { ...item, scope: event.target.value as PolicyDraft["scope"] }
-                            : item,
-                        ),
-                      }))
-                    }
-                  >
-                    <option value="chat">chat</option>
-                    <option value="user_global">user_global</option>
-                    <option value="chat_user">chat_user</option>
-                  </select>
-                </div>
-                <div className="grid gap-2">
-                  <Label>{t("governance.overrides.subject")}</Label>
-                  <Input
-                    value={policy.subjectKey}
-                    placeholder={
-                      policy.scope === "chat_user"
-                        ? "-100123:456"
-                        : policy.scope === "chat"
-                          ? "-100123"
-                          : "456"
-                    }
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        overrides: current.overrides.map((item, index) =>
-                          index === policyIndex
-                            ? { ...item, subjectKey: event.target.value }
-                            : item,
-                        ),
-                      }))
-                    }
-                  />
-                </div>
-                {(["hourly", "daily", "cooldownSeconds"] as const).map((field) => (
-                  <div className="grid gap-2" key={field}>
-                    <Label>{t(`governance.overrides.${field}`)}</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={policy[field] ?? ""}
-                      onChange={(event) =>
-                        setDraft((current) => ({
-                          ...current,
-                          overrides: current.overrides.map((item, index) =>
-                            index === policyIndex
-                              ? {
-                                  ...item,
-                                  [field]:
-                                    event.target.value === ""
-                                      ? undefined
-                                      : Number(event.target.value),
-                                }
-                              : item,
-                          ),
-                        }))
-                      }
-                    />
-                  </div>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("governance.overrides.remove")}
-                  onClick={() =>
-                    setDraft((current) => ({
-                      ...current,
-                      overrides: current.overrides.filter((_, index) => index !== policyIndex),
-                    }))
-                  }
+            draft.overrides.map((policy, policyIndex) => {
+              const chatUser = splitChatUserSubject(policy.subjectKey);
+              const subjectError = overrideErrors[policyIndex];
+              const updateSubject = (subjectKey: string) => {
+                clearOverrideError(policyIndex);
+                setDraft((current) => ({
+                  ...current,
+                  overrides: current.overrides.map((item, index) =>
+                    index === policyIndex ? { ...item, subjectKey } : item,
+                  ),
+                }));
+              };
+              const pickerShared = {
+                searchPlaceholder: t("governance.overrides.searchPlaceholder"),
+                emptyText: t("governance.overrides.noSubjects"),
+                loadErrorText: t("governance.overrides.subjectLoadError"),
+                invalid: Boolean(subjectError),
+              };
+              return (
+                <section
+                  key={`${policy.resource}:${policy.scope}:${policyIndex}`}
+                  className="relative space-y-4 rounded-xl border p-4 pr-14"
                 >
-                  <Trash2 className="size-4" aria-hidden="true" />
-                </Button>
-              </section>
-            ))
+                  <div className="grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[10rem_11rem_minmax(0,1fr)]">
+                    <div className="grid min-w-0 gap-2">
+                      <Label>{t("governance.overrides.resource")}</Label>
+                      <select
+                        aria-label={t("governance.overrides.resource")}
+                        className="border-input bg-background h-10 min-w-0 rounded-md border px-3 text-sm"
+                        value={policy.resource}
+                        onChange={(event) =>
+                          setDraft((current) => ({
+                            ...current,
+                            overrides: current.overrides.map((item, index) =>
+                              index === policyIndex
+                                ? {
+                                    ...item,
+                                    resource: event.target.value as PolicyDraft["resource"],
+                                  }
+                                : item,
+                            ),
+                          }))
+                        }
+                      >
+                        <option value="ai_reply">{t("governance.overrides.resources.ai")}</option>
+                        <option value="image">{t("governance.overrides.resources.image")}</option>
+                      </select>
+                    </div>
+                    <div className="grid min-w-0 gap-2">
+                      <Label>{t("governance.overrides.scope")}</Label>
+                      <select
+                        aria-label={t("governance.overrides.scope")}
+                        className="border-input bg-background h-10 min-w-0 rounded-md border px-3 text-sm"
+                        value={policy.scope}
+                        onChange={(event) => {
+                          clearOverrideError(policyIndex);
+                          setDraft((current) => ({
+                            ...current,
+                            overrides: current.overrides.map((item, index) =>
+                              index === policyIndex
+                                ? {
+                                    ...item,
+                                    scope: event.target.value as PolicyDraft["scope"],
+                                    subjectKey: "",
+                                  }
+                                : item,
+                            ),
+                          }));
+                        }}
+                      >
+                        <option value="chat">{t("governance.overrides.scopes.chat")}</option>
+                        <option value="user_global">
+                          {t("governance.overrides.scopes.user_global")}
+                        </option>
+                        <option value="chat_user">
+                          {t("governance.overrides.scopes.chat_user")}
+                        </option>
+                      </select>
+                    </div>
+                    <div
+                      className={
+                        policy.scope === "chat_user"
+                          ? "grid min-w-0 gap-3 md:col-span-2 md:grid-cols-2 xl:col-span-1"
+                          : "grid min-w-0 gap-2 md:col-span-2 xl:col-span-1"
+                      }
+                    >
+                      {policy.scope === "chat" && (
+                        <div className="grid min-w-0 gap-2">
+                          <Label>{t("governance.overrides.group")}</Label>
+                          <GovernanceSubjectPicker
+                            key={`chat:${botId}`}
+                            {...pickerShared}
+                            label={t("governance.overrides.group")}
+                            value={policy.subjectKey}
+                            onValueChange={updateSubject}
+                            loadOptions={loadChats}
+                            resolveOption={resolveChat}
+                            placeholder={t("governance.overrides.chooseGroup")}
+                            unknownText={(value) =>
+                              t("governance.overrides.unknownGroup", { id: value })
+                            }
+                          />
+                        </div>
+                      )}
+                      {policy.scope === "user_global" && (
+                        <div className="grid min-w-0 gap-2">
+                          <Label>{t("governance.overrides.person")}</Label>
+                          <GovernanceSubjectPicker
+                            key={`user:${botId}`}
+                            {...pickerShared}
+                            label={t("governance.overrides.person")}
+                            value={policy.subjectKey}
+                            onValueChange={updateSubject}
+                            loadOptions={loadUsers}
+                            resolveOption={resolveUser}
+                            placeholder={t("governance.overrides.choosePerson")}
+                            unknownText={(value) =>
+                              t("governance.overrides.unknownPerson", { id: value })
+                            }
+                          />
+                        </div>
+                      )}
+                      {policy.scope === "chat_user" && (
+                        <>
+                          <div className="grid min-w-0 gap-2">
+                            <Label>{t("governance.overrides.group")}</Label>
+                            <GovernanceSubjectPicker
+                              key={`chat-user-chat:${botId}`}
+                              {...pickerShared}
+                              label={t("governance.overrides.group")}
+                              value={chatUser.chatId}
+                              onValueChange={(chatId) =>
+                                updateSubject(`${chatId}:${chatUser.userId}`)
+                              }
+                              loadOptions={loadChats}
+                              resolveOption={resolveChat}
+                              placeholder={t("governance.overrides.chooseGroup")}
+                              unknownText={(value) =>
+                                t("governance.overrides.unknownGroup", { id: value })
+                              }
+                            />
+                          </div>
+                          <div className="grid min-w-0 gap-2">
+                            <Label>{t("governance.overrides.person")}</Label>
+                            <GovernanceSubjectPicker
+                              key={`chat-user-user:${botId}`}
+                              {...pickerShared}
+                              label={t("governance.overrides.person")}
+                              value={chatUser.userId}
+                              onValueChange={(userId) =>
+                                updateSubject(`${chatUser.chatId}:${userId}`)
+                              }
+                              loadOptions={loadUsers}
+                              resolveOption={resolveUser}
+                              placeholder={t("governance.overrides.choosePerson")}
+                              unknownText={(value) =>
+                                t("governance.overrides.unknownPerson", { id: value })
+                              }
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {subjectError && (
+                    <p className="text-destructive text-sm" role="alert">
+                      {subjectError}
+                    </p>
+                  )}
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    {(["hourly", "daily", "cooldownSeconds"] as const).map((field) => (
+                      <div className="grid min-w-0 gap-2" key={field}>
+                        <Label>{t(`governance.overrides.${field}`)}</Label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={policy[field] ?? ""}
+                          onChange={(event) =>
+                            setDraft((current) => ({
+                              ...current,
+                              overrides: current.overrides.map((item, index) =>
+                                index === policyIndex
+                                  ? {
+                                      ...item,
+                                      [field]:
+                                        event.target.value === ""
+                                          ? undefined
+                                          : Number(event.target.value),
+                                    }
+                                  : item,
+                              ),
+                            }))
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-3 right-3"
+                    aria-label={t("governance.overrides.remove")}
+                    onClick={() => {
+                      setOverrideErrors({});
+                      setDraft((current) => ({
+                        ...current,
+                        overrides: current.overrides.filter((_, index) => index !== policyIndex),
+                      }));
+                    }}
+                  >
+                    <Trash2 className="size-4" aria-hidden="true" />
+                  </Button>
+                </section>
+              );
+            })
           )}
           <p className="text-muted-foreground text-xs">{t("governance.overrides.hint")}</p>
         </CardContent>
