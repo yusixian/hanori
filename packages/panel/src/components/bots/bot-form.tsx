@@ -5,11 +5,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ALL_EMAIL_EVENT_TYPES, DEFAULT_LARK_MENTION_MAP } from "@cos-tool-bot/shared";
-import type { BotPlatform, EmailEventType } from "@cos-tool-bot/shared";
+import type { BotPlatform, CosInsideConfig, EmailEventType } from "@cos-tool-bot/shared";
 import type { FormEvent } from "react";
 import { useRef, useState } from "react";
 import { Link } from "react-router";
 import { useTranslation } from "react-i18next";
+import {
+  CosInsideTargetsField,
+  type CosInsideTargetDraft,
+  type CosInsideTargetErrors,
+} from "./cos-inside-targets-field";
 
 interface EmailForwardFormData {
   imapHost: string;
@@ -33,6 +38,7 @@ export interface BotFormData {
   webhookUrl?: string;
   signSecret?: string;
   emailForwardConfig?: EmailForwardFormData;
+  cosInsideConfig?: CosInsideConfig;
 }
 
 interface BotFormProps {
@@ -55,10 +61,13 @@ interface BotFormProps {
       disabledEventTypes?: EmailEventType[];
       hasPassword?: boolean;
     };
+    cosInsideConfig?: CosInsideConfig;
   };
   onSubmit: (data: BotFormData) => Promise<void>;
   submitLabel: string;
   isEdit?: boolean;
+  botId?: string;
+  canManageCosInside?: boolean;
 }
 
 const EVENT_TYPE_GROUPS: Array<{ labelKey: string; events: EmailEventType[] }> = [
@@ -141,7 +150,14 @@ function EventTypeFilter({
   );
 }
 
-export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormProps) {
+export function BotForm({
+  initialData,
+  onSubmit,
+  submitLabel,
+  isEdit,
+  botId,
+  canManageCosInside = false,
+}: BotFormProps) {
   const { t } = useTranslation("bots");
   const [platform, setPlatform] = useState<BotPlatform>(initialData?.platform ?? "telegram");
   const [name, setName] = useState(initialData?.name ?? "");
@@ -150,6 +166,17 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
   const [isActive, setIsActive] = useState(initialData?.isActive ?? true);
   const [miniAppEnabled, setMiniAppEnabled] = useState(initialData?.miniAppEnabled ?? false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const nextCosInsideKey = useRef(0);
+  const [cosInsideTargets, setCosInsideTargets] = useState<CosInsideTargetDraft[]>(() =>
+    (initialData?.cosInsideConfig?.targets ?? []).map((target, index) => ({
+      key: `stored-${index}`,
+      alias: target.alias,
+      chatId: String(target.chatId),
+    })),
+  );
+  const [cosInsideTouched, setCosInsideTouched] = useState(false);
+  const [cosInsideErrors, setCosInsideErrors] = useState<Record<string, CosInsideTargetErrors>>({});
 
   // Lark fields
   const [webhookUrl, setWebhookUrl] = useState(initialData?.webhookUrl ?? "");
@@ -209,6 +236,36 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    setSubmitError("");
+    let parsedCosInsideConfig: CosInsideConfig | undefined;
+    if (platform === "telegram" && canManageCosInside && isEdit && botId && cosInsideTouched) {
+      const nextErrors: Record<string, CosInsideTargetErrors> = {};
+      const aliases = new Set<string>();
+      const targets: CosInsideConfig["targets"] = [];
+      for (const target of cosInsideTargets) {
+        const alias = target.alias.trim();
+        const normalizedAlias = alias.toLowerCase();
+        const errors: CosInsideTargetErrors = {};
+        if (!/^[a-z0-9_-]{1,32}$/i.test(alias)) {
+          errors.alias = t("form.cosInside.aliasInvalid");
+        } else if (aliases.has(normalizedAlias)) {
+          errors.alias = t("form.cosInside.aliasDuplicate");
+        } else {
+          aliases.add(normalizedAlias);
+        }
+
+        const chatIdText = target.chatId.trim();
+        const chatId = Number(chatIdText);
+        if (!/^-\d+$/.test(chatIdText) || !Number.isSafeInteger(chatId) || chatId > -1) {
+          errors.chatId = t("form.cosInside.groupInvalid");
+        }
+        if (errors.alias || errors.chatId) nextErrors[target.key] = errors;
+        else targets.push({ alias, chatId });
+      }
+      setCosInsideErrors(nextErrors);
+      if (Object.keys(nextErrors).length > 0) return;
+      parsedCosInsideConfig = { targets };
+    }
     setSubmitting(true);
     try {
       const ids = adminChatIds
@@ -226,6 +283,8 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
         isActive,
         miniAppEnabled,
       };
+
+      if (parsedCosInsideConfig) data.cosInsideConfig = parsedCosInsideConfig;
 
       if (platform === "lark-webhook") {
         data.webhookUrl = webhookUrl;
@@ -258,6 +317,8 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
       }
 
       await onSubmit(data);
+    } catch {
+      setSubmitError(t("form.saveFailed"));
     } finally {
       setSubmitting(false);
     }
@@ -339,6 +400,56 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
                 />
                 <p className="text-muted-foreground text-xs">{t("form.adminChatIdsHint")}</p>
               </div>
+
+              {canManageCosInside &&
+                (isEdit && botId ? (
+                  <CosInsideTargetsField
+                    botId={botId}
+                    targets={cosInsideTargets}
+                    errors={cosInsideErrors}
+                    onAdd={() => {
+                      const key = `new-${nextCosInsideKey.current++}`;
+                      setCosInsideTargets((current) => [
+                        ...current,
+                        { key, alias: "", chatId: "" },
+                      ]);
+                      setCosInsideTouched(true);
+                    }}
+                    onUpdate={(key, patch) => {
+                      setCosInsideTargets((current) =>
+                        current.map((target) =>
+                          target.key === key ? { ...target, ...patch } : target,
+                        ),
+                      );
+                      setCosInsideErrors((current) => {
+                        if (!(key in current)) return current;
+                        const next = { ...current };
+                        delete next[key];
+                        return next;
+                      });
+                      setCosInsideTouched(true);
+                    }}
+                    onRemove={(key) => {
+                      setCosInsideTargets((current) =>
+                        current.filter((target) => target.key !== key),
+                      );
+                      setCosInsideErrors((current) => {
+                        if (!(key in current)) return current;
+                        const next = { ...current };
+                        delete next[key];
+                        return next;
+                      });
+                      setCosInsideTouched(true);
+                    }}
+                  />
+                ) : (
+                  <div className="space-y-1 rounded-md border p-3">
+                    <h3 className="text-sm font-medium">{t("form.cosInside.title")}</h3>
+                    <p className="text-muted-foreground text-xs">
+                      {t("form.cosInside.createFirst")}
+                    </p>
+                  </div>
+                ))}
             </>
           ) : (
             <>
@@ -590,6 +701,12 @@ export function BotForm({ initialData, onSubmit, submitLabel, isEdit }: BotFormP
               </label>
             </div>
           ) : null}
+
+          {submitError && (
+            <p className="text-destructive text-sm" role="alert">
+              {submitError}
+            </p>
+          )}
 
           <Button type="submit" disabled={submitting} className="w-full">
             {submitting ? t("common:common.saving") : submitLabel}

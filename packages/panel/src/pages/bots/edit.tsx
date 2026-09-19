@@ -3,6 +3,7 @@ import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useOne, useUpdate } from "@refinedev/core";
 import { useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
+import { useCanManageBot } from "@/hooks/use-can-manage-bot";
 
 export function BotEditPage() {
   const { t } = useTranslation("bots");
@@ -16,6 +17,7 @@ export function BotEditPage() {
   });
 
   const { mutateAsync: update } = useUpdate();
+  const canManageBot = useCanManageBot();
 
   const bot = data?.data;
 
@@ -32,7 +34,10 @@ export function BotEditPage() {
       <h1 className="text-2xl font-bold">{t("edit.title")}</h1>
 
       <BotForm
+        key={bot.id}
         isEdit
+        botId={botId}
+        canManageCosInside={canManageBot}
         initialData={{
           name: bot.name,
           platform: bot.platform,
@@ -43,6 +48,7 @@ export function BotEditPage() {
           webhookUrl: bot.larkWebhookConfig?.webhookUrl,
           hasSignSecret: bot.larkWebhookConfig?.hasSignSecret,
           emailForwardConfig: bot.emailForwardConfig,
+          cosInsideConfig: bot.cosInsideConfig,
         }}
         submitLabel={t("edit.submit")}
         onSubmit={async (formData) => {
@@ -61,6 +67,7 @@ export function BotEditPage() {
               ...(formData.emailForwardConfig
                 ? { emailForwardConfig: formData.emailForwardConfig }
                 : {}),
+              ...(formData.cosInsideConfig ? { cosInsideConfig: formData.cosInsideConfig } : {}),
             },
           });
           navigate(`/bots/${botId}`);

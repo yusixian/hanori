@@ -3,7 +3,6 @@ import {
   bots,
   imageGenerationConfigs,
   peopleProfiles,
-  telegramChats,
   usageGovernancePolicies,
 } from "@cos-tool-bot/database";
 import {
@@ -14,12 +13,16 @@ import {
   type UsageScope,
 } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { and, desc, eq, ilike, isNull, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, ne, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AuthVariables } from "../middleware/better-auth.js";
 import type { ImageGenerationService } from "../services/image-generation-service.js";
 import type { ImageMcpConnectionService } from "../services/image-mcp-connection-service.js";
+import {
+  normalizeTelegramChatSubjectQuery,
+  searchTelegramChatSubjects,
+} from "../services/telegram-chat-subjects.js";
 import { escapeLike } from "../utils/search.js";
 
 const LIMIT_KEYS = [
@@ -208,7 +211,7 @@ export function governanceRoutes(
     .get("/:botId/governance/subjects", async (c) => {
       const botId = c.req.param("botId");
       const kind = c.req.query("kind");
-      const query = (c.req.query("query") ?? "").trim().replace(/^@/, "");
+      const query = normalizeTelegramChatSubjectQuery(c.req.query("query"));
       if ((kind !== "chat" && kind !== "user") || query.length > 64) {
         return c.json({ ok: false as const, error: "invalid_subject_search" }, 400);
       }
@@ -217,36 +220,9 @@ export function governanceRoutes(
 
       const pattern = `%${escapeLike(query)}%`;
       if (kind === "chat") {
-        const numericId = /^-\d+$/.test(query) ? Number(query) : undefined;
-        const matches = query
-          ? numericId !== undefined && Number.isSafeInteger(numericId)
-            ? eq(telegramChats.chatId, numericId)
-            : or(
-                ilike(telegramChats.title, pattern),
-                ilike(telegramChats.username, pattern),
-                sql`${telegramChats.chatId}::text ILIKE ${pattern}`,
-              )
-          : undefined;
-        const subjects = await db
-          .select({
-            id: telegramChats.chatId,
-            name: telegramChats.title,
-            username: telegramChats.username,
-          })
-          .from(telegramChats)
-          .where(
-            and(
-              eq(telegramChats.botId, botId),
-              isNull(telegramChats.leftAt),
-              isNull(telegramChats.migratedToChatId),
-              matches,
-            ),
-          )
-          .orderBy(desc(telegramChats.lastObservedAt))
-          .limit(20);
         return c.json({
           ok: true as const,
-          subjects: subjects.map((subject) => ({ ...subject, id: String(subject.id) })),
+          subjects: await searchTelegramChatSubjects(db, botId, query),
         });
       }
 

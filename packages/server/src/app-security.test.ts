@@ -13,13 +13,113 @@ process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
 
 let createApp: (typeof import("./app.js"))["createApp"];
 const TEST_SHA = "0123456789abcdef0123456789abcdef01234567";
+const TEST_BOT_ID = "00000000-0000-4000-8000-000000000001";
 
 // Cold transformation of the full app graph can exceed 10s on the shared CI runner.
 beforeAll(async () => {
   ({ createApp } = await import("./app.js"));
 }, 30_000);
 
+function createRoleApp(role: string) {
+  let selectCalls = 0;
+  const db = {
+    select: vi.fn(() => {
+      selectCalls += 1;
+      if (selectCalls === 1) {
+        return {
+          from: () => ({
+            innerJoin: () => ({
+              where: () => ({
+                limit: async () => [
+                  {
+                    memberId: "member-1",
+                    userId: "user-1",
+                    organizationId: "org-1",
+                    role,
+                    organizationName: "Test",
+                    organizationSlug: "cos-tool-bot",
+                  },
+                ],
+              }),
+            }),
+          }),
+        };
+      }
+      if (selectCalls === 2) {
+        return {
+          from: () => ({ where: () => ({ limit: async () => [{ id: TEST_BOT_ID }] }) }),
+        };
+      }
+      return {
+        from: () => ({
+          where: () => ({
+            orderBy: () => ({
+              limit: async () => [{ id: -1001, name: "Operations", username: "operations" }],
+            }),
+          }),
+        }),
+      };
+    }),
+  };
+  return createApp({
+    db: db as never,
+    auth: {
+      api: {
+        getSession: vi.fn(async () => ({
+          user: { id: "user-1" },
+          session: { id: "session-1" },
+        })),
+      },
+      handler: vi.fn(),
+    } as never,
+    baseURL: "https://bot.example.test",
+    botPool: {} as never,
+    encryptionKey: "test-key",
+    backupService: {} as never,
+    modelCapabilityService: {} as never,
+    timerRegistry: {} as never,
+    rssFeedService: {} as never,
+    mcpClientManager: {} as never,
+    summaryService: {} as never,
+    summaryConfigService: {} as never,
+    githubAppService: {} as never,
+    miniAppSessionSecret: "x".repeat(32),
+    telegramDirectoryService: {} as never,
+    telegramMembershipVerifier: {} as never,
+    miniAppAccessService: {} as never,
+    groupConfigService: {} as never,
+    chatAiSelectionService: {} as never,
+    botLifecycleService: {} as never,
+    botSettingsService: {} as never,
+    imageGenerationService: {} as never,
+    imageMcpConnectionService: {} as never,
+    usageGovernor: {} as never,
+    runtimeHealth: new RuntimeHealth(TEST_SHA),
+  });
+}
+
 describe("production HTTP policy", () => {
+  it("protects the cos-inside group lookup at app composition", async () => {
+    const admin = createRoleApp("admin");
+    const adminGroups = await admin.request(`/api/bots/${TEST_BOT_ID}/cos-inside/groups?query=ops`);
+    expect(adminGroups.status).toBe(200);
+    await expect(adminGroups.json()).resolves.toEqual({
+      ok: true,
+      subjects: [{ id: "-1001", name: "Operations", username: "operations" }],
+    });
+
+    const editor = createRoleApp("editor");
+    const editorGroups = await editor.request(
+      `/api/bots/${TEST_BOT_ID}/cos-inside/groups?query=ops`,
+    );
+    expect(editorGroups.status).toBe(403);
+
+    const adminGovernance = await createRoleApp("admin").request(
+      `/api/bots/${TEST_BOT_ID}/governance/subjects?kind=chat&query=ops`,
+    );
+    expect(adminGovernance.status).toBe(403);
+  });
+
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {
     const adminCsp = APP_SECURITY_HEADERS["Content-Security-Policy"];
     const miniAppCsp = MINI_APP_SECURITY_HEADERS["Content-Security-Policy"];

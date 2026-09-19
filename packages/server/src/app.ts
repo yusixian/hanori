@@ -14,6 +14,7 @@ import { resolveAllowedOrigins, type AppAuth } from "./auth.js";
 import { authzRoutes } from "./routes/authz.js";
 import { backupRoutes } from "./routes/backup.js";
 import { botsRoutes } from "./routes/bots.js";
+import { cosInsideRoutes } from "./routes/cos-inside.js";
 import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
@@ -169,6 +170,7 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/restart", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/governance", requireRoles(ownerOnly))
     .use("/api/bots/:botId/governance/*", requireRoles(ownerOnly))
+    .use("/api/bots/:botId/cos-inside/groups", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/skills", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations/*", requireRoles(ownerOrAdmin))
@@ -178,6 +180,7 @@ export function createApp(options: AppOptions) {
       "/api/bots",
       botsRoutes(db, botPool, modelCapabilityService, botLifecycleService, chatAiSelectionService),
     )
+    .route("/api/bots", cosInsideRoutes(db))
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
