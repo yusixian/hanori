@@ -141,6 +141,31 @@ export function CosInsideTargetsField({
                     loadErrorText={t("form.cosInside.loadGroupsFailed")}
                     invalid={!!targetErrors?.chatId}
                   />
+                  <details className="text-xs">
+                    <summary className="text-muted-foreground cursor-pointer py-1">
+                      {t("form.cosInside.manualEntry")}
+                    </summary>
+                    <div className="space-y-1 pt-1">
+                      <label htmlFor={`cos-inside-chat-id-${target.key}`}>
+                        {t("form.cosInside.chatIdNumber", { number: index + 1 })}
+                      </label>
+                      <Input
+                        id={`cos-inside-chat-id-${target.key}`}
+                        type="text"
+                        value={target.chatId}
+                        placeholder="-1001234567890"
+                        aria-invalid={!!targetErrors?.chatId || undefined}
+                        aria-describedby={`cos-inside-chat-id-hint-${target.key}`}
+                        onChange={(event) => onUpdate(target.key, { chatId: event.target.value })}
+                      />
+                      <p
+                        id={`cos-inside-chat-id-hint-${target.key}`}
+                        className="text-muted-foreground"
+                      >
+                        {t("form.cosInside.manualHint")}
+                      </p>
+                    </div>
+                  </details>
                   {targetErrors?.chatId && (
                     <p className="text-destructive text-xs" role="alert">
                       {targetErrors.chatId}

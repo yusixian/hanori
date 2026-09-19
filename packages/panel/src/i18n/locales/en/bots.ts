@@ -85,6 +85,10 @@ export const bots = {
       empty: "No relay targets. Saving this state disables /cosinside.",
       alias: "Alias",
       group: "Telegram group",
+      manualEntry: "Enter group ID manually",
+      chatIdNumber: "Group ID {{number}}",
+      manualHint:
+        "Enter the negative numeric chat ID. The Bot must already be in the group and able to send messages.",
       groupNumber: "Relay group {{number}}",
       selectGroup: "Select a group",
       searchGroup: "Search groups",
@@ -97,7 +101,7 @@ export const bots = {
       example: "Usage: {{command}}",
       aliasInvalid: "Use 1–32 letters, numbers, hyphens, or underscores.",
       aliasDuplicate: "Aliases must be unique (ignoring letter case).",
-      groupInvalid: "Select a valid Telegram group.",
+      groupInvalid: "Select a group or enter a valid negative group ID.",
     },
     email: {
       title: "Email Forwarding (IMAP)",

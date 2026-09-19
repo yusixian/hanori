@@ -85,6 +85,9 @@ export const bots = {
       empty: "尚未配置代发目标；以此状态保存会停用 /cosinside。",
       alias: "别名",
       group: "Telegram 群",
+      manualEntry: "手动填写群 ID",
+      chatIdNumber: "群 ID {{number}}",
+      manualHint: "填写负整数 chat ID。Bot 必须已加入该群并拥有发言权限。",
       groupNumber: "代发群 {{number}}",
       selectGroup: "选择群聊",
       searchGroup: "搜索群聊",
@@ -97,7 +100,7 @@ export const bots = {
       example: "用法：{{command}}",
       aliasInvalid: "请输入 1–32 位字母、数字、连字符或下划线。",
       aliasDuplicate: "别名不能重复（不区分大小写）。",
-      groupInvalid: "请选择有效的 Telegram 群。",
+      groupInvalid: "请选择群聊或填写有效的负整数群 ID。",
     },
     email: {
       title: "邮件转发（IMAP）",

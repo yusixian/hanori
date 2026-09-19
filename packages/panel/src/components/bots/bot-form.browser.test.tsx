@@ -169,14 +169,16 @@ test("rejects malformed and case-insensitive duplicate aliases", async () => {
   expect(onSubmit).not.toHaveBeenCalled();
 });
 
-test("requires selecting an observed group for a new target", async () => {
+test("requires a valid group for a new target", async () => {
   const onSubmit = vi.fn(async (_data: BotFormData) => undefined);
   await renderForm({ onSubmit, targets: [] });
 
   await page.getByRole("button", { name: "Add target" }).click();
   await page.getByLabelText("Alias").fill("ops");
   await page.getByRole("button", { name: "Save Changes" }).click();
-  await expect.element(page.getByText("Select a valid Telegram group.")).toBeVisible();
+  await expect
+    .element(page.getByText("Select a group or enter a valid negative group ID."))
+    .toBeVisible();
   expect(onSubmit).not.toHaveBeenCalled();
 
   await page.getByRole("combobox", { name: "Relay group 1" }).click();
@@ -239,3 +241,38 @@ test("shows create-first guidance instead of an unbound group picker", async () 
     .toBeVisible();
   expect(page.getByRole("button", { name: "Add target" }).query()).toBeNull();
 });
+
+test("accepts a manual group ID absent from the directory and keeps picker selection in sync", async () => {
+  const onSubmit = vi.fn(async (_data: BotFormData) => undefined);
+  await renderForm({ onSubmit });
+  await page.getByText("Enter group ID manually", { exact: true }).click();
+  await page.getByLabelText("Group ID 1").fill("-1009876543210");
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      cosInsideConfig: { targets: [{ alias: "ops", chatId: -1009876543210 }] },
+    }),
+  );
+  await page.getByRole("combobox", { name: "Relay group 1" }).click();
+  await page.getByRole("option", { name: /Release Room/ }).click();
+  await expect.element(page.getByLabelText("Group ID 1")).toHaveValue("-1002");
+  await page.getByRole("button", { name: "Save Changes" }).click();
+  expect(onSubmit).toHaveBeenLastCalledWith(
+    expect.objectContaining({ cosInsideConfig: { targets: [{ alias: "ops", chatId: -1002 }] } }),
+  );
+});
+
+test.each(["", "0", "123", "-1.5", "-9007199254740992", "group"])(
+  "rejects invalid manual group ID %s",
+  async (chatId) => {
+    const onSubmit = vi.fn(async (_data: BotFormData) => undefined);
+    await renderForm({ onSubmit });
+    await page.getByText("Enter group ID manually", { exact: true }).click();
+    await page.getByLabelText("Group ID 1").fill(chatId);
+    await page.getByRole("button", { name: "Save Changes" }).click();
+    await expect
+      .element(page.getByText("Select a group or enter a valid negative group ID."))
+      .toBeVisible();
+    expect(onSubmit).not.toHaveBeenCalled();
+  },
+);
