@@ -195,6 +195,13 @@ function projectForwardOrigin(meta: Record<string, unknown> | null | undefined):
   return forwardOrigin ? { forwardOrigin } : {};
 }
 
+function projectTgMessageId(meta: Record<string, unknown> | null | undefined): {
+  tgMessageId?: number;
+} {
+  const tgMessageId = meta?.["tgMessageId"];
+  return typeof tgMessageId === "number" && Number.isInteger(tgMessageId) ? { tgMessageId } : {};
+}
+
 function truncateToTokenBudget(content: string, budget: number): string {
   if (budget <= 0) return "";
   if (countTokens(content) <= budget) return content;
@@ -218,6 +225,7 @@ export function selectHistoryWithinTokenBudget(
     createdAt: Date;
     historyOrderId?: number;
     forwardOrigin?: ConversationForwardOrigin;
+    tgMessageId?: number;
   }>,
   active:
     | {
@@ -495,6 +503,7 @@ export class ConversationStore {
         createdAt: Date;
         historyOrderId: number;
         forwardOrigin?: ConversationForwardOrigin;
+        tgMessageId?: number;
       }> = [];
       let pageBeforeOrderId: number | undefined;
       let pageBeforeId: number | undefined;
@@ -544,6 +553,7 @@ export class ConversationStore {
         const projectedBatch = batch.map(({ meta, ...message }) => ({
           ...message,
           ...projectForwardOrigin(meta),
+          ...projectTgMessageId(meta),
         }));
         newestFirst.push(...projectedBatch);
         scannedTokens += projectedBatch.reduce(
@@ -583,6 +593,7 @@ export class ConversationStore {
           userName: message.userName,
           createdAt: message.createdAt.toISOString(),
           ...(message.forwardOrigin ? { forwardOrigin: message.forwardOrigin } : {}),
+          ...(message.tgMessageId === undefined ? {} : { tgMessageId: message.tgMessageId }),
         })),
         budgetTrace: selected.trace,
       };
@@ -626,6 +637,7 @@ export class ConversationStore {
         userName: message.userName,
         createdAt: message.createdAt.toISOString(),
         ...projectForwardOrigin(meta),
+        ...projectTgMessageId(meta),
       })),
     };
   }

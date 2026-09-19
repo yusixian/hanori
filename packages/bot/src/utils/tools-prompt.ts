@@ -47,7 +47,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- delete_own_message: 删除/撤回 bot 之前发的消息");
   lines.push("- pin_message: 置顶消息（需管理员权限）");
   lines.push("- get_chat_info: 获取当前聊天信息");
-  lines.push("- reply_to_specific: 回复某条特定历史消息");
+  lines.push(
+    "- reply_to_specific: 回复某条特定历史消息。reply_to_message_id 只接受上下文中 [#数字] 标注的 ID（包括对话历史和近期群聊消息），或本轮工具返回的刚发出消息 ID。没有 ID 标注的消息不要猜数字，改用普通回复",
+  );
 
   // Web tools
   if (opts.capabilities.has("web")) {

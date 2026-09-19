@@ -52,6 +52,13 @@ export interface TelegramToolsOptions {
   token?: string;
   receivedFiles?: ReceivedFile[];
   timeoutConfig?: TimeoutConfig;
+  /**
+   * Telegram message IDs the model was actually shown this turn. `reply_to_specific`
+   * refuses every other ID, because nothing else in the prompt carries a message ID and
+   * a guessed number lands on an unrelated message that Telegram accepts without error.
+   * Read lazily so callers can fill the list after the tools are built.
+   */
+  getReplyableMessageIds?: () => readonly number[];
   /** Longest set_timer duration, in seconds. Falls back to DEFAULT_TIMER_MAX_SECONDS. */
   timerMaxSeconds?: number;
 }
@@ -65,6 +72,25 @@ async function resolveInput(source: string, dataDir?: string): Promise<string | 
     return new InputFile(buffer, path.basename(resolved));
   }
   return source;
+}
+
+/**
+ * Rejects a reply target the model was never shown. It wraps the tool outside the once
+ * guard: a rejected call sends nothing, so the guard must stay free for the corrected retry.
+ */
+function wrapReplyTargetCheck(
+  getReplyable: () => Set<number>,
+  /** `any` is needed to match AI SDK's dynamic tool execute signature */
+  execute: (...args: any[]) => PromiseLike<any>,
+): (...args: any[]) => PromiseLike<any> {
+  return async (input: { reply_to_message_id: number }, ...rest: any[]) => {
+    const replyable = getReplyable();
+    if (replyable.has(input.reply_to_message_id)) return execute(input, ...rest);
+    return {
+      error: `message_id ${input.reply_to_message_id} 不在你本轮看到的消息里，无法确认它指向哪条消息。只能回复上下文中 [#数字] 标注的消息或你自己刚发出的消息；目标已不在上下文时请直接普通回复。`,
+      available_message_ids: [...replyable].sort((a, b) => a - b),
+    };
+  };
 }
 
 const MIN_TIMER_SECONDS = 5;
@@ -91,6 +117,9 @@ const ONCE_GUARDED_TELEGRAM_TOOLS = [
 
 export function createTelegramTools(options: TelegramToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, dataDir } = options;
+  // The shared list survives turns; only newly sent messages are visible through this
+  // turn's tool results. Older bot IDs must not make guessed reply targets valid.
+  const previousBotMessageIds = new Set(recentBotMessageIds);
   const timerMaxSeconds = resolveTimerMaxSeconds(options.timerMaxSeconds);
 
   const tools: Record<string, Tool> = {
@@ -521,10 +550,13 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
     }),
 
     reply_to_specific: tool({
-      description: "回复聊天中的某条特定历史消息。用于引用之前的某条消息进行回复。",
+      description:
+        "回复聊天中的某条特定历史消息。目标 ID 只能取自上下文中 [#数字] 标注的消息，或你自己刚发出的消息；不要猜测、推算或沿用其它数字。目标不在上下文里时改用普通回复。",
       inputSchema: zodToAiSchema(
         z.object({
-          reply_to_message_id: z.number().describe("要回复的目标消息 ID"),
+          reply_to_message_id: z
+            .number()
+            .describe("要回复的目标消息 ID，必须来自上下文中 [#数字] 标注"),
           text: z.string().describe("回复内容"),
         }),
       ),
@@ -534,7 +566,11 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_parameters: { message_id: reply_to_message_id },
           });
           recentBotMessageIds.push(sent.message_id);
-          return { success: true, message_id: sent.message_id };
+          return {
+            success: true,
+            message_id: sent.message_id,
+            replied_to_message_id: reply_to_message_id,
+          };
         } catch (err) {
           return { error: String(err) };
         }
@@ -628,6 +664,18 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
         t.execute = wrapOnce(name, guard, t.execute);
       }
     }
+  }
+
+  const replyTool = tools.reply_to_specific;
+  if (replyTool && "execute" in replyTool && typeof replyTool.execute === "function") {
+    replyTool.execute = wrapReplyTargetCheck(
+      () =>
+        new Set([
+          ...(options.getReplyableMessageIds?.() ?? []),
+          ...recentBotMessageIds.filter((id) => !previousBotMessageIds.has(id)),
+        ]),
+      replyTool.execute,
+    );
   }
 
   return tools;

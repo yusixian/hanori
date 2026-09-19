@@ -397,7 +397,7 @@ function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
 
 type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
 
-interface BufferedMessage {
+export interface BufferedMessage {
   messageId: number;
   userId: number;
   userName: string;
@@ -704,11 +704,16 @@ function describeGroupMessageForHistory(msg: Message): string {
   return [attachment, caption].filter(Boolean).join("\n");
 }
 
-function formatGroupContextMessages(messages: BufferedMessage[]): string {
+/**
+ * Renders the ring buffer with each Telegram message ID attached to its own line.
+ * The ID and the text arrive together, so `reply_to_specific` can only quote a message
+ * the model actually read, using the same labels as the database history.
+ */
+export function formatGroupContextMessages(messages: BufferedMessage[]): string {
   return messages
     .map(
       (message) =>
-        `[${message.userName}]: ${withForwardOrigin(message.text, message.forwardOrigin)}`,
+        `[#${message.messageId} ${message.userName}]: ${withForwardOrigin(message.text, message.forwardOrigin)}`,
     )
     .join("\n");
 }
@@ -1668,12 +1673,17 @@ export function createAiReplyHandler(
                 .catch(() => null)
             : Promise.resolve(null);
 
+        // Filled once the ring buffer and the assembled history below decide what the
+        // model gets to read. Only ids it actually read may reach reply_to_specific.
+        const replyableMessageIds: number[] = [msg.message_id];
+
         // Create per-request telegram tools
         const telegramTools = createTelegramTools({
           api: ctx.api,
           chatId,
           userId,
           recentBotMessageIds: chatBotMsgIds,
+          getReplyableMessageIds: () => replyableMessageIds,
           pendingActions,
           onTimerFired: async (timerChatId, timerId, reason) => {
             await onTimerFired(timerChatId, timerId, reason, userId);
@@ -1772,6 +1782,9 @@ export function createAiReplyHandler(
             );
             if (contextMessages.length > 0) {
               ringBufferContext = formatGroupContextMessages(contextMessages);
+              for (const buffered of contextMessages) {
+                replyableMessageIds.push(buffered.messageId);
+              }
             }
           }
         }
@@ -2073,6 +2086,7 @@ export function createAiReplyHandler(
         } else {
           currentRequest = { role: "user", content: textContent };
         }
+        replyableMessageIds.push(...promptBundle.replyableMessageIds);
         const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, currentRequest);
         const historyBudget = promptTrace.sections
           .map((section) => section.details?.["historyBudget"])

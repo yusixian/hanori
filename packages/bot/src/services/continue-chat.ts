@@ -500,6 +500,7 @@ async function doContinueChat(
       chatId,
       userId: event.userId,
       recentBotMessageIds: chatBotMsgIds,
+      getReplyableMessageIds: () => promptBundle.replyableMessageIds,
       pendingActions: config.pendingActions,
       onTimerFired: wrappedOnTimerFired,
       onTimerCreate:

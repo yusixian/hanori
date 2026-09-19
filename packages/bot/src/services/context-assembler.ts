@@ -66,6 +66,11 @@ export interface PromptTrace {
 export interface PromptBundle {
   messages: Array<{ role: PromptRole; content: string }>;
   trace: PromptTrace;
+  /**
+   * Telegram message IDs rendered into this prompt. They are the only IDs the model can
+   * cite, so they are also the only legal `reply_to_specific` targets.
+   */
+  replyableMessageIds: number[];
 }
 
 export interface CompletedPromptBundle {
@@ -352,10 +357,12 @@ function appendMessage(
 function finishBundle(
   messages: PromptBundle["messages"],
   sections: PromptSectionTrace[],
+  replyableMessageIds: number[] = [],
 ): PromptBundle {
   const staticContent = messages[0]?.content ?? "";
   return {
     messages,
+    replyableMessageIds,
     trace: {
       sections,
       totalEstimatedTokens: messages.reduce(
@@ -516,11 +523,16 @@ async function loadLateBoundMemories(input: {
   return input.botMemory.getMemoriesForPrompt(input.userId, input.limit);
 }
 
+/** Explain the ID labels next to the rendered ring buffer, as with database history. */
+const RING_BUFFER_HEADER =
+  "[近期群聊消息]（行首 [#数字] 是该消息的 Telegram message_id，reply_to_specific 只能用这些 ID）";
+
 function historySections(
   history: Awaited<ReturnType<ConversationCallbacks["getHistory"]>>,
   historyFormat: "prompt" | "messages",
   isPrivate: boolean,
   ringBufferContext?: string,
+  replyableMessageIds?: number[],
 ): RawSection[][] {
   const historyDetails = history.budgetTrace
     ? {
@@ -534,6 +546,12 @@ function historySections(
   const historyContent = (message: (typeof history.messages)[number]) => {
     const attribution = formatConversationForwardOrigin(message.forwardOrigin);
     return attribution ? `${attribution}\n${message.content}` : message.content;
+  };
+  /** Records the id as quotable and returns it, or returns undefined when it stays hidden. */
+  const claimQuotableId = (message: (typeof history.messages)[number]) => {
+    if (isPrivate || message.role !== "user" || message.tgMessageId === undefined) return undefined;
+    replyableMessageIds?.push(message.tgMessageId);
+    return message.tgMessageId;
   };
   if (historyFormat === "prompt") {
     const combined: RawSection[] = [];
@@ -553,7 +571,10 @@ function historySections(
       const lines = history.messages.map((message) => {
         const content = historyContent(message);
         if (message.role === "context") return `[群聊上下文]\n${content}`;
-        return `${message.role === "assistant" ? "AI" : message.userName || "User"}: ${content}`;
+        if (message.role === "assistant") return `AI: ${content}`;
+        const name = message.userName || "User";
+        const id = claimQuotableId(message);
+        return id === undefined ? `${name}: ${content}` : `[#${id} ${name}]: ${content}`;
       });
       combined.push(
         section(
@@ -573,7 +594,7 @@ function historySections(
           "group.ring-buffer",
           "volatile",
           "user-derived",
-          `[近期群聊消息]\n${ringBufferContext}`,
+          `${RING_BUFFER_HEADER}\n${ringBufferContext}`,
           { role: "user" },
         ),
       );
@@ -610,10 +631,12 @@ function historySections(
     }
     const role = message.role === "assistant" ? "assistant" : "user";
     const attributedContent = historyContent(message);
-    const content =
-      !isPrivate && message.userName && message.role === "user"
-        ? `[${message.userName}]: ${attributedContent}`
-        : attributedContent;
+    let content = attributedContent;
+    if (!isPrivate && message.userName && message.role === "user") {
+      const id = claimQuotableId(message);
+      const label = id === undefined ? message.userName : `#${id} ${message.userName}`;
+      content = `[${label}]: ${attributedContent}`;
+    }
     groups.push([
       section(
         `history.message:${index}`,
@@ -636,7 +659,7 @@ function historySections(
         "group.ring-buffer",
         "volatile",
         "user-derived",
-        `[近期群聊消息]\n${ringBufferContext}`,
+        `${RING_BUFFER_HEADER}\n${ringBufferContext}`,
         { role: "user" },
       ),
     ]);
@@ -647,6 +670,7 @@ function historySections(
 export async function buildPromptBundle(input: ContextAssemblyInput): Promise<PromptBundle> {
   const messages: PromptBundle["messages"] = [];
   const traces: PromptSectionTrace[] = [];
+  const replyableMessageIds: number[] = [];
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const historyFormat = input.historyFormat ?? conversationConfig.historyFormat ?? "prompt";
   const memoryConfig = input.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -731,6 +755,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       historyFormat,
       input.isPrivate,
       input.ringBufferContext,
+      replyableMessageIds,
     )) {
       appendMessage(messages, traces, group);
     }
@@ -885,7 +910,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
 
   appendMessage(messages, traces, lateBindingSections);
 
-  return finishBundle(messages, traces);
+  return finishBundle(messages, traces, replyableMessageIds);
 }
 
 export async function assembleContext(input: ContextAssemblyInput): Promise<AssembledContext> {
@@ -1060,6 +1085,7 @@ export async function buildContinueChatPromptBundle(
 ): Promise<PromptBundle> {
   const messages: PromptBundle["messages"] = [];
   const traces: PromptSectionTrace[] = [];
+  const replyableMessageIds: number[] = [];
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const botMemoryConfig = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
   const isPrivate = input.chatId > 0;
@@ -1096,7 +1122,13 @@ export async function buildContinueChatPromptBundle(
       input.chatId,
       conversationConfig.maxContextMessages,
     );
-    for (const group of historySections(history, "prompt", isPrivate)) {
+    for (const group of historySections(
+      history,
+      "prompt",
+      isPrivate,
+      undefined,
+      replyableMessageIds,
+    )) {
       appendMessage(messages, traces, group);
     }
   }
@@ -1134,7 +1166,7 @@ export async function buildContinueChatPromptBundle(
     }
   }
   if (lateBindingSections.length > 0) appendMessage(messages, traces, lateBindingSections);
-  return finishBundle(messages, traces);
+  return finishBundle(messages, traces, replyableMessageIds);
 }
 
 /** @deprecated Prefer buildContinueChatPromptBundle() when adding the current event request. */

@@ -1,0 +1,101 @@
+import type { ConversationCallbacks } from "@cos-tool-bot/shared";
+import { describe, expect, it, vi } from "vitest";
+import {
+  assembleContext,
+  buildContinueChatPromptBundle,
+  type ContextAssemblyInput,
+} from "./context-assembler.js";
+
+const HISTORY = [
+  { role: "user", content: "这个 hydration 的文章讲了啥", userName: "Nahida", tgMessageId: 4820 },
+  { role: "assistant", content: "我看看", userName: null, tgMessageId: 4821 },
+  { role: "user", content: "帮我写个频道摘要", userName: "cos", tgMessageId: 4822 },
+  { role: "user", content: "压缩时丢了 id 的旧消息", userName: "cos" },
+];
+
+function conversation(): ConversationCallbacks {
+  return {
+    getHistory: vi.fn().mockResolvedValue({ summary: null, messages: HISTORY }),
+    getRecentUserMessagesAcrossChats: vi.fn().mockResolvedValue([]),
+    addMessage: vi.fn(),
+    addMessages: vi.fn(),
+    upsertUserMessage: vi.fn(),
+    ensureCompression: vi.fn(),
+    triggerCompression: vi.fn(),
+    clearHistory: vi.fn(),
+  } as unknown as ConversationCallbacks;
+}
+
+function input(overrides: Partial<ContextAssemblyInput> = {}): ContextAssemblyInput {
+  return {
+    systemPrompt: "Base system",
+    isPrivate: false,
+    chatId: -1001,
+    userName: "cos",
+    maxContextMessages: 20,
+    conversation: conversation(),
+    ...overrides,
+  };
+}
+
+function promptText(messages: Array<{ content: string }>): string {
+  return messages.map((message) => message.content).join("\n");
+}
+
+describe("replyable message ids in the assembled prompt", () => {
+  it("labels group history messages with their Telegram id and reports them", async () => {
+    const bundle = await assembleContext(input({ historyFormat: "prompt" }));
+
+    expect(promptText(bundle.messages)).toContain("[#4820 Nahida]: 这个 hydration 的文章讲了啥");
+    expect(promptText(bundle.messages)).toContain("[#4822 cos]: 帮我写个频道摘要");
+    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+  });
+
+  it.each(["reply", "continue"])(
+    "allows database history targets without a ring buffer in a %s turn",
+    async (turn) => {
+      const bundle =
+        turn === "reply"
+          ? await assembleContext(input())
+          : await buildContinueChatPromptBundle({
+              systemPrompt: "Base system",
+              chatId: -1001,
+              conversation: conversation(),
+              moodState: new Map(),
+            });
+      const instructions = bundle.messages[0]!.content;
+      expect(instructions).toContain("包括对话历史和近期群聊消息");
+      expect(instructions).not.toContain("其它位置的历史消息没有 ID");
+      expect(promptText(bundle.messages)).toContain("[#4820 Nahida]");
+      expect(bundle.replyableMessageIds).toContain(4820);
+    },
+  );
+
+  it("labels group history the same way in messages format", async () => {
+    const bundle = await assembleContext(input({ historyFormat: "messages" }));
+
+    expect(promptText(bundle.messages)).toContain("[#4820 Nahida]: 这个 hydration 的文章讲了啥");
+    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+  });
+
+  it("omits the bot's own messages, so the model cannot cite them as reply targets", async () => {
+    const bundle = await assembleContext(input({ historyFormat: "prompt" }));
+
+    expect(promptText(bundle.messages)).not.toContain("#4821");
+    expect(bundle.replyableMessageIds).not.toContain(4821);
+  });
+
+  it("leaves private chats unlabelled", async () => {
+    const bundle = await assembleContext(input({ isPrivate: true, chatId: 42 }));
+
+    expect(promptText(bundle.messages)).not.toContain("#4820");
+    expect(bundle.replyableMessageIds).toEqual([]);
+  });
+
+  it("keeps a message that lost its id out of the reply target set", async () => {
+    const bundle = await assembleContext(input({ historyFormat: "prompt" }));
+
+    expect(promptText(bundle.messages)).toContain("cos: 压缩时丢了 id 的旧消息");
+    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+  });
+});

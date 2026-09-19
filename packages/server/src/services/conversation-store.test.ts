@@ -204,6 +204,58 @@ describe("ConversationStore.getHistory", () => {
     ).toEqual({ type: "channel", name: "Daily News" });
     expect(historyWhereSql[1]).toContain("turnOrderId");
   });
+
+  it.each([undefined, 12_000])(
+    "projects the Telegram message id out of meta with a token budget of %s",
+    async (tokenBudget) => {
+      const rows = [
+        {
+          id: 201,
+          role: "user",
+          content: "带 id 的消息",
+          userName: "Nahida",
+          createdAt: new Date("2026-07-29T00:00:01.000Z"),
+          turnOrderId: 201,
+          meta: { tgMessageId: 4820 },
+        },
+        {
+          id: 202,
+          role: "user",
+          content: "没有 id 的消息",
+          userName: "cos",
+          createdAt: new Date("2026-07-29T00:00:02.000Z"),
+          turnOrderId: 202,
+          meta: { tgMessageId: "4821" },
+        },
+      ];
+      let selectedTable: unknown;
+      const db = {
+        select: () => {
+          const query = {
+            from: (table: unknown) => {
+              selectedTable = table;
+              return query;
+            },
+            innerJoin: () => query,
+            where: () => query,
+            orderBy: () => query,
+            limit: async () =>
+              selectedTable === conversationCompactionState ? [] : [...rows].reverse(),
+          };
+          return query;
+        },
+      } as unknown as Database;
+
+      const history = await new ConversationStore(db).getHistory(
+        baseParams.botId,
+        baseParams.chatId,
+        20,
+        tokenBudget,
+      );
+
+      expect(history.messages.map((message) => message.tgMessageId)).toEqual([4820, undefined]);
+    },
+  );
 });
 
 describe("selectHistoryWithinTokenBudget", () => {

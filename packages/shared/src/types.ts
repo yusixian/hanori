@@ -294,6 +294,8 @@ export interface ConversationCallbacks {
       userName: string | null;
       forwardOrigin?: ConversationForwardOrigin;
       createdAt?: string;
+      /** Telegram message ID, present for messages the bot ingested from a chat. */
+      tgMessageId?: number;
     }>;
     budgetTrace?: ConversationHistoryBudgetTrace;
   }>;
