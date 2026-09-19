@@ -1,5 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
-import { DEFAULT_AI_EXECUTION_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_TIMER_MAX_SECONDS } from "@cos-tool-bot/shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
@@ -266,6 +266,44 @@ describe("AI execution configuration", () => {
     expect(response.status).toBe(200);
     expect(savedAiConfig?.["executionConfig"]).toEqual({
       maxConcurrentReplies: 8,
+      timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
+      queueNotice: { enabled: true, text: "稍后就来" },
+    });
+  });
+
+  it("keeps a raised timer ceiling when a client omits only that field", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase(
+        (aiConfig) => {
+          savedAiConfig = aiConfig as Record<string, unknown>;
+        },
+        {
+          ...existingAiConfig,
+          executionConfig: {
+            maxConcurrentReplies: 6,
+            timerMaxSeconds: 604800,
+            queueNotice: { enabled: false, text: "保留我" },
+          },
+        },
+      ),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        executionConfig: {
+          maxConcurrentReplies: 8,
+          queueNotice: { enabled: true, text: "稍后就来" },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["executionConfig"]).toEqual({
+      maxConcurrentReplies: 8,
+      timerMaxSeconds: 604800,
       queueNotice: { enabled: true, text: "稍后就来" },
     });
   });
@@ -291,7 +329,10 @@ describe("AI execution configuration", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(savedAiConfig?.["executionConfig"]).toEqual(existingExecutionConfig);
+    expect(savedAiConfig?.["executionConfig"]).toEqual({
+      ...existingExecutionConfig,
+      timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
+    });
   });
 
   it.each([0, 129, 1.5])("rejects invalid max concurrency %s", async (maxConcurrentReplies) => {
@@ -305,6 +346,56 @@ describe("AI execution configuration", () => {
           ...requestBody(),
           executionConfig: {
             maxConcurrentReplies,
+            queueNotice: { enabled: true, text: "稍后就来" },
+          },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("saves a timer ceiling above the 24 hour default", async () => {
+    let savedAiConfig: Record<string, unknown> | undefined;
+    const response = await routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as Record<string, unknown>;
+      }),
+      savingBotPool(),
+    ).request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        executionConfig: {
+          maxConcurrentReplies: 8,
+          timerMaxSeconds: 604800,
+          queueNotice: { enabled: true, text: "稍后就来" },
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.["executionConfig"]).toEqual({
+      maxConcurrentReplies: 8,
+      timerMaxSeconds: 604800,
+      queueNotice: { enabled: true, text: "稍后就来" },
+    });
+  });
+
+  it.each([299, 604801, 3600.5])("rejects timer ceiling %s", async (timerMaxSeconds) => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          executionConfig: {
+            maxConcurrentReplies: 4,
+            timerMaxSeconds,
             queueNotice: { enabled: true, text: "稍后就来" },
           },
         }),
@@ -358,6 +449,7 @@ describe("AI execution configuration", () => {
     expect(response.status).toBe(200);
     expect(savedAiConfig?.["executionConfig"]).toEqual({
       maxConcurrentReplies: 4,
+      timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
       queueNotice: { enabled: false, text: "" },
     });
   });

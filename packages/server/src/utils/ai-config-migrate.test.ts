@@ -1,5 +1,9 @@
 import type { AiConfigStored } from "@cos-tool-bot/shared";
-import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_TIMER_MAX_SECONDS,
+} from "@cos-tool-bot/shared";
 import { describe, expect, it } from "vitest";
 import { migrateAiConfig } from "./ai-config-migrate.js";
 
@@ -77,8 +81,20 @@ describe("migrateAiConfig", () => {
 
     expect(migrated.executionConfig).toEqual({
       maxConcurrentReplies: 8,
+      timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
       queueNotice: { enabled: false, text: "稍后回复" },
     });
+  });
+
+  it("keeps a configured timer ceiling", () => {
+    const stored = createStoredConfig();
+    stored.executionConfig = {
+      maxConcurrentReplies: 8,
+      timerMaxSeconds: 604_800,
+      queueNotice: { enabled: true, text: "稍后回复" },
+    };
+
+    expect(migrateAiConfig(stored).executionConfig?.timerMaxSeconds).toBe(604_800);
   });
 
   it("adds a provider default model that is missing from its model catalog", () => {

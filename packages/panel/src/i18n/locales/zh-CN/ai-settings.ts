@@ -352,12 +352,16 @@ export const aiSettings = {
     maxConcurrentReplies: "AI 回复并发数",
     maxConcurrentRepliesDescription:
       "此 Bot 可同时跨聊天运行的最大回复数（1–128）；同一聊天仍逐条执行。默认 32。",
+    timerMaxSeconds: "定时器最大时长",
+    timerMaxSecondsDescription:
+      "AI 通过 set_timer 可设置的最长时间，单位秒（300–604800）。默认 86400，即 24 小时。",
     queueNotice: "排队提示",
     queueNoticeDescription: "回复无法立即开始时，先发送一条等待消息。",
     queueNoticeText: "等待提示文案",
     queueNoticeTextDescription: "按纯文本发送，最多 200 个字符。",
     validation: {
       maxConcurrentReplies: "请输入 1 到 128 之间的整数。",
+      timerMaxSeconds: "请输入 300 到 604800 之间的整数。",
       queueNoticeText: {
         required: "启用排队提示时，请填写等待提示文案。",
         tooLong: "等待提示文案不能超过 200 个字符。",

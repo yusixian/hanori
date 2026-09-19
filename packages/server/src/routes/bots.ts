@@ -18,6 +18,8 @@ import {
   IMAGE_MIN_SIZE,
   MAX_CONCURRENT_AI_REPLIES,
   MAX_SUB_AGENT_STEPS,
+  MAX_TIMER_MAX_SECONDS,
+  MIN_TIMER_MAX_SECONDS,
   resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
 import type {
@@ -408,6 +410,12 @@ const modelDiscoveryPathSchema = z
 const aiExecutionConfigSchema = z
   .object({
     maxConcurrentReplies: z.number().int().min(1).max(MAX_CONCURRENT_AI_REPLIES),
+    timerMaxSeconds: z
+      .number()
+      .int()
+      .min(MIN_TIMER_MAX_SECONDS)
+      .max(MAX_TIMER_MAX_SECONDS)
+      .optional(),
     queueNotice: z.object({
       enabled: z.boolean(),
       text: z.string().trim().max(200),
@@ -1257,6 +1265,7 @@ export function botsRoutes(
           messageConfig: body.messageConfig,
           hasImageGeneration: true,
           skills: resolveBotSkills(bot?.aiConfig?.skillConfig),
+          timerMaxSeconds: bot?.aiConfig?.executionConfig?.timerMaxSeconds,
         });
 
         // Keep the public RPC response structurally named inside the server package. Returning
@@ -1682,10 +1691,16 @@ export function botsRoutes(
           artworkToolsConfig: body.artworkToolsConfig,
           botMemoryConfig: body.botMemoryConfig,
           messageConfig: body.messageConfig,
-          executionConfig:
-            body.executionConfig ??
-            existingMigrated?.executionConfig ??
-            DEFAULT_AI_EXECUTION_CONFIG,
+          executionConfig: body.executionConfig
+            ? {
+                ...body.executionConfig,
+                // A client built before timerMaxSeconds existed omits the key. Replacing the
+                // whole object would silently reset a raised ceiling back to the default.
+                timerMaxSeconds:
+                  body.executionConfig.timerMaxSeconds ??
+                  existingMigrated?.executionConfig?.timerMaxSeconds,
+              }
+            : (existingMigrated?.executionConfig ?? DEFAULT_AI_EXECUTION_CONFIG),
           timeoutConfig:
             body.timeoutConfig?.pixaiTaskMs === undefined
               ? body.timeoutConfig

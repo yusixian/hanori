@@ -23,6 +23,7 @@ import {
   DEFAULT_MEMORY_CONFIG,
   formatConversationForwardOrigin,
   isStreamReplyMode,
+  resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, Tool, UserModelMessage } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
@@ -109,6 +110,7 @@ export interface ContextAssemblyInput {
   hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 export type AssembledContext = PromptBundle;
@@ -179,6 +181,7 @@ interface StaticPromptInput {
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 function section(
@@ -294,6 +297,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
         hasFileTools: !!input.hasFileTools,
         isPrivate: input.isPrivate,
         hasMultiMessage: !isStreamReplyMode(input.messageConfig),
+        timerMaxSeconds: resolveTimerMaxSeconds(input.timerMaxSeconds),
       }),
     ),
   );
@@ -680,6 +684,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       artworkToolsEnabled: input.artworkToolsEnabled,
       hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
 
@@ -912,6 +917,7 @@ export interface PromptPreviewInput {
   hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 export interface PromptPreviewResult {
@@ -953,6 +959,7 @@ export async function assemblePromptPreview(
       artworkToolsEnabled: input.artworkToolsEnabled,
       hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
   appendMessage(messages, traces, [
@@ -1052,6 +1059,7 @@ export interface ContinueChatContextInput {
   botMemory?: BotMemoryCallbacks;
   retrievalQuery?: string;
   userId?: number;
+  timerMaxSeconds?: number;
 }
 
 export async function buildContinueChatPromptBundle(
@@ -1083,6 +1091,7 @@ export async function buildContinueChatPromptBundle(
       artworkToolsEnabled: input.artworkToolsEnabled,
       hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
 

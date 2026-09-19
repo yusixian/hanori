@@ -41,6 +41,7 @@ import {
   inferCapabilities,
   isRichMessageEnabled,
   isStreamReplyMode,
+  resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { JSONValue, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
@@ -910,6 +911,7 @@ export function createAiReplyHandler(
       ...config.executionConfig?.queueNotice,
     },
   };
+  const timerMaxSeconds = resolveTimerMaxSeconds(executionConfig.timerMaxSeconds);
   const executionCoordinator = new AiExecutionCoordinator({
     maxConcurrent: executionConfig.maxConcurrentReplies,
     maxQueued: 100,
@@ -1291,6 +1293,7 @@ export function createAiReplyHandler(
       onTimerCreate: config.onTimerCreate,
       onTimerCancel: config.onTimerCancel,
       onTimerFiredPersist: config.onTimerFiredPersist,
+      timerMaxSeconds,
       onLog: config.onLog,
       onTokenUsage: config.onTokenUsage,
       adminIds: config.adminChatIds,
@@ -1771,6 +1774,7 @@ export function createAiReplyHandler(
           token: config.token,
           receivedFiles: recentReceivedFiles.get(chatId),
           timeoutConfig: config.timeoutConfig,
+          timerMaxSeconds,
         });
         if (!personalizationEnabled) delete telegramTools.set_timer;
 
@@ -2138,6 +2142,7 @@ export function createAiReplyHandler(
           hasFileTools: !!fileTools,
           dataFiles: config.dataFiles,
           messageConfig: turnMessageConfig,
+          timerMaxSeconds,
         });
 
         // --- Assemble final user message (multimodal or text-only) ---

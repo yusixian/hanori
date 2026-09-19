@@ -1,5 +1,10 @@
 import type { TimeoutConfig } from "@cos-tool-bot/shared";
-import { DEFAULT_TIMEOUT_CONFIG, MAX_FILE_SIZE, resolveAndValidate } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_TIMEOUT_CONFIG,
+  MAX_FILE_SIZE,
+  resolveAndValidate,
+  resolveTimerMaxSeconds,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -47,6 +52,8 @@ export interface TelegramToolsOptions {
   token?: string;
   receivedFiles?: ReceivedFile[];
   timeoutConfig?: TimeoutConfig;
+  /** Longest set_timer duration, in seconds. Falls back to DEFAULT_TIMER_MAX_SECONDS. */
+  timerMaxSeconds?: number;
 }
 
 async function resolveInput(source: string, dataDir?: string): Promise<string | InputFile> {
@@ -58,6 +65,16 @@ async function resolveInput(source: string, dataDir?: string): Promise<string | 
     return new InputFile(buffer, path.basename(resolved));
   }
   return source;
+}
+
+const MIN_TIMER_SECONDS = 5;
+
+/** Formats a timer ceiling for the model, in the largest whole unit it divides into. */
+function describeTimerCeiling(seconds: number): string {
+  if (seconds % 86_400 === 0) return `${seconds / 86_400}天`;
+  if (seconds % 3_600 === 0) return `${seconds / 3_600}小时`;
+  if (seconds % 60 === 0) return `${seconds / 60}分钟`;
+  return `${seconds}秒`;
 }
 
 /** Tool names whose execute functions should be guarded against duplicate calls. */
@@ -74,6 +91,7 @@ const ONCE_GUARDED_TELEGRAM_TOOLS = [
 
 export function createTelegramTools(options: TelegramToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, dataDir } = options;
+  const timerMaxSeconds = resolveTimerMaxSeconds(options.timerMaxSeconds);
 
   const tools: Record<string, Tool> = {
     send_photo: tool({
@@ -306,7 +324,13 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
         "设置一个定时器。到期后你（AI）会自动收到通知并可继续对话。可用于投票倒计时、游戏节奏控制、定时提醒等。支持持久化（重启后自动恢复）。",
       inputSchema: zodToAiSchema(
         z.object({
-          seconds: z.number().min(5).max(86400).describe("定时秒数（5-86400，即最长24小时）"),
+          seconds: z
+            .number()
+            .min(MIN_TIMER_SECONDS)
+            .max(timerMaxSeconds)
+            .describe(
+              `定时秒数（${MIN_TIMER_SECONDS}-${timerMaxSeconds}，即最长${describeTimerCeiling(timerMaxSeconds)}）`,
+            ),
           reason: z.string().describe("定时器用途说明，到期后会作为上下文提供给你"),
         }),
       ),
@@ -322,6 +346,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             // Placeholder handle, replaced below
             setTimeout(() => {}, 0),
             true, // persistent: managed by DB
+            seconds * 1000,
           );
           clearTimeout(pending.handle);
           if (options.onTimerCreate) {

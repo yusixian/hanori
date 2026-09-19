@@ -13,6 +13,8 @@ export interface ExtendedToolsPromptOptions {
   hasFileTools: boolean;
   isPrivate: boolean;
   hasMultiMessage: boolean;
+  /** Effective set_timer ceiling, in seconds. Must match the tool schema. */
+  timerMaxSeconds: number;
 }
 
 export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
@@ -47,7 +49,9 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- send_poll: 发起投票（非匿名时投票结果会自动通知你）");
   lines.push("- send_choice: 发送 inline keyboard 选择按钮（用户点击后你会自动收到通知）");
   lines.push("- close_poll: 手动关闭投票并获取最终结果");
-  lines.push("- set_timer: 设置定时器，到期后你会自动收到通知继续对话");
+  lines.push(
+    `- set_timer: 设置定时器，到期后你会自动收到通知继续对话。单个定时器最长 ${opts.timerMaxSeconds} 秒`,
+  );
   lines.push("- cancel_timer: 取消定时器");
   lines.push("- send_dice: 发送骰子/随机动画");
   lines.push("- edit_own_message: 编辑 bot 之前发的消息");

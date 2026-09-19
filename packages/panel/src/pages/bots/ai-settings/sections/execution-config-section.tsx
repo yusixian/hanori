@@ -3,7 +3,11 @@ import { Label } from "@/components/ui/label";
 import { NumberInput } from "@/components/ui/number-input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { MAX_CONCURRENT_AI_REPLIES } from "@cos-tool-bot/shared";
+import {
+  MAX_CONCURRENT_AI_REPLIES,
+  MAX_TIMER_MAX_SECONDS,
+  MIN_TIMER_MAX_SECONDS,
+} from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 import { type AiExecutionConfigDraft, validateExecutionConfig } from "../execution-config";
 
@@ -48,6 +52,30 @@ export function ExecutionConfigSection({
           {errors.maxConcurrentReplies && (
             <p id="max-concurrent-replies-error" role="alert" className="text-destructive text-xs">
               {t("execution.validation.maxConcurrentReplies")}
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="timer-max-seconds">{t("execution.timerMaxSeconds")}</Label>
+          <NumberInput
+            id="timer-max-seconds"
+            name="timerMaxSeconds"
+            min={MIN_TIMER_MAX_SECONDS}
+            max={MAX_TIMER_MAX_SECONDS}
+            value={config.timerMaxSeconds ?? ""}
+            onValueChange={(timerMaxSeconds) => onUpdate({ ...config, timerMaxSeconds })}
+            aria-invalid={errors.timerMaxSeconds ? true : undefined}
+            aria-describedby={
+              errors.timerMaxSeconds ? "timer-max-seconds-error" : "timer-max-seconds-description"
+            }
+          />
+          <p id="timer-max-seconds-description" className="text-muted-foreground text-xs">
+            {t("execution.timerMaxSecondsDescription")}
+          </p>
+          {errors.timerMaxSeconds && (
+            <p id="timer-max-seconds-error" role="alert" className="text-destructive text-xs">
+              {t("execution.validation.timerMaxSeconds")}
             </p>
           )}
         </div>
