@@ -575,9 +575,24 @@ export const DEFAULT_MESSAGE_CONFIG: MessageConfig = {
   splitDelayMs: 800,
 };
 
+export const DEFAULT_TIMER_MAX_SECONDS = 86_400;
+export const MIN_TIMER_MAX_SECONDS = 300;
+/** TimerRegistry schedules every timer with one setTimeout, on creation and on restart
+ *  recovery. A week keeps both delays far below the 2^31-1 ms overflow point, above which
+ *  Node fires the timer immediately. */
+export const MAX_TIMER_MAX_SECONDS = 604_800;
+
+/** Resolve the effective set_timer ceiling, clamping stored values into the supported range. */
+export function resolveTimerMaxSeconds(seconds?: number): number {
+  if (seconds === undefined || !Number.isFinite(seconds)) return DEFAULT_TIMER_MAX_SECONDS;
+  return Math.min(Math.max(Math.trunc(seconds), MIN_TIMER_MAX_SECONDS), MAX_TIMER_MAX_SECONDS);
+}
+
 export interface AiExecutionConfig {
   /** Maximum number of AI replies that may execute concurrently across chats for one Bot. */
   maxConcurrentReplies: number;
+  /** Longest duration the AI may request from set_timer, in seconds. */
+  timerMaxSeconds?: number;
   queueNotice: {
     enabled: boolean;
     /** Plain-text notice sent when an AI reply must wait for a scheduler slot. */
@@ -587,6 +602,7 @@ export interface AiExecutionConfig {
 
 export const DEFAULT_AI_EXECUTION_CONFIG: AiExecutionConfig = {
   maxConcurrentReplies: 32,
+  timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
   queueNotice: {
     enabled: true,
     text: "正在处理中，请稍候～",

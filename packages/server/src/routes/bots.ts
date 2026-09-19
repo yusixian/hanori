@@ -738,6 +738,7 @@ export function botsRoutes(
           messageConfig: body.messageConfig,
           hasImageGeneration: true,
           skills: resolveBotSkills(bot?.aiConfig?.skillConfig),
+          timerMaxSeconds: bot?.aiConfig?.executionConfig?.timerMaxSeconds,
         });
 
         // Keep the public RPC response structurally named inside the server package. Returning

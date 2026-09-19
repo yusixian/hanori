@@ -17,15 +17,20 @@ test("shows the defaults and reports concurrency and queue-notice edits", async 
   render(<ExecutionConfigSection config={config} onUpdate={onUpdate} />);
 
   const concurrency = page.getByRole("spinbutton", { name: "Concurrent AI replies" });
+  const timerMax = page.getByRole("spinbutton", { name: "Timer maximum duration" });
   const queueNotice = page.getByRole("switch", { name: "Queue notice" });
   const waitingMessage = page.getByRole("textbox", { name: "Waiting message" });
 
   await expect.element(concurrency).toHaveValue(32);
+  await expect.element(timerMax).toHaveValue(86400);
   await expect.element(queueNotice).toBeChecked();
   await expect.element(waitingMessage).toHaveValue(DEFAULT_EXECUTION_CONFIG.queueNotice.text);
 
   await concurrency.fill("8");
   expect(onUpdate).toHaveBeenLastCalledWith({ ...config, maxConcurrentReplies: 8 });
+
+  await timerMax.fill("604800");
+  expect(onUpdate).toHaveBeenLastCalledWith({ ...config, timerMaxSeconds: 604800 });
 
   await queueNotice.click();
   expect(onUpdate).toHaveBeenLastCalledWith({
@@ -39,6 +44,7 @@ test("shows actionable errors for invalid execution settings", async () => {
     <ExecutionConfigSection
       config={{
         maxConcurrentReplies: 0,
+        timerMaxSeconds: 60,
         queueNotice: { enabled: true, text: "   " },
       }}
       onUpdate={vi.fn()}
@@ -46,6 +52,7 @@ test("shows actionable errors for invalid execution settings", async () => {
   );
 
   await expect.element(page.getByText("Enter a whole number from 1 to 128.")).toBeVisible();
+  await expect.element(page.getByText("Enter a whole number from 300 to 604800.")).toBeVisible();
   await expect
     .element(page.getByText("Enter a waiting message while queue notices are enabled."))
     .toBeVisible();
@@ -61,31 +68,51 @@ test("normalizes valid drafts and rejects values outside the saved contract", ()
   expect(
     toExecutionConfigUpdate({
       maxConcurrentReplies: 6,
+      timerMaxSeconds: 604800,
       queueNotice: { enabled: true, text: "  Please wait  " },
     }),
   ).toEqual({
     maxConcurrentReplies: 6,
+    timerMaxSeconds: 604800,
     queueNotice: { enabled: true, text: "Please wait" },
   });
 
   expect(
     toExecutionConfigUpdate({
       maxConcurrentReplies: 2.5,
+      timerMaxSeconds: 86400,
       queueNotice: { enabled: true, text: "Ready" },
     }),
   ).toBeNull();
   expect(
     toExecutionConfigUpdate({
       maxConcurrentReplies: 4,
+      timerMaxSeconds: 604801,
+      queueNotice: { enabled: true, text: "Ready" },
+    }),
+  ).toBeNull();
+  expect(
+    toExecutionConfigUpdate({
+      maxConcurrentReplies: 4,
+      timerMaxSeconds: 299,
+      queueNotice: { enabled: true, text: "Ready" },
+    }),
+  ).toBeNull();
+  expect(
+    toExecutionConfigUpdate({
+      maxConcurrentReplies: 4,
+      timerMaxSeconds: 86400,
       queueNotice: { enabled: false, text: "   " },
     }),
   ).toEqual({
     maxConcurrentReplies: 4,
+    timerMaxSeconds: 86400,
     queueNotice: { enabled: false, text: "" },
   });
   expect(
     toExecutionConfigUpdate({
       maxConcurrentReplies: 4,
+      timerMaxSeconds: 86400,
       queueNotice: { enabled: true, text: "x".repeat(201) },
     }),
   ).toBeNull();

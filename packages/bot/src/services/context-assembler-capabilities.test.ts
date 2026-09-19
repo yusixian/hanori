@@ -24,6 +24,7 @@ describe("prompt tool capabilities", () => {
       chatId: 42,
       userName: "Nahida",
       maxContextMessages: 20,
+      timerMaxSeconds: 604_800,
       webToolsConfig: runtimeConfig,
       webTools: resolvedWebTools,
     });
@@ -32,6 +33,7 @@ describe("prompt tool capabilities", () => {
       isPrivate: true,
       memoryEnabled: false,
       botMemoryEnabled: false,
+      timerMaxSeconds: 604_800,
       webToolsConfig: {
         enabled: true,
         search: { provider: "tavily", hasApiKey: true },
@@ -41,6 +43,7 @@ describe("prompt tool capabilities", () => {
       systemPrompt: "System",
       chatId: 42,
       moodState: new Map(),
+      timerMaxSeconds: 604_800,
       webToolsConfig: runtimeConfig,
       webTools: resolvedWebTools,
     });
@@ -48,6 +51,7 @@ describe("prompt tool capabilities", () => {
     expect(preview.trace.staticPrefixHash).toBe(runtime.trace.staticPrefixHash);
     expect(continuation.trace.staticPrefixHash).toBe(runtime.trace.staticPrefixHash);
     expect(preview.fullPrompt).toContain("- web_search: 搜索网络获取最新信息");
+    expect(preview.fullPrompt).toContain("单个定时器最长 604800 秒");
   });
 
   it("does not advertise search from invalid preview config or config alone at runtime", async () => {

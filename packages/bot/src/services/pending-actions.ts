@@ -31,10 +31,17 @@ export interface PendingTimer {
   handle: ReturnType<typeof setTimeout>;
   createdAt: number;
   persistent?: boolean;
+  /** Eviction deadline derived from the timer's own duration. Without it a multi-day
+   *  timer loses its entry long before it fires, and cancel_timer then reports it as
+   *  already expired while the durable scheduler still delivers it. */
+  expiresAt?: number;
 }
 
 const TTL_MS = 60 * 60 * 1000; // 1 hour
-const PERSISTENT_TTL_MS = 25 * 60 * 60 * 1000; // 25 hours (max timer is 24h + buffer)
+/** Fallback for a persistent timer registered without its duration. */
+const PERSISTENT_TTL_MS = 25 * 60 * 60 * 1000; // 25 hours
+/** Kept past a persistent timer's own deadline so a late delivery still finds its entry. */
+const PERSISTENT_GRACE_MS = 60 * 60 * 1000; // 1 hour
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 function shortId(): string {
@@ -137,16 +144,21 @@ export class PendingActionRegistry {
     reason: string,
     handle: ReturnType<typeof setTimeout>,
     persistent?: boolean,
+    durationMs?: number,
   ): PendingTimer {
     const timerId = shortId();
+    const createdAt = Date.now();
     const pending: PendingTimer = {
       type: "timer",
       timerId,
       chatId,
       reason,
       handle,
-      createdAt: Date.now(),
+      createdAt,
       persistent,
+      ...(durationMs === undefined
+        ? {}
+        : { expiresAt: createdAt + durationMs + PERSISTENT_GRACE_MS }),
     };
     this.timers.set(timerId, pending);
     return pending;
@@ -208,8 +220,9 @@ export class PendingActionRegistry {
       if (now - choice.createdAt > TTL_MS) this.choices.delete(id);
     }
     for (const [id, timer] of this.timers) {
-      const ttl = timer.persistent ? PERSISTENT_TTL_MS : TTL_MS;
-      if (now - timer.createdAt > ttl) {
+      const deadline =
+        timer.expiresAt ?? timer.createdAt + (timer.persistent ? PERSISTENT_TTL_MS : TTL_MS);
+      if (now > deadline) {
         clearTimeout(timer.handle);
         this.timers.delete(id);
       }

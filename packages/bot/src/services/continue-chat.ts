@@ -130,6 +130,8 @@ export interface ContinueChatConfig {
   }) => void | Promise<void>;
   onTimerCancel?: (timerId: string) => void;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
+  /** Longest set_timer duration, in seconds. Falls back to DEFAULT_TIMER_MAX_SECONDS. */
+  timerMaxSeconds?: number;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   adminIds?: number[];
@@ -445,6 +447,7 @@ async function doContinueChat(
       botMemory: config.botMemory,
       retrievalQuery: eventDescription,
       userId: event.userId,
+      timerMaxSeconds: config.timerMaxSeconds,
     });
 
     const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, {
@@ -506,6 +509,7 @@ async function doContinueChat(
       onTimerCancel: config.onTimerCancel,
       onTimerFiredPersist: config.onTimerFiredPersist,
       onceGuard,
+      timerMaxSeconds: config.timerMaxSeconds,
     });
 
     const deliveredMultiMessages: string[] = [];

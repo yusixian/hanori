@@ -23,6 +23,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   formatConversationForwardOrigin,
+  resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, Tool, UserModelMessage } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
@@ -113,6 +114,7 @@ export interface ContextAssemblyInput {
   hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 export type AssembledContext = PromptBundle;
@@ -178,6 +180,7 @@ interface StaticPromptInput {
   skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 function section(
@@ -283,6 +286,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
         capabilities: input.toolCapabilities,
         availableAgents,
         isPrivate: input.isPrivate,
+        timerMaxSeconds: resolveTimerMaxSeconds(input.timerMaxSeconds),
       }),
     ),
   );
@@ -671,6 +675,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
 
@@ -903,6 +908,7 @@ export interface PromptPreviewInput {
   hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
+  timerMaxSeconds?: number;
 }
 
 export interface PromptPreviewResult {
@@ -945,6 +951,7 @@ export async function assemblePromptPreview(
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
   appendMessage(messages, traces, [
@@ -1045,6 +1052,7 @@ export interface ContinueChatContextInput {
   botMemory?: BotMemoryCallbacks;
   retrievalQuery?: string;
   userId?: number;
+  timerMaxSeconds?: number;
 }
 
 export async function buildContinueChatPromptBundle(
@@ -1079,6 +1087,7 @@ export async function buildContinueChatPromptBundle(
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       messageConfig: input.messageConfig,
+      timerMaxSeconds: input.timerMaxSeconds,
     }),
   );
 

@@ -226,8 +226,15 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     artworkToolsConfig: patch.artworkToolsConfig,
     botMemoryConfig: patch.botMemoryConfig,
     messageConfig: patch.messageConfig,
-    executionConfig:
-      patch.executionConfig ?? existingMigrated?.executionConfig ?? DEFAULT_AI_EXECUTION_CONFIG,
+    executionConfig: patch.executionConfig
+      ? {
+          ...patch.executionConfig,
+          // Older clients omit this field; preserve the stored timer ceiling.
+          timerMaxSeconds:
+            patch.executionConfig.timerMaxSeconds ??
+            existingMigrated?.executionConfig?.timerMaxSeconds,
+        }
+      : (existingMigrated?.executionConfig ?? DEFAULT_AI_EXECUTION_CONFIG),
     timeoutConfig:
       patch.timeoutConfig?.pixaiTaskMs === undefined
         ? patch.timeoutConfig

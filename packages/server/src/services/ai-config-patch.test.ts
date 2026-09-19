@@ -316,6 +316,7 @@ describe("absorbAiConfigPatch preserved sections", () => {
     expect(result.skillConfig).toEqual({ enabledBuiltInIds: ["md2tg"], customSkills: [] });
     expect(result.executionConfig).toEqual({
       maxConcurrentReplies: 4,
+      timerMaxSeconds: 86_400,
       queueNotice: { enabled: false, text: "" },
     });
     expect(result.imageGenerationReceiptConfig?.promptPreviewLength).toBe(30);

@@ -6,6 +6,8 @@ import {
   IMAGE_MIN_SIZE,
   MAX_CONCURRENT_AI_REPLIES,
   MAX_SUB_AGENT_STEPS,
+  MAX_TIMER_MAX_SECONDS,
+  MIN_TIMER_MAX_SECONDS,
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
 
@@ -19,6 +21,12 @@ export const modelDiscoveryPathSchema = z
 export const aiExecutionConfigSchema = z
   .object({
     maxConcurrentReplies: z.number().int().min(1).max(MAX_CONCURRENT_AI_REPLIES),
+    timerMaxSeconds: z
+      .number()
+      .int()
+      .min(MIN_TIMER_MAX_SECONDS)
+      .max(MAX_TIMER_MAX_SECONDS)
+      .optional(),
     queueNotice: z.object({
       enabled: z.boolean(),
       text: z.string().trim().max(200),

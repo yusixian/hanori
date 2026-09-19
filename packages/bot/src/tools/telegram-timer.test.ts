@@ -8,6 +8,43 @@ type ExecutableTool = {
   execute: (input: unknown, options: { abortSignal: AbortSignal }) => Promise<unknown>;
 };
 
+type TimerSchema = {
+  jsonSchema: { properties: { seconds: { maximum: number; description: string } } };
+};
+
+function timerSecondsSchema(
+  timerMaxSeconds?: number,
+): TimerSchema["jsonSchema"]["properties"]["seconds"] {
+  const tools = createTelegramTools({
+    api: {} as Api,
+    chatId: 42,
+    recentBotMessageIds: [],
+    timerMaxSeconds,
+  });
+  return (tools.set_timer!.inputSchema as unknown as TimerSchema).jsonSchema.properties.seconds;
+}
+
+describe("set_timer duration ceiling", () => {
+  it("follows the configured ceiling in both the schema and its description", () => {
+    const seconds = timerSecondsSchema(604_800);
+
+    expect(seconds.maximum).toBe(604_800);
+    expect(seconds.description).toBe("定时秒数（5-604800，即最长7天）");
+  });
+
+  it("falls back to 24 hours when no ceiling is configured", () => {
+    const seconds = timerSecondsSchema();
+
+    expect(seconds.maximum).toBe(86_400);
+    expect(seconds.description).toBe("定时秒数（5-86400，即最长1天）");
+  });
+
+  it("clamps a stored ceiling that sits outside the supported range", () => {
+    expect(timerSecondsSchema(30).maximum).toBe(300);
+    expect(timerSecondsSchema(30 * 86_400).maximum).toBe(604_800);
+  });
+});
+
 describe("telegram timer scheduling", () => {
   beforeEach(() => {
     vi.useFakeTimers();

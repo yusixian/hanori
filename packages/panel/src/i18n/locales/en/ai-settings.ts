@@ -362,12 +362,16 @@ export const aiSettings = {
     maxConcurrentReplies: "Concurrent AI replies",
     maxConcurrentRepliesDescription:
       "Maximum replies running across chats for this Bot (1–128; default 32). Replies in the same chat still run one at a time.",
+    timerMaxSeconds: "Timer maximum duration",
+    timerMaxSecondsDescription:
+      "Longest duration the AI may request from set_timer, in seconds (300–604800; default 86400, which is 24 hours).",
     queueNotice: "Queue notice",
     queueNoticeDescription: "Send a waiting message when a reply cannot start immediately.",
     queueNoticeText: "Waiting message",
     queueNoticeTextDescription: "Sent as plain text and limited to 200 characters.",
     validation: {
       maxConcurrentReplies: "Enter a whole number from 1 to 128.",
+      timerMaxSeconds: "Enter a whole number from 300 to 604800.",
       queueNoticeText: {
         required: "Enter a waiting message while queue notices are enabled.",
         tooLong: "Keep the waiting message within 200 characters.",
