@@ -1032,6 +1032,7 @@ export async function assemblePromptPreview(
 export interface ContinueChatContextInput {
   systemPrompt: string;
   behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
   conversation?: ConversationCallbacks;
   chatId: number;
@@ -1069,6 +1070,7 @@ export async function buildContinueChatPromptBundle(
     await buildStaticSections({
       systemPrompt: input.systemPrompt,
       behavioralPrompt: input.behavioralPrompt,
+      groupBehavioralPrompt: input.groupBehavioralPrompt,
       isPrivate,
       dataFiles: input.dataFiles,
       memoryInstructions: !!input.memoryTools,

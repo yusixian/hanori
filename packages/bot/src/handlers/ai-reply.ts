@@ -94,13 +94,7 @@ import type { RssToolsOptions } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
 import type { MoodInfo } from "../tools/index.js";
-import {
-  createOnceGuard,
-  createPerStepAbort,
-  createRequestCache,
-  wrapToolsWithCache,
-} from "../tools/utils.js";
-import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
+import { createOnceGuard, createPerStepAbort, createRequestCache } from "../tools/utils.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { markdownToTelegramHtml } from "../utils/format.js";
 import { normalizeTelegramForwardOrigin } from "../utils/forward-origin.js";
@@ -109,7 +103,7 @@ import { RingBuffer } from "../utils/ring-buffer.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { formatSentMessagesHtml, showRichThinkingDraft } from "../utils/stream-reply.js";
-import { wrapToolsWithLogging } from "../utils/tool-log.js";
+import { composeTurnTools } from "../utils/tool-pipeline.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { describeImages } from "../services/image-ocr.js";
 import { TelegramProfileObserver } from "../services/telegram-profile-observer.js";
@@ -134,6 +128,8 @@ import {
   type AiSelectionMutations,
   type AiSelectionSnapshot,
 } from "./ai-selection.js";
+
+export { wrapToolsWithStatus } from "../utils/tool-pipeline.js";
 
 export type { AiProviderRuntime } from "./ai-selection.js";
 
@@ -539,89 +535,6 @@ async function handleEmptyText(
     const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
     if (replyMsgId) chatBotMsgIds.push(replyMsgId);
   }
-}
-
-const TOOL_STATUS_MAP: Record<string, string> = {
-  // Memory tools
-  get_profile: "🔍 看看你是谁...",
-  update_profile: "📝 记住你的变化...",
-  search_profiles: "🔎 想想这个人...",
-  search_history: "📜 翻翻聊天记录...",
-  // Telegram tools
-  send_photo: "📷 发送图片...",
-  send_voice: "🎙️ 发送语音...",
-  send_document: "📎 发送文件...",
-  send_poll: "📊 发起投票...",
-  send_choice: "🎮 发送选择...",
-  close_poll: "📊 关闭投票...",
-  set_timer: "⏱️ 设置定时器...",
-  cancel_timer: "⏱️ 取消定时器...",
-  send_dice: "🎲 掷骰子...",
-  edit_own_message: "✏️ 编辑消息...",
-  delete_own_message: "🗑️ 撤回消息...",
-  pin_message: "📌 置顶消息...",
-  get_chat_info: "ℹ️ 获取聊天信息...",
-  reply_to_specific: "↩️ 回复消息...",
-  // Web tools
-  web_search: "🌐 搜索中...",
-  fetch_webpage: "📄 看看这个网页...",
-  search_danbooru_character_tags: "🏷️ 查找角色标签...",
-  get_current_time: "🕐 获取时间...",
-  generate_image: "🎨 画画中...",
-  github_repository: "🐙 查看 GitHub 仓库...",
-  github_read_file: "🐙 读取仓库代码...",
-  github_list_tree: "🐙 查看代码结构...",
-  github_list_issues: "🐙 查看 Issue...",
-  github_code_task: "🛠️ Pi 正在修改和测试代码...",
-  github_inspect_workspace: "🔎 检查本地 coding workspace...",
-  github_resume_workspace: "🔐 准备 workspace 恢复确认...",
-  github_discard_workspace: "🔐 准备 workspace 丢弃确认...",
-  github_push_branch: "🔐 准备分支推送确认...",
-  github_create_pull_request: "🔐 准备 Pull Request 创建确认...",
-  github_create_issue: "🔐 准备 Issue 创建确认...",
-  github_update_issue: "🔐 准备 Issue 更新确认...",
-  // Agent tools
-  delegate_task: "🤖 找帮手...",
-  // Bot memory tools
-  save_memory: "💾 记下来...",
-  recall_memories: "🧠 回忆中...",
-  delete_memory: "🗑️ 忘掉它...",
-  // Artwork tools
-  fetch_artwork_info: "🖼️ 查看作品...",
-  send_artwork: "🖼️ 发送作品图片...",
-  send_media_group: "📷 发送多张图片...",
-  // File tools
-  read_file: "📄 读取文件...",
-  write_file: "✏️ 写入文件...",
-  delete_file: "🗑️ 删除文件...",
-  save_received_file: "💾 保存文件...",
-};
-
-export function wrapToolsWithStatus(
-  tools: Record<string, Tool>,
-  ctx: WrapperContext,
-): Record<string, Tool> {
-  const wrapped: Record<string, Tool> = {};
-  for (const [name, t] of Object.entries(tools)) {
-    if (!("execute" in t) || typeof t.execute !== "function") {
-      wrapped[name] = t;
-      continue;
-    }
-    const status = TOOL_STATUS_MAP[name] ?? "🛠️ 使用工具中...";
-    const originalExecute = t.execute;
-    wrapped[name] = {
-      ...t,
-      execute: async (...args: Parameters<typeof originalExecute>) => {
-        if (ctx.waiting_message) {
-          await ctx.resolveWait(status).catch(() => {});
-        } else {
-          await ctx.wait(status).catch(() => {});
-        }
-        return originalExecute(...args);
-      },
-    };
-  }
-  return wrapped;
 }
 
 function resolveGroupConfig(
@@ -1262,6 +1175,7 @@ export function createAiReplyHandler(
       unregisterAbortController: (c) => activeAbortControllers.delete(c),
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
+      groupBehavioralPrompt: config.groupBehavioralPrompt,
       conversationConfig: config.conversationConfig,
       conversation: config.conversation,
       privacy: config.privacy,
@@ -2288,18 +2202,15 @@ export function createAiReplyHandler(
         let stepCounter = 0;
         let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
-        const wrappedTools = wrapToolsWithStatus(
-          wrapToolsWithLogging(
-            wrapToolsWithCache(
-              trackSuccessfulToolEffects(stableTools, () => {
-                successfulToolEffectCount += 1;
-              }),
-              requestCache,
-            ),
-            { onLog: config.onLog, getStep: () => stepCounter + 1 },
-          ),
-          ctx,
-        );
+        const wrappedTools = composeTurnTools(stableTools, {
+          requestCache,
+          onLog: config.onLog,
+          getStep: () => stepCounter + 1,
+          onEffect: () => {
+            successfulToolEffectCount += 1;
+          },
+          statusContext: ctx,
+        });
         manualAbort = new AbortController();
         activeAbortControllers.add(manualAbort);
         const perStepAbort = createPerStepAbort(

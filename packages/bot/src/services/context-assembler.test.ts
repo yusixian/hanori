@@ -456,6 +456,22 @@ describe("prompt bundle", () => {
     expect(completed.trace.sections.at(-1)?.id).toBe("runtime.current-request");
   });
 
+  it("adds the group behavior section to a group continuation only", async () => {
+    const continuationFor = async (chatId: number) =>
+      (
+        await buildContinueChatPromptBundle({
+          systemPrompt: "Continue",
+          behavioralPrompt: "Be concise",
+          groupBehavioralPrompt: "Stay on topic in groups",
+          chatId,
+          moodState: new Map(),
+        })
+      ).trace.sections.map((item) => item.id);
+
+    expect(await continuationFor(-100)).toContain("static.group-behavior");
+    expect(await continuationFor(42)).not.toContain("static.group-behavior");
+  });
+
   it("does not log retrieval errors or query details", async () => {
     const botMemory = createBotMemory();
     vi.mocked(botMemory.getMemoriesForQuery!).mockRejectedValue(
