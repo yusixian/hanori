@@ -1,18 +1,10 @@
 import { getArtworkPlatforms } from "../tools/index.js";
+import type { ToolPromptCapability } from "./tool-capabilities.js";
 
 export interface ExtendedToolsPromptOptions {
-  hasStickerPacks: boolean;
-  hasTTS: boolean;
-  hasWebTools: boolean;
-  hasSearchTool: boolean;
-  hasImageGeneration: boolean;
-  hasAgentTools: boolean;
+  capabilities: ReadonlySet<ToolPromptCapability>;
   availableAgents: string[];
-  hasBotMemory: boolean;
-  hasArtworkTools: boolean;
-  hasFileTools: boolean;
   isPrivate: boolean;
-  hasMultiMessage: boolean;
 }
 
 export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
@@ -20,7 +12,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
 
   // Behavior tools (always available)
   lines.push("你拥有以下高级行为工具:");
-  if (opts.hasMultiMessage) {
+  if (opts.capabilities.has("multi-message")) {
     lines.push(
       "- multi_message: 分多条消息回复（像真人那样）。同一请求可在不同阶段发送不同内容，但不要重复相同内容；使用后不需要再生成普通文本回复。",
     );
@@ -33,15 +25,12 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push(
     "- react_to_message: 对当前消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji: 👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡",
   );
-  if (opts.hasStickerPacks) {
+  if (opts.capabilities.has("sticker")) {
     lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }
   lines.push(
     "- send_photo: 发送图片（URL、file_id，或 local:photo.png 发送 data 目录文件）。支持 has_spoiler 遮罩",
   );
-  if (opts.hasTTS) {
-    lines.push("- send_voice: 发送语音消息（文本转语音）");
-  }
   lines.push("- send_document: 发送文件（URL、file_id，或 local:report.csv 发送 data 目录文件）");
   lines.push("- send_media_group: 批量发送多张图片或文档（支持 URL、file_id、local:xxx 混合）");
   lines.push("- send_poll: 发起投票（非匿名时投票结果会自动通知你）");
@@ -57,17 +46,17 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- reply_to_specific: 回复某条特定历史消息");
 
   // Web tools
-  if (opts.hasWebTools) {
+  if (opts.capabilities.has("web")) {
     lines.push("");
     lines.push("信息获取工具:");
     lines.push("- get_current_time: 获取当前时间");
-    if (opts.hasSearchTool) {
+    if (opts.capabilities.has("web-search")) {
       lines.push("- web_search: 搜索网络获取最新信息");
     }
     lines.push("- fetch_webpage: 获取网页正文内容");
   }
 
-  if (opts.hasImageGeneration) {
+  if (opts.capabilities.has("image-generation")) {
     lines.push("");
     lines.push("异步生图工具:");
     lines.push("- list_image_presets（可用时）: 创建前列出管理员允许的预设");
@@ -75,13 +64,13 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
       "- create_image（可用时）: 仅从工具参数枚举中的可用路由选择；anime_illustration 可用时为默认，且不得自动跨供应商降级",
     );
     lines.push("- get_image_generation / cancel_image_generation: 查询或请求取消任务");
-    if (opts.hasBotMemory) {
+    if (opts.capabilities.has("bot-memory")) {
       lines.push("- 画用户本人时，先检索相关长期记忆，再据此编写提示词");
     }
   }
 
   // Agent tools
-  if (opts.hasAgentTools && opts.availableAgents.length > 0) {
+  if (opts.capabilities.has("agent-delegation") && opts.availableAgents.length > 0) {
     lines.push("");
     lines.push("子任务委派工具:");
     lines.push(
@@ -90,7 +79,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   }
 
   // File tools
-  if (opts.hasFileTools) {
+  if (opts.capabilities.has("file")) {
     lines.push("");
     lines.push("文件工具:");
     lines.push("- read_file: 读取你的 data 目录中的文件（如 NOTES.md、IDENTITY.md）");
@@ -106,7 +95,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   }
 
   // Bot memory tools
-  if (opts.hasBotMemory) {
+  if (opts.capabilities.has("bot-memory")) {
     lines.push("");
     lines.push("长期记忆工具:");
     lines.push("- save_memory: 保存一条长期记忆（通用或关联特定用户）");
@@ -115,7 +104,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   }
 
   // Artwork tools
-  if (opts.hasArtworkTools) {
+  if (opts.capabilities.has("artwork")) {
     const platforms = getArtworkPlatforms();
     lines.push("");
     lines.push(`作品图片抓取工具（支持: ${platforms.join(", ")}）:`);
@@ -143,7 +132,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("");
   lines.push("使用指南:");
   lines.push("- 积极使用互动工具让对话更生动，像真人聊天一样自然表达");
-  if (opts.hasMultiMessage) {
+  if (opts.capabilities.has("multi-message")) {
     lines.push("- 除非使用了 multi_message，否则你必须生成文字回复内容");
   } else {
     lines.push("- 你必须生成文字回复内容");
@@ -153,12 +142,12 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("");
   lines.push("**主动行为建议**:");
   lines.push("- 用户说了有趣/感动/搞笑的话 → react_to_message 加个表情");
-  if (opts.hasMultiMessage) {
+  if (opts.capabilities.has("multi-message")) {
     lines.push("- 回复内容较长或包含多个话题 → 用 multi_message 分条发送");
   }
   lines.push("- 对话氛围变化时 → 用 set_mood 调整情绪状态");
   lines.push("- 用户分享了个人信息 → 用记忆工具记录");
-  if (opts.hasSearchTool) {
+  if (opts.capabilities.has("web-search")) {
     lines.push("- 用户提到时事/不确定的事实 → 用 web_search 查证");
   }
   lines.push("- 需要用户做选择时 → 用 send_choice 或 send_poll，禁止文本选数字");

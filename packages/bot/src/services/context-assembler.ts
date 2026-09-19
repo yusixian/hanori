@@ -16,19 +16,23 @@ import type {
   MemoryConfig,
   MessageConfig,
   WebToolsConfig,
+  WebToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   formatConversationForwardOrigin,
-  isStreamReplyMode,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, Tool, UserModelMessage } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import { buildExtendedToolsPrompt } from "../utils/tools-prompt.js";
+import {
+  deriveToolPromptCapabilities,
+  type ToolPromptCapability,
+} from "../utils/tool-capabilities.js";
 import { buildSkillsCatalogPrompt, type BotSkillDefinition } from "../skills/catalog.js";
 
 export type PromptStability = "static" | "append-only" | "volatile";
@@ -169,15 +173,10 @@ interface StaticPromptInput {
   dataFiles?: DataFilesConfig;
   memoryInstructions: boolean;
   botMemoryInstructions: boolean;
-  stickerPacks?: string[];
-  webToolsConfig?: WebToolsConfig;
-  hasSearchTool: boolean;
-  hasImageGeneration?: boolean;
+  webToolsConfig?: WebToolsConfig | WebToolsConfigPublic;
+  toolCapabilities: ReadonlySet<ToolPromptCapability>;
   skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
-  hasBotMemoryTool: boolean;
-  artworkToolsEnabled?: boolean;
-  hasFileTools?: boolean;
   messageConfig?: MessageConfig;
 }
 
@@ -281,19 +280,9 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
       "static",
       "developer",
       buildExtendedToolsPrompt({
-        hasStickerPacks: !!input.stickerPacks?.length,
-        hasTTS: false,
-        hasWebTools: !!input.webToolsConfig?.enabled,
-        hasSearchTool: input.hasSearchTool,
-        hasImageGeneration:
-          input.hasImageGeneration === true || !!input.webToolsConfig?.imageGeneration,
-        hasAgentTools: !!input.agentToolsConfig?.enabled,
+        capabilities: input.toolCapabilities,
         availableAgents,
-        hasBotMemory: input.hasBotMemoryTool,
-        hasArtworkTools: !!input.artworkToolsEnabled,
-        hasFileTools: !!input.hasFileTools,
         isPrivate: input.isPrivate,
-        hasMultiMessage: !isStreamReplyMode(input.messageConfig),
       }),
     ),
   );
@@ -658,6 +647,13 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const historyFormat = input.historyFormat ?? conversationConfig.historyFormat ?? "prompt";
   const memoryConfig = input.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
   const botMemoryConfig = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
+  const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
+  const toolCapabilities = deriveToolPromptCapabilities({
+    ...input,
+    webTools: input.webTools ?? {},
+    hasBotMemoryTool: !!input.botMemoryTools,
+    hasFileTools,
+  });
 
   appendMessage(
     messages,
@@ -670,15 +666,10 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       dataFiles: input.dataFiles,
       memoryInstructions: !!input.memoryTools,
       botMemoryInstructions: !!input.botMemoryTools,
-      stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
-      hasSearchTool: !!input.webTools?.web_search,
-      hasImageGeneration: input.hasImageGeneration,
+      toolCapabilities,
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
-      hasBotMemoryTool: !!input.botMemoryTools,
-      artworkToolsEnabled: input.artworkToolsEnabled,
-      hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
     }),
   );
@@ -904,7 +895,7 @@ export interface PromptPreviewInput {
   memoryEnabled: boolean;
   botMemoryEnabled: boolean;
   stickerPacks?: string[];
-  webToolsConfig?: WebToolsConfig;
+  webToolsConfig?: WebToolsConfig | WebToolsConfigPublic;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsEnabled?: boolean;
   hasImageGeneration?: boolean;
@@ -932,6 +923,12 @@ export async function assemblePromptPreview(
 ): Promise<PromptPreviewResult> {
   const messages: PromptBundle["messages"] = [];
   const traces: PromptSectionTrace[] = [];
+  const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
+  const toolCapabilities = deriveToolPromptCapabilities({
+    ...input,
+    hasBotMemoryTool: input.botMemoryEnabled,
+    hasFileTools,
+  });
   appendMessage(
     messages,
     traces,
@@ -943,15 +940,10 @@ export async function assemblePromptPreview(
       dataFiles: input.dataFiles,
       memoryInstructions: input.memoryEnabled,
       botMemoryInstructions: input.botMemoryEnabled,
-      stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
-      hasSearchTool: !!input.webToolsConfig?.enabled && !!input.webToolsConfig.search,
-      hasImageGeneration: input.hasImageGeneration,
+      toolCapabilities,
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
-      hasBotMemoryTool: input.botMemoryEnabled,
-      artworkToolsEnabled: input.artworkToolsEnabled,
-      hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
     }),
   );
@@ -1063,6 +1055,13 @@ export async function buildContinueChatPromptBundle(
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const botMemoryConfig = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
   const isPrivate = input.chatId > 0;
+  const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
+  const toolCapabilities = deriveToolPromptCapabilities({
+    ...input,
+    webTools: input.webTools ?? {},
+    hasBotMemoryTool: !!input.botMemoryTools,
+    hasFileTools,
+  });
 
   appendMessage(
     messages,
@@ -1075,15 +1074,10 @@ export async function buildContinueChatPromptBundle(
       dataFiles: input.dataFiles,
       memoryInstructions: !!input.memoryTools,
       botMemoryInstructions: !!input.botMemoryTools,
-      stickerPacks: input.stickerPacks,
       webToolsConfig: input.webToolsConfig,
-      hasSearchTool: !!input.webTools?.web_search,
-      hasImageGeneration: input.hasImageGeneration,
+      toolCapabilities,
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
-      hasBotMemoryTool: !!input.botMemoryTools,
-      artworkToolsEnabled: input.artworkToolsEnabled,
-      hasFileTools: input.hasFileTools ?? !!input.dataFiles,
       messageConfig: input.messageConfig,
     }),
   );

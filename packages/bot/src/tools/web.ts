@@ -4,6 +4,7 @@ import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
+import { hasWebSearchProviderPrerequisites } from "../utils/tool-capabilities.js";
 
 // --- Search Provider abstraction ---
 
@@ -277,9 +278,10 @@ export function createWebTools(options: WebToolsOptions): Record<string, Tool> {
   });
 
   // Search tool
-  if (config.search) {
+  const searchConfig = config.search;
+  if (searchConfig && hasWebSearchProviderPrerequisites(searchConfig)) {
     try {
-      const searchProvider = createSearchProvider(config.search);
+      const searchProvider = createSearchProvider(searchConfig);
       tools.web_search = tool({
         description: "搜索网络获取最新信息。返回搜索结果的标题、URL 和摘要。",
         inputSchema: zodToAiSchema(
