@@ -16,6 +16,17 @@ export function createAuthGuard(adminIds: number[]): CommandMiddleware<WrapperCo
   };
 }
 
+/** Rejects a command outside a private chat with the same text an unauthorized user sees,
+ *  so a bystander cannot learn that the command exists or who may run it. */
+export const privateChatOnlyGuard: CommandMiddleware<WrapperContext> = async (ctx, next) => {
+  if (ctx.chat?.type !== "private") {
+    await ctx.reply(PERMISSION_DENIED);
+    return false;
+  }
+  await next();
+  return true;
+};
+
 export function createAiSelectionGuard(
   adminIds: number[],
   config: AiChatAccessConfig & { modelCommandAccess?: "admin" | "all" },

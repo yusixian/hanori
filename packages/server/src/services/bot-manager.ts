@@ -71,6 +71,7 @@ interface BotManagerOptions {
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
+  cosInside?: BotConfig["cosInside"];
 }
 
 export class BotManager implements IBotManager, TelegramRichMessageSender {
@@ -112,6 +113,7 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       quota: options.quota,
       telegramObservation: options.telegramObservation,
       miniAppUrl: options.miniAppUrl,
+      cosInside: options.cosInside,
     };
   }
 

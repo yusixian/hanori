@@ -32,7 +32,7 @@ describe("getUpdateConstraint", () => {
     },
   );
 
-  test.each(["backup", "draw", "summary"])(
+  test.each(["backup", "cosinside", "draw", "summary"])(
     "serializes /%s in a per-chat operation lane",
     (command) => {
       expect(getUpdateConstraint(createContext(42, command))).toBe("command:operation:42");

@@ -21,6 +21,10 @@ export interface TelegramCommandMetadata {
   executionLane: TelegramCommandExecutionLane;
   capability: string;
   publicHelpVisibility: PublicHelpVisibility;
+  /** Keeps this command's arguments out of the generic Bot log. Set it whenever the
+   *  arguments carry a secret or a message body, because the log middleware records
+   *  private-chat arguments verbatim by default. */
+  redactArgs?: true;
 }
 
 /**
@@ -99,6 +103,19 @@ export const TELEGRAM_COMMAND_CATALOG = [
     publicHelpVisibility: "admin-overview",
   },
   {
+    command: "cosinside",
+    description: {
+      "zh-CN": "在私聊中让 Bot 代发消息到配置的群",
+      en: "Relay a message to a configured group from a private chat",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "message.relay",
+    publicHelpVisibility: "hidden",
+    redactArgs: true,
+  },
+  {
     command: "stop",
     description: { "zh-CN": "停用 AI 回复并中断当前调用", en: "Stop AI replies and active calls" },
     category: "ai",
@@ -127,6 +144,7 @@ export const TELEGRAM_COMMAND_CATALOG = [
     executionLane: "config",
     capability: "credentials.manage",
     publicHelpVisibility: "hidden",
+    redactArgs: true,
   },
   {
     command: "mcp",

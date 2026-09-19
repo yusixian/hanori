@@ -176,6 +176,7 @@ function createCommandTestBot(
           adminChatIds: [userId],
         }
       : undefined,
+    cosInside: complete ? { targets: [{ alias: "ops", chatId: -1001 }] } : undefined,
   });
 }
 

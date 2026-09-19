@@ -1,4 +1,5 @@
 import type { BotLogEntry } from "@cos-tool-bot/shared";
+import { findTelegramCommandMetadata } from "@cos-tool-bot/shared";
 import type { MiddlewareFn } from "grammy";
 import type { WrapperContext } from "../context.js";
 
@@ -27,7 +28,8 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
       if (match) {
         meta.command = match[1];
         if (!isGroupChat) {
-          meta.args = match[1]?.toLowerCase() === "apikey" ? "[REDACTED]" : (match[2] ?? "");
+          const redact = findTelegramCommandMetadata(match[1]?.toLowerCase() ?? "")?.redactArgs;
+          meta.args = redact ? "[REDACTED]" : (match[2] ?? "");
         }
         onLog({ level: "info", message: `Command /${match[1]} from ${username}`, meta });
       }
@@ -74,15 +76,22 @@ export function createLogMiddleware(onLog?: OnLog): MiddlewareFn<WrapperContext>
         return next();
       }
 
+      // Caption commands pass through logging before command guards can reject them.
+      const redactCaption = msg.caption_entities?.some((entity) => {
+        if (entity.type !== "bot_command") return false;
+        const command = msg.caption?.slice(entity.offset + 1, entity.offset + entity.length);
+        return findTelegramCommandMetadata(command?.split("@")[0]?.toLowerCase() ?? "")?.redactArgs;
+      });
+      const caption = redactCaption ? "[REDACTED]" : msg.caption;
       let type: string;
 
       if (msg.sticker) {
         type = `Sticker ${msg.sticker.emoji ?? ""} (${msg.sticker.set_name ?? "custom"})`;
       } else if (msg.photo) {
-        type = msg.caption ? `Photo: ${msg.caption}` : "Photo";
+        type = caption ? `Photo: ${caption}` : "Photo";
       } else if (msg.video) {
-        type = msg.caption
-          ? `Video: ${msg.caption}`
+        type = caption
+          ? `Video: ${caption}`
           : `Video${msg.video.file_name ? `: ${msg.video.file_name}` : ""}`;
       } else if (msg.document) {
         type = `Document: ${msg.document.file_name ?? "unknown"}`;

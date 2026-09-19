@@ -1167,6 +1167,17 @@ export interface EmailForwardConfigPublic {
 export const DEFAULT_LARK_MENTION_MAP: Record<string, string> = {
 };
 
+/** Relay destination for the `/cosinside` private-chat channel. Aliases are the only
+ *  target selector the command accepts; raw chat IDs never reach the Telegram side. */
+export interface CosInsideTarget {
+  alias: string;
+  chatId: number;
+}
+
+export interface CosInsideConfig {
+  targets: CosInsideTarget[];
+}
+
 export interface BotRecord {
   id: string;
   name: string;
@@ -1181,6 +1192,7 @@ export interface BotRecord {
   updatedAt: string | null;
   larkWebhookConfig?: { webhookUrl: string; hasSignSecret: boolean };
   emailForwardConfig?: EmailForwardConfigPublic;
+  cosInsideConfig?: CosInsideConfig;
 }
 
 export interface BotWithStatus extends BotRecord {

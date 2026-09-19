@@ -6,6 +6,7 @@ import type {
   AiSelectionSnapshot,
   BotAiSelectionRuntime,
   BotTimerHandlers,
+  CosInsideAuditEntry,
   TelegramObservationCallbacks,
 } from "@cos-tool-bot/bot";
 import { removeProfileAvatarFile, resolveBotSkills } from "@cos-tool-bot/bot";
@@ -15,6 +16,7 @@ import {
   EMBEDDING_DIMENSIONS,
   bots,
   mcpServers,
+  miniAppAuditEvents,
   miniAppChatGrants,
   miniAppOperatorGrants,
   pixaiGenerations,
@@ -1383,6 +1385,44 @@ export class BotPool {
           }
         : undefined;
 
+    const cosInsideTargets = bot.cosInsideConfig?.targets ?? [];
+    const cosInside =
+      cosInsideTargets.length > 0
+        ? {
+            targets: cosInsideTargets,
+            onAudit: async (entry: CosInsideAuditEntry) => {
+              try {
+                await this.db.insert(miniAppAuditEvents).values({
+                  botId,
+                  actorTelegramUserId: entry.actorUserId,
+                  actorRole: "admin",
+                  capability: "message.relay",
+                  action: "cos_inside.relay",
+                  resourceType: "telegram_chat",
+                  resourceId: String(entry.targetChatId),
+                  nextSummary: {
+                    alias: entry.alias,
+                    bodyLength: entry.bodyLength,
+                    hasReplyTarget: entry.hasReplyTarget,
+                    ...(entry.failureReason ? { failureReason: entry.failureReason } : {}),
+                  },
+                  outcome: entry.outcome,
+                });
+              } catch (error) {
+                // The relay already happened, so this line is the only remaining trace.
+                dbLogger.error("cos inside relay audit could not be persisted", {
+                  actorUserId: entry.actorUserId,
+                  targetChatId: entry.targetChatId,
+                  alias: entry.alias,
+                  bodyLength: entry.bodyLength,
+                  outcome: entry.outcome,
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+            },
+          }
+        : undefined;
+
     const manager = new BotManager({
       botId,
       token,
@@ -1461,6 +1501,7 @@ export class BotPool {
         : undefined,
       telegramObservation: this.telegramObservation,
       miniAppUrl,
+      cosInside,
     });
 
     this.managers.set(botId, manager);

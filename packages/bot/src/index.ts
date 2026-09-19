@@ -22,6 +22,7 @@ import { createApiKeyCommand } from "./commands/api-key.js";
 import { createClearCommand } from "./commands/clear.js";
 import { createSummaryCommand, type SummaryCallbacks } from "./commands/summary.js";
 import { createClearReceivedCommand } from "./commands/clear-received.js";
+import { createCosInsideCommand, type CosInsideCommandConfig } from "./commands/cos-inside.js";
 import { createDrawV2Command } from "./commands/draw-v2.js";
 import { createImageCommand } from "./commands/image.js";
 import { createQuotaCommand, type QuotaCommandConfig } from "./commands/quota.js";
@@ -46,7 +47,7 @@ import {
   parseTimerCancelId,
 } from "./commands/timers.js";
 import { WrapperContext, type BotContext } from "./context.js";
-import { createAiSelectionGuard, createAuthGuard } from "./guards/auth.js";
+import { createAiSelectionGuard, createAuthGuard, privateChatOnlyGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
 import type { AiSelectionMutations, AiSelectionSnapshot } from "./handlers/ai-selection.js";
 import {
@@ -123,6 +124,7 @@ export interface BotConfig {
   quota?: QuotaCommandConfig;
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
+  cosInside?: CosInsideCommandConfig;
 }
 
 export async function sendLocalImageFiles(
@@ -390,6 +392,14 @@ export function createBot(config: BotConfig) {
   commandRegistry.register("status", authGuard, createStatusCommand(statusConfig, aiState));
   commandRegistry.register("restart", authGuard, createRestartCommand(config.onRestart));
   commandRegistry.register("backup", authGuard, createBackupCommand(config.onBackup));
+  if (config.cosInside) {
+    commandRegistry.register(
+      "cosinside",
+      privateChatOnlyGuard,
+      authGuard,
+      createCosInsideCommand(config.cosInside),
+    );
+  }
   if (aiSetAiEnabled) {
     commandRegistry.register("stop", authGuard, createStopCommand(aiSetAiEnabled));
     commandRegistry.register("resume", authGuard, createResumeCommand(aiSetAiEnabled));
@@ -697,6 +707,7 @@ export {
   type PromptTrust,
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
+export type { CosInsideAuditEntry, CosInsideCommandConfig } from "./commands/cos-inside.js";
 export type { SummaryCallbacks } from "./commands/summary.js";
 export {
   createTelegramObservationMiddleware,

@@ -14,9 +14,10 @@ process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
 let createApp: (typeof import("./app.js"))["createApp"];
 const TEST_SHA = "0123456789abcdef0123456789abcdef01234567";
 
+// Cold transformation of the full app graph can exceed 10s on the shared CI runner.
 beforeAll(async () => {
   ({ createApp } = await import("./app.js"));
-});
+}, 30_000);
 
 describe("production HTTP policy", () => {
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {

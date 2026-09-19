@@ -264,4 +264,77 @@ describe("createLogMiddleware", () => {
     expect(JSON.stringify(onLog.mock.calls)).not.toContain("secret-value");
     expect(next).toHaveBeenCalledOnce();
   });
+
+  test("redacts the relayed body of /cosinside", async () => {
+    const onLog = vi.fn();
+    const next = vi.fn();
+    const ctx = {
+      from: { id: 1, username: "admin" },
+      chat: { id: 1, type: "private" },
+      message: {
+        text: "/cosinside ops 内部通知：明早九点开会",
+        entities: [{ type: "bot_command" }],
+      },
+    };
+
+    await createLogMiddleware(onLog)(ctx as unknown as WrapperContext, next);
+
+    expect(onLog).toHaveBeenCalledWith({
+      level: "info",
+      message: "Command /cosinside from admin",
+      meta: {
+        userId: 1,
+        username: "admin",
+        chatId: 1,
+        chatType: "private",
+        command: "cosinside",
+        args: "[REDACTED]",
+      },
+    });
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain("内部通知");
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  test("keeps arguments of a command that carries no secret", async () => {
+    const onLog = vi.fn();
+    const next = vi.fn();
+    const ctx = {
+      from: { id: 1, username: "admin" },
+      chat: { id: 1, type: "private" },
+      message: {
+        text: "/summary 6h",
+        entities: [{ type: "bot_command" }],
+      },
+    };
+
+    await createLogMiddleware(onLog)(ctx as unknown as WrapperContext, next);
+
+    expect(onLog.mock.calls[0]?.[0]?.meta).toMatchObject({ command: "summary", args: "6h" });
+  });
+  test.each([
+    ["photo", "/cosinside"],
+    ["video", "/cosinside@test_bot"],
+    ["photo", "/apikey"],
+    ["video", "/apikey@test_bot"],
+  ])("redacts sensitive %s caption command %s before handler rejection", async (kind, command) => {
+    const onLog = vi.fn();
+    const next = vi.fn();
+    const ctx = {
+      from: { id: 1, username: "admin" },
+      chat: { id: 1, type: "private" },
+      message: {
+        [kind]: kind === "photo" ? [] : { duration: 1 },
+        caption: `${command} ops confidential-body\nsecond-line`,
+        caption_entities: [{ type: "bot_command", offset: 0, length: command.length }],
+      },
+    };
+    await createLogMiddleware(onLog)(ctx as unknown as WrapperContext, next);
+    expect(onLog).toHaveBeenCalledOnce();
+    expect(onLog.mock.calls[0]?.[0]?.message).toBe(
+      `${kind === "photo" ? "Photo" : "Video"}: [REDACTED] from admin`,
+    );
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain("confidential-body");
+    expect(JSON.stringify(onLog.mock.calls)).not.toContain("second-line");
+    expect(next).toHaveBeenCalledOnce();
+  });
 });

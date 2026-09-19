@@ -1,5 +1,6 @@
 import type {
   AiConfigStored,
+  CosInsideConfig,
   EmailForwardConfig,
   ImageArtifact,
   ImageGenerationEventKind,
@@ -51,6 +52,7 @@ export const bots = pgTable("bots", {
   aiConfig: json("ai_config").$type<AiConfigStored>(),
   larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
   emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
+  cosInsideConfig: json("cos_inside_config").$type<CosInsideConfig>(),
   isActive: boolean("is_active").notNull().default(true),
   miniAppEnabled: boolean("mini_app_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),

@@ -91,13 +91,19 @@ describe("Mini App Bot management", () => {
       id: "00000000-0000-4000-8000-000000000001",
       platform: "telegram",
       adminChatIds: [7],
+      cosInsideConfig: { targets: [{ alias: "ops", chatId: -100 }] },
       isActive: false,
       miniAppEnabled: false,
     };
     const select = vi.fn(() => ({ from: () => ({ where: async () => [existing] }) }));
     const app = createApp({ select } as unknown as Database, {} as BotPool, { role: "editor" });
 
-    for (const body of [{ adminChatIds: [42] }, { token: "999:attacker-token" }]) {
+    for (const body of [
+      { adminChatIds: [42] },
+      { token: "999:attacker-token" },
+      { cosInsideConfig: { targets: [{ alias: "public", chatId: -200 }] } },
+      { cosInsideConfig: { targets: [] } },
+    ]) {
       const response = await app.request("/bots/00000000-0000-4000-8000-000000000001", {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -105,7 +111,58 @@ describe("Mini App Bot management", () => {
       });
       expect(response.status).toBe(403);
     }
-    expect(select).toHaveBeenCalledTimes(2);
+    expect(select).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["owner", "admin"])("lets a %s manage the relay target allowlist", async (role) => {
+    const botId = "00000000-0000-4000-8000-000000000001";
+    const existing = {
+      id: botId,
+      name: "Relay Bot",
+      platform: "telegram" as const,
+      encryptedToken: "encrypted",
+      adminChatIds: [7],
+      cosInsideConfig: { targets: [{ alias: "ops", chatId: -100 }] },
+      aiConfig: null,
+      larkWebhookConfig: null,
+      emailForwardConfig: null,
+      isActive: false,
+      miniAppEnabled: false,
+      createdAt: new Date("2026-07-27T00:00:00.000Z"),
+      updatedAt: new Date("2026-07-27T00:00:00.000Z"),
+    };
+    const savedConfigs: unknown[] = [];
+    const db = {
+      select: () => ({ from: () => ({ where: async () => [existing] }) }),
+      update: () => ({
+        set: (updates: Record<string, unknown>) => {
+          savedConfigs.push(updates.cosInsideConfig);
+          return {
+            where: () => ({ returning: async () => [{ ...existing, ...updates }] }),
+          };
+        },
+      }),
+    } as unknown as Database;
+    const app = createApp(db, { getManager: vi.fn(() => undefined) } as unknown as BotPool, {
+      role,
+    });
+
+    for (const cosInsideConfig of [
+      { targets: [{ alias: "release", chatId: -200 }] },
+      { targets: [] },
+    ]) {
+      const response = await app.request(`/bots/${botId}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cosInsideConfig }),
+      });
+      expect(response.status).toBe(200);
+    }
+
+    expect(savedConfigs).toEqual([
+      { targets: [{ alias: "release", chatId: -200 }] },
+      { targets: [] },
+    ]);
   });
 
   it("lets an editor save ordinary fields when protected values are unchanged", async () => {

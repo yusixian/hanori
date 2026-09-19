@@ -69,6 +69,31 @@ const emailForwardConfigSchema = z.object({
   disabledEventTypes: z.array(z.string()).optional(),
 });
 
+const cosInsideConfigSchema = z
+  .object({
+    targets: z
+      .array(
+        z.object({
+          alias: z
+            .string()
+            .trim()
+            .min(1)
+            .max(32)
+            .regex(
+              /^[a-z0-9_-]+$/i,
+              "Alias may only contain letters, digits, hyphen or underscore",
+            ),
+          chatId: z.number().int().max(-1).min(-9007199254740991),
+        }),
+      )
+      .max(20),
+  })
+  .refine(
+    ({ targets }) =>
+      new Set(targets.map(({ alias }) => alias.toLowerCase())).size === targets.length,
+    { message: "Relay target aliases must be unique" },
+  );
+
 const createBotSchema = z
   .object({
     name: z.string().min(1).max(100),
@@ -81,6 +106,7 @@ const createBotSchema = z
     webhookUrl: z.string().optional(),
     signSecret: z.string().optional(),
     emailForwardConfig: emailForwardConfigSchema.optional(),
+    cosInsideConfig: cosInsideConfigSchema.optional(),
   })
   .refine(
     (data) => {
@@ -113,6 +139,7 @@ const updateBotSchema = z.object({
   signSecret: z.string().optional(),
   emailForwardConfig: emailForwardConfigSchema.optional(),
   clearEmailForwardConfig: z.boolean().optional(),
+  cosInsideConfig: cosInsideConfigSchema.optional(),
 });
 
 const globalAiSelectionSchema = z
@@ -267,6 +294,7 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     larkWebhookConfig: larkCfg
       ? { webhookUrl: larkCfg.webhookUrl, hasSignSecret: !!larkCfg.encryptedSignSecret }
       : undefined,
+    cosInsideConfig: bot.cosInsideConfig ?? undefined,
     emailForwardConfig: emailCfg
       ? {
           imapHost: emailCfg.imapHost,
@@ -465,6 +493,7 @@ export function botsRoutes(
           miniAppEnabled: body.miniAppEnabled,
           larkWebhookConfig: larkWebhookConfig ?? null,
           emailForwardConfig: emailForwardConfig ?? null,
+          cosInsideConfig: body.cosInsideConfig ?? null,
         })
         .returning();
       const created = rows[0]!;
@@ -499,6 +528,7 @@ export function botsRoutes(
       const protectedSettingChanged =
         body.token !== undefined ||
         adminIdsChanged ||
+        body.cosInsideConfig !== undefined ||
         (body.isActive !== undefined && body.isActive !== existing.isActive) ||
         (body.miniAppEnabled !== undefined && body.miniAppEnabled !== existing.miniAppEnabled);
       if (protectedSettingChanged && !ownerOrAdmin.has(c.get("authMember").role)) {
@@ -554,6 +584,7 @@ export function botsRoutes(
       } else if (body.clearEmailForwardConfig) {
         updates.emailForwardConfig = null;
       }
+      if (body.cosInsideConfig !== undefined) updates.cosInsideConfig = body.cosInsideConfig;
 
       const rows = await db.update(bots).set(updates).where(eq(bots.id, botId)).returning();
       let updated = rows[0]!;
@@ -615,7 +646,8 @@ export function botsRoutes(
           body.signSecret !== undefined ||
           body.miniAppEnabled !== undefined ||
           body.emailForwardConfig !== undefined ||
-          body.clearEmailForwardConfig;
+          body.clearEmailForwardConfig ||
+          body.cosInsideConfig !== undefined;
         if (manager && needsRestart && !miniAppRestartHandled) {
           try {
             await botPool.restartBot(botId);
