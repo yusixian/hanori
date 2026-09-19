@@ -21,12 +21,12 @@ import {
   tokenUsage,
 } from "@cos-tool-bot/database";
 import type {
+  AiConfigStored,
   BotMemoryCallbacks,
   BotPlatform,
   ConversationCallbacks,
   IBotManager,
   MemoryCallbacks,
-  ModelEntry,
   ImageGenerationPort,
   ImageGenerationRequestSnapshot,
   PixAIConfig,
@@ -44,7 +44,6 @@ import type {
 import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
-  DEFAULT_MESSAGE_CONFIG,
   DEFAULT_TIMEOUT_CONFIG,
   IMAGE_EXTENSIONS,
   getDataDir,
@@ -54,7 +53,12 @@ import type { Logger } from "pino";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import { env } from "../env.js";
 import { tryDecrypt } from "../utils/crypto.js";
-import { migrateAiConfig } from "../utils/ai-config-migrate.js";
+import {
+  applyGroupOverride,
+  applyMessageConfigUpdate,
+  applyWebToolApiKey,
+  toAiConfigRuntime,
+} from "./ai-config-runtime.js";
 import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
@@ -70,7 +74,6 @@ import {
   isTerminalGenerationRecoveryError,
   PendingGenerationInsertFallbackTracker,
   persistTerminalGenerationClaim,
-  resolvePixaiTaskTimeoutMs,
   tryPersistTerminalGenerationFailure,
 } from "./generation-recovery.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
@@ -578,6 +581,24 @@ export class BotPool {
     return this.aiConfigLocks.run(botId, operation);
   }
 
+  /** Returns false when the bot has no stored AI config; no write happens. */
+  private async updateStoredAiConfig(
+    botId: string,
+    mutate: (current: AiConfigStored) => AiConfigStored,
+  ): Promise<boolean> {
+    return this.withAiConfigLock(botId, () =>
+      this.db.transaction(async (tx) => {
+        const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
+        if (!current?.aiConfig) return false;
+        await tx
+          .update(bots)
+          .set({ aiConfig: mutate(current.aiConfig) })
+          .where(eq(bots.id, botId));
+        return true;
+      }),
+    );
+  }
+
   async startBot(botId: string) {
     return this.enqueue(botId, () => this.startBotImpl(botId));
   }
@@ -662,57 +683,17 @@ export class BotPool {
     let aiSelectionCallbacks: AiSelectionCallbacks | undefined;
     let conversation: ConversationCallbacks | undefined;
     let runInitialHistoryGovernance: (() => Promise<void>) | undefined;
-    const aiConfig = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
-    const pixaiTaskTimeoutMs = resolvePixaiTaskTimeoutMs(aiConfig?.timeoutConfig?.pixaiTaskMs);
-    const runtimeTimeoutConfig = aiConfig?.timeoutConfig
-      ? { ...aiConfig.timeoutConfig, pixaiTaskMs: pixaiTaskTimeoutMs }
-      : undefined;
+    const aiRuntime = toAiConfigRuntime(bot.aiConfig, env.ENCRYPTION_KEY);
+    const aiConfig = aiRuntime?.config ?? null;
+    const runtimeTimeoutConfig = aiRuntime?.timeoutConfig;
     const auxiliaryTimeoutMs = runtimeTimeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs;
-    // Decrypt all providers up front — kept in-memory for bot lifetime.
-    // Track skip reasons separately so operators can distinguish "no key configured"
-    // from "encryption key mismatch" when diagnosing.
-    const providersRuntime: Array<{
-      id: string;
-      label: string;
-      apiKey: string;
-      baseURL: string;
-      providerFormat: "openai" | "gemini";
-      defaultModel: string;
-      models?: ModelEntry[];
-    }> = [];
-    const skippedNoKey: string[] = [];
-    const skippedDecryptFail: string[] = [];
-    for (const p of aiConfig?.providers ?? []) {
-      if (!p.encryptedApiKey) {
-        skippedNoKey.push(p.label);
-        continue;
-      }
-      const decrypted = tryDecrypt(p.encryptedApiKey, env.ENCRYPTION_KEY);
-      if (!decrypted) {
-        skippedDecryptFail.push(p.label);
-        continue;
-      }
-      providersRuntime.push({
-        id: p.id,
-        label: p.label,
-        apiKey: decrypted,
-        baseURL: p.baseURL,
-        providerFormat: p.providerFormat,
-        defaultModel: p.defaultModel,
-        models: p.models,
-      });
-    }
-    const activeProvider =
-      (aiConfig?.activeProviderId &&
-        providersRuntime.find((p) => p.id === aiConfig.activeProviderId)) ||
-      providersRuntime[0];
-    if (aiConfig?.enabled && activeProvider) {
+    const providersRuntime = aiRuntime?.providers ?? [];
+    const activeProvider = aiRuntime?.activeProvider;
+    if (aiRuntime && aiConfig?.enabled && activeProvider) {
       const apiKey = activeProvider.apiKey;
       const storedGitHubConfig = aiConfig.githubToolsConfig;
       const installation = storedGitHubConfig?.githubAppInstallation;
-      const legacyGitHubToken = storedGitHubConfig?.encryptedToken
-        ? (tryDecrypt(storedGitHubConfig.encryptedToken, env.ENCRYPTION_KEY) ?? undefined)
-        : undefined;
+      const legacyGitHubToken = aiRuntime.githubToken;
       const githubCredentialResolver =
         installation && this.githubAppCredentialService?.available
           ? () => this.githubAppCredentialService!.getInstallationToken(installation.installationId)
@@ -736,7 +717,7 @@ export class BotPool {
               : undefined,
           }
         : undefined;
-      if (storedGitHubConfig?.encryptedToken && !legacyGitHubToken) {
+      if (aiRuntime.githubTokenDecryptFailed) {
         dbLogger.warn(
           "GitHub credential cannot be decrypted; private repository and write access disabled.",
         );
@@ -750,6 +731,8 @@ export class BotPool {
           "GitHub repository allowlist contained entries outside the installation snapshot; runtime access was clamped.",
         );
       }
+      const skippedNoKey = aiRuntime.skippedProviders.noKey;
+      const skippedDecryptFail = aiRuntime.skippedProviders.decryptFailed;
       if (skippedNoKey.length > 0) {
         dbLogger.warn(`AI providers skipped (no API key configured): ${skippedNoKey.join(", ")}`);
       }
@@ -829,23 +812,21 @@ export class BotPool {
       // Create embedding service early so closures can reference it
       let embeddingService: EmbeddingService | undefined;
       const embeddingCfg = aiConfig.embeddingConfig;
-      if (embeddingCfg?.enabled && embeddingCfg.encryptedApiKey) {
-        const embeddingApiKey = tryDecrypt(embeddingCfg.encryptedApiKey, env.ENCRYPTION_KEY);
-        if (embeddingApiKey) {
-          embeddingService = new EmbeddingService(
-            {
-              apiKey: embeddingApiKey,
-              baseURL: embeddingCfg.baseURL,
-              model: embeddingCfg.model,
-              dimensions: EMBEDDING_DIMENSIONS,
-            },
-            this.logger,
-          );
-        } else {
-          dbLogger.warn(
-            "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
-          );
-        }
+      const embeddingApiKey = aiRuntime.embeddingApiKey;
+      if (embeddingCfg && embeddingApiKey) {
+        embeddingService = new EmbeddingService(
+          {
+            apiKey: embeddingApiKey,
+            baseURL: embeddingCfg.baseURL,
+            model: embeddingCfg.model,
+            dimensions: EMBEDDING_DIMENSIONS,
+          },
+          this.logger,
+        );
+      } else if (aiRuntime.embeddingApiKeyDecryptFailed) {
+        dbLogger.warn(
+          "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
+        );
       }
 
       conversation = {
@@ -1182,23 +1163,8 @@ export class BotPool {
         privateChatWhitelist: aiConfig.privateChatWhitelist,
         onGroupOverrideUpdate: async (chatId, override) => {
           try {
-            await this.withAiConfigLock(botId, () =>
-              this.db.transaction(async (tx) => {
-                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-                if (!current?.aiConfig) return;
-                await tx
-                  .update(bots)
-                  .set({
-                    aiConfig: {
-                      ...current.aiConfig,
-                      groupOverrides: {
-                        ...current.aiConfig.groupOverrides,
-                        [String(chatId)]: override,
-                      },
-                    },
-                  })
-                  .where(eq(bots.id, botId));
-              }),
+            await this.updateStoredAiConfig(botId, (current) =>
+              applyGroupOverride(current, chatId, override),
             );
           } catch (err) {
             this.logger.error(err, "Failed to persist group override update");
@@ -1206,52 +1172,20 @@ export class BotPool {
         },
         onMessageConfigUpdate: async (updates) => {
           try {
-            await this.withAiConfigLock(botId, () =>
-              this.db.transaction(async (tx) => {
-                const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-                if (!current?.aiConfig) throw new Error("AI is not configured");
-                await tx
-                  .update(bots)
-                  .set({
-                    aiConfig: {
-                      ...current.aiConfig,
-                      messageConfig: {
-                        ...DEFAULT_MESSAGE_CONFIG,
-                        ...current.aiConfig.messageConfig,
-                        ...updates,
-                      },
-                    },
-                  })
-                  .where(eq(bots.id, botId));
-              }),
+            const updated = await this.updateStoredAiConfig(botId, (current) =>
+              applyMessageConfigUpdate(current, updates),
             );
+            if (!updated) throw new Error("AI is not configured");
           } catch (error) {
             this.logger.error(error, "Failed to persist message config update");
             throw error;
           }
         },
         onWebToolApiKeyUpdate: async (target, apiKey) => {
-          await this.withAiConfigLock(botId, () =>
-            this.db.transaction(async (tx) => {
-              const [current] = await tx.select().from(bots).where(eq(bots.id, botId));
-              const webToolsConfig = current?.aiConfig?.webToolsConfig;
-              if (!current?.aiConfig || !webToolsConfig) {
-                throw new Error("Web tools are not configured");
-              }
-
-              const targetConfig =
-                target === "image" ? webToolsConfig.imageGeneration : webToolsConfig.search;
-              if (!targetConfig) {
-                throw new Error(`${target} web tool is not configured`);
-              }
-
-              targetConfig.apiKey = apiKey;
-              await tx
-                .update(bots)
-                .set({ aiConfig: { ...current.aiConfig, webToolsConfig: { ...webToolsConfig } } })
-                .where(eq(bots.id, botId));
-            }),
+          const updated = await this.updateStoredAiConfig(botId, (current) =>
+            applyWebToolApiKey(current, target, apiKey),
           );
+          if (!updated) throw new Error("Web tools are not configured");
         },
         rssCallbacks: this.rssFeedService ? this.buildRssCallbacks(botId) : undefined,
         mcpTools: this.buildMcpToolsConfig(aiConfig.mcpServerIds),

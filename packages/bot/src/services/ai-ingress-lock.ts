@@ -1,7 +1,7 @@
-class KeyedIngressLock {
-  private readonly tails = new Map<number, Promise<void>>();
+export class KeyedIngressLock<K = number> {
+  private readonly tails = new Map<K, Promise<void>>();
 
-  acquire(key: number): Promise<() => void> {
+  acquire(key: K): Promise<() => void> {
     const previous = this.tails.get(key) ?? Promise.resolve();
     let resolveCurrent!: () => void;
     const current = new Promise<void>((resolve) => {
@@ -19,7 +19,7 @@ class KeyedIngressLock {
     });
   }
 
-  async run<T>(key: number, operation: () => Promise<T>): Promise<T> {
+  async run<T>(key: K, operation: () => Promise<T>): Promise<T> {
     const release = await this.acquire(key);
     try {
       return await operation();

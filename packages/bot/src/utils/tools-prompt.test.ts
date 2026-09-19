@@ -6,18 +6,9 @@ function promptOptions(
   overrides: Partial<ExtendedToolsPromptOptions> = {},
 ): ExtendedToolsPromptOptions {
   return {
-    hasStickerPacks: false,
-    hasTTS: false,
-    hasWebTools: false,
-    hasSearchTool: false,
-    hasImageGeneration: false,
-    hasAgentTools: false,
+    capabilities: new Set(),
     availableAgents: [],
-    hasBotMemory: false,
-    hasArtworkTools: false,
-    hasFileTools: false,
     isPrivate: false,
-    hasMultiMessage: false,
     timerMaxSeconds: DEFAULT_TIMER_MAX_SECONDS,
     ...overrides,
   };

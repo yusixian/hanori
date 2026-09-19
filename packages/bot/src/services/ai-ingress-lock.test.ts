@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { AiIngressLock } from "./ai-ingress-lock.js";
+import { AiIngressLock, KeyedIngressLock } from "./ai-ingress-lock.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -91,5 +91,30 @@ describe("AiIngressLock", () => {
       "clear",
     ]);
     expect(locks.hasMessageAdmission(secondContext)).toBe(false);
+  });
+});
+
+describe("KeyedIngressLock", () => {
+  it("serialises one string key and leaves other keys free", async () => {
+    const lock = new KeyedIngressLock<string>();
+    const gate = deferred();
+    const events: string[] = [];
+
+    const first = lock.run("bot-a:1", async () => {
+      events.push("a1:start");
+      await gate.promise;
+      events.push("a1:end");
+    });
+    const second = lock.run("bot-a:1", async () => {
+      events.push("a1:second");
+    });
+    await lock.run("bot-b:1", async () => {
+      events.push("b1");
+    });
+
+    expect(events).toEqual(["a1:start", "b1"]);
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(events).toEqual(["a1:start", "b1", "a1:end", "a1:second"]);
   });
 });

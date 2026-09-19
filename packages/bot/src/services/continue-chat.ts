@@ -41,13 +41,7 @@ import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
-import {
-  createOnceGuard,
-  createPerStepAbort,
-  createRequestCache,
-  wrapToolsWithCache,
-} from "../tools/utils.js";
-import { trackSuccessfulToolEffects } from "../tools/visible-effects.js";
+import { createOnceGuard, createPerStepAbort, createRequestCache } from "../tools/utils.js";
 import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
@@ -57,7 +51,7 @@ import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-pre
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
 import { startChatActionHeartbeat } from "../utils/chat-action-heartbeat.js";
-import { wrapToolsWithLogging } from "../utils/tool-log.js";
+import { composeTurnTools } from "../utils/tool-pipeline.js";
 import {
   createCacheFingerprint,
   createToolSchemaHash,
@@ -66,7 +60,13 @@ import {
 import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
-import { withChatLock } from "./chat-lock.js";
+import { KeyedIngressLock } from "./ai-ingress-lock.js";
+
+/**
+ * Serialises continuations for callers that supply no `runWithExecution`, keyed by
+ * (botId, chatId) so two Bot runtimes in the same Chat never queue behind each other.
+ */
+export const fallbackExecutionLock = new KeyedIngressLock<string>();
 
 export interface ContinueChatSelection {
   model: LanguageModel;
@@ -95,6 +95,7 @@ export interface ContinueChatConfig {
   ) => Promise<T>;
   systemPrompt: string;
   behavioralPrompt?: string;
+  groupBehavioralPrompt?: string;
   conversationConfig?: ConversationConfig;
   conversation?: ConversationCallbacks;
   privacy?: UserPrivacyCallbacks;
@@ -244,7 +245,9 @@ async function scheduleContinuationFailureNotice(
         sendWithPrivacy,
       );
     }
-    return await withChatLock(event.chatId, () => sendWithPrivacy());
+    return await fallbackExecutionLock.run(`${config.botId}:${event.chatId}`, () =>
+      sendWithPrivacy(),
+    );
   } catch (error) {
     config.onLog?.({
       level: "info",
@@ -349,7 +352,7 @@ export async function continueChat(
           { chatId: event.chatId, userId: event.userId },
           runWithPrivacy,
         )
-      : await withChatLock(event.chatId, () => runWithPrivacy());
+      : await fallbackExecutionLock.run(`${config.botId}:${event.chatId}`, () => runWithPrivacy());
     succeeded = result;
     return result;
   } finally {
@@ -423,6 +426,7 @@ async function doContinueChat(
     const promptBundle = await buildContinueChatPromptBundle({
       systemPrompt: config.systemPrompt,
       behavioralPrompt: config.behavioralPrompt,
+      groupBehavioralPrompt: config.groupBehavioralPrompt,
       conversationConfig: config.conversationConfig,
       conversation: config.conversation,
       chatId,
@@ -663,15 +667,14 @@ async function doContinueChat(
     const result = streamText({
       model: selection.model,
       messages,
-      tools: wrapToolsWithLogging(
-        wrapToolsWithCache(
-          trackSuccessfulToolEffects(stableTools, () => {
-            successfulToolEffectCount += 1;
-          }),
-          requestCache,
-        ),
-        { onLog: config.onLog, getStep: () => stepCounter + 1 },
-      ),
+      tools: composeTurnTools(stableTools, {
+        requestCache,
+        onLog: config.onLog,
+        getStep: () => stepCounter + 1,
+        onEffect: () => {
+          successfulToolEffectCount += 1;
+        },
+      }),
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,

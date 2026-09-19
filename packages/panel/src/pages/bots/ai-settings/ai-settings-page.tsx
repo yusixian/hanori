@@ -15,7 +15,6 @@ import type {
   BotWithStatus,
   SummaryConfigStored,
   TimeoutConfig,
-  WebToolsConfig,
   WebToolsConfigPublic,
   GitHubToolsConfigPublic,
 } from "@cos-tool-bot/shared";
@@ -39,6 +38,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildAiConfigSaveBody } from "./ai-config-save-body";
 import { PromptPreviewDialog } from "./prompt-preview-dialog";
 import { useParams, useSearchParams } from "react-router";
 import {
@@ -120,35 +120,6 @@ function serializeDraft(
     imageOcrConfig,
     executionConfig,
   });
-}
-
-function toWebToolsConfigUpdate(
-  config: WebToolsConfigPublic | undefined,
-  searchApiKey: string,
-  imageApiKey: string,
-): WebToolsConfig | undefined {
-  if (!config) return undefined;
-  return {
-    enabled: config.enabled,
-    trustedPrivateHosts: config.trustedPrivateHosts,
-    search: config.search
-      ? {
-          provider: config.search.provider,
-          apiKey: searchApiKey || undefined,
-          baseURL: config.search.baseURL,
-        }
-      : undefined,
-    imageGeneration: config.imageGeneration
-      ? {
-          provider: config.imageGeneration.provider,
-          apiKey: imageApiKey || undefined,
-          baseURL: config.imageGeneration.baseURL,
-          model: config.imageGeneration.model,
-          size: config.imageGeneration.size,
-          pixaiConfig: config.imageGeneration.pixaiConfig,
-        }
-      : undefined,
-  };
 }
 
 export function BotAiSettingsPage() {
@@ -436,86 +407,21 @@ export function BotAiSettingsPage() {
     setMessage(null);
     const providerIdsBeforeSave = config.providers.map((provider) => provider.id);
     try {
-      const activeProvider =
-        config.providers?.find((provider) => provider.id === config.activeProviderId) ??
-        config.providers?.[0];
       const res = await client.api.bots[":botId"]["ai-config"].$put({
         param: { botId },
-        json: {
+        json: buildAiConfigSaveBody({
           revision: revisionRef.current,
-          enabled: config.enabled,
-          baseURL: activeProvider?.baseURL ?? config.baseURL,
-          providerFormat: activeProvider?.providerFormat ?? config.providerFormat,
-          model: activeProvider?.defaultModel ?? config.model,
-          systemPrompt: config.systemPrompt,
-          behavioralPrompt: config.behavioralPrompt || undefined,
-          groupBehavioralPrompt: config.groupBehavioralPrompt || undefined,
-          triggerConfig: {
-            ...config.triggerConfig,
-            triggerWords: triggerWordsText
-              .split(",")
-              .map((word) => word.trim())
-              .filter(Boolean),
-          },
-          groupOverrides: config.groupOverrides,
-          conversationConfig: config.conversationConfig,
-          memoryConfig: config.memoryConfig,
-          botMemoryConfig: config.botMemoryConfig,
-          webToolsConfig: toWebToolsConfigUpdate(
-            config.webToolsConfig,
-            webSearchApiKey,
-            webImageApiKey,
-          ),
-          imageGenerationReceiptConfig: config.imageGenerationReceiptConfig,
-          agentToolsConfig: config.agentToolsConfig,
-          githubToolsConfig: config.githubToolsConfig
-            ? {
-                enabled: config.githubToolsConfig.enabled,
-                publicReadEnabled: config.githubToolsConfig.publicReadEnabled,
-                codingAgentEnabled: config.githubToolsConfig.codingAgentEnabled,
-                codingProviderId: config.githubToolsConfig.codingProviderId,
-                codingModelId: config.githubToolsConfig.codingModelId,
-                authorName: config.githubToolsConfig.authorName,
-                authorEmail: config.githubToolsConfig.authorEmail,
-                repositories: config.githubToolsConfig.repositories,
-              }
-            : undefined,
-          artworkToolsConfig: config.artworkToolsConfig,
-          messageConfig: config.messageConfig,
-          timeoutConfig: config.timeoutConfig,
-          models: activeProvider?.models ?? config.models,
-          modelCommandAccess: config.modelCommandAccess,
-          embeddingConfig: config.embeddingConfig
-            ? {
-                enabled: config.embeddingConfig.enabled,
-                apiKey: embeddingApiKey || undefined,
-                baseURL: config.embeddingConfig.baseURL,
-                model: config.embeddingConfig.model,
-              }
-            : undefined,
-          privateChatWhitelist: config.privateChatWhitelist,
-          privateChatAccess: config.privateChatAccess ?? "all",
-          mcpServerIds: config.mcpServerIds,
+          config,
+          triggerWordsText,
+          stickerPacksText,
           summaryConfig,
           imageOcrConfig,
           executionConfig: executionConfigUpdate,
-          stickerPacks: stickerPacksText
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean),
-          providers: config.providers?.map((p) => ({
-            // Keep temp "__new_*" ids so backend can remap activeProviderId through them.
-            id: p.id,
-            label: p.label,
-            baseURL: p.baseURL,
-            providerFormat: p.providerFormat,
-            defaultModel: p.defaultModel,
-            modelDiscoveryPath: p.modelDiscoveryPath,
-            apiKey: providerApiKeys[p.id] || undefined,
-            models: p.models,
-          })),
-          activeProviderId: config.activeProviderId,
-        },
+          providerApiKeys,
+          webSearchApiKey,
+          webImageApiKey,
+          embeddingApiKey,
+        }),
       });
       if (!res.ok) {
         type SaveErrorResponse = {

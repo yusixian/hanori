@@ -1,8 +1,7 @@
 import type { UserPrivacyCallbacks } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import { acquireChatLock } from "./chat-lock.js";
-import { continueChat, type ContinueChatConfig } from "./continue-chat.js";
+import { continueChat, fallbackExecutionLock, type ContinueChatConfig } from "./continue-chat.js";
 
 describe("continueChat privacy", () => {
   it("does not persist the continuation event description in generic logs", async () => {
@@ -146,12 +145,13 @@ describe("continueChat privacy", () => {
 
   it("resolves one selection snapshot only after acquiring the chat lock", async () => {
     const chatId = -200;
-    const releaseLock = await acquireChatLock(chatId);
+    const botId = "bot-a";
+    const releaseLock = await fallbackExecutionLock.acquire(`${botId}:${chatId}`);
     const resolveSelection = vi.fn(() => ({ model: {} as never, modelId: "model-a" }));
 
     const continuation = continueChat(
       {} as Api,
-      { resolveSelection } as unknown as ContinueChatConfig,
+      { botId, resolveSelection } as unknown as ContinueChatConfig,
       { chatId, userId: 42, eventDescription: "timer fired" },
     );
     await Promise.resolve();

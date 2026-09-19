@@ -2,6 +2,9 @@ import { MAX_TOOL_CALLS_PER_REQUEST } from "@cos-tool-bot/shared";
 import type { Tool, JSONValue } from "ai";
 import { jsonSchema } from "ai";
 import { z } from "zod";
+import { getToolCacheKey, getToolCallLimit } from "./descriptors.js";
+
+export { normalizeUrlForCache } from "./descriptors.js";
 
 /**
  * Convert a Zod v4 schema to an AI SDK-compatible JSON Schema.
@@ -64,67 +67,6 @@ export function createRequestCache(): RequestCache {
   };
 }
 
-const TWITTER_HOSTS = new Set([
-  "twitter.com",
-  "x.com",
-  "vxtwitter.com",
-  "fxtwitter.com",
-  "api.vxtwitter.com",
-  "api.fxtwitter.com",
-  "fixvx.com",
-]);
-const TWITTER_STATUS_RE = /\/[^/]+\/status\/(\d+)/;
-const PIXIV_ARTWORKS_RE = /\/(?:en\/)?(?:artworks|i)\/(\d+)/;
-
-/** Normalize URLs for cache deduplication. */
-export function normalizeUrlForCache(url: string): string {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-
-    // Twitter variants → tweet:{postId}
-    if (TWITTER_HOSTS.has(host) || host.endsWith(".twitter.com") || host.endsWith(".x.com")) {
-      const m = u.pathname.match(TWITTER_STATUS_RE);
-      if (m) return `tweet:${m[1]}`;
-    }
-
-    // Pixiv
-    if (host === "www.pixiv.net" || host === "pixiv.net") {
-      const m = u.pathname.match(PIXIV_ARTWORKS_RE);
-      if (m) return `pixiv:${m[1]}`;
-    }
-
-    // Generic: host + pathname (strip tracking params)
-    return `${host}${u.pathname}`;
-  } catch {
-    return url.toLowerCase();
-  }
-}
-
-const TOOL_CALL_LIMITS: Record<string, number> = {
-  fetch_webpage: 128,
-  web_search: 64,
-  fetch_artwork_info: 64,
-  delegate_task: 64,
-  search_danbooru_character_tags: 64,
-};
-
-const CACHEABLE_TOOLS = new Set(["fetch_webpage", "web_search", "fetch_artwork_info"]);
-
-function buildCacheKey(toolName: string, args: Record<string, unknown>): string {
-  if (toolName === "fetch_artwork_info" || toolName === "fetch_webpage") {
-    const url = String(args.url ?? "");
-    return `${toolName}:${normalizeUrlForCache(url)}`;
-  }
-  if (toolName === "web_search") {
-    const query = String(args.query ?? "")
-      .toLowerCase()
-      .trim();
-    return `${toolName}:${query}`;
-  }
-  return `${toolName}:${JSON.stringify(args)}`;
-}
-
 /**
  * Wraps every executable tool with a generous total request budget. Selected
  * read-only tools additionally receive deduplication and per-tool limits.
@@ -151,13 +93,13 @@ export function wrapToolsWithCache(
           };
         }
 
-        if (!CACHEABLE_TOOLS.has(name) && !(name in TOOL_CALL_LIMITS)) {
+        const args = (toolArgs ?? {}) as Record<string, unknown>;
+        const callLimit = getToolCallLimit(name);
+        const key = getToolCacheKey(name, args);
+        if (key === undefined && callLimit === undefined) {
           return originalExecute(toolArgs, options);
         }
 
-        const args = (toolArgs ?? {}) as Record<string, unknown>;
-        const cacheable = CACHEABLE_TOOLS.has(name);
-        const key = cacheable ? buildCacheKey(name, args) : undefined;
         if (key) {
           const cached = cache.getCachedResult(key);
           if (cached !== undefined) {
@@ -167,7 +109,7 @@ export function wrapToolsWithCache(
           }
         }
 
-        const limit = TOOL_CALL_LIMITS[name] ?? Infinity;
+        const limit = callLimit ?? Infinity;
         const count = cache.incrementCallCount(name);
         if (count > limit) {
           return {
