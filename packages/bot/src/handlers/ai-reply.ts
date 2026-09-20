@@ -1,3 +1,4 @@
+import { createTurnInteractionTools } from "../tools/turn-interaction.js";
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
@@ -76,8 +77,6 @@ import {
 import {
   createActionTools,
   createAgentTools,
-  createArtworkTools,
-  createBehaviorTools,
   createBotMemoryTools,
   createDanbooruTools,
   createMemoryTools,
@@ -88,7 +87,6 @@ import {
   type McpToolsOptions,
   createRssTools,
   createSkillTools,
-  createTelegramTools,
   createWebTools,
 } from "../tools/index.js";
 import type { RssToolsOptions } from "../tools/index.js";
@@ -1677,42 +1675,41 @@ export function createAiReplyHandler(
         // model gets to read. Only ids it actually read may reach reply_to_specific.
         const replyableMessageIds: number[] = [msg.message_id];
 
-        // Create per-request telegram tools
-        const telegramTools = createTelegramTools({
+        const deliveredMultiMessages: string[] = [];
+        const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
           api: ctx.api,
           chatId,
-          userId,
           recentBotMessageIds: chatBotMsgIds,
-          getReplyableMessageIds: () => replyableMessageIds,
-          pendingActions,
-          onTimerFired: async (timerChatId, timerId, reason) => {
-            await onTimerFired(timerChatId, timerId, reason, userId);
-          },
-          onTimerCreate: config.onTimerCreate
-            ? (params) => config.onTimerCreate!({ ...params, userId })
-            : undefined,
-          onTimerCancel: config.onTimerCancel,
-          onTimerFiredPersist: config.onTimerFiredPersist,
           onceGuard,
-          dataDir: config.dataFiles?.dataDir,
-          token: config.token,
-          receivedFiles: recentReceivedFiles.get(chatId),
-          timeoutConfig: config.timeoutConfig,
-          timerMaxSeconds,
+          telegram: {
+            userId,
+            getReplyableMessageIds: () => replyableMessageIds,
+            pendingActions,
+            onTimerFired: async (timerChatId, timerId, reason) => {
+              await onTimerFired(timerChatId, timerId, reason, userId);
+            },
+            onTimerCreate: config.onTimerCreate
+              ? (params) => config.onTimerCreate!({ ...params, userId })
+              : undefined,
+            onTimerCancel: config.onTimerCancel,
+            onTimerFiredPersist: config.onTimerFiredPersist,
+            dataDir: config.dataFiles?.dataDir,
+            token: config.token,
+            receivedFiles: recentReceivedFiles.get(chatId),
+            timeoutConfig: config.timeoutConfig,
+            timerMaxSeconds,
+          },
+          behavior: {
+            moodState,
+            richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
+            onLog: config.onLog,
+            onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
+          },
+          artwork: config.artworkToolsConfig
+            ? { config: config.artworkToolsConfig, timeoutConfig: config.timeoutConfig }
+            : undefined,
         });
         if (!personalizationEnabled) delete telegramTools.set_timer;
-
-        // Create per-request behavior tools
-        const deliveredMultiMessages: string[] = [];
-        const behaviorTools = createBehaviorTools({
-          api: ctx.api,
-          chatId,
-          recentBotMessageIds: chatBotMsgIds,
-          moodState,
-          richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
-          onLog: config.onLog,
-          onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
-        });
         if (!personalizationEnabled) delete behaviorTools.set_mood;
 
         // Resolve one immutable provider/model/factory snapshot after acquiring the scheduler slot.
@@ -1753,19 +1750,6 @@ export function createAiReplyHandler(
               currentProviderRuntime,
               currentModel,
             ),
-          });
-        }
-
-        // Create artwork tools if enabled
-        let artworkTools: Record<string, Tool> = {};
-        if (config.artworkToolsConfig?.enabled) {
-          artworkTools = createArtworkTools({
-            api: ctx.api,
-            chatId,
-            recentBotMessageIds: chatBotMsgIds,
-            config: config.artworkToolsConfig,
-            onceGuard,
-            timeoutConfig: config.timeoutConfig,
           });
         }
 

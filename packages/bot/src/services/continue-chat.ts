@@ -1,3 +1,4 @@
+import { createTurnInteractionTools } from "../tools/turn-interaction.js";
 import type {
   AgentToolsConfig,
   ArtworkToolsConfig,
@@ -29,13 +30,7 @@ import {
 import type { JSONValue, LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import {
-  createBehaviorTools,
-  createDanbooruTools,
-  createImageGenerationTools,
-  createRssTools,
-  createTelegramTools,
-} from "../tools/index.js";
+import { createDanbooruTools, createImageGenerationTools, createRssTools } from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
@@ -495,36 +490,37 @@ async function doContinueChat(
         }
       : undefined;
 
-    const telegramTools = createTelegramTools({
-      api,
-      chatId,
-      userId: event.userId,
-      recentBotMessageIds: chatBotMsgIds,
-      getReplyableMessageIds: () => promptBundle.replyableMessageIds,
-      pendingActions: config.pendingActions,
-      onTimerFired: wrappedOnTimerFired,
-      onTimerCreate:
-        config.onTimerCreate && timerUserId !== undefined
-          ? (params) => config.onTimerCreate?.({ ...params, userId: timerUserId })
-          : undefined,
-      onTimerCancel: config.onTimerCancel,
-      onTimerFiredPersist: config.onTimerFiredPersist,
-      onceGuard,
-      timerMaxSeconds: config.timerMaxSeconds,
-    });
-
     const deliveredMultiMessages: string[] = [];
-    const behaviorTools = createBehaviorTools({
+    const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
       api,
       chatId,
       recentBotMessageIds: chatBotMsgIds,
-      moodState: config.moodState,
-      richMessageEnabled: isRichMessageEnabled(config.messageConfig),
-      onLog: config.onLog,
-      onMultiMessageSent: (text) => {
-        deliveredMultiMessages.push(text);
-        visibleDeliveryCount += 1;
+      onceGuard,
+      telegram: {
+        userId: event.userId,
+        getReplyableMessageIds: () => promptBundle.replyableMessageIds,
+        pendingActions: config.pendingActions,
+        onTimerFired: wrappedOnTimerFired,
+        onTimerCreate:
+          config.onTimerCreate && timerUserId !== undefined
+            ? (params) => config.onTimerCreate?.({ ...params, userId: timerUserId })
+            : undefined,
+        onTimerCancel: config.onTimerCancel,
+        onTimerFiredPersist: config.onTimerFiredPersist,
+        timerMaxSeconds: config.timerMaxSeconds,
       },
+      behavior: {
+        moodState: config.moodState,
+        richMessageEnabled: isRichMessageEnabled(config.messageConfig),
+        onLog: config.onLog,
+        onMultiMessageSent: (text) => {
+          deliveredMultiMessages.push(text);
+          visibleDeliveryCount += 1;
+        },
+      },
+      artwork: config.artworkToolsConfig
+        ? { config: config.artworkToolsConfig, timeoutConfig: config.timeoutConfig }
+        : undefined,
     });
 
     const allTools: Record<string, Tool> = {
@@ -586,21 +582,7 @@ async function doContinueChat(
       );
     }
 
-    // Artwork tools
-    if (config.artworkToolsConfig?.enabled) {
-      const { createArtworkTools } = await import("../tools/artwork/index.js");
-      Object.assign(
-        allTools,
-        createArtworkTools({
-          api,
-          chatId,
-          recentBotMessageIds: chatBotMsgIds,
-          config: config.artworkToolsConfig,
-          onceGuard,
-          timeoutConfig: config.timeoutConfig,
-        }),
-      );
-    }
+    Object.assign(allTools, artworkTools);
 
     // RSS tools
     if (config.rssCallbacks) {
