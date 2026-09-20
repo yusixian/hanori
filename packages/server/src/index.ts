@@ -42,6 +42,10 @@ import { ImageGenerationService } from "./services/image-generation-service.js";
 import { BotConfiguredGeneralImageBackend } from "./services/general-image-backend.js";
 import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
 import { resolveDeploymentVersion, RuntimeHealth } from "./runtime-health.js";
+import {
+  EngagementSampleCleaner,
+  EngagementSampleService,
+} from "./services/engagement-sample-service.js";
 
 export type { AppType } from "./app.js";
 
@@ -153,6 +157,10 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const engagementSampleService = new EngagementSampleService(db);
+const engagementSampleCleaner = new EngagementSampleCleaner(engagementSampleService, logger);
+engagementSampleCleaner.start();
+botPool.setEngagementSampleService(engagementSampleService);
 const usageGovernor = new UsageGovernor(db);
 const imageMcpConnectionService = new ImageMcpConnectionService({
   db,
@@ -378,6 +386,7 @@ const app = createApp({
   imageGenerationService,
   imageMcpConnectionService,
   usageGovernor,
+  engagementSampleService,
   runtimeHealth,
 });
 
@@ -427,6 +436,7 @@ const scheduledServices: [
   ["LogCleaner", logCleaner],
   ["MemoryGC", memoryGC],
   ["GenerationCleaner", generationCleaner],
+  ["EngagementSampleCleaner", engagementSampleCleaner],
   ["ModelCapabilityService", modelCapabilityService],
 ];
 for (const [name, svc] of scheduledServices) {
@@ -453,6 +463,7 @@ const shutdown = async (signal: string) => {
   logCleaner.stop();
   memoryGC.stop();
   generationCleaner.stop();
+  engagementSampleCleaner.stop();
   await botPool.stopAll();
   await dbClient.end();
   process.exit(0);

@@ -42,4 +42,5 @@ export {
   getDataDir,
 } from "./file-validation.js";
 
+export * from "./engagement.js";
 export { parseConversationRelayOrigin, formatConversationRelayOrigin } from "./relay-origin.js";

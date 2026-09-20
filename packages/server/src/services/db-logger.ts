@@ -2,6 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import { botLogs } from "@cos-tool-bot/database";
 import type { LogLevel } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
+import { redactDiagnostic } from "./run-redaction.js";
 
 export class DbLogger {
   constructor(
@@ -11,14 +12,17 @@ export class DbLogger {
   ) {}
 
   async log(level: LogLevel, message: string, meta?: unknown) {
+    const safeMessage = redactDiagnostic(message) as string;
+    const safeMeta = meta === undefined ? undefined : redactDiagnostic(meta);
     // pino default level is info, so debug() calls are silently ignored in stdout
-    this.pino[level](meta, message);
+    if (safeMeta === undefined) this.pino[level](safeMessage);
+    else this.pino[level](safeMeta, safeMessage);
     try {
       await this.db
         .insert(botLogs)
-        .values({ level, message, meta: meta ?? null, botId: this.botId ?? null });
+        .values({ level, message: safeMessage, meta: safeMeta ?? null, botId: this.botId ?? null });
     } catch (err) {
-      this.pino.error(err, "Failed to write log to database");
+      this.pino.error(redactDiagnostic(err), "Failed to write log to database");
     }
   }
 

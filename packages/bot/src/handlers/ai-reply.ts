@@ -1,3 +1,4 @@
+import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import { createTurnInteractionTools } from "../tools/turn-interaction.js";
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
@@ -13,6 +14,9 @@ import type {
   ConversationConfig,
   ConversationForwardOrigin,
   ConversationRole,
+  EngagementConfigRuntime,
+  EngagementPolicy,
+  EngagementSample,
   GitHubToolsRuntimeConfig,
   ImageOcrConfig,
   ImageGenerationPort,
@@ -34,6 +38,7 @@ import {
   DEFAULT_AI_EXECUTION_CONFIG,
   DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_ENGAGEMENT_POLICY,
   DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES,
   DEFAULT_MEMORY_CONFIG,
   DEFAULT_MESSAGE_CONFIG,
@@ -66,6 +71,13 @@ import {
   type AiRunScope,
 } from "../services/ai-execution-coordinator.js";
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
+import {
+  createLocalEngagementErrorSample,
+  createLocalEngagementSample,
+  EngagementEvaluator,
+  selectEngagementContext,
+  type EngagementContextCandidate,
+} from "../services/engagement-evaluator.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
   AiTurnCoalescer,
@@ -192,6 +204,7 @@ export interface AiReplyConfig {
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
   triggerConfig: AiTriggerConfig;
+  engagement?: EngagementConfigRuntime;
   groupOverrides: Record<string, AiGroupOverride>;
   adminChatIds: number[];
   conversationConfig?: ConversationConfig;
@@ -218,6 +231,7 @@ export interface AiReplyConfig {
   botMemory?: BotMemoryCallbacks;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
+  onEngagementSample?: (sample: EngagementSample) => void | Promise<void>;
   models?: ModelEntry[];
   modelCommandAccess?: "admin" | "all";
   timeoutConfig?: TimeoutConfig;
@@ -393,7 +407,14 @@ function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
   return files;
 }
 
-type TriggerResult = "reply" | "mention" | "keyword" | "random" | false;
+type TriggerResult =
+  | "reply"
+  | "mention"
+  | "keyword"
+  | "random"
+  | "engagement_continue"
+  | "engagement_join"
+  | false;
 
 export interface BufferedMessage {
   messageId: number;
@@ -402,6 +423,71 @@ export interface BufferedMessage {
   text: string;
   timestamp: number;
   forwardOrigin?: ConversationForwardOrigin;
+}
+
+const MAX_ENGAGEMENT_PRIVACY_USERS = 50;
+
+interface EngagementPrivacySource {
+  privacyUserIds: number[];
+  verifiable: boolean;
+}
+
+function boundedPrivacyUserIds(...groups: Array<readonly number[] | undefined>): number[] {
+  const result: number[] = [];
+  const seen = new Set<number>();
+  for (const group of groups) {
+    for (const userId of group ?? []) {
+      if (!Number.isSafeInteger(userId) || seen.has(userId)) continue;
+      seen.add(userId);
+      result.push(userId);
+      if (result.length >= MAX_ENGAGEMENT_PRIVACY_USERS) return result;
+    }
+  }
+  return result;
+}
+
+function privacyUserIdsOverflow(...groups: Array<readonly number[] | undefined>): boolean {
+  const seen = new Set<number>();
+  for (const group of groups) {
+    for (const userId of group ?? []) {
+      if (!Number.isSafeInteger(userId)) continue;
+      seen.add(userId);
+      if (seen.size > MAX_ENGAGEMENT_PRIVACY_USERS) return true;
+    }
+  }
+  return false;
+}
+
+function engagementPrivacySource(
+  message: { from?: { id: number }; forward_origin?: unknown },
+  fallbackUserId?: number,
+  botUserId?: number,
+): EngagementPrivacySource {
+  const directUserId = message.from?.id ?? fallbackUserId;
+  const directIds = directUserId !== undefined && directUserId !== botUserId ? [directUserId] : [];
+  if (message.forward_origin == null) {
+    return { privacyUserIds: directIds, verifiable: directUserId !== undefined };
+  }
+  if (
+    typeof message.forward_origin !== "object" ||
+    Array.isArray(message.forward_origin) ||
+    message.forward_origin === null
+  ) {
+    return { privacyUserIds: directIds, verifiable: false };
+  }
+  const origin = message.forward_origin as Record<string, unknown>;
+  const sender = origin["sender_user"];
+  const senderId =
+    origin["type"] === "user" && sender && typeof sender === "object" && !Array.isArray(sender)
+      ? (sender as Record<string, unknown>)["id"]
+      : undefined;
+  if (typeof senderId !== "number" || !Number.isSafeInteger(senderId)) {
+    return { privacyUserIds: directIds, verifiable: false };
+  }
+  return {
+    privacyUserIds: boundedPrivacyUserIds(directIds, [senderId]),
+    verifiable: true,
+  };
 }
 
 interface ToolResultEntry {
@@ -547,12 +633,29 @@ function resolveGroupConfig(
   conversationEnabled: boolean;
   maxContextMessages: number;
   groupHistoryMaxTokens: number;
+  engagementPolicy: EngagementPolicy;
 } {
   const conversationCfg = {
     ...DEFAULT_CONVERSATION_CONFIG,
     ...config.conversationConfig,
   };
   const override = config.groupOverrides[String(chatId)];
+  const engagementPolicy: EngagementPolicy = {
+    ...DEFAULT_ENGAGEMENT_POLICY,
+    ...(config.engagement
+      ? {
+          mode: config.engagement.mode,
+          style: config.engagement.style,
+          preferences: config.engagement.preferences,
+          keywordDirect: config.engagement.keywordDirect,
+          cooldownSeconds: config.engagement.cooldownSeconds,
+          confidenceThreshold: config.engagement.confidenceThreshold,
+          contextMessages: config.engagement.contextMessages,
+          timeoutMs: config.engagement.timeoutMs,
+        }
+      : {}),
+    ...override?.engagement,
+  };
   if (!override) {
     return {
       enabled: config.triggerConfig !== undefined,
@@ -563,6 +666,7 @@ function resolveGroupConfig(
       maxContextMessages: conversationCfg.maxContextMessages,
       groupHistoryMaxTokens:
         conversationCfg.groupHistoryMaxTokens ?? DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
+      engagementPolicy,
     };
   }
   return {
@@ -576,10 +680,11 @@ function resolveGroupConfig(
       override.groupHistoryMaxTokens ??
       conversationCfg.groupHistoryMaxTokens ??
       DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
+    engagementPolicy,
   };
 }
 
-function checkTrigger(
+function checkLegacyTrigger(
   ctx: WrapperContext,
   triggerConfig: AiTriggerConfig,
   chatId: number,
@@ -616,6 +721,24 @@ function checkTrigger(
     }
   }
 
+  return false;
+}
+
+function detectExplicitTrigger(ctx: WrapperContext): "reply" | "mention" | false {
+  if (ctx.message?.reply_to_message?.from?.id === ctx.me.id) return "reply";
+  const text = ctx.message?.text ?? ctx.message?.caption ?? "";
+  const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? [];
+  for (const entity of entities) {
+    if (entity.type === "text_mention" && entity.user.id === ctx.me.id) return "mention";
+    if (
+      entity.type === "mention" &&
+      ctx.me.username &&
+      text.slice(entity.offset, entity.offset + entity.length).toLowerCase() ===
+        `@${ctx.me.username.toLowerCase()}`
+    ) {
+      return "mention";
+    }
+  }
   return false;
 }
 
@@ -813,11 +936,22 @@ export function createAiReplyHandler(
   destroy: () => Promise<void>;
 } {
   const cooldownMap = new Map<number, number>();
+  const engagementCooldownMap = new Map<string, number>();
+  const engagementEvaluator = new EngagementEvaluator();
   const governanceNoticeAt = new Map<string, number>();
+  const maxConfiguredEngagementCooldown = Math.max(
+    DEFAULT_ENGAGEMENT_POLICY.cooldownSeconds,
+    config.engagement?.cooldownSeconds ?? 0,
+    ...Object.values(config.groupOverrides).map(
+      (override) => override.engagement?.cooldownSeconds ?? 0,
+    ),
+  );
 
   // Bot-wide AI kill switch (in-memory). /stop flips aiDisabled=true and aborts
   // all in-flight streamText calls via the registered controllers.
   let aiDisabled = false;
+  let engagementGeneration = 0;
+  const engagementGateControllers = new Set<AbortController>();
   const activeAbortControllers = new Set<AbortController>();
   const executionConfig: AiExecutionConfig = {
     ...DEFAULT_AI_EXECUTION_CONFIG,
@@ -893,7 +1027,11 @@ export function createAiReplyHandler(
       return 0;
     }
     aiDisabled = true;
+    engagementGeneration++;
     turnCoalescer.clear();
+    for (const controller of engagementGateControllers) controller.abort();
+    engagementGateControllers.clear();
+    engagementEvaluator.cancelActive();
     const scheduledAborted = executionCoordinator.cancelAllNow();
     const toAbort = [...activeAbortControllers];
     activeAbortControllers.clear();
@@ -901,6 +1039,60 @@ export function createAiReplyHandler(
       c.abort(new Error("AI disabled by /stop"));
     }
     return Math.max(scheduledAborted, toAbort.length);
+  }
+
+  interface EngagementGate {
+    controller: AbortController;
+    generation: number;
+    deadlineAt: number;
+  }
+
+  function beginEngagementGate(timeoutMs: number): EngagementGate {
+    const controller = new AbortController();
+    engagementGateControllers.add(controller);
+    return {
+      controller,
+      generation: engagementGeneration,
+      deadlineAt: Date.now() + Math.max(1, timeoutMs),
+    };
+  }
+
+  function engagementGateIsCurrent(gate: EngagementGate): boolean {
+    return (
+      !gate.controller.signal.aborted &&
+      !aiDisabled &&
+      gate.generation === engagementGeneration &&
+      Date.now() < gate.deadlineAt
+    );
+  }
+
+  async function awaitEngagementGate<T>(
+    operation: Promise<T>,
+    gate: EngagementGate,
+  ): Promise<T | undefined> {
+    if (!engagementGateIsCurrent(gate)) return undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let removeAbortListener: (() => void) | undefined;
+    const stopped = new Promise<undefined>((resolve) => {
+      const onAbort = () => resolve(undefined);
+      gate.controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => gate.controller.signal.removeEventListener("abort", onAbort);
+    });
+    const expired = new Promise<undefined>((resolve) => {
+      timeout = setTimeout(() => resolve(undefined), Math.max(1, gate.deadlineAt - Date.now()));
+      timeout.unref?.();
+    });
+    try {
+      const result = await Promise.race([operation, stopped, expired]);
+      return result !== undefined && engagementGateIsCurrent(gate) ? result : undefined;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      removeAbortListener?.();
+    }
+  }
+
+  function finishEngagementGate(gate: EngagementGate): void {
+    engagementGateControllers.delete(gate.controller);
   }
 
   // Reply mode runtime override (takes precedence over config)
@@ -1224,6 +1416,11 @@ export function createAiReplyHandler(
     for (const [chatId, lastTime] of cooldownMap) {
       if (now - lastTime > maxCooldown * 2) cooldownMap.delete(chatId);
     }
+    for (const [scopeKey, lastTime] of engagementCooldownMap) {
+      if (now - lastTime > maxConfiguredEngagementCooldown * 2_000) {
+        engagementCooldownMap.delete(scopeKey);
+      }
+    }
     for (const [key, lastTime] of governanceNoticeAt) {
       if (now - lastTime > 10 * 60_000) governanceNoticeAt.delete(key);
     }
@@ -1247,6 +1444,10 @@ export function createAiReplyHandler(
     number,
     { buffer: RingBuffer<BufferedMessage>; lastActive: number }
   >();
+  const engagementBuffers = new Map<
+    string,
+    { buffer: RingBuffer<EngagementContextCandidate>; lastActive: number }
+  >();
 
   const bufferCleanupTimer = setInterval(() => {
     const now = Date.now();
@@ -1254,6 +1455,9 @@ export function createAiReplyHandler(
       if (now - entry.lastActive > BUFFER_STALE_MS) {
         groupBuffers.delete(chatId);
       }
+    }
+    for (const [scopeKey, entry] of engagementBuffers) {
+      if (now - entry.lastActive > BUFFER_STALE_MS) engagementBuffers.delete(scopeKey);
     }
   }, BUFFER_CLEANUP_INTERVAL);
   bufferCleanupTimer.unref();
@@ -1266,6 +1470,25 @@ export function createAiReplyHandler(
         lastActive: Date.now(),
       };
       groupBuffers.set(chatId, entry);
+    } else {
+      entry.lastActive = Date.now();
+    }
+    return entry.buffer;
+  }
+
+  function engagementScopeKey(chatId: number, threadId: number | undefined): string {
+    return `${chatId}:${threadId ?? 0}`;
+  }
+
+  function getOrCreateEngagementBuffer(
+    chatId: number,
+    threadId: number | undefined,
+  ): RingBuffer<EngagementContextCandidate> {
+    const scopeKey = engagementScopeKey(chatId, threadId);
+    let entry = engagementBuffers.get(scopeKey);
+    if (!entry) {
+      entry = { buffer: new RingBuffer<EngagementContextCandidate>(40), lastActive: Date.now() };
+      engagementBuffers.set(scopeKey, entry);
     } else {
       entry.lastActive = Date.now();
     }
@@ -1294,6 +1517,7 @@ export function createAiReplyHandler(
   const handleMessage: MiddlewareFn<BotContext> = async (ctx, next) => {
     const msg = ctx.message;
     if (!msg) return next();
+    const engagementCapturedAt = Date.now();
 
     const chatId = ctx.chat?.id;
     if (!chatId) return next();
@@ -1314,6 +1538,23 @@ export function createAiReplyHandler(
       return next();
     }
 
+    const onLog = createAiTurnLogger(
+      config.onLog,
+      {
+        botId: config.botId,
+        chatId,
+        userId,
+        messageId: msg.message_id,
+        updateId: ctx.update?.update_id,
+        threadId: msg.message_thread_id,
+      },
+      [
+        config.apiKey,
+        config.token,
+        config.engagement?.apiKey ?? "",
+        ...(config.providers ?? []).map((provider) => provider.apiKey),
+      ],
+    );
     const isAdmin = config.adminChatIds.includes(userId);
     const userName = getDisplayName(ctx.from);
 
@@ -1323,6 +1564,7 @@ export function createAiReplyHandler(
     let groupMaxContext = conversationCfg.maxContextMessages;
     let groupHistoryMaxTokens = conversationCfg.groupHistoryMaxTokens;
     let groupTriggerConfig = config.triggerConfig;
+    let engagementPolicy: EngagementPolicy | undefined;
 
     if (isPrivate) {
       if (
@@ -1355,6 +1597,7 @@ export function createAiReplyHandler(
       groupMaxContext = groupCfg.maxContextMessages;
       groupHistoryMaxTokens = groupCfg.groupHistoryMaxTokens;
       groupTriggerConfig = groupCfg.triggerConfig;
+      engagementPolicy = groupCfg.engagementPolicy;
     }
 
     const privacyMode: UserPrivacyMode = (await config.privacy?.getMode(userId)) ?? "normal";
@@ -1374,9 +1617,11 @@ export function createAiReplyHandler(
     // Push to ring buffer for group chats (before trigger check)
     let bufferedGroupText = "";
     let groupBufferSnapshot: BufferedMessage[] = [];
+    let engagementBufferSnapshot: EngagementContextCandidate[] = [];
     let persistedGroupMessageId: number | undefined;
     const hasForwardOrigin = msg.forward_origin != null;
     const forwardOrigin = normalizeTelegramForwardOrigin(msg.forward_origin);
+    const currentEngagementSource = engagementPrivacySource(msg, userId, ctx.me.id);
     if (!isPrivate) {
       const buffer = getOrCreateBuffer(chatId);
       bufferedGroupText = describeGroupMessageForHistory(msg);
@@ -1391,11 +1636,280 @@ export function createAiReplyHandler(
         });
       }
       groupBufferSnapshot = buffer.getAll();
+      if (!aiDisabled && engagementPolicy?.mode !== "off" && personalizationEnabled) {
+        const engagementText = (msg.text ?? msg.caption ?? "").trim();
+        const engagementBuffer = getOrCreateEngagementBuffer(chatId, msg.message_thread_id);
+        if (engagementText && currentEngagementSource.verifiable) {
+          engagementBuffer.push({
+            messageId: msg.message_id,
+            userId,
+            text: engagementText,
+            timestamp: engagementCapturedAt,
+            threadId: msg.message_thread_id,
+            privacyUserIds: currentEngagementSource.privacyUserIds,
+          });
+        }
+        engagementBufferSnapshot = engagementBuffer.getAll();
+      }
     }
 
-    triggerResult = isPrivate
+    const replyText = (ctx.reply_to_message?.text ?? ctx.reply_to_message?.caption ?? "").trim();
+    const bufferedReplyCandidate = ctx.reply_to_message
+      ? engagementBufferSnapshot.find(
+          (candidate) => candidate.messageId === ctx.reply_to_message?.message_id,
+        )
+      : undefined;
+    const rawReplySource = ctx.reply_to_message
+      ? engagementPrivacySource(ctx.reply_to_message, ctx.reply_to_message.from?.id, ctx.me.id)
+      : undefined;
+    const replySource = bufferedReplyCandidate
+      ? {
+          privacyUserIds: bufferedReplyCandidate.privacyUserIds ?? [],
+          verifiable: true,
+        }
+      : rawReplySource;
+    const replyCandidate: EngagementContextCandidate | undefined =
+      ctx.reply_to_message && replyText && replySource?.verifiable
+        ? (bufferedReplyCandidate ?? {
+            messageId: ctx.reply_to_message.message_id,
+            userId: ctx.reply_to_message.from?.id ?? 0,
+            text: replyText,
+            timestamp: ctx.reply_to_message.date * 1000,
+            ...(ctx.reply_to_message.from?.id === ctx.me.id ? { isBot: true } : {}),
+            privacyUserIds: replySource.privacyUserIds,
+          })
+        : undefined;
+    const engagementResponseCapturedAt = Math.min(
+      Date.now(),
+      ...engagementBufferSnapshot.map((message) => message.privacyCapturedAt ?? message.timestamp),
+      ...(replyCandidate ? [replyCandidate.privacyCapturedAt ?? replyCandidate.timestamp] : []),
+    );
+    const initialEngagementResponsePrivacyGroups = [
+      currentEngagementSource.privacyUserIds,
+      ...engagementBufferSnapshot.map((candidate) => candidate.privacyUserIds),
+      replyCandidate?.privacyUserIds,
+    ];
+    let engagementResponsePrivacyUserIds = boundedPrivacyUserIds(
+      ...initialEngagementResponsePrivacyGroups,
+    );
+    let engagementResponseProvenanceVerified =
+      currentEngagementSource.verifiable &&
+      (!replyText || replySource?.verifiable === true) &&
+      !privacyUserIdsOverflow(...initialEngagementResponsePrivacyGroups);
+
+    const legacyTrigger = isPrivate
       ? "reply"
-      : checkTrigger(ctx, groupTriggerConfig, chatId, cooldownMap);
+      : checkLegacyTrigger(ctx, groupTriggerConfig, chatId, cooldownMap);
+    triggerResult = legacyTrigger;
+    let engagementSamplePromise: Promise<EngagementSample | undefined> | undefined;
+    let shouldCommitEngagementCooldown = false;
+    const engagementCooldownKey = engagementScopeKey(chatId, msg.message_thread_id);
+    const finalizeEngagementSample = (actualTrigger: string | false, finalReasonCode?: string) => {
+      if (!engagementSamplePromise || !config.onEngagementSample) return;
+      void engagementSamplePromise
+        .then((sample) => {
+          if (!sample) return;
+          onLog({
+            level: sample.errorCategory ? "warn" : "info",
+            message: "JEV engagement decision",
+            meta: {
+              mode: sample.mode,
+              style: sample.style,
+              choice: sample.choice,
+              recommendation: sample.engagement,
+              actualTrigger: actualTrigger || null,
+              confidence: sample.confidence,
+              probabilities: sample.probabilities,
+              reasonCode: finalReasonCode ?? sample.reasonCode,
+              errorCategory: sample.errorCategory,
+              model: sample.model,
+              configVersion: sample.configVersion,
+              latencyMs: sample.latencyMs,
+              inputTokens: sample.inputTokens,
+              estimatedCostUsd: sample.estimatedCostUsd,
+              contextMessages: sample.context.length,
+            },
+          });
+          return config.onEngagementSample!({
+            ...sample,
+            ...(finalReasonCode ? { reasonCode: finalReasonCode } : {}),
+            actualTrigger: actualTrigger || null,
+          });
+        })
+        .catch((error) => {
+          onLog?.({
+            level: "warn",
+            message: "Failed to record engagement sample",
+            meta: {
+              chatId,
+              messageId: msg.message_id,
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        });
+    };
+
+    if (!isPrivate && !aiDisabled && engagementPolicy && engagementPolicy.mode !== "off") {
+      const explicitTrigger = detectExplicitTrigger(ctx);
+      if (explicitTrigger) {
+        if (engagementPolicy.mode === "active") triggerResult = explicitTrigger;
+      } else if (privacyMode === "off") {
+        if (engagementPolicy.mode === "active") triggerResult = false;
+      } else if (engagementPolicy.mode === "shadow" && !config.onEngagementSample) {
+        // There is no observation sink, so avoid privacy lookups and a classifier call.
+      } else {
+        const currentText = (msg.text ?? msg.caption ?? "").trim();
+        const currentCandidate: EngagementContextCandidate = {
+          messageId: msg.message_id,
+          userId,
+          text: currentText,
+          timestamp: engagementCapturedAt,
+          privacyUserIds: currentEngagementSource.privacyUserIds,
+        };
+        const isFilterCandidate = legacyTrigger === "keyword" || legacyTrigger === "random";
+        const shouldEvaluate =
+          !!currentText &&
+          currentEngagementSource.verifiable &&
+          (engagementPolicy.style !== "filter" || isFilterCandidate);
+        const preparationTimeoutSample = () =>
+          createLocalEngagementErrorSample(
+            {
+              policy: engagementPolicy,
+              context: [],
+              chatId,
+              messageId: msg.message_id,
+              currentMessageId: msg.message_id,
+            },
+            "timeout",
+          );
+        const prepareEvaluationInput = async (gate: EngagementGate) => {
+          const privacyByUser = new Map<number, UserPrivacyMode>();
+          const contextUserIds = [
+            ...new Set(
+              [currentCandidate, ...engagementBufferSnapshot, replyCandidate].flatMap((message) =>
+                message ? (message.privacyUserIds ?? (!message.isBot ? [message.userId] : [])) : [],
+              ),
+            ),
+          ];
+          await Promise.all(
+            contextUserIds.map(async (contextUserId) => {
+              try {
+                privacyByUser.set(
+                  contextUserId,
+                  (await config.privacy?.getMode(contextUserId)) ?? "normal",
+                );
+              } catch {
+                privacyByUser.set(contextUserId, "off");
+              }
+            }),
+          );
+          const isPrivacySafe = (message: EngagementContextCandidate) =>
+            (message.privacyUserIds ?? (!message.isBot ? [message.userId] : [])).every(
+              (contextUserId) => {
+                const resetAt = config.privacy?.getContextResetAt?.(contextUserId);
+                return (
+                  privacyByUser.get(contextUserId) !== "off" &&
+                  (resetAt === undefined ||
+                    (message.privacyCapturedAt ?? message.timestamp) > resetAt)
+                );
+              },
+            );
+          if (!isPrivacySafe(currentCandidate)) return null;
+          const safeSnapshot = engagementBufferSnapshot.filter(isPrivacySafe);
+          const safeReplyCandidate =
+            replyCandidate && isPrivacySafe(replyCandidate) ? replyCandidate : undefined;
+          return {
+            contextSnapshot: safeSnapshot,
+            evaluationInput: {
+              apiKey: config.engagement?.apiKey,
+              policy: engagementPolicy,
+              context: selectEngagementContext({
+                messages: safeSnapshot,
+                current: currentCandidate,
+                reply: safeReplyCandidate,
+                maxMessages: engagementPolicy.contextMessages,
+              }),
+              chatId,
+              messageId: msg.message_id,
+              currentMessageId: msg.message_id,
+              replyMessageId: safeReplyCandidate?.messageId,
+              deadlineAt: gate.deadlineAt,
+            },
+          };
+        };
+
+        if (engagementPolicy.mode === "shadow") {
+          if (shouldEvaluate && config.onEngagementSample) {
+            const gate = beginEngagementGate(engagementPolicy.timeoutMs);
+            engagementSamplePromise = (async () => {
+              try {
+                const prepared = await awaitEngagementGate(prepareEvaluationInput(gate), gate);
+                if (prepared) return engagementEvaluator.evaluate(prepared.evaluationInput);
+                return prepared === undefined &&
+                  gate.generation === engagementGeneration &&
+                  !aiDisabled
+                  ? preparationTimeoutSample()
+                  : undefined;
+              } finally {
+                finishEngagementGate(gate);
+              }
+            })();
+          }
+        } else if (!shouldEvaluate) {
+          triggerResult = false;
+        } else {
+          const gate = beginEngagementGate(engagementPolicy.timeoutMs);
+          try {
+            const prepared = await awaitEngagementGate(prepareEvaluationInput(gate), gate);
+            if (prepared === null) {
+              triggerResult = false;
+            } else if (prepared === undefined) {
+              if (gate.generation === engagementGeneration && !aiDisabled) {
+                engagementSamplePromise = Promise.resolve(preparationTimeoutSample());
+                triggerResult = legacyTrigger;
+              } else {
+                triggerResult = false;
+              }
+            } else if (engagementPolicy.keywordDirect && legacyTrigger === "keyword") {
+              triggerResult = "keyword";
+              engagementSamplePromise = Promise.resolve(
+                createLocalEngagementSample(prepared.evaluationInput, "join", "keyword_direct"),
+              );
+            } else {
+              const sample = await engagementEvaluator.evaluate(prepared.evaluationInput);
+              engagementSamplePromise = Promise.resolve(sample);
+              if (gate.generation !== engagementGeneration || aiDisabled) {
+                triggerResult = false;
+              } else if (sample.errorCategory) {
+                triggerResult = legacyTrigger;
+              } else if (sample.engagement === "answer" && sample.choice !== "silent") {
+                const recentBotUtterance = prepared.contextSnapshot.some(
+                  (message) => message.isBot && Date.now() - message.timestamp <= 120_000,
+                );
+                const skipsCooldown = sample.choice === "continue" && recentBotUtterance;
+                const lastEngagement = engagementCooldownMap.get(engagementCooldownKey) ?? 0;
+                const cooldownMs = Math.max(0, engagementPolicy.cooldownSeconds) * 1000;
+                if (!skipsCooldown && Date.now() - lastEngagement < cooldownMs) {
+                  engagementSamplePromise = Promise.resolve({
+                    ...sample,
+                    reasonCode: "engagement_cooldown",
+                  });
+                  triggerResult = false;
+                } else {
+                  triggerResult =
+                    sample.choice === "continue" ? "engagement_continue" : "engagement_join";
+                  shouldCommitEngagementCooldown = !skipsCooldown;
+                }
+              } else {
+                triggerResult = false;
+              }
+            }
+          } finally {
+            finishEngagementGate(gate);
+          }
+        }
+      }
+    }
     if (privacyMode === "off" && triggerResult !== "reply" && triggerResult !== "mention") {
       triggerResult = false;
     }
@@ -1437,7 +1951,7 @@ export function createAiReplyHandler(
           await config.conversation!.addMessage({ ...message, role: "user" });
         }
       } catch (err) {
-        config.onLog?.({
+        onLog?.({
           level: "error",
           message: `Failed to capture group message: ${err instanceof Error ? err.message : String(err)}`,
           meta: { chatId, userId, messageId: msg.message_id },
@@ -1469,9 +1983,15 @@ export function createAiReplyHandler(
           ...(!hasForwardOrigin ? { userAuthoredContent: msg.text.trim() } : {}),
           sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
           ...(forwardOrigin ? { forwardOrigin } : {}),
+          privacyUserIds: boundedPrivacyUserIds(
+            currentEngagementSource.privacyUserIds,
+            replyCandidate?.privacyUserIds,
+          ),
+          ...(!engagementResponseProvenanceVerified ? { hasUnverifiablePrivacySource: true } : {}),
         });
       if (merged) {
-        config.onLog?.({
+        finalizeEngagementSample("coalesced", "coalesced");
+        onLog?.({
           level: "info",
           message: "AI reply coalesced into queued turn",
           meta: { chatId, userId, ...executionCoordinator.stats },
@@ -1483,6 +2003,7 @@ export function createAiReplyHandler(
     // owner's handle still drains extras that were accepted before this boundary.
     turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
     if (!triggerResult || aiDisabled) {
+      finalizeEngagementSample(false, aiDisabled ? "ai_disabled" : undefined);
       if (shouldPersistPublicGroupMessage) {
         void config.conversation!.triggerCompression(chatId);
       }
@@ -1490,7 +2011,11 @@ export function createAiReplyHandler(
     }
 
     const usageResource: UsageResource =
-      triggerResult === "random" ? "proactive_reply" : "ai_reply";
+      triggerResult === "random" ||
+      triggerResult === "engagement_continue" ||
+      triggerResult === "engagement_join"
+        ? "proactive_reply"
+        : "ai_reply";
     const usageReservation = await config.usageGovernance?.reserve({
       botId: config.botId,
       resource: usageResource,
@@ -1499,6 +2024,7 @@ export function createAiReplyHandler(
       userId: usageResource === "proactive_reply" ? undefined : userId,
     });
     if (usageReservation && !usageReservation.allowed) {
+      finalizeEngagementSample(false, "usage_denied");
       if (shouldPersistPublicGroupMessage) {
         try {
           if (config.conversation?.completeTurns) {
@@ -1516,7 +2042,7 @@ export function createAiReplyHandler(
           }
           void config.conversation?.triggerCompression(chatId);
         } catch (error) {
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: "Failed to finalize rate-limited group turn",
             meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
@@ -1561,7 +2087,7 @@ export function createAiReplyHandler(
       usageFinalization = operation.then(
         () => undefined,
         (error) => {
-          config.onLog?.({
+          onLog?.({
             level: "error",
             message: "Failed to finalize AI usage reservation",
             meta: {
@@ -1590,7 +2116,7 @@ export function createAiReplyHandler(
       try {
         admissionHistoryWatermark = await config.conversation.getHistoryWatermark();
       } catch (err) {
-        config.onLog?.({
+        onLog?.({
           level: "warn",
           message: `Failed to capture conversation history watermark: ${err instanceof Error ? err.message : String(err)}`,
           meta: { chatId, userId },
@@ -1598,6 +2124,7 @@ export function createAiReplyHandler(
       }
     }
 
+    let executionFailure: unknown;
     const executeTurn = async (
       executionContext: AiRunContext,
       preserveQueuedMessage: boolean,
@@ -1702,7 +2229,7 @@ export function createAiReplyHandler(
           behavior: {
             moodState,
             richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
-            onLog: config.onLog,
+            onLog: onLog,
             onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
           },
           artwork: config.artworkToolsConfig
@@ -1726,7 +2253,7 @@ export function createAiReplyHandler(
             model: currentModel,
             agentConfig: config.agentToolsConfig,
             webToolsConfig: config.webToolsConfig,
-            onLog: config.onLog,
+            onLog: onLog,
             timeoutConfig: config.timeoutConfig,
           });
         }
@@ -1758,7 +2285,10 @@ export function createAiReplyHandler(
         if (!isPrivate && !readConversation && personalizationEnabled) {
           const shouldIncludeContext =
             conversationCfg.groupContextMode === "all" ||
-            (conversationCfg.groupContextMode === "random_only" && triggerResult === "random");
+            (conversationCfg.groupContextMode === "random_only" &&
+              (triggerResult === "random" ||
+                triggerResult === "engagement_continue" ||
+                triggerResult === "engagement_join"));
 
           if (shouldIncludeContext) {
             const contextMessages = groupBufferSnapshot.filter(
@@ -1780,7 +2310,7 @@ export function createAiReplyHandler(
         const maxInputImageBytes =
           config.imageOcrConfig?.maxInputImageBytes ?? DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES;
         const onImageSkipped = (details: { fileId: string; size: number; limit: number }) =>
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: "Model input image skipped because it exceeds the configured size limit",
             meta: details,
@@ -1793,7 +2323,7 @@ export function createAiReplyHandler(
           context: "current" | "reply",
           details: { sourceIndex: number; reason: VideoStickerUnavailableReason },
         ) =>
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: "Video sticker frames unavailable; continuing with metadata only",
             meta: { chatId, context, ...details },
@@ -1868,21 +2398,21 @@ export function createAiReplyHandler(
               activeProviderId: config.activeProviderId,
               logger: {
                 debug: (o, m) => {
-                  config.onLog?.({
+                  onLog?.({
                     level: "debug",
                     message: `[image-ocr] ${m ?? ""}`,
                     meta: o as Record<string, unknown>,
                   });
                 },
                 info: (o, m) => {
-                  config.onLog?.({
+                  onLog?.({
                     level: "info",
                     message: `[image-ocr] ${m ?? ""}`,
                     meta: o as Record<string, unknown>,
                   });
                 },
                 warn: (o, m) => {
-                  config.onLog?.({
+                  onLog?.({
                     level: "warn",
                     message: `[image-ocr] ${m ?? ""}`,
                     meta: o as Record<string, unknown>,
@@ -1924,13 +2454,13 @@ export function createAiReplyHandler(
                 `${descriptions.join("；")}${hasVideoFrames ? "（抽帧，非完整视频）" : ""}`,
               );
             }
-            config.onLog?.({
+            onLog?.({
               level: "info",
               message: `[image-ocr] processed ${imageBuffers.length} image(s): ${ok} ok, skips=${JSON.stringify(skipCounts)}`,
               meta: { chatId, ok, skipCounts },
             });
           } catch (err) {
-            config.onLog?.({
+            onLog?.({
               level: "warn",
               message: `[image-ocr] describeImages threw: ${err instanceof Error ? err.message : String(err)}`,
               meta: { chatId },
@@ -2004,7 +2534,7 @@ export function createAiReplyHandler(
               await config.conversation!.addMessage({ ...message, role: "user" });
             }
           } catch (err) {
-            config.onLog?.({
+            onLog?.({
               level: "error",
               message: `Failed to enrich triggered group message: ${err instanceof Error ? err.message : String(err)}`,
               meta: { chatId, userId, messageId: msg.message_id },
@@ -2111,12 +2641,12 @@ export function createAiReplyHandler(
           const mcpToolKeys = Object.keys(mcpTools);
           if (mcpToolKeys.length > 0) {
             Object.assign(allTools, mcpTools);
-            config.onLog?.({
+            onLog?.({
               level: "info",
               message: `MCP tools injected: ${mcpToolKeys.join(", ")}`,
             });
           } else {
-            config.onLog?.({
+            onLog?.({
               level: "warn",
               message: "MCP config present but no tools available (servers may be disconnected)",
             });
@@ -2168,7 +2698,7 @@ export function createAiReplyHandler(
 
         // Debug: AI request
         const startTime = Date.now();
-        config.onLog?.({
+        onLog?.({
           level: "debug",
           message: "AI request",
           meta: {
@@ -2177,6 +2707,7 @@ export function createAiReplyHandler(
             providerLabel: currentProviderRuntime.label,
             baseURL: currentProviderRuntime.baseURL,
             providerFormat: currentProviderRuntime.providerFormat,
+            messages: personalizationEnabled ? messages : "[omitted: privacy off]",
             messagesCount: messages.length,
             systemPromptLength: messages[0]?.role === "system" ? messages[0].content.length : 0,
             staticPrefixHash: promptTrace.staticPrefixHash,
@@ -2207,7 +2738,7 @@ export function createAiReplyHandler(
         const requestCache = createRequestCache();
         const wrappedTools = composeTurnTools(stableTools, {
           requestCache,
-          onLog: config.onLog,
+          onLog: onLog,
           getStep: () => stepCounter + 1,
           onEffect: () => {
             successfulToolEffectCount += 1;
@@ -2229,7 +2760,21 @@ export function createAiReplyHandler(
 
         // ─── streamText (ai v6 API) ───
         const modelEntry = currentSelection.modelEntry;
+        let capturedStreamError: unknown;
         const result = streamText({
+          onError: ({ error }) => {
+            capturedStreamError ??= error;
+            onLog({
+              level: "error",
+              message: "AI provider stream failed",
+              meta: {
+                model: currentModel,
+                providerId: currentProviderRuntime.id,
+                providerFormat: currentProviderRuntime.providerFormat,
+                error,
+              },
+            });
+          },
           model: currentProviderFactory(currentModel),
           messages,
           tools: wrappedTools,
@@ -2256,11 +2801,10 @@ export function createAiReplyHandler(
         let streamStarted = false;
         // Preserve the first stream failure. AI SDK's later `result.text` access can replace
         // it with the generic "No output generated" error, hiding the actionable provider cause.
-        let capturedStreamError: unknown;
         // Track whether multi_message actually delivered content (segment mode only).
         let sentViaMultiMessage = false;
         const logRichFallback = (mode: "rich" | "html", error: unknown) => {
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: `${mode === "rich" ? "Rich Message" : "HTML"} delivery failed, falling back`,
             meta: {
@@ -2275,14 +2819,14 @@ export function createAiReplyHandler(
           if (isStreamMode && ctx.chat?.type === "private") {
             // ─── Private stream mode: Rich Markdown draft + persistent Rich Message ───
             const thinkFilter = createThinkingStreamFilter(({ pattern, strippedLength }) => {
-              config.onLog?.({
+              onLog?.({
                 level: "info",
                 message: `Stripped thinking content from stream (pattern: ${pattern}, ${strippedLength} chars)`,
                 meta: { chatId, userId },
               });
             });
             const metaFilter = createMetaPrefixStreamFilter(({ pattern, strippedLength }) => {
-              config.onLog?.({
+              onLog?.({
                 level: "warn",
                 message: `Stripped meta prefix from stream (pattern: ${pattern}, ${strippedLength} chars)`,
                 meta: { chatId, userId },
@@ -2345,16 +2889,17 @@ export function createAiReplyHandler(
               }
               streamStarted = sentMessages.length > 0;
             } catch (streamErr) {
-              capturedStreamError = streamErr;
+              capturedStreamError ??= streamErr;
               const streamMethod = richMessageEnabled
                 ? "replyWithMarkdownStream"
                 : "replyWithStream";
-              config.onLog?.({
+              onLog?.({
                 level: "warn",
                 message: `${streamMethod} failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
                 meta: {
                   chatId,
                   userId,
+                  error: streamErr,
                   errorName: streamErr instanceof Error ? streamErr.name : undefined,
                   errorCause:
                     streamErr instanceof Error && streamErr.cause
@@ -2381,7 +2926,7 @@ export function createAiReplyHandler(
 
         // If /stop fired while streamText was running, drop all pending sends + saves.
         if (aiDisabled || manualAbort?.signal.aborted || !executionContext.isCurrent()) {
-          config.onLog?.({
+          onLog?.({
             level: "info",
             message: "AI disabled mid-reply, dropping pending sends",
             meta: { chatId, userId },
@@ -2392,14 +2937,14 @@ export function createAiReplyHandler(
 
         const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
         const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
-          config.onLog?.({
+          onLog?.({
             level: "info",
             message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
             meta: { chatId, userId },
           });
         });
         const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
             meta: { chatId, userId },
@@ -2482,7 +3027,7 @@ export function createAiReplyHandler(
           : text || "";
 
         if (sentViaMultiMessage && text && !sentFinalText) {
-          config.onLog?.({
+          onLog?.({
             level: trailingTextCovered ? "info" : "warn",
             message: trailingTextCovered
               ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
@@ -2494,10 +3039,14 @@ export function createAiReplyHandler(
         // Debug: AI response
         const totalToolCalls = steps.reduce((n, s) => n + s.toolCalls.length, 0);
         const totalToolResults = steps.reduce((n, s) => n + s.toolResults.length, 0);
-        config.onLog?.({
+        onLog?.({
           level: "debug",
           message: "AI response",
           meta: {
+            model: currentModel,
+            providerId: currentProviderRuntime.id,
+            responseText: personalizationEnabled ? text : "[omitted: privacy off]",
+            deliveredText: personalizationEnabled ? assistantContent : "[omitted: privacy off]",
             durationMs,
             responseLength: text?.length ?? 0,
             totalSteps: steps.length,
@@ -2639,7 +3188,7 @@ export function createAiReplyHandler(
             privateExtrasSettled = true;
             if (isPrivate) await config.conversation!.triggerCompression(chatId);
           } catch (err) {
-            config.onLog?.({
+            onLog?.({
               level: "error",
               message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
               meta: { chatId },
@@ -2647,7 +3196,39 @@ export function createAiReplyHandler(
           }
         }
 
-        config.onLog?.({
+        if (
+          !isPrivate &&
+          personalizationEnabled &&
+          engagementPolicy?.mode !== "off" &&
+          engagementResponseProvenanceVerified &&
+          assistantContent.trim()
+        ) {
+          const botMessageId = chatBotMsgIds.at(-1);
+          if (botMessageId !== undefined) {
+            const coalescedPrivacyGroups = [
+              engagementResponsePrivacyUserIds,
+              ...coalescedExtras.map((extra) => extra.privacyUserIds),
+            ];
+            engagementResponsePrivacyUserIds = boundedPrivacyUserIds(...coalescedPrivacyGroups);
+            engagementResponseProvenanceVerified =
+              !privacyUserIdsOverflow(...coalescedPrivacyGroups) &&
+              !coalescedExtras.some((extra) => extra.hasUnverifiablePrivacySource);
+          }
+          if (botMessageId !== undefined && engagementResponseProvenanceVerified) {
+            getOrCreateEngagementBuffer(chatId, msg.message_thread_id).push({
+              messageId: botMessageId,
+              userId: ctx.me.id,
+              text: assistantContent.trim(),
+              timestamp: Date.now(),
+              isBot: true,
+              threadId: msg.message_thread_id,
+              privacyUserIds: engagementResponsePrivacyUserIds,
+              privacyCapturedAt: engagementResponseCapturedAt,
+            });
+          }
+        }
+
+        onLog?.({
           level: "info",
           message: "AI reply sent",
           meta: {
@@ -2668,11 +3249,12 @@ export function createAiReplyHandler(
           await ctx.deleteWaiting().catch(() => {});
           return;
         }
+        executionFailure = err;
         const errMsg = err instanceof Error ? err.message : String(err);
-        config.onLog?.({
+        onLog?.({
           level: "error",
           message: `AI reply failed: ${errMsg}`,
-          meta: { chatId, userId },
+          meta: { chatId, userId, error: err },
         });
         const errorReply = `AI 回复时出错:\n${errMsg}`;
         try {
@@ -2719,7 +3301,7 @@ export function createAiReplyHandler(
         try {
           currentPrivacyMode = await config.privacy.getMode(userId);
         } catch (error) {
-          config.onLog?.({
+          onLog?.({
             level: "error",
             message: "Failed to verify privacy mode before persisting coalesced messages",
             meta: {
@@ -2746,7 +3328,7 @@ export function createAiReplyHandler(
           lastError = error;
         }
       }
-      config.onLog?.({
+      onLog?.({
         level: "error",
         message: `Failed to persist coalesced messages: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
         meta: { chatId, userId, count: coalescedExtras.length },
@@ -2781,7 +3363,7 @@ export function createAiReplyHandler(
             lastError = error;
           }
         }
-        config.onLog?.({
+        onLog?.({
           level: "error",
           message: "Failed to finalize conversation turn",
           meta: {
@@ -2801,7 +3383,7 @@ export function createAiReplyHandler(
         // Synchronous drain: everything appended before this instant joins this turn.
         coalescedExtras = coalesceHandle?.drain() ?? [];
         executionStartedAt = Date.now();
-        config.onLog?.({
+        onLog?.({
           level: "info",
           message: "AI reply execution started",
           meta: {
@@ -2838,9 +3420,13 @@ export function createAiReplyHandler(
         }
       });
     } catch (error) {
+      finalizeEngagementSample(
+        false,
+        error instanceof AiReplyQueueFullError ? "queue_full" : "scheduler_error",
+      );
       await finalizeUsage(false);
       if (error instanceof AiReplyQueueFullError) {
-        config.onLog?.({
+        onLog?.({
           level: "warn",
           message: "AI reply queue is full",
           meta: { chatId, userId, ...executionCoordinator.stats },
@@ -2859,6 +3445,10 @@ export function createAiReplyHandler(
       await finalizeGroupTurn();
       throw error;
     }
+    if (shouldCommitEngagementCooldown) {
+      engagementCooldownMap.set(engagementCooldownKey, Date.now());
+    }
+    finalizeEngagementSample(triggerResult);
 
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
     if (scheduled.queued && supportsQueuedTurnCoalescing) {
@@ -2875,10 +3465,11 @@ export function createAiReplyHandler(
         .finally(finalizeGroupTurn)
         .then(
           () => {
-            config.onLog?.({
+            onLog?.({
               level: "info",
               message: "AI reply execution finished",
               meta: {
+                outcome: executionFailure === undefined ? "completed" : "failed",
                 chatId,
                 userId,
                 runMs:
@@ -2893,7 +3484,7 @@ export function createAiReplyHandler(
             await finalizeUsage(false);
             await queueNotice;
             if (error instanceof AiRunCancelledError) {
-              config.onLog?.({
+              onLog?.({
                 level: "info",
                 message: "AI reply execution cancelled",
                 meta: { chatId, userId, ...executionCoordinator.stats },
@@ -2906,10 +3497,10 @@ export function createAiReplyHandler(
               return;
             }
             const message = error instanceof Error ? error.message : String(error);
-            config.onLog?.({
+            onLog?.({
               level: "error",
               message: "Scheduled AI reply failed before execution",
-              meta: { chatId, userId, error: message, ...executionCoordinator.stats },
+              meta: { chatId, userId, error, ...executionCoordinator.stats },
             });
             try {
               await ctx.resolveWait(`AI 回复时出错:\n${message}`);
@@ -2923,14 +3514,14 @@ export function createAiReplyHandler(
     );
 
     if (preserveQueuedMessage) {
-      config.onLog?.({
+      onLog?.({
         level: "info",
         message: "AI reply queued",
         meta: { chatId, userId, ...executionCoordinator.stats },
       });
       queueNotice = trackDetachedDelivery(
         ctx.wait(executionConfig.queueNotice.text).catch((error) => {
-          config.onLog?.({
+          onLog?.({
             level: "warn",
             message: "Failed to send AI queue notice",
             meta: { chatId, userId, error: error instanceof Error ? error.message : String(error) },
@@ -2972,7 +3563,9 @@ export function createAiReplyHandler(
       clearInterval(bufferCleanupTimer);
       pendingActions.destroy();
       pendingAdminActions.destroy();
+      engagementEvaluator.destroy();
       cooldownMap.clear();
+      engagementCooldownMap.clear();
       governanceNoticeAt.clear();
       recentReceivedFiles.clear();
       recentBotMessageIds.clear();
@@ -2980,6 +3573,7 @@ export function createAiReplyHandler(
       knownPrivateChats.clear();
       lastSystemContent.clear();
       groupBuffers.clear();
+      engagementBuffers.clear();
     }
     let attempt!: Promise<void>;
     attempt = (async () => {

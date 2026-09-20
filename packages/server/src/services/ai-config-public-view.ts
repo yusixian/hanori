@@ -1,5 +1,5 @@
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
-import { DEFAULT_AI_EXECUTION_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
   AiConfigStored,
@@ -14,6 +14,7 @@ import { resolvePixaiTaskTimeoutMs } from "./generation-recovery.js";
 
 function emptyAiConfigPublic(): AiConfigPublic {
   return {
+    engagement: { ...DEFAULT_ENGAGEMENT_POLICY, hasApiKey: false },
     enabled: false,
     hasApiKey: false,
     baseURL: "",
@@ -67,6 +68,21 @@ export function hasActiveApiKey(stored: AiConfigStored | null | undefined): bool
   return !!(stored && getActiveProvider(migrateAiConfig(stored))?.encryptedApiKey);
 }
 
+function toEngagementConfigPublic(stored: AiConfigStored["engagement"]) {
+  return {
+    mode: stored?.mode ?? DEFAULT_ENGAGEMENT_POLICY.mode,
+    style: stored?.style ?? DEFAULT_ENGAGEMENT_POLICY.style,
+    preferences: stored?.preferences ?? DEFAULT_ENGAGEMENT_POLICY.preferences,
+    keywordDirect: stored?.keywordDirect ?? DEFAULT_ENGAGEMENT_POLICY.keywordDirect,
+    cooldownSeconds: stored?.cooldownSeconds ?? DEFAULT_ENGAGEMENT_POLICY.cooldownSeconds,
+    confidenceThreshold:
+      stored?.confidenceThreshold ?? DEFAULT_ENGAGEMENT_POLICY.confidenceThreshold,
+    contextMessages: stored?.contextMessages ?? DEFAULT_ENGAGEMENT_POLICY.contextMessages,
+    timeoutMs: stored?.timeoutMs ?? DEFAULT_ENGAGEMENT_POLICY.timeoutMs,
+    hasApiKey: !!stored?.encryptedApiKey,
+  };
+}
+
 export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiConfigPublic {
   if (!config) return emptyAiConfigPublic();
   const migrated = migrateAiConfig(config);
@@ -83,6 +99,7 @@ export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiC
     models: p.models,
   }));
   return {
+    engagement: toEngagementConfigPublic(migrated.engagement),
     enabled: migrated.enabled,
     hasApiKey: !!active.encryptedApiKey,
     baseURL: active.baseURL,

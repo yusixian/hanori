@@ -1,5 +1,5 @@
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
-import { DEFAULT_AI_EXECUTION_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
 import type { AiConfigStored } from "@cos-tool-bot/shared";
 import { describe, expect, it } from "vitest";
 import { hasActiveApiKey, toAiConfigPublic } from "./ai-config-public-view.js";
@@ -66,11 +66,17 @@ const secretStored: AiConfigStored = {
     search: { provider: "tavily", apiKey: "tavily-secret" },
     imageGeneration: { provider: "openai", apiKey: "openai-secret" },
   },
+  engagement: {
+    ...DEFAULT_ENGAGEMENT_POLICY,
+    mode: "shadow",
+    encryptedApiKey: "iv4:tag4:engagement-secret",
+  },
 };
 
 describe("toAiConfigPublic", () => {
   it("returns the empty default view without a stored config", () => {
     expect(toAiConfigPublic(null)).toEqual({
+      engagement: { ...DEFAULT_ENGAGEMENT_POLICY, hasApiKey: false },
       enabled: false,
       hasApiKey: false,
       baseURL: "",
@@ -100,6 +106,7 @@ describe("toAiConfigPublic", () => {
     expect(serialized).not.toContain("github-secret");
     expect(serialized).not.toContain("tavily-secret");
     expect(serialized).not.toContain("openai-secret");
+    expect(serialized).not.toContain("engagement-secret");
 
     expect(view.hasApiKey).toBe(true);
     expect(view.providers[0]!.hasApiKey).toBe(true);
@@ -113,6 +120,11 @@ describe("toAiConfigPublic", () => {
     expect(view.githubToolsConfig?.hasToken).toBe(true);
     expect(view.webToolsConfig?.search?.hasApiKey).toBe(true);
     expect(view.webToolsConfig?.imageGeneration?.hasApiKey).toBe(true);
+    expect(view.engagement).toEqual({
+      ...DEFAULT_ENGAGEMENT_POLICY,
+      mode: "shadow",
+      hasApiKey: true,
+    });
   });
 
   it("prefers the installation account login over the legacy login", () => {

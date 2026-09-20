@@ -1,3 +1,5 @@
+import { EngagementSamplesSection } from "./sections/engagement-samples-section";
+import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
 import { authFetch, client } from "@/lib/client";
 import type {
@@ -138,6 +140,7 @@ export function BotAiSettingsPage() {
   const [message, setMessage] = useState<StatusMessage | null>(null);
   const [triggerWordsText, setTriggerWordsText] = useState("");
   const [stickerPacksText, setStickerPacksText] = useState("");
+  const [engagementApiKey, setEngagementApiKey] = useState("");
   const [embeddingApiKey, setEmbeddingApiKey] = useState("");
   const [webSearchApiKey, setWebSearchApiKey] = useState("");
   const [webImageApiKey, setWebImageApiKey] = useState("");
@@ -273,6 +276,7 @@ export function BotAiSettingsPage() {
               : (json.data.activeProviderId ?? json.data.providers[0]?.id),
           );
           setEmbeddingApiKey("");
+          setEngagementApiKey("");
           setWebSearchApiKey("");
           setWebImageApiKey("");
           setProviderApiKeys({});
@@ -374,6 +378,7 @@ export function BotAiSettingsPage() {
         imageOcrConfig,
         executionConfig,
       ) ||
+      engagementApiKey !== "" ||
       embeddingApiKey !== "" ||
       webSearchApiKey !== "" ||
       webImageApiKey !== "" ||
@@ -421,6 +426,7 @@ export function BotAiSettingsPage() {
           webSearchApiKey,
           webImageApiKey,
           embeddingApiKey,
+          engagementApiKey,
         }),
       });
       if (!res.ok) {
@@ -476,6 +482,7 @@ export function BotAiSettingsPage() {
         setTriggerWordsText(triggerText);
         setStickerPacksText(stickersText);
         setEmbeddingApiKey("");
+        setEngagementApiKey("");
         setWebSearchApiKey("");
         setWebImageApiKey("");
         setProviderApiKeys({});
@@ -883,7 +890,11 @@ export function BotAiSettingsPage() {
         onClose={() => setPreviewOpen(false)}
       />
 
-      <div className="space-y-5">
+      <fieldset
+        disabled={saving}
+        aria-busy={saving}
+        className="min-w-0 space-y-5 disabled:opacity-70"
+      >
         <div className="min-w-0">
           <header className="mb-5 flex items-end justify-between gap-4 px-1">
             <div>
@@ -1004,6 +1015,18 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                title={t("engagement.title")}
+                description={t("engagement.description")}
+                summary={t(`engagement.modes.${config.engagement?.mode ?? "off"}`)}
+              >
+                <EngagementSection
+                  config={config.engagement}
+                  apiKey={engagementApiKey}
+                  onApiKeyChange={setEngagementApiKey}
+                  onChange={(engagement) => setConfig((prev) => ({ ...prev, engagement }))}
+                />
+              </SettingsDisclosureRow>
+              <SettingsDisclosureRow
                 title={t("disclosures.triggers.title")}
                 description={t("disclosures.triggers.description")}
                 summary={t("disclosures.triggers.summary", {
@@ -1017,6 +1040,7 @@ export function BotAiSettingsPage() {
                   onUpdate={updateTrigger}
                 />
               </SettingsDisclosureRow>
+              {botId && <EngagementSamplesSection botId={botId} />}
               <SettingsDisclosureRow
                 title={t("disclosures.conversationContext.title")}
                 description={t("disclosures.conversationContext.description")}
@@ -1223,6 +1247,7 @@ export function BotAiSettingsPage() {
               >
                 <GroupOverridesSection
                   overrides={config.groupOverrides}
+                  engagement={config.engagement}
                   onAdd={addGroupOverride}
                   onUpdate={updateOverride}
                   onRemove={removeOverride}
@@ -1231,7 +1256,7 @@ export function BotAiSettingsPage() {
             </div>
           )}
         </div>
-      </div>
+      </fieldset>
     </div>
   );
 }

@@ -2,10 +2,11 @@ import type { AiProviderRuntime } from "@cos-tool-bot/bot";
 import type {
   AiConfigStored,
   AiGroupOverride,
+  EngagementConfigRuntime,
   MessageConfig,
   TimeoutConfig,
 } from "@cos-tool-bot/shared";
-import { DEFAULT_MESSAGE_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_ENGAGEMENT_POLICY, DEFAULT_MESSAGE_CONFIG } from "@cos-tool-bot/shared";
 import { migrateAiConfig } from "../utils/ai-config-migrate.js";
 import { tryDecrypt } from "../utils/crypto.js";
 import { resolvePixaiTaskTimeoutMs } from "./generation-recovery.js";
@@ -29,6 +30,8 @@ export interface AiConfigRuntime {
   /** Decrypted embedding key when embedding is enabled and a ciphertext exists. */
   embeddingApiKey: string | undefined;
   embeddingApiKeyDecryptFailed: boolean;
+  engagement: EngagementConfigRuntime;
+  engagementApiKeyDecryptFailed: boolean;
 }
 
 /** Projects a stored AI config into the decrypted runtime view used to boot a bot. */
@@ -86,6 +89,18 @@ export function toAiConfigRuntime(
       ? (tryDecrypt(embeddingCfg.encryptedApiKey, encryptionKey) ?? undefined)
       : undefined;
 
+  const encryptedEngagementApiKey = config.engagement?.encryptedApiKey;
+  const engagementApiKey = encryptedEngagementApiKey
+    ? (tryDecrypt(encryptedEngagementApiKey, encryptionKey) ?? undefined)
+    : undefined;
+  const { encryptedApiKey: _encryptedEngagementApiKey, ...storedEngagementPolicy } =
+    config.engagement ?? { encryptedApiKey: null };
+  const engagement: EngagementConfigRuntime = {
+    ...DEFAULT_ENGAGEMENT_POLICY,
+    ...storedEngagementPolicy,
+    ...(engagementApiKey ? { apiKey: engagementApiKey } : {}),
+  };
+
   return {
     config,
     timeoutConfig,
@@ -98,6 +113,8 @@ export function toAiConfigRuntime(
     embeddingApiKeyDecryptFailed: Boolean(
       embeddingCfg?.enabled && embeddingCfg.encryptedApiKey && !embeddingApiKey,
     ),
+    engagement,
+    engagementApiKeyDecryptFailed: Boolean(encryptedEngagementApiKey) && !engagementApiKey,
   };
 }
 

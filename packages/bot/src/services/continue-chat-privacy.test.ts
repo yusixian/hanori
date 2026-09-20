@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { continueChat, fallbackExecutionLock, type ContinueChatConfig } from "./continue-chat.js";
 
 describe("continueChat privacy", () => {
-  it("does not persist the continuation event description in generic logs", async () => {
+  it("includes continuation content in the bounded correlated diagnostic", async () => {
     const onLog = vi.fn();
     const secretDescription = "private timer reason that must not reach logs";
 
@@ -21,12 +21,19 @@ describe("continueChat privacy", () => {
       },
     );
 
-    const serializedLogs = JSON.stringify(onLog.mock.calls);
-    expect(serializedLogs).not.toContain(secretDescription);
     expect(onLog).toHaveBeenCalledWith(
       expect.objectContaining({
         message: "continueChat triggered",
         meta: expect.objectContaining({ eventDescriptionLength: secretDescription.length }),
+      }),
+    );
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("continueChat failed:"),
+        meta: expect.objectContaining({
+          correlationId: expect.any(String),
+          eventDescription: secretDescription,
+        }),
       }),
     );
   });

@@ -1,3 +1,8 @@
+import type {
+  EngagementConfigStored,
+  EngagementConfigPublic,
+  EngagementPolicy,
+} from "./engagement.js";
 // Image generation size constraints (single source of truth)
 export const IMAGE_MIN_SIZE = 1;
 export const IMAGE_MAX_SIZE = 3072;
@@ -191,6 +196,7 @@ export interface AiTriggerConfig {
 }
 
 export interface AiGroupOverride {
+  engagement?: Partial<EngagementPolicy>;
   chatId: number;
   chatTitle?: string;
   enabled?: boolean;
@@ -364,6 +370,8 @@ export interface UserPrivacyForgetResult {
 
 export interface UserPrivacyCallbacks {
   getMode(userId: number): Promise<UserPrivacyMode>;
+  /** Last off/forget boundary for invalidating captured context after re-enabling. */
+  getContextResetAt?(userId: number): number | undefined;
   /**
    * Serializes personalization work for one Telegram user across chats.
    * Callers must use this around reads, writes, and privacy mutations.
@@ -788,6 +796,7 @@ export interface GitHubWorkspaceDiscardResult {
 }
 
 export interface AiConfigStored {
+  engagement?: EngagementConfigStored;
   enabled: boolean;
   /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */
   encryptedApiKey: string | null;
@@ -1040,6 +1049,7 @@ export interface EmbeddingConfigPublic {
 }
 
 export interface AiConfigPublic {
+  engagement?: EngagementConfigPublic;
   enabled: boolean;
   /** @deprecated reflects providers[activeProviderId].hasApiKey for backward compat */
   hasApiKey: boolean;

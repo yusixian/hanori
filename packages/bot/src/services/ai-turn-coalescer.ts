@@ -8,6 +8,10 @@ export interface CoalescedTurnMessage {
   userAuthoredContent?: string;
   /** Telegram-visible forwarding attribution retained for request and history rendering. */
   forwardOrigin?: ConversationForwardOrigin;
+  /** Users whose privacy settings govern text incorporated into this follow-up. */
+  privacyUserIds?: number[];
+  /** The text has a forwarded or quoted source whose user identity cannot be verified. */
+  hasUnverifiablePrivacySource?: boolean;
   /** Group ingress turn to finalize together with the owning run; absent for private chats. */
   sourceKey?: string;
 }

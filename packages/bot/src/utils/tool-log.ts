@@ -32,6 +32,7 @@ function isSensitiveKey(key: string): boolean {
 }
 
 function truncateString(value: string): string {
+  if (/^data:[^,]+;base64,/i.test(value)) return `[binary data URL: ${value.length} chars]`;
   const redacted = value.replace(BEARER_VALUE, "Bearer [REDACTED]");
   return redacted.length > MAX_STRING_CHARS
     ? `${redacted.slice(0, MAX_STRING_CHARS)}… [truncated ${redacted.length - MAX_STRING_CHARS} chars]`
@@ -54,6 +55,7 @@ function normalizeToolLogValue(
   if (typeof value === "symbol") return value.toString();
   if (depth >= MAX_DEPTH) return "[Max depth reached]";
 
+  if (value instanceof URL) return truncateString(value.toString());
   if (value instanceof Date) return value.toISOString();
   if (ArrayBuffer.isView(value)) {
     return { type: value.constructor.name, byteLength: value.byteLength };
@@ -62,7 +64,14 @@ function normalizeToolLogValue(
   if (value instanceof Error) {
     return {
       name: value.name,
+      ...Object.fromEntries(
+        Object.entries(value).map(([name, item]) => [
+          name,
+          normalizeToolLogValue(item, seen, depth + 1, name),
+        ]),
+      ),
       message: truncateString(value.message),
+      stack: value.stack ? truncateString(value.stack) : undefined,
       cause: normalizeToolLogValue(value.cause, seen, depth + 1),
     };
   }
@@ -94,10 +103,15 @@ function normalizeToolLogValue(
 }
 
 /** Preserve useful tool diagnostics while keeping database JSON bounded and credential-safe. */
-export function toToolLogValue(value: unknown): unknown {
+export function toToolLogValue(value: unknown, secrets: readonly string[] = []): unknown {
   const normalized = normalizeToolLogValue(value, new WeakSet(), 0);
-  const serialized = JSON.stringify(normalized);
-  if (!serialized || serialized.length <= MAX_SERIALIZED_CHARS) return normalized;
+  let serialized = JSON.stringify(normalized);
+  if (!serialized) return normalized;
+  for (const secret of secrets) {
+    if (secret.length >= 4)
+      serialized = serialized.split(JSON.stringify(secret).slice(1, -1)).join("[REDACTED]");
+  }
+  if (serialized.length <= MAX_SERIALIZED_CHARS) return JSON.parse(serialized);
   return {
     truncated: true,
     serializedLength: serialized.length,

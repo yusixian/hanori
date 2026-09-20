@@ -17,10 +17,43 @@ describe("redactDiagnostic", () => {
     });
   });
 
+  it("redacts credential assignments without erasing token usage metrics", () => {
+    expect(
+      redactDiagnostic({
+        inputTokens: 120,
+        promptToken: 88,
+        output_tokens: 8,
+        maxTokens: 4_096,
+        tokenUsage: { cached: 32 },
+        accessToken: "credential",
+        detail: 'api_key=test-key token=second password: "third"',
+      }),
+    ).toEqual({
+      inputTokens: 120,
+      promptToken: 88,
+      output_tokens: 8,
+      maxTokens: 4_096,
+      tokenUsage: { cached: 32 },
+      accessToken: "[REDACTED]",
+      detail: "api_key=[REDACTED] token=[REDACTED] password: [REDACTED]",
+    });
+  });
+
   it("serializes error chains without leaking credentials", () => {
     const cause = new Error("Bearer abc.def");
     const error = new Error("request failed", { cause });
-    expect(JSON.stringify(redactDiagnostic(error))).not.toContain("abc.def");
+    const redacted = redactDiagnostic(error) as Record<string, unknown>;
+    expect(JSON.stringify(redacted)).not.toContain("abc.def");
+    expect(redacted).toMatchObject({
+      name: "Error",
+      message: "request failed",
+      stack: expect.stringContaining("request failed"),
+      cause: {
+        name: "Error",
+        message: "Bearer [REDACTED]",
+        stack: expect.stringContaining("Bearer [REDACTED]"),
+      },
+    });
   });
 
   it("preserves provider error diagnostics while redacting sensitive fields", () => {
@@ -44,7 +77,15 @@ describe("redactDiagnostic", () => {
   });
 
   it("marks oversized strings as truncated", () => {
-    expect(redactDiagnostic("x".repeat(70_000))).toMatch(/\[truncated\]$/);
+    expect(redactDiagnostic("x".repeat(70_000))).toMatch(/\[truncated: diagnostic text limit\]$/);
+  });
+
+  it("bounds collections and marks omitted values explicitly", () => {
+    const redacted = redactDiagnostic(
+      Array.from({ length: 250 }, (_, index) => index),
+    ) as unknown[];
+    expect(redacted).toHaveLength(201);
+    expect(redacted.at(-1)).toBe("[truncated: 50 items omitted]");
   });
 
   it("handles circular structures and leaves short secret candidates alone", () => {

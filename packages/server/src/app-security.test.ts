@@ -94,6 +94,16 @@ function createRoleApp(role: string) {
     imageGenerationService: {} as never,
     imageMcpConnectionService: {} as never,
     usageGovernor: {} as never,
+    engagementSampleService: {
+      list: vi.fn(async () => ({
+        items: [],
+        total: 0,
+        page: 1,
+        pageSize: 20,
+        metrics: { total: 0 },
+      })),
+      updateLabel: vi.fn(),
+    } as never,
     runtimeHealth: new RuntimeHealth(TEST_SHA),
   });
 }
@@ -118,6 +128,16 @@ describe("production HTTP policy", () => {
       `/api/bots/${TEST_BOT_ID}/governance/subjects?kind=chat&query=ops`,
     );
     expect(adminGovernance.status).toBe(403);
+
+    const adminSamples = await createRoleApp("admin").request(
+      `/api/bots/${TEST_BOT_ID}/engagement-samples`,
+    );
+    expect(adminSamples.status).toBe(200);
+
+    const editorSamples = await createRoleApp("editor").request(
+      `/api/bots/${TEST_BOT_ID}/engagement-samples`,
+    );
+    expect(editorSamples.status).toBe(403);
   });
 
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {

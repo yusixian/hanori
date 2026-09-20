@@ -1,27 +1,47 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botLogs } from "@cos-tool-bot/database";
 import { zValidator } from "@hono/zod-validator";
-import { and, count, desc, eq, gt, ilike } from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike, or, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { z } from "zod";
 import { escapeLike } from "../utils/search.js";
 
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().positive().max(1_000_000).optional().default(1),
+  limit: z.coerce.number().int().positive().max(200).optional().default(50),
+  level: z.enum(["debug", "info", "warn", "error"]).optional(),
+  botId: z.string().uuid().optional(),
+  search: z.string().trim().min(1).max(500).optional(),
+  chatId: z
+    .string()
+    .trim()
+    .regex(/^-?\d+$/)
+    .max(32)
+    .optional(),
+  correlationId: z.string().trim().min(1).max(200).optional(),
+});
+
 export function logRoutes(db: Database) {
   return new Hono()
-    .get("/", async (c) => {
-      const page = Number(c.req.query("page") ?? "1");
-      const limit = Number(c.req.query("limit") ?? "50");
-      const level = c.req.query("level");
-      const botId = c.req.query("botId");
-      const search = c.req.query("search");
+    .get("/", zValidator("query", listQuerySchema), async (c) => {
+      const { page, limit, level, botId, search, chatId, correlationId } = c.req.valid("query");
       const offset = (page - 1) * limit;
 
       const conditions: SQL[] = [];
       if (level) conditions.push(eq(botLogs.level, level));
       if (botId) conditions.push(eq(botLogs.botId, botId));
-      if (search) conditions.push(ilike(botLogs.message, `%${escapeLike(search)}%`));
+      if (search) {
+        const pattern = `%${escapeLike(search)}%`;
+        conditions.push(
+          or(ilike(botLogs.message, pattern), sql`${botLogs.meta}::text ILIKE ${pattern}`)!,
+        );
+      }
+      if (chatId) conditions.push(sql`${botLogs.meta} ->> 'chatId' = ${chatId}`);
+      if (correlationId) {
+        conditions.push(sql`${botLogs.meta} ->> 'correlationId' = ${correlationId}`);
+      }
       const where = conditions.length > 0 ? and(...conditions) : undefined;
 
       const [logs, [countResult]] = await Promise.all([
@@ -29,7 +49,7 @@ export function logRoutes(db: Database) {
           .select()
           .from(botLogs)
           .where(where)
-          .orderBy(desc(botLogs.createdAt))
+          .orderBy(desc(botLogs.createdAt), desc(botLogs.id))
           .limit(limit)
           .offset(offset),
         db.select({ total: count() }).from(botLogs).where(where),

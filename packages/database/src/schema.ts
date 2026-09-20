@@ -2,6 +2,9 @@ import type {
   AiConfigStored,
   CosInsideConfig,
   EmailForwardConfig,
+  EngagementContextMessage,
+  EngagementLabel,
+  EngagementPolicy,
   ImageArtifact,
   ImageGenerationEventKind,
   ImageGenerationRequestSnapshot,
@@ -243,6 +246,73 @@ export const botLogs = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (t) => [index("bot_logs_bot_id_idx").on(t.botId)],
+);
+
+export const engagementSamples = pgTable(
+  "engagement_samples",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    messageId: bigint("message_id", { mode: "number" }).notNull(),
+    source: text("source").notNull(),
+    mode: text("mode").notNull(),
+    style: text("style").notNull(),
+    choice: text("choice"),
+    engagement: text("engagement").notNull(),
+    confidence: real("confidence"),
+    probabilities: json("probabilities").$type<Record<string, number>>(),
+    reasonCode: text("reason_code").notNull(),
+    actualTrigger: text("actual_trigger"),
+    model: text("model").notNull(),
+    configVersion: text("config_version").notNull(),
+    configSnapshot: json("config_snapshot").$type<EngagementPolicy>().notNull(),
+    latencyMs: integer("latency_ms").notNull(),
+    inputTokens: integer("input_tokens"),
+    estimatedCostUsd: real("estimated_cost_usd"),
+    inputPriceUsdPerMillion: real("input_price_usd_per_million").notNull(),
+    pricingSource: text("pricing_source").notNull(),
+    pricingSourceUrl: text("pricing_source_url").notNull(),
+    pricingObservedAt: timestamp("pricing_observed_at").notNull(),
+    context: json("context").$type<EngagementContextMessage[]>(),
+    contextExpiresAt: timestamp("context_expires_at").notNull(),
+    contextPurgedAt: timestamp("context_purged_at"),
+    errorCategory: text("error_category"),
+    label: text("label").$type<EngagementLabel>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("engagement_samples_bot_created_idx").on(t.botId, t.createdAt),
+    index("engagement_samples_bot_chat_created_idx").on(t.botId, t.chatId, t.createdAt),
+    index("engagement_samples_context_expiry_idx").on(t.contextExpiresAt),
+    check("engagement_samples_mode_check", sql`${t.mode} in ('off', 'shadow', 'active')`),
+    check("engagement_samples_source_check", sql`${t.source} in ('jev', 'jev_error', 'local')`),
+    check("engagement_samples_style_check", sql`${t.style} in ('natural', 'assistant', 'filter')`),
+    check(
+      "engagement_samples_choice_check",
+      sql`${t.choice} is null or ${t.choice} in ('continue', 'join', 'silent')`,
+    ),
+    check("engagement_samples_engagement_check", sql`${t.engagement} in ('answer', 'silent')`),
+    check(
+      "engagement_samples_confidence_check",
+      sql`${t.confidence} is null or (${t.confidence} >= 0 and ${t.confidence} <= 1)`,
+    ),
+    check("engagement_samples_latency_check", sql`${t.latencyMs} >= 0`),
+    check(
+      "engagement_samples_input_tokens_check",
+      sql`${t.inputTokens} is null or ${t.inputTokens} >= 0`,
+    ),
+    check(
+      "engagement_samples_estimated_cost_check",
+      sql`${t.estimatedCostUsd} is null or ${t.estimatedCostUsd} >= 0`,
+    ),
+    check(
+      "engagement_samples_label_check",
+      sql`${t.label} is null or ${t.label} in ('answer', 'silent', 'uncertain')`,
+    ),
+  ],
 );
 
 export const botRuns = pgTable(

@@ -1,0 +1,46 @@
+CREATE TABLE "engagement_samples" (
+	"id" serial PRIMARY KEY NOT NULL,
+	"bot_id" uuid NOT NULL,
+	"chat_id" bigint NOT NULL,
+	"message_id" bigint NOT NULL,
+	"source" text NOT NULL,
+	"mode" text NOT NULL,
+	"style" text NOT NULL,
+	"choice" text,
+	"engagement" text NOT NULL,
+	"confidence" real,
+	"probabilities" json,
+	"reason_code" text NOT NULL,
+	"actual_trigger" text,
+	"model" text NOT NULL,
+	"config_version" text NOT NULL,
+	"config_snapshot" json NOT NULL,
+	"latency_ms" integer NOT NULL,
+	"input_tokens" integer,
+	"estimated_cost_usd" real,
+	"input_price_usd_per_million" real NOT NULL,
+	"pricing_source" text NOT NULL,
+	"pricing_source_url" text NOT NULL,
+	"pricing_observed_at" timestamp NOT NULL,
+	"context" json,
+	"context_expires_at" timestamp NOT NULL,
+	"context_purged_at" timestamp,
+	"error_category" text,
+	"label" text,
+	"created_at" timestamp DEFAULT now() NOT NULL,
+	CONSTRAINT "engagement_samples_mode_check" CHECK ("engagement_samples"."mode" in ('off', 'shadow', 'active')),
+	CONSTRAINT "engagement_samples_source_check" CHECK ("engagement_samples"."source" in ('jev', 'jev_error', 'local')),
+	CONSTRAINT "engagement_samples_style_check" CHECK ("engagement_samples"."style" in ('natural', 'assistant', 'filter')),
+	CONSTRAINT "engagement_samples_choice_check" CHECK ("engagement_samples"."choice" is null or "engagement_samples"."choice" in ('continue', 'join', 'silent')),
+	CONSTRAINT "engagement_samples_engagement_check" CHECK ("engagement_samples"."engagement" in ('answer', 'silent')),
+	CONSTRAINT "engagement_samples_confidence_check" CHECK ("engagement_samples"."confidence" is null or ("engagement_samples"."confidence" >= 0 and "engagement_samples"."confidence" <= 1)),
+	CONSTRAINT "engagement_samples_latency_check" CHECK ("engagement_samples"."latency_ms" >= 0),
+	CONSTRAINT "engagement_samples_input_tokens_check" CHECK ("engagement_samples"."input_tokens" is null or "engagement_samples"."input_tokens" >= 0),
+	CONSTRAINT "engagement_samples_estimated_cost_check" CHECK ("engagement_samples"."estimated_cost_usd" is null or "engagement_samples"."estimated_cost_usd" >= 0),
+	CONSTRAINT "engagement_samples_label_check" CHECK ("engagement_samples"."label" is null or "engagement_samples"."label" in ('answer', 'silent', 'uncertain'))
+);
+--> statement-breakpoint
+ALTER TABLE "engagement_samples" ADD CONSTRAINT "engagement_samples_bot_id_bots_id_fk" FOREIGN KEY ("bot_id") REFERENCES "public"."bots"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "engagement_samples_bot_created_idx" ON "engagement_samples" USING btree ("bot_id","created_at");--> statement-breakpoint
+CREATE INDEX "engagement_samples_bot_chat_created_idx" ON "engagement_samples" USING btree ("bot_id","chat_id","created_at");--> statement-breakpoint
+CREATE INDEX "engagement_samples_context_expiry_idx" ON "engagement_samples" USING btree ("context_expires_at");

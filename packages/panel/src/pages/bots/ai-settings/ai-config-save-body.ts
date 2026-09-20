@@ -1,3 +1,4 @@
+import { DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
 import type { client } from "@/lib/client";
 import type {
   AiConfigPublic,
@@ -25,6 +26,7 @@ export interface AiConfigSaveInput {
   webSearchApiKey: string;
   webImageApiKey: string;
   embeddingApiKey: string;
+  engagementApiKey?: string;
 }
 
 function toWebToolsConfigUpdate(
@@ -77,6 +79,11 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
   return {
     revision,
     enabled: config.enabled,
+    engagement: config.engagement
+      ? { ...config.engagement, apiKey: input.engagementApiKey || undefined }
+      : input.engagementApiKey
+        ? { ...DEFAULT_ENGAGEMENT_POLICY, apiKey: input.engagementApiKey }
+        : undefined,
     baseURL: activeProvider?.baseURL ?? config.baseURL,
     providerFormat: activeProvider?.providerFormat ?? config.providerFormat,
     model: activeProvider?.defaultModel ?? config.model,
@@ -90,7 +97,12 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
         .map((word) => word.trim())
         .filter(Boolean),
     },
-    groupOverrides: config.groupOverrides,
+    groupOverrides: Object.fromEntries(
+      Object.entries(config.groupOverrides).map(([id, override]) => [
+        id,
+        { ...override, engagement: override.engagement ?? null },
+      ]),
+    ),
     conversationConfig: config.conversationConfig,
     memoryConfig: config.memoryConfig,
     botMemoryConfig: config.botMemoryConfig,

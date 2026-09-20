@@ -42,9 +42,23 @@ export const aiExecutionConfigSchema = z
     }
   });
 
+export const engagementPolicySchema = z.object({
+  mode: z.enum(["off", "shadow", "active"]),
+  style: z.enum(["natural", "assistant", "filter"]),
+  preferences: z.string().max(1_000),
+  keywordDirect: z.boolean(),
+  cooldownSeconds: z.number().int().min(0).max(3_600),
+  confidenceThreshold: z.number().min(0).max(1),
+  contextMessages: z.number().int().min(1).max(20),
+  timeoutMs: z.number().int().min(100).max(5_000),
+});
+
 export const aiConfigSchema = z
   .object({
     revision: z.string().min(1).max(100),
+    engagement: engagementPolicySchema
+      .extend({ apiKey: z.string().trim().max(512).optional() })
+      .optional(),
     enabled: z.boolean(),
     apiKey: z.string().optional(),
     baseURL: z.string(),
@@ -82,6 +96,7 @@ export const aiConfigSchema = z
         maxContextMessages: z.number().min(1).max(100).optional(),
         groupHistoryMaxTokens: z.number().int().min(2_000).max(64_000).optional(),
         imageGenerationEnabled: z.boolean().optional(),
+        engagement: engagementPolicySchema.partial().nullable().optional(),
       }),
     ),
     conversationConfig: z

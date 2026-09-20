@@ -116,6 +116,57 @@ function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
 }
 
 describe("AI reply streaming", () => {
+  it("keeps the original provider error and links it to the request and failed execution", async () => {
+    const providerError = Object.assign(new Error("upstream quota exceeded"), {
+      statusCode: 429,
+      responseBody: '{"error":"quota exhausted"}',
+    });
+    streamTextMock.mockImplementation((options) => {
+      async function* failedStream() {
+        options.onError({ error: providerError });
+        yield* [] as string[];
+      }
+      return {
+        textStream: failedStream(),
+        get text() {
+          return Promise.reject(new Error("No output generated"));
+        },
+      };
+    });
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx } = createContext();
+    const runtime = createAiReplyHandler(createConfig(onLog));
+    try {
+      await runtime.handler(ctx, vi.fn());
+      await vi.waitFor(() =>
+        expect(onLog).toHaveBeenCalledWith(
+          expect.objectContaining({ message: "AI reply execution finished" }),
+        ),
+      );
+      const logs = onLog.mock.calls.map(([entry]) => entry);
+      const request = logs.find((entry) => entry.message === "AI request")!;
+      const failure = logs.find((entry) => entry.message === "AI provider stream failed")!;
+      expect(failure.meta).toMatchObject({
+        correlationId: request.meta!.correlationId,
+        chatId: 123,
+        messageId: 7,
+        error: {
+          statusCode: 429,
+          responseBody: '{"error":"quota exhausted"}',
+          stack: expect.any(String),
+        },
+      });
+      expect(
+        logs.find((entry) => entry.message === "AI reply execution finished")?.meta,
+      ).toMatchObject({ outcome: "failed", correlationId: request.meta!.correlationId });
+      expect(
+        logs.find((entry) => entry.message.startsWith("AI reply failed:"))?.meta,
+      ).toMatchObject({ error: { message: "upstream quota exceeded" } });
+    } finally {
+      await runtime.destroy();
+    }
+  });
+
   it.each([
     ["web_search", "🌐 搜索中..."],
     ["search_danbooru_character_tags", "🏷️ 查找角色标签..."],

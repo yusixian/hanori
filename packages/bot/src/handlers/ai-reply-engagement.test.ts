@@ -1,0 +1,712 @@
+import { AiExecutionCoordinator } from "../services/ai-execution-coordinator.js";
+import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
+import {
+  ENGAGEMENT_MODEL,
+  type EngagementSample,
+  type UserPrivacyCallbacks,
+} from "@cos-tool-bot/shared";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { BotContext } from "../context.js";
+import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
+
+const { streamTextMock } = vi.hoisted(() => ({ streamTextMock: vi.fn() }));
+
+vi.mock("ai", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("ai")>()),
+  streamText: streamTextMock,
+}));
+
+const runtimes: Array<ReturnType<typeof createAiReplyHandler>> = [];
+
+beforeEach(() => streamTextMock.mockReset());
+afterEach(async () => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  await Promise.allSettled(runtimes.splice(0).map((runtime) => runtime.destroy()));
+});
+
+function response(choice: "continue" | "join" | "silent") {
+  const probabilities =
+    choice === "continue"
+      ? { continue: 0.9, join: 0.05, silent: 0.05 }
+      : choice === "join"
+        ? { continue: 0.05, join: 0.9, silent: 0.05 }
+        : { continue: 0.05, join: 0.05, silent: 0.9 };
+  return new Response(
+    JSON.stringify({
+      model: ENGAGEMENT_MODEL,
+      answers: {
+        engagement: { type: "choice", choice, confidence: 0.9, probabilities },
+      },
+      usage: { input_tokens: 10 },
+    }),
+  );
+}
+
+function privacy(
+  getMode: UserPrivacyCallbacks["getMode"] = async () => "normal",
+): UserPrivacyCallbacks {
+  return {
+    getMode,
+    runExclusive: vi.fn(async (_userId, operation) => operation()),
+    setMode: vi.fn(),
+    forget: vi.fn(),
+  } satisfies UserPrivacyCallbacks;
+}
+
+function config(
+  mode: "off" | "shadow" | "active",
+  onEngagementSample = vi.fn<(sample: EngagementSample) => void>(),
+  privacyCallbacks = privacy(),
+): AiReplyConfig {
+  return {
+    botId: "bot-1",
+    apiKey: "model-key",
+    baseURL: "https://model.example/v1",
+    model: "model",
+    systemPrompt: "system",
+    triggerConfig: {
+      replyToBot: false,
+      mentionBot: false,
+      triggerWords: [],
+      randomReplyPercent: 0,
+      randomReplyCooldown: 60,
+    },
+    engagement: {
+      apiKey: "jev-key",
+      mode,
+      style: "natural",
+      preferences: "",
+      keywordDirect: false,
+      cooldownSeconds: 60,
+      confidenceThreshold: 0.8,
+      contextMessages: 20,
+      timeoutMs: 1000,
+    },
+    groupOverrides: { "-100": { chatId: -100, whitelisted: true } },
+    adminChatIds: [],
+    privacy: privacyCallbacks,
+    token: "token",
+    onEngagementSample,
+  };
+}
+
+function context(
+  text: string,
+  options: {
+    messageId?: number;
+    userId?: number;
+    threadId?: number;
+    entities?: Array<{ type: "mention"; offset: number; length: number }>;
+  } = {},
+): BotContext {
+  return {
+    update: { update_id: options.messageId ?? 1 },
+    message: {
+      message_id: options.messageId ?? 1,
+      date: 1_700_000_000,
+      text,
+      entities: options.entities ?? [],
+      message_thread_id: options.threadId,
+    },
+    chat: { id: -100, type: "supergroup", title: "Public group" },
+    from: { id: options.userId ?? 42, is_bot: false, first_name: "Tester" },
+    me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+    api: { sendChatAction: vi.fn() },
+    replyWithChatAction: vi.fn(),
+    resolveWait: vi.fn().mockResolvedValue(20),
+    deleteWaiting: vi.fn(),
+    directlyReply: vi.fn(),
+  } as unknown as BotContext;
+}
+
+function streamResult(text = "answer") {
+  async function* textStream() {
+    yield text;
+  }
+  return {
+    textStream: textStream(),
+    text: Promise.resolve(text),
+    steps: Promise.resolve([]),
+    usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    finishReason: Promise.resolve("stop"),
+  };
+}
+
+describe("AI engagement decisions", () => {
+  it("does not hold message ingress while shadow evaluations are pending", async () => {
+    const releases: Array<(value: Response) => void> = [];
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          releases.push(resolve);
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("shadow", onSample));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("first ambient", { messageId: 1 }), vi.fn());
+    await runtime.handler(context("second ambient", { messageId: 2 }), vi.fn());
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onSample).not.toHaveBeenCalled();
+    releases[0]!(response("silent"));
+    releases[1]!(response("join"));
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+    expect(onSample.mock.calls.map(([sample]) => sample.actualTrigger)).toEqual([null, null]);
+  });
+
+  it("does not hold shadow ingress on the asynchronous context privacy recheck", async () => {
+    let releasePrivacy!: () => void;
+    const privacyPending = new Promise<void>((resolve) => {
+      releasePrivacy = resolve;
+    });
+    let calls = 0;
+    const privacyCallbacks = privacy(async () => {
+      calls++;
+      if (calls > 1) await privacyPending;
+      return "normal";
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = createAiReplyHandler(config("shadow", vi.fn(), privacyCallbacks));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("ambient text"), vi.fn());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    releasePrivacy();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  });
+
+  it("bypasses JEV for an entity mention in active mode even when legacy mention is disabled", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockReturnValue(streamResult());
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+    const text = "hey @sample_bot";
+
+    await runtime.handler(
+      context(text, {
+        entities: [{ type: "mention", offset: 4, length: 11 }],
+      }),
+      vi.fn(),
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalledOnce();
+  });
+
+  it("keeps a JEV silent decision out of the reply scheduler and records no admission", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response("silent")));
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("active", onSample));
+    runtimes.push(runtime);
+    const next = vi.fn();
+
+    await runtime.handler(context("ambient discussion"), next);
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({ choice: "silent", actualTrigger: null }),
+    );
+  });
+
+  it("does not call JEV for filter style without a legacy keyword or random candidate", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const runtimeConfig = config("active");
+    runtimeConfig.engagement = { ...runtimeConfig.engagement!, style: "filter" };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+    const next = vi.fn();
+
+    await runtime.handler(context("ordinary ambient discussion"), next);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("lets keywordDirect bypass JEV and records the deterministic admission", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockReturnValue(streamResult());
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtimeConfig = config("active", onSample);
+    runtimeConfig.triggerConfig.triggerWords = ["wake"];
+    runtimeConfig.engagement = { ...runtimeConfig.engagement!, keywordDirect: true };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("wake up"), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reasonCode: "keyword_direct",
+        actualTrigger: "keyword",
+        confidence: null,
+        inputTokens: 0,
+      }),
+    );
+  });
+
+  it("rolls a legacy random candidate once when a JEV failure falls back", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response("bad json")));
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    streamTextMock.mockReturnValue(streamResult());
+    const reserve = vi.fn().mockResolvedValue(undefined);
+    const runtimeConfig = config("active");
+    runtimeConfig.triggerConfig.randomReplyPercent = 100;
+    runtimeConfig.triggerConfig.randomReplyCooldown = 0;
+    runtimeConfig.usageGovernance = {
+      reserve,
+      settle: vi.fn().mockResolvedValue(undefined),
+      refund: vi.fn().mockResolvedValue(undefined),
+      getSnapshot: vi.fn(),
+    } as never;
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("random candidate"), vi.fn());
+
+    expect(random).toHaveBeenCalledOnce();
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({ resource: "proactive_reply", userId: undefined }),
+    );
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    random.mockRestore();
+  });
+
+  it("commits join cooldown only after proactive usage admission succeeds", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async () => response("join")),
+    );
+    streamTextMock.mockReturnValue(streamResult());
+    const reserve = vi
+      .fn()
+      .mockResolvedValueOnce({
+        allowed: false,
+        reason: "cooldown",
+        scope: "chat",
+        subjectKey: "-100",
+        limit: 1,
+        used: 1,
+      })
+      .mockResolvedValueOnce({
+        allowed: true,
+        reservationId: "reservation-2",
+        reservedUnits: 1,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtimeConfig = config("active", onSample);
+    runtimeConfig.usageGovernance = {
+      reserve,
+      settle: vi.fn().mockResolvedValue(undefined),
+      refund: vi.fn().mockResolvedValue(undefined),
+      getSnapshot: vi.fn(),
+    } as never;
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("first join", { messageId: 1 }), vi.fn());
+    await runtime.handler(context("second join", { messageId: 2 }), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+
+    expect(reserve).toHaveBeenCalledTimes(2);
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample.mock.calls[0]?.[0]).toMatchObject({
+      reasonCode: "usage_denied",
+      actualTrigger: null,
+    });
+    expect(onSample.mock.calls[1]?.[0]).toMatchObject({
+      reasonCode: "jev_answer",
+      actualTrigger: "engagement_join",
+    });
+  });
+
+  it("does not spend the engagement cooldown when scheduler admission fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async () => response("join")),
+    );
+    streamTextMock.mockReturnValue(streamResult());
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("active", onSample));
+    runtimes.push(runtime);
+    vi.spyOn(AiExecutionCoordinator.prototype, "schedule").mockImplementationOnce(() => {
+      throw new AiReplyQueueFullError(100);
+    });
+    const first = context("queue full candidate", { messageId: 1 });
+    vi.mocked(first.directlyReply).mockResolvedValue(undefined as never);
+    await runtime.handler(first, vi.fn());
+    await runtime.handler(context("next admitted candidate", { messageId: 2 }), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+    expect(onSample.mock.calls[0]?.[0]).toMatchObject({
+      reasonCode: "queue_full",
+      actualTrigger: null,
+    });
+    expect(onSample.mock.calls[1]?.[0]).toMatchObject({ actualTrigger: "engagement_join" });
+    expect(streamTextMock).toHaveBeenCalledOnce();
+  });
+
+  it("lets a recent bot utterance continue through an active join cooldown", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async () => response("join"))
+      .mockImplementationOnce(async () => response("continue"));
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockReturnValue(streamResult());
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("join this discussion", { messageId: 1 }), vi.fn());
+    await runtime.handler(context("and what next?", { messageId: 2 }), vi.fn());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("blocks another ordinary join while the active engagement cooldown is running", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockImplementation(async () => response("join")),
+    );
+    streamTextMock.mockReturnValue(streamResult());
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("active", onSample));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("first join", { messageId: 1 }), vi.fn());
+    await runtime.handler(context("second join", { messageId: 2 }), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample.mock.calls[1]?.[0]).toMatchObject({
+      reasonCode: "engagement_cooldown",
+      actualTrigger: null,
+    });
+  });
+
+  it("does not use a bot utterance from another forum topic to bypass cooldown", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async () => response("join"))
+      .mockImplementationOnce(async () => response("join"))
+      .mockImplementationOnce(async () => response("continue"));
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock
+      .mockReturnValueOnce(streamResult("topic one answer"))
+      .mockImplementationOnce(() => {
+        throw new Error("provider unavailable");
+      });
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("topic one", { messageId: 1, threadId: 10 }), vi.fn());
+    await runtime.handler(context("topic two", { messageId: 2, threadId: 20 }), vi.fn());
+    await runtime.handler(context("topic two follow-up", { messageId: 3, threadId: 20 }), vi.fn());
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never carries an opted-out user's text into a later shadow request", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const privacyCallbacks = privacy(async (userId) => (userId === 42 ? "off" : "normal"));
+    const runtime = createAiReplyHandler(config("shadow", vi.fn(), privacyCallbacks));
+    runtimes.push(runtime);
+
+    await runtime.handler(
+      context("private phrase must not leave", { messageId: 1, userId: 42 }),
+      vi.fn(),
+    );
+    await runtime.handler(context("ordinary group text", { messageId: 2, userId: 43 }), vi.fn());
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(JSON.stringify(request)).not.toContain("private phrase must not leave");
+  });
+
+  it("rechecks buffered authors so a later privacy opt-out removes already captured text", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    let user42Mode: "normal" | "off" = "normal";
+    const privacyCallbacks = privacy(async (userId) => (userId === 42 ? user42Mode : "normal"));
+    const runtime = createAiReplyHandler(config("shadow", vi.fn(), privacyCallbacks));
+    runtimes.push(runtime);
+
+    await runtime.handler(
+      context("captured before opt out", { messageId: 1, userId: 42 }),
+      vi.fn(),
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    user42Mode = "off";
+    await runtime.handler(context("later group text", { messageId: 2, userId: 43 }), vi.fn());
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const laterRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+      string,
+      unknown
+    >;
+    expect(JSON.stringify(laterRequest)).not.toContain("captured before opt out");
+  });
+
+  it("does not resend forgotten buffered text after the user re-enables privacy", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    let resetAt: number | undefined;
+    const callbacks = privacy();
+    callbacks.getContextResetAt = (userId) => (userId === 42 ? resetAt : undefined);
+    const runtime = createAiReplyHandler(config("shadow", vi.fn(), callbacks));
+    runtimes.push(runtime);
+    await runtime.handler(context("forgotten secret", { messageId: 1, userId: 42 }), vi.fn());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    resetAt = Date.now();
+    await runtime.handler(context("new speaker", { messageId: 2, userId: 43 }), vi.fn());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1]?.[1]?.body)).not.toContain("forgotten secret");
+  });
+
+  it("invalidates a later bot response derived from context captured before forget", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementationOnce(async () => response("silent"))
+      .mockImplementationOnce(async () => response("join"))
+      .mockImplementation(async () => response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    let resetAt: number | undefined;
+    const callbacks = privacy();
+    callbacks.getContextResetAt = (userId) => (userId === 42 ? resetAt : undefined);
+    streamTextMock.mockImplementation(() => {
+      resetAt = Date.now();
+      return streamResult("derived forgotten secret");
+    });
+    const runtime = createAiReplyHandler(config("active", vi.fn(), callbacks));
+    runtimes.push(runtime);
+    await runtime.handler(
+      context("original forgotten secret", { messageId: 1, userId: 42 }),
+      vi.fn(),
+    );
+    await runtime.handler(context("please explain", { messageId: 2, userId: 43 }), vi.fn());
+    await runtime.handler(context("later topic", { messageId: 3, userId: 44 }), vi.fn());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(String(fetchMock.mock.calls[2]?.[1]?.body)).not.toContain("forgotten secret");
+  });
+
+  it("does not send a forwarded user's text when that original user opted out", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("join"));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = createAiReplyHandler(
+      config(
+        "active",
+        vi.fn(),
+        privacy(async (userId) => (userId === 43 ? "off" : "normal")),
+      ),
+    );
+    runtimes.push(runtime);
+    const forwarded = context("forwarded private phrase") as BotContext & {
+      message: NonNullable<BotContext["message"]>;
+    };
+    Object.assign(forwarded.message, {
+      forward_origin: {
+        type: "user",
+        date: 1_700_000_000,
+        sender_user: { id: 43, is_bot: false, first_name: "Original" },
+      },
+    });
+
+    await runtime.handler(forwarded, vi.fn());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("retains known forward provenance in samples without sending user IDs to JEV", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("shadow", onSample));
+    runtimes.push(runtime);
+    const forwarded = context("allowed forwarded phrase") as BotContext & {
+      message: NonNullable<BotContext["message"]>;
+    };
+    Object.assign(forwarded.message, {
+      forward_origin: {
+        type: "user",
+        date: 1_700_000_000,
+        sender_user: { id: 43, is_bot: false, first_name: "Original" },
+      },
+    });
+
+    await runtime.handler(forwarded, vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    const requestBody = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(requestBody).toContain("allowed forwarded phrase");
+    expect(requestBody).not.toContain("privacyUserIds");
+    expect(onSample.mock.calls[0]?.[0].context).toContainEqual(
+      expect.objectContaining({ messageId: 1, privacyUserIds: [42, 43] }),
+    );
+  });
+
+  it("never sends unverifiable forwarded text to JEV", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+    const forwarded = context("hidden forwarded phrase") as BotContext & {
+      message: NonNullable<BotContext["message"]>;
+    };
+    Object.assign(forwarded.message, {
+      forward_origin: {
+        type: "hidden_user",
+        date: 1_700_000_000,
+        sender_user_name: "Hidden",
+      },
+    });
+
+    await runtime.handler(forwarded, vi.fn());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("excludes an opted-out reply source while evaluating the current message", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(
+      config(
+        "active",
+        onSample,
+        privacy(async (userId) => (userId === 43 ? "off" : "normal")),
+      ),
+    );
+    runtimes.push(runtime);
+    const current = Object.assign(context("current public question"), {
+      reply_to_message: {
+        message_id: 9,
+        date: 1_700_000_000,
+        text: "private replied phrase",
+        from: { id: 43, is_bot: false, first_name: "Other" },
+      },
+    });
+
+    await runtime.handler(current, vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    const requestBody = String(fetchMock.mock.calls[0]?.[1]?.body);
+    expect(requestBody).toContain("current public question");
+    expect(requestBody).not.toContain("private replied phrase");
+    expect(onSample.mock.calls[0]?.[0].context).not.toContainEqual(
+      expect.objectContaining({ messageId: 9 }),
+    );
+  });
+
+  it("bounds privacy preparation, records timeout, and falls back once", async () => {
+    let releasePrivacy!: () => void;
+    const privacyPending = new Promise<void>((resolve) => {
+      releasePrivacy = resolve;
+    });
+    let privacyCalls = 0;
+    const privacyCallbacks = privacy(async () => {
+      privacyCalls++;
+      if (privacyCalls === 2) await privacyPending;
+      return "normal";
+    });
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtimeConfig = config("active", onSample, privacyCallbacks);
+    runtimeConfig.engagement = { ...runtimeConfig.engagement!, timeoutMs: 20 };
+    runtimeConfig.triggerConfig.randomReplyPercent = 100;
+    runtimeConfig.triggerConfig.randomReplyCooldown = 0;
+    streamTextMock.mockReturnValue(streamResult());
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("legacy fallback candidate"), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+    releasePrivacy();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCategory: "timeout", actualTrigger: "random", context: [] }),
+    );
+    random.mockRestore();
+  });
+
+  it("does not revive a stale gate after stop and resume during privacy preparation", async () => {
+    let releasePrivacy!: () => void;
+    const privacyPending = new Promise<void>((resolve) => {
+      releasePrivacy = resolve;
+    });
+    let privacyCalls = 0;
+    const privacyCallbacks = privacy(async () => {
+      privacyCalls++;
+      if (privacyCalls > 1) await privacyPending;
+      return "normal";
+    });
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("join"));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = createAiReplyHandler(config("active", vi.fn(), privacyCallbacks));
+    runtimes.push(runtime);
+
+    const handling = runtime.handler(context("stale ambient gate"), vi.fn());
+    await vi.waitFor(() => expect(privacyCalls).toBeGreaterThan(1));
+    runtime.setAiEnabled(false);
+    runtime.setAiEnabled(true);
+    await handling;
+    releasePrivacy();
+    await Promise.resolve();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it("cancels an active gate when AI is stopped and suppresses the late reply", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("active", onSample));
+    runtimes.push(runtime);
+
+    const handling = runtime.handler(context("ambient decision"), vi.fn());
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    runtime.setAiEnabled(false);
+    await handling;
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCategory: "aborted", actualTrigger: null }),
+    );
+  });
+});

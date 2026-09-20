@@ -136,6 +136,7 @@ function route(): ImageRouteCapabilities {
 describe("choice continuation tools", () => {
   it("keeps configured image generation tools bound to the selecting user's identity", async () => {
     const coordinator = createCoordinator();
+    const onLog = vi.fn();
     const create = vi.fn().mockResolvedValue({
       accepted: true,
       generation: {
@@ -180,6 +181,7 @@ describe("choice continuation tools", () => {
     const config = createConfig(coordinator, {
       imageGenerationPort,
       isDelegatedGroupAdmin: vi.fn().mockResolvedValue(true),
+      onLog,
     });
 
     await expect(
@@ -214,6 +216,135 @@ describe("choice continuation tools", () => {
     );
     expect(sendMessage).not.toHaveBeenCalledWith(CHAT_ID, FAILURE_MESSAGE);
     expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).toContain("侧脸少年");
+    const requestLog = onLog.mock.calls.find(
+      ([entry]) => entry.message === "AI continuation request",
+    )?.[0];
+    const toolLog = onLog.mock.calls.find(([entry]) => entry.message === "AI tool call")?.[0];
+    expect(toolLog?.meta).toMatchObject({
+      correlationId: requestLog?.meta?.correlationId,
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      eventType: "continuation",
+      toolName: "create_image",
+    });
+  });
+
+  it("logs bounded continuation request and response content in one diagnostic scope", async () => {
+    const coordinator = createCoordinator();
+    const onLog = vi.fn();
+    async function* textStream() {
+      yield "continuation answer";
+    }
+    streamTextMock.mockReturnValueOnce({
+      textStream: textStream(),
+      text: Promise.resolve("continuation answer"),
+      steps: Promise.resolve([]),
+      usage: Promise.resolve({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+    });
+    const { api } = createApi();
+
+    await expect(
+      continueChat(api, createConfig(coordinator, { onLog }), {
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        userName: "Krau",
+        eventDescription: "diagnostic event body",
+        requireDelivery: true,
+      }),
+    ).resolves.toBe(true);
+
+    const entries = onLog.mock.calls.map(([entry]) => entry);
+    const request = entries.find((entry) => entry.message === "AI continuation request");
+    const response = entries.find((entry) => entry.message === "AI continuation response");
+    const completed = entries.find((entry) => entry.message === "continueChat completed");
+    expect(request?.meta).toMatchObject({
+      botId: "bot-1",
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      eventType: "continuation",
+      providerId: "p",
+      model: "model-a",
+      eventDescription: "diagnostic event body",
+      userName: "Krau",
+    });
+    expect(JSON.stringify(request?.meta?.messages)).toContain("diagnostic event body");
+    expect(response?.meta).toMatchObject({
+      correlationId: request?.meta?.correlationId,
+      rawResponseText: "continuation answer",
+      responseText: "continuation answer",
+    });
+    expect(completed?.meta).toMatchObject({
+      correlationId: request?.meta?.correlationId,
+      responseText: "continuation answer",
+    });
+  });
+
+  it("keeps the original provider error when the stream ends as NoOutputGenerated", async () => {
+    const coordinator = createCoordinator();
+    const onLog = vi.fn();
+    const providerError = Object.assign(new Error("upstream rejected request"), {
+      statusCode: 429,
+      responseBody: {
+        error: "rate limited",
+        authorization: "Bearer provider-secret-value",
+      },
+    });
+    const finalError = new Error("No output generated");
+    finalError.name = "AI_NoOutputGeneratedError";
+    streamTextMock.mockImplementationOnce(
+      (options: { onError?: (event: { error: unknown }) => void }) => {
+        async function* textStream() {
+          options.onError?.({ error: providerError });
+          yield await Promise.reject(finalError);
+        }
+        return {
+          textStream: textStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+        };
+      },
+    );
+    const { api } = createApi();
+
+    await expect(
+      continueChat(api, createConfig(coordinator, { onLog }), {
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        eventDescription: "provider failure event",
+        requireDelivery: true,
+      }),
+    ).rejects.toBe(finalError);
+
+    const entries = onLog.mock.calls.map(([entry]) => entry);
+    const providerFailure = entries.find(
+      (entry) => entry.message === "AI continuation provider stream error",
+    );
+    const finalFailure = entries.find((entry) =>
+      String(entry.message).startsWith("continueChat failed:"),
+    );
+    expect(providerFailure?.meta).toMatchObject({
+      providerId: "p",
+      model: "model-a",
+      error: {
+        name: "Error",
+        message: "upstream rejected request",
+        statusCode: 429,
+        responseBody: {
+          error: "rate limited",
+          authorization: "[REDACTED]",
+        },
+      },
+    });
+    expect(providerFailure?.meta?.error).toHaveProperty("stack");
+    expect(finalFailure?.meta).toMatchObject({
+      correlationId: providerFailure?.meta?.correlationId,
+      error: { name: "AI_NoOutputGeneratedError", message: "No output generated" },
+      providerError: {
+        message: "upstream rejected request",
+        statusCode: 429,
+      },
+    });
   });
 
   it("surfaces selection resolution failures before model execution", async () => {

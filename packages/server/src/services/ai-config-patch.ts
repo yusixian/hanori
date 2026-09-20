@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
 import {
   DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_ENGAGEMENT_POLICY,
   resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
-import type { AiConfigStored, AiProviderEntry } from "@cos-tool-bot/shared";
+import type { AiConfigStored, AiGroupOverride, AiProviderEntry } from "@cos-tool-bot/shared";
 import { migrateAiConfig, normalizeAiProvider } from "../utils/ai-config-migrate.js";
 import { encrypt } from "../utils/crypto.js";
 import { normalizeBaseURLForComparison, type AiConfigPatch } from "./ai-config-schema.js";
@@ -112,6 +113,19 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     encryptedApiKey = encrypt(patch.apiKey, encryptionKey);
   }
 
+  let engagement = existingMigrated?.engagement;
+  if (patch.engagement) {
+    const { apiKey: engagementApiKey, ...policy } = patch.engagement;
+    const suppliedApiKey = engagementApiKey?.trim();
+    engagement = {
+      ...DEFAULT_ENGAGEMENT_POLICY,
+      ...policy,
+      encryptedApiKey: suppliedApiKey
+        ? encrypt(suppliedApiKey, encryptionKey)
+        : (existingMigrated?.engagement?.encryptedApiKey ?? null),
+    };
+  }
+
   // If model is empty but models array has entries, use first model as default
   const effectiveModel =
     patch.model || (patch.models?.length ? patch.models[0]!.id : (current?.model ?? ""));
@@ -197,7 +211,23 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     throw new AiConfigPatchError("The conversation compression Provider does not exist");
   }
 
+  const groupOverrides = Object.fromEntries(
+    Object.entries(patch.groupOverrides).map(([chatId, incoming]) => {
+      const { engagement: engagementPatch, ...rest } = incoming;
+      const existingEngagement = existingMigrated?.groupOverrides[chatId]?.engagement;
+      const engagement = engagementPatch === undefined ? existingEngagement : engagementPatch;
+      return [
+        chatId,
+        {
+          ...rest,
+          ...(engagement === null || engagement === undefined ? {} : { engagement }),
+        } satisfies AiGroupOverride,
+      ];
+    }),
+  );
+
   const updatedAiConfig: AiConfigStored = {
+    engagement,
     enabled: patch.enabled,
     encryptedApiKey,
     baseURL: patch.baseURL,
@@ -212,7 +242,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     behavioralPrompt: patch.behavioralPrompt,
     groupBehavioralPrompt: patch.groupBehavioralPrompt,
     triggerConfig: patch.triggerConfig,
-    groupOverrides: patch.groupOverrides,
+    groupOverrides,
     conversationConfig,
     memoryConfig: patch.memoryConfig,
     stickerPacks: patch.stickerPacks ?? current?.stickerPacks,

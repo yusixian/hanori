@@ -192,6 +192,45 @@ describe("toAiConfigRuntime embedding key", () => {
   });
 });
 
+describe("toAiConfigRuntime engagement key", () => {
+  const policy = {
+    mode: "shadow" as const,
+    style: "natural" as const,
+    preferences: "join art discussions",
+    keywordDirect: false,
+    cooldownSeconds: 60,
+    confidenceThreshold: 0.8,
+    contextMessages: 20,
+    timeoutMs: 1_000,
+  };
+
+  it("decrypts the JEV key into the runtime-only projection", () => {
+    const runtime = toAiConfigRuntime(
+      baseConfig({
+        engagement: { ...policy, encryptedApiKey: encrypt("jev-secret", KEY) },
+      }),
+      KEY,
+    );
+
+    expect(runtime?.engagement).toEqual({ ...policy, apiKey: "jev-secret" });
+    expect(runtime?.engagementApiKeyDecryptFailed).toBe(false);
+    expect(JSON.stringify(runtime?.config)).not.toContain("jev-secret");
+  });
+
+  it("reports a JEV key that cannot be decrypted without exposing ciphertext in runtime policy", () => {
+    const runtime = toAiConfigRuntime(
+      baseConfig({
+        engagement: { ...policy, encryptedApiKey: encrypt("jev-secret", OTHER_KEY) },
+      }),
+      KEY,
+    );
+
+    expect(runtime?.engagement.apiKey).toBeUndefined();
+    expect(runtime?.engagementApiKeyDecryptFailed).toBe(true);
+    expect(runtime?.engagement).not.toHaveProperty("encryptedApiKey");
+  });
+});
+
 describe("AI config write-back helpers", () => {
   const override: AiGroupOverride = { chatId: -100, whitelisted: true, enabled: true };
 

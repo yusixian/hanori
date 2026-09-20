@@ -35,6 +35,25 @@ function expectPatchError(absorbCall: () => AiConfigStored, message: string) {
   expect(absorbCall).toThrow(message);
 }
 
+describe("engagement config validation", () => {
+  it("caps the evaluator context at the runtime-supported 20 messages", () => {
+    expect(() =>
+      buildPatch({
+        engagement: {
+          mode: "shadow",
+          style: "natural",
+          preferences: "",
+          keywordDirect: false,
+          cooldownSeconds: 60,
+          confidenceThreshold: 0.8,
+          contextMessages: 21,
+          timeoutMs: 1_000,
+        },
+      }),
+    ).toThrow();
+  });
+});
+
 const storedProvider = {
   id: "provider-1",
   label: "Main",
@@ -320,5 +339,73 @@ describe("absorbAiConfigPatch preserved sections", () => {
       queueNotice: { enabled: false, text: "" },
     });
     expect(result.imageGenerationReceiptConfig?.promptPreviewLength).toBe(30);
+  });
+
+  it("preserves engagement secrets and group policies omitted by older settings clients", () => {
+    const current = storedConfig({
+      engagement: {
+        mode: "shadow",
+        style: "natural",
+        preferences: "join art discussions",
+        keywordDirect: false,
+        cooldownSeconds: 60,
+        confidenceThreshold: 0.8,
+        contextMessages: 20,
+        timeoutMs: 1_000,
+        encryptedApiKey: "iv:tag:engagement",
+      },
+      groupOverrides: {
+        "-100": {
+          chatId: -100,
+          whitelisted: true,
+          engagement: { style: "assistant" },
+        },
+      },
+    });
+    const result = absorb(
+      current,
+      buildPatch({
+        providers: [{ ...patchProvider, apiKey: "" }],
+        groupOverrides: { "-100": { chatId: -100, whitelisted: true } },
+      }),
+    );
+
+    expect(result.engagement).toEqual(current.engagement);
+    expect(result.groupOverrides["-100"]?.engagement).toEqual({ style: "assistant" });
+  });
+
+  it("encrypts a new engagement key and supports an explicit group inheritance reset", () => {
+    const current = storedConfig({
+      groupOverrides: {
+        "-100": {
+          chatId: -100,
+          whitelisted: true,
+          engagement: { style: "assistant" },
+        },
+      },
+    });
+    const result = absorb(
+      current,
+      buildPatch({
+        providers: [{ ...patchProvider, apiKey: "" }],
+        engagement: {
+          mode: "active",
+          style: "natural",
+          preferences: "",
+          keywordDirect: false,
+          cooldownSeconds: 60,
+          confidenceThreshold: 0.8,
+          contextMessages: 20,
+          timeoutMs: 1_000,
+          apiKey: "jev-secret",
+        },
+        groupOverrides: {
+          "-100": { chatId: -100, whitelisted: true, engagement: null },
+        },
+      }),
+    );
+
+    expect(decrypt(result.engagement!.encryptedApiKey!, ENCRYPTION_KEY)).toBe("jev-secret");
+    expect(result.groupOverrides["-100"]?.engagement).toBeUndefined();
   });
 });

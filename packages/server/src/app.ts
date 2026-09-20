@@ -30,6 +30,7 @@ import { governanceRoutes } from "./routes/governance.js";
 import { imageMcpRoutes } from "./routes/image-mcp.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
+import { engagementSampleRoutes } from "./routes/engagement-samples.js";
 import { botGitHubAppRoutes, githubAppCallbackRoutes } from "./routes/github-app.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
@@ -54,6 +55,7 @@ import type { ImageMcpConnectionService } from "./services/image-mcp-connection-
 import type { UsageGovernor } from "./services/usage-governor.js";
 import { securityHeaders, staticCacheControl } from "./http-policy.js";
 import type { RuntimeHealthReader } from "./runtime-health.js";
+import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
   db: Database;
@@ -80,6 +82,7 @@ interface AppOptions {
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
   usageGovernor: UsageGovernor;
+  engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
 }
 
@@ -108,8 +111,11 @@ export function createApp(options: AppOptions) {
     botSettingsService,
     imageGenerationService,
     imageMcpConnectionService,
+    engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
   } = options;
+  const engagementSampleService =
+    providedEngagementSampleService ?? new EngagementSampleService(db);
 
   const app = new Hono()
     .use("*", honoLogger())
@@ -174,6 +180,8 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/skills", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/generations/*", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/engagement-samples", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/engagement-samples/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/files-raw/generations/*", requireRoles(ownerOrAdmin))
     .route("/api/bots", governanceRoutes(db, imageGenerationService, imageMcpConnectionService))
     .route(
@@ -185,6 +193,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db, botPool, imageGenerationService))
+    .route("/api/bots", engagementSampleRoutes(engagementSampleService))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
     .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))

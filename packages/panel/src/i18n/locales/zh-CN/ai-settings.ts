@@ -1,4 +1,52 @@
+import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  engagementSamples,
+  engagement: {
+    title: "智能群聊接话",
+    description:
+      "JEV 判断何时参与聊天，当前选定的聊天模型生成回复。建议先观察样本，再启用实际接话。",
+    mode: "运行模式",
+    style: "接话风格",
+    modes: {
+      off: "关闭",
+      shadow: "观察",
+      active: "启用",
+    },
+    styles: {
+      natural: "自然群友",
+      assistant: "克制助手",
+      filter: "筛选现有插话",
+    },
+    styleHelp: {
+      natural: "延续对话、参与相关话题，也能适当地接梗。",
+      assistant: "在有人需要帮助时参与，普通闲聊尽量不打扰。",
+      filter: "仅判断原有关键词和随机回复规则选中的消息。",
+    },
+    modeHelp: {
+      off: "沿用原有触发设置，不调用 JEV。",
+      shadow: "记录判断建议，实际回复行为保持不变。",
+      active:
+        "私聊、明确 @ 和回复 Bot 直接进入回答流程，原有 @／回复开关不再控制这些请求；权限和隐私规则仍然生效。",
+    },
+    preferences: "补充接话偏好",
+    preferencesPlaceholder: "例如：可以接动漫梗，争论时少插话。",
+    keywordDirect: "命中触发词时直接回答",
+    cooldownSeconds: "主动插话冷却（秒）",
+    continuationHelp: "Bot 发言后 2 分钟内，高置信度的延续对话可跳过此冷却，仍遵守用量和并发限制。",
+    advanced: "高级设置",
+    confidenceThreshold: "最低置信度",
+    contextMessages: "上下文消息数",
+    timeoutMs: "判断超时（毫秒）",
+    confidenceHelp:
+      "置信度表示模型判断的确定程度，不是实测准确率，请结合人工标记校准。上下文限制为最近 5 分钟、最多 6,000 字符；判断失败时沿用原有触发规则。",
+    apiKey: "TypeSafe API Key",
+    keyConfigured: "已配置，留空保留现有密钥",
+    keyMissing: "输入 TypeSafe 密钥",
+    keyHelp: "密钥加密保存。使用官方接口与固定模型 jev-1.13.0；观察模式也会产生分类费用。",
+    override: "单独配置这个群的接话策略",
+    overridden: "此群使用下方设置，关闭单独配置可恢复继承。",
+    inherited: "继承 Bot 默认配置，下方显示当前生效值。",
+  },
   common: {
     add: "添加",
     apiKey: "API 密钥",

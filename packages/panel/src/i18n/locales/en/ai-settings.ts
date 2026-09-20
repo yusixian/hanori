@@ -1,4 +1,56 @@
+import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  engagementSamples,
+  engagement: {
+    title: "Smart group engagement",
+    description:
+      "JEV decides when to join a conversation. Your selected chat model writes the reply. Start in observe mode before enabling replies.",
+    mode: "Run mode",
+    style: "Conversation style",
+    modes: {
+      off: "Off",
+      shadow: "Observe",
+      active: "Enabled",
+    },
+    styles: {
+      natural: "Natural group member",
+      assistant: "Reserved assistant",
+      filter: "Filter existing triggers",
+    },
+    styleHelp: {
+      natural:
+        "Continue conversations, join relevant topics and respond to jokes when appropriate.",
+      assistant: "Join when someone needs help; leave ordinary conversations alone.",
+      filter: "Only evaluate keyword and random-reply candidates from existing triggers.",
+    },
+    modeHelp: {
+      off: "Uses existing triggers. No JEV requests are made.",
+      shadow: "Records suggestions while keeping existing reply behavior unchanged.",
+      active:
+        "Private messages, explicit mentions and replies to the bot enter the reply flow regardless of the old mention/reply switches. Access and privacy rules still apply.",
+    },
+    preferences: "Additional preferences",
+    preferencesPlaceholder: "For example: anime jokes are welcome; avoid joining arguments.",
+    keywordDirect: "Reply directly to trigger words",
+    cooldownSeconds: "Proactive reply cooldown (seconds)",
+    continuationHelp:
+      "A confident continuation within 2 minutes of a bot message may bypass this cooldown. Usage and concurrency limits still apply.",
+    advanced: "Advanced settings",
+    confidenceThreshold: "Minimum confidence",
+    contextMessages: "Context messages",
+    timeoutMs: "Decision timeout (ms)",
+    confidenceHelp:
+      "Confidence describes how decisive JEV is, not its measured accuracy. Calibrate with labeled samples. Context is limited to 5 minutes and 6,000 characters; failures use existing triggers.",
+    apiKey: "TypeSafe API key",
+    keyConfigured: "Configured — leave blank to keep",
+    keyMissing: "Enter your TypeSafe key",
+    keyHelp:
+      "Stored encrypted. Requests use the official endpoint and pinned model jev-1.13.0. Observe mode also incurs classification cost.",
+    override: "Customize engagement for this group",
+    overridden:
+      "This group uses the settings below. Turn off customization to restore inheritance.",
+    inherited: "Following the bot defaults. Effective settings are shown below.",
+  },
   common: {
     add: "Add",
     apiKey: "API Key",

@@ -29,6 +29,7 @@ import type {
   BotMemoryCallbacks,
   BotPlatform,
   ConversationCallbacks,
+  EngagementSample,
   IBotManager,
   MemoryCallbacks,
   ImageGenerationPort,
@@ -103,6 +104,7 @@ import {
 } from "./telegram-rich-message-errors.js";
 import { UserPrivacyService } from "./user-privacy-service.js";
 import type { ChatAiSelectionService } from "./chat-ai-selection-service.js";
+import type { EngagementSampleService } from "./engagement-sample-service.js";
 import type {
   ChatAiSelectionRuntime,
   ChatAiSelectionRuntimeRegistry,
@@ -211,6 +213,7 @@ export class BotPool {
   private summaryConfigService?: SummaryConfigService;
   private gitWorkspaceService?: GitWorkspaceService;
   private githubAppCredentialService?: GitHubAppCredentialService;
+  private engagementSampleService?: Pick<EngagementSampleService, "persist">;
   private telegramObservation?: TelegramObservationCallbacks;
   private telegramProfileObserver?: (
     botId: string,
@@ -275,6 +278,24 @@ export class BotPool {
 
   setGitHubAppCredentialService(service: GitHubAppCredentialService) {
     this.githubAppCredentialService = service;
+  }
+
+  setEngagementSampleService(service: Pick<EngagementSampleService, "persist">) {
+    this.engagementSampleService = service;
+  }
+
+  private async persistEngagementSample(
+    botId: string,
+    sample: EngagementSample,
+    secrets: readonly string[],
+  ): Promise<void> {
+    const engagementSampleService = this.engagementSampleService;
+    if (!engagementSampleService) return;
+    await this.userPrivacyService.runWithEngagementContextPrivacy(
+      botId,
+      sample.context,
+      (context) => engagementSampleService.persist(botId, { ...sample, context }, secrets),
+    );
   }
 
   setTelegramDirectoryCallbacks(
@@ -657,6 +678,7 @@ export class BotPool {
     const privacyService = this.userPrivacyService;
     const privacy: UserPrivacyCallbacks = {
       getMode: (userId) => privacyService.getMode(botId, userId),
+      getContextResetAt: (userId) => privacyService.getContextResetAt(botId, userId),
       runExclusive: (userId, operation) => privacyService.runExclusive(botId, userId, operation),
       setMode: (userId, mode) => privacyService.setMode(botId, userId, mode),
       forget: async (userId) => {
@@ -830,6 +852,15 @@ export class BotPool {
       } else if (aiRuntime.embeddingApiKeyDecryptFailed) {
         dbLogger.warn(
           "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
+        );
+      }
+      if (aiRuntime.engagementApiKeyDecryptFailed) {
+        dbLogger.warn(
+          "Engagement API key cannot be decrypted; JEV decisions will use the legacy fallback.",
+        );
+      } else if (aiRuntime.engagement.mode !== "off" && !aiRuntime.engagement.apiKey) {
+        dbLogger.warn(
+          "Engagement mode is enabled without an API key; JEV decisions will use the legacy fallback.",
         );
       }
 
@@ -1070,6 +1101,22 @@ export class BotPool {
         behavioralPrompt: aiConfig.behavioralPrompt,
         groupBehavioralPrompt: aiConfig.groupBehavioralPrompt,
         triggerConfig: aiConfig.triggerConfig,
+        engagement: aiRuntime.engagement,
+        onEngagementSample: async (sample) => {
+          if (!this.engagementSampleService) return;
+          try {
+            await this.persistEngagementSample(
+              botId,
+              sample,
+              [
+                aiRuntime.engagement.apiKey,
+                ...providersRuntime.map((provider) => provider.apiKey),
+              ].filter((secret): secret is string => !!secret),
+            );
+          } catch (error) {
+            this.logger.error({ error, botId }, "Failed to persist engagement sample");
+          }
+        },
         groupOverrides: aiConfig.groupOverrides,
         conversationConfig: conversationCfg,
         conversation,

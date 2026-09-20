@@ -56,6 +56,7 @@ import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-a
 import type { PendingActionRegistry } from "./pending-actions.js";
 import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
 import { KeyedIngressLock } from "./ai-ingress-lock.js";
+import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 
 /**
  * Serialises continuations for callers that supply no `runWithExecution`, keyed by
@@ -202,7 +203,7 @@ async function sendContinuationFailureNotice(
       message: "Failed to deliver continuation error",
       meta: {
         chatId: event.chatId,
-        error: error instanceof Error ? error.message : String(error),
+        error,
       },
     });
     return false;
@@ -249,7 +250,7 @@ async function scheduleContinuationFailureNotice(
       message: "Continuation error delivery cancelled",
       meta: {
         chatId: event.chatId,
-        error: error instanceof Error ? error.message : String(error),
+        error,
       },
     });
     return false;
@@ -258,9 +259,18 @@ async function scheduleContinuationFailureNotice(
 
 export async function continueChat(
   api: Api,
-  config: ContinueChatConfig,
+  inputConfig: ContinueChatConfig,
   event: ContinueChatEvent,
 ): Promise<boolean> {
+  const config: ContinueChatConfig = {
+    ...inputConfig,
+    onLog: createAiTurnLogger(inputConfig.onLog, {
+      botId: inputConfig.botId,
+      chatId: event.chatId,
+      userId: event.userId,
+      eventType: "continuation",
+    }),
+  };
   const executionConfig = event.memoryless
     ? {
         ...config,
@@ -369,7 +379,7 @@ export async function continueChat(
           message: "Failed to finalize continuation usage reservation",
           meta: {
             chatId: event.chatId,
-            error: error instanceof Error ? error.message : String(error),
+            error,
           },
         });
       });
@@ -390,6 +400,9 @@ async function doContinueChat(
 
   let successfulToolEffectCount = 0;
   let visibleDeliveryCount = 0;
+  let providerStreamError: unknown;
+  let selectedProviderId: string | undefined;
+  let selectedModelId: string | undefined;
 
   config.onLog?.({
     level: "info",
@@ -406,6 +419,8 @@ async function doContinueChat(
     executionContext?.isCurrent() === false;
   try {
     const selection = config.resolveSelection(chatId);
+    selectedProviderId = selection.providerId;
+    selectedModelId = selection.modelId;
     let memoryTools: Record<string, Tool> | undefined;
     if (memCfg.enabled && config.memory) {
       const { createMemoryTools } = await import("../tools/index.js");
@@ -483,7 +498,7 @@ async function doContinueChat(
             config.onLog?.({
               level: "error",
               message: `Timer continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
-              meta: { chatId: tChatId, timerId },
+              meta: { chatId: tChatId, timerId, error: err },
             });
             throw err;
           }
@@ -620,6 +635,10 @@ async function doContinueChat(
         chatId,
         providerId: selection.providerId,
         model: selection.modelId,
+        eventDescription,
+        userName: event.userName,
+        timerDepth: event.timerDepth,
+        messages,
         staticPrefixHash: promptTrace.staticPrefixHash,
         toolSchemaHash,
         cacheFingerprint,
@@ -670,6 +689,18 @@ async function doContinueChat(
         stepCounter++;
         perStepAbort.reset();
       },
+      onError: ({ error }) => {
+        providerStreamError ??= error;
+        config.onLog?.({
+          level: "error",
+          message: "AI continuation provider stream error",
+          meta: {
+            providerId: selection.providerId,
+            model: selection.modelId,
+            error,
+          },
+        });
+      },
     });
 
     let streamFailed = false;
@@ -713,7 +744,7 @@ async function doContinueChat(
           config.onLog?.({
             level: "warn",
             message: `streamToChat failed, falling back to text: ${streamErr instanceof Error ? streamErr.message : String(streamErr)}`,
-            meta: { chatId },
+            meta: { chatId, error: streamErr },
           });
         }
       } else {
@@ -741,22 +772,30 @@ async function doContinueChat(
       return successfulToolEffectCount > 0 || visibleDeliveryCount > 0;
     }
 
-    const afterThink = stripThinkingContent(
-      (await result.text).trim(),
-      ({ pattern, strippedLength }) => {
-        config.onLog?.({
-          level: "info",
-          message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
-          meta: { chatId },
-        });
-      },
-    );
+    const rawResponseText = (await result.text).trim();
+    const afterThink = stripThinkingContent(rawResponseText, ({ pattern, strippedLength }) => {
+      config.onLog?.({
+        level: "info",
+        message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+        meta: { chatId },
+      });
+    });
     const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
       config.onLog?.({
         level: "warn",
         message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
         meta: { chatId },
       });
+    });
+    config.onLog?.({
+      level: "debug",
+      message: "AI continuation response",
+      meta: {
+        providerId: selection.providerId,
+        model: selection.modelId,
+        rawResponseText,
+        responseText: text,
+      },
     });
     stopChatActionHeartbeat();
     stopChatActionHeartbeat = undefined;
@@ -791,7 +830,7 @@ async function doContinueChat(
                 message: `${mode === "rich" ? "Rich Message" : "HTML"} continueChat delivery failed, falling back`,
                 meta: {
                   chatId,
-                  error: error instanceof Error ? error.message : String(error),
+                  error,
                 },
               });
             },
@@ -803,7 +842,7 @@ async function doContinueChat(
           config.onLog?.({
             level: "error",
             message: `Rich Message fallbacks failed: ${sendError instanceof Error ? sendError.message : String(sendError)}`,
-            meta: { chatId },
+            meta: { chatId, error: sendError },
           });
           if (
             event.requireDelivery &&
@@ -911,7 +950,7 @@ async function doContinueChat(
         config.onLog?.({
           level: "error",
           message: `Failed to save continuation conversation: ${err instanceof Error ? err.message : String(err)}`,
-          meta: { chatId },
+          meta: { chatId, error: err },
         });
       }
     }
@@ -921,6 +960,10 @@ async function doContinueChat(
       message: "continueChat completed",
       meta: {
         chatId,
+        providerId: selection.providerId,
+        model: selection.modelId,
+        eventDescription,
+        responseText: assistantContent,
         textLength: assistantContent.length,
         responseTextLength: text?.length ?? 0,
         multiMessageSentCount: deliveredMultiMessages.length,
@@ -931,7 +974,14 @@ async function doContinueChat(
     config.onLog?.({
       level: "error",
       message: `continueChat failed: ${err instanceof Error ? err.message : String(err)}`,
-      meta: { chatId },
+      meta: {
+        chatId,
+        providerId: selectedProviderId,
+        model: selectedModelId,
+        eventDescription,
+        error: err,
+        ...(providerStreamError !== undefined ? { providerError: providerStreamError } : {}),
+      },
     });
     if (successfulToolEffectCount > 0 || visibleDeliveryCount > 0) return true;
     if (isExecutionCancelled()) {

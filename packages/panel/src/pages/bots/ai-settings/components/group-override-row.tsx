@@ -1,3 +1,5 @@
+import { EngagementPolicyFields } from "./engagement-policy-fields";
+import { DEFAULT_ENGAGEMENT_POLICY, type EngagementPolicy } from "@cos-tool-bot/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -11,11 +13,13 @@ import { useTranslation } from "react-i18next";
 export function GroupOverrideRow({
   groupKey,
   override,
+  engagement,
   onUpdate,
   onRemove,
 }: {
   groupKey: string;
   override: AiGroupOverride;
+  engagement?: EngagementPolicy;
   onUpdate: (updates: Partial<AiGroupOverride>) => void;
   onRemove: () => void;
 }) {
@@ -81,6 +85,31 @@ export function GroupOverrideRow({
 
       {expanded && (
         <div className="space-y-5 border-t bg-slate-50/50 px-4 py-4">
+          <div className="space-y-3 rounded-lg border bg-white p-3">
+            <p className="text-sm font-medium">{t("engagement.title")}</p>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={override.engagement !== undefined}
+                onCheckedChange={(checked) =>
+                  onUpdate({
+                    engagement:
+                      checked === true
+                        ? { ...DEFAULT_ENGAGEMENT_POLICY, ...engagement }
+                        : undefined,
+                  })
+                }
+              />
+              {t("engagement.override")}
+            </label>
+            <p className="text-muted-foreground text-xs">
+              {t(override.engagement ? "engagement.overridden" : "engagement.inherited")}
+            </p>
+            <EngagementPolicyFields
+              value={{ ...DEFAULT_ENGAGEMENT_POLICY, ...engagement, ...override.engagement }}
+              disabled={override.engagement === undefined}
+              onChange={(value) => onUpdate({ engagement: value })}
+            />
+          </div>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">{t("groupOverride.systemPrompt")}</label>
             <Textarea

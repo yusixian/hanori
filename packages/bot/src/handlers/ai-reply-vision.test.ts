@@ -242,7 +242,15 @@ describe("AI reply vision input", () => {
       expect.objectContaining({
         level: "warn",
         message: expect.stringContaining("image skipped"),
-        meta: { fileId: "photo-large", size: 3, limit: 2 },
+        meta: expect.objectContaining({
+          fileId: "photo-large",
+          size: 3,
+          limit: 2,
+          correlationId: expect.any(String),
+          botId: "bot-1",
+          chatId: 42,
+          messageId: 7,
+        }),
       }),
     );
     expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
