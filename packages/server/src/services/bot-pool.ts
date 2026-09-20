@@ -7,6 +7,8 @@ import type {
   BotAiSelectionRuntime,
   BotTimerHandlers,
   CosInsideAuditEntry,
+  CosInsideHistoryEntry,
+  CosInsideHistoryFailure,
   TelegramObservationCallbacks,
 } from "@cos-tool-bot/bot";
 import { removeProfileAvatarFile, resolveBotSkills } from "@cos-tool-bot/bot";
@@ -1386,10 +1388,59 @@ export class BotPool {
         : undefined;
 
     const cosInsideTargets = bot.cosInsideConfig?.targets ?? [];
+    const cosInsideHistory =
+      conversation && aiReply
+        ? {
+            isEnabled: (targetChatId: number) => {
+              const targetOverride = aiReply.groupOverrides[String(targetChatId)];
+              const conversationConfig = {
+                ...DEFAULT_CONVERSATION_CONFIG,
+                ...aiReply.conversationConfig,
+              };
+              return (
+                (targetOverride?.enabled ?? true) &&
+                (targetOverride?.conversationEnabled ?? conversationConfig.enabled)
+              );
+            },
+            save: async (entry: CosInsideHistoryEntry) => {
+              await conversation.addMessage({
+                chatId: entry.targetChatId,
+                role: "context",
+                content: entry.body,
+                userId: entry.actorUserId,
+                userName: entry.actorName,
+                sourceKey: `telegram:${entry.tgMessageId}:cosinside`,
+                meta: {
+                  source: "cosinside",
+                  initiatorTelegramId: entry.actorUserId,
+                  initiatorName: entry.actorName,
+                  tgMessageId: entry.tgMessageId,
+                  publicGroupHistory: true,
+                  ...(entry.replyToMessageId === undefined
+                    ? {}
+                    : { replyToMessageId: entry.replyToMessageId }),
+                },
+              });
+              void Promise.resolve()
+                .then(() => conversation.triggerCompression(entry.targetChatId))
+                .catch(() =>
+                  dbLogger.error("cos inside history governance could not be scheduled", {
+                    actorUserId: entry.actorUserId,
+                    targetChatId: entry.targetChatId,
+                    tgMessageId: entry.tgMessageId,
+                  }),
+                );
+            },
+            onFailure: async (entry: CosInsideHistoryFailure) => {
+              await dbLogger.error("cos inside relay history could not be persisted", entry);
+            },
+          }
+        : undefined;
     const cosInside =
       cosInsideTargets.length > 0
         ? {
             targets: cosInsideTargets,
+            ...(cosInsideHistory ? { history: cosInsideHistory } : {}),
             onAudit: async (entry: CosInsideAuditEntry) => {
               try {
                 await this.db.insert(miniAppAuditEvents).values({

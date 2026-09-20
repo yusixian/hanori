@@ -64,6 +64,43 @@ afterEach(() => {
 });
 
 describe("compressConversation", () => {
+  it("passes relay identity to summarization as data and asks to retain attribution", async () => {
+    const store = createStore({
+      getCompactionCandidate: vi.fn().mockResolvedValue({
+        activeSummaryId: null,
+        oldCursorId: 0,
+        existingSummary: null,
+        sourceMessageIds: [1],
+        newCursorId: 1,
+        messages: [
+          {
+            id: 1,
+            role: "context",
+            content: "relay body",
+            userName: "Alice",
+            relayOrigin: { source: "cosinside", initiatorTelegramId: 42, initiatorName: "Alice" },
+          },
+        ],
+      }),
+    });
+    await compressConversation(createOptions(store));
+    const request = vi.mocked(generateText).mock.calls[0]![0];
+    expect(request.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "system",
+          content: expect.stringContaining("不要归为 AI 自主发言"),
+        }),
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining(
+            '"relayOrigin":{"source":"cosinside","initiatorTelegramId":42,"initiatorName":"Alice"}',
+          ),
+        }),
+      ]),
+    );
+  });
+
   it("does nothing when automatic summarization is disabled", async () => {
     const store = createStore();
     const options = createOptions(store);

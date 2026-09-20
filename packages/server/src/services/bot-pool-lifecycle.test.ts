@@ -1,4 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
+import type { CosInsideCommandConfig } from "@cos-tool-bot/bot";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   type BotStatus,
@@ -17,7 +18,9 @@ interface FakeManager extends IBotManager {
 interface FakeManagerOptions {
   conversation?: {
     ensureCompression: (chatId: number) => Promise<void>;
+    triggerCompression: (chatId: number) => void | Promise<void>;
   };
+  cosInside?: CosInsideCommandConfig;
   timerCallbacks?: {
     onBotReady?: (handlers: {
       fireTimer: () => Promise<boolean>;
@@ -62,7 +65,10 @@ import { BotPool } from "./bot-pool.js";
 
 const BOT_ID = "00000000-0000-4000-8000-000000000001";
 
-function botRow(aiConfig: unknown = null) {
+function botRow(
+  aiConfig: unknown = null,
+  cosInsideConfig: { targets: Array<{ alias: string; chatId: number }> } | null = null,
+) {
   return {
     id: BOT_ID,
     name: "Lifecycle Bot",
@@ -70,6 +76,7 @@ function botRow(aiConfig: unknown = null) {
     encryptedToken: "encrypted-token",
     adminChatIds: [],
     aiConfig,
+    cosInsideConfig,
     larkWebhookConfig: null,
     emailForwardConfig: null,
     isActive: true,
@@ -135,6 +142,115 @@ beforeEach(() => {
 });
 
 describe("BotPool failed runtime cleanup", () => {
+  it("wires effective target history policy and the durable relay projection", async () => {
+    let cosInside: CosInsideCommandConfig | undefined;
+    let conversation: FakeManagerOptions["conversation"];
+    managerMocks.factories.push((options) => {
+      cosInside = options.cosInside;
+      conversation = options.conversation;
+      return fakeManager(options, (manager) => {
+        manager.start.mockImplementation(async () => {
+          manager.status = "running";
+        });
+      });
+    });
+    const aiConfig = {
+      enabled: true,
+      encryptedApiKey: null,
+      baseURL: "",
+      model: "",
+      systemPrompt: "Be helpful.",
+      triggerConfig: {
+        replyToBot: true,
+        mentionBot: true,
+        triggerWords: [],
+        randomReplyPercent: 0,
+        randomReplyCooldown: 60,
+      },
+      groupOverrides: {
+        "-1001": { chatId: -1001, whitelisted: true, conversationEnabled: true },
+        "-1002": { chatId: -1002, whitelisted: true, conversationEnabled: false },
+        "-1003": {
+          chatId: -1003,
+          enabled: false,
+          whitelisted: true,
+          conversationEnabled: true,
+        },
+      },
+      providers: [
+        {
+          id: "chat-provider",
+          label: "Chat Provider",
+          encryptedApiKey: "encrypted-chat",
+          baseURL: "https://chat.example/v1",
+          providerFormat: "openai" as const,
+          defaultModel: "chat-model",
+        },
+      ],
+      activeProviderId: "chat-provider",
+      conversationConfig: {
+        ...DEFAULT_CONVERSATION_CONFIG,
+        enabled: false,
+        maxRawMessagesPerChat: 0,
+      },
+    };
+    const { pool } = createPool(
+      vi.fn(async () => 0),
+      botRow(aiConfig, {
+        targets: [
+          { alias: "saved", chatId: -1001 },
+          { alias: "history-off", chatId: -1002 },
+          { alias: "group-off", chatId: -1003 },
+          { alias: "default-off", chatId: -1004 },
+        ],
+      }),
+    );
+    const addMessage = vi
+      .spyOn(pool.getConversationStore(), "addMessage")
+      .mockResolvedValue(undefined);
+
+    await pool.startBot(BOT_ID);
+    conversation!.triggerCompression = vi.fn(async () => {
+      throw new Error("governance failed after persistence");
+    });
+
+    expect(cosInside?.history?.isEnabled(-1001)).toBe(true);
+    expect(cosInside?.history?.isEnabled(-1002)).toBe(false);
+    expect(cosInside?.history?.isEnabled(-1003)).toBe(false);
+    expect(cosInside?.history?.isEnabled(-1004)).toBe(false);
+
+    await expect(
+      cosInside!.history!.save({
+        targetChatId: -1001,
+        body: "relay body",
+        tgMessageId: 88,
+        actorUserId: 42,
+        actorName: "Admin Operator",
+        replyToMessageId: 77,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(addMessage).toHaveBeenCalledWith({
+      botId: BOT_ID,
+      chatId: -1001,
+      role: "context",
+      content: "relay body",
+      userId: 42,
+      userName: "Admin Operator",
+      sourceKey: "telegram:88:cosinside",
+      meta: {
+        source: "cosinside",
+        initiatorTelegramId: 42,
+        initiatorName: "Admin Operator",
+        tgMessageId: 88,
+        publicGroupHistory: true,
+        replyToMessageId: 77,
+      },
+    });
+    expect(addMessage.mock.calls[0]?.[0]).not.toHaveProperty("userAuthoredContent");
+    await vi.waitFor(() => expect(conversation!.triggerCompression).toHaveBeenCalledWith(-1001));
+  });
+
   it("uses the dedicated conversation compression Provider at runtime", async () => {
     let conversation: FakeManagerOptions["conversation"];
     managerMocks.factories.push((options) => {

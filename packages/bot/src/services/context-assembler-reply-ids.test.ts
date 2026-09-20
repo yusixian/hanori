@@ -99,3 +99,34 @@ describe("replyable message ids in the assembled prompt", () => {
     expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
   });
 });
+
+describe("cosinside relay context", () => {
+  it.each(["prompt", "messages"] as const)(
+    "attributes relay text without an assistant turn in %s format",
+    async (historyFormat) => {
+      const callbacks = conversation();
+      vi.mocked(callbacks.getHistory).mockResolvedValue({
+        summary: null,
+        messages: [
+          {
+            role: "context",
+            content: "明天再讨论",
+            userName: "Alice",
+            tgMessageId: 5000,
+            relayOrigin: { source: "cosinside", initiatorTelegramId: 42, initiatorName: "Alice" },
+          },
+        ],
+      });
+      const bundle = await assembleContext(input({ historyFormat, conversation: callbacks }));
+      const relayMessage = bundle.messages.find((message) =>
+        message.content.includes("明天再讨论"),
+      );
+      expect(relayMessage?.role).toBe("user");
+      expect(relayMessage?.content).toContain("cosinside 代发");
+      expect(relayMessage?.content).toContain("Alice");
+      expect(relayMessage?.content).toContain("Telegram ID: 42");
+      expect(relayMessage?.content).toContain("非 AI 自主发言");
+      expect(bundle.replyableMessageIds).not.toContain(5000);
+    },
+  );
+});

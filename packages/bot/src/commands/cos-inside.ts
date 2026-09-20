@@ -26,8 +26,37 @@ export interface CosInsideAuditEntry {
 export interface CosInsideCommandConfig {
   targets: CosInsideTarget[];
   onAudit?: (entry: CosInsideAuditEntry) => void | Promise<void>;
+  history?: CosInsideHistoryConfig;
   now?: () => number;
 }
+
+export interface CosInsideHistoryEntry {
+  targetChatId: number;
+  body: string;
+  tgMessageId: number;
+  actorUserId: number;
+  actorName: string;
+  replyToMessageId?: number;
+}
+
+export interface CosInsideHistoryFailure {
+  actorUserId: number;
+  targetChatId: number;
+  alias: string;
+  tgMessageId: number;
+}
+
+export interface CosInsideHistoryConfig {
+  isEnabled(targetChatId: number): boolean;
+  save(entry: CosInsideHistoryEntry): Promise<void>;
+  onFailure?: (entry: CosInsideHistoryFailure) => void | Promise<void>;
+}
+
+export type CosInsideMutationRunner = <T>(
+  targetChatId: number,
+  actorUserId: number,
+  operation: () => Promise<T>,
+) => Promise<T>;
 
 export type CosInsideRequest =
   | { kind: "usage" }
@@ -103,12 +132,21 @@ function describeFailure(error: unknown): string {
   return description.slice(0, COS_INSIDE_MAX_FAILURE_REASON_LENGTH);
 }
 
+function getActorName(from: WrapperContext["from"]): string {
+  if (!from) return "Unknown";
+  const fullName = [from.first_name, from.last_name].filter(Boolean).join(" ").trim();
+  return fullName || from.username || "Unknown";
+}
+
 export function createCosInsideCommand(
   config: CosInsideCommandConfig,
+  runMutation?: CosInsideMutationRunner,
 ): CommandMiddleware<WrapperContext> {
   const allowAttempt = createRateLimiter(config.now ?? (() => Date.now()));
   const record = async (entry: CosInsideAuditEntry) => {
-    await Promise.resolve(config.onAudit?.(entry)).catch(() => {});
+    await Promise.resolve()
+      .then(() => config.onAudit?.(entry))
+      .catch(() => {});
   };
 
   return async (ctx) => {
@@ -159,15 +197,66 @@ export function createCosInsideCommand(
       hasReplyTarget: request.replyToMessageId !== undefined,
     } as const;
 
-    try {
-      await ctx.api.sendMessage(
+    const state: {
+      sentMessageId?: number;
+      historyOutcome: "saved" | "skipped" | "failed";
+    } = { historyOutcome: "skipped" };
+    let historyFailureReported = false;
+    const reportHistoryFailure = async () => {
+      const messageId = state.sentMessageId;
+      if (messageId === undefined || historyFailureReported) return;
+      historyFailureReported = true;
+      await Promise.resolve()
+        .then(() =>
+          config.history?.onFailure?.({
+            actorUserId,
+            targetChatId: target.chatId,
+            alias: target.alias,
+            tgMessageId: messageId,
+          }),
+        )
+        .catch(() => {});
+    };
+    const relay = async () => {
+      const sent = await ctx.api.sendMessage(
         target.chatId,
         request.body,
         request.replyToMessageId === undefined
           ? undefined
           : { reply_parameters: { message_id: request.replyToMessageId } },
       );
+      state.sentMessageId = sent.message_id;
+
+      if (!config.history?.isEnabled(target.chatId)) return;
+      try {
+        await config.history.save({
+          targetChatId: target.chatId,
+          body: request.body,
+          tgMessageId: sent.message_id,
+          actorUserId,
+          actorName: getActorName(ctx.from),
+          ...(request.replyToMessageId === undefined
+            ? {}
+            : { replyToMessageId: request.replyToMessageId }),
+        });
+        state.historyOutcome = "saved";
+      } catch {
+        state.historyOutcome = "failed";
+        await reportHistoryFailure();
+      }
+    };
+
+    try {
+      if (runMutation) await runMutation(target.chatId, actorUserId, relay);
+      else await relay();
     } catch (error) {
+      if (state.sentMessageId !== undefined) {
+        state.historyOutcome = "failed";
+        await reportHistoryFailure();
+        await record({ ...audit, outcome: "succeeded" });
+        await ctx.reply(`已代发至 ${target.alias}，但保存到对话历史失败；消息不会重复发送。`);
+        return;
+      }
       const failureReason = describeFailure(error);
       await record({ ...audit, outcome: "failed", failureReason });
       await ctx.reply(`代发失败：${failureReason}`);
@@ -175,6 +264,12 @@ export function createCosInsideCommand(
     }
 
     await record({ ...audit, outcome: "succeeded" });
-    await ctx.reply(`已代发至 ${target.alias}。`);
+    if (state.historyOutcome === "failed") {
+      await ctx.reply(`已代发至 ${target.alias}，但保存到对话历史失败；消息不会重复发送。`);
+    } else if (state.historyOutcome === "skipped") {
+      await ctx.reply(`已代发至 ${target.alias}，但该群的对话历史未启用，未保存至上下文。`);
+    } else {
+      await ctx.reply(`已代发至 ${target.alias}。`);
+    }
   };
 }

@@ -393,11 +393,15 @@ export function createBot(config: BotConfig) {
   commandRegistry.register("restart", authGuard, createRestartCommand(config.onRestart));
   commandRegistry.register("backup", authGuard, createBackupCommand(config.onBackup));
   if (config.cosInside) {
+    const runCosInsideMutation = aiIngressLock
+      ? <T>(targetChatId: number, actorUserId: number, operation: () => Promise<T>) =>
+          aiIngressLock.runExecutionAdmission(targetChatId, actorUserId, operation)
+      : undefined;
     commandRegistry.register(
       "cosinside",
       privateChatOnlyGuard,
       authGuard,
-      createCosInsideCommand(config.cosInside),
+      createCosInsideCommand(config.cosInside, runCosInsideMutation),
     );
   }
   if (aiSetAiEnabled) {
@@ -707,7 +711,12 @@ export {
   type PromptTrust,
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
-export type { CosInsideAuditEntry, CosInsideCommandConfig } from "./commands/cos-inside.js";
+export type {
+  CosInsideAuditEntry,
+  CosInsideCommandConfig,
+  CosInsideHistoryEntry,
+  CosInsideHistoryFailure,
+} from "./commands/cos-inside.js";
 export type { SummaryCallbacks } from "./commands/summary.js";
 export {
   createTelegramObservationMiddleware,

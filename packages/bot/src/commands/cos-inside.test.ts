@@ -6,6 +6,9 @@ import {
   COS_INSIDE_MAX_BODY_LENGTH,
   createCosInsideCommand,
   type CosInsideAuditEntry,
+  type CosInsideHistoryEntry,
+  type CosInsideHistoryFailure,
+  type CosInsideMutationRunner,
 } from "./cos-inside.js";
 
 type CommandRunner = (ctx: WrapperContext, next: () => Promise<void>) => Promise<void>;
@@ -23,7 +26,12 @@ function createContext(
   const replies: string[] = [];
   const sendMessage = vi.fn(async () => ({ message_id: 1 }));
   const ctx = {
-    from: { id: options.userId ?? ADMIN_ID },
+    from: {
+      id: options.userId ?? ADMIN_ID,
+      first_name: "Admin",
+      last_name: "Operator",
+      username: "admin",
+    },
     chat: { id: options.userId ?? ADMIN_ID, type: options.chatType ?? "private" },
     match: text,
     message: options.asCaption ? { caption: `/cosinside ${text}` } : { text: `/cosinside ${text}` },
@@ -36,20 +44,52 @@ function createContext(
 }
 
 function createRelay(
-  config: { targets?: Array<{ alias: string; chatId: number }>; now?: () => number } = {},
+  config: {
+    targets?: Array<{ alias: string; chatId: number }>;
+    now?: () => number;
+    historyEnabled?: boolean;
+    saveHistory?: (entry: CosInsideHistoryEntry) => Promise<void>;
+    onHistoryFailure?: (entry: CosInsideHistoryFailure) => void | Promise<void>;
+    runMutation?: CosInsideMutationRunner;
+  } = {},
 ): {
   run: (ctx: WrapperContext) => Promise<void>;
   audits: CosInsideAuditEntry[];
+  histories: CosInsideHistoryEntry[];
+  historyFailures: CosInsideHistoryFailure[];
 } {
   const audits: CosInsideAuditEntry[] = [];
-  const command = createCosInsideCommand({
-    targets: config.targets ?? TARGETS,
-    onAudit: (entry) => {
-      audits.push(entry);
+  const histories: CosInsideHistoryEntry[] = [];
+  const historyFailures: CosInsideHistoryFailure[] = [];
+  const command = createCosInsideCommand(
+    {
+      targets: config.targets ?? TARGETS,
+      onAudit: (entry) => {
+        audits.push(entry);
+      },
+      history: {
+        isEnabled: () => config.historyEnabled ?? true,
+        save:
+          config.saveHistory ??
+          (async (entry) => {
+            histories.push(entry);
+          }),
+        onFailure:
+          config.onHistoryFailure ??
+          ((entry) => {
+            historyFailures.push(entry);
+          }),
+      },
+      ...(config.now ? { now: config.now } : {}),
     },
-    ...(config.now ? { now: config.now } : {}),
-  }) as unknown as CommandRunner;
-  return { run: (ctx: WrapperContext) => command(ctx, async () => {}), audits };
+    config.runMutation,
+  ) as unknown as CommandRunner;
+  return {
+    run: (ctx: WrapperContext) => command(ctx, async () => {}),
+    audits,
+    histories,
+    historyFailures,
+  };
 }
 
 describe("cosinside access", () => {
@@ -89,7 +129,7 @@ describe("createCosInsideCommand", () => {
   });
 
   it("relays to the chat id that the alias resolves to", async () => {
-    const { run, audits } = createRelay();
+    const { run, audits, histories } = createRelay();
     const { ctx, replies, sendMessage } = createContext("dev 今晚发版");
 
     await run(ctx);
@@ -104,6 +144,15 @@ describe("createCosInsideCommand", () => {
         bodyLength: 4,
         hasReplyTarget: false,
         outcome: "succeeded",
+      },
+    ]);
+    expect(histories).toEqual([
+      {
+        targetChatId: -1002,
+        body: "今晚发版",
+        tgMessageId: 1,
+        actorUserId: ADMIN_ID,
+        actorName: "Admin Operator",
       },
     ]);
   });
@@ -142,7 +191,7 @@ describe("createCosInsideCommand", () => {
   });
 
   it("turns reply:<id> into reply_parameters", async () => {
-    const { run, audits } = createRelay();
+    const { run, audits, histories } = createRelay();
     const { ctx, sendMessage } = createContext("ops reply:77 收到");
 
     await run(ctx);
@@ -151,6 +200,7 @@ describe("createCosInsideCommand", () => {
       reply_parameters: { message_id: 77 },
     });
     expect(audits[0]?.hasReplyTarget).toBe(true);
+    expect(histories[0]?.replyToMessageId).toBe(77);
   });
 
   it("reports a rejected reply target instead of sending a plain message", async () => {
@@ -233,6 +283,91 @@ describe("createCosInsideCommand", () => {
       "outcome",
       "targetChatId",
     ]);
+  });
+
+  it("sends without saving and reports the effective target history policy", async () => {
+    const { run, histories } = createRelay({ historyEnabled: false });
+    const { ctx, replies, sendMessage } = createContext("ops 仅发送");
+
+    await run(ctx);
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(histories).toEqual([]);
+    expect(replies).toEqual(["已代发至 ops，但该群的对话历史未启用，未保存至上下文。"]);
+  });
+
+  it("does not resend when durable history fails after Telegram accepted the message", async () => {
+    const historyError = new Error("database password leaked in raw error");
+    const historyFailures: CosInsideHistoryFailure[] = [];
+    const { run, audits } = createRelay({
+      saveHistory: async () => {
+        throw historyError;
+      },
+      onHistoryFailure: (entry) => {
+        historyFailures.push(entry);
+      },
+    });
+    const { ctx, replies, sendMessage } = createContext("dev 内部正文");
+
+    await run(ctx);
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(audits).toEqual([
+      expect.objectContaining({ targetChatId: -1002, outcome: "succeeded" }),
+    ]);
+    expect(historyFailures).toEqual([
+      {
+        actorUserId: ADMIN_ID,
+        targetChatId: -1002,
+        alias: "dev",
+        tgMessageId: 1,
+      },
+    ]);
+    expect(JSON.stringify(historyFailures)).not.toContain("内部正文");
+    expect(JSON.stringify(historyFailures)).not.toContain(historyError.message);
+    expect(replies).toEqual(["已代发至 dev，但保存到对话历史失败；消息不会重复发送。"]);
+  });
+
+  it("still confirms the sent message when the history failure hook throws synchronously", async () => {
+    const { run, audits } = createRelay({
+      saveHistory: async () => {
+        throw new Error("write failed");
+      },
+      onHistoryFailure: () => {
+        throw new Error("diagnostic failed");
+      },
+    });
+    const { ctx, replies, sendMessage } = createContext("ops 正文");
+
+    await run(ctx);
+
+    expect(sendMessage).toHaveBeenCalledOnce();
+    expect(audits[0]?.outcome).toBe("succeeded");
+    expect(replies).toEqual(["已代发至 ops，但保存到对话历史失败；消息不会重复发送。"]);
+  });
+
+  it("holds the target-chat and actor mutation fence across send and history persistence", async () => {
+    const events: string[] = [];
+    const { run } = createRelay({
+      runMutation: async (targetChatId, actorUserId, operation) => {
+        events.push(`lock:${targetChatId}:${actorUserId}:start`);
+        const result = await operation();
+        events.push(`lock:${targetChatId}:${actorUserId}:end`);
+        return result;
+      },
+      saveHistory: async () => {
+        events.push("history");
+      },
+    });
+    const { ctx, sendMessage } = createContext("ops 顺序");
+    sendMessage.mockImplementationOnce(async () => {
+      events.push("send");
+      return { message_id: 9 };
+    });
+
+    await run(ctx);
+
+    expect(events).toEqual(["lock:-1001:42:start", "send", "history", "lock:-1001:42:end"]);
   });
 
   it("refuses a command written in a media caption instead of relaying the caption alone", async () => {

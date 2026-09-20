@@ -6,6 +6,9 @@ import {
 } from "@cos-tool-bot/database";
 import {
   formatConversationForwardOrigin,
+  formatConversationRelayOrigin,
+  parseConversationRelayOrigin,
+  type ConversationRelayOrigin,
   parseConversationForwardOrigin,
   type ConversationForwardOrigin,
   type ConversationHistoryBudgetTrace,
@@ -74,6 +77,7 @@ export interface CompactionCandidate {
     content: string;
     userName: string | null;
     forwardOrigin?: ConversationForwardOrigin;
+    relayOrigin?: ConversationRelayOrigin;
   }>;
   sourceMessageIds: number[];
   newCursorId: number;
@@ -179,8 +183,14 @@ function estimateHistoryMessageTokens(message: {
   content: string;
   userName: string | null;
   forwardOrigin?: ConversationForwardOrigin;
+  relayOrigin?: ConversationRelayOrigin;
 }): number {
-  const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+  const attribution = [
+    formatConversationForwardOrigin(message.forwardOrigin),
+    formatConversationRelayOrigin(message.relayOrigin),
+  ]
+    .filter(Boolean)
+    .join("\n");
   const content = attribution ? `${attribution}\n${message.content}` : message.content;
   return (
     countTokens(`${message.role === "assistant" ? "AI" : message.userName || "User"}: ${content}`) +
@@ -193,6 +203,13 @@ function projectForwardOrigin(meta: Record<string, unknown> | null | undefined):
 } {
   const forwardOrigin = parseConversationForwardOrigin(meta?.["forwardOrigin"]);
   return forwardOrigin ? { forwardOrigin } : {};
+}
+
+function projectRelayOrigin(meta: Record<string, unknown> | null | undefined): {
+  relayOrigin?: ConversationRelayOrigin;
+} {
+  const relayOrigin = parseConversationRelayOrigin(meta);
+  return relayOrigin ? { relayOrigin } : {};
 }
 
 function projectTgMessageId(meta: Record<string, unknown> | null | undefined): {
@@ -225,6 +242,7 @@ export function selectHistoryWithinTokenBudget(
     createdAt: Date;
     historyOrderId?: number;
     forwardOrigin?: ConversationForwardOrigin;
+    relayOrigin?: ConversationRelayOrigin;
     tgMessageId?: number;
   }>,
   active:
@@ -279,7 +297,12 @@ export function selectHistoryWithinTokenBudget(
     const messageTokens = estimateHistoryMessageTokens(message);
     if (reversed.length > 0 && tailTokens + messageTokens > tailBudget) break;
     if (messageTokens > tailBudget) {
-      const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+      const attribution = [
+        formatConversationForwardOrigin(message.forwardOrigin),
+        formatConversationRelayOrigin(message.relayOrigin),
+      ]
+        .filter(Boolean)
+        .join("\n");
       const attributionTokens = attribution ? countTokens(`${attribution}\n`) : 0;
       const contentBudget = Math.max(
         1,
@@ -503,6 +526,7 @@ export class ConversationStore {
         createdAt: Date;
         historyOrderId: number;
         forwardOrigin?: ConversationForwardOrigin;
+        relayOrigin?: ConversationRelayOrigin;
         tgMessageId?: number;
       }> = [];
       let pageBeforeOrderId: number | undefined;
@@ -553,6 +577,7 @@ export class ConversationStore {
         const projectedBatch = batch.map(({ meta, ...message }) => ({
           ...message,
           ...projectForwardOrigin(meta),
+          ...projectRelayOrigin(meta),
           ...projectTgMessageId(meta),
         }));
         newestFirst.push(...projectedBatch);
@@ -593,6 +618,7 @@ export class ConversationStore {
           userName: message.userName,
           createdAt: message.createdAt.toISOString(),
           ...(message.forwardOrigin ? { forwardOrigin: message.forwardOrigin } : {}),
+          ...(message.relayOrigin ? { relayOrigin: message.relayOrigin } : {}),
           ...(message.tgMessageId === undefined ? {} : { tgMessageId: message.tgMessageId }),
         })),
         budgetTrace: selected.trace,
@@ -637,6 +663,7 @@ export class ConversationStore {
         userName: message.userName,
         createdAt: message.createdAt.toISOString(),
         ...projectForwardOrigin(meta),
+        ...projectRelayOrigin(meta),
         ...projectTgMessageId(meta),
       })),
     };
@@ -818,6 +845,7 @@ export class ConversationStore {
     const messages = storedMessages.map(({ meta, ...message }) => ({
       ...message,
       ...projectForwardOrigin(meta),
+      ...projectRelayOrigin(meta),
     }));
 
     if (messages.length === 0) return null;
@@ -854,6 +882,7 @@ export class ConversationStore {
             role: message.role,
             userName: message.userName,
             forwardOrigin: message.forwardOrigin,
+            relayOrigin: message.relayOrigin,
             content: "",
           }).length +
           1,
@@ -891,12 +920,13 @@ export class ConversationStore {
     if (!lastMessage) return null;
     const sourceMessageIds = sourceBatch.map((message) => message.id).sort((a, b) => a - b);
     const orderedBatch = orderConversationMessagesByTurn(sourceBatch).map(
-      ({ id, role, content, userName, forwardOrigin }) => ({
+      ({ id, role, content, userName, forwardOrigin, relayOrigin }) => ({
         id,
         role,
         content,
         userName,
         ...(forwardOrigin ? { forwardOrigin } : {}),
+        ...(relayOrigin ? { relayOrigin } : {}),
       }),
     );
     return {
@@ -1344,6 +1374,7 @@ export class ConversationStore {
       userName: conversationMessages.userName,
       chatId: conversationMessages.chatId,
       createdAt: conversationMessages.createdAt,
+      meta: conversationMessages.meta,
     };
 
     type Row = {
@@ -1353,14 +1384,18 @@ export class ConversationStore {
       userName: string | null;
       chatId: number;
       createdAt: Date;
+      meta?: Record<string, unknown> | null;
     };
-    const toResult = (r: Row) => ({
-      role: r.role,
-      content: r.content,
-      userName: r.userName,
-      chatId: r.chatId,
-      createdAt: r.createdAt.toISOString(),
-    });
+    const toResult = (r: Row) => {
+      const attribution = formatConversationRelayOrigin(parseConversationRelayOrigin(r.meta));
+      return {
+        role: r.role,
+        content: attribution ? `${attribution}\n${r.content}` : r.content,
+        userName: r.userName,
+        chatId: r.chatId,
+        createdAt: r.createdAt.toISOString(),
+      };
+    };
 
     // Hybrid search when embedding is available
     if (params.queryEmbedding) {

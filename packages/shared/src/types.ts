@@ -256,6 +256,12 @@ export type ConversationForwardOrigin =
       authorSignature?: string;
     };
 
+export interface ConversationRelayOrigin {
+  source: "cosinside";
+  initiatorTelegramId: number;
+  initiatorName: string;
+}
+
 export interface ConversationHistoryBudgetTrace {
   configuredTokens: number;
   usedTokens: number;
@@ -293,6 +299,7 @@ export interface ConversationCallbacks {
       content: string;
       userName: string | null;
       forwardOrigin?: ConversationForwardOrigin;
+      relayOrigin?: ConversationRelayOrigin;
       createdAt?: string;
       /** Telegram message ID, present for messages the bot ingested from a chat. */
       tgMessageId?: number;

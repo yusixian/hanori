@@ -41,3 +41,5 @@ export {
   resolveAndValidateDir,
   getDataDir,
 } from "./file-validation.js";
+
+export { parseConversationRelayOrigin, formatConversationRelayOrigin } from "./relay-origin.js";

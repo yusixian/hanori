@@ -216,7 +216,12 @@ describe("ConversationStore.getHistory", () => {
           userName: "Nahida",
           createdAt: new Date("2026-07-29T00:00:01.000Z"),
           turnOrderId: 201,
-          meta: { tgMessageId: 4820 },
+          meta: {
+            tgMessageId: 4820,
+            source: "cosinside",
+            initiatorTelegramId: 42,
+            initiatorName: "Alice",
+          },
         },
         {
           id: 202,
@@ -254,6 +259,12 @@ describe("ConversationStore.getHistory", () => {
       );
 
       expect(history.messages.map((message) => message.tgMessageId)).toEqual([4820, undefined]);
+      expect(history.messages[0]?.relayOrigin).toEqual({
+        source: "cosinside",
+        initiatorTelegramId: 42,
+        initiatorName: "Alice",
+      });
+      expect(history.messages[1]).not.toHaveProperty("relayOrigin");
     },
   );
 });
@@ -293,6 +304,28 @@ describe("selectHistoryWithinTokenBudget", () => {
     );
 
     expect(forwarded.trace.usedTokens).toBeGreaterThan(plain.trace.usedTokens);
+  });
+
+  it("budgets relay attribution and preserves it when the body is truncated", () => {
+    const plain = selectHistoryWithinTokenBudget(rows.slice(0, 1), undefined, 12_000);
+    const relayOrigin = {
+      source: "cosinside" as const,
+      initiatorTelegramId: 42,
+      initiatorName: "Alice",
+    };
+    const attributed = selectHistoryWithinTokenBudget(
+      [{ ...rows[0]!, role: "context", relayOrigin }],
+      undefined,
+      12_000,
+    );
+    expect(attributed.trace.usedTokens).toBeGreaterThan(plain.trace.usedTokens);
+    const truncated = selectHistoryWithinTokenBudget(
+      [{ ...rows[0]!, role: "context", relayOrigin, content: "long body ".repeat(500) }],
+      undefined,
+      100,
+    );
+    expect(truncated.messages[0]?.relayOrigin).toEqual(relayOrigin);
+    expect(truncated.messages[0]!.content.length).toBeLessThan(5000);
   });
 
   it("marks a compacted summary as degraded when the raw tail is also truncated", () => {
@@ -979,6 +1012,30 @@ describe("ConversationStore.getCompactionCandidate", () => {
     });
   });
 
+  it("preserves relay attribution in compaction without changing stored body", async () => {
+    const { db } = createCandidateDb([
+      {
+        id: 1,
+        role: "context",
+        content: "relay body",
+        userName: "Alice",
+        historyOrderId: 1,
+        meta: { source: "cosinside", initiatorTelegramId: 42, initiatorName: "Alice" },
+      },
+      { id: 2, role: "user", content: "later", userName: "Bob", historyOrderId: 2 },
+    ]);
+    const candidate = await new ConversationStore(db).getCompactionCandidate(
+      baseParams.botId,
+      baseParams.chatId,
+      1,
+    );
+    expect(candidate?.messages[0]).toMatchObject({
+      role: "context",
+      content: "relay body",
+      relayOrigin: { source: "cosinside", initiatorTelegramId: 42, initiatorName: "Alice" },
+    });
+  });
+
   it("does not advance compaction across a pending reply turn", async () => {
     const { db } = createCandidateDb([
       {
@@ -1410,6 +1467,35 @@ describe("ConversationStore.addMessages", () => {
     expect(state.inserted[0]?.["sourceKey"]).toBe("telegram:42:user");
   });
 
+  it("deduplicates a delivered relay without creating a personal continuity projection", async () => {
+    const { db, state } = createMessageWriteDb();
+    const store = new ConversationStore(db);
+    const message = {
+      ...baseParams,
+      role: "context" as const,
+      content: "relay body",
+      userId: 42,
+      userName: "Alice",
+      sourceKey: "telegram:55:cosinside",
+      meta: {
+        source: "cosinside",
+        initiatorTelegramId: 42,
+        initiatorName: "Alice",
+        tgMessageId: 55,
+      },
+    };
+    await store.addMessage(message);
+    await store.addMessage(message);
+    expect(state.inserted).toHaveLength(1);
+    expect(state.inserted[0]).toMatchObject({
+      content: "relay body",
+      role: "context",
+      userId: 42,
+      sourceKey: "telegram:55:cosinside",
+    });
+    expect(state.inserted[0]?.["userAuthoredContent"]).toBeNull();
+  });
+
   it("persists a separate user-authored projection for cross-chat continuity", async () => {
     const { db, state } = createMessageWriteDb();
     const store = new ConversationStore(db);
@@ -1522,4 +1608,36 @@ describe("ConversationStore.getHistoryWatermark", () => {
 
     await expect(store.getHistoryWatermark(baseParams.botId)).resolves.toBeUndefined();
   });
+});
+
+describe("relay history search", () => {
+  it.each([undefined, [0.1]])(
+    "retains attribution in keyword and hybrid results %j",
+    async (queryEmbedding) => {
+      const row = {
+        id: 1,
+        role: "context",
+        content: "relay body",
+        userName: "Alice",
+        chatId: -1001,
+        createdAt: new Date(),
+        meta: { source: "cosinside", initiatorTelegramId: 42, initiatorName: "Alice" },
+      };
+      const query = {
+        from: () => query,
+        where: () => query,
+        orderBy: () => query,
+        limit: async () => [row],
+      };
+      const db = { select: () => query } as unknown as Database;
+      const results = await new ConversationStore(db).searchMessages(baseParams.botId, {
+        query: "relay",
+        queryEmbedding,
+      });
+      expect(results[0]?.content).toContain("cosinside 代发");
+      expect(results[0]?.content).toContain("Telegram ID: 42");
+      expect(results[0]?.content).toContain("relay body");
+      expect(row.content).toBe("relay body");
+    },
+  );
 });

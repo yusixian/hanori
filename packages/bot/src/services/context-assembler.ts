@@ -23,6 +23,7 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   formatConversationForwardOrigin,
+  formatConversationRelayOrigin,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, Tool, UserModelMessage } from "ai";
@@ -544,7 +545,12 @@ function historySections(
     .map((message) => message.id)
     .filter((id): id is number => id !== undefined);
   const historyContent = (message: (typeof history.messages)[number]) => {
-    const attribution = formatConversationForwardOrigin(message.forwardOrigin);
+    const attribution = [
+      formatConversationForwardOrigin(message.forwardOrigin),
+      formatConversationRelayOrigin(message.relayOrigin),
+    ]
+      .filter(Boolean)
+      .join("\n");
     return attribution ? `${attribution}\n${message.content}` : message.content;
   };
   /** Records the id as quotable and returns it, or returns undefined when it stays hidden. */
