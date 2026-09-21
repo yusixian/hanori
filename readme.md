@@ -17,6 +17,8 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 
 首版中文指南覆盖 AI 对话与模型、群聊和 JEV、隐私与记忆、图片与贴纸、RSS/总结/提醒、Mini App、管理员私聊代发、MCP、GitHub 编码任务和飞书集成。文档支持搜索、移动端导航和深浅色主题。
 
+[Telegram 链接读取配置指南](packages/docs/content/docs/integrations/telegram-reader.mdx)介绍独立 MCP Platform Reader 的账号登录、白名单、OAuth 与验收流程，并说明当前 Bot 接入仍需补齐的能力。
+
 版本详情与 GitHub Release 共用 `docs/releases/v*.md` 正文，避免两份说明长期不一致。公开文档不代表源码仓库已经开源；仓库访问与未来许可证会独立管理。
 
 本地只查看文档可运行 `pnpm dev:docs`，打开 `http://localhost:5174/docs/`，无需数据库或 Bot Token。内容维护和构建方式见 [公开文档维护指南](docs/PUBLIC_DOCUMENTATION.md)。
