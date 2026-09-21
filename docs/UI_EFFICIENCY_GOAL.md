@@ -44,13 +44,18 @@
 
 ## 当前迭代
 
-- 基线：main `05bb9329dffc3459da57084ff9ee1062c6fd8ace`，最新 GitHub Release v0.3.0；2026-09-22 已在线核对，没有打开的 PR。
+- 起始基线：main `05bb9329dffc3459da57084ff9ee1062c6fd8ace`，最新 GitHub Release v0.3.0。
+- 持久目标已提交为 `32eeb6174492a7dca5e50538d9c1f3df0a71ccab` 并推至远端迭代分支，已用 ls-remote 核实。直接 push main 因远端新增 `4aea68e`（生成素材库教程 #85）非快进被拒绝；未强推。当前分支 `ui/navigation-efficiency-v0.4.0`，按用户授权改走 PR，最终提交前整合远端文档更新。
 - 当前重点：v0.4.0 导航与工作区；AI 设置页的下一轮证据与两个批次见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
 - 浏览器基线已查看：1440×900 / 390×844，Bot 菜单 16 项平铺，全局入口在 Bot 内消失，固定页脚约占 240px。截图和 API 夹具证据在 `.acceptance/ui-efficiency/before/`；无页面异常或整页横向溢出。
 - 环境：项目 CI runner 已启动；Docker 当前不可用；3100/5173 属于其他项目，未动。当前使用独立 Vite 5188 + 全部拦截的测试 API，不能当作真实数据库/Telegram 验证。
 - 按现有锁文件补齐了缺失依赖；未升级依赖或改写锁文件。
 - 无关未跟踪内容：`.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/`，保持原状。
-- 下一步：Sol 实施任务分组、搜索、全局入口和抽屉键盘行为；主代理负责公共指南、版本说明和整体验证，然后独立审查、提交、CI 和发布。
+- 导航核心与 7 项浏览器测试已实现；主代理和独立 Sol 审查发现的概览双高亮、折叠按钮布局/标签、手机软键盘自动弹出、顶部返回 Bot 列表、同页点击关闭与跳转焦点恢复均已修复。
+- 本地证据：文档 typecheck/build 通过；文档原 10 项浏览器测试 + 新指南搜索/可读性 2 项通过，桌面/手机截图已查看。完整应用 + 模拟 API 的导航搜索/清空/全局直达/折叠搜索/手机 Escape 与导航后回焦检查通过，无页面错误或横向溢出，最终证据 `.acceptance/ui-efficiency/navigation-final/`。Panel typecheck、导航浏览器测试 7/7、相关 lint/format 和 i18n 2273 keys 通过。
+- 下一轮 AI 设置批次 A 已由 Sol 在 `/private/tmp/cos-tool-bot-ai-efficiency-20260922` 隔离 worktree 实现中；主仓库本轮不混入它。只包含搜索、setting 深链和移动摘要，不改保存/权限/API；主代理在 v0.4.0 发布后审查整合。
+- 后续高频管理候选：真实浏览器截图 `.acceptance/ui-efficiency/navigation-flows-verified/1440-collapsed.png` 显示日志页两个 Select 在桌面占满整行，筛选区占用过多高度；源码 `pages/logs/list.tsx` 的筛选 Select 未设置宽度。列入后续日志检索效率批次，不混入当前导航发布。
+- 下一步：独立审查结论收口，整合远端最新文档，最终浏览器与构建检查，再提交 PR、等待完整 CI、合入并自主发布 v0.4.0。功能提交、PR、合入和发布目前均未完成。
 
 ## 迭代证据
 
