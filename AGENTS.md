@@ -3,6 +3,13 @@
 Repository guide for coding agents. When documentation drifts, the current source tree and
 `package.json` win.
 
+## Active Iteration Goal
+
+For the ongoing UI efficiency and reliability work, read [docs/UI_EFFICIENCY_GOAL.md](docs/UI_EFFICIENCY_GOAL.md)
+before continuing, including after context compaction. It preserves the user's goal-specific
+commit/push/release authorization, priorities, verification evidence, and next steps. Keep it current;
+do not treat one version's publication as completion of the whole goal.
+
 ## Working Agreement
 
 - Keep changes narrowly scoped; reuse existing services, helpers, and domain types before adding a
