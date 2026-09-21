@@ -164,9 +164,8 @@ body {
 .prose h1,
 .docs-page h1,
 [data-docs-body] h1 {
-  max-width: 17ch;
-  font-size: clamp(2.15rem, 5vw, 3.7rem);
-  line-height: 1.07;
+  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  line-height: 1.2;
 }
 
 .prose h2,

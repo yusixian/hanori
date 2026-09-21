@@ -19,10 +19,11 @@ for await (const entry of glob("v*.md", { cwd: releaseDirectory })) {
   }
 
   const version = basename(entry, ".md");
+  const theme = heading.replace(new RegExp(`^${version.replaceAll(".", "\\.")}\\s*[—–-]\\s*`), "");
   const body = source.replace(/^#\s+.+(?:\r?\n)+/, "");
   const generated = `---
-title: ${JSON.stringify(heading)}
-description: ${JSON.stringify(`cos-tool-bot ${version} 的功能、可靠性改进与升级说明。`)}
+title: ${JSON.stringify(version)}
+description: ${JSON.stringify(theme)}
 ---
 
 ${body}`;

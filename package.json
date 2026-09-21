@@ -1,6 +1,6 @@
 {
   "name": "cos-tool-bot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "A grammy Telegram bot with Hono API and Vue panel",
   "type": "module",
