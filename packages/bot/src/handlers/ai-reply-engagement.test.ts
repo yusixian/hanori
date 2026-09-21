@@ -25,7 +25,7 @@ afterEach(async () => {
   await Promise.allSettled(runtimes.splice(0).map((runtime) => runtime.destroy()));
 });
 
-function responseBody(choice: "continue" | "join" | "silent") {
+function responseBody(choice: "addressed" | "continue" | "join" | "silent") {
   return {
     model: ENGAGEMENT_MODEL,
     answers: {
@@ -40,12 +40,12 @@ function responseBody(choice: "continue" | "join" | "silent") {
       },
       participation: {
         type: "choice",
-        choice: choice === "continue" ? "continue" : "join",
+        choice: choice === "addressed" ? "addressed" : choice === "continue" ? "continue" : "join",
         confidence: 0.9,
         probabilities: {
-          addressed: 0,
-          continue: choice === "continue" ? 0.95 : 0.05,
-          join: choice === "continue" ? 0.05 : 0.95,
+          addressed: choice === "addressed" ? 0.95 : 0,
+          continue: choice === "addressed" ? 0.025 : choice === "continue" ? 0.95 : 0.05,
+          join: choice === "addressed" ? 0.025 : choice === "continue" ? 0.05 : 0.95,
         },
       },
     },
@@ -53,7 +53,7 @@ function responseBody(choice: "continue" | "join" | "silent") {
   };
 }
 
-function response(choice: "continue" | "join" | "silent") {
+function response(choice: "addressed" | "continue" | "join" | "silent") {
   return new Response(JSON.stringify(responseBody(choice)), { status: 200 });
 }
 
@@ -111,6 +111,7 @@ function context(
     messageId?: number;
     userId?: number;
     threadId?: number;
+    isPrivate?: boolean;
     entities?: Array<{ type: "mention"; offset: number; length: number }>;
   } = {},
 ): BotContext {
@@ -123,7 +124,9 @@ function context(
       entities: options.entities ?? [],
       message_thread_id: options.threadId,
     },
-    chat: { id: -100, type: "supergroup", title: "Public group" },
+    chat: options.isPrivate
+      ? { id: options.userId ?? 42, type: "private", first_name: "Tester" }
+      : { id: -100, type: "supergroup", title: "Public group" },
     from: { id: options.userId ?? 42, is_bot: false, first_name: "Tester" },
     me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
     api: { sendChatAction: vi.fn() },
@@ -232,6 +235,113 @@ describe("AI engagement decisions", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
+  });
+
+  it.each([
+    ["addressed", "认真按问题实际需要回应", ["直接接上当前交流", "这是一次主动加入群聊"]],
+    ["continue", "直接接上当前交流", ["认真按问题实际需要回应", "这是一次主动加入群聊"]],
+    ["join", "这是一次主动加入群聊", ["认真按问题实际需要回应", "直接接上当前交流"]],
+  ] as const)(
+    "passes active %s participation to the reply model without replacing owner prompts",
+    async (choice, expectedGuidance, excludedGuidance) => {
+      vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response(choice)));
+      streamTextMock.mockReturnValue(streamResult());
+      const runtimeConfig = config("active");
+      runtimeConfig.systemPrompt = "owner system persona";
+      runtimeConfig.groupBehavioralPrompt = "owner group behavior";
+      const runtime = createAiReplyHandler(runtimeConfig);
+      runtimes.push(runtime);
+
+      await runtime.handler(context("group message"), vi.fn());
+
+      expect(streamTextMock).toHaveBeenCalledOnce();
+      const prompt = JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages);
+      expect(prompt).toContain("owner system persona");
+      expect(prompt).toContain("owner group behavior");
+      expect(prompt).toContain(expectedGuidance);
+      expect(prompt).toContain("继续遵循既有角色、提示词和工具使用判断");
+      for (const excluded of excludedGuidance) expect(prompt).not.toContain(excluded);
+    },
+  );
+
+  it.each(["off", "shadow"] as const)("keeps %s mode on the legacy prompt path", async (mode) => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("join"));
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockReturnValue(streamResult());
+    const runtimeConfig = config(mode);
+    runtimeConfig.triggerConfig.triggerWords = ["wake"];
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("wake up"), vi.fn());
+
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(mode === "shadow" ? 1 : 0);
+  });
+
+  it("does not add participation guidance to an active provider-error fallback", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response("bad json")));
+    streamTextMock.mockReturnValue(streamResult());
+    const runtimeConfig = config("active");
+    runtimeConfig.triggerConfig.triggerWords = ["wake"];
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("wake up"), vi.fn());
+
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
+  });
+
+  it("keeps private chats on their existing prompt path", async () => {
+    const fetchMock = vi.fn<typeof fetch>();
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockReturnValue(streamResult());
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+    const privateContext = context("private question", { isPrivate: true });
+
+    await runtime.handler(privateContext, vi.fn());
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
+  });
+
+  it("does not persist active participation guidance into a later explicit turn", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("join"));
+    vi.stubGlobal("fetch", fetchMock);
+    streamTextMock.mockImplementation(() => streamResult());
+    const runtime = createAiReplyHandler(config("active"));
+    runtimes.push(runtime);
+
+    await runtime.handler(context("join this discussion", { messageId: 1 }), vi.fn());
+    await runtime.handler(
+      context("hey @sample_bot", {
+        messageId: 2,
+        entities: [{ type: "mention", offset: 4, length: 11 }],
+      }),
+      vi.fn(),
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(streamTextMock).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).toContain(
+      "这是一次主动加入群聊",
+    );
+    expect(JSON.stringify(streamTextMock.mock.calls[1]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
   });
 
   it("keeps a JEV silent decision out of the reply scheduler and records no admission", async () => {
@@ -283,6 +393,9 @@ describe("AI engagement decisions", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).not.toContain(
+      "本轮群聊参与指导",
+    );
     expect(onSample).toHaveBeenCalledWith(
       expect.objectContaining({
         reasonCode: "keyword_direct",

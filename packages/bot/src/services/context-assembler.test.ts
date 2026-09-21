@@ -183,6 +183,28 @@ describe("prompt bundle", () => {
     expect(result.messages[0]!.content).toContain("user-derived reference data");
   });
 
+  it("keeps per-turn guidance volatile and outside the static prompt hash", async () => {
+    const plain = await assembleContext(runtimeInput());
+    const guided = await assembleContext(
+      runtimeInput({ turnGuidancePrompt: "Only guide this request" }),
+    );
+    const guidance = guided.trace.sections.find(
+      (section) => section.id === "runtime.turn-guidance",
+    );
+
+    expect(guided.trace.staticPrefixHash).toBe(plain.trace.staticPrefixHash);
+    expect(guidance).toMatchObject({
+      source: "runtime.turn-guidance",
+      stability: "volatile",
+      trust: "application",
+      role: "user",
+    });
+    expect(guided.messages[guidance!.messageIndex]!.content).toContain("Only guide this request");
+    expect(plain.trace.sections).not.toContainEqual(
+      expect.objectContaining({ id: "runtime.turn-guidance" }),
+    );
+  });
+
   it("falls back to the legacy prompt-memory callback when query retrieval is unavailable", async () => {
     const botMemory = createBotMemory();
     delete botMemory.getMemoriesForQuery;

@@ -83,6 +83,8 @@ export interface ContextAssemblyInput {
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
+  /** Application-owned guidance for this request only. Never persisted or added to the static prefix. */
+  turnGuidancePrompt?: string;
   isPrivate: boolean;
   chatId: number;
   userName: string;
@@ -843,6 +845,18 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       { role: "user" },
     ),
   ];
+  if (input.turnGuidancePrompt) {
+    lateBindingSections.push(
+      section(
+        "runtime.turn-guidance",
+        "runtime.turn-guidance",
+        "volatile",
+        "application",
+        input.turnGuidancePrompt,
+        { role: "user" },
+      ),
+    );
+  }
   if (input.currentMood) {
     lateBindingSections.push(
       section(

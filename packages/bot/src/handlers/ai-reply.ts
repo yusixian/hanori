@@ -417,6 +417,20 @@ type TriggerResult =
   | "engagement_join"
   | false;
 
+function buildEngagementTurnGuidance(trigger: TriggerResult): string | undefined {
+  const shared = "继续遵循既有角色、提示词和工具使用判断。";
+  switch (trigger) {
+    case "engagement_addressed":
+      return `[本轮群聊参与指导：对方正在向你发问或点名。请认真按问题实际需要回应，不必为了显得认真而刻意写成长文。${shared}]`;
+    case "engagement_continue":
+      return `[本轮群聊参与指导：当前消息是在延续你刚参与的对话。直接接上当前交流，避免重复已经明确的背景。${shared}]`;
+    case "engagement_join":
+      return `[本轮群聊参与指导：这是一次主动加入群聊。回复应简洁克制，可以自然轻松地接梗，但不要抢占话题。${shared}]`;
+    default:
+      return undefined;
+  }
+}
+
 export interface BufferedMessage {
   messageId: number;
   userId: number;
@@ -2561,6 +2575,7 @@ export function createAiReplyHandler(
           systemPrompt: effectivePrompt,
           behavioralPrompt: config.behavioralPrompt,
           groupBehavioralPrompt: config.groupBehavioralPrompt,
+          turnGuidancePrompt: buildEngagementTurnGuidance(triggerResult),
           isPrivate,
           chatId,
           userName,
