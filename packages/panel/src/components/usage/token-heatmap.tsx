@@ -52,7 +52,7 @@ interface GridCell {
   future: boolean;
 }
 
-function buildGrid(data: HeatmapDay[]): GridCell[] {
+export function buildGrid(data: HeatmapDay[]): GridCell[] {
   const lookup = new Map<string, number>();
   for (const d of data) {
     const key = d.date.slice(0, 10);
@@ -63,15 +63,10 @@ function buildGrid(data: HeatmapDay[]): GridCell[] {
   today.setHours(0, 0, 0, 0);
   const todayISO = toLocalISO(today);
 
-  // Walk back to fill 53 full weeks ending on today's weekday row
-  const totalDays = WEEKS * DAYS;
+  // Keep the current Sunday-to-Saturday column, including future cells, then
+  // prepend 52 complete weeks.
   const startDate = new Date(today);
-  startDate.setDate(startDate.getDate() - totalDays + 1);
-  // Align to Sunday (start of week column)
-  const startDay = startDate.getDay();
-  if (startDay !== 0) {
-    startDate.setDate(startDate.getDate() - startDay);
-  }
+  startDate.setDate(startDate.getDate() - startDate.getDay() - (WEEKS - 1) * DAYS);
 
   const cells: GridCell[] = [];
   const cursor = new Date(startDate);

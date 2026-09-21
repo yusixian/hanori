@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.8.0/");
+  await page.goto("/docs/changelog/v0.9.0/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.8.0");
-  await expect(page.getByText("AI 读取缓存头像", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.9.0");
+  await expect(page.getByText("用量概览与统计范围", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.8.0");
+  await expect(title).toHaveText("v0.9.0");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.8.0.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.9.0.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -66,6 +66,9 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(
     page.getByRole("link", { name: "v0.8.0", exact: true }).filter({ visible: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.9.0", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
@@ -85,6 +88,8 @@ test("management guides are searchable and readable on desktop and mobile", asyn
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("管理面板导航");
   await expect(page.getByRole("heading", { name: "从 Bot 进入全局管理" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "检索和清理日志" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "查看用量与统计范围" })).toBeVisible();
+  await expect(page.getByText("全部 Bot 对比", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { level: 2, name: /^浏览与管理 Bot/ })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,

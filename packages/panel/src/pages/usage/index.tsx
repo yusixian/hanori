@@ -85,6 +85,35 @@ interface BotOption {
   name: string;
 }
 
+const BOT_OPTIONS_PAGE_SIZE = 100;
+
+async function loadAllBotOptions(signal: AbortSignal): Promise<BotOption[]> {
+  const options = new Map<string, BotOption>();
+  let page = 1;
+  let expectedTotal: number | undefined;
+
+  while (true) {
+    const response = await client.api.bots.$get(
+      { query: { page: String(page), limit: String(BOT_OPTIONS_PAGE_SIZE) } },
+      { init: { signal } },
+    );
+    if (!response.ok) throw new Error("Bot list request failed");
+    const result = await response.json();
+    if (!result.ok) throw new Error("Bot list request failed");
+    expectedTotal ??= result.total;
+    if (result.total !== expectedTotal) throw new Error("Bot list changed during pagination");
+    for (const bot of result.data) options.set(bot.id, { id: bot.id, name: bot.name });
+
+    const totalPages = Math.max(1, Math.ceil(expectedTotal / BOT_OPTIONS_PAGE_SIZE));
+    if (page >= totalPages) {
+      if (options.size !== expectedTotal) throw new Error("Bot list pagination was incomplete");
+      return [...options.values()];
+    }
+    if (result.data.length === 0) throw new Error("Bot list pagination was incomplete");
+    page += 1;
+  }
+}
+
 // ── Stat Card ──
 
 function StatCard({ title, value, sub }: { title: string; value: string; sub?: string }) {
@@ -125,32 +154,34 @@ export function UsagePage() {
   const [byModel, setByModel] = useState<ModelStat[]>([]);
   const [byBot, setByBot] = useState<BotStat[]>([]);
   const [loading, setLoading] = useState(true);
+  const [byBotLoading, setByBotLoading] = useState(true);
   const [heatmapData, setHeatmapData] = useState<{ date: string; totalTokens: number }[]>([]);
   const [heatmapLoading, setHeatmapLoading] = useState(true);
 
   const [error, setError] = useState(false);
+  const [byBotError, setByBotError] = useState(false);
   const [heatmapError, setHeatmapError] = useState(false);
   const [botsError, setBotsError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [byBotRetry, setByBotRetry] = useState(0);
   const [heatmapRetry, setHeatmapRetry] = useState(0);
   const [botsRetry, setBotsRetry] = useState(0);
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     setBotsError(false);
     void (async () => {
       try {
-        const response = await client.api.bots.$get({ query: { page: "1", limit: "100" } });
-        if (!response.ok) throw new Error("Bot list request failed");
-        const result = await response.json();
-        if (!result.ok) throw new Error("Bot list request failed");
-        if (active) setBots(result.data.map((b) => ({ id: b.id, name: b.name })));
+        const options = await loadAllBotOptions(controller.signal);
+        if (active) setBots(options);
       } catch {
-        if (active) setBotsError(true);
+        if (active && !controller.signal.aborted) setBotsError(true);
       }
     })();
     return () => {
       active = false;
+      controller.abort();
     };
   }, [botsRetry]);
 
@@ -170,24 +201,20 @@ export function UsagePage() {
             query: { ...params, granularity: range <= 7 ? "hour" : "day" },
           }),
           client.api.usage["by-model"].$get({ query: params }),
-          // This chart compares all bots within the selected time range.
-          client.api.usage["by-bot"].$get({ query: { from } }),
         ]);
         if (responses.some((response) => !response.ok)) throw new Error("Usage request failed");
-        const [summaryData, trendData, modelData, botData] = await Promise.all([
+        const [summaryData, trendData, modelData] = await Promise.all([
           responses[0].json(),
           responses[1].json(),
           responses[2].json(),
-          responses[3].json(),
         ]);
-        if (!summaryData.ok || !trendData.ok || !modelData.ok || !botData.ok) {
+        if (!summaryData.ok || !trendData.ok || !modelData.ok) {
           throw new Error("Usage request failed");
         }
         if (!active) return;
         setSummary(summaryData.data);
         setTrend(trendData.data);
         setByModel(modelData.data);
-        setByBot(botData.data);
       } catch {
         if (active) setError(true);
       } finally {
@@ -198,6 +225,30 @@ export function UsagePage() {
       active = false;
     };
   }, [range, botId, retry]);
+
+  // This comparison is intentionally global and only follows the selected time range.
+  useEffect(() => {
+    let active = true;
+    setByBotLoading(true);
+    setByBotError(false);
+    const from = daysAgo(range);
+    void (async () => {
+      try {
+        const response = await client.api.usage["by-bot"].$get({ query: { from } });
+        if (!response.ok) throw new Error("Bot comparison request failed");
+        const result = await response.json();
+        if (!result.ok) throw new Error("Bot comparison request failed");
+        if (active) setByBot(result.data);
+      } catch {
+        if (active) setByBotError(true);
+      } finally {
+        if (active) setByBotLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [range, byBotRetry]);
 
   // Heatmap: always fetch 365 days, independent of range.
   useEffect(() => {
@@ -255,12 +306,20 @@ export function UsagePage() {
   const formatRate = (value: number | null | undefined) =>
     value == null ? "—" : percentFormatter.format(value);
   const granLabel = range <= 7 ? t("usage.hourly") : t("usage.daily");
+  const selectedBotName = botId
+    ? (bots.find((bot) => bot.id === botId)?.name ?? t("usage.selectedBot"))
+    : t("usage.allBots");
 
   return (
     <div className="mx-auto max-w-6xl min-w-0 space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">{t("usage.title")}</h1>
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold">{t("usage.title")}</h1>
+          <p className="text-muted-foreground mt-1 text-sm [overflow-wrap:anywhere] break-words">
+            {t("usage.rangeSummary", { bot: selectedBotName, count: range })}
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex rounded-md border">
             {([7, 30, 90] as Range[]).map((d) => (
@@ -285,7 +344,7 @@ export function UsagePage() {
             aria-label={t("usage.botFilter")}
             value={botId}
             onChange={(e) => setBotId(e.target.value)}
-            className="w-40"
+            className="w-40 [&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
           >
             <option value="">{t("usage.allBots")}</option>
             {bots.map((b) => (
@@ -308,25 +367,181 @@ export function UsagePage() {
       ) : error ? (
         <LoadError message={t("usage.loadError")} onRetry={() => setRetry((n) => n + 1)} />
       ) : (
-        <>
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard
-              title={t("usage.totalTokens")}
-              value={formatTokens(summary?.totalTokens ?? 0)}
-            />
-            <StatCard
-              title={t("usage.promptTokens")}
-              value={formatTokens(summary?.promptTokens ?? 0)}
-            />
-            <StatCard
-              title={t("usage.completionTokens")}
-              value={formatTokens(summary?.completionTokens ?? 0)}
-            />
-            <StatCard
-              title={t("usage.requests")}
-              value={numberFormatter.format(summary?.requestCount ?? 0)}
-            />
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <StatCard
+            title={t("usage.totalTokens")}
+            value={formatTokens(summary?.totalTokens ?? 0)}
+          />
+          <StatCard
+            title={t("usage.promptTokens")}
+            value={formatTokens(summary?.promptTokens ?? 0)}
+          />
+          <StatCard
+            title={t("usage.completionTokens")}
+            value={formatTokens(summary?.completionTokens ?? 0)}
+          />
+          <StatCard
+            title={t("usage.requests")}
+            value={numberFormatter.format(summary?.requestCount ?? 0)}
+          />
+        </div>
+      )}
+
+      {!loading && !error && (
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("usage.trend", { granularity: granLabel })}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {trend.length === 0 ? (
+              <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
+                {t("usage.noData")}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <AreaChart data={trend}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(v: string) => {
+                      const date = new Date(v);
+                      return range <= 7
+                        ? shortDateTimeFormatter.format(date)
+                        : shortDateFormatter.format(date);
+                    }}
+                    className="text-xs"
+                  />
+                  <YAxis tickFormatter={formatTokens} className="text-xs" />
+                  <Tooltip
+                    formatter={(value) => formatTokens(Number(value))}
+                    labelFormatter={(label) => dateTimeFormatter.format(new Date(String(label)))}
+                  />
+                  <Legend />
+                  <Area
+                    type="monotone"
+                    dataKey="promptTokens"
+                    stackId="1"
+                    name={t("usage.prompt")}
+                    stroke="#3b82f6"
+                    fill="#3b82f6"
+                    fillOpacity={0.6}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="completionTokens"
+                    stackId="1"
+                    name={t("usage.completion")}
+                    stroke="#f97316"
+                    fill="#f97316"
+                    fillOpacity={0.6}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        {!loading && !error && (
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("usage.byModel")}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {byModel.length === 0 ? (
+                <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
+                  {t("usage.noData")}
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(byModel.length * 40, 120)}>
+                  <BarChart data={byModel} layout="vertical">
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                    <XAxis type="number" tickFormatter={formatTokens} className="text-xs" />
+                    <YAxis
+                      type="category"
+                      dataKey="model"
+                      width={140}
+                      className="text-xs"
+                      tick={{ fontSize: 11 }}
+                    />
+                    <Tooltip formatter={(value) => formatTokens(Number(value))} />
+                    <Legend />
+                    <Bar
+                      dataKey="promptTokens"
+                      name={t("usage.prompt")}
+                      fill="#3b82f6"
+                      stackId="a"
+                    />
+                    <Bar
+                      dataKey="completionTokens"
+                      name={t("usage.completion")}
+                      fill="#f97316"
+                      stackId="a"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{t("usage.byBot")}</CardTitle>
+            <p className="text-muted-foreground text-sm">{t("usage.byBotScope")}</p>
+          </CardHeader>
+          <CardContent>
+            {byBotLoading ? (
+              <div role="status" className="text-muted-foreground py-8 text-center text-sm">
+                {t("usage.loading")}
+              </div>
+            ) : byBotError ? (
+              <LoadError
+                message={t("usage.byBotLoadError")}
+                onRetry={() => setByBotRetry((n) => n + 1)}
+              />
+            ) : byBot.length === 0 ? (
+              <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
+                {t("usage.noData")}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={Math.max(byBot.length * 40, 120)}>
+                <BarChart data={byBot} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis type="number" tickFormatter={formatTokens} className="text-xs" />
+                  <YAxis
+                    type="category"
+                    dataKey="botName"
+                    width={120}
+                    className="text-xs"
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip formatter={(value) => formatTokens(Number(value))} />
+                  <Legend />
+                  <Bar dataKey="promptTokens" name={t("usage.prompt")} fill="#3b82f6" stackId="a" />
+                  <Bar
+                    dataKey="completionTokens"
+                    name={t("usage.completion")}
+                    fill="#f97316"
+                    stackId="a"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {!loading && !error && (
+        <section aria-labelledby="usage-cache-heading" className="space-y-4">
+          <div>
+            <h2 id="usage-cache-heading" className="text-xl font-semibold">
+              {t("usage.cacheDiagnostics")}
+            </h2>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t("usage.cacheDiagnosticsDescription")}
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -371,33 +586,7 @@ export function UsagePage() {
               }
             />
           </div>
-        </>
-      )}
 
-      {/* Daily Activity Heatmap */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("usage.dailyActivity")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {heatmapLoading ? (
-            <div role="status" className="text-muted-foreground py-8 text-center text-sm">
-              {t("usage.loading")}
-            </div>
-          ) : heatmapError ? (
-            <LoadError
-              message={t("usage.heatmapLoadError")}
-              onRetry={() => setHeatmapRetry((n) => n + 1)}
-            />
-          ) : (
-            <TokenHeatmap data={heatmapData} />
-          )}
-        </CardContent>
-      </Card>
-
-      {!loading && !error && (
-        <>
-          {/* Prompt Cache Trend */}
           <Card>
             <CardHeader>
               <CardTitle>{t("usage.cacheTrend", { granularity: granLabel })}</CardTitle>
@@ -457,149 +646,29 @@ export function UsagePage() {
               )}
             </CardContent>
           </Card>
-
-          {/* Trend Chart */}
-          <Card>
-            <CardHeader>
-              <CardTitle>{t("usage.trend", { granularity: granLabel })}</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {trend.length === 0 ? (
-                <div className="text-muted-foreground flex h-64 items-center justify-center text-sm">
-                  {t("usage.noData")}
-                </div>
-              ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={trend}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis
-                      dataKey="date"
-                      tickFormatter={(v: string) => {
-                        const date = new Date(v);
-                        return range <= 7
-                          ? shortDateTimeFormatter.format(date)
-                          : shortDateFormatter.format(date);
-                      }}
-                      className="text-xs"
-                    />
-                    <YAxis tickFormatter={formatTokens} className="text-xs" />
-                    <Tooltip
-                      formatter={(value) => formatTokens(Number(value))}
-                      labelFormatter={(label) => dateTimeFormatter.format(new Date(String(label)))}
-                    />
-                    <Legend />
-                    <Area
-                      type="monotone"
-                      dataKey="promptTokens"
-                      stackId="1"
-                      name={t("usage.prompt")}
-                      stroke="#3b82f6"
-                      fill="#3b82f6"
-                      fillOpacity={0.6}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="completionTokens"
-                      stackId="1"
-                      name={t("usage.completion")}
-                      stroke="#f97316"
-                      fill="#f97316"
-                      fillOpacity={0.6}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Bottom Charts */}
-          <div className="grid gap-6 lg:grid-cols-2">
-            {/* By Model */}
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("usage.byModel")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {byModel.length === 0 ? (
-                  <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
-                    {t("usage.noData")}
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(byModel.length * 40, 120)}>
-                    <BarChart data={byModel} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                      <XAxis type="number" tickFormatter={formatTokens} className="text-xs" />
-                      <YAxis
-                        type="category"
-                        dataKey="model"
-                        width={140}
-                        className="text-xs"
-                        tick={{ fontSize: 11 }}
-                      />
-                      <Tooltip formatter={(value) => formatTokens(Number(value))} />
-                      <Legend />
-                      <Bar
-                        dataKey="promptTokens"
-                        name={t("usage.prompt")}
-                        fill="#3b82f6"
-                        stackId="a"
-                      />
-                      <Bar
-                        dataKey="completionTokens"
-                        name={t("usage.completion")}
-                        fill="#f97316"
-                        stackId="a"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* By Bot */}
-            <Card>
-              <CardHeader>
-                <CardTitle>{t("usage.byBot")}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {byBot.length === 0 ? (
-                  <div className="text-muted-foreground flex h-48 items-center justify-center text-sm">
-                    {t("usage.noData")}
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(byBot.length * 40, 120)}>
-                    <BarChart data={byBot} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                      <XAxis type="number" tickFormatter={formatTokens} className="text-xs" />
-                      <YAxis
-                        type="category"
-                        dataKey="botName"
-                        width={120}
-                        className="text-xs"
-                        tick={{ fontSize: 11 }}
-                      />
-                      <Tooltip formatter={(value) => formatTokens(Number(value))} />
-                      <Legend />
-                      <Bar
-                        dataKey="promptTokens"
-                        name={t("usage.prompt")}
-                        fill="#3b82f6"
-                        stackId="a"
-                      />
-                      <Bar
-                        dataKey="completionTokens"
-                        name={t("usage.completion")}
-                        fill="#f97316"
-                        stackId="a"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </>
+        </section>
       )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("usage.dailyActivity")}</CardTitle>
+          <p className="text-muted-foreground text-sm">{t("usage.dailyActivityScope")}</p>
+        </CardHeader>
+        <CardContent>
+          {heatmapLoading ? (
+            <div role="status" className="text-muted-foreground py-8 text-center text-sm">
+              {t("usage.loading")}
+            </div>
+          ) : heatmapError ? (
+            <LoadError
+              message={t("usage.heatmapLoadError")}
+              onRetry={() => setHeatmapRetry((n) => n + 1)}
+            />
+          ) : (
+            <TokenHeatmap data={heatmapData} />
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

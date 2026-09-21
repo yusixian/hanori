@@ -11,8 +11,14 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 let requests: PendingRequest[];
+let botRequests: URL[];
 const response = (data: unknown, ok = true, status = 200) =>
   new Response(JSON.stringify({ ok, data }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+const botResponse = (data: unknown[], total = data.length, ok = true, status = 200) =>
+  new Response(JSON.stringify({ ok, data, total }), {
     status,
     headers: { "content-type": "application/json" },
   });
@@ -35,6 +41,8 @@ const isHeatmap = (request: PendingRequest) =>
   Date.now() - new Date(request.url.searchParams.get("from")!).getTime() > 360 * 86400000;
 const stats = () => requests.filter((request) => !isHeatmap(request));
 const heatmaps = () => requests.filter(isHeatmap);
+const comparisons = () => stats().filter((request) => request.url.pathname.endsWith("/by-bot"));
+const filteredStats = () => stats().filter((request) => !request.url.pathname.endsWith("/by-bot"));
 function completeStats(batch: PendingRequest[], value: number) {
   for (const request of batch) {
     const endpoint = request.url.pathname.split("/").at(-1);
@@ -84,19 +92,22 @@ async function initialSuccess() {
 }
 beforeEach(async () => {
   requests = [];
+  botRequests = [];
   await i18n.changeLanguage("en");
   await page.viewport(1440, 900);
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL) => {
       const url = new URL(String(input), location.origin);
-      if (url.pathname === "/api/bots")
+      if (url.pathname === "/api/bots") {
+        botRequests.push(url);
         return Promise.resolve(
-          response([
+          botResponse([
             { id: "a", name: "Alpha" },
             { id: "b", name: "Beta" },
           ]),
         );
+      }
       return new Promise<Response>((resolve, reject) => requests.push({ url, resolve, reject }));
     }),
   );
@@ -141,8 +152,8 @@ test("a failed new filter hides old data and supports retry", async () => {
     .toHaveTextContent("Usage data could not be loaded.");
   await expect.element(page.getByText("111", { exact: true })).not.toBeInTheDocument();
   await page.getByRole("button", { name: "Retry", exact: true }).click();
-  await vi.waitFor(() => expect(stats()).toHaveLength(12));
-  await expect.element(page.getByRole("status")).toBeVisible();
+  await vi.waitFor(() => expect(stats()).toHaveLength(11));
+  expect(document.querySelectorAll('[role="status"]')).toHaveLength(2);
   completeStats(stats().slice(8), 333);
   await expect.element(page.getByText("333", { exact: true })).toBeVisible();
   expect(heatmaps()).toHaveLength(1);
@@ -156,7 +167,7 @@ test("old completions cannot clear the current loading state", async () => {
   await vi.waitFor(() => expect(stats()).toHaveLength(8));
   completeStats(old, 111);
   await flushResponses();
-  await expect.element(page.getByRole("status")).toBeVisible();
+  expect(document.querySelectorAll('[role="status"]')).toHaveLength(2);
   await expect.element(page.getByText("111", { exact: true })).not.toBeInTheDocument();
   completeStats(stats().slice(4), 222);
   await expect.element(page.getByText("222", { exact: true })).toBeVisible();
@@ -214,11 +225,8 @@ test("heatmap keeps the latest bot and ignores an older empty response", async (
   await flushResponses();
   await expect.element(page.getByText("Less", { exact: true })).toBeVisible();
   await expect.element(page.getByText("No usage data", { exact: true })).not.toBeInTheDocument();
-  for (const request of stats().slice(4)) {
-    expect(request.url.searchParams.get("botId")).toBe(
-      request.url.pathname.endsWith("/by-bot") ? null : "a",
-    );
-  }
+  for (const request of stats().slice(4)) expect(request.url.searchParams.get("botId")).toBe("a");
+  expect(comparisons()).toHaveLength(1);
   expect(heatmaps()[1]!.url.searchParams.get("botId")).toBe("a");
   expect(heatmaps()[1]!.url.searchParams.get("granularity")).toBe("day");
 });
@@ -258,7 +266,7 @@ for (const failure of ["http", "application", "network"] as const) {
     await expect.element(page.getByRole("status")).toBeVisible();
     heatmaps()[2]!.resolve(response(heatmapData(42)));
     await expect.element(page.getByText("Less", { exact: true })).toBeVisible();
-    expect(stats()).toHaveLength(8);
+    expect(stats()).toHaveLength(7);
     expect(heatmaps()[2]!.url.searchParams.get("botId")).toBe("a");
   });
 }
@@ -268,7 +276,7 @@ for (const width of [1440, 390]) {
     await page.viewport(width, width === 390 ? 844 : 900);
     await i18n.changeLanguage("zh-CN");
     await start();
-    expect(document.querySelectorAll('[role="status"]')).toHaveLength(2);
+    expect(document.querySelectorAll('[role="status"]')).toHaveLength(3);
     completeStats(stats(), 111);
     heatmaps()[0]!.resolve(response(heatmapData(42)));
     await expect.element(page.getByText("111", { exact: true })).toBeVisible();
@@ -279,7 +287,7 @@ for (const width of [1440, 390]) {
     await expect.element(page.getByRole("alert")).toHaveTextContent("用量数据加载失败。");
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
     await page.getByRole("button", { name: "重试", exact: true }).click();
-    await vi.waitFor(() => expect(stats()).toHaveLength(12));
+    await vi.waitFor(() => expect(stats()).toHaveLength(11));
     completeStats(stats().slice(8), 333);
     await expect.element(page.getByText("333", { exact: true })).toBeVisible();
     expect(heatmaps()).toHaveLength(1);
@@ -303,7 +311,7 @@ test("a late old success cannot hide the current filter error", async () => {
 });
 
 test("a failed bot list can be retried independently of usage data", async () => {
-  vi.mocked(fetch).mockImplementationOnce(() => Promise.resolve(response([], false)));
+  vi.mocked(fetch).mockImplementationOnce(() => Promise.resolve(botResponse([], 0, false)));
   await initialSuccess();
   await expect
     .element(page.getByRole("alert"))
@@ -313,6 +321,129 @@ test("a failed bot list can be retried independently of usage data", async () =>
   expect(requests).toHaveLength(5);
   await page.getByRole("combobox").click();
   await expect.element(page.getByRole("option", { name: "Alpha", exact: true })).toBeVisible();
+});
+
+test("loads every Bot filter page before publishing 125 options", async () => {
+  const bots = Array.from({ length: 125 }, (_, index) => ({
+    id: `bot-${index + 1}`,
+    name: `Bot ${index + 1}`,
+  }));
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+    const url = new URL(String(input), location.origin);
+    if (url.pathname === "/api/bots") {
+      botRequests.push(url);
+      const pageNumber = Number(url.searchParams.get("page"));
+      const startIndex = (pageNumber - 1) * 100;
+      return Promise.resolve(botResponse(bots.slice(startIndex, startIndex + 100), bots.length));
+    }
+    return new Promise<Response>((resolve, reject) => requests.push({ url, resolve, reject }));
+  });
+
+  await start();
+  await page.getByRole("combobox").click();
+  await vi.waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(126));
+  expect(botRequests.map((url) => url.searchParams.get("page"))).toEqual(["1", "2"]);
+  expect(botRequests.every((url) => url.searchParams.get("limit") === "100")).toBe(true);
+  await expect.element(page.getByRole("option", { name: "Bot 125", exact: true })).toBeVisible();
+});
+
+test("keeps a long selected Bot name inside the filter trigger", async () => {
+  const longName = `Bot ${"with-a-very-long-name-".repeat(14)}`;
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+    const url = new URL(String(input), location.origin);
+    if (url.pathname === "/api/bots")
+      return Promise.resolve(botResponse([{ id: "long", name: longName }]));
+    return new Promise<Response>((resolve, reject) => requests.push({ url, resolve, reject }));
+  });
+
+  await start();
+  await selectBot(longName);
+  const trigger = document.querySelector<HTMLElement>('[role="combobox"]')!;
+  const value = trigger.querySelector<HTMLElement>(":scope > span:first-child")!;
+  expect(value.getBoundingClientRect().height).toBeLessThanOrEqual(
+    trigger.getBoundingClientRect().height,
+  );
+  expect(value.scrollWidth).toBeGreaterThan(value.clientWidth);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+});
+
+test("keeps Bot filters atomic when the total changes on page two and retries", async () => {
+  const bots = Array.from({ length: 125 }, (_, index) => ({
+    id: `bot-${index + 1}`,
+    name: `Bot ${index + 1}`,
+  }));
+  let pageTwoAttempts = 0;
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+    const url = new URL(String(input), location.origin);
+    if (url.pathname === "/api/bots") {
+      botRequests.push(url);
+      const pageNumber = Number(url.searchParams.get("page"));
+      if (pageNumber === 2 && pageTwoAttempts++ === 0) {
+        return Promise.resolve(botResponse(bots.slice(100), bots.length - 1));
+      }
+      const startIndex = (pageNumber - 1) * 100;
+      return Promise.resolve(botResponse(bots.slice(startIndex, startIndex + 100), bots.length));
+    }
+    return new Promise<Response>((resolve, reject) => requests.push({ url, resolve, reject }));
+  });
+
+  await start();
+  completeStats(stats(), 111);
+  heatmaps()[0]!.resolve(response([]));
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Bot filters could not be loaded.");
+  await page.getByRole("combobox").click();
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(1);
+  await expect
+    .element(page.getByRole("option", { name: "Bot 1", exact: true }))
+    .not.toBeInTheDocument();
+  await page.getByRole("option", { name: "All Bots", exact: true }).click();
+
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await vi.waitFor(() => expect(botRequests).toHaveLength(4));
+  expect(botRequests.map((url) => url.searchParams.get("page"))).toEqual(["1", "2", "1", "2"]);
+  await page.getByRole("combobox").click();
+  await vi.waitFor(() => expect(document.querySelectorAll('[role="option"]')).toHaveLength(126));
+  await expect.element(page.getByRole("option", { name: "Bot 125", exact: true })).toBeVisible();
+});
+
+test("keeps the all-Bot comparison visible when filtered statistics fail", async () => {
+  await start();
+  comparisons()[0]!.resolve(
+    response([{ botId: "global", botName: "Global Bot", ...metrics(444) }]),
+  );
+  filteredStats()[0]!.reject(new Error("offline"));
+  heatmaps()[0]!.resolve(response([]));
+
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Usage data could not be loaded.");
+  await vi.waitFor(() =>
+    expect(
+      Array.from(document.querySelectorAll(".recharts-cartesian-axis-tick-value")).map(
+        (node) => node.textContent,
+      ),
+    ).toContain("Global Bot"),
+  );
+  await expect.element(page.getByText("All Bots comparison", { exact: true })).toBeVisible();
+});
+
+test("retries an all-Bot comparison error without hiding filtered statistics", async () => {
+  await start();
+  comparisons()[0]!.reject(new Error("offline"));
+  completeStats(filteredStats(), 111);
+  heatmaps()[0]!.resolve(response([]));
+
+  await expect.element(page.getByText("111", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("The all-Bot comparison could not be loaded.");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await vi.waitFor(() => expect(comparisons()).toHaveLength(2));
+  comparisons()[1]!.resolve(response([{ botId: "a", botName: "Alpha", ...metrics(222) }]));
+  await expect.element(page.getByRole("alert")).not.toBeInTheDocument();
+  await expect.element(page.getByText("111", { exact: true })).toBeVisible();
 });
 
 test("preserves 7/30/90 day global comparisons and an independent 365 day heatmap", async () => {
@@ -333,12 +464,16 @@ test("preserves 7/30/90 day global comparisons and an independent 365 day heatma
     const expectedFrom = new Date();
     expectedFrom.setDate(expectedFrom.getDate() - days);
     expect(Math.abs(new Date(from!).getTime() - expectedFrom.getTime())).toBeLessThan(2000);
-    for (const request of batch) expect(request.url.searchParams.get("from")).toBe(from);
+    const comparison = batch.find((request) => request.url.pathname.endsWith("/by-bot"))!;
+    for (const request of batch.filter((request) => request !== comparison)) {
+      expect(request.url.searchParams.get("from")).toBe(from);
+    }
     expect(
-      batch
-        .find((request) => request.url.pathname.endsWith("/by-bot"))!
-        .url.searchParams.has("botId"),
-    ).toBe(false);
+      Math.abs(
+        new Date(comparison.url.searchParams.get("from")!).getTime() - new Date(from!).getTime(),
+      ),
+    ).toBeLessThan(100);
+    expect(comparison.url.searchParams.has("botId")).toBe(false);
     expect(
       batch
         .find((request) => request.url.pathname.endsWith("/trend"))!
