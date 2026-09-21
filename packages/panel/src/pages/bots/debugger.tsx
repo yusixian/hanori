@@ -12,8 +12,9 @@ import type {
 import { Bug, Copy, Download, Pin, Play, RefreshCw, RotateCcw, Send, Square } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { downloadDebugRun } from "./debugger-export";
+import { EngagementSamplesSection } from "./ai-settings/sections/engagement-samples-section";
 
 interface BotRunEvent {
   id: number;
@@ -48,6 +49,9 @@ function statusVariant(status: string) {
 export function BotDebuggerPage() {
   const { t } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") === "engagement" ? "engagement" : "runs";
+  const activeTabRef = useRef(activeTab);
   const [runs, setRuns] = useState<BotRun[]>([]);
   const [selected, setSelected] = useState<BotRun | null>(null);
   const [mode, setMode] = useState<"message" | "raw">("message");
@@ -83,8 +87,10 @@ export function BotDebuggerPage() {
   const activeBotIdRef = useRef(botId);
   const previousBotIdRef = useRef(botId);
   const botLoadRequestRef = useRef(0);
+  const runsLoadRequestRef = useRef(0);
   const richSendRequestRef = useRef(0);
   activeBotIdRef.current = botId;
+  activeTabRef.current = activeTab;
   const statusLabels = useMemo<Record<string, string>>(
     () => ({
       running: t("debugger.statuses.running"),
@@ -125,19 +131,35 @@ export function BotDebuggerPage() {
   }, [botId, t]);
 
   const loadRuns = useCallback(async () => {
-    if (!botId) return;
+    if (!botId || activeTabRef.current !== "runs") return;
+    const requestedBotId = botId;
+    const requestId = ++runsLoadRequestRef.current;
     try {
-      const response = await authFetch(`/api/bots/${botId}/runs`);
+      const response = await authFetch(`/api/bots/${requestedBotId}/runs`);
       const json = (await response.json()) as { ok: boolean; data?: BotRun[]; error?: string };
       if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadRuns"));
+      if (
+        activeBotIdRef.current !== requestedBotId ||
+        activeTabRef.current !== "runs" ||
+        runsLoadRequestRef.current !== requestId
+      ) {
+        return;
+      }
       setRuns(json.data);
     } catch (cause) {
+      if (
+        activeBotIdRef.current !== requestedBotId ||
+        activeTabRef.current !== "runs" ||
+        runsLoadRequestRef.current !== requestId
+      ) {
+        return;
+      }
       setError(cause instanceof Error ? cause.message : t("debugger.errors.loadRuns"));
     }
   }, [botId, t]);
 
   const loadBot = useCallback(async () => {
-    if (!botId) return;
+    if (!botId || activeTabRef.current !== "runs") return;
     const requestedBotId = botId;
     const requestId = ++botLoadRequestRef.current;
     try {
@@ -148,12 +170,20 @@ export function BotDebuggerPage() {
         error?: string;
       };
       if (!json.ok || !json.data) throw new Error(json.error ?? t("debugger.errors.loadBot"));
-      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+      if (
+        activeBotIdRef.current !== requestedBotId ||
+        activeTabRef.current !== "runs" ||
+        botLoadRequestRef.current !== requestId
+      ) {
         return;
       }
       setLoadedBot({ id: requestedBotId, platform: json.data.platform });
     } catch (cause) {
-      if (activeBotIdRef.current !== requestedBotId || botLoadRequestRef.current !== requestId) {
+      if (
+        activeBotIdRef.current !== requestedBotId ||
+        activeTabRef.current !== "runs" ||
+        botLoadRequestRef.current !== requestId
+      ) {
         return;
       }
       setError(cause instanceof Error ? cause.message : t("debugger.errors.loadBot"));
@@ -176,12 +206,18 @@ export function BotDebuggerPage() {
   );
 
   useEffect(() => {
+    if (activeTab !== "runs") {
+      botLoadRequestRef.current += 1;
+      runsLoadRequestRef.current += 1;
+      setError(null);
+      return;
+    }
     void loadBot();
     void loadRuns();
-  }, [loadBot, loadRuns]);
+  }, [activeTab, loadBot, loadRuns]);
 
   useEffect(() => {
-    if (!botId || !selected || selected.status !== "running") return;
+    if (activeTab !== "runs" || !botId || !selected || selected.status !== "running") return;
     const source = new EventSource(`/api/bots/${botId}/runs/${selected.id}/stream`);
     const appendEvent = (raw: Event) => {
       const event = JSON.parse((raw as MessageEvent<string>).data) as BotRunEvent;
@@ -198,7 +234,7 @@ export function BotDebuggerPage() {
       source.close();
     });
     return () => source.close();
-  }, [botId, selected?.id, selected?.status, loadRun, loadRuns]);
+  }, [activeTab, botId, selected?.id, selected?.status, loadRun, loadRuns]);
 
   const start = async (replayId?: string) => {
     if (!botId) return;
@@ -308,8 +344,14 @@ export function BotDebuggerPage() {
   };
 
   return (
-    <div className="space-y-6 xl:flex xl:h-[calc(100dvh-5rem)] xl:min-h-0 xl:flex-col xl:space-y-0 xl:overflow-hidden">
-      <div className="flex flex-wrap items-start justify-between gap-3 xl:shrink-0 xl:pb-6">
+    <div
+      className={
+        activeTab === "runs"
+          ? "space-y-6 xl:flex xl:h-[calc(100dvh-5rem)] xl:min-h-0 xl:flex-col xl:gap-5 xl:space-y-0 xl:overflow-hidden"
+          : "min-w-0 space-y-5"
+      }
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 xl:shrink-0">
         <div>
           <p className="text-primary mb-1 text-sm font-medium">{t("debugger.eyebrow")}</p>
           <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight sm:text-3xl">
@@ -317,10 +359,54 @@ export function BotDebuggerPage() {
           </h1>
           <p className="text-muted-foreground mt-1 text-sm">{t("debugger.description")}</p>
         </div>
-        <Badge variant="muted">{t("debugger.ownerOnly")}</Badge>
+        <Badge variant="muted">
+          {t(activeTab === "runs" ? "debugger.ownerOnly" : "debugger.ownerOrAdmin")}
+        </Badge>
       </div>
 
-      <div className="grid gap-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(20rem,0.8fr)_minmax(28rem,1.2fr)]">
+      <div
+        role="tablist"
+        aria-label={t("debugger.tabs.ariaLabel")}
+        className="flex w-fit max-w-full gap-1 rounded-lg bg-slate-100 p-1 xl:shrink-0"
+      >
+        {(["runs", "engagement"] as const).map((tab) => (
+          <button
+            key={tab}
+            type="button"
+            role="tab"
+            id={`debugger-tab-${tab}`}
+            aria-controls={`debugger-panel-${tab}`}
+            aria-selected={activeTab === tab}
+            className="focus-visible:ring-ring rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:outline-none aria-selected:bg-white aria-selected:text-slate-950 aria-selected:shadow-sm"
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              if (tab === "runs") next.delete("tab");
+              else next.set("tab", "engagement");
+              setSearchParams(next, { replace: true });
+            }}
+          >
+            {t(`debugger.tabs.${tab}`)}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "engagement" && botId && (
+        <div
+          id="debugger-panel-engagement"
+          role="tabpanel"
+          aria-labelledby="debugger-tab-engagement"
+        >
+          <EngagementSamplesSection botId={botId} />
+        </div>
+      )}
+
+      <div
+        id="debugger-panel-runs"
+        role="tabpanel"
+        aria-labelledby="debugger-tab-runs"
+        hidden={activeTab !== "runs"}
+        className="grid gap-5 xl:min-h-0 xl:flex-1 xl:grid-cols-[minmax(20rem,0.8fr)_minmax(28rem,1.2fr)]"
+      >
         <div className="space-y-5 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
           <Card>
             <CardHeader>

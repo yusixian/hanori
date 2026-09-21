@@ -202,6 +202,12 @@ export const botData = {
     title: "AI 调试器",
     description: "使用当前 Bot 配置执行模拟运行，检查模型流事件、错误链和可重放的运行记录。",
     ownerOnly: "仅所有者可用",
+    ownerOrAdmin: "所有者或管理员可用",
+    tabs: {
+      ariaLabel: "调试器分区",
+      runs: "运行调试",
+      engagement: "接话决策",
+    },
     newRun: "新建运行",
     messageMode: "消息",
     rawMode: "原始渠道事件",

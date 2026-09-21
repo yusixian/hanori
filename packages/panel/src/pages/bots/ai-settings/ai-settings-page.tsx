@@ -1,4 +1,3 @@
-import { EngagementSamplesSection } from "./sections/engagement-samples-section";
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
 import { authFetch, client } from "@/lib/client";
@@ -42,7 +41,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAiConfigSaveBody } from "./ai-config-save-body";
 import { PromptPreviewDialog } from "./prompt-preview-dialog";
-import { useParams, useSearchParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import {
   AiSettingsNavigation,
   type AiSettingsNavItem,
@@ -1025,6 +1024,19 @@ export function BotAiSettingsPage() {
                   onApiKeyChange={setEngagementApiKey}
                   onChange={(engagement) => setConfig((prev) => ({ ...prev, engagement }))}
                 />
+                {botId && (
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
+                    <p className="text-muted-foreground text-xs">
+                      {t("engagement.reviewRecordsHelp")}
+                    </p>
+                    <Link
+                      to={`/bots/${botId}/debugger?tab=engagement`}
+                      className="focus-visible:ring-ring border-input inline-flex h-10 items-center justify-center rounded-lg border bg-white px-3.5 text-sm font-semibold transition-[background-color,border-color,color] hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-2 focus-visible:outline-none"
+                    >
+                      {t("engagement.reviewRecords")}
+                    </Link>
+                  </div>
+                )}
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
                 title={t("disclosures.triggers.title")}
@@ -1040,7 +1052,6 @@ export function BotAiSettingsPage() {
                   onUpdate={updateTrigger}
                 />
               </SettingsDisclosureRow>
-              {botId && <EngagementSamplesSection botId={botId} />}
               <SettingsDisclosureRow
                 title={t("disclosures.conversationContext.title")}
                 description={t("disclosures.conversationContext.description")}

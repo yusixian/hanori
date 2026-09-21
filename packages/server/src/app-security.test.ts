@@ -109,7 +109,7 @@ function createRoleApp(role: string) {
 }
 
 describe("production HTTP policy", () => {
-  it("protects the cos-inside group lookup at app composition", async () => {
+  it("preserves the existing owner and admin API boundaries at app composition", async () => {
     const admin = createRoleApp("admin");
     const adminGroups = await admin.request(`/api/bots/${TEST_BOT_ID}/cos-inside/groups?query=ops`);
     expect(adminGroups.status).toBe(200);
@@ -133,6 +133,15 @@ describe("production HTTP policy", () => {
       `/api/bots/${TEST_BOT_ID}/engagement-samples`,
     );
     expect(adminSamples.status).toBe(200);
+
+    const adminRuns = await createRoleApp("admin").request(`/api/bots/${TEST_BOT_ID}/runs`);
+    expect(adminRuns.status).toBe(403);
+
+    const adminDebug = await createRoleApp("admin").request(
+      `/api/bots/${TEST_BOT_ID}/debug/rich-messages`,
+      { method: "POST" },
+    );
+    expect(adminDebug.status).toBe(403);
 
     const editorSamples = await createRoleApp("editor").request(
       `/api/bots/${TEST_BOT_ID}/engagement-samples`,

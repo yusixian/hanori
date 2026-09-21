@@ -1,5 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import type { EngagementSample } from "@cos-tool-bot/shared";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it, vi } from "vitest";
 import {
   ENGAGEMENT_INPUT_PRICE_USD_PER_MILLION,
@@ -111,6 +113,104 @@ describe("EngagementSampleService persistence", () => {
     expect(result).toBeNull();
     expect(limit).toHaveBeenCalledOnce();
     expect(db.update).not.toHaveBeenCalled();
+  });
+
+  it("applies unreviewed and inclusive time filters to full-result metrics", async () => {
+    let selectCall = 0;
+    let listWhere: SQL | undefined;
+    let metricsWhere: SQL | undefined;
+    const db = {
+      select: vi.fn(() => {
+        selectCall += 1;
+        if (selectCall === 1) {
+          return {
+            from: () => ({ where: () => ({ limit: async () => [{ id: "bot-a" }] }) }),
+          };
+        }
+        if (selectCall === 2) {
+          return {
+            from: () => ({
+              where: (expression: SQL) => {
+                listWhere = expression;
+                return {
+                  orderBy: () => ({ limit: () => ({ offset: async () => [] }) }),
+                };
+              },
+            }),
+          };
+        }
+        return {
+          from: () => ({
+            where: async (expression: SQL) => {
+              metricsWhere = expression;
+              return [
+                {
+                  total: 8,
+                  labeledCount: 0,
+                  evaluatedCount: 3,
+                  labelAnswerCount: 2,
+                  labelSilentCount: 1,
+                  falsePositiveCount: 1,
+                  falseNegativeCount: 1,
+                  latencyP50Ms: 50,
+                  latencyP95Ms: 95,
+                  classifierCostUsd: 0.2,
+                  classifierCostKnownCount: 6,
+                  classifierCostUnknownCount: 2,
+                  errorCount: 4,
+                  timeoutCount: 3,
+                  inputTokens: 100,
+                },
+              ];
+            },
+          }),
+        };
+      }),
+      update: () => ({ set: () => ({ where: async () => undefined }) }),
+    } as unknown as Database;
+    const service = new EngagementSampleService(db);
+    const createdFrom = new Date("2026-09-20T00:00:00.000Z");
+    const createdTo = new Date("2026-09-21T00:00:00.000Z");
+
+    const result = await service.list({
+      botId: "bot-a",
+      page: 1,
+      pageSize: 20,
+      label: "unreviewed",
+      createdFrom,
+      createdTo,
+    });
+
+    expect(result?.metrics).toMatchObject({ total: 8, errorCount: 4, timeoutCount: 3 });
+    const dialect = new PgDialect();
+    const listQuery = dialect.sqlToQuery(listWhere!);
+    const metricsQuery = dialect.sqlToQuery(metricsWhere!);
+    expect(listQuery.sql).toContain('"engagement_samples"."label" is null');
+    expect(listQuery.sql).toContain('"engagement_samples"."created_at" >=');
+    expect(listQuery.sql).toContain('"engagement_samples"."created_at" <=');
+    expect(listQuery.params).toEqual(["bot-a", createdFrom.toISOString(), createdTo.toISOString()]);
+    expect(metricsQuery).toEqual(listQuery);
+  });
+
+  it("updates only rows that match both the bot scope and requested ids", async () => {
+    let whereExpression: SQL | undefined;
+    const returning = vi.fn(async () => [{ id: 3 }, { id: 8 }]);
+    const where = vi.fn((expression: SQL) => {
+      whereExpression = expression;
+      return { returning };
+    });
+    const set = vi.fn(() => ({ where }));
+    const db = { update: vi.fn(() => ({ set })) } as unknown as Database;
+    const service = new EngagementSampleService(db);
+
+    const result = await service.updateLabels("bot-a", [3, 8, 99], null);
+
+    expect(set).toHaveBeenCalledWith({ label: null });
+    expect(result).toEqual({ ids: [3, 8], count: 2 });
+    const compiled = new PgDialect().sqlToQuery(whereExpression!);
+    expect(compiled.sql).toContain('"engagement_samples"."bot_id" = $1');
+    expect(compiled.sql).toContain('"engagement_samples"."id" in ($2, $3, $4)');
+    expect(compiled.params).toEqual(["bot-a", 3, 8, 99]);
   });
 });
 

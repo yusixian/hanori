@@ -1,14 +1,17 @@
 import { i18n } from "@/i18n";
 import { engagementSamples } from "@/i18n/locales/en/engagement-samples";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import "@/style.css";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { EngagementSamplesSection } from "./engagement-samples-section";
 
 const sample = {
   id: 17,
+  botId: "bot-1",
   chatId: -100123,
   messageId: 41,
+  source: "jev",
   mode: "shadow",
   style: "natural",
   choice: "join",
@@ -32,44 +35,96 @@ const sample = {
   latencyMs: 87,
   inputTokens: 120,
   estimatedCostUsd: 0.00042,
-  context: null,
-  contextExpiresAt: "2026-09-20T00:00:00.000Z",
-  contextPurgedAt: "2026-09-20T00:00:00.000Z",
+  context: [
+    { messageId: 41, userId: 7, text: "Should the bot join this conversation?", timestamp: 1 },
+    {
+      messageId: 42,
+      userId: 0,
+      text: "Later bot content must not become the summary",
+      timestamp: 2,
+      isBot: true,
+    },
+  ],
+  contextExpiresAt: "2099-09-28T00:00:00.000Z",
+  contextPurgedAt: null,
   pricingSource: "typesafe-official-pricing-manual",
   pricingSourceUrl: "https://docs.typesafe.ai/models",
   pricingObservedAt: "2026-09-21T00:00:00.000Z",
   errorCategory: "timeout",
-  label: null,
+  label: null as "answer" | "silent" | "uncertain" | null,
   createdAt: "2026-09-21T08:00:00.000Z",
+};
+
+const secondSample = {
+  ...sample,
+  id: 18,
+  messageId: 51,
+  engagement: "answer",
+  actualTrigger: null,
+  context: [{ messageId: 51, userId: 8, text: "A second current message", timestamp: 3 }],
+  errorCategory: null,
+};
+
+const localSample = {
+  ...sample,
+  id: 19,
+  messageId: 61,
+  source: "local",
+  probabilities: null,
+  confidence: null,
+  reasonCode: "keyword_direct",
+  context: [{ messageId: 61, userId: 9, text: "Local keyword matched", timestamp: 4 }],
+  errorCategory: null,
 };
 
 const legacySample = {
   ...sample,
-  id: 16,
-  messageId: 40,
-  choice: "continue",
-  engagement: "answer",
-  confidence: 0.88,
-  probabilities: { continue: 0.88, join: 0.07, silent: 0.05 },
-  reasonCode: "jev_answer",
-  actualTrigger: null,
+  id: 20,
+  messageId: 71,
+  probabilities: { continue: 0.2, join: 0.3, silent: 0.5 },
+  confidence: 0.5,
+  context: [{ messageId: 71, userId: 10, text: "A legacy decision", timestamp: 5 }],
+  errorCategory: null,
 };
 
-const twoRouteSample = {
-  ...sample,
-  id: 15,
-  messageId: 39,
-  engagement: "answer",
-  confidence: 0.9,
-  probabilities: { answer: 0.9, silent: 0.1, continue: 0.45, join: 0.55 },
-  reasonCode: "jev_answer",
-  actualTrigger: null,
+const metrics = {
+  total: 3,
+  labeledCount: 2,
+  evaluatedCount: 2,
+  labelAnswerCount: 1,
+  labelSilentCount: 1,
+  falsePositiveCount: 1,
+  falseNegativeCount: 0,
+  falsePositiveRate: 1,
+  falseNegativeRate: 0,
+  latencyP50Ms: 80,
+  latencyP95Ms: 112,
+  classifierCostUsd: 0.0012,
+  classifierCostKnownCount: 3,
+  classifierCostUnknownCount: 2,
+  errorCount: 1,
+  timeoutCount: 1,
+  inputTokens: 360,
+  actorCostStatus: "unpriced",
+  actorCostReason: "not priced",
+  actorUsagePath: "/api/usage/summary?botId=bot-1",
 };
 
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
+  });
+}
+
+function listResponse(items: Array<typeof sample>, total = items.length) {
+  return response({
+    ok: true,
+    items,
+    total,
+    page: 1,
+    pageSize: 20,
+    metrics: { ...metrics, total },
   });
 }
 
@@ -83,236 +138,372 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-test("reviews expired shadow samples, filters them, labels them, and paginates", async () => {
-  const requests: Array<{ url: string; init?: RequestInit }> = [];
-  let currentLabel: "answer" | null = null;
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    requests.push({ url, init });
-    if (url.includes("/engagement-samples/17") && init?.method === "PATCH") {
-      expect(JSON.parse(String(init.body))).toEqual({ label: "answer" });
-      currentLabel = "answer";
-      return response({ ok: true, data: { ...sample, label: currentLabel } });
-    }
-    if (url.includes("/engagement-samples")) {
-      const parsed = new URL(url, window.location.origin);
-      const secondPage = parsed.searchParams.get("page") === "2";
-      return response({
-        ok: true,
-        items: secondPage
-          ? [{ ...sample, id: 18, messageId: 42, context: [] }]
-          : [{ ...sample, label: currentLabel }, twoRouteSample, legacySample],
-        total: 21,
-        page: secondPage ? 2 : 1,
-        pageSize: 20,
-        metrics: {
-          total: 21,
-          labeledCount: 1,
-          evaluatedCount: 1,
-          latencyP95Ms: 112,
-          classifierCostUsd: 0.0012,
-          classifierCostKnownCount: 3,
-          classifierCostUnknownCount: 2,
-        },
-      });
-    }
-    return response({ ok: false, error: "Not found" }, 404);
-  });
-  vi.stubGlobal("fetch", fetchMock);
+test("shows the exact sampled message, compact decisions, full metrics, and local rules", async () => {
+  await page.viewport(1440, 900);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      listResponse([sample, secondSample, localSample, legacySample] as Array<typeof sample>),
+    ),
+  );
 
   render(<EngagementSamplesSection botId="bot-1" />);
 
   await expect
     .element(page.getByRole("heading", { name: "Engagement review samples" }))
     .toBeVisible();
-  const currentSampleRow = page.getByRole("article").nth(0);
-  const twoRouteSampleRow = page.getByRole("article").nth(1);
-  const legacySampleRow = page.getByRole("article").nth(2);
+  const rows = page.getByRole("article");
+  const current = rows.nth(0);
+  const local = rows.nth(2);
   await expect
-    .element(currentSampleRow.getByText("Context expired", { exact: true }))
+    .element(current.getByText("Should the bot join this conversation?", { exact: true }).nth(0))
     .toBeVisible();
   await expect
-    .element(currentSampleRow.getByText("Participation route: Join", { exact: true }))
+    .element(current.getByText("Admitted to the reply pipeline", { exact: true }))
     .toBeVisible();
   await expect
-    .element(currentSampleRow.getByText("Policy result: silent", { exact: true }))
+    .element(current.getByText("Reason: Below policy threshold", { exact: false }))
     .toBeVisible();
-  await expect
-    .element(currentSampleRow.getByText("Reply actually admitted", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(currentSampleRow.getByText("Reply-decision confidence: 60%", { exact: true }))
-    .toBeVisible();
-  await expect.element(currentSampleRow.getByText("Reply 60%", { exact: true })).toBeVisible();
-  await expect.element(currentSampleRow.getByText("Silent 40%", { exact: true })).toBeVisible();
-  await expect
-    .element(currentSampleRow.getByText("Direct address 20%", { exact: true }))
-    .toBeVisible();
-  await expect.element(currentSampleRow.getByText("Continue 30%", { exact: true })).toBeVisible();
-  await expect.element(currentSampleRow.getByText("Join 50%", { exact: true })).toBeVisible();
-  await expect
-    .element(
-      currentSampleRow.getByText(
-        "Below policy threshold: reply-decision confidence 60%, 80% required",
-        { exact: true },
-      ),
-    )
-    .toBeVisible();
-  await expect
-    .element(twoRouteSampleRow.getByText("Direct address —", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(legacySampleRow.getByText("Legacy JEV choice: Continue", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(legacySampleRow.getByText("Legacy choice confidence: 88%", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(legacySampleRow.getByText("Legacy model probabilities", { exact: true }))
-    .toBeVisible();
-  await expect.element(legacySampleRow.getByText("Continue 88%", { exact: true })).toBeVisible();
-  await expect.element(legacySampleRow.getByText("Join 7%", { exact: true })).toBeVisible();
-  await expect.element(legacySampleRow.getByText("Silent 5%", { exact: true })).toBeVisible();
+  await expect.element(local.getByText("Local rule: Join", { exact: true })).toBeVisible();
+  expect(local.element().textContent).not.toContain("Legacy JEV choice");
+  expect(page.getByText("Records").element().parentElement?.textContent).toContain("4");
+  expect(page.getByText("Errors / timeouts").element().parentElement?.textContent).toContain(
+    "1 / 1",
+  );
+  await page.viewport(390, 844);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
     document.documentElement.clientWidth,
   );
-  await expect.element(page.getByText("$0.0012 known + 2 unknown", { exact: true })).toBeVisible();
   await expect
-    .element(currentSampleRow.getByText("Classifier $0.0004", { exact: true }))
+    .element(page.getByRole("article").nth(0).getByRole("button", { name: "Should answer" }))
     .toBeVisible();
-  await expect
-    .element(
-      page.getByText(
-        "Classifier cost only; reply usage is tracked separately and is not priced here.",
-      ),
-    )
-    .toBeVisible();
+  await page.viewport(1440, 900);
+  window.scrollTo(0, 0);
 
-  const details = currentSampleRow.getByText("Show bounded context", { exact: true });
-  await details.click();
+  await page.getByText("Human evaluation · 2 labeled JEV samples", { exact: true }).click();
+  await expect.element(page.getByText("1/1", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("0/1", { exact: true })).toBeVisible();
+
+  await current.getByText("Details, context, probabilities, and cost", { exact: true }).click();
+  await expect.element(current.getByText("Reply-decision probabilities")).toBeVisible();
+  await expect.element(current.getByText("Reply 60%", { exact: true })).toBeVisible();
+  await expect.element(current.getByText("Silent 40%", { exact: true })).toBeVisible();
+  await expect.element(current.getByText("Participation probabilities")).toBeVisible();
+  await expect.element(current.getByText("Direct address 20%", { exact: true })).toBeVisible();
+  await expect.element(current.getByText("Continue 30%", { exact: true })).toBeVisible();
+  await expect.element(current.getByText("Join 50%", { exact: true })).toBeVisible();
   await expect
-    .element(currentSampleRow.getByText("This context has expired and is no longer displayed."))
+    .element(current.getByText("Later bot content must not become the summary", { exact: true }))
     .toBeVisible();
-  await expect.element(currentSampleRow.getByText("Keep jokes light")).toBeVisible();
+  await expect.element(current.getByText("Keep jokes light", { exact: false })).toBeVisible();
+
+  const legacy = rows.nth(3);
+  await legacy.getByText("Details, context, probabilities, and cost", { exact: true }).click();
+  await expect.element(legacy.getByText("Legacy model probabilities")).toBeVisible();
+  expect(legacy.element().textContent).not.toContain("Reply-decision probabilities");
+  expect(legacy.element().textContent).not.toContain("Participation probabilities");
+});
+
+test("clamps long summaries at 390px, wraps URLs, and hides expired context", async () => {
+  const longText = `${"这是需要保持紧凑显示的长中文消息。".repeat(60)}https://example.com/${"segment".repeat(160)}`;
+  const expiredText = "Expired context must never remain visible in the summary.";
+  const longSample = {
+    ...sample,
+    id: 31,
+    messageId: 301,
+    context: [{ messageId: 301, userId: 11, text: longText, timestamp: 6 }],
+  };
+  const expiredSample = {
+    ...sample,
+    id: 32,
+    messageId: 302,
+    context: [{ messageId: 302, userId: 12, text: expiredText, timestamp: 7 }],
+    contextExpiresAt: "2020-01-01T00:00:00.000Z",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => listResponse([longSample, expiredSample] as unknown as Array<typeof sample>)),
+  );
+
+  await page.viewport(390, 844);
+  render(<EngagementSamplesSection botId="bot-1" />);
+
+  const summaries = page.getByTestId("engagement-message-summary");
+  await expect.element(summaries.nth(0)).toBeVisible();
+  expect(summaries.nth(0).element().className).toContain("line-clamp-3");
+  expect(summaries.nth(0).element().className).toContain("[overflow-wrap:anywhere]");
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+    document.documentElement.clientWidth,
+  );
+
+  const longRow = page.getByRole("article").nth(0);
+  await longRow.getByText("Details, context, probabilities, and cost", { exact: true }).click();
+  await expect.element(longRow.getByText(longText, { exact: true }).nth(1)).toBeVisible();
+
+  await expect
+    .element(page.getByText("The current message context has expired", { exact: false }))
+    .toBeVisible();
+  expect(document.body.textContent).not.toContain(expiredText);
+
+  await page.viewport(1440, 900);
+});
+
+test("selects only the current page, applies batch labels and clear, and retains selection on failure", async () => {
+  const labels = new Map<number, "answer" | "silent" | "uncertain" | null>();
+  let failBatch = false;
+  const requests: Array<{ url: string; body?: unknown }> = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH" && url.endsWith("/engagement-samples")) {
+        const body = JSON.parse(String(init.body)) as {
+          ids: number[];
+          label: "answer" | "silent" | "uncertain" | null;
+        };
+        requests.push({ url, body });
+        if (failBatch) return response({ ok: false, error: "failed" }, 500);
+        for (const id of body.ids) labels.set(id, body.label);
+        return response({ ok: true, ids: body.ids, count: body.ids.length });
+      }
+      const items = [sample, secondSample].map((item) => ({
+        ...item,
+        label: labels.get(item.id) ?? null,
+      }));
+      return listResponse(items as Array<typeof sample>);
+    }),
+  );
+
+  render(<EngagementSamplesSection botId="bot-1" />);
+  await expect.element(page.getByText("2 samples", { exact: true })).toBeVisible();
+
+  await page.getByRole("checkbox", { name: "Select message 41" }).click();
+  await expect
+    .element(page.getByRole("checkbox", { name: "Select all samples on this page" }))
+    .toHaveAttribute("aria-checked", "mixed");
+  await page.getByRole("checkbox", { name: "Select all samples on this page" }).click();
+  await expect.element(page.getByText("2 selected", { exact: true })).toBeVisible();
+  await page
+    .getByRole("group", { name: "Review actions" })
+    .nth(0)
+    .getByRole("button", { name: "Should answer" })
+    .click();
+  await vi.waitFor(() => expect(requests.at(-1)?.body).toEqual({ ids: [17, 18], label: "answer" }));
+  await expect.element(page.getByText("0 selected", { exact: true })).toBeVisible();
+
+  await page.getByRole("checkbox", { name: "Select message 41" }).click();
+  await page
+    .getByRole("group", { name: "Review actions" })
+    .nth(0)
+    .getByRole("button", { name: "Clear" })
+    .click();
+  await vi.waitFor(() => expect(requests.at(-1)?.body).toEqual({ ids: [17], label: null }));
+
+  await page.getByRole("checkbox", { name: "Select all samples on this page" }).click();
+  await expect.element(page.getByText("2 selected", { exact: true })).toBeVisible();
+  failBatch = true;
+  const silentBatchButton = page
+    .getByRole("group", { name: "Review actions" })
+    .nth(0)
+    .getByRole("button", { name: "Should stay silent" });
+  await expect.element(silentBatchButton).toBeEnabled();
+  await silentBatchButton.click();
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("The review label could not be saved.");
+  await expect.element(page.getByText("2 selected", { exact: true })).toBeVisible();
 
   await page.getByRole("combobox", { name: "Decision mode" }).click();
   await page.getByRole("option", { name: "Active" }).click();
-  await vi.waitFor(() => {
-    expect(
-      requests.some(
-        ({ url }) => new URL(url, window.location.origin).searchParams.get("mode") === "active",
-      ),
-    ).toBe(true);
-  });
-
-  await page.getByRole("combobox", { name: "Policy result" }).click();
-  await page.getByRole("option", { name: "Policy result: reply" }).click();
-  await vi.waitFor(() => {
-    expect(
-      requests.some(
-        ({ url }) =>
-          new URL(url, window.location.origin).searchParams.get("engagement") === "answer",
-      ),
-    ).toBe(true);
-  });
-
-  await page.getByRole("combobox", { name: "Actual admission" }).click();
-  await page.getByRole("option", { name: "Reply actually admitted" }).click();
-  await vi.waitFor(() => {
-    expect(
-      requests.some(
-        ({ url }) =>
-          new URL(url, window.location.origin).searchParams.get("actualOutcome") === "answer",
-      ),
-    ).toBe(true);
-  });
-
-  await page.getByRole("combobox", { name: "Review label for message 41" }).click();
-  await page.getByRole("option", { name: "Should answer" }).click();
-  await vi.waitFor(() => {
-    expect(requests.some(({ init }) => init?.method === "PATCH")).toBe(true);
-  });
-  await expect
-    .element(page.getByRole("combobox", { name: "Review label for message 41" }))
-    .toHaveTextContent("Should answer");
-
-  await page.getByRole("button", { name: "Next page" }).click();
-  await vi.waitFor(() => {
-    expect(
-      requests.some(
-        ({ url }) => new URL(url, window.location.origin).searchParams.get("page") === "2",
-      ),
-    ).toBe(true);
-  });
-  await expect.element(page.getByText("Message 42", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("0 selected", { exact: true })).toBeVisible();
 });
 
-test("reloads a saved label with the latest filters", async () => {
-  let finishPatch!: (response: Response) => void;
-  const pendingPatch = new Promise<Response>((resolve) => {
-    finishPatch = resolve;
+test("ignores a late old-bot response and converges an emptied last unreviewed page", async () => {
+  let resolveOld!: (response: Response) => void;
+  const oldRequest = new Promise<Response>((resolve) => {
+    resolveOld = resolve;
   });
-  const getModes: Array<string | null> = [];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
-    if (url.includes("/engagement-samples/17") && init?.method === "PATCH") {
-      return pendingPatch;
-    }
-    if (url.includes("/engagement-samples")) {
-      const mode = new URL(url, window.location.origin).searchParams.get("mode");
-      getModes.push(mode);
+  let pageTwoReviewed = false;
+  const getPages: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/bot-old/")) return oldRequest;
+      if (init?.method === "PATCH" && url.includes("/engagement-samples/18")) {
+        pageTwoReviewed = true;
+        return response({ ok: true, data: { ...secondSample, label: "answer" } });
+      }
+      const parsed = new URL(url, window.location.origin);
+      const requestedPage = parsed.searchParams.get("page") ?? "1";
+      getPages.push(requestedPage);
+      if (requestedPage === "2" && !pageTwoReviewed) {
+        return response({
+          ok: true,
+          items: [secondSample],
+          total: 21,
+          page: 2,
+          pageSize: 20,
+          metrics: { ...metrics, total: 21 },
+        });
+      }
       return response({
         ok: true,
-        items: [{ ...sample, mode: mode ?? "shadow", messageId: mode === "active" ? 99 : 41 }],
-        total: 1,
+        items: [sample],
+        total: pageTwoReviewed ? 20 : 21,
         page: 1,
         pageSize: 20,
-        metrics: { labeledCount: 0 },
+        metrics: { ...metrics, total: pageTwoReviewed ? 20 : 21 },
       });
-    }
-    return response({ ok: false, error: "Not found" }, 404);
+    }),
+  );
+
+  const view = await render(<EngagementSamplesSection botId="bot-old" />);
+  await view.rerender(<EngagementSamplesSection botId="bot-new" />);
+  await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
+  resolveOld(listResponse([{ ...localSample, messageId: 999 }] as unknown as Array<typeof sample>));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.body.textContent).not.toContain("Message 999");
+
+  await page.getByRole("combobox", { name: "Review label" }).click();
+  await page.getByRole("option", { name: "Unreviewed" }).click();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect.element(page.getByText("Message 51", { exact: true })).toBeVisible();
+  const rowActions = page.getByRole("article").getByRole("group", { name: "Review actions" });
+  await rowActions.getByRole("button", { name: "Should answer" }).click();
+  await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
+  expect(getPages).toContain("2");
+  expect(getPages.at(-1)).toBe("1");
+});
+
+test("validates text and time filters without starting request loops", async () => {
+  const requests: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      return listResponse([sample]);
+    }),
+  );
+
+  render(<EngagementSamplesSection botId="bot-1" />);
+  await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
+  const initialRequests = requests.length;
+
+  await page.getByRole("textbox", { name: "Chat ID" }).fill("not-a-chat");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("safe whole number");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  expect(requests).toHaveLength(initialRequests);
+
+  await page.getByRole("textbox", { name: "Chat ID" }).fill("-100123");
+  await vi.waitFor(() =>
+    expect(
+      requests.some(
+        (url) => new URL(url, window.location.origin).searchParams.get("chatId") === "-100123",
+      ),
+    ).toBe(true),
+  );
+
+  await page.getByText("More filters", { exact: true }).click();
+  await page.getByLabelText("From").fill("2026-09-22T00:00");
+  await page.getByLabelText("To").fill("2026-09-21T00:00");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("end time");
+});
+
+test("blocks review writes until the current filter collection is presented", async () => {
+  let resolveOldFilter!: (response: Response) => void;
+  const oldFilterRequest = new Promise<Response>((resolve) => {
+    resolveOldFilter = resolve;
   });
-  vi.stubGlobal("fetch", fetchMock);
+  const requests: string[] = [];
+  const patches: unknown[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push(url);
+      if (init?.method === "PATCH") {
+        patches.push(JSON.parse(String(init.body)));
+        return response({ ok: true, ids: [sample.id], count: 1 });
+      }
+      const chatId = new URL(url, window.location.origin).searchParams.get("chatId");
+      if (chatId === "-100123") return oldFilterRequest;
+      if (chatId === "-200") return listResponse([secondSample] as unknown as Array<typeof sample>);
+      return listResponse([sample]);
+    }),
+  );
 
   render(<EngagementSamplesSection botId="bot-1" />);
   await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
 
-  await page.getByRole("combobox", { name: "Review label for message 41" }).click();
-  await page.getByRole("option", { name: "Should answer" }).click();
+  const chatFilter = page.getByRole("textbox", { name: "Chat ID" });
+  await chatFilter.fill("-100123");
+  await expect
+    .element(page.getByRole("status"))
+    .toHaveTextContent("Review actions are temporarily unavailable");
+  const oldRowAnswer = page.getByRole("article").getByRole("button", { name: "Should answer" });
+  await expect.element(oldRowAnswer).toBeDisabled();
+  (oldRowAnswer.element() as HTMLElement).click();
+  expect(patches).toHaveLength(0);
+
+  await vi.waitFor(() =>
+    expect(
+      requests.some(
+        (url) => new URL(url, window.location.origin).searchParams.get("chatId") === "-100123",
+      ),
+    ).toBe(true),
+  );
+  await expect.element(oldRowAnswer).toBeDisabled();
+
+  await chatFilter.fill("-200");
+  await expect.element(oldRowAnswer).toBeDisabled();
+  await expect.element(page.getByText("Message 51", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("article").getByRole("button", { name: "Should answer" }))
+    .toBeEnabled();
+
+  resolveOldFilter(
+    listResponse([{ ...localSample, messageId: 999 }] as unknown as Array<typeof sample>),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(document.body.textContent).not.toContain("Message 999");
+
+  await chatFilter.fill("not-a-chat");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("safe whole number");
+  const invalidRowAnswer = page.getByRole("article").getByRole("button", { name: "Should answer" });
+  await expect.element(invalidRowAnswer).toBeDisabled();
+  (invalidRowAnswer.element() as HTMLElement).click();
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  expect(patches).toHaveLength(0);
+});
+
+test("does not apply a late label response to a newly filtered collection", async () => {
+  let resolvePatch!: (response: Response) => void;
+  const pendingPatch = new Promise<Response>((resolve) => {
+    resolvePatch = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "PATCH") return pendingPatch;
+      const mode = new URL(url, window.location.origin).searchParams.get("mode");
+      const item = mode === "active" ? { ...sample, messageId: 99, mode: "active" } : sample;
+      return listResponse([item] as Array<typeof sample>);
+    }),
+  );
+
+  render(<EngagementSamplesSection botId="bot-1" />);
+  await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
+  await page.getByRole("article").getByRole("button", { name: "Should answer" }).click();
   await page.getByRole("combobox", { name: "Decision mode" }).click();
   await page.getByRole("option", { name: "Active" }).click();
   await expect.element(page.getByText("Message 99", { exact: true })).toBeVisible();
 
-  finishPatch(response({ ok: true, data: { ...sample, label: "answer" } }));
-  await vi.waitFor(() => {
-    expect(getModes.at(-1)).toBe("active");
-  });
-  await expect.element(page.getByText("Message 99", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("Message 41", { exact: true })).not.toBeInTheDocument();
-});
-
-test("shows the empty and failed states", async () => {
-  let shouldFail = false;
-  const fetchMock = vi.fn(async () => {
-    if (shouldFail) return response({ ok: false, error: "boom" }, 500);
-    return response({
-      ok: true,
-      items: [],
-      total: 0,
-      page: 1,
-      pageSize: 20,
-      metrics: { labeledCount: 0 },
-    });
-  });
-  vi.stubGlobal("fetch", fetchMock);
-
-  render(<EngagementSamplesSection botId="bot-1" />);
-  await expect.element(page.getByText("No engagement samples yet.", { exact: true })).toBeVisible();
-
-  shouldFail = true;
-  await page.getByRole("textbox", { name: "Chat ID" }).fill("42");
-  await expect.element(page.getByRole("alert")).toBeVisible();
-  await expect
-    .element(page.getByText("Samples could not be loaded.", { exact: true }))
-    .toBeVisible();
+  const lateResponse = response({ ok: true, data: { ...sample, label: "answer" } });
+  const jsonSpy = vi.spyOn(lateResponse, "json");
+  resolvePatch(lateResponse);
+  await expect.poll(() => jsonSpy).toHaveBeenCalledOnce();
+  expect(document.body.textContent).not.toContain("Review label saved.");
+  await expect.element(page.getByText("Unreviewed", { exact: true })).toBeVisible();
 });

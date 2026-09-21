@@ -205,6 +205,12 @@ export const botData = {
     description:
       "Dry-run the current bot configuration and inspect model-stream events, error chains, and replayable run records.",
     ownerOnly: "Owner only",
+    ownerOrAdmin: "Owner or admin",
+    tabs: {
+      ariaLabel: "Debugger sections",
+      runs: "Run debugger",
+      engagement: "Engagement decisions",
+    },
     newRun: "New Run",
     messageMode: "Message",
     rawMode: "Raw Channel Event",

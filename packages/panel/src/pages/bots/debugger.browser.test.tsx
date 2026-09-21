@@ -110,6 +110,69 @@ test("offers message and raw Channel event dry-runs", async () => {
   await expect.element(page.getByRole("button", { name: "Run dry-run" })).toBeVisible();
 });
 
+test("lets admins deep-link to engagement decisions without requesting owner-only APIs", async () => {
+  const requestedUrls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (isBotDetailRequest(input)) return botDetailResponse();
+      if (url.includes("/engagement-samples")) {
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            items: [],
+            total: 0,
+            page: 1,
+            pageSize: 20,
+            metrics: {
+              total: 0,
+              labeledCount: 0,
+              evaluatedCount: 0,
+              errorCount: 0,
+              timeoutCount: 0,
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 });
+    }),
+  );
+
+  render(
+    <MemoryRouter initialEntries={["/bots/test-id/debugger?tab=engagement"]}>
+      <Routes>
+        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  await expect
+    .element(page.getByRole("tab", { name: "Engagement decisions" }))
+    .toHaveAttribute("aria-selected", "true");
+  await expect
+    .element(page.getByRole("heading", { name: "Engagement review samples" }))
+    .toBeVisible();
+  await expect.element(page.getByText("Owner or admin", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("New Run", { exact: true })).not.toBeVisible();
+  expect(requestedUrls.some((url) => url.endsWith("/api/bots/test-id"))).toBe(false);
+  expect(requestedUrls.some((url) => url.includes("/api/bots/test-id/runs"))).toBe(false);
+  expect(requestedUrls.some((url) => url.includes("/api/bots/test-id/debug"))).toBe(false);
+
+  await page.getByRole("tab", { name: "Run debugger" }).click();
+  await expect.element(page.getByText("New Run", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Owner only", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("tab", { name: "Run debugger" }))
+    .toHaveAttribute("aria-selected", "true");
+  await vi.waitFor(() => {
+    expect(requestedUrls.some((url) => url.endsWith("/api/bots/test-id"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("/api/bots/test-id/runs"))).toBe(true);
+  });
+});
+
 test("strictly sends a custom Telegram Rich Message from the debugger", async () => {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);

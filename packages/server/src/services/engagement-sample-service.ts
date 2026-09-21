@@ -6,7 +6,7 @@ import type {
   EngagementPolicy,
   EngagementSample,
 } from "@cos-tool-bot/shared";
-import { and, count, desc, eq, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Logger } from "pino";
 import { redactDiagnostic } from "./run-redaction.js";
@@ -33,7 +33,9 @@ export interface EngagementSampleFilters {
   actualTrigger?: string;
   actualOutcome?: "answer" | "silent";
   errorCategory?: string;
-  label?: EngagementLabel;
+  label?: EngagementLabel | "unreviewed";
+  createdFrom?: Date;
+  createdTo?: Date;
 }
 
 export interface EngagementSampleListInput extends EngagementSampleFilters {
@@ -273,6 +275,14 @@ export class EngagementSampleService {
             sql<number>`(count(*) filter (where ${engagementSamples.source} <> 'local' and ${engagementSamples.estimatedCostUsd} is null))::int`.mapWith(
               Number,
             ),
+          errorCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.errorCategory} is not null))::int`.mapWith(
+              Number,
+            ),
+          timeoutCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.errorCategory} = 'timeout'))::int`.mapWith(
+              Number,
+            ),
           inputTokens:
             sql<number>`coalesce(sum(${engagementSamples.inputTokens}) filter (where ${engagementSamples.source} <> 'local'), 0)::double precision`.mapWith(
               Number,
@@ -309,6 +319,8 @@ export class EngagementSampleService {
         classifierCostUsd: toNumber(metrics?.classifierCostUsd),
         classifierCostKnownCount: toNumber(metrics?.classifierCostKnownCount),
         classifierCostUnknownCount: toNumber(metrics?.classifierCostUnknownCount),
+        errorCount: toNumber(metrics?.errorCount),
+        timeoutCount: toNumber(metrics?.timeoutCount),
         inputTokens: toNumber(metrics?.inputTokens),
         actorCostStatus: "unpriced" as const,
         actorCostReason: "Token usage records do not contain model pricing",
@@ -317,13 +329,23 @@ export class EngagementSampleService {
     };
   }
 
-  async updateLabel(botId: string, sampleId: number, label: EngagementLabel) {
+  async updateLabel(botId: string, sampleId: number, label: EngagementLabel | null) {
     const [row] = await this.db
       .update(engagementSamples)
       .set({ label })
       .where(and(eq(engagementSamples.botId, botId), eq(engagementSamples.id, sampleId)))
       .returning();
     return row ? projectEngagementSampleRow(row, this.now()) : null;
+  }
+
+  async updateLabels(botId: string, sampleIds: readonly number[], label: EngagementLabel | null) {
+    const rows = await this.db
+      .update(engagementSamples)
+      .set({ label })
+      .where(and(eq(engagementSamples.botId, botId), inArray(engagementSamples.id, [...sampleIds])))
+      .returning({ id: engagementSamples.id });
+    const ids = rows.map((row) => row.id);
+    return { ids, count: ids.length };
   }
 
   async cleanupExpiredContext(now = this.now()): Promise<void> {
@@ -351,7 +373,10 @@ export class EngagementSampleService {
       conditions.push(eq(engagementSamples.actualTrigger, input.actualTrigger));
     if (input.errorCategory)
       conditions.push(eq(engagementSamples.errorCategory, input.errorCategory));
-    if (input.label) conditions.push(eq(engagementSamples.label, input.label));
+    if (input.label === "unreviewed") conditions.push(isNull(engagementSamples.label));
+    else if (input.label) conditions.push(eq(engagementSamples.label, input.label));
+    if (input.createdFrom) conditions.push(gte(engagementSamples.createdAt, input.createdFrom));
+    if (input.createdTo) conditions.push(lte(engagementSamples.createdAt, input.createdTo));
     return conditions;
   }
 }

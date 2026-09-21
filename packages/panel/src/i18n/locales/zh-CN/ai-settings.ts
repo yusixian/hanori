@@ -39,6 +39,8 @@ export const aiSettings = {
     timeoutMs: "判断超时（毫秒）",
     confidenceHelp:
       "是否回复与参与方式分别判断，参与方式不确定不会直接导致沉默。JEV 选择回复且回复判断置信度达到此配置阈值时才允许回复；降低阈值会增加接话，建议结合人工标记校准。“直接招呼”和“延续对话”跳过冷却均采用固定 0.8 的参与方式置信度门槛；不足时按主动加入处理，仍受冷却限制。置信度表示模型判断的确定程度，不是实测准确率。上下文限制为最近 5 分钟、最多 6,000 字符；判断失败时沿用原有触发规则。",
+    reviewRecords: "查看决策记录",
+    reviewRecordsHelp: "前往 Bot 调试器复核并标注接话决策样本。",
     apiKey: "TypeSafe API Key",
     keyConfigured: "已配置，留空保留现有密钥",
     keyMissing: "输入 TypeSafe 密钥",
