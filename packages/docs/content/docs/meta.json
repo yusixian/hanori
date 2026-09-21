@@ -1,0 +1,11 @@
+{
+  "pages": [
+    "index",
+    "getting-started",
+    "guides",
+    "integrations",
+    "self-hosting",
+    "reference",
+    "changelog"
+  ]
+}

@@ -1,0 +1,231 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+:root {
+  --docs-sans:
+    "Avenir Next", Avenir, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --docs-serif: "Iowan Old Style", "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+  --color-fd-background: hsl(42 38% 96%);
+  --color-fd-foreground: hsl(174 19% 13%);
+  --color-fd-muted: hsl(40 24% 91%);
+  --color-fd-muted-foreground: hsl(168 8% 40%);
+  --color-fd-popover: hsl(42 42% 98%);
+  --color-fd-popover-foreground: hsl(174 19% 13%);
+  --color-fd-card: hsl(42 30% 97%);
+  --color-fd-card-foreground: hsl(174 19% 13%);
+  --color-fd-border: hsl(39 19% 83%);
+  --color-fd-primary: hsl(171 61% 27%);
+  --color-fd-primary-foreground: hsl(42 44% 98%);
+  --color-fd-secondary: hsl(39 24% 90%);
+  --color-fd-secondary-foreground: hsl(174 19% 16%);
+  --color-fd-accent: hsl(168 29% 89%);
+  --color-fd-accent-foreground: hsl(172 45% 20%);
+  --color-fd-ring: hsl(171 52% 36%);
+  color-scheme: light;
+}
+
+.dark {
+  --color-fd-background: hsl(172 16% 9%);
+  --color-fd-foreground: hsl(42 30% 92%);
+  --color-fd-muted: hsl(170 13% 14%);
+  --color-fd-muted-foreground: hsl(40 10% 64%);
+  --color-fd-popover: hsl(172 17% 11%);
+  --color-fd-popover-foreground: hsl(42 30% 92%);
+  --color-fd-card: hsl(172 15% 12%);
+  --color-fd-card-foreground: hsl(42 30% 92%);
+  --color-fd-border: hsl(168 10% 22%);
+  --color-fd-primary: hsl(166 47% 62%);
+  --color-fd-primary-foreground: hsl(172 22% 10%);
+  --color-fd-secondary: hsl(171 13% 17%);
+  --color-fd-secondary-foreground: hsl(42 24% 88%);
+  --color-fd-accent: hsl(170 21% 18%);
+  --color-fd-accent-foreground: hsl(166 44% 70%);
+  --color-fd-ring: hsl(166 45% 55%);
+  color-scheme: dark;
+}
+
+html {
+  font-family: var(--docs-sans);
+  background: var(--color-fd-background);
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 12% 0%,
+      color-mix(in srgb, var(--color-fd-primary) 8%, transparent),
+      transparent 30rem
+    ),
+    linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(100% - 1px),
+      color-mix(in srgb, var(--color-fd-border) 32%, transparent) calc(100% - 1px)
+    );
+  background-size:
+    auto,
+    6rem 100%;
+  color: var(--color-fd-foreground);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-fd-primary) 23%, transparent);
+}
+
+.docs-wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.docs-wordmark__mark {
+  display: grid;
+  width: 1.9rem;
+  height: 1.9rem;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-fd-primary) 70%, var(--color-fd-border));
+  border-radius: 0.35rem 0.8rem 0.35rem 0.35rem;
+  background: var(--color-fd-primary);
+  color: var(--color-fd-primary-foreground);
+  font-family: var(--docs-serif);
+  font-size: 1rem;
+  font-weight: 700;
+  box-shadow: 0 5px 18px color-mix(in srgb, var(--color-fd-primary) 18%, transparent);
+}
+
+.docs-wordmark__text {
+  display: grid;
+  line-height: 1.05;
+}
+
+.docs-wordmark__text strong {
+  font-family: var(--docs-serif);
+  font-size: 0.98rem;
+  letter-spacing: -0.015em;
+}
+
+.docs-wordmark__text small {
+  margin-top: 0.25rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+}
+
+.docs-search-trigger {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-fd-background) 84%, transparent);
+}
+
+.docs-panel-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 999px;
+  padding: 0.38rem 0.7rem;
+  color: var(--color-fd-muted-foreground);
+  font-size: 0.8rem;
+  font-weight: 650;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.docs-panel-link:hover {
+  border-color: color-mix(in srgb, var(--color-fd-primary) 50%, var(--color-fd-border));
+  background: var(--color-fd-accent);
+  color: var(--color-fd-accent-foreground);
+}
+
+.docs-panel-link svg {
+  width: 0.92rem;
+  height: 0.92rem;
+}
+
+.prose h1,
+.prose h2,
+.prose h3,
+.docs-page h1,
+.docs-page h2,
+.docs-page h3,
+[data-docs-body] h1,
+[data-docs-body] h2,
+[data-docs-body] h3 {
+  font-family: var(--docs-serif);
+  font-variation-settings: "opsz" 32;
+  letter-spacing: -0.025em;
+}
+
+.prose h1,
+.docs-page h1,
+[data-docs-body] h1 {
+  max-width: 17ch;
+  font-size: clamp(2.15rem, 5vw, 3.7rem);
+  line-height: 1.07;
+}
+
+.prose h2,
+.docs-page h2,
+[data-docs-body] h2 {
+  margin-top: 2.9rem;
+}
+
+.prose a,
+[data-docs-body] a {
+  text-decoration-color: color-mix(in srgb, var(--color-fd-primary) 45%, transparent);
+  text-decoration-thickness: 0.09em;
+  text-underline-offset: 0.16em;
+}
+
+.prose blockquote,
+[data-docs-body] blockquote {
+  border-inline-start-color: var(--color-fd-primary);
+  background: color-mix(in srgb, var(--color-fd-accent) 58%, transparent);
+}
+
+.docs-error {
+  display: grid;
+  min-height: 100vh;
+  place-content: center;
+  padding: 2rem;
+  text-align: center;
+}
+
+.docs-error__code {
+  color: var(--color-fd-primary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.docs-error h1 {
+  margin: 0.6rem 0 0;
+  font-family: var(--docs-serif);
+  font-size: clamp(2rem, 7vw, 4rem);
+}
+
+.docs-error p {
+  margin: 1rem auto 1.6rem;
+  color: var(--color-fd-muted-foreground);
+}
+
+.docs-error a {
+  justify-self: center;
+  border-radius: 999px;
+  background: var(--color-fd-primary);
+  padding: 0.7rem 1.1rem;
+  color: var(--color-fd-primary-foreground);
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

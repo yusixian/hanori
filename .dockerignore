@@ -1,6 +1,10 @@
 node_modules
 **/node_modules
 **/dist
+**/build
+**/.react-router
+**/.source
+packages/docs/content/docs/changelog/v*.mdx
 .acceptance
 acceptance
 coverage
@@ -21,4 +25,5 @@ data
 .vscode
 *.md
 !packages/*/README.md
+!docs/releases/*.md
 .github

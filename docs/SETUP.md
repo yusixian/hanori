@@ -1,5 +1,7 @@
 # 配置与初始化指南
 
+面向使用者的配置入门见[公开文档：快速开始](../packages/docs/content/docs/getting-started/quickstart.mdx)。部署后可从实例的 `/docs/` 访问文档站；维护说明见[公开文档站维护](PUBLIC_DOCUMENTATION.md)。
+
 本文说明本地开发和生产部署所需的环境变量、Better Auth 首次初始化、Google 登录配置，以及从旧版 JWT 面板认证迁移的步骤。
 
 ## 1. 前置条件

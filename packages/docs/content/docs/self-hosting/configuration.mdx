@@ -1,0 +1,64 @@
+---
+title: 配置说明
+description: 按类别说明环境变量、密钥轮换和可选服务的启用方式。
+---
+
+先复制实例提供的 `.env.example`，再把秘密写入受保护的 `.env` 或部署平台 Secret。下面只列配置名称和行为，不放真实值；示例中的占位符请替换后使用。
+
+## 数据库和服务
+
+| 变量                 | 用途                                                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`       | PostgreSQL 连接字符串。                                                                                               |
+| `DB_PASSWORD`        | Docker Compose 数据库密码。                                                                                           |
+| `PORT`               | 服务在容器内默认监听 `3000`；使用 `docker-compose.direct.yml` 时也作为宿主机映射端口，未设置时宿主机默认使用 `9600`。 |
+| `BACKUP_DIR`         | 本地备份目录；未设置时使用应用默认目录。                                                                              |
+| `BETTER_AUTH_URL`    | 生产环境实际公开 origin，必须使用 HTTPS。                                                                             |
+| `BETTER_AUTH_SECRET` | Better Auth 会话和加密用途的稳定密钥，至少 32 位随机值。                                                              |
+| `AUTH_OWNER_EMAIL`   | 首次启动时创建 owner 的邮箱。                                                                                         |
+| `PANEL_PASSWORD`     | 仅用于首次 bootstrap 的密码；首次成功登录并修改密码后删除。                                                           |
+
+`BETTER_AUTH_URL` 只填写 origin，不要带末尾 `/` 或 API 路径。更换 `BETTER_AUTH_SECRET` 会使已有认证会话失效。
+
+## Bot 和加密
+
+| 变量                                        | 用途                                                                |
+| ------------------------------------------- | ------------------------------------------------------------------- |
+| `BOT_TOKEN`                                 | 首次迁移或开发时使用的 Telegram Token；长期配置可保存到面板数据库。 |
+| `ADMIN_CHAT_IDS`                            | 首次迁移时写入的管理员 Telegram ID 数组。                           |
+| `ENCRYPTION_KEY`                            | 加密 Bot Token、API Key 等敏感配置的稳定密钥。                      |
+| `MINI_APP_SESSION_SECRET`                   | Mini App 独立会话签名密钥。                                         |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 可选 Google OAuth；两个必须同时配置。                               |
+
+生产环境务必显式设置 `ENCRYPTION_KEY`。已经保存数据后不要随意修改它，否则旧密文无法解密。Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini App secret 会让现有 Mini App 会话失效。
+
+## AI、媒体和清理
+
+| 变量                         | 用途                                                          |
+| ---------------------------- | ------------------------------------------------------------- |
+| `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。       |
+| `PIXAI_MCP_URL`              | 开发或特定环境使用的 PixAI MCP 地址；生产地址由实例配置决定。 |
+| `NSFW_API_URL`               | 可选的图片内容安全服务地址。                                  |
+| `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                            |
+| `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                            |
+| `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                |
+| `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                            |
+
+Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
+
+## GitHub 与编码 Worker
+
+GitHub App 的五项变量需要全部配置或全部留空：`GITHUB_APP_ID`、`GITHUB_APP_CLIENT_ID`、`GITHUB_APP_CLIENT_SECRET`、`GITHUB_APP_PRIVATE_KEY` 和 `GITHUB_APP_SLUG`。私钥用单行加字面 `\n` 的 PEM 形式保存。
+
+启用隔离 worker 时同时设置：
+
+```dotenv
+COMPOSE_PROFILES=coding
+CODING_WORKER_SECRET=生成的独立随机值
+```
+
+可选的 `CODING_WORKER_URL`、`CODING_WORKER_SOCKET`、`CODING_JOB_DIR`、`CODING_WORKSPACES_DIR` 和 `CODING_GIT_DIR` 描述内部连接和持久化目录。不要把 worker secret 当作模型或 GitHub 凭据。
+
+## 轮换规则
+
+轮换前先确认备份和回滚路径。认证 secret、Mini App secret、加密 key、Bot Token、GitHub 私钥、MCP/API Key 和邮箱应用密码的失效范围不同；每次只轮换一类，重启后检查健康接口、面板登录、Bot 连通和对应集成。

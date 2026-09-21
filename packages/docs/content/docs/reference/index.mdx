@@ -1,0 +1,51 @@
+---
+title: 参考
+description: 查找面板入口、服务健康接口、角色边界和常用配置约定。
+---
+
+这一节适合已经完成首次配置、需要定位某个入口或核对权限边界的管理员。
+
+## 面板入口
+
+不同角色看到的导航不完全相同。常见页面包括：
+
+| 入口                                | 用途                                           |
+| ----------------------------------- | ---------------------------------------------- |
+| Bots                                | 创建、启停和编辑 Bot。                         |
+| AI                                  | Provider、模型、系统提示词和 AI 相关设置。     |
+| Governance                          | 群组、用户和资源的用量、冷却、并发与路由策略。 |
+| Conversations / Profiles / Memories | 检查历史、人物档案和长期记忆。                 |
+| Generations / Files                 | 查看图片任务、生成状态和 Bot 收到的文件。      |
+| RSS / Summary / Timers              | 配置订阅源、群总结和定时任务。                 |
+| Logs / Usage                        | 查看运行诊断、用量和成本相关信息。             |
+| MCP Servers                         | 管理外部工具连接。                             |
+| Backup / Data                       | 创建备份、导出或管理数据。                     |
+| Settings                            | 工作区认证、成员和实例设置。                   |
+
+界面隐藏按钮不等于授权；服务端会对每个 API 请求再次检查工作区角色、Bot 所有权、群组范围和资源权限。
+
+## 角色概念
+
+管理面板工作区通常包含 owner、admin、editor 和 viewer 等角色。owner 负责高风险实例设置和部分 OAuth/备份操作；admin 管理日常 Bot 和集成；editor/viewer 的权限由当前实现和资源策略决定。
+
+Telegram Mini App 使用另一套按 Bot 作用域的 admin、operator、viewer 和 none 角色，详见[Telegram Mini App](/docs/guides/mini-app)。不要把 Web 面板角色、Telegram 管理员身份和 Bot 群内管理员身份混为一谈。
+
+## 健康接口
+
+服务端提供以下只读接口：
+
+```text
+GET /api/health
+GET /api/health/live
+GET /api/health/ready
+```
+
+`/api/health` 表示进程能响应；`live` 返回 live 状态和版本；`ready` 只有在必需依赖初始化成功时才返回 ready，否则可能返回 HTTP `503`。健康接口不代表外部 Provider、Telegram 真实投递或所有可选集成已经验证。
+
+## 版本和构建标识
+
+产品版本来自根版本管理，运行时还可能暴露构建 commit 或 `APP_VERSION`。版本号用于人类可读的发布说明，commit 用于定位实际部署代码；报告问题时同时提供两者和发生时间。
+
+## 数据和迁移约定
+
+数据库 schema 位于 database 包，迁移按顺序应用。修改 schema 后应生成并审查迁移；不要编辑已经部署的迁移文件或手工删除迁移记录。embedding 维度、加密 key 和数据库密码属于部署级约束，不应在未备份时直接修改。

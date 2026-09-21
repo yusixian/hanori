@@ -1,5 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { publicDocsRoutes } from "./routes/public-docs.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
@@ -119,6 +120,7 @@ export function createApp(options: AppOptions) {
 
   const app = new Hono()
     .use("*", honoLogger())
+    .route("/", publicDocsRoutes())
     .use("*", async (c, next) => {
       await next();
       for (const [name, value] of Object.entries(securityHeaders(c.req.path)))

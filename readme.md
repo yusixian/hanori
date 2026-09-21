@@ -2,6 +2,25 @@
 
 pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框架 + [Hono](https://hono.dev/) API 服务 + [React](https://react.dev/) + [Refine](https://refine.dev/) 管理面板。
 
+[快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) · [功能指南](packages/docs/content/docs/index.mdx) · [自托管](packages/docs/content/docs/self-hosting/index.mdx) · [更新说明](packages/docs/content/docs/changelog/index.mdx)
+
+## 文档与更新说明
+
+项目包含独立的 Fumadocs 文档站，随应用一起部署，访客无需登录或获得 GitHub 仓库权限即可阅读。管理面板侧栏底部和登录页均提供“文档”和“更新说明”入口。
+
+| 内容               | 部署后的入口（在实例域名后追加）   | 仓库内阅读                                                            |
+| ------------------ | ---------------------------------- | --------------------------------------------------------------------- |
+| 文档首页与功能总览 | `/docs/`                           | [文档首页](packages/docs/content/docs/index.mdx)                      |
+| 首次配置与使用     | `/docs/getting-started/quickstart` | [快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) |
+| 自托管、配置与升级 | `/docs/self-hosting`               | [自托管总览](packages/docs/content/docs/self-hosting/index.mdx)       |
+| 历史版本与升级说明 | `/docs/changelog/`                 | [发布说明源文件](docs/releases)                                       |
+
+首版中文指南覆盖 AI 对话与模型、群聊和 JEV、隐私与记忆、图片与贴纸、RSS/总结/提醒、Mini App、管理员私聊代发、MCP、GitHub 编码任务和飞书集成。文档支持搜索、移动端导航和深浅色主题。
+
+版本详情与 GitHub Release 共用 `docs/releases/v*.md` 正文，避免两份说明长期不一致。公开文档不代表源码仓库已经开源；仓库访问与未来许可证会独立管理。
+
+本地只查看文档可运行 `pnpm dev:docs`，打开 `http://localhost:5174/docs/`，无需数据库或 Bot Token。内容维护和构建方式见 [公开文档维护指南](docs/PUBLIC_DOCUMENTATION.md)。
+
 ## 项目结构
 
 ```
@@ -11,6 +30,7 @@ packages/
   bot/       # grammY Bot（createBot 工厂函数）
   server/    # Hono API 入口 + BotPool + DbLogger
   panel/     # React 19 + Refine v4 + Tailwind CSS v4 管理面板
+  docs/      # Fumadocs 公开文档站（静态构建，/docs）
 ```
 
 ## 开发
@@ -19,7 +39,8 @@ packages/
 pnpm install
 cp .env.example .env  # 填写环境变量
 
-pnpm dev              # 启动所有服务（server + panel dev）
+pnpm dev              # 启动 server + panel + docs
+pnpm dev:docs         # 只启动公开文档站，无需数据库或 Bot Token
 pnpm build            # 构建所有包
 pnpm lint             # oxlint 代码检查
 ```

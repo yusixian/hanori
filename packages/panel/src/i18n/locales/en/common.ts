@@ -40,6 +40,8 @@ export const common = {
     workspace: "Workspace",
     botWorkspace: "Bot workspace",
     backToBots: "Back to Bots",
+    documentation: "Documentation",
+    changelog: "Changelog",
     bots: "Bots",
     usage: "Usage",
     data: "Data",

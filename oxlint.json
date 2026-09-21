@@ -5,5 +5,11 @@
     "no-console": "warn",
     "eqeqeq": "error"
   },
-  "ignorePatterns": ["**/dist/**", "**/node_modules/**"]
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "packages/docs/build/**",
+    "packages/docs/.react-router/**",
+    "packages/docs/.source/**"
+  ]
 }

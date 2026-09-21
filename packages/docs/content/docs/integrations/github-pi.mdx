@@ -1,0 +1,41 @@
+---
+title: GitHub 与编码 Worker
+description: 配置 GitHub App、授权仓库访问，并理解隔离编码任务的安全边界。
+---
+
+GitHub 集成是可选的管理员能力。它使用 GitHub App 安装授权把访问范围限定到选定仓库，再由服务端为 Bot 或编码任务提供短期凭据。它不是让每个用户粘贴长期 Personal Access Token。
+
+## GitHub App 配置
+
+实例管理员需要准备完整的一组 GitHub App 配置：App ID、Client ID、Client Secret、私钥和 slug。五项应全部填写或全部留空；只填一部分会让启动或更新检查失败。
+
+GitHub App 的三个地址都应使用实例的公开 origin：
+
+```text
+Homepage: ${BETTER_AUTH_URL}
+Setup:    ${BETTER_AUTH_URL}/api/github-app/setup
+Callback: ${BETTER_AUTH_URL}/api/github-app/callback
+```
+
+上面是配置格式示例；实际值必须替换成你的实例地址。私钥写入环境变量时使用带字面 `\n` 的单行形式，并限制文件权限。安装流程不要开启会绕过 Setup URL 的快捷 OAuth 选项，否则服务端无法可靠知道用户选择了哪个 installation。
+
+## 在面板中授权
+
+owner 或 admin 从对应 Bot 的 AI/GitHub 入口发起授权，跳转到 GitHub 选择安装范围和仓库，完成回调后回到面板。授权状态、仓库列表和撤销操作都以服务端记录为准；viewer/editor 不应看到授权入口。
+
+授权前先决定最小仓库范围。不要为了方便选择“所有仓库”，也不要让 Bot 访问不需要的私有项目。撤销 GitHub App installation 或面板连接后，应在下一次请求中阻止旧凭据继续使用。
+
+## 隔离 Pi coding worker
+
+编码 worker 是可选的 Compose profile。它接收服务端授权的有限工作任务，在单独网络和工作区中运行 Pi coding agent；worker 不应直接持有数据库凭据、GitHub App 私钥或推送权限。
+
+启用时，`COMPOSE_PROFILES` 与 `CODING_WORKER_SECRET` 必须同时配置。worker 与服务端通过内部 secret 建立认证，工作目录、Git 目录和出口代理由部署配置提供。任务应有单次启动、超时、取消、干净工作区和精确状态确认等边界。
+
+GitHub 写入、push、创建 PR 和最终确认属于受信任的服务端流程。Bot 或 worker 的“建议已完成”不等于远端分支、PR 或生产部署已经改变；管理员应在 GitHub 和面板中复核结果。
+
+## 常见失败
+
+- 回调失败：检查公开 origin、HTTPS、Setup/Callback 地址和 GitHub App 设置是否逐字匹配。
+- 看不到仓库：重新检查 installation 选择、App 权限和当前 Bot 绑定。
+- worker 不在线：检查 Compose profile、worker secret、健康检查和出口代理，不要把 worker 直接暴露到公网。
+- 任务完成但 PR 不存在：把 worker 结果当作待确认状态，登录 GitHub 检查分支和 PR，再决定是否继续。

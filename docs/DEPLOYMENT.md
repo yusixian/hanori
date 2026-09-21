@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+简明公开指南见[文档站：Docker 部署](../packages/docs/content/docs/self-hosting/docker.mdx)。应用部署后会同时提供 `/docs/` 和 `/docs/changelog/`；构建与维护方式见[公开文档站维护](PUBLIC_DOCUMENTATION.md)。
+
 这份指南面向第一次接触服务器和 Docker 的用户。命令默认在 Linux 服务器上执行，生产环境的 Compose 项目名统一使用 `cos-bot-prod`。
 
 > 永远不要执行 `docker compose down -v`。其中的 `-v` 会删除数据库存储卷。

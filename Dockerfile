@@ -32,6 +32,7 @@ COPY packages/database/package.json packages/database/
 COPY packages/bot/package.json packages/bot/
 COPY packages/server/package.json packages/server/
 COPY packages/panel/package.json packages/panel/
+COPY packages/docs/package.json packages/docs/
 COPY packages/coding-worker/package.json packages/coding-worker/
 RUN pnpm install --frozen-lockfile
 
@@ -43,6 +44,7 @@ COPY --from=deps /app/packages/database/node_modules ./packages/database/node_mo
 COPY --from=deps /app/packages/bot/node_modules ./packages/bot/node_modules
 COPY --from=deps /app/packages/server/node_modules ./packages/server/node_modules
 COPY --from=deps /app/packages/panel/node_modules ./packages/panel/node_modules
+COPY --from=deps /app/packages/docs/node_modules ./packages/docs/node_modules
 COPY --from=deps /app/packages/coding-worker/node_modules ./packages/coding-worker/node_modules
 COPY . .
 ARG APP_VERSION=""
@@ -73,6 +75,8 @@ COPY --from=builder /app/deployment-version ./deployment-version
 
 # Copy panel build output as static files for Hono to serve
 COPY --from=builder /app/packages/panel/dist ./public
+COPY --from=builder /app/packages/docs/build/client/docs ./public/docs
+COPY --from=builder /app/packages/docs/build/client/docs.data ./public/docs.data
 
 EXPOSE 3000
 CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]

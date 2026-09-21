@@ -45,7 +45,7 @@ export function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-5">
+    <div className="relative flex min-h-screen flex-col items-center justify-center gap-6 overflow-hidden p-5">
       <div className="pointer-events-none absolute -top-32 left-1/2 size-[34rem] -translate-x-1/2 rounded-full bg-blue-200/40 blur-3xl" />
       <Card className="relative w-full max-w-[420px]">
         <CardHeader className="items-center px-7 pt-8 text-center">
@@ -114,6 +114,21 @@ export function LoginPage() {
           </form>
         </CardContent>
       </Card>
+      <footer className="text-muted-foreground relative flex items-center gap-4 text-sm">
+        <a
+          href="/docs/"
+          className="hover:text-foreground focus-visible:ring-ring rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {t("common:navigation.documentation")}
+        </a>
+        <span aria-hidden="true">·</span>
+        <a
+          href="/docs/changelog/"
+          className="hover:text-foreground focus-visible:ring-ring rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"
+        >
+          {t("common:navigation.changelog")}
+        </a>
+      </footer>
     </div>
   );
 }

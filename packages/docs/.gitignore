@@ -1,0 +1,4 @@
+.react-router/
+.source/
+build/
+content/docs/changelog/v*.mdx

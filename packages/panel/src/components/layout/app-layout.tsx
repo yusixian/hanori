@@ -291,6 +291,30 @@ export function AppLayout() {
             className={cn("mb-2 block", collapsed && "md:hidden")}
             selectClassName="w-full"
           />
+          <a
+            href="/docs/"
+            title={t("navigation.documentation")}
+            aria-label={t("navigation.documentation")}
+            className={cn(
+              "mb-1 flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
+              collapsed && "md:justify-center",
+            )}
+          >
+            <BookOpen className="h-4 w-4 shrink-0" />
+            <span className={cn(collapsed && "md:hidden")}>{t("navigation.documentation")}</span>
+          </a>
+          <a
+            href="/docs/changelog/"
+            title={t("navigation.changelog")}
+            aria-label={t("navigation.changelog")}
+            className={cn(
+              "mb-1 flex min-h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-muted-foreground transition-[background-color,color] hover:bg-slate-100 hover:text-foreground focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none",
+              collapsed && "md:justify-center",
+            )}
+          >
+            <FileText className="h-4 w-4 shrink-0" />
+            <span className={cn(collapsed && "md:hidden")}>{t("navigation.changelog")}</span>
+          </a>
           <Link
             to="/settings"
             title={t("navigation.settings")}

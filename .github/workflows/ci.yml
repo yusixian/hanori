@@ -38,6 +38,9 @@ jobs:
       - name: Check translations
         run: pnpm i18n:check
 
+      - name: Build public documentation
+        run: pnpm build:docs
+
       - name: Unit tests
         run: pnpm test
 
@@ -47,3 +50,6 @@ jobs:
 
       - name: Browser tests
         run: pnpm test:browser
+
+      - name: Public documentation browser tests
+        run: pnpm test:docs

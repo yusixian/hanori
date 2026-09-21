@@ -1,0 +1,62 @@
+---
+title: Docker 部署
+description: 使用 Docker Compose 启动服务、执行健康检查并安全地更新实例。
+---
+
+下面的命令假设你已经取得源码或构建上下文，并在项目根目录执行。项目当前不是公开仓库，因此不要直接复制一个未经授权的 clone 地址；先使用维护者提供的来源和版本。
+
+## 1. 准备环境
+
+确认 Docker Engine、Docker Compose 插件、OpenSSL 和 Git（如果使用 Git 来源）可用。准备一个持久化的数据库 volume、备份目录和 HTTPS 反向代理。
+
+生成密钥时使用随机值：
+
+```bash
+openssl rand -hex 32
+```
+
+为 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`PANEL_PASSWORD` 和需要的 `MINI_APP_SESSION_SECRET` 分别生成不同的值。
+
+## 2. 创建环境文件
+
+从模板复制配置并限制权限：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+```
+
+至少填写 `DATABASE_URL`（或 Compose 使用的 `DB_PASSWORD`）、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、`AUTH_OWNER_EMAIL` 和首次启动用的 `PANEL_PASSWORD`。生产环境再显式填写 `ENCRYPTION_KEY`。不要把 `.env` 加入版本库、镜像或日志。
+
+## 3. 启动最小服务
+
+使用仓库提供的 Compose 文件启动 app 和数据库。部署平台如果需要固定项目名，可以选择一个不会与其他实例冲突的名字：
+
+```bash
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
+```
+
+不要使用 `docker compose down -v`，它会删除数据库存储卷。更新前先阅读[备份与升级](/docs/self-hosting/backup-upgrade)。
+
+## 4. 验证启动
+
+检查容器状态、日志和健康接口：
+
+```bash
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml ps
+docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs --tail=200 app
+curl -fsS http://127.0.0.1:9600/api/health
+curl -fsS http://127.0.0.1:9600/api/health/ready
+```
+
+上面的 `9600` 是 `docker-compose.direct.yml` 未设置 `PORT` 时的宿主机默认端口；如果设置了 `PORT=某个端口`，把命令中的端口替换成该值。容器内部仍使用 `3000`。`/api/health` 表示进程可响应；`/api/health/ready` 还要求数据库迁移、认证、Bot 和必需集成达到 ready 状态。只有 ready 通过后，才继续面板和 Telegram 验收。
+
+## 5. 首次登录和启用选项
+
+打开 `BETTER_AUTH_URL`，用 owner 邮箱和 bootstrap 密码登录，进入 Settings 修改密码。确认登录成功后，从 `.env` 删除 `PANEL_PASSWORD`，再按需在面板中添加 Bot Token、Provider、备份和可选集成。
+
+启用编码 worker 时，把 `COMPOSE_PROFILES=coding` 和 `CODING_WORKER_SECRET` 一起设置，再重建服务。检查 worker 与出口代理的健康状态，确认它们未暴露到公网。
+
+## 6. 后续更新
+
+更新前先做数据库备份，确认工作区没有手工修改，拉取已核验版本后重新构建 app。启动完成后重新检查 `/api/health/ready`、面板登录、Bot `/status`、一次 AI 私聊和关键集成。部署检查通过不等于真实 Telegram 群组、外部 Provider 或生产流量已经完整验证。

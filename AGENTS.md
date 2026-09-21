@@ -23,6 +23,7 @@ packages/
   bot/            grammY runtime, commands, middleware, AI handlers, Telegram tools
   server/         Composition root, Hono API, auth, BotPool lifecycle, integrations
   panel/          React 19 + Refine admin SPA and Telegram Mini App
+  docs/           Public Fumadocs site, statically built and served under /docs
   coding-worker/  Isolated Pi worker; no direct database or GitHub credentials
 scripts/          Mini App orchestration and production update helpers
 docs/             Subsystem runbooks: SETUP, DEPLOYMENT, TELEGRAM_MINI_APP,
@@ -36,6 +37,8 @@ The coding worker is reached only through the server's authenticated worker clie
 
 ```bash
 pnpm dev                     # server :3000 + panel Vite dev server
+pnpm dev:docs                # public docs only, :5174/docs (no database needed)
+pnpm build:docs              # prerender public docs for production
 pnpm dev:db                  # development PostgreSQL via Compose
 pnpm db:generate             # Drizzle migration from schema changes
 pnpm db:migrate              # apply pending migrations
@@ -104,6 +107,32 @@ alongside manually started server/panel/tunnel. Details:
 - Keep authorization server-side even when the UI hides a control, and preserve Telegram signature
   validation. Owner-configured tools may explicitly allow trusted private-network targets; keep
   request bounds and block cloud metadata endpoints and accidental credential forwarding by default.
+
+## Public Documentation and Releases
+
+- The product version comes from the root `package.json`; private workspace package versions are
+  not separate product releases. Keep the deployment `APP_VERSION`/health `version` contract as a
+  full Git SHA, not a SemVer string.
+- When changing user-visible features, configuration, permissions, or deployment behavior, update
+  the affected public guides in `packages/docs/content/docs/` in the same PR. Update README entry
+  points when adding or moving documentation. Never copy internal runbooks or private environment
+  details into the public site wholesale.
+- For a release, compare the previous tag with the exact candidate commit, including merged PRs
+  and direct commits. Update the product version and write `docs/releases/vX.Y.Z.md` with features,
+  fixes, upgrade/migration notes, and verification limits. Keep historical notes tied to their
+  released version; do not rewrite them to describe newer behavior.
+- Release Markdown is the shared source for the public version detail page and GitHub Release.
+  The docs sync script generates `content/docs/changelog/v*.mdx`; do not edit or commit generated
+  copies. Check the changelog navigation and update its overview when introducing a new milestone.
+- Before handing off release changes, run docs typecheck, `pnpm build:docs`, and `pnpm test:docs`
+  (or the affected focused checks during development). Verify anonymous access, deep links,
+  search, and the new version page. Follow [docs/PUBLIC_DOCUMENTATION.md](docs/PUBLIC_DOCUMENTATION.md).
+- Creating a tag/Release still requires explicit release authorization. Use the reviewed full
+  commit SHA and `--notes-file docs/releases/vX.Y.Z.md`, then verify remote tag and Release state.
+  Do not silently move an existing release tag or infer deployment permission.
+- GitHub publication does not update a running site's static pages. Report release publication,
+  documentation build, and deployment as separate states; verify the public version URL after an
+  explicitly authorized deployment. Preserve public access to older version URLs.
 
 ## Verification
 

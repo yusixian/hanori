@@ -40,6 +40,8 @@ export const common = {
     workspace: "工作区",
     botWorkspace: "Bot 工作区",
     backToBots: "返回 Bot 列表",
+    documentation: "文档",
+    changelog: "更新说明",
     bots: "Bot",
     usage: "用量",
     data: "数据",

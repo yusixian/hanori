@@ -69,3 +69,18 @@ test("returns to the requested generation detail after login", async () => {
 
   await expect.element(page.getByText("Generation detail restored")).toBeVisible();
 });
+
+test("exposes public documentation links before authentication", async () => {
+  render(
+    <MemoryRouter>
+      <LoginPage />
+    </MemoryRouter>,
+  );
+
+  await expect
+    .element(page.getByRole("link", { name: "Documentation" }))
+    .toHaveAttribute("href", "/docs/");
+  await expect
+    .element(page.getByRole("link", { name: "Changelog" }))
+    .toHaveAttribute("href", "/docs/changelog/");
+});

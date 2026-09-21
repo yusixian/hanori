@@ -19,7 +19,7 @@ export function securityHeaders(pathname: string) {
 }
 
 export function staticCacheControl(pathname: string): string {
-  return pathname.startsWith("/assets/")
+  return pathname.startsWith("/assets/") || pathname.startsWith("/docs/assets/")
     ? "public, max-age=31536000, immutable"
     : "no-cache, no-store, must-revalidate";
 }
