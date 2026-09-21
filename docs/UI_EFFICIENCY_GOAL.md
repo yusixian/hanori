@@ -44,17 +44,12 @@
 
 ## 当前迭代
 
-- v0.4.0 导航、v0.5.0 AI 设置查找、v0.5.1 日志筛选、v0.6.0 草稿保护、v0.7.0 Bot 列表与管理入口均已完成审查、PR CI、合入及 GitHub Release。
-- v0.7.0 的 PR #91 已合入，main/tag/Release 为 `b49dcd5994851017cd87f7cd23397d6aec30482e`；合入后 CI `35641965847` 已核实 completed/success，精确 SHA 与发布一致。
-- 按用户于 2026-09-22 指定顺序，当前转入 Issue #87：AI 档案头像读取，计划 v0.8.0；不继续扩展其他 UI 切片。
-- #87 验收：明确 Telegram 用户标识、当前 Bot 可见且已缓存的头像；真正进入模型图像上下文；本人/他人/不可见档案权限，缺失/失效/拒绝明确状态；无文件路径、凭据或永久公开 URL；工具 schema、测试、公开指南同步。
-- 角色形象更新仍遵守既有主体授权和角色维护权限，读取头像不赋予编辑权。图片只保留在当前模型请求中，工具日志与持久历史只记录状态。
-- 已发现已安装 OpenAI 兼容适配器会把 tool content 转成 JSON 文本，需要请求级图像注入；不能仅返回图片字段就认定视觉链路可用。
-- 当前分支 `feat/profile-avatar-vision-v0.8.0`，基线为已发布 v0.7.0。已完成工具、两入口、缓存服务、隐私和公开文档；独立 Astra 审查的重要问题已关闭，入口测试22项与Bot类型检查已通过，等待CI/合入/发布。
-- 头像采用 Bot 级可见性和读取时授权的本轮快照：双方非off、他人仅normal；isolated本人可读。没有增加当前Chat成员查询或限制私聊只能读本人。模型的 requester 来自可信 ctx/event，不由工具参数指定。
-- 审查修复：头像目录/文件 symlink 越界防护；保持旧绝对路径清理兼容；读取最多5MiB；Google provider HTTP400错误内的裸base64日志改为MIME/长度摘要并经真实adapter失败probe验证。
-- 最终11个相关文件110项回归通过，覆盖工具/日志、缓存/观察器/生命周期及普通回复/续聊；Shared/Bot/Server类型、Bot/Server生产构建、文档类型/构建与14项桌面/手机场景。图片适配器HTTP夹具覆盖OpenAI兼容与Google，未调用真实模型或真实用户头像。
-- 无关 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。未部署生产或发送 Telegram 消息；Docker 不可用，3100/5173 属于其他项目，勿动。用于本轮 UI 验收的 5188/5192 已关闭。
+- v0.4.0 导航、v0.5.0 AI 设置查找、v0.5.1 日志筛选、v0.6.0 草稿保护、v0.7.0 Bot 列表与管理入口均已完成审查、PR CI、合入、GitHub Release 和合入后 CI。
+- 用户指定的后续 Issue #87 已通过 PR #92 合入并核实 CLOSED，发布为 v0.8.0。合入提交与 tag/Release 目标为 `e5b079e29e2b7854b3bc2a68a970c82e26ce8ccd`。
+- v0.8.0 PR CI `35644021599` completed/success，合入文件树与已验证 head 一致；合入后 CI `35644859749` 已核实 completed/success，精确 SHA 与发布一致。
+- 本轮所有已确认重要审查发现已修复。长期目标和授权继续保留；后续 UI 优先项从真实用户旅程重新验证，历史巡检记录仅作为候选，不把旧问题直接当成当前事实。
+- 没有执行生产部署、真实模型调用、真实头像读取或 Telegram 消息发送。文档源码/构建与 GitHub 发布已同步，不据此断言线上实例已经更新。
+- 无关 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。用于本轮 UI 验收的 5188/5192 已关闭；Docker 不可用，3100/5173 属于其他项目，勿动。
 
 ## 迭代证据
 
@@ -120,3 +115,18 @@
 - PR #91 已核实 MERGED。PR CI 35641125157 completed/success，精确 head `8a935c31040719fe68c778148b5c7b6957ea9fe1`；合入文件树一致。
 - main/tag/Release 目标为 `b49dcd5994851017cd87f7cd23397d6aec30482e`。v0.7.0 已公开，非 draft/预发布，正文来自 `docs/releases/v0.7.0.md`。
 - 合入后 CI `35641965847` 已核实 completed/success，精确 SHA 与发布一致。公开导航指南与版本页已同步，合入后核对文件树。未部署生产，未操作真实Bot或生产数据库。
+
+### v0.8.0 — AI 读取缓存头像（Issue #87）
+
+- 基线：v0.7.0 `b49dcd5994851017cd87f7cd23397d6aec30482e`。按用户顺序完成既有 UI 版本后实施本项，没有另开 UI 切片。
+- 新增 `get_profile_avatar`，普通回复/续聊均接入；模型只能给目标 Telegram ID，请求者来自可信 ctx/event。每轮最多3次，读取当前 Bot 已缓存头像，不调用 Telegram 下载或提供公共 URL。
+- 使用 Bot 级档案可见性：请求者 off 拒绝，目标 off 拒绝，他人 isolated 拒绝，本人 isolated 可读；没有增加当前 Chat 成员查询或私聊仅本人限制。双方隐私锁复用已有重入/逆序保护。
+- 读取时授权的图像快照只保留在本轮，后续请求重新检查；角色与绑定编辑权限不变。缓存是 last-known-good，缺失/损坏/不安全路径明确返回状态，不能声称实时头像。
+- 图片通过 prepareStep 中的 user image part 进入 OpenAI兼容/Google模型适配器；工具结果、持久历史只含元数据。修复Google provider失败错误对象裸base64落日志的问题，保留MIME/长度和其他有用诊断。
+- 缓存读取限制同Bot目录和头像所有者，拒绝目录/文件symlink越界、绝对/穿越路径、非普通文件；O_NONBLOCK/O_NOFOLLOW、最多5MiB、支持格式与像素上限。保留原头像清理对合法绝对路径的兼容。
+- 审查：Sol实现与入口测试，主代理整合/复核，独立Astra对隐私/并发/数据泄漏限定审查；Google错误日志P2修复后独立失败probe复验关闭，无剩余重要发现。
+- 本地终态11文件110项回归通过，含真实模型适配器模拟HTTP图片请求和Google HTTP400诊断序列化、缓存/隐私/观察器/生命周期、普通回复/续聊持久化。Shared/Bot/Server类型，相关lint/format，Bot/Server生产构建通过。
+- 文档类型/构建与14项桌面/手机浏览器场景通过：匿名访问、深链、搜索、版本导航、头像与隐私指南。证据 `.acceptance/ui-efficiency/docs-v0.8.0/`；新图像测试仅使用合成夹具，没有真实头像或外部模型请求。
+- PR #92 已核实 MERGED，Issue #87 已核实 CLOSED。PR CI 35644021599 completed/success，精确 head `f67d6731b08a66a605a676bd46758bea542e674f`；合入文件树一致。
+- main/tag/Release目标为 `e5b079e29e2b7854b3bc2a68a970c82e26ce8ccd`。v0.8.0 已公开，非draft/预发布；正文来自 `docs/releases/v0.8.0.md`。
+- 合入后 CI `35644859749` 已核实 completed/success，精确 SHA 与发布一致。AI对话、隐私、生成素材库指南与版本站同步；合入后已复核文件树。未执行生产部署。
