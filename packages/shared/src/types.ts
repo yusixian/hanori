@@ -113,6 +113,20 @@ export interface PeopleProfileAvatarUpdateResult {
   previousAvatarPath: string | null;
 }
 
+export type PeopleProfileAvatarMediaType = "image/jpeg" | "image/png" | "image/webp";
+
+export type PeopleProfileAvatarResult =
+  | {
+      status: "available";
+      telegramId: number;
+      avatarVersion: string | null;
+      mediaType: PeopleProfileAvatarMediaType;
+      data: Uint8Array;
+    }
+  | {
+      status: "not_found" | "no_avatar" | "cache_unavailable" | "forbidden" | "unavailable";
+    };
+
 export interface PeopleProfileTouchResult {
   created: boolean;
   profileId: number;
@@ -128,6 +142,10 @@ export interface MemorySearchResult {
 
 export interface MemoryCallbacks {
   getProfile(telegramId: number): Promise<PeopleProfile | null>;
+  getProfileAvatar?(
+    telegramId: number,
+    requesterTelegramId: number,
+  ): Promise<PeopleProfileAvatarResult>;
   upsertProfile(data: {
     telegramId: number;
     username?: string;

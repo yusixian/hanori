@@ -95,3 +95,7 @@ OpenAI-compatible 服务可以通过标准 `prompt_tokens_details.cached_tokens`
 ## 诊断时保护隐私
 
 诊断日志可以帮助定位关联请求、工具调用和失败原因，但可能包含有界的消息正文或工具输入输出。分享日志前应先移除用户 ID、消息正文、URL 中的密钥、Cookie、Authorization 头和任何 Token。详见[隐私、历史与记忆](/docs/guides/privacy-memory)。
+
+## 分析已缓存的人物头像
+
+启用人物档案记忆后，AI 可在明确请求下通过 `get_profile_avatar` 读取当前 Bot 缓存的头像，并把图片加入本次视觉上下文。需要回复模型支持图像输入；只支持文本的模型无法保证视觉分析。隐私权限、缓存状态与角色保存步骤见[角色与提示词资产库](/docs/guides/generation-library)。

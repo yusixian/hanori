@@ -64,6 +64,7 @@ const queryCacheKey = (args: Record<string, unknown>) =>
 
 export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   // Memory tools
+  { name: "get_profile_avatar", statusLabel: "🖼️ 查看头像...", effect: "read_only", callLimit: 3 },
   { name: "get_profile", statusLabel: "🔍 看看你是谁...", effect: "read_only" },
   { name: "update_profile", statusLabel: "📝 记住你的变化...", effect: "mutating" },
   { name: "search_profiles", statusLabel: "🔎 想想这个人...", effect: "read_only" },

@@ -1,3 +1,4 @@
+import { createProfileAvatarTools } from "../tools/profile-avatar.js";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import { createTurnInteractionTools } from "../tools/turn-interaction.js";
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
@@ -2549,7 +2550,14 @@ export function createAiReplyHandler(
         const retrievalQuery = [rawContent || messageText, ...coalescedExtras.map((e) => e.text)]
           .join("\n")
           .trim();
-        const requestMemoryTools = personalizationEnabled ? memoryTools : undefined;
+        const profileAvatars = createProfileAvatarTools(
+          personalizationEnabled && memoryCfg.enabled ? config.memory : undefined,
+          userId,
+        );
+        const requestMemoryTools =
+          personalizationEnabled && memoryTools
+            ? { ...memoryTools, ...profileAvatars.tools }
+            : undefined;
         const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
 
         if (!isPrivate && persistConversation) {
@@ -2838,6 +2846,7 @@ export function createAiReplyHandler(
           model: currentProviderFactory(currentModel),
           messages,
           tools: wrappedTools,
+          prepareStep: profileAvatars.prepareStep,
           stopWhen: stepCountIs(maxSteps),
           toolChoice,
           abortSignal: perStepAbort.signal,

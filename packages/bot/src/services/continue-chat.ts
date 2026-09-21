@@ -1,3 +1,4 @@
+import { createProfileAvatarTools } from "../tools/profile-avatar.js";
 import { createTurnInteractionTools } from "../tools/turn-interaction.js";
 import type {
   AgentToolsConfig,
@@ -429,10 +430,14 @@ async function doContinueChat(
     const selection = config.resolveSelection(chatId);
     selectedProviderId = selection.providerId;
     selectedModelId = selection.modelId;
+    const profileAvatars = createProfileAvatarTools(
+      memCfg.enabled ? config.memory : undefined,
+      event.userId,
+    );
     let memoryTools: Record<string, Tool> | undefined;
     if (memCfg.enabled && config.memory) {
       const { createMemoryTools } = await import("../tools/index.js");
-      memoryTools = createMemoryTools(config.memory);
+      memoryTools = { ...createMemoryTools(config.memory), ...profileAvatars.tools };
     }
     let botMemoryTools: Record<string, Tool> | undefined;
     if (botMemCfg.enabled && config.botMemory) {
@@ -710,6 +715,7 @@ async function doContinueChat(
           successfulToolEffectCount += 1;
         },
       }),
+      prepareStep: profileAvatars.prepareStep,
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,

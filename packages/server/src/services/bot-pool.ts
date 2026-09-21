@@ -85,6 +85,7 @@ import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore, mapProfileToDto } from "./people-profile-store.js";
+import { PeopleProfileAvatarService } from "./people-profile-avatar-service.js";
 import type { TelegramBotPublicProfile } from "./telegram-bot-runtime.js";
 import { selectMemoriesForPrompt } from "./prompt-memory-selector.js";
 import type { McpClientManager } from "./mcp-client-manager.js";
@@ -191,6 +192,7 @@ export class BotPool {
   private generationInsertFallbacks = new PendingGenerationInsertFallbackTracker();
   private conversationStore: ConversationStore;
   private profileStore: PeopleProfileStore;
+  private profileAvatarService: PeopleProfileAvatarService;
   private botMemoryStore: BotMemoryStore;
   private userPrivacyService: UserPrivacyService;
   private generationLibraryService: GenerationLibraryService;
@@ -231,8 +233,12 @@ export class BotPool {
     this.timerRegistry = timerRegistry;
     this.conversationStore = new ConversationStore(db);
     this.profileStore = new PeopleProfileStore(db);
-    this.botMemoryStore = new BotMemoryStore(db);
     this.userPrivacyService = new UserPrivacyService(db);
+    this.profileAvatarService = new PeopleProfileAvatarService(
+      this.profileStore,
+      this.userPrivacyService,
+    );
+    this.botMemoryStore = new BotMemoryStore(db);
     this.generationLibraryService = new GenerationLibraryService(db, this.userPrivacyService);
   }
 
@@ -961,6 +967,13 @@ export class BotPool {
         memory = {
           getProfile: (telegramId) =>
             ps.getProfile(botId, telegramId).then((p) => (p ? mapProfileToDto(p) : null)),
+          getProfileAvatar: (telegramId, requesterTelegramId) =>
+            this.profileAvatarService.getProfileAvatar(
+              botId,
+              getDataDir(botId),
+              telegramId,
+              requesterTelegramId,
+            ),
           upsertProfile: (data) => ps.upsertProfile(botId, data).then(mapProfileToDto),
           searchProfiles: (query) =>
             ps.searchProfiles(botId, query).then((profiles) => profiles.map(mapProfileToDto)),

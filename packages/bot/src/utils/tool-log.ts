@@ -94,10 +94,15 @@ function normalizeToolLogValue(
     return [...value].map((item) => normalizeToolLogValue(item, seen, depth + 1));
   }
 
+  const inlineMedia =
+    key?.replace(/_/g, "").toLowerCase() === "inlinedata" &&
+    ("mimeType" in value || "mime_type" in value);
   return Object.fromEntries(
     Object.entries(value).map(([name, item]) => [
       name,
-      normalizeToolLogValue(item, seen, depth + 1, name),
+      inlineMedia && name === "data" && typeof item === "string"
+        ? `[binary inline data: ${item.length} chars]`
+        : normalizeToolLogValue(item, seen, depth + 1, name),
     ]),
   );
 }

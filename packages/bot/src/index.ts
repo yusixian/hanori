@@ -751,6 +751,8 @@ export type { NsfwCheckerConfig, NsfwCheckResult } from "./services/nsfw-checker
 export {
   cleanupBotAvatarFiles,
   cleanupProfileAvatarFiles,
+  MAX_PROFILE_AVATAR_BYTES,
+  readProfileAvatarFile,
   removeProfileAvatarFile,
 } from "./services/profile-avatar-files.js";
 export {

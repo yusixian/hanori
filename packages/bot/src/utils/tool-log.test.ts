@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { toToolLogValue } from "./tool-log.js";
 
 describe("toToolLogValue", () => {
+  it("summarizes inline media while preserving ordinary data fields", () => {
+    expect(
+      toToolLogValue({
+        inlineData: { mimeType: "image/png", data: "aW1hZ2U=" },
+        inline_data: { mime_type: "image/jpeg", data: "cGhvdG8=" },
+        result: { data: "useful diagnostic text" },
+      }),
+    ).toEqual({
+      inlineData: { mimeType: "image/png", data: "[binary inline data: 8 chars]" },
+      inline_data: { mime_type: "image/jpeg", data: "[binary inline data: 8 chars]" },
+      result: { data: "useful diagnostic text" },
+    });
+  });
+
   it("preserves tool queries and structured results", () => {
     expect(
       toToolLogValue({

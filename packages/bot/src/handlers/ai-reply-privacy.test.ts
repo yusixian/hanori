@@ -6,6 +6,7 @@ import type {
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
 import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import type { JSONValue, ModelMessage, Tool } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
 import { createAiReplyHandler, type AiReplyConfig } from "./ai-reply.js";
@@ -492,9 +493,11 @@ describe("AI reply group capture and privacy", () => {
     const history = conversation();
     const getProfile = vi.fn();
     const touchProfile = vi.fn();
+    const getProfileAvatar = vi.fn();
     const memory = {
       getProfile,
       touchProfile,
+      getProfileAvatar,
     } as unknown as MemoryCallbacks;
     const getMemoriesForQuery = vi.fn();
     const botMemory = {
@@ -544,12 +547,157 @@ describe("AI reply group capture and privacy", () => {
     expect(history.addMessages).not.toHaveBeenCalled();
     expect(getProfile).not.toHaveBeenCalled();
     expect(touchProfile).not.toHaveBeenCalled();
+    expect(getProfileAvatar).not.toHaveBeenCalled();
     expect(getMemoriesForQuery).not.toHaveBeenCalled();
+    expect(streamTextMock.mock.calls.at(-1)?.[0]?.tools).not.toHaveProperty("get_profile_avatar");
     const requestLog = logs.find((entry) => entry.message === "AI request");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("get_profile");
+    expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("get_profile_avatar");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("save_memory");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("set_mood");
     expect(requestLog?.meta?.["toolsEnabled"]).not.toContain("set_timer");
+    runtime.destroy();
+  });
+
+  it("binds avatar reads to the requesting user and keeps image bytes ephemeral", async () => {
+    const avatarBytes = Uint8Array.from([211, 17, 99, 207]);
+    const byteSignature = JSON.stringify(avatarBytes);
+    const getProfileAvatar = vi.fn().mockResolvedValue({
+      status: "available" as const,
+      telegramId: 77,
+      avatarVersion: "avatar-v1",
+      mediaType: "image/jpeg" as const,
+      data: avatarBytes,
+    });
+    const memory = { getProfileAvatar } as unknown as MemoryCallbacks;
+    const history = conversation();
+    const logs: BotLogEntry[] = [];
+    let toolOutput: unknown;
+    let preparedMessages: ModelMessage[] = [];
+    const steps: Array<{
+      toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>;
+      toolResults: Array<{ toolName: string; toolCallId: string; output: unknown }>;
+      usage: { inputTokens: number; outputTokens: number; totalTokens: number };
+    }> = [];
+
+    streamTextMock.mockImplementationOnce(
+      (options: {
+        tools: Record<string, Tool>;
+        prepareStep: (input: { messages: ModelMessage[] }) => { messages: ModelMessage[] };
+      }) => {
+        async function* textStream() {
+          toolOutput = await options.tools.get_profile_avatar!.execute!(
+            { telegram_id: 77 },
+            { toolCallId: "avatar-call", messages: [] },
+          );
+          preparedMessages = options.prepareStep({
+            messages: [
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolName: "get_profile_avatar",
+                    toolCallId: "avatar-call",
+                    output: { type: "json", value: toolOutput as JSONValue },
+                  },
+                ],
+              },
+            ],
+          }).messages;
+          steps.push({
+            toolCalls: [
+              {
+                toolName: "get_profile_avatar",
+                toolCallId: "avatar-call",
+                input: { telegram_id: 77 },
+              },
+            ],
+            toolResults: [
+              { toolName: "get_profile_avatar", toolCallId: "avatar-call", output: toolOutput },
+            ],
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          });
+          yield "avatar answer";
+        }
+        return {
+          textStream: textStream(),
+          text: Promise.resolve("avatar answer"),
+          steps: Promise.resolve(steps),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+          finishReason: Promise.resolve("stop"),
+        };
+      },
+    );
+    const runtime = createAiReplyHandler({
+      ...config(history, privacy("normal")),
+      memory,
+      memoryConfig: {
+        enabled: true,
+        maxSteps: 3,
+        autoReadProfile: false,
+        autoUpdateLastSeen: false,
+        toolChoice: "auto",
+      },
+      messageConfig: {
+        replyMode: "segment",
+        richMessageEnabled: false,
+        autoSplitThreshold: 0,
+        splitDelayMs: 0,
+      },
+      onLog: (entry) => {
+        logs.push(entry);
+      },
+    });
+    const ctx = {
+      update: { update_id: 4 },
+      message: { message_id: 11, text: "analyze their avatar", entities: [] },
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "Tester" },
+      me: { id: 99, is_bot: true, first_name: "Ai", username: "sample_bot" },
+      api: { sendChatAction: vi.fn() },
+      wait: vi.fn().mockResolvedValue(20),
+      replyWithChatAction: vi.fn(),
+      resolveWait: vi.fn().mockResolvedValue(20),
+      deleteWaiting: vi.fn(),
+      directlyReply: vi.fn(),
+    } as unknown as BotContext;
+
+    await runtime.handler(ctx, vi.fn());
+
+    expect(getProfileAvatar).toHaveBeenCalledWith(77, 42);
+    expect(toolOutput).toMatchObject({
+      status: "available",
+      telegramId: 77,
+      avatarVersion: "avatar-v1",
+    });
+    expect(toolOutput).not.toHaveProperty("data");
+    expect(preparedMessages).toContainEqual({
+      role: "user",
+      content: [
+        { type: "text", text: expect.stringContaining("77") },
+        { type: "image", image: avatarBytes, mediaType: "image/jpeg" },
+      ],
+    });
+    expect(vi.mocked(history.addMessages)).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "tool_result",
+          content: JSON.stringify(toolOutput),
+          meta: expect.objectContaining({
+            toolName: "get_profile_avatar",
+            toolCallId: "avatar-call",
+          }),
+        }),
+      ]),
+    );
+    expect(
+      JSON.stringify({ history: vi.mocked(history.addMessages).mock.calls, logs }),
+    ).not.toContain(byteSignature);
+    expect(
+      JSON.stringify({ history: vi.mocked(history.addMessages).mock.calls, logs }),
+    ).not.toContain('"data"');
     runtime.destroy();
   });
 

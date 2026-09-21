@@ -40,6 +40,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
   "check_rss",
   "list_rss_feeds",
   "get_profile",
+  "get_profile_avatar",
   "search_profiles",
   "search_history",
   "recall_memories",
