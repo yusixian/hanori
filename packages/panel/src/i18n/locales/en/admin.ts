@@ -130,6 +130,8 @@ export const admin = {
     title: "Logs",
     clear: "Clear Logs",
     clearConfirm: "Clear all logs?",
+    clearBotConfirm: 'Clear all logs for "{{botName}}"?',
+    clearFailed: "Logs could not be cleared. Try again.",
     live: "Live",
     disconnected: "Disconnected",
     realTime: "Real-time",

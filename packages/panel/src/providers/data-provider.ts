@@ -20,6 +20,8 @@ export const dataProvider: DataProvider = {
       const level = getFilterValue(filters, "level");
       const botId = getFilterValue(filters, "botId");
       const search = getFilterValue(filters, "search");
+      const chatId = getFilterValue(filters, "chatId");
+      const correlationId = getFilterValue(filters, "correlationId");
 
       const query: Record<string, string> = {
         page: String(page),
@@ -28,6 +30,8 @@ export const dataProvider: DataProvider = {
       if (level) query.level = level;
       if (botId) query.botId = botId;
       if (search) query.search = search;
+      if (chatId) query.chatId = chatId;
+      if (correlationId) query.correlationId = correlationId;
 
       const res = await client.api.logs.$get({ query });
       const json = await res.json();

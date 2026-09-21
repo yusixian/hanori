@@ -44,15 +44,13 @@
 
 ## 当前迭代
 
-- v0.4.0 导航与工作区已完成审查、CI、合入及 GitHub Release，详见下方证据；完整目标保持进行中。
-- 当前重点：v0.5.0 AI 设置批次 A（搜索、稳定深链、移动摘要），已从 Sol 隔离工作区精确整合到 `ui/ai-settings-efficiency-v0.5.0`。独立审查发现的定位/键盘焦点问题已修复；主代理补修 IME Enter 误选、重复清空图标、窄窗口吸顶导航遮挡。未改保存/权限/API。
-- v0.5.0 本地验证：AI 页面 9/9 浏览器回归，Panel typecheck/build、相关 lint、i18n 2277 keys；文档 typecheck/build 和 12/12 浏览器测试；1440×900、900×768、390×844 完整应用 API 夹具验证深链、历史、焦点、草稿保留和定位不遮挡，无页面错误/横向溢出。证据 `.acceptance/ui-efficiency/ai-final-verified/` 和 `docs-v0.5.0/`；尚未 PR/合入/发布。
-- 下一批次：AI 保存状态与草稿保护。站内导航丢草稿已用实际浏览器复现；当前 BrowserRouter 与 useBlocker 兼容性需单独处理。详细证据与范围见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
-- 日志检索批次已由 Sol 在 `/private/tmp/cos-tool-bot-logs-efficiency-20260922` 隔离实现：两个页面的结构化筛选被 DataProvider 丢弃，历史与 SSE 条件不一致；局部筛选布局占用过高；清理确认文案须准确反映 Bot 范围。保留 debounce、IME、SSE、权限和删除契约，单独审查交付。
+- v0.4.0 导航与工作区、v0.5.0 AI 设置查找已完成审查、PR CI、合入及 GitHub Release，详见下方证据；完整目标保持进行中。
+- 当前重点：v0.5.1 日志筛选与清理反馈。已从 Sol 隔离工作区按明确文件整合到 `ui/logs-efficiency-v0.5.1`：修复 DataProvider 丢失群聊 ID / 关联 ID；统一历史与实时 applied 筛选；整理桌面/手机布局；准确显示 Bot 清理范围与清理失败。独立审查发现的空白参数、DELETE 失败后误清列表两项 P2 已修复并复审通过。主代理整合后验证：日志浏览器 9/9；1440×900、1280×800、390×844 两个完整页面的 API/SSE 夹具通过，无溢出、非法请求或页面错误；Panel typecheck、相关 lint/format、i18n 2279 keys、文档 typecheck/build 与浏览器 12/12 通过。证据 `.acceptance/ui-efficiency/logs-final/` 和 `docs-v0.5.1/`；尚未提交/发布。
+- 下一批次：AI 保存状态与草稿保护。站内导航丢草稿已复现；最小 wildcard data-router 兼容性 probe 5/5 通过（Link、navigate、真实 history back、query-only 保留草稿、MiniApp 分流）。Sol 在 `/private/tmp/cos-tool-bot-ai-drafts-20260922`（基线 `68b2ef6`）实施；主代理已指出 StrictMode 下 dispose 生命周期风险，修正后须验证实际 Refine/auth/lazy/MiniApp 组装。保持路由表/认证/保存权限和 revision 恢复契约，增加显式保存状态、Live selection Discard 与离开确认。见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
 - 非阻断导航体验项：1024×768 长菜单底部展开全局管理后还需滚动才能看到入口；搜索已可直接定位，后续评估。
 - 环境：项目专用 CI runner 可用；Docker 当前不可用；3100/5173 属于其他项目，未动。UI 证据使用独立 Vite 5188 + 全量拦截 API，不是生产数据库或 Telegram 验证。
 - 无关未跟踪内容 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。
-- 下一步：记录本轮交付，完成 AI 批次 A 的独立审查与真实浏览器验收，更新公共指南/版本说明并进入下一轮 CI、合入和发布。
+- 下一步：完成日志批次整体验收、文档/版本同步与 CI 发布闭环；继续 AI 草稿保护的独立审查和完整入口验收。
 
 ## 迭代证据
 
@@ -70,3 +68,15 @@
 - 发布：v0.4.0 已公开，非 draft/预发布；远端 tag 与发布目标均核实为上述 main SHA。正文来自 `docs/releases/v0.4.0.md`。
 - 文档：新增公开导航指南、快速开始与 README 入口、版本导航和 v0.4.0 页面；保留旧版本访问。合入后已复核提交文件树与文档同步。
 - 部署：未部署生产；不能据 GitHub 发布或模拟浏览器结果声称线上面板/Telegram 已更新。
+
+### v0.5.0 — 更快找到 AI 设置
+
+- 基线：v0.4.0 与后续目标记录 `5ec4ab8007c44979eca41f887a14a3c8b0f25a35`。
+- 范围：21 个折叠设置的跨分类搜索、稳定设置 ID / URL 深链、加载后定位与键盘焦点、手机摘要；不改变保存、权限或 API。
+- 审查：独立 Sol 与主代理复核。修复延迟加载定位、键盘焦点、IME Enter 误选、重复清空图标和吸顶区域遮挡；终态无剩余 P1/P2。
+- 本地验证：AI 页面浏览器 9/9；Panel typecheck/build、相关 lint/format、i18n 2277 keys；文档 typecheck/build、桌面/手机浏览器 12/12。
+- 完整应用 API 夹具：1440×900、900×768、390×844 验证深链、新标签页恢复、慢加载、前进后退、焦点、同页草稿保留和目标不被遮挡；无页面错误/横向溢出。证据 `.acceptance/ui-efficiency/ai-final-verified/` 和 `docs-v0.5.0/`。
+- PR #88 已核实 MERGED。PR CI 35630934214 completed/success，head `68b2ef62e5afd75b8c48f941b473e4e8feba9a7f`；合入文件树完全相同。
+- main/tag/Release 目标均已核实为 `202799c5286dbccd4651f5345e9d0604840f74b1`。v0.5.0 已公开，非 draft/预发布；正文来自 `docs/releases/v0.5.0.md`。
+- 合入后 CI 35632627064 正在运行，尚未记录终态。
+- 文档：AI 对话与模型指南、版本导航和 v0.5.0 页面已同步；合入后通过文件树一致性复核。未部署生产。
