@@ -175,6 +175,10 @@ export const admin = {
     cancelConfirm: "Cancel timer {{id}}?",
   },
   usage: {
+    loadError: "Usage data could not be loaded.",
+    heatmapLoadError: "Daily activity could not be loaded.",
+    botsLoadError: "Bot filters could not be loaded.",
+    botFilter: "Filter by Bot",
     title: "Token Usage",
     days: "{{count}}d",
     allBots: "All Bots",

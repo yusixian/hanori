@@ -173,6 +173,10 @@ export const admin = {
     cancelConfirm: "确定取消定时器 {{id}} 吗？",
   },
   usage: {
+    loadError: "用量数据加载失败。",
+    heatmapLoadError: "每日活跃度加载失败。",
+    botsLoadError: "Bot 筛选列表加载失败。",
+    botFilter: "按 Bot 筛选",
     title: "Token 用量",
     days: "{{count}} 天",
     allBots: "全部 Bot",
