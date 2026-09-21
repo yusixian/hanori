@@ -40,7 +40,7 @@ export const aiSettings = {
     contextMessages: "Context messages",
     timeoutMs: "Decision timeout (ms)",
     confidenceHelp:
-      "Confidence describes how decisive JEV is, not its measured accuracy. Calibrate with labeled samples. Context is limited to 5 minutes and 6,000 characters; failures use existing triggers.",
+      "Reply and participation are judged independently; uncertain participation does not by itself cause silence. A reply is admitted only when JEV selects Reply and the reply-decision confidence reaches this configured threshold. Lowering it increases replies. Direct Address and the Continue cooldown exception use a fixed 0.8 participation-confidence threshold; lower-confidence participation is routed as Join and still observes the cooldown. Confidence describes how decisive the model is, not measured accuracy. Calibrate with labeled samples. Context is limited to 5 minutes and 6,000 characters; failures use existing triggers.",
     apiKey: "TypeSafe API key",
     keyConfigured: "Configured — leave blank to keep",
     keyMissing: "Enter your TypeSafe key",

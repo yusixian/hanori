@@ -27,27 +27,36 @@ function evaluateInput(overrides: Partial<Parameters<EngagementEvaluator["evalua
   };
 }
 
-function jevResponse(choice: "continue" | "join" | "silent" = "continue") {
-  const probabilities = {
-    continue: choice === "continue" ? 0.9 : 0.05,
-    join: choice === "join" ? 0.9 : 0.05,
-    silent: choice === "silent" ? 0.9 : 0.05,
-  };
-  return new Response(
-    JSON.stringify({
-      model: ENGAGEMENT_MODEL,
-      answers: {
-        engagement: {
-          type: "choice",
-          choice,
-          confidence: 0.9,
-          probabilities,
+function jevResponseBody(choice: "continue" | "join" | "silent" = "continue") {
+  return {
+    model: ENGAGEMENT_MODEL,
+    answers: {
+      reply: {
+        type: "choice",
+        choice: choice === "silent" ? "silent" : "answer",
+        confidence: 0.9,
+        probabilities: {
+          answer: choice === "silent" ? 0.05 : 0.95,
+          silent: choice === "silent" ? 0.95 : 0.05,
         },
       },
-      usage: { input_tokens: 100 },
-    }),
-    { status: 200 },
-  );
+      participation: {
+        type: "choice",
+        choice: choice === "continue" ? "continue" : "join",
+        confidence: 0.9,
+        probabilities: {
+          addressed: 0,
+          continue: choice === "continue" ? 0.95 : 0.05,
+          join: choice === "continue" ? 0.05 : 0.95,
+        },
+      },
+    },
+    usage: { input_tokens: 100 },
+  };
+}
+
+function jevResponse(choice: "continue" | "join" | "silent" = "continue") {
+  return new Response(JSON.stringify(jevResponseBody(choice)), { status: 200 });
 }
 
 describe("selectEngagementContext", () => {
@@ -94,6 +103,70 @@ describe("selectEngagementContext", () => {
 });
 
 describe("EngagementEvaluator", () => {
+  it("provides bounded bot identity without sending participant identifiers", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jevResponse());
+    await new EngagementEvaluator(fetchMock).evaluate(
+      evaluateInput({
+        assistantIdentity: {
+          displayName: "助手",
+          username: "sample_bot",
+          triggerWords: ["助手", "x".repeat(100)],
+        },
+      }),
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body.state.assistant).toEqual({
+      displayName: "助手",
+      username: "sample_bot",
+      configuredTriggerWords: ["助手", "x".repeat(80)],
+    });
+    expect(body.state.conversation[0].speaker).toBe("participant_1");
+    expect(JSON.stringify(body.state)).not.toContain('"userId"');
+  });
+
+  it.each([
+    [0.8, "silent", "below_threshold"],
+    [0.4, "answer", "jev_answer"],
+  ] as const)(
+    "respects a configured threshold of %s for a tentative join",
+    async (threshold, engagement, reasonCode) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            model: ENGAGEMENT_MODEL,
+            answers: {
+              reply: {
+                type: "choice",
+                choice: "answer",
+                confidence: 0.4,
+                probabilities: { answer: 0.7, silent: 0.3 },
+              },
+              participation: {
+                type: "choice",
+                choice: "join",
+                confidence: 0.1,
+                probabilities: { addressed: 0, continue: 0.45, join: 0.55 },
+              },
+            },
+          }),
+        ),
+      );
+      await expect(
+        new EngagementEvaluator(fetchMock).evaluate(
+          evaluateInput({
+            policy: { ...policy, confidenceThreshold: threshold },
+          }),
+        ),
+      ).resolves.toMatchObject({
+        choice: "join",
+        confidence: 0.4,
+        engagement,
+        reasonCode,
+        probabilities: { answer: 0.7, silent: 0.3, continue: 0.45, join: 0.55 },
+      });
+    },
+  );
+
   it("sends the pinned Choice request and returns a sanitized, costed sample", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jevResponse());
     const evaluator = new EngagementEvaluator(fetchMock);
@@ -128,11 +201,17 @@ describe("EngagementEvaluator", () => {
         JSON.stringify({
           model: ENGAGEMENT_MODEL,
           answers: {
-            engagement: {
+            reply: {
               type: "choice",
-              choice: "continue",
+              choice: "answer",
               confidence: 0.9,
-              probabilities: { continue: 0.9, join: 0.9, silent: 0.9 },
+              probabilities: { answer: 0.9, silent: 0.9 },
+            },
+            participation: {
+              type: "choice",
+              choice: "join",
+              confidence: 0.9,
+              probabilities: { addressed: 0, continue: 0.05, join: 0.95 },
             },
           },
         }),
@@ -150,11 +229,17 @@ describe("EngagementEvaluator", () => {
         JSON.stringify({
           model: ENGAGEMENT_MODEL,
           answers: {
-            engagement: {
+            reply: {
               type: "choice",
               choice: "silent",
               confidence: 0.9,
-              probabilities: { continue: 0.05, join: 0.9, silent: 0.05 },
+              probabilities: { answer: 0.95, silent: 0.05 },
+            },
+            participation: {
+              type: "choice",
+              choice: "join",
+              confidence: 0.9,
+              probabilities: { addressed: 0, continue: 0.05, join: 0.95 },
             },
           },
           usage: { input_tokens: 100 },
@@ -165,6 +250,79 @@ describe("EngagementEvaluator", () => {
     await expect(
       new EngagementEvaluator(fetchMock).evaluate(evaluateInput()),
     ).resolves.toMatchObject({ errorCategory: "invalid_response", choice: null });
+  });
+
+  it("allows a clear reply even when participation is ambiguous, without granting continuation", async () => {
+    const payload = jevResponseBody("continue");
+    payload.answers.participation = {
+      type: "choice",
+      choice: "continue",
+      confidence: 0.1,
+      probabilities: { addressed: 0, continue: 0.55, join: 0.45 },
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(payload)));
+    const sample = await new EngagementEvaluator(fetchMock).evaluate(evaluateInput());
+    expect(sample).toMatchObject({
+      choice: "join",
+      engagement: "answer",
+      confidence: 0.9,
+      reasonCode: "jev_answer",
+      probabilities: { answer: 0.95, silent: 0.05, continue: 0.55, join: 0.45 },
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(Object.keys(body.questions)).toEqual(["reply", "participation"]);
+  });
+
+  it("does not let a confident participation answer override a silent reply decision", async () => {
+    const payload = jevResponseBody("silent");
+    payload.answers.participation = {
+      type: "choice",
+      choice: "continue",
+      confidence: 1,
+      probabilities: { addressed: 0, continue: 1, join: 0 },
+    };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(payload)));
+    await expect(
+      new EngagementEvaluator(fetchMock).evaluate(evaluateInput()),
+    ).resolves.toMatchObject({
+      choice: "silent",
+      engagement: "silent",
+      reasonCode: "jev_silent",
+    });
+  });
+
+  it("does not loosen continuation eligibility when the reply threshold is lowered", async () => {
+    const payload = jevResponseBody("continue");
+    payload.answers.participation.confidence = 0.5;
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(payload)));
+    await expect(
+      new EngagementEvaluator(fetchMock).evaluate(
+        evaluateInput({
+          policy: { ...policy, confidenceThreshold: 0.4 },
+        }),
+      ),
+    ).resolves.toMatchObject({ choice: "join", engagement: "answer", addressed: false });
+  });
+
+  it.each(["reply", "participation"])("rejects a missing %s answer", async (missing) => {
+    const payload = jevResponseBody();
+    const answers: Record<string, unknown> = { ...payload.answers };
+    delete answers[missing];
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify({ ...payload, answers })));
+    await expect(
+      new EngagementEvaluator(fetchMock).evaluate(evaluateInput()),
+    ).resolves.toMatchObject({
+      errorCategory: "invalid_response",
+    });
   });
 
   it("cancels an unread error response body", async () => {
@@ -196,9 +354,9 @@ describe("EngagementEvaluator", () => {
 
     const criteria = fetchMock.mock.calls.map(([, init]) => {
       const body = JSON.parse(String(init?.body)) as {
-        questions: { engagement: { criteria: unknown } };
+        questions: { reply: { criteria: unknown } };
       };
-      return body.questions.engagement.criteria;
+      return body.questions.reply.criteria;
     });
     expect(new Set(criteria.map((value) => JSON.stringify(value))).size).toBe(3);
   });

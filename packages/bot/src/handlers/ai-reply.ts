@@ -413,6 +413,7 @@ type TriggerResult =
   | "keyword"
   | "random"
   | "engagement_continue"
+  | "engagement_addressed"
   | "engagement_join"
   | false;
 
@@ -1717,6 +1718,7 @@ export function createAiReplyHandler(
               style: sample.style,
               choice: sample.choice,
               recommendation: sample.engagement,
+              addressed: sample.addressed,
               actualTrigger: actualTrigger || null,
               confidence: sample.confidence,
               probabilities: sample.probabilities,
@@ -1822,6 +1824,11 @@ export function createAiReplyHandler(
             contextSnapshot: safeSnapshot,
             evaluationInput: {
               apiKey: config.engagement?.apiKey,
+              assistantIdentity: {
+                displayName: ctx.me.first_name,
+                username: ctx.me.username,
+                triggerWords: groupTriggerConfig.triggerWords,
+              },
               policy: engagementPolicy,
               context: selectEngagementContext({
                 messages: safeSnapshot,
@@ -1886,7 +1893,8 @@ export function createAiReplyHandler(
                 const recentBotUtterance = prepared.contextSnapshot.some(
                   (message) => message.isBot && Date.now() - message.timestamp <= 120_000,
                 );
-                const skipsCooldown = sample.choice === "continue" && recentBotUtterance;
+                const skipsCooldown =
+                  sample.addressed === true || (sample.choice === "continue" && recentBotUtterance);
                 const lastEngagement = engagementCooldownMap.get(engagementCooldownKey) ?? 0;
                 const cooldownMs = Math.max(0, engagementPolicy.cooldownSeconds) * 1000;
                 if (!skipsCooldown && Date.now() - lastEngagement < cooldownMs) {
@@ -1896,8 +1904,11 @@ export function createAiReplyHandler(
                   });
                   triggerResult = false;
                 } else {
-                  triggerResult =
-                    sample.choice === "continue" ? "engagement_continue" : "engagement_join";
+                  triggerResult = sample.addressed
+                    ? "engagement_addressed"
+                    : sample.choice === "continue"
+                      ? "engagement_continue"
+                      : "engagement_join";
                   shouldCommitEngagementCooldown = !skipsCooldown;
                 }
               } else {
@@ -2012,6 +2023,7 @@ export function createAiReplyHandler(
 
     const usageResource: UsageResource =
       triggerResult === "random" ||
+      triggerResult === "engagement_addressed" ||
       triggerResult === "engagement_continue" ||
       triggerResult === "engagement_join"
         ? "proactive_reply"
@@ -2287,6 +2299,7 @@ export function createAiReplyHandler(
             conversationCfg.groupContextMode === "all" ||
             (conversationCfg.groupContextMode === "random_only" &&
               (triggerResult === "random" ||
+                triggerResult === "engagement_addressed" ||
                 triggerResult === "engagement_continue" ||
                 triggerResult === "engagement_join"));
 

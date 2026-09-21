@@ -21,6 +21,7 @@ type FilterState = {
   chatId: string;
   mode: "" | "off" | "shadow" | "active";
   choice: "" | "continue" | "join" | "silent";
+  engagement: "" | "answer" | "silent";
   actualOutcome: "" | "answer" | "silent";
   actualTrigger: string;
   errorCategory: string;
@@ -31,6 +32,7 @@ const EMPTY_FILTERS: FilterState = {
   chatId: "",
   mode: "",
   choice: "",
+  engagement: "",
   actualOutcome: "",
   actualTrigger: "",
   errorCategory: "",
@@ -119,7 +121,13 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters((current) => ({ ...current, [key]: value }));
-    if (key === "mode" || key === "choice" || key === "actualOutcome" || key === "label") {
+    if (
+      key === "mode" ||
+      key === "choice" ||
+      key === "engagement" ||
+      key === "actualOutcome" ||
+      key === "label"
+    ) {
       setPage(1);
       setSettledFilters((current) => ({ ...current, [key]: value }));
     }
@@ -212,15 +220,26 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
             <option value="silent">{t("engagementSamples.choices.silent")}</option>
           </Select>
           <Select
-            value={filters.actualOutcome}
+            value={filters.engagement}
             onChange={(event) =>
-              updateFilter("actualOutcome", event.target.value as FilterState["actualOutcome"])
+              updateFilter("engagement", event.target.value as FilterState["engagement"])
             }
             aria-label={t("engagementSamples.filters.engagement")}
           >
             <option value="">{t("engagementSamples.filters.allEngagements")}</option>
             <option value="answer">{t("engagementSamples.admissions.answer")}</option>
             <option value="silent">{t("engagementSamples.admissions.silent")}</option>
+          </Select>
+          <Select
+            value={filters.actualOutcome}
+            onChange={(event) =>
+              updateFilter("actualOutcome", event.target.value as FilterState["actualOutcome"])
+            }
+            aria-label={t("engagementSamples.filters.actualOutcome")}
+          >
+            <option value="">{t("engagementSamples.filters.allActualOutcomes")}</option>
+            <option value="answer">{t("engagementSamples.actualOutcomes.answer")}</option>
+            <option value="silent">{t("engagementSamples.actualOutcomes.silent")}</option>
           </Select>
           <Input
             value={filters.actualTrigger}
@@ -394,6 +413,11 @@ function EngagementSampleRowView({
   const createdAt = getCreatedAt(row);
   const displayLabel = row.label ?? "";
   const sampleId = getSampleId(row);
+  const hasReplyDecision = row.probabilities?.answer !== undefined;
+  const probability = (key: string) => {
+    const value = row.probabilities?.[key];
+    return value === undefined ? t("engagementSamples.notAvailable") : formatConfidence(value);
+  };
 
   return (
     <article className="rounded-xl border bg-white px-3.5 py-3 shadow-sm sm:px-4">
@@ -406,9 +430,18 @@ function EngagementSampleRowView({
           >
             {t(`engagementSamples.modes.${row.mode}`)}
           </Badge>
-          <Badge>{t(`engagementSamples.choices.${row.choice ?? "unknown"}`)}</Badge>
+          <Badge>
+            {t(
+              hasReplyDecision
+                ? "engagementSamples.participationChoice"
+                : "engagementSamples.legacyChoice",
+              {
+                choice: t(`engagementSamples.choices.${row.choice ?? "unknown"}`),
+              },
+            )}
+          </Badge>
           <Badge variant={row.engagement === "answer" ? "success" : "muted"}>
-            {t(`engagementSamples.recommendations.${row.engagement}`)}
+            {t(`engagementSamples.admissions.${row.engagement}`)}
           </Badge>
           <Badge variant={row.actualTrigger ? "success" : "muted"}>
             {t(`engagementSamples.actualOutcomes.${row.actualTrigger ? "answer" : "silent"}`)}
@@ -433,7 +466,12 @@ function EngagementSampleRowView({
           </strong>
         </span>
         <span>
-          {t("engagementSamples.confidence")}:{" "}
+          {t(
+            hasReplyDecision
+              ? "engagementSamples.replyConfidence"
+              : "engagementSamples.legacyConfidence",
+          )}
+          :{" "}
           <strong className="text-foreground font-medium">
             {row.confidence === null || row.confidence === undefined
               ? t("engagementSamples.notAvailable")
@@ -462,6 +500,54 @@ function EngagementSampleRowView({
           <span>{t("engagementSamples.cost", { value: formatUsd(row.estimatedCostUsd) })}</span>
         )}
       </div>
+
+      {row.probabilities &&
+        (hasReplyDecision ? (
+          <div className="mt-2 space-y-1 text-[11px]">
+            <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-foreground font-medium">
+                {t("engagementSamples.replyProbabilities")}
+              </span>
+              <span>
+                {t("engagementSamples.replyChoices.answer", { value: probability("answer") })}
+              </span>
+              <span>
+                {t("engagementSamples.replyChoices.silent", { value: probability("silent") })}
+              </span>
+            </div>
+            <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-foreground font-medium">
+                {t("engagementSamples.participationProbabilities")}
+              </span>
+              <span>
+                {t("engagementSamples.participationChoices.addressed", {
+                  value: probability("addressed"),
+                })}
+              </span>
+              <span>
+                {t("engagementSamples.participationChoices.continue", {
+                  value: probability("continue"),
+                })}
+              </span>
+              <span>
+                {t("engagementSamples.participationChoices.join", {
+                  value: probability("join"),
+                })}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="text-muted-foreground mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            <span className="text-foreground font-medium">
+              {t("engagementSamples.legacyProbabilities")}
+            </span>
+            {(["continue", "join", "silent"] as const).map((choice) => (
+              <span key={choice}>
+                {t(`engagementSamples.choices.${choice}`)} {probability(choice)}
+              </span>
+            ))}
+          </div>
+        ))}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
         <div className="flex items-center gap-2 text-xs">
@@ -494,7 +580,24 @@ function EngagementSampleRowView({
             />
           )}
         </div>
-        {row.reasonCode && <span className="text-muted-foreground text-xs">{row.reasonCode}</span>}
+        {row.reasonCode && (
+          <span className="text-muted-foreground text-xs">
+            {row.reasonCode === "below_threshold"
+              ? t(
+                  hasReplyDecision
+                    ? "engagementSamples.reasonCodes.belowReplyThreshold"
+                    : "engagementSamples.reasonCodes.belowLegacyThreshold",
+                  {
+                    confidence:
+                      row.confidence === null || row.confidence === undefined
+                        ? t("engagementSamples.notAvailable")
+                        : formatConfidence(row.confidence),
+                    threshold: formatConfidence(row.configSnapshot.confidenceThreshold),
+                  },
+                )
+              : row.reasonCode}
+          </span>
+        )}
       </div>
 
       <details className="group mt-1">

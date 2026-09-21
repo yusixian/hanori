@@ -25,22 +25,36 @@ afterEach(async () => {
   await Promise.allSettled(runtimes.splice(0).map((runtime) => runtime.destroy()));
 });
 
-function response(choice: "continue" | "join" | "silent") {
-  const probabilities =
-    choice === "continue"
-      ? { continue: 0.9, join: 0.05, silent: 0.05 }
-      : choice === "join"
-        ? { continue: 0.05, join: 0.9, silent: 0.05 }
-        : { continue: 0.05, join: 0.05, silent: 0.9 };
-  return new Response(
-    JSON.stringify({
-      model: ENGAGEMENT_MODEL,
-      answers: {
-        engagement: { type: "choice", choice, confidence: 0.9, probabilities },
+function responseBody(choice: "continue" | "join" | "silent") {
+  return {
+    model: ENGAGEMENT_MODEL,
+    answers: {
+      reply: {
+        type: "choice",
+        choice: choice === "silent" ? "silent" : "answer",
+        confidence: 0.9,
+        probabilities: {
+          answer: choice === "silent" ? 0.05 : 0.95,
+          silent: choice === "silent" ? 0.95 : 0.05,
+        },
       },
-      usage: { input_tokens: 10 },
-    }),
-  );
+      participation: {
+        type: "choice",
+        choice: choice === "continue" ? "continue" : "join",
+        confidence: 0.9,
+        probabilities: {
+          addressed: 0,
+          continue: choice === "continue" ? 0.95 : 0.05,
+          join: choice === "continue" ? 0.05 : 0.95,
+        },
+      },
+    },
+    usage: { input_tokens: 10 },
+  };
+}
+
+function response(choice: "continue" | "join" | "silent") {
+  return new Response(JSON.stringify(responseBody(choice)), { status: 200 });
 }
 
 function privacy(
@@ -134,6 +148,25 @@ function streamResult(text = "answer") {
 }
 
 describe("AI engagement decisions", () => {
+  it("sends the bot identity and effective group trigger words to the gate", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const runtimeConfig = config("active");
+    runtimeConfig.triggerConfig.triggerWords = ["default nickname"];
+    runtimeConfig.groupOverrides["-100"]!.triggerConfig = { triggerWords: ["助手"] };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+    await runtime.handler(context("助手怎么不说话"), vi.fn());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body.state.assistant).toEqual({
+      displayName: "Ai",
+      username: "sample_bot",
+      configuredTriggerWords: ["助手"],
+    });
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
   it("does not hold message ingress while shadow evaluations are pending", async () => {
     const releases: Array<(value: Response) => void> = [];
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(
@@ -398,6 +431,66 @@ describe("AI engagement decisions", () => {
       actualTrigger: null,
     });
   });
+
+  it("keeps ambiguous participation under cooldown even when the reply decision is confident", async () => {
+    const uncertain = responseBody("continue");
+    uncertain.answers.participation.confidence = 0.1;
+    uncertain.answers.participation.probabilities = { addressed: 0, continue: 0.55, join: 0.45 };
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(response("join"))
+        .mockResolvedValueOnce(new Response(JSON.stringify(uncertain))),
+    );
+    streamTextMock.mockReturnValue(streamResult());
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtime = createAiReplyHandler(config("active", onSample));
+    runtimes.push(runtime);
+    await runtime.handler(context("first join", { messageId: 1 }), vi.fn());
+    await runtime.handler(context("new exchange", { messageId: 2 }), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample.mock.calls[1]?.[0]).toMatchObject({
+      choice: "join",
+      engagement: "answer",
+      reasonCode: "engagement_cooldown",
+      actualTrigger: null,
+    });
+  });
+
+  it.each([0.9, 0.5])(
+    "requires a confident direct invitation to bypass cooldown (%s)",
+    async (confidence) => {
+      const addressed = responseBody("join");
+      addressed.answers.participation.choice = "addressed";
+      addressed.answers.participation.confidence = confidence;
+      addressed.answers.participation.probabilities = {
+        addressed: 0.95,
+        continue: 0.025,
+        join: 0.025,
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi
+          .fn<typeof fetch>()
+          .mockResolvedValueOnce(response("join"))
+          .mockResolvedValueOnce(new Response(JSON.stringify(addressed))),
+      );
+      streamTextMock.mockReturnValue(streamResult());
+      const onSample = vi.fn<(sample: EngagementSample) => void>();
+      const runtime = createAiReplyHandler(config("active", onSample));
+      runtimes.push(runtime);
+      await runtime.handler(context("first join", { messageId: 1 }), vi.fn());
+      await runtime.handler(context("助手你怎么看", { messageId: 2 }), vi.fn());
+      await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+      expect(streamTextMock).toHaveBeenCalledTimes(confidence >= 0.8 ? 2 : 1);
+      expect(onSample.mock.calls[1]?.[0]).toMatchObject({
+        addressed: confidence >= 0.8,
+        actualTrigger: confidence >= 0.8 ? "engagement_addressed" : null,
+      });
+    },
+  );
 
   it("does not use a bot utterance from another forum topic to bypass cooldown", async () => {
     const fetchMock = vi

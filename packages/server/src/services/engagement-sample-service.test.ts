@@ -52,6 +52,16 @@ function sample(overrides: Partial<EngagementSample> = {}): EngagementSample {
 }
 
 describe("EngagementSampleService persistence", () => {
+  it("preserves both independent decision distributions without normalizing them together", async () => {
+    const values = vi.fn(async (_value: Record<string, unknown>) => undefined);
+    const service = new EngagementSampleService({
+      insert: () => ({ values }),
+    } as unknown as Database);
+    const probabilities = { answer: 0.95, silent: 0.05, addressed: 0.1, continue: 0.5, join: 0.4 };
+    await service.persist("00000000-0000-4000-8000-000000000001", sample({ probabilities }));
+    expect(values.mock.calls[0]![0]).toMatchObject({ probabilities, source: "jev" });
+  });
+
   it("stores a redacted bounded context and immutable pricing snapshot without credentials", async () => {
     const values = vi.fn(async (_value: Record<string, unknown>) => undefined);
     const db = { insert: () => ({ values }) } as unknown as Database;

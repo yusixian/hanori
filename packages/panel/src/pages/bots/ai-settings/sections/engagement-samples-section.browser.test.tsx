@@ -13,9 +13,9 @@ const sample = {
   style: "natural",
   choice: "join",
   engagement: "silent",
-  confidence: 0.88,
-  probabilities: { join: 0.88 },
-  reasonCode: "topic_match",
+  confidence: 0.6,
+  probabilities: { answer: 0.6, silent: 0.4, addressed: 0.2, continue: 0.3, join: 0.5 },
+  reasonCode: "below_threshold",
   actualTrigger: "random",
   model: "jev-1.13.0",
   configVersion: "policy-7",
@@ -41,6 +41,29 @@ const sample = {
   errorCategory: "timeout",
   label: null,
   createdAt: "2026-09-21T08:00:00.000Z",
+};
+
+const legacySample = {
+  ...sample,
+  id: 16,
+  messageId: 40,
+  choice: "continue",
+  engagement: "answer",
+  confidence: 0.88,
+  probabilities: { continue: 0.88, join: 0.07, silent: 0.05 },
+  reasonCode: "jev_answer",
+  actualTrigger: null,
+};
+
+const twoRouteSample = {
+  ...sample,
+  id: 15,
+  messageId: 39,
+  engagement: "answer",
+  confidence: 0.9,
+  probabilities: { answer: 0.9, silent: 0.1, continue: 0.45, join: 0.55 },
+  reasonCode: "jev_answer",
+  actualTrigger: null,
 };
 
 function response(body: unknown, status = 200) {
@@ -78,7 +101,7 @@ test("reviews expired shadow samples, filters them, labels them, and paginates",
         ok: true,
         items: secondPage
           ? [{ ...sample, id: 18, messageId: 42, context: [] }]
-          : [{ ...sample, label: currentLabel }],
+          : [{ ...sample, label: currentLabel }, twoRouteSample, legacySample],
         total: 21,
         page: secondPage ? 2 : 1,
         pageSize: 20,
@@ -102,11 +125,61 @@ test("reviews expired shadow samples, filters them, labels them, and paginates",
   await expect
     .element(page.getByRole("heading", { name: "Engagement review samples" }))
     .toBeVisible();
-  await expect.element(page.getByText("Context expired", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("Gate recommends silence", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("Answered", { exact: true })).toBeVisible();
+  const currentSampleRow = page.getByRole("article").nth(0);
+  const twoRouteSampleRow = page.getByRole("article").nth(1);
+  const legacySampleRow = page.getByRole("article").nth(2);
+  await expect
+    .element(currentSampleRow.getByText("Context expired", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Participation route: Join", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Policy result: silent", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Reply actually admitted", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Reply-decision confidence: 60%", { exact: true }))
+    .toBeVisible();
+  await expect.element(currentSampleRow.getByText("Reply 60%", { exact: true })).toBeVisible();
+  await expect.element(currentSampleRow.getByText("Silent 40%", { exact: true })).toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Direct address 20%", { exact: true }))
+    .toBeVisible();
+  await expect.element(currentSampleRow.getByText("Continue 30%", { exact: true })).toBeVisible();
+  await expect.element(currentSampleRow.getByText("Join 50%", { exact: true })).toBeVisible();
+  await expect
+    .element(
+      currentSampleRow.getByText(
+        "Below policy threshold: reply-decision confidence 60%, 80% required",
+        { exact: true },
+      ),
+    )
+    .toBeVisible();
+  await expect
+    .element(twoRouteSampleRow.getByText("Direct address —", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(legacySampleRow.getByText("Legacy JEV choice: Continue", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(legacySampleRow.getByText("Legacy choice confidence: 88%", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(legacySampleRow.getByText("Legacy model probabilities", { exact: true }))
+    .toBeVisible();
+  await expect.element(legacySampleRow.getByText("Continue 88%", { exact: true })).toBeVisible();
+  await expect.element(legacySampleRow.getByText("Join 7%", { exact: true })).toBeVisible();
+  await expect.element(legacySampleRow.getByText("Silent 5%", { exact: true })).toBeVisible();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(
+    document.documentElement.clientWidth,
+  );
   await expect.element(page.getByText("$0.0012 known + 2 unknown", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("Classifier $0.0004", { exact: true })).toBeVisible();
+  await expect
+    .element(currentSampleRow.getByText("Classifier $0.0004", { exact: true }))
+    .toBeVisible();
   await expect
     .element(
       page.getByText(
@@ -115,12 +188,12 @@ test("reviews expired shadow samples, filters them, labels them, and paginates",
     )
     .toBeVisible();
 
-  const details = page.getByText("Show bounded context", { exact: true });
+  const details = currentSampleRow.getByText("Show bounded context", { exact: true });
   await details.click();
   await expect
-    .element(page.getByText("This context has expired and is no longer displayed."))
+    .element(currentSampleRow.getByText("This context has expired and is no longer displayed."))
     .toBeVisible();
-  await expect.element(page.getByText("Keep jokes light")).toBeVisible();
+  await expect.element(currentSampleRow.getByText("Keep jokes light")).toBeVisible();
 
   await page.getByRole("combobox", { name: "Decision mode" }).click();
   await page.getByRole("option", { name: "Active" }).click();
@@ -132,8 +205,19 @@ test("reviews expired shadow samples, filters them, labels them, and paginates",
     ).toBe(true);
   });
 
+  await page.getByRole("combobox", { name: "Policy result" }).click();
+  await page.getByRole("option", { name: "Policy result: reply" }).click();
+  await vi.waitFor(() => {
+    expect(
+      requests.some(
+        ({ url }) =>
+          new URL(url, window.location.origin).searchParams.get("engagement") === "answer",
+      ),
+    ).toBe(true);
+  });
+
   await page.getByRole("combobox", { name: "Actual admission" }).click();
-  await page.getByRole("option", { name: "Answer admitted" }).click();
+  await page.getByRole("option", { name: "Reply actually admitted" }).click();
   await vi.waitFor(() => {
     expect(
       requests.some(

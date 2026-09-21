@@ -50,8 +50,13 @@ export interface EngagementSample {
   mode: EngagementMode;
   style: EngagementStyle;
   choice: EngagementChoice | null;
+  /** High-confidence direct invitation; bypasses proactive cooldown, not reply/privacy gates. */
+  addressed?: boolean;
   engagement: "answer" | "silent";
   confidence: number | null;
+  /** Current samples store independent answer/silent and addressed/continue/join distributions.
+   * Legacy samples have a single continue/join/silent distribution (no answer key).
+   */
   probabilities: Record<string, number> | null;
   reasonCode: string;
   actualTrigger: string | null;
