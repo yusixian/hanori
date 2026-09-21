@@ -1,6 +1,6 @@
 # AI 设置页效率审计
 
-状态：批次 A 已发布为 v0.5.0；批次 B 审查与验收进行中。记录日期：2026-09-22。
+状态：批次 A 已发布为 v0.5.0；批次 B 已发布为 v0.6.0。记录日期：2026-09-22。
 
 本文保留 `packages/panel` Bot AI 设置页的起始审计与后续证据。前文源码行号对应起始基线；实现、验收和发布状态以文末进展及 UI_EFFICIENCY_GOAL.md 为准。
 
@@ -152,4 +152,4 @@ Sol 实现后，主代理与限定范围 Astra 审查发现并要求修复：
 
 整合后生产构建的三个尺寸保存/普通离开流程通过。最后的真实 BetterAuth HTTP 500 验收另发现：Refine 将 `success:false` 当作 mutation onSuccess，仍失效认证缓存；`Authenticated` 在重新检查时卸载 AI 页面，导致草稿丢失。此前即时返回 getSession 的 mock 掩盖了这一行为。已将 logout 错误抛出，保留成功路径，并补上延迟认证检查和调用数回归。独立窄复审通过；生产预览的真实 HTTP 500 复验确认草稿和弹窗保留、没有额外认证/配置请求、后续重试成功才退出。证据 `.acceptance/ui-efficiency/ai-logout-error-production-fixed/`。
 
-生产构建的会话过期与手机长错误也已复验通过；前者保留原生 beforeunload 提示并最终进入登录页，后者 sticky 高度为 220px。最终根目录 26 项相关浏览器测试、类型与格式/lint、生产构建通过，完整仓库门禁待 CI；不能据上述夹具声明真实 Telegram WebView、生产 Bot 或已部署状态。
+生产构建的会话过期与手机长错误也已复验通过；前者保留原生 beforeunload 提示并最终进入登录页，后者 sticky 高度为 220px。最终根目录 26 项相关浏览器测试、类型与格式/lint、生产构建，以及 PR #90 完整 CI 均通过。v0.6.0 已合入并发布；不能据上述夹具声明真实 Telegram WebView、生产 Bot 或已部署状态。

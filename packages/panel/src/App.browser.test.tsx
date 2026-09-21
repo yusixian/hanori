@@ -128,7 +128,10 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
 
   await expect.element(page.getByRole("heading", { name: "Test Bot" })).toBeVisible();
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("link", { name: "AI Settings" }).click();
+  await page
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "AI Settings", exact: true })
+    .click();
   await expect.element(page.getByRole("heading", { name: "AI Settings" })).toBeVisible();
 
   const enableAi = page.getByRole("switch", { name: "Enable AI Replies" });
@@ -180,7 +183,10 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await page.getByRole("link", { name: /Test Bot/ }).click();
   await expect.element(page.getByRole("heading", { name: "Test Bot" })).toBeVisible();
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("link", { name: "AI Settings" }).click();
+  await page
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "AI Settings", exact: true })
+    .click();
   await expect.element(page.getByRole("heading", { name: "AI Settings" })).toBeVisible();
   await page.getByRole("switch", { name: "Enable AI Replies" }).click();
   await page.getByRole("button", { name: "Open menu" }).click();
@@ -197,7 +203,10 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await page.getByRole("link", { name: /Test Bot/ }).click();
   await expect.element(page.getByRole("heading", { name: "Test Bot" })).toBeVisible();
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("link", { name: "AI Settings" }).click();
+  await page
+    .getByRole("navigation", { name: "Primary navigation" })
+    .getByRole("link", { name: "AI Settings", exact: true })
+    .click();
   await expect.element(page.getByRole("heading", { name: "AI Settings" })).toBeVisible();
   await page.getByRole("button", { name: "Open menu" }).click();
   await page.getByRole("button", { name: "Log out" }).click();

@@ -15,7 +15,7 @@ import type {
   EmailEventType,
 } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { count, eq } from "drizzle-orm";
+import { asc, count, eq } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import * as fs from "node:fs/promises";
 import { HTTPException } from "hono/http-exception";
@@ -418,7 +418,12 @@ export function botsRoutes(
         const offset = (page - 1) * limit;
 
         const [allBots, [countResult]] = await Promise.all([
-          db.select().from(bots).limit(limit).offset(offset),
+          db
+            .select()
+            .from(bots)
+            .orderBy(asc(bots.createdAt), asc(bots.id))
+            .limit(limit)
+            .offset(offset),
           db.select({ total: count() }).from(bots),
         ]);
 

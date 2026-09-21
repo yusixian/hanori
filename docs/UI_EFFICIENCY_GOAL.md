@@ -44,17 +44,19 @@
 
 ## 当前迭代
 
-- v0.4.0 导航与工作区、v0.5.0 AI 设置查找、v0.5.1 日志筛选与清理反馈已完成审查、PR CI、合入及 GitHub Release。完整目标保持进行中。
-- 当前重点：v0.6.0 AI 保存状态与草稿保护，已整合到 `ui/ai-drafts-v0.6.0`（基线为已发布 v0.5.1），尚未提交/发布。
-- 实现范围：持续保存状态、clean 禁用保存、Live selection Discard、站内离开及主动退出登录确认；保留 revision/API、认证失败关闭和 Mini App 入口。根路由使用最小 wildcard data-router 包装。
-- 审查已修复 StrictMode router 生命周期、已保存但应用失败的重试入口、跨 Bot 清理恢复状态、手机长错误撑高 sticky、主动 Logout 先行 signOut、Refine pending 字段和 BetterAuth resolved error。
-- 最终生产预览发现并修复：返回 `success:false` 仍会触发 Refine 认证缓存失效并卸载草稿。改为 throw 后走 Refine onError，独立窄复审通过；真实 HTTP 500 复验确认草稿/弹窗保留、没有额外认证或配置请求，重试成功才退出。错误 toast 和失败后回焦一并补齐。
-- 根目录最终 26 项相关浏览器测试与 Panel typecheck 通过；修复后生产构建通过。相关 lint/format、Mini App entry、i18n 2297 keys、文档 types/build 均通过；文档 12 个场景在修正标题选择器后全部验证通过。完整仓库门禁待 CI。
-- 生产构建全 API 夹具已通过 1440×900、900×768、390×844 的 clean/dirty/saving/error/success、同页草稿、确认/取消离开与历史返回，无溢出或页面错误；证据 `.acceptance/ui-efficiency/ai-drafts-production/`。真实退出失败、会话过期和长错误分别见 `ai-logout-error-production-fixed/`、`ai-expiry-production/`、`ai-long-error-production/`。
-- AI 基线、范围与复现详见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。非阻断导航体验项：1024×768 长菜单底部展开全局管理后仍需滚动；搜索可直接定位，后续评估。
-- 环境：项目专用 runner 可用；Docker 当前不可用；3100/5173 属于其他项目，未动。浏览器使用独立 5188/5191 开发服务和 5192 生产预览，全量拦截 API，不涉及生产数据库或 Telegram。
-- 无关未跟踪内容 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。
-- 下一步：完成最终相关检查和验证记录，然后 CI、合入与 v0.6.0 发布。
+- v0.4.0 导航与工作区、v0.5.0 AI 设置查找、v0.5.1 日志筛选与清理反馈、v0.6.0 AI 保存与草稿保护均已完成审查、PR CI、合入及 GitHub Release。完整目标保持进行中。
+- v0.6.0 合入后 CI `35638264681` 已核实 completed/success，精确 SHA 与发布一致；PR CI、合入后 CI、main/tag/Release 均完成核对。
+- 当前重点：v0.7.0 Bot 列表与概览，已整合到根工作区 `ui/bot-management-v0.7.0`（基线为已发布 v0.6.0），尚未提交或发布。Sol 隔离工作区已冻结，临时依赖链接已清理。
+- 新基线已复现列表 HTTP 500 伪装成“还没有 Bot”；固定前 100 项且没有分页；手机 240px 卡片首屏只能显示两个 Bot，概览常用操作仍需菜单。详见 [UI_BOT_MANAGEMENT_AUDIT.md](UI_BOT_MANAGEMENT_AUDIT.md)。
+- v0.7.0 范围：真实分页/total、紧凑卡片、列表及详情失败重试、后台刷新失败保留旧数据，以及平台适用的概览快捷入口。审查后补充服务端创建时间/ID 稳定排序和切页完成后的焦点恢复。现有 API 仍只支持 page/limit，不添加仅当前页的假搜索/状态筛选，也不重构生命周期或授权接口。
+- v0.7.0 独立 Sol 审查及最终窄复审无剩余 P1/P2。根目录9项页面测试通过，完整App回归在限定同名快捷入口选择器后通过；SQL排序回归1/1、Panel/Server类型检查、i18n 2311 keys、Panel生产构建、相关lint/format均通过。文档类型/构建与12项浏览器场景通过，最终文案另复验4项通过。完整CI仍待提交后运行。
+- v0.7.0 完整生产预览125 Bot夹具已通过1440×900和390×844的跨100边界、真实total、分页焦点、初错/重试/后台失败保留与Telegram/Lark入口，无页面错误或横向溢出；手机常规卡片约127px（原约240px）。证据 `.acceptance/ui-efficiency/bot-management-production/`，错误留白收尾单独复验。
+- AI 两个批次完整审计与修复证据见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。非阻断导航项：1024×768 长菜单展开全局管理后需滚动，搜索可直接定位，后续评估。
+- 环境：项目专用 runner 可用，Docker 不可用；3100/5173 属于其他项目，未动。浏览器使用独立 5188 开发服务、5192 生产预览和全部 API 夹具；5191/5193 已关闭，隔离工作区临时依赖链接/失败截图已清理。
+- 无关内容 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。未部署生产、修改真实 Bot 或发送 Telegram 消息。
+- 下一步：完成 v0.7.0 实现、独立审查、真实浏览器与公共指南同步，再走 CI/合入/发布闭环。
+- 用户于 2026-09-22 新增明确顺序：先完成当前 v0.7.0 的既有工作，再修复 Issue #87 的 AI 档案头像读取。Issue 已存在且 OPEN，不重复创建；当前已读取完整正文，尚未调查或实现。完成当前版本后优先转入该项，不继续扩展其他 UI 切片。
+- #87 验收边界：通过明确 Telegram 用户标识读取当前 Bot 可见且已缓存的头像本体；返回内容可直接进入视觉分析；复用本人/群友/不可见档案权限，缺失/缓存失效/拒绝明确区分，不泄露文件路径、凭据或永久公开 URL；补工具 schema、测试和公开文档。更新角色形象仍遵守本人授权及既有维护规则，不因可读头像而扩大写入权限。
 
 ## 迭代证据
 
@@ -96,3 +98,16 @@
 - main/tag/Release 目标均已核实为 `c17d2ccbbaec643680f0e4dbc49513b0aeb888fd`。v0.5.1 已公开，非 draft/预发布；正文来自 `docs/releases/v0.5.1.md`。
 - 合入后 CI 35634304541 completed/success，精确 head 为上述 main/tag SHA。
 - 文档：导航指南新增日志检索/清理，故障排查入口和版本页同步；合入后核实文件树一致。未部署生产，也未删除真实日志。
+
+### v0.6.0 — AI 设置保存状态与草稿保护
+
+- 基线：v0.5.1 `c17d2ccbbaec643680f0e4dbc49513b0aeb888fd`。
+- 范围：桌面/手机持续保存状态和禁用原因；撤销当前回复选择但保留其他草稿；站内离开和主动退出登录前确认；保留已保存但应用失败的重试恢复。
+- 根路由只增加 wildcard data-router 包装，保留原管理路由、Refine 认证和 Mini App 分流。独立限定 Astra 审查与主代理完整应用复验修复了 StrictMode 生命周期、apply 重试、长错误 sticky、退出前确认和真实 HTTP 500 失败恢复。
+- 关键证据：Refine 对 resolved `success:false` 仍刷新认证并卸载表单；改为 throw 进入 onError 后，真实 HTTP 500 保留草稿/弹窗且没有额外认证或配置请求。失败有可见提示，Stay 恢复焦点，重试成功才退出；401 仍经原 beforeunload/登录流程处理。
+- 本地最终 26 项相关浏览器测试、Panel typecheck/build/Mini App entry、相关 lint/format、i18n 2297 keys 均通过。文档 typecheck/build；12 个桌面/手机场景在修正标题选择器后通过，完整 CI 也已统一通过。
+- 生产预览夹具覆盖 1440×900、900×768、390×844，无横向溢出或页面错误。证据 `.acceptance/ui-efficiency/ai-drafts-production/`、`ai-logout-error-production-fixed/`、`ai-expiry-production/`、`ai-long-error-production/`。文档证据 `docs-v0.6.0/` 与 `docs-v0.6.0-guides/`。
+- PR #90 已核实 MERGED。PR CI 35637334435 completed/success，head `7c2673de6f5387562b0535c8f5ae49df29a2d99b`；合入文件树完全相同。
+- main/tag/Release 目标均已核实为 `4ad9d5bfb03e827468895c1b8fb07172ec2a0089`。v0.6.0 已公开，非 draft/预发布；正文来自 `docs/releases/v0.6.0.md`。
+- 合入后 CI 35638264681 completed/success，精确 head 为上述 main/tag SHA。
+- AI 操作指南、文档站版本导航和版本页已同步；合入后核实文件树一致。未部署生产，未验证真实 Telegram WebView。

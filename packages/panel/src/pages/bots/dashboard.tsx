@@ -5,9 +5,21 @@ import { getUptimeParts, statusBadgeVariant } from "@/lib/bot-utils";
 import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useDelete, useInvalidate, useOne } from "@refinedev/core";
-import { Play, RefreshCw, Send, Square, Trash2 } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Brain,
+  MessageSquare,
+  Pencil,
+  Play,
+  RefreshCw,
+  ScrollText,
+  Send,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 
 export function BotDashboardPage() {
@@ -17,7 +29,7 @@ export function BotDashboardPage() {
   const [busy, setBusy] = useState(false);
   const invalidate = useInvalidate();
 
-  const { data, isLoading } = useOne<BotWithStatus>({
+  const { data, isLoading, isFetching, isError, refetch } = useOne<BotWithStatus>({
     resource: "bots",
     id: botId!,
     queryOptions: { enabled: !!botId, refetchInterval: 5000 },
@@ -54,12 +66,45 @@ export function BotDashboardPage() {
     return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
   }
 
+  if (isError && !bot) {
+    return (
+      <Card role="alert">
+        <CardContent className="flex flex-col items-start gap-4 px-5 py-8 sm:px-6 sm:py-8">
+          <div>
+            <p className="font-semibold text-slate-900">{t("dashboard.loadErrorTitle")}</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {t("dashboard.loadErrorDescription")}
+            </p>
+          </div>
+          <Button disabled={isFetching} onClick={() => void refetch()}>
+            <RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
+            {t("dashboard.retry")}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!bot || !botId) {
     return <p className="text-muted-foreground text-sm">{t("dashboard.notFound")}</p>;
   }
 
   const isRunning = bot.status === "running";
   const isLark = bot.platform === "lark-webhook";
+  const quickLinks = isLark
+    ? [
+        { label: t("dashboard.quickEdit"), to: `/bots/${botId}/edit`, icon: Pencil },
+        { label: t("dashboard.quickLogs"), to: `/bots/${botId}/logs`, icon: ScrollText },
+      ]
+    : [
+        { label: t("dashboard.quickAiSettings"), to: `/bots/${botId}/ai`, icon: Brain },
+        {
+          label: t("dashboard.quickConversations"),
+          to: `/bots/${botId}/conversations`,
+          icon: MessageSquare,
+        },
+        { label: t("dashboard.quickLogs"), to: `/bots/${botId}/logs`, icon: ScrollText },
+      ];
 
   const sendLarkTest = async () => {
     if (!botId) return;
@@ -86,6 +131,22 @@ export function BotDashboardPage() {
 
   return (
     <div className="space-y-7">
+      {isError && (
+        <div
+          className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+          role="alert"
+        >
+          <span className="flex items-start gap-2">
+            <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            {t("dashboard.staleData")}
+          </span>
+          <Button size="sm" variant="outline" disabled={isFetching} onClick={() => void refetch()}>
+            <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
+            {t("dashboard.retry")}
+          </Button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-primary mb-1 text-sm font-medium">{t("dashboard.eyebrow")}</p>
@@ -97,6 +158,31 @@ export function BotDashboardPage() {
           <p className="text-muted-foreground mt-1 text-sm">{t("dashboard.description")}</p>
         </div>
       </div>
+
+      <nav aria-label={t("dashboard.quickActions")}>
+        <p className="text-muted-foreground mb-2 text-xs font-medium tracking-wide uppercase">
+          {t("dashboard.quickActions")}
+        </p>
+        <div className="grid gap-2 sm:grid-cols-3">
+          {quickLinks.map((item) => {
+            const Icon = item.icon;
+            return (
+              <Link
+                key={item.to}
+                to={item.to}
+                className="group flex min-h-11 items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-[border-color,color,box-shadow] duration-150 hover:border-slate-300 hover:text-blue-700 hover:shadow-[var(--shadow-surface-hover)] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+              >
+                <Icon aria-hidden="true" className="size-4 shrink-0 text-slate-500" />
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                <ArrowUpRight
+                  aria-hidden="true"
+                  className="size-3.5 shrink-0 text-slate-400 transition-colors duration-150 group-hover:text-blue-600"
+                />
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
