@@ -45,6 +45,17 @@ export function mapProfileToDto(p: {
   };
 }
 
+function profileSearchCondition(query: string) {
+  const pattern = `%${query}%`;
+  return or(
+    ilike(peopleProfiles.displayName, pattern),
+    ilike(peopleProfiles.username, pattern),
+    ilike(peopleProfiles.notes, pattern),
+    sql`${peopleProfiles.traits}::text ILIKE ${pattern}`,
+    sql`${peopleProfiles.interests}::text ILIKE ${pattern}`,
+  )!;
+}
+
 export class PeopleProfileStore {
   constructor(private db: Database) {}
 
@@ -236,41 +247,31 @@ export class PeopleProfileStore {
   }
 
   async searchProfiles(botId: string, query: string) {
-    const pattern = `%${query}%`;
     const results = await this.db
       .select()
       .from(peopleProfiles)
-      .where(
-        and(
-          eq(peopleProfiles.botId, botId),
-          or(
-            ilike(peopleProfiles.displayName, pattern),
-            ilike(peopleProfiles.username, pattern),
-            ilike(peopleProfiles.notes, pattern),
-            sql`${peopleProfiles.traits}::text ILIKE ${pattern}`,
-            sql`${peopleProfiles.interests}::text ILIKE ${pattern}`,
-          ),
-        ),
-      )
+      .where(and(eq(peopleProfiles.botId, botId), profileSearchCondition(query)))
       .orderBy(desc(peopleProfiles.lastSeen))
       .limit(10);
     return results;
   }
 
-  async listProfiles(botId: string, page: number, limit: number) {
+  async listProfiles(botId: string, page: number, limit: number, search?: string) {
+    const conditions = [eq(peopleProfiles.botId, botId)];
+    if (search) {
+      conditions.push(profileSearchCondition(search));
+    }
+    const where = and(...conditions);
     const offset = (page - 1) * limit;
     const [profiles, [totalResult]] = await Promise.all([
       this.db
         .select()
         .from(peopleProfiles)
-        .where(eq(peopleProfiles.botId, botId))
-        .orderBy(desc(peopleProfiles.lastSeen))
+        .where(where)
+        .orderBy(desc(peopleProfiles.lastSeen), desc(peopleProfiles.id))
         .limit(limit)
         .offset(offset),
-      this.db
-        .select({ total: count() })
-        .from(peopleProfiles)
-        .where(eq(peopleProfiles.botId, botId)),
+      this.db.select({ total: count() }).from(peopleProfiles).where(where),
     ]);
     return {
       data: profiles.map((p) => ({ id: p.id, ...mapProfileToDto(p) })),

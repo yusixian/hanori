@@ -439,6 +439,22 @@ function profileList(name = "Known person") {
   return profileJson({ ok: true, total: 1, data: [{ ...managedProfile, displayName: name }] });
 }
 
+function profilePage(start: number, count: number, total = 25) {
+  return profileJson({
+    ok: true,
+    total,
+    data: Array.from({ length: count }, (_, index) => {
+      const position = start + index;
+      return {
+        ...managedProfile,
+        id: 100 + position,
+        telegramId: 1_000 + position,
+        displayName: `Search person ${position}`,
+      };
+    }),
+  });
+}
+
 function mountManagedProfiles() {
   render(
     <MemoryRouter initialEntries={["/bots/test-id/profiles"]}>
@@ -454,6 +470,72 @@ function failProfileRequest(kind: "http" | "application" | "network") {
   if (kind === "network") throw new TypeError("Offline");
   return profileJson({ ok: false, error: "fixture failure" }, kind === "http" ? 500 : 200);
 }
+
+test("links a profile to memories for that Telegram user", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).includes("/profiles")) return new Response(null, { status: 404 });
+      return profileList();
+    }),
+  );
+  mountManagedProfiles();
+
+  const link = page.getByRole("link", { name: "View memories for user 42", exact: true });
+  await expect.element(link).toBeVisible();
+  await expect.element(link).toHaveAttribute("href", "/bots/test-id/memories?telegramId=42");
+});
+
+test("paginates all profile search matches and resets to page one when cleared", async () => {
+  const requests: URL[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const rawUrl = input instanceof Request ? input.url : String(input);
+      const url = new URL(rawUrl, location.origin);
+      if (!url.pathname.endsWith("/profiles")) return new Response(null, { status: 404 });
+      requests.push(url);
+      if (url.searchParams.get("search") !== "match") return profileList();
+      return url.searchParams.get("page") === "2" ? profilePage(21, 5) : profilePage(1, 20);
+    }),
+  );
+  mountManagedProfiles();
+  await expect.element(page.getByText("Known person", { exact: true })).toBeVisible();
+
+  await page.getByPlaceholder("Search by name, username, or notes…").fill("match");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await expect.element(page.getByText("25 total", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("1 / 2", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 1", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 20", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 21", { exact: true })).not.toBeInTheDocument();
+
+  await page.getByRole("button", { name: "Next page", exact: true }).click();
+  await expect.element(page.getByText("2 / 2", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 21", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 25", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Search person 1", { exact: true })).not.toBeInTheDocument();
+
+  const searchRequests = requests.filter((url) => url.searchParams.get("search") === "match");
+  expect(
+    searchRequests.map((url) => ({
+      limit: url.searchParams.get("limit"),
+      page: url.searchParams.get("page"),
+      search: url.searchParams.get("search"),
+    })),
+  ).toEqual([
+    { limit: "20", page: "1", search: "match" },
+    { limit: "20", page: "2", search: "match" },
+  ]);
+
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await expect.element(page.getByText("Known person", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("1 total", { exact: true })).toBeVisible();
+  const clearedRequest = requests.at(-1)!;
+  expect(clearedRequest.searchParams.get("search")).toBeNull();
+  expect(clearedRequest.searchParams.get("page")).toBe("1");
+  expect(clearedRequest.searchParams.get("limit")).toBe("20");
+});
 
 for (const failure of ["http", "application", "network"] as const) {
   test(`shows ${failure} profile list failure and retries without claiming an empty list`, async () => {

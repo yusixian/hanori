@@ -164,6 +164,9 @@ export const botData = {
     seconds: "{{value}} s",
   },
   profiles: {
+    viewMemories: "View memories",
+    viewUserMemories: "View memories for user {{id}}",
+
     title: "People profiles",
     add: "Add profile",
     new: "New profile",
@@ -312,6 +315,22 @@ export const botData = {
     deleteFailed: "Could not delete the generation library item.",
   },
   memories: {
+    filters: "Memory filters",
+    scope: "Scope",
+    specificUser: "Specific user",
+    userIdPlaceholder: "Enter Telegram ID",
+    invalidUserId: "Enter a valid Telegram user ID as a whole number.",
+    unappliedFilters: "Filters changed. Search to apply them.",
+    showingScope: "Showing: {{scope}}",
+    userScope: "User {{id}}",
+    categoryScope: "Category: {{category}}",
+    searchScope: "Search: {{search}}",
+    finishEditing: "Save or cancel the current edit before changing filters.",
+    confirmBeforeFiltering:
+      "Confirm the current list with a successful refresh before changing filters.",
+    navigationWaiting: "The address change will apply afterwards.",
+    retainedDraft: "This record is no longer in the loaded results. Your edit is kept here.",
+
     title: "Bot memories",
     add: "Add memory",
     new: "New memory",

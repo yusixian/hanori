@@ -17,9 +17,9 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams } from "react-router";
+import { useLocation, useParams, useSearchParams } from "react-router";
 
 interface MemoryItem {
   id: number;
@@ -62,6 +62,49 @@ async function requireSuccessfulMutation(response: Response, message: string): P
   if (!response.ok || result.ok !== true) throw new Error(message);
 }
 
+interface MemoryQuery {
+  page: number;
+  search: string;
+  category: string;
+  telegramId: string;
+}
+
+interface MemoryFilterForm {
+  search: string;
+  category: string;
+  scope: "all" | "general" | "user";
+  telegramId: string;
+}
+
+function isTelegramId(value: string) {
+  return /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value));
+}
+
+function readMemoryQuery(value: string): MemoryQuery {
+  const params = new URLSearchParams(value);
+  const page = Number(params.get("page") ?? "1");
+  const rawId = (params.get("telegramId") ?? "").trim();
+  return {
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1,
+    search: (params.get("search") ?? "").trim(),
+    category: (params.get("category") ?? "").trim(),
+    telegramId: isTelegramId(rawId) ? String(Number(rawId)) : rawId,
+  };
+}
+
+function filterKey(query: MemoryQuery) {
+  return JSON.stringify([query.search, query.category, query.telegramId]);
+}
+
+function queryToForm(query: MemoryQuery): MemoryFilterForm {
+  return {
+    search: query.search,
+    category: query.category,
+    scope: !query.telegramId ? "all" : query.telegramId === "general" ? "general" : "user",
+    telegramId: query.telegramId === "general" ? "" : query.telegramId,
+  };
+}
+
 export function BotMemoriesPage() {
   const { botId } = useParams<{ botId: string }>();
   return botId ? <BotMemoriesContent key={botId} botId={botId} /> : null;
@@ -71,17 +114,27 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   const { t, i18n } = useTranslation("botData");
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const requestedQuery = searchParams.toString();
+  const [activeQuery, setActiveQuery] = useState(requestedQuery);
+  const query = useMemo(() => readMemoryQuery(activeQuery), [activeQuery]);
+  const { page, search, category: filterCategory, telegramId: filterTelegramId } = query;
+  const submittedFiltersRef = useRef(filterKey(query));
+  const validQuery =
+    !filterTelegramId || filterTelegramId === "general" || isTelegramId(filterTelegramId);
+  const [filterForm, setFilterForm] = useState(() => queryToForm(query));
+  const [filterError, setFilterError] = useState(false);
+  const filterIdRef = useRef<HTMLInputElement>(null);
+  const filterComposingRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [loadedQueryKey, setLoadedQueryKey] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<LoadError>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const [categories, setCategories] = useState<string[]>([]);
   const [categoriesReloadToken, setCategoriesReloadToken] = useState(0);
-  const [filterCategory, setFilterCategory] = useState("");
-  const [filterTelegramId, setFilterTelegramId] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [search, setSearch] = useState("");
+  const [editingMemory, setEditingMemory] = useState<MemoryItem | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
@@ -92,6 +145,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   } | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [confirmationRequired, setConfirmationRequired] = useState(false);
   const [mutationRecoveryPending, setMutationRecoveryPending] = useState(false);
   const listRequestRef = useRef(0);
   const loadedQueryKeyRef = useRef<string | null>(null);
@@ -100,17 +154,70 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   const mountedRef = useRef(false);
   const limit = 20;
   const queryKey = JSON.stringify([page, filterCategory, filterTelegramId, search]);
-  const hasCurrentData = loadedQueryKey === queryKey;
+  const hasCurrentData = validQuery && loadedQueryKey === queryKey;
   const hasConfirmedEmptyData =
     hasCurrentData && memories.length === 0 && !loading && loadError === null;
   const mutationPending = pendingMutation !== null;
-  const mutationControlsLocked = mutationPending || mutationRecoveryPending;
+  const operationPending = mutationPending || mutationRecoveryPending;
+  const queryNavigationPending =
+    JSON.stringify(readMemoryQuery(requestedQuery)) !== JSON.stringify(query);
+  const navigationHeld =
+    operationPending || confirmationRequired || mutationError !== null || editingId !== null;
+  const mutationControlsLocked =
+    operationPending || confirmationRequired || (queryNavigationPending && !navigationHeld);
+  const queryControlsLocked = mutationControlsLocked || navigationHeld;
+  const displayMemories =
+    editingMemory && !memories.some((item) => item.id === editingMemory.id)
+      ? [editingMemory, ...memories]
+      : memories;
+  const draftTelegramId =
+    filterForm.scope === "all"
+      ? ""
+      : filterForm.scope === "general"
+        ? "general"
+        : filterForm.telegramId.trim();
+  const unappliedFilters =
+    filterForm.search.trim() !== search ||
+    filterForm.category !== filterCategory ||
+    draftTelegramId !== filterTelegramId;
+  const hasFilters = !!(
+    search ||
+    filterCategory ||
+    filterTelegramId ||
+    filterForm.search ||
+    filterForm.category ||
+    filterForm.scope !== "all"
+  );
+  const categoryOptions = [
+    ...new Set([...categories, filterForm.category, filterCategory].filter(Boolean)),
+  ];
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const dateTimeFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
     [locale],
   );
+
+  useEffect(() => {
+    // Router transitions may coalesce PUSH then POP back to the same location context.
+    const onPopState = () => setHistoryRevision((value) => value + 1);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  // Compare the last submitted filters even when a rapid Back skips the intermediate render.
+  // A page-only navigation leaves unapplied filter inputs intact.
+  useLayoutEffect(() => {
+    if (navigationHeld) return;
+    const next = readMemoryQuery(location.search);
+    const nextFilterKey = filterKey(next);
+    if (submittedFiltersRef.current !== nextFilterKey) {
+      submittedFiltersRef.current = nextFilterKey;
+      setFilterForm(queryToForm(next));
+      setFilterError(false);
+    }
+    setActiveQuery(location.search);
+  }, [location, navigationHeld, historyRevision]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -140,6 +247,12 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   useEffect(() => {
     const controller = new AbortController();
     const requestId = ++listRequestRef.current;
+    const isConfirmationRequest = mutationRecoveryRef.current;
+    if (!validQuery) {
+      setLoading(false);
+      setLoadError(null);
+      return () => controller.abort();
+    }
     setLoading(true);
     setLoadError(null);
     const query: Record<string, string> = {
@@ -163,13 +276,17 @@ function BotMemoriesContent({ botId }: { botId: string }) {
         setTotal(result.total);
         loadedQueryKeyRef.current = queryKey;
         setLoadedQueryKey(queryKey);
+        if (isConfirmationRequest) {
+          setConfirmationRequired(false);
+          setMutationError(null);
+        }
       } catch {
         if (controller.signal.aborted || requestId !== listRequestRef.current) return;
         setLoadError(loadedQueryKeyRef.current === queryKey ? "stale" : "initial");
       } finally {
         if (!controller.signal.aborted && requestId === listRequestRef.current) {
           setLoading(false);
-          if (mutationRecoveryRef.current) {
+          if (isConfirmationRequest) {
             mutationRecoveryRef.current = false;
             setMutationRecoveryPending(false);
           }
@@ -178,23 +295,90 @@ function BotMemoriesContent({ botId }: { botId: string }) {
     })();
 
     return () => controller.abort();
-  }, [botId, filterCategory, filterTelegramId, page, queryKey, reloadToken, search]);
+  }, [botId, filterCategory, filterTelegramId, page, queryKey, reloadToken, search, validQuery]);
 
   useEffect(() => {
-    setMutationError(null);
     setSuccessMessage(null);
   }, [queryKey]);
 
-  const handleSearch = () => {
+  const updateQuery = (nextQuery: MemoryQuery) => {
+    const next = new URLSearchParams(searchParams);
+    for (const [key, value] of Object.entries({
+      search: nextQuery.search,
+      category: nextQuery.category,
+      telegramId: nextQuery.telegramId,
+      page: nextQuery.page > 1 ? String(nextQuery.page) : "",
+    })) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
+    if (next.toString() === requestedQuery) setReloadToken((value) => value + 1);
+    else {
+      submittedFiltersRef.current = filterKey(nextQuery);
+      setSearchParams(next);
+    }
+  };
+
+  const refreshList = () => {
     if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
-    setPage(1);
-    setSearch(searchInput);
+    if (mutationError !== null || confirmationRequired) {
+      mutationRecoveryRef.current = true;
+      setMutationRecoveryPending(true);
+      setConfirmationRequired(true);
+    }
+    setReloadToken((value) => value + 1);
+    setCategoriesReloadToken((value) => value + 1);
+  };
+
+  const handleSearch = () => {
+    if (
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current ||
+      queryControlsLocked ||
+      filterComposingRef.current
+    )
+      return;
+    if (filterForm.scope === "user" && !isTelegramId(filterForm.telegramId.trim())) {
+      setFilterError(true);
+      filterIdRef.current?.focus();
+      return;
+    }
+    const nextQuery = {
+      page: 1,
+      search: filterForm.search.trim(),
+      category: filterForm.category.trim(),
+      telegramId:
+        filterForm.scope === "user"
+          ? String(Number(filterForm.telegramId.trim()))
+          : draftTelegramId,
+    };
+    setFilterError(false);
+    setFilterForm(queryToForm(nextQuery));
+    updateQuery(nextQuery);
+  };
+
+  const clearFilters = () => {
+    if (mutationInFlightRef.current || mutationRecoveryRef.current || queryControlsLocked) return;
+    const nextQuery = { page: 1, search: "", category: "", telegramId: "" };
+    setFilterError(false);
+    setFilterForm(queryToForm(nextQuery));
+    updateQuery(nextQuery);
+  };
+
+  const refreshListAfterMutation = () => {
+    mutationRecoveryRef.current = true;
+    setMutationRecoveryPending(true);
+    setConfirmationRequired(true);
+    setReloadToken((value) => value + 1);
+    setCategoriesReloadToken((value) => value + 1);
   };
 
   const handleDelete = async (memoryId: number) => {
     if (
       mutationInFlightRef.current ||
       mutationRecoveryRef.current ||
+      mutationControlsLocked ||
+      editingId !== null ||
       !window.confirm(t("memories.deleteConfirm"))
     )
       return;
@@ -209,8 +393,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       await requireSuccessfulMutation(response, t("common.deleteFailed"));
       if (mountedRef.current) {
         setSuccessMessage(t("common.deleted"));
-        setReloadToken((value) => value + 1);
-        setCategoriesReloadToken((value) => value + 1);
+        refreshListAfterMutation();
       }
     } catch {
       if (mountedRef.current) setMutationError(t("common.deleteFailed"));
@@ -221,6 +404,8 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   };
 
   const startEdit = (m: MemoryItem) => {
+    if (mutationControlsLocked || editingId !== null) return;
+    setEditingMemory(m);
     setEditingId(m.id);
     setEditForm({
       content: m.content,
@@ -230,6 +415,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   };
 
   const cancelEdit = () => {
+    setEditingMemory(null);
     setEditingId(null);
     setEditForm(null);
   };
@@ -239,7 +425,8 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       !editForm ||
       editingId === null ||
       mutationInFlightRef.current ||
-      mutationRecoveryRef.current
+      mutationRecoveryRef.current ||
+      mutationControlsLocked
     )
       return;
     mutationInFlightRef.current = true;
@@ -260,8 +447,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       if (mountedRef.current) {
         cancelEdit();
         setSuccessMessage(t("common.saved"));
-        setReloadToken((value) => value + 1);
-        setCategoriesReloadToken((value) => value + 1);
+        refreshListAfterMutation();
       }
     } catch {
       if (mountedRef.current) setMutationError(t("common.saveFailed"));
@@ -272,7 +458,13 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   };
 
   const handleCreate = async () => {
-    if (!createForm.content.trim() || mutationInFlightRef.current || mutationRecoveryRef.current)
+    if (
+      !createForm.content.trim() ||
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current ||
+      mutationControlsLocked ||
+      !validQuery
+    )
       return;
     mutationInFlightRef.current = true;
     setPendingMutation({ kind: "create" });
@@ -293,8 +485,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
         setShowCreate(false);
         setCreateForm(emptyCreateForm);
         setSuccessMessage(t("common.created"));
-        setReloadToken((value) => value + 1);
-        setCategoriesReloadToken((value) => value + 1);
+        refreshListAfterMutation();
       }
     } catch {
       if (mountedRef.current) setMutationError(t("common.createFailed"));
@@ -321,8 +512,19 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           variant="outline"
           size="sm"
           className="w-full shrink-0 sm:ml-auto sm:w-auto"
-          onClick={() => setShowCreate(!showCreate)}
-          disabled={mutationControlsLocked}
+          onClick={() => {
+            if (
+              !showCreate &&
+              !createForm.content &&
+              !createForm.category &&
+              !createForm.telegramId &&
+              isTelegramId(filterTelegramId)
+            ) {
+              setCreateForm({ ...emptyCreateForm, telegramId: filterTelegramId });
+            }
+            setShowCreate(!showCreate);
+          }}
+          disabled={mutationControlsLocked || !validQuery}
         >
           <Plus className="h-4 w-4" />
           {t("memories.add")}
@@ -335,17 +537,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           className="border-destructive/30 bg-destructive/5 text-destructive flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
         >
           <span>{mutationError}</span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              mutationRecoveryRef.current = true;
-              setMutationRecoveryPending(true);
-              setMutationError(null);
-              setReloadToken((value) => value + 1);
-              setCategoriesReloadToken((value) => value + 1);
-            }}
-          >
+          <Button variant="outline" size="sm" onClick={refreshList} disabled={operationPending}>
             <RefreshCw className="size-3.5" />
             {t("common.refreshList")}
           </Button>
@@ -410,7 +602,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
               <Button
                 size="sm"
                 onClick={handleCreate}
-                disabled={mutationControlsLocked || !createForm.content.trim()}
+                disabled={mutationControlsLocked || !validQuery || !createForm.content.trim()}
               >
                 {pendingMutation?.kind === "create" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -436,79 +628,155 @@ function BotMemoriesContent({ botId }: { botId: string }) {
         </Card>
       )}
 
-      {/* Filters */}
-      <fieldset
-        className="flex min-w-0 flex-wrap items-center gap-2 border-0 p-0"
-        disabled={mutationControlsLocked}
+      <form
+        className="space-y-3"
+        aria-label={t("memories.filters")}
+        onSubmit={(event) => {
+          event.preventDefault();
+          handleSearch();
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key === "Enter" &&
+            (event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229 ||
+              filterComposingRef.current)
+          )
+            event.preventDefault();
+        }}
+        onCompositionStart={() => {
+          filterComposingRef.current = true;
+        }}
+        onCompositionEnd={() => {
+          filterComposingRef.current = false;
+        }}
       >
-        <Input
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder={t("memories.searchPlaceholder")}
-          className="max-w-xs"
-          disabled={mutationControlsLocked}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-        />
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleSearch}
-          disabled={mutationControlsLocked}
+        <fieldset
+          disabled={queryControlsLocked}
+          className="grid min-w-0 grid-cols-2 items-end gap-3 border-0 p-0 xl:flex"
         >
-          <Search className="h-4 w-4" />
-          {t("common.search")}
-        </Button>
-
-        <Select
-          className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
-          value={filterCategory}
-          onChange={(e) => {
-            if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
-            setFilterCategory(e.target.value);
-            setPage(1);
-          }}
-          disabled={mutationControlsLocked}
-        >
-          <option value="">{t("memories.allCategories")}</option>
-          {categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </Select>
-
-        <Select
-          className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
-          value={filterTelegramId}
-          onChange={(e) => {
-            if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
-            setFilterTelegramId(e.target.value);
-            setPage(1);
-          }}
-          disabled={mutationControlsLocked}
-        >
-          <option value="">{t("memories.allMemories")}</option>
-          <option value="general">{t("memories.generalOnly")}</option>
-        </Select>
-
-        {(search || filterCategory || filterTelegramId) && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
-              setSearch("");
-              setSearchInput("");
-              setFilterCategory("");
-              setFilterTelegramId("");
-              setPage(1);
-            }}
-            disabled={mutationControlsLocked}
-          >
-            {t("common.clearFilters")}
-          </Button>
+          <div className="col-span-2 min-w-0 space-y-1.5 xl:flex-1">
+            <label htmlFor="memory-filter-search" className="text-muted-foreground text-xs">
+              {t("common.search")}
+            </label>
+            <Input
+              id="memory-filter-search"
+              value={filterForm.search}
+              onChange={(event) => setFilterForm({ ...filterForm, search: event.target.value })}
+              placeholder={t("memories.searchPlaceholder")}
+              disabled={queryControlsLocked}
+            />
+          </div>
+          <div className="min-w-0 space-y-1.5 xl:w-40">
+            <label htmlFor="memory-filter-category" className="text-muted-foreground text-xs">
+              {t("memories.category")}
+            </label>
+            <Select
+              id="memory-filter-category"
+              value={filterForm.category}
+              disabled={queryControlsLocked}
+              className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+              onChange={(event) => setFilterForm({ ...filterForm, category: event.target.value })}
+            >
+              <option value="">{t("memories.allCategories")}</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="min-w-0 space-y-1.5 xl:w-40">
+            <label htmlFor="memory-filter-scope" className="text-muted-foreground text-xs">
+              {t("memories.scope")}
+            </label>
+            <Select
+              id="memory-filter-scope"
+              value={filterForm.scope}
+              disabled={queryControlsLocked}
+              onChange={(event) => {
+                const scope = event.target.value;
+                if (scope === "all" || scope === "general" || scope === "user")
+                  setFilterForm({ ...filterForm, scope });
+                setFilterError(false);
+              }}
+            >
+              <option value="all">{t("memories.allMemories")}</option>
+              <option value="general">{t("memories.generalOnly")}</option>
+              <option value="user">{t("memories.specificUser")}</option>
+            </Select>
+          </div>
+          {filterForm.scope === "user" && (
+            <div className="col-span-2 min-w-0 space-y-1.5 xl:w-40">
+              <label htmlFor="memory-filter-user-id" className="text-muted-foreground text-xs">
+                {t("memories.telegramId")}
+              </label>
+              <Input
+                id="memory-filter-user-id"
+                ref={filterIdRef}
+                value={filterForm.telegramId}
+                inputMode="numeric"
+                onChange={(event) => {
+                  setFilterForm({ ...filterForm, telegramId: event.target.value });
+                  setFilterError(false);
+                }}
+                aria-invalid={filterError || !validQuery}
+                aria-describedby={filterError || !validQuery ? "memory-filter-error" : undefined}
+                placeholder={t("memories.userIdPlaceholder")}
+                disabled={queryControlsLocked}
+              />
+            </div>
+          )}
+          <div className="col-span-2 flex flex-wrap gap-2 xl:shrink-0">
+            <Button type="submit" variant="outline" size="sm" disabled={queryControlsLocked}>
+              <Search className="h-4 w-4" />
+              {t("common.search")}
+            </Button>
+            {hasFilters && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={clearFilters}
+                disabled={queryControlsLocked}
+              >
+                {t("common.clearFilters")}
+              </Button>
+            )}
+          </div>
+        </fieldset>
+        {(filterError || !validQuery) && (
+          <p id="memory-filter-error" role="alert" className="text-destructive text-sm">
+            {t("memories.invalidUserId")}
+          </p>
         )}
-      </fieldset>
+        {unappliedFilters && (
+          <p className="text-muted-foreground text-xs">{t("memories.unappliedFilters")}</p>
+        )}
+      </form>
+      {navigationHeld && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {editingId !== null ? t("memories.finishEditing") : t("memories.confirmBeforeFiltering")}
+          {queryNavigationPending && <> {t("memories.navigationWaiting")}</>}
+        </p>
+      )}
+      {validQuery && (
+        <p className="text-muted-foreground text-sm wrap-anywhere">
+          {t("memories.showingScope", {
+            scope:
+              filterTelegramId === "general"
+                ? t("memories.generalOnly")
+                : filterTelegramId
+                  ? t("memories.userScope", { id: filterTelegramId })
+                  : t("memories.allMemories"),
+          })}
+          {" · "}
+          {filterCategory
+            ? t("memories.categoryScope", { category: filterCategory })
+            : t("memories.allCategories")}
+          {search && <> · {t("memories.searchScope", { search })}</>}
+        </p>
+      )}
 
       {loadError === "stale" && hasCurrentData && (
         <div
@@ -519,27 +787,18 @@ function BotMemoriesContent({ botId }: { botId: string }) {
             <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
             {t("common.refreshFailed")}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={loading}
-            onClick={() => setReloadToken((value) => value + 1)}
-          >
+          <Button variant="outline" size="sm" disabled={loading} onClick={refreshList}>
             <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
             {t("common.retry")}
           </Button>
         </div>
       )}
 
-      {loadError === "initial" && !hasCurrentData ? (
+      {!validQuery ? null : loadError === "initial" && !hasCurrentData ? (
         <Card role="alert">
           <CardContent className="flex flex-col items-start gap-4 px-5 py-8">
             <p className="text-sm">{t("common.loadFailed")}</p>
-            <Button
-              size="sm"
-              disabled={loading}
-              onClick={() => setReloadToken((value) => value + 1)}
-            >
+            <Button size="sm" disabled={loading} onClick={refreshList}>
               <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
               {t("common.retry")}
             </Button>
@@ -547,11 +806,11 @@ function BotMemoriesContent({ botId }: { botId: string }) {
         </Card>
       ) : (loading || !hasCurrentData) && !hasCurrentData ? (
         <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
-      ) : hasConfirmedEmptyData ? (
+      ) : hasConfirmedEmptyData && editingId === null ? (
         <p className="text-muted-foreground text-sm">{t("memories.empty")}</p>
       ) : hasCurrentData ? (
         <div className="space-y-3">
-          {memories.map((m) => (
+          {displayMemories.map((m) => (
             <Card key={m.id}>
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between gap-3">
@@ -571,6 +830,11 @@ function BotMemoriesContent({ botId }: { botId: string }) {
               <CardContent className="space-y-2 pt-0">
                 {editingId === m.id && editForm ? (
                   <div className="space-y-3">
+                    {!memories.some((item) => item.id === m.id) && (
+                      <p role="status" className="text-muted-foreground text-sm">
+                        {t("memories.retainedDraft")}
+                      </p>
+                    )}
                     <div>
                       <label
                         htmlFor={`edit-mem-content-${m.id}`}
@@ -656,7 +920,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                           onClick={() => startEdit(m)}
                           title={t("memories.editTitle")}
                           aria-label={t("memories.editTitle")}
-                          disabled={mutationControlsLocked}
+                          disabled={mutationControlsLocked || editingId !== null}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -666,7 +930,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                           onClick={() => handleDelete(m.id)}
                           title={t("memories.deleteTitle")}
                           aria-label={t("memories.deleteTitle")}
-                          disabled={mutationControlsLocked}
+                          disabled={mutationControlsLocked || editingId !== null}
                         >
                           {pendingMutation?.kind === "delete" &&
                           pendingMutation.memoryId === m.id ? (
@@ -686,13 +950,14 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       ) : null}
 
       {hasCurrentData && (
-        <fieldset disabled={mutationControlsLocked} className="min-w-0 border-0 p-0">
+        <fieldset disabled={queryControlsLocked} className="min-w-0 border-0 p-0">
           <Pagination
             page={page}
             totalPages={totalPages}
             onPageChange={(nextPage) => {
-              if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
-              setPage(nextPage);
+              if (mutationInFlightRef.current || mutationRecoveryRef.current || queryControlsLocked)
+                return;
+              updateQuery({ ...query, page: nextPage });
             }}
           />
         </fieldset>

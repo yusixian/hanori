@@ -42,7 +42,6 @@ import {
   normalizeBaseURLForComparison,
 } from "../services/ai-config-schema.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
-import { mapProfileToDto } from "../services/people-profile-store.js";
 import { decrypt, encrypt, maskToken } from "../utils/crypto.js";
 import { createDataFilesLoader } from "../utils/data-files-loader.js";
 import {
@@ -93,6 +92,15 @@ const cosInsideConfigSchema = z
       new Set(targets.map(({ alias }) => alias.toLowerCase())).size === targets.length,
     { message: "Relay target aliases must be unique" },
   );
+
+const memoryTelegramIdFilterSchema = z
+  .string()
+  .trim()
+  .refine((value) => {
+    if (value === "" || value === "general") return true;
+    return /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value));
+  }, "telegramId must be general or a decimal safe integer")
+  .optional();
 
 const createBotSchema = z
   .object({
@@ -1186,15 +1194,7 @@ export function botsRoutes(
         const botId = c.req.param("botId");
         const { page, limit, search } = c.req.valid("query");
         const store = botPool.getProfileStore();
-        if (search) {
-          const profiles = await store.searchProfiles(botId, search);
-          return c.json({
-            ok: true as const,
-            data: profiles.map((p) => ({ id: p.id, ...mapProfileToDto(p) })),
-            total: profiles.length,
-          });
-        }
-        const result = await store.listProfiles(botId, page, limit);
+        const result = await store.listProfiles(botId, page, limit, search);
         return c.json({ ok: true as const, ...result });
       },
     )
@@ -1456,7 +1456,7 @@ export function botsRoutes(
           page: z.coerce.number().int().positive().optional().default(1),
           limit: z.coerce.number().int().positive().max(100).optional().default(20),
           category: z.string().optional(),
-          telegramId: z.string().optional(),
+          telegramId: memoryTelegramIdFilterSchema,
           search: z.string().optional(),
         }),
       ),
@@ -1468,10 +1468,7 @@ export function botsRoutes(
         let tidFilter: number | "general" | undefined;
         if (telegramId === "general") {
           tidFilter = "general";
-        } else if (telegramId) {
-          const num = Number(telegramId);
-          if (!Number.isNaN(num)) tidFilter = num;
-        }
+        } else if (telegramId) tidFilter = Number(telegramId);
 
         const result = await store.listMemories(botId, page, limit, {
           category,

@@ -1,4 +1,4 @@
-# 人物档案与记忆管理：基线与 v0.9.1 验收
+# 人物档案与记忆管理：基线与版本验收
 
 2026-09-22，在 v0.9.0 发布阶段完成有界调查。生产面板构建 + 全 API 模拟，1440×900 与 390×844；没有真实 Bot、模型、数据库读写。调查时两页代码与 v0.8.0 相同。
 
@@ -56,3 +56,16 @@ Sol对当前源码只读追踪确认：Panel传page/limit/search，GET profiles�
 验收应覆盖25个匹配档案的20+5两页、真实total、Bot隔离、原搜索字段、清空回第一页和请求切换；数据库测试不能以Panel模拟API代替。
 
 记忆API现有telegramId可选字符串：general对应NULL，可转数字的字符串精确匹配，省略不过滤；非数字目前静默忽略。工作区viewer可读，写要求owner/admin/editor，列表保留Bot范围。面板仅有全部/通用，没有具体用户输入。下一版需决定明确的输入/URL状态、错误处理和紧凑桌面布局，避免用户输入无效ID却看到全部结果。
+
+## v0.10.0：检索与筛选效率
+
+基线 main `60d90dc08437eb2554d81f88a81f2df86f6dc666`。后续已在独立临时 PostgreSQL 17 复现旧 Store 的25个匹配仅返回10条：`.acceptance/ui-efficiency/profile-search-database-baseline.json`。只创建合成数据所需表，没有跑完整迁移或连接真实数据库。
+
+- 管理端人物搜索统一走listProfiles分页，rows/count共用原有搜索条件，lastSeen/id降序；AI searchProfiles仍10条并保留原LIKE通配符语义。GET记忆telegramId拒绝非法/非十进制/非安全整数，不再静默扩大范围。
+- 人物卡可直达当前Bot的指定用户记忆；记忆筛选改为紧凑桌面行、手机双列，显式提交、已应用范围、URL深链/刷新/history。支持全部/通用/指定用户与分类/内容组合，清除回第一页，新建空草稿可预填当前用户ID。
+- 请求URL、活动查询和筛选草稿分离；未保存编辑及未确认写入延后应用history，确认失败继续留在原范围，只有原范围GET成功才释放。已编辑记录从服务端列表消失时仍保留可见编辑卡。页面重载不承诺保稿。
+- Sol独立审查与主代理复核关闭普通read重试误锁全部动作、非法URL下Create假可用两个P2，以及纯分页丢筛选草稿、快速提交后原生Back漏同步问题。后者由真实生产浏览器复现：Router可能合并PUSH/POP并复用原LocationContext；页面级popstate仅递增同步revision，仍由原查询/锁控制采纳，不修改全局路由。
+- 最终本地人物26＋记忆24＝50项浏览器回归通过，后端4文件43项通过，Panel/Server类型、相关lint/format、i18n2345 keys和Panel生产构建通过。AI/App共享路由探索期间另跑65项通过；最终未修改App或全局路由配置，不把探索范围算作本轮产品变动。
+- 真实Store SQL复验：25条20＋5分页、total25、Bot隔离、displayName/username/notes/traits/interests字段、同时间id排序、AI10条及通配符。证据 `profile-search-database-final.json`；对应端口55491临时PG已关闭。完整API使用独立Hono契约测试，SQL探针不声称全服务器端到端验证。
+- 生产预览1440×900与390×844分别24/22个模拟请求，覆盖25档案分页、人物Link、reload、快速Back/Forward、长分类、非法ID、初始错误恢复、新建预填；无页面错误/横向溢出，主代理已查看实际截图。证据 `.acceptance/ui-efficiency/record-search-final/`，脚本 `verify-record-search.mjs`。
+- 公共隐私/记忆、导航指南和v0.10.0正文/导航同步；文档typecheck/build与14项匿名访问、搜索、导航及深链桌面手机检查通过。GitHub CI、合入和发布证据在完成后补录。未部署生产。

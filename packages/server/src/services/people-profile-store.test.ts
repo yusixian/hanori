@@ -1,5 +1,6 @@
 import { peopleProfiles, type Database } from "@cos-tool-bot/database";
-import { getTableConfig } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import { PeopleProfileStore } from "./people-profile-store.js";
@@ -14,6 +15,81 @@ function queryValues(chunks: QueryChunk[]): unknown[] {
     ...(chunk.value === undefined ? [] : [chunk.value]),
     ...(chunk.queryChunks ? queryValues(chunk.queryChunks) : []),
   ]);
+}
+
+const profileRow = (id: number) => ({
+  id,
+  botId: "bot-a",
+  telegramId: id,
+  username: `person${id}`,
+  displayName: `Person ${id}`,
+  firstName: "Person",
+  lastName: String(id),
+  languageCode: "en",
+  isPremium: false,
+  avatarPath: null,
+  avatarVersion: null,
+  avatarRefreshVersion: 0,
+  notes: "matching note",
+  traits: ["matching trait"],
+  interests: ["matching interest"],
+  relationship: null,
+  firstSeen: new Date("2026-01-01T00:00:00.000Z"),
+  lastSeen: new Date("2026-01-02T00:00:00.000Z"),
+  updatedAt: new Date("2026-01-02T00:00:00.000Z"),
+});
+
+function createProfileListDb(rows: ReturnType<typeof profileRow>[], total: number) {
+  const whereClauses: SQL[] = [];
+  const orderClauses: SQL[][] = [];
+  const limits: number[] = [];
+  const offsets: number[] = [];
+  const db = {
+    select: (selection?: unknown) => {
+      const countQuery = selection !== undefined;
+      const query: Record<string, unknown> = {};
+      query["from"] = () => query;
+      query["where"] = (where: SQL) => {
+        whereClauses.push(where);
+        return countQuery ? Promise.resolve([{ total }]) : query;
+      };
+      query["orderBy"] = (...order: SQL[]) => {
+        orderClauses.push(order);
+        return query;
+      };
+      query["limit"] = (limit: number) => {
+        limits.push(limit);
+        return query;
+      };
+      query["offset"] = async (offset: number) => {
+        offsets.push(offset);
+        return rows;
+      };
+      return query;
+    },
+  } as unknown as Database;
+  return { db, whereClauses, orderClauses, limits, offsets };
+}
+
+function createProfileSearchDb(rows: ReturnType<typeof profileRow>[]) {
+  const whereClauses: SQL[] = [];
+  const limits: number[] = [];
+  const query: Record<string, unknown> = {};
+  query["from"] = () => query;
+  query["where"] = (where: SQL) => {
+    whereClauses.push(where);
+    return query;
+  };
+  query["orderBy"] = () => query;
+  query["limit"] = async (limit: number) => {
+    limits.push(limit);
+    return rows.slice(0, limit);
+  };
+  return {
+    db: { select: () => query } as unknown as Database,
+    whereClauses,
+    limits,
+  };
 }
 
 function createConcurrentDb(
@@ -137,6 +213,63 @@ function createConcurrentDb(
 }
 
 describe("PeopleProfileStore", () => {
+  it("paginates management search with a shared Bot-scoped count and stable order", async () => {
+    const fixture = createProfileListDb(
+      Array.from({ length: 5 }, (_, index) => profileRow(21 + index)),
+      25,
+    );
+    const store = new PeopleProfileStore(fixture.db);
+
+    const result = await store.listProfiles("bot-a", 2, 20, "match");
+
+    expect(result.data).toHaveLength(5);
+    expect(result.total).toBe(25);
+    expect(fixture.limits).toEqual([20]);
+    expect(fixture.offsets).toEqual([20]);
+    expect(fixture.whereClauses).toHaveLength(2);
+    for (const where of fixture.whereClauses) {
+      const rendered = new PgDialect().sqlToQuery(where);
+      expect(rendered.sql).toContain('"people_profiles"."bot_id" =');
+      expect(rendered.sql.match(/ilike/gi)).toHaveLength(5);
+      for (const column of ["display_name", "username", "notes", "traits", "interests"]) {
+        expect(rendered.sql).toContain(`"people_profiles"."${column}"`);
+      }
+      expect(rendered.params).toEqual([
+        "bot-a",
+        "%match%",
+        "%match%",
+        "%match%",
+        "%match%",
+        "%match%",
+      ]);
+    }
+    expect(fixture.orderClauses).toHaveLength(1);
+    expect(fixture.orderClauses[0]!.map((order) => new PgDialect().sqlToQuery(order).sql)).toEqual([
+      '"people_profiles"."last_seen" desc',
+      '"people_profiles"."id" desc',
+    ]);
+  });
+
+  it("keeps AI profile search capped at 10 with its existing wildcard semantics", async () => {
+    const fixture = createProfileSearchDb(
+      Array.from({ length: 12 }, (_, index) => profileRow(index + 1)),
+    );
+    const store = new PeopleProfileStore(fixture.db);
+
+    const result = await store.searchProfiles("bot-a", "Ai%_");
+
+    expect(result).toHaveLength(10);
+    expect(fixture.limits).toEqual([10]);
+    expect(new PgDialect().sqlToQuery(fixture.whereClauses[0]!).params).toEqual([
+      "bot-a",
+      "%Ai%_%",
+      "%Ai%_%",
+      "%Ai%_%",
+      "%Ai%_%",
+      "%Ai%_%",
+    ]);
+  });
+
   it("enforces one profile per bot and Telegram user in the database", () => {
     const profileIndex = getTableConfig(peopleProfiles).indexes.find(
       ({ config }) => config.name === "people_bot_telegram_idx",

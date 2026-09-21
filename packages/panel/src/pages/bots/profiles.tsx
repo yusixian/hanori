@@ -19,7 +19,7 @@ import type { CharacterBinding, CharacterRelation, LibraryCharacter } from "@cos
 import { Check, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 
 interface ProfileItem {
   id: number;
@@ -940,6 +940,22 @@ function BotProfilesContent({ botId }: { botId: string | undefined }) {
                       </button>
                     )}
                     <div className="border-t pt-2">
+                      <Link
+                        to={`/bots/${encodeURIComponent(botId ?? "")}/memories?telegramId=${p.telegramId}`}
+                        aria-label={t("profiles.viewUserMemories", { id: p.telegramId })}
+                        aria-disabled={controlsDisabled || undefined}
+                        tabIndex={controlsDisabled ? -1 : undefined}
+                        onClick={(event) => {
+                          if (controlsDisabled || mutationRef.current || recoveryRef.current)
+                            event.preventDefault();
+                        }}
+                        className={cn(
+                          "focus-visible:ring-ring mr-3 inline-flex min-h-9 items-center rounded-md text-sm underline underline-offset-4 focus-visible:outline-none focus-visible:ring-2",
+                          controlsDisabled && "pointer-events-none opacity-50",
+                        )}
+                      >
+                        {t("profiles.viewMemories")}
+                      </Link>
                       <Button
                         variant="outline"
                         size="sm"

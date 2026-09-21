@@ -161,6 +161,9 @@ export const botData = {
     seconds: "{{value}} 秒",
   },
   profiles: {
+    viewMemories: "查看记忆",
+    viewUserMemories: "查看用户 {{id}} 的记忆",
+
     title: "人物档案",
     add: "添加档案",
     new: "新建档案",
@@ -308,6 +311,21 @@ export const botData = {
     deleteFailed: "无法删除生成素材库项目。",
   },
   memories: {
+    filters: "记忆筛选",
+    scope: "范围",
+    specificUser: "指定用户",
+    userIdPlaceholder: "输入 Telegram 用户 ID",
+    invalidUserId: "请输入有效的 Telegram 用户 ID（整数）。",
+    unappliedFilters: "筛选条件已更改，点击搜索后生效。",
+    showingScope: "当前范围：{{scope}}",
+    userScope: "用户 {{id}}",
+    categoryScope: "分类：{{category}}",
+    searchScope: "搜索：{{search}}",
+    finishEditing: "请先保存或取消当前编辑，再切换筛选。",
+    confirmBeforeFiltering: "请先成功刷新并确认当前列表，再切换筛选。",
+    navigationWaiting: "地址中的筛选条件将在此后生效。",
+    retainedDraft: "已加载的结果中没有这条记录，编辑草稿仍保留在这里。",
+
     title: "Bot 记忆",
     add: "添加记忆",
     new: "新建记忆",

@@ -1,6 +1,13 @@
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
-import { MemoryRouter, Route, Routes, useNavigate } from "react-router";
+import {
+  createMemoryRouter,
+  RouterProvider,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { i18n } from "@/i18n";
 import "@/style.css";
@@ -53,11 +60,30 @@ function requestDetails(input: RequestInfo | URL, init?: RequestInit) {
 
 function TestRoutes() {
   const navigate = useNavigate();
+  const current = useLocation();
   return (
     <>
       <button type="button" onClick={() => navigate("/bots/bot-b/memories")}>
         Switch Bot
       </button>
+      <button onClick={() => navigate(-1)}>Back</button>
+      <button
+        onClick={() => {
+          document
+            .querySelector<HTMLFormElement>('form[aria-label="Memory filters"]')!
+            .requestSubmit();
+          navigate(-1);
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        }}
+      >
+        Submit then back
+      </button>
+      <button onClick={() => navigate(1)}>Forward</button>
+      <button onClick={() => navigate("?telegramId=bad")}>Invalid address</button>
+      <output aria-label="Current address">
+        {current.pathname}
+        {current.search}
+      </output>
       <Routes>
         <Route path="/bots/:botId/memories" element={<BotMemoriesPage />} />
       </Routes>
@@ -67,9 +93,11 @@ function TestRoutes() {
 
 function start(path = "/bots/bot-a/memories") {
   render(
-    <MemoryRouter initialEntries={[path]}>
-      <TestRoutes />
-    </MemoryRouter>,
+    <RouterProvider
+      router={createMemoryRouter([{ path: "*", element: <TestRoutes /> }], {
+        initialEntries: [path],
+      })}
+    />,
   );
 }
 
@@ -342,4 +370,209 @@ test("keeps a record after a delete network failure and removes it after success
   listRequests[2]!.resolve(listResponse([]));
   await expect.element(page.getByText("Deleted.", { exact: true })).toBeVisible();
   await expect.element(page.getByText("No memories found.", { exact: true })).toBeVisible();
+});
+
+test("restores submitted user filters through history and keeps pagination scoped", async () => {
+  await resolveInitial([memory(1, "All records")]);
+  await page.getByRole("combobox", { name: "Scope", exact: true }).click();
+  await page.getByRole("option", { name: "Specific user", exact: true }).click();
+  await page.getByLabelText("Telegram ID", { exact: true }).fill("00042");
+  await page.getByPlaceholder("Search memories…").fill("  tea  ");
+  expect(listRequests).toHaveLength(1);
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  expect(listRequests[1]!.url.searchParams.get("telegramId")).toBe("42");
+  expect(listRequests[1]!.url.searchParams.get("search")).toBe("tea");
+  listRequests[1]!.resolve(listResponse([memory(2, "User tea")], { total: 25 }));
+  await page.getByRole("button", { name: "Next page" }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  expect(listRequests[2]!.url.searchParams.get("telegramId")).toBe("42");
+  expect(listRequests[2]!.url.searchParams.get("page")).toBe("2");
+  listRequests[2]!.resolve(listResponse([memory(3, "Second page")], { total: 25 }));
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(4));
+  expect(listRequests[3]!.url.searchParams.get("page")).toBe("1");
+  listRequests[3]!.resolve(listResponse([memory(2, "User tea")], { total: 25 }));
+  await expect.element(page.getByLabelText("Telegram ID", { exact: true })).toHaveValue("42");
+  await page.getByRole("button", { name: "Forward", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(5));
+  expect(listRequests[4]!.url.searchParams.get("page")).toBe("2");
+  listRequests[4]!.resolve(listResponse([memory(3, "Second page")], { total: 25 }));
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(6));
+  expect(listRequests[5]!.url.searchParams.get("page")).toBe("1");
+  expect(listRequests[5]!.url.searchParams.has("telegramId")).toBe(false);
+});
+
+for (const id of ["bad", "1e3", "0x2a", "9007199254740992"]) {
+  test(`rejects invalid direct user filter ${id} without fetching all records`, async () => {
+    start(`/bots/bot-a/memories?telegramId=${id}`);
+    await expect.element(page.getByRole("alert")).toHaveTextContent("valid Telegram user ID");
+    expect(listRequests).toHaveLength(0);
+    await expect.element(page.getByLabelText("Telegram ID", { exact: true })).toHaveValue(id);
+    await expect
+      .element(page.getByText("No memories found.", { exact: true }))
+      .not.toBeInTheDocument();
+    await page.getByLabelText("Telegram ID", { exact: true }).fill("-42");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await vi.waitFor(() => expect(listRequests).toHaveLength(1));
+    expect(listRequests[0]!.url.searchParams.get("telegramId")).toBe("-42");
+  });
+}
+
+test("hydrates a category deep link before metadata and pre-fills new user memories", async () => {
+  start("/bots/bot-a/memories?telegramId=42&category=custom&page=2");
+  await vi.waitFor(() => expect(listRequests).toHaveLength(1));
+  expect(listRequests[0]!.url.searchParams.get("category")).toBe("custom");
+  await expect
+    .element(page.getByRole("combobox", { name: "Category", exact: true }))
+    .toHaveTextContent("custom");
+  listRequests[0]!.resolve(listResponse([memory(1, "Scoped memory")], { total: 25 }));
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  await expect.element(page.getByLabelText("Telegram ID (optional)")).toHaveValue("42");
+  await page.getByLabelText("Telegram ID (optional)").fill("99");
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  await expect.element(page.getByLabelText("Telegram ID (optional)")).toHaveValue("99");
+});
+
+test("does not apply pending browser history until a failed write is confirmed on its original scope", async () => {
+  await resolveInitial([memory(1, "Original")]);
+  await page.getByPlaceholder("Search memories…").fill("scope");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.resolve(listResponse([memory(1, "Original")]));
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  const draft = page.getByPlaceholder("Memory content…");
+  await draft.fill("Kept draft");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  mutationRequests[0]!.reject(new Error("offline"));
+  await expect.element(page.getByText(/The address change will apply afterwards/)).toBeVisible();
+  await expect.element(draft).toHaveValue("Kept draft");
+  expect(listRequests).toHaveLength(2);
+  await page.getByRole("button", { name: "Refresh list", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  expect(listRequests[2]!.url.searchParams.get("search")).toBe("scope");
+  await page.getByRole("button", { name: "Forward", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  expect(listRequests[2]!.signal?.aborted).toBe(false);
+  listRequests[2]!.resolve(listResponse([], { ok: false, status: 503 }));
+  await expect
+    .element(page.getByText("Refresh failed. Showing the last loaded records.", { exact: true }))
+    .toBeVisible();
+  expect(listRequests).toHaveLength(3);
+  await expect.element(draft).toHaveValue("Kept draft");
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(4));
+  expect(listRequests[3]!.url.searchParams.get("search")).toBe("scope");
+  listRequests[3]!.resolve(listResponse([memory(1, "Original")]));
+  await vi.waitFor(() => expect(listRequests).toHaveLength(5));
+  expect(listRequests[4]!.url.searchParams.has("search")).toBe(false);
+  listRequests[4]!.resolve(listResponse([memory(2, "All scope")]));
+  await expect.element(page.getByText("All scope", { exact: true })).toBeVisible();
+  await expect.element(draft).toHaveValue("Kept draft");
+});
+
+test("keeps an edit accessible across browser history and a recovery that no longer contains it", async () => {
+  await resolveInitial([memory(1, "Original")]);
+  await page.getByPlaceholder("Search memories…").fill("scope");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.resolve(listResponse([memory(1, "Original")]));
+  await page.getByRole("button", { name: "Edit memory", exact: true }).click();
+  const draft = page.getByLabelText("Content", { exact: true });
+  await draft.fill("Kept edit");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect.element(draft).toBeEnabled();
+  expect(listRequests).toHaveLength(2);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  mutationRequests[0]!.resolve(mutationResponse(false));
+  await page.getByRole("button", { name: "Refresh list", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  listRequests[2]!.resolve(listResponse([]));
+  await expect.element(draft).toHaveValue("Kept edit");
+  await expect.element(page.getByText(/Your edit is kept here/)).toBeVisible();
+  expect(listRequests).toHaveLength(3);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(4));
+  expect(listRequests[3]!.url.searchParams.has("search")).toBe(false);
+});
+
+test("ignores Enter during IME composition", async () => {
+  await resolveInitial();
+  const input = page.getByPlaceholder("Search memories…").element();
+  input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+  input.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    }),
+  );
+  input.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  expect(listRequests).toHaveLength(1);
+  input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+});
+
+test("allows another query after a normal list retry also fails", async () => {
+  start();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(1));
+  listRequests[0]!.reject(new Error("offline"));
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.reject(new Error("still offline"));
+  const search = page.getByPlaceholder("Search memories…");
+  await expect.element(search).toBeEnabled();
+  await search.fill("another scope");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  expect(listRequests[2]!.url.searchParams.get("search")).toBe("another scope");
+});
+
+test("disables retained create submission when queued history has an invalid user ID", async () => {
+  await resolveInitial([memory(1, "Original")]);
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  const draft = page.getByPlaceholder("Memory content…");
+  await draft.fill("Kept draft");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  await page.getByRole("button", { name: "Invalid address", exact: true }).click();
+  mutationRequests[0]!.reject(new Error("offline"));
+  await page.getByRole("button", { name: "Refresh list", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.resolve(listResponse([memory(1, "Original")]));
+  await expect.element(page.getByRole("alert")).toHaveTextContent("valid Telegram user ID");
+  await expect.element(draft).toHaveValue("Kept draft");
+  await expect.element(page.getByRole("button", { name: "Create", exact: true })).toBeDisabled();
+  expect(listRequests).toHaveLength(2);
+});
+
+test("keeps unapplied filter text when navigating only between result pages", async () => {
+  await resolveInitial([memory(1, "Original")], 25);
+  const search = page.getByPlaceholder("Search memories…");
+  await search.fill("Unapplied text");
+  await page.getByRole("button", { name: "Next page" }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  expect(listRequests[1]!.url.searchParams.has("search")).toBe(false);
+  listRequests[1]!.resolve(listResponse([memory(2, "Next page")], { total: 25 }));
+  await expect.element(search).toHaveValue("Unapplied text");
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  await expect.element(search).toHaveValue("Unapplied text");
+});
+
+test("restores filters when submitting and going back before the intermediate render", async () => {
+  await resolveInitial([memory(1, "Original")]);
+  const search = page.getByPlaceholder("Search memories…");
+  await search.fill("Briefly submitted");
+  await page.getByRole("button", { name: "Submit then back", exact: true }).click();
+  await expect.element(search).toHaveValue("");
+  await expect
+    .element(page.getByLabelText("Current address"))
+    .toHaveTextContent("/bots/bot-a/memories");
+  expect(listRequests.every((request) => !request.url.searchParams.has("search"))).toBe(true);
 });
