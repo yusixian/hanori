@@ -44,19 +44,27 @@
 
 ## 当前迭代
 
-- 起始基线：main `05bb9329dffc3459da57084ff9ee1062c6fd8ace`，最新 GitHub Release v0.3.0。
-- 持久目标已提交为 `32eeb6174492a7dca5e50538d9c1f3df0a71ccab` 并推至远端迭代分支，已用 ls-remote 核实。直接 push main 因远端新增 `4aea68e`（生成素材库教程 #85）非快进被拒绝；未强推。当前分支 `ui/navigation-efficiency-v0.4.0`，按用户授权改走 PR，最终提交前整合远端文档更新。
-- 当前重点：v0.4.0 导航与工作区；AI 设置页的下一轮证据与两个批次见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
-- 浏览器基线已查看：1440×900 / 390×844，Bot 菜单 16 项平铺，全局入口在 Bot 内消失，固定页脚约占 240px。截图和 API 夹具证据在 `.acceptance/ui-efficiency/before/`；无页面异常或整页横向溢出。
-- 环境：项目 CI runner 已启动；Docker 当前不可用；3100/5173 属于其他项目，未动。当前使用独立 Vite 5188 + 全部拦截的测试 API，不能当作真实数据库/Telegram 验证。
-- 按现有锁文件补齐了缺失依赖；未升级依赖或改写锁文件。
-- 无关未跟踪内容：`.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/`，保持原状。
-- 导航核心与 7 项浏览器测试已实现；主代理和独立 Sol 审查发现的概览双高亮、折叠按钮布局/标签、手机软键盘自动弹出、顶部返回 Bot 列表、同页点击关闭与跳转焦点恢复均已修复。
-- 本地证据：文档 typecheck/build 通过；文档原 10 项浏览器测试 + 新指南搜索/可读性 2 项通过，桌面/手机截图已查看。完整应用 + 模拟 API 的导航搜索/清空/全局直达/折叠搜索/手机 Escape 与导航后回焦检查通过，无页面错误或横向溢出，最终证据 `.acceptance/ui-efficiency/navigation-final/`。Panel typecheck、导航浏览器测试 7/7、相关 lint/format 和 i18n 2273 keys 通过。
-- 下一轮 AI 设置批次 A 已由 Sol 在 `/private/tmp/cos-tool-bot-ai-efficiency-20260922` 隔离 worktree 实现中；主仓库本轮不混入它。只包含搜索、setting 深链和移动摘要，不改保存/权限/API；主代理在 v0.4.0 发布后审查整合。
-- 后续高频管理候选：真实浏览器截图 `.acceptance/ui-efficiency/navigation-flows-verified/1440-collapsed.png` 显示日志页两个 Select 在桌面占满整行，筛选区占用过多高度；源码 `pages/logs/list.tsx` 的筛选 Select 未设置宽度。列入后续日志检索效率批次，不混入当前导航发布。
-- 下一步：独立审查结论收口，整合远端最新文档，最终浏览器与构建检查，再提交 PR、等待完整 CI、合入并自主发布 v0.4.0。功能提交、PR、合入和发布目前均未完成。
+- v0.4.0 导航与工作区已完成审查、CI、合入及 GitHub Release，详见下方证据；完整目标保持进行中。
+- 当前重点：AI 设置批次 A（搜索、稳定深链、移动摘要），Sol 在 `/private/tmp/cos-tool-bot-ai-efficiency-20260922` 隔离工作区实现，另一位 Sol 只读审查；修复搜索焦点、键盘列表与异步加载定位后由主代理整合。暂不改保存/权限/API。
+- 下一批次：AI 保存状态与草稿保护。站内导航丢草稿已用实际浏览器复现；当前 BrowserRouter 与 useBlocker 兼容性需单独处理。详细证据与范围见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
+- 日志检索批次已由 Sol 在 `/private/tmp/cos-tool-bot-logs-efficiency-20260922` 隔离实现：两个页面的结构化筛选被 DataProvider 丢弃，历史与 SSE 条件不一致；局部筛选布局占用过高；清理确认文案须准确反映 Bot 范围。保留 debounce、IME、SSE、权限和删除契约，单独审查交付。
+- 非阻断导航体验项：1024×768 长菜单底部展开全局管理后还需滚动才能看到入口；搜索已可直接定位，后续评估。
+- 环境：项目专用 CI runner 可用；Docker 当前不可用；3100/5173 属于其他项目，未动。UI 证据使用独立 Vite 5188 + 全量拦截 API，不是生产数据库或 Telegram 验证。
+- 无关未跟踪内容 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。
+- 下一步：记录本轮交付，完成 AI 批次 A 的独立审查与真实浏览器验收，更新公共指南/版本说明并进入下一轮 CI、合入和发布。
 
 ## 迭代证据
 
-尚未发布新的迭代版本。后续每版记录：范围、基线/最终 SHA、审查结论、定向检查、浏览器证据、CI、文档、tag/Release、线上部署状态及剩余工作。
+### v0.4.0 — 更清晰的工作区导航
+
+- 基线：v0.3.0 / `05bb9329dffc3459da57084ff9ee1062c6fd8ace`。
+- 范围：Bot 菜单按任务分组；侧栏即时搜索和范围标识；全局管理直达；顶部返回 Bot 列表；紧凑页脚、桌面折叠和手机焦点行为。
+- 保留远端并行更新：`4aea68e` 生成素材库教程 #85。最初直接 push 因 main 前进被非快进拒绝，未强推；改走 PR #86，整合后文档构建与测试重跑。
+- 审查：独立 Sol + 主代理复核；修复概览双高亮、折叠按钮布局/标签、手机自动弹键盘、返回入口、同页关闭/导航回焦及中间类型错误。终态没有剩余 P1/P2 finding。
+- 本地验证：导航浏览器回归 7/7；Panel typecheck、相关 lint/format、i18n 2273 keys；重建旧 shared 产物后 panel 生产构建通过；文档 typecheck/build；整合后文档浏览器 12/12 通过。
+- 浏览器证据：桌面 1440×900、手机 390×844，完整应用 + API 夹具的搜索/清空/范围跳转/唯一当前项/折叠搜索/Escape/关闭回焦通过；无页面错误或横向溢出。截图与脚本在 `.acceptance/ui-efficiency/navigation-final/`，文档在 `.acceptance/ui-efficiency/docs-integrated/`。
+- PR CI 35628346088：completed/success，head `fe2edb3337088edaad10c559a0aacdde9743618f`，完整仓库门禁通过。合并后文件树与该提交完全一致。
+- 合入：PR #86 已核实 MERGED，main `5c839e567880e4213b29e948a1eb8e329f5e7447`。
+- 发布：v0.4.0 已公开，非 draft/预发布；远端 tag 与发布目标均核实为上述 main SHA。正文来自 `docs/releases/v0.4.0.md`。
+- 文档：新增公开导航指南、快速开始与 README 入口、版本导航和 v0.4.0 页面；保留旧版本访问。合入后已复核提交文件树与文档同步。
+- 部署：未部署生产；不能据 GitHub 发布或模拟浏览器结果声称线上面板/Telegram 已更新。

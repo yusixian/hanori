@@ -1,12 +1,12 @@
 # AI 设置页效率审计
 
-状态：静态审计完成，尚未做真实浏览器验证。记录日期：2026-09-22。
+状态：静态审计完成；已补充草稿丢失的真实浏览器复现。记录日期：2026-09-22。
 
 本文是 `packages/panel` Bot AI 设置页后续迭代的持久证据。当前迭代先交付导航与工作区调整；本文不表示这些 AI 设置改动已经实现或验收。
 
 ## 范围与证据边界
 
-审计范围包括 AI 设置页的设置查找、信息层级、保存与未保存反馈，以及离开页面时的草稿保护。结论来自当前源码和已有浏览器测试；没有启动面板、没有操作真实浏览器，也没有调用 Bot、Telegram 或生产服务。
+初次审计范围包括 AI 设置页的设置查找、信息层级、保存与未保存反馈，以及离开页面时的草稿保护，依据源码和已有浏览器测试。后续补充的实际浏览器证据单列于文末；所有检查均未调用真实 Bot、Telegram 或生产服务。
 
 当前页面已经具备可复用基础：
 
@@ -125,3 +125,9 @@ AI 设置页仅注册浏览器 `beforeunload`：`packages/panel/src/pages/bots/a
 `packages/panel/src/pages/bots/ai-settings/ai-settings-page.browser.test.tsx:23-57` 目前只验证从 Smart group engagement 跳转到 debugger。`packages/panel/src/pages/bots/ai-settings/sections/global-ai-selection-section.browser.test.tsx:45-111` 只覆盖 Apply、Retry 和只读权限，没有覆盖 Discard、顶部 Save 联动、搜索、URL 展开状态、dirty 状态或离开保护。
 
 因此两个批次都必须增加页面级浏览器测试；组件测试只能证明局部交互，不能替代真实路由组装和桌面/手机验收。
+
+## 后续浏览器证据（2026-09-22）
+
+主代理在完整 BrowserRouter 应用、1440×900 Chromium 和全量拦截的 API 夹具下复现：进入回复行为，修改系统提示词，确认“有未保存的更改”；点击侧栏返回 Bot 列表并等待 AI 表单卸载，未出现确认提示；浏览器返回后系统提示词恢复服务端空值，草稿丢失。证据在 `.acceptance/ui-efficiency/ai-draft-baseline/`，复现脚本 `verify-ai-draft-baseline.mjs` 位于同一父目录。未调用保存 API、真实 Bot 或生产服务。
+
+兼容性调查：本地 React Router 7.13.0 的 `useBlocker` 首先调用 `useDataRouterContext`，当前根 `BrowserRouter` 不能直接使用它。后续需把可靠的站内保护作为独立路由兼容批次评估，保留 Mini App 分流、懒加载和 Refine 认证行为；不把只拦截鼠标链接或 `beforeunload` 当作完整保护。[官方 useBlocker 说明](https://reactrouter.com/api/hooks/useBlocker)。
