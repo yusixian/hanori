@@ -3,6 +3,7 @@ import {
   conversationCompactionState,
   conversationMessages,
   engagementSamples,
+  generationCharacters,
   peopleProfiles,
   type Database,
 } from "@cos-tool-bot/database";
@@ -10,6 +11,71 @@ import { describe, expect, it, vi } from "vitest";
 import { UserPrivacyService } from "./user-privacy-service.js";
 
 describe("UserPrivacyService.runExclusive", () => {
+  it("lets a foreground library operation reuse its AI turn lock", async () => {
+    const service = new UserPrivacyService({} as Database);
+    await expect(
+      service.runExclusive("bot", 42, () =>
+        service.runLibraryExclusiveMany("bot", [42], async () => "saved"),
+      ),
+    ).resolves.toBe("saved");
+  });
+
+  it("rejects inverse nested cross-user acquisition instead of deadlocking", async () => {
+    const service = new UserPrivacyService({} as Database);
+    let release!: () => void;
+    const other = service.runExclusive(
+      "bot",
+      42,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await expect(
+      service.runExclusive("bot", 43, () =>
+        service.runLibraryExclusiveMany("bot", [42, 43], async () => "saved"),
+      ),
+    ).rejects.toThrow("busy");
+    release();
+    await other;
+    await expect(
+      service.runExclusive("bot", 43, () =>
+        service.runLibraryExclusiveMany("bot", [42, 43], async () => "saved"),
+      ),
+    ).resolves.toBe("saved");
+  });
+
+  it("does not reuse an expired lock inherited by detached work", async () => {
+    const service = new UserPrivacyService({} as Database);
+    let resumeDetached!: () => void;
+    const detachedGate = new Promise<void>((resolve) => {
+      resumeDetached = resolve;
+    });
+    const operation = vi.fn().mockResolvedValue("saved");
+    let detached!: Promise<string>;
+    await service.runExclusive("bot", 42, async () => {
+      detached = detachedGate.then(() => service.runLibraryExclusiveMany("bot", [42], operation));
+    });
+    let releaseOwner!: () => void;
+    let ownerStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      ownerStarted = resolve;
+    });
+    const owner = service.runExclusive("bot", 42, () => {
+      ownerStarted();
+      return new Promise<void>((resolve) => {
+        releaseOwner = resolve;
+      });
+    });
+    await started;
+    resumeDetached();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(operation).not.toHaveBeenCalled();
+    releaseOwner();
+    await owner;
+    await expect(detached).resolves.toBe("saved");
+  });
   it("serializes the same bot user across otherwise independent chats", async () => {
     const service = new UserPrivacyService({} as Database);
     let releaseFirst!: () => void;
@@ -121,6 +187,7 @@ describe("UserPrivacyService.runExclusive", () => {
         conversationMessages,
         conversationCompactionState,
         peopleProfiles,
+        generationCharacters,
         botMemories,
       ]),
     );

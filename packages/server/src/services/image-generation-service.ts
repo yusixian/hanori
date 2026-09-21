@@ -24,12 +24,16 @@ import {
   type ImagePreset,
   type ImageProviderRoute,
   type ImageRouteCapabilities,
+  type GenerationLibraryPort,
+  type GenerationMaterialSnapshot,
 } from "@cos-tool-bot/shared";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { PixaiMcpAdapter, PixaiGenerationOperation } from "./pixai-mcp-adapter.js";
 import type { PixaiMcpArtifactData, PixaiMcpArtifactReader } from "./pixai-mcp-artifacts.js";
 import { UsageGovernor } from "./usage-governor.js";
+import { recordGenerationAssetUses } from "./generation-asset-usage.js";
+import { GenerationLibraryError } from "./generation-library-service.js";
 
 const PENDING_STATES: ImageGenerationState[] = [
   "preparing",
@@ -78,6 +82,7 @@ export interface ImageGenerationDelivery {
 }
 
 export interface ImageGenerationServiceOptions {
+  generationLibrary?: GenerationLibraryPort;
   db: Database;
   usageGovernor: UsageGovernor;
   pixai: PixaiMcpAdapter;
@@ -119,9 +124,11 @@ export class ImageGenerationService implements ImageGenerationPort {
   private readonly isGroupEnabled: (botId: string, chatId: number) => Promise<boolean>;
   private readonly generalRuns = new Map<string, AbortController>();
   private readonly advancing = new Set<string>();
+  private readonly generationLibrary?: GenerationLibraryPort;
 
   constructor(options: ImageGenerationServiceOptions) {
     this.db = options.db;
+    this.generationLibrary = options.generationLibrary;
     this.usageGovernor = options.usageGovernor;
     this.pixai = options.pixai;
     this.artifacts = options.artifacts;
@@ -238,7 +245,41 @@ export class ImageGenerationService implements ImageGenerationPort {
         return { accepted: false, reason: "not_allowed" };
       }
     }
-    const prompt = request.prompt.trim();
+    let prompt = request.prompt.trim();
+    if (!prompt || prompt.length > 8_000) return { accepted: false, reason: "invalid_request" };
+
+    let materialSnapshot: GenerationMaterialSnapshot | undefined;
+    if (!request.materials?.skipLibrary && this.generationLibrary) {
+      try {
+        const resolved = await this.generationLibrary.resolveMaterials(
+          {
+            botId: actor.botId,
+            source: "telegram",
+            telegramUserId: actor.userId,
+            isAdmin: actor.isBotAdmin,
+          },
+          prompt,
+          request.materials ?? {},
+        );
+        prompt = resolved.prompt;
+        materialSnapshot = resolved.snapshot;
+      } catch (error) {
+        return {
+          accepted: false,
+          reason: "invalid_request",
+          message:
+            error instanceof GenerationLibraryError
+              ? error.message
+              : "Generation materials are unavailable. Retry, or explicitly skip the library.",
+        };
+      }
+    } else if (request.materials && !request.materials.skipLibrary) {
+      return {
+        accepted: false,
+        reason: "invalid_request",
+        message: "Generation library is unavailable",
+      };
+    }
     if (!prompt || prompt.length > 8_000) return { accepted: false, reason: "invalid_request" };
 
     const presets = await this.listPresetsForConfig(
@@ -282,6 +323,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     const idempotencyKey = `cos-tool-bot:${actor.botId}:${id}`;
     const initialSnapshot: ImageGenerationRequestSnapshot = {
       presetKey,
+      ...(materialSnapshot ? { materials: materialSnapshot } : {}),
     };
     try {
       await this.db.insert(imageGenerations).values({
@@ -842,30 +884,48 @@ export class ImageGenerationService implements ImageGenerationPort {
           sha256,
         });
       }
-      const [claimed] = await this.db
-        .update(imageGenerations)
-        .set({
-          state: "succeeded",
-          artifacts,
-          localFiles,
-          completedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(
-          and(eq(imageGenerations.id, row.id), inArray(imageGenerations.state, COMPLETABLE_STATES)),
-        )
-        .returning({ id: imageGenerations.id });
+      const completedAt = new Date();
+      const persistSuccess = async (db: Pick<Database, "update">) => {
+        const [claimed] = await db
+          .update(imageGenerations)
+          .set({
+            state: "succeeded",
+            artifacts,
+            localFiles,
+            completedAt,
+            updatedAt: completedAt,
+          })
+          .where(
+            and(
+              eq(imageGenerations.id, row.id),
+              inArray(imageGenerations.state, COMPLETABLE_STATES),
+            ),
+          )
+          .returning({ id: imageGenerations.id });
+        return claimed;
+      };
+      const assetIds = row.requestSnapshot?.materials?.assets.map((asset) => asset.id) ?? [];
+      const claimed =
+        assetIds.length > 0
+          ? await this.db.transaction(async (tx) => {
+              const result = await persistSuccess(tx);
+              if (result)
+                await recordGenerationAssetUses(tx, row.botId, row.id, assetIds, completedAt);
+              return result;
+            })
+          : await persistSuccess(this.db);
       if (!claimed) {
         await Promise.allSettled(createdFiles.map((filename) => unlink(path.join(dir, filename))));
         return;
       }
-      await this.recordEvent(row.botId, row.id, "artifacts_saved", "succeeded", undefined, {
-        artifactCount: artifacts.length,
-      });
     } catch (error) {
       await Promise.allSettled(createdFiles.map((filename) => unlink(path.join(dir, filename))));
       throw error;
     }
+    // A diagnostic write must not remove files whose successful state already committed.
+    await this.recordEvent(row.botId, row.id, "artifacts_saved", "succeeded", undefined, {
+      artifactCount: artifacts.length,
+    });
     if (row.usageReservationId) {
       await this.usageGovernor.settle({
         reservationId: row.usageReservationId,

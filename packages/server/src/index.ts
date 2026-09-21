@@ -172,6 +172,7 @@ const imageMcpConnectionService = new ImageMcpConnectionService({
 });
 const imageGenerationService = new ImageGenerationService({
   db,
+  generationLibrary: botPool.getGenerationLibraryService(),
   usageGovernor,
   pixai: imageMcpConnectionService.adapter,
   artifacts: imageMcpConnectionService.artifacts,

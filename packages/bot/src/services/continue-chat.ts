@@ -11,6 +11,8 @@ import type {
   MemoryCallbacks,
   MemoryConfig,
   MessageConfig,
+  GenerationLibraryActor,
+  GenerationLibraryPort,
   ImageGenerationPort,
   TimeoutConfig,
   TokenUsageRecord,
@@ -30,7 +32,12 @@ import {
 import type { JSONValue, LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import { createDanbooruTools, createImageGenerationTools, createRssTools } from "../tools/index.js";
+import {
+  createDanbooruTools,
+  createGenerationLibraryTools,
+  createImageGenerationTools,
+  createRssTools,
+} from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
@@ -71,7 +78,7 @@ export interface ContinueChatSelection {
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, Record<string, JSONValue>>;
-  agentToolsFactory?: () => Record<string, Tool>;
+  agentToolsFactory?: (actor?: GenerationLibraryActor) => Record<string, Tool>;
 }
 
 export interface ContinueChatRunContext {
@@ -106,6 +113,7 @@ export interface ContinueChatConfig {
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
   imageGenerationPort?: ImageGenerationPort;
+  generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   usageGovernance?: UsageGovernancePort;
@@ -538,11 +546,25 @@ async function doContinueChat(
         : undefined,
     });
 
+    const libraryActor =
+      config.generationLibraryPort && event.userId !== undefined
+        ? {
+            botId: config.botId,
+            source: "telegram" as const,
+            telegramUserId: event.userId,
+            isAdmin: config.adminIds?.includes(event.userId) === true,
+          }
+        : undefined;
     const allTools: Record<string, Tool> = {
       ...telegramTools,
       ...behaviorTools,
       ...config.webTools,
-      ...createDanbooruTools({ timeoutConfig: config.timeoutConfig }),
+      ...createDanbooruTools({
+        timeoutConfig: config.timeoutConfig,
+        generationLibraryPort: config.generationLibraryPort,
+        getActor: libraryActor ? () => libraryActor : undefined,
+        onLog: config.onLog,
+      }),
       ...createSkillTools({
         skills: config.skills ?? [],
         hasImageGeneration: !!config.imageGenerationPort && event.userId !== undefined,
@@ -567,7 +589,18 @@ async function doContinueChat(
     }
 
     if (selection.agentToolsFactory) {
-      Object.assign(allTools, selection.agentToolsFactory());
+      Object.assign(allTools, selection.agentToolsFactory(libraryActor));
+    }
+
+    if (config.generationLibraryPort && libraryActor) {
+      Object.assign(
+        allTools,
+        createGenerationLibraryTools({
+          port: config.generationLibraryPort,
+          getActor: () => libraryActor,
+          readOnly: true,
+        }),
+      );
     }
 
     if (memoryTools) Object.assign(allTools, memoryTools);

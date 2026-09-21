@@ -1,3 +1,4 @@
+import type { GenerationLibraryActor, GenerationLibraryPort } from "@cos-tool-bot/shared";
 import type { LanguageModel, Tool } from "ai";
 import { describe, expect, test, vi } from "vitest";
 import { createAgentTools } from "./agents.js";
@@ -67,5 +68,39 @@ describe("createAgentTools logging", () => {
         }),
       }),
     );
+  });
+
+  test("passes the trusted Telegram actor into researcher library tools", async () => {
+    generateTextMock.mockImplementationOnce(async (options: { tools: Record<string, Tool> }) => {
+      expect(options.tools.save_original_character).toBeUndefined();
+      expect(options.tools.set_character_binding).toBeUndefined();
+      expect(options.tools.save_prompt_asset).toBeUndefined();
+      await (
+        options.tools.search_generation_characters as Tool as unknown as {
+          execute: (input: { search: string; page: number; limit: number }) => Promise<unknown>;
+        }
+      ).execute({ search: "oc", page: 1, limit: 10 });
+      return { text: "research answer", steps: [] };
+    });
+    const actor: GenerationLibraryActor = {
+      botId: "bot-1",
+      source: "telegram",
+      telegramUserId: 42,
+      isAdmin: false,
+    };
+    const listCharacters = vi.fn().mockResolvedValue({ data: [], total: 0 });
+    const tools = createAgentTools({
+      provider: () => ({}) as LanguageModel,
+      model: "test-model",
+      generationLibraryPort: { listCharacters } as unknown as GenerationLibraryPort,
+      getActor: () => actor,
+    });
+
+    await (tools.delegate_task as Tool as unknown as ExecutableTool).execute({
+      agent: "researcher",
+      task: "search the local character library",
+    });
+
+    expect(listCharacters).toHaveBeenCalledWith(actor, { search: "oc", page: 1, limit: 10 }, true);
   });
 });

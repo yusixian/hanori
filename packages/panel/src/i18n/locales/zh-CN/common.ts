@@ -58,6 +58,7 @@ export const common = {
     debugger: "调试器",
     conversations: "对话",
     profiles: "人物档案",
+    generationLibrary: "生成素材库",
     memories: "记忆",
     rss: "RSS",
     chatSummary: "群聊总结",

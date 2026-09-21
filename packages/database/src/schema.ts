@@ -9,6 +9,11 @@ import type {
   ImageGenerationEventKind,
   ImageGenerationRequestSnapshot,
   ImageGovernanceConfig,
+  GenerationLibrarySettings,
+  CharacterSource,
+  CharacterRelation,
+  PromptAssetType,
+  AssetSafety,
   LarkWebhookConfig,
   UsageBucketCharge,
   UsageLimits,
@@ -473,6 +478,107 @@ export const peopleProfiles = pgTable(
   (t) => [uniqueIndex("people_bot_telegram_idx").on(t.botId, t.telegramId)],
 );
 
+export const generationCharacters = pgTable(
+  "generation_characters",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    source: text("source").$type<CharacterSource>().notNull(),
+    canonicalTag: text("canonical_tag"),
+    name: text("name").notNull(),
+    aliases: json("aliases").$type<string[]>().notNull().default([]),
+    appearance: text("appearance").notNull().default(""),
+    defaultOutfit: text("default_outfit").notNull().default(""),
+    notes: text("notes").notNull().default(""),
+    copyright: text("copyright"),
+    ownerTelegramId: bigint("owner_telegram_id", { mode: "number" }),
+    postCount: integer("post_count"),
+    wikiSummary: text("wiki_summary"),
+    sourceUrl: text("source_url"),
+    sourceFetchedAt: timestamp("source_fetched_at"),
+    queryCount: integer("query_count").notNull().default(0),
+    firstQueriedAt: timestamp("first_queried_at"),
+    lastQueriedAt: timestamp("last_queried_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("generation_characters_bot_source_tag_idx").on(t.botId, t.source, t.canonicalTag),
+    uniqueIndex("generation_characters_bot_id_idx").on(t.botId, t.id),
+    index("generation_characters_bot_owner_idx").on(t.botId, t.ownerTelegramId),
+    check(
+      "generation_character_source_check",
+      sql`(${t.source} = 'original' AND ${t.canonicalTag} IS NULL) OR (${t.source} = 'danbooru' AND ${t.canonicalTag} IS NOT NULL)`,
+    ),
+  ],
+);
+
+export const peopleCharacterBindings = pgTable(
+  "people_character_bindings",
+  {
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    profileId: integer("profile_id")
+      .notNull()
+      .references(() => peopleProfiles.id, { onDelete: "cascade" }),
+    characterId: integer("character_id").notNull(),
+    relation: text("relation").$type<CharacterRelation>().notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.profileId, t.characterId, t.relation] }),
+    foreignKey({
+      columns: [t.botId, t.characterId],
+      foreignColumns: [generationCharacters.botId, generationCharacters.id],
+    }).onDelete("cascade"),
+    uniqueIndex("people_character_default_idx")
+      .on(t.botId, t.profileId)
+      .where(sql`${t.isDefault} = true`),
+    check(
+      "people_character_relation_check",
+      sql`${t.relation} IN ('representation', 'favorite') AND (NOT ${t.isDefault} OR ${t.relation} = 'representation')`,
+    ),
+  ],
+);
+
+export const generationLibraryConfigs = pgTable("generation_library_configs", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  settings: json("settings").$type<GenerationLibrarySettings>().notNull(),
+});
+
+export const promptAssets = pgTable(
+  "prompt_assets",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type").$type<PromptAssetType>().notNull(),
+    content: text("content").notNull(),
+    notes: text("notes").notNull().default(""),
+    safety: text("safety").$type<AssetSafety>().notNull(),
+    pinned: boolean("pinned").notNull().default(false),
+    useCount: integer("use_count").notNull().default(0),
+    lastUsedAt: timestamp("last_used_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("prompt_assets_bot_type_idx").on(t.botId, t.type),
+    check("prompt_assets_safety_check", sql`${t.safety} IN ('safe', 'nsfw')`),
+    check(
+      "prompt_assets_type_check",
+      sql`${t.type} IN ('artist_string', 'style', 'outfit', 'trait', 'composition')`,
+    ),
+  ],
+);
+
 export const backups = pgTable("backups", {
   id: serial("id").primaryKey(),
   filename: text("filename").notNull(),
@@ -723,6 +829,22 @@ export const imageGenerations = pgTable(
       sql`${t.approvalState} in ('not_required', 'required', 'approved', 'rejected')`,
     ),
   ],
+);
+
+/** Kept independently of the asset so deleting an asset cannot resurrect its usage. */
+export const generationAssetUses = pgTable(
+  "generation_asset_uses",
+  {
+    generationId: uuid("generation_id")
+      .notNull()
+      .references(() => imageGenerations.id, { onDelete: "cascade" }),
+    assetId: integer("asset_id").notNull(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.generationId, t.assetId] })],
 );
 
 /** Append-only lifecycle history for provider-neutral image operations. */

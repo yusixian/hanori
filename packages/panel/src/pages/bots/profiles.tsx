@@ -1,14 +1,23 @@
 import { Badge } from "@/components/ui/badge";
 import { AuthImage } from "@/components/ui/auth-image";
 import { Pagination } from "@/components/ui/pagination";
+import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useCanManageBot } from "@/hooks/use-can-manage-bot";
 import { client } from "@/lib/client";
+import {
+  getCharacterBindings,
+  listLibraryCharacters,
+  removeCharacterBinding,
+  setCharacterBinding,
+} from "@/lib/generation-library-client";
 import { cn } from "@/lib/utils";
+import type { CharacterBinding, CharacterRelation, LibraryCharacter } from "@cos-tool-bot/shared";
 import { Check, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
@@ -87,6 +96,7 @@ function ProfileAvatarFallback({ label }: { label: string }) {
 export function BotProfilesPage() {
   const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
+  const canManageBot = useCanManageBot();
   const [profiles, setProfiles] = useState<ProfileItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -100,6 +110,23 @@ export function BotProfilesPage() {
   const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
   const [showCreate, setShowCreate] = useState(false);
+  const [bindingTelegramId, setBindingTelegramId] = useState<number | null>(null);
+  const [bindingsByTelegramId, setBindingsByTelegramId] = useState<
+    Record<number, CharacterBinding[]>
+  >({});
+  const [bindingCandidates, setBindingCandidates] = useState<LibraryCharacter[]>([]);
+  const [bindingSearchInput, setBindingSearchInput] = useState("");
+  const [bindingSearch, setBindingSearch] = useState("");
+  const [bindingComposing, setBindingComposing] = useState(false);
+  const [bindingRelation, setBindingRelation] = useState<CharacterRelation>("representation");
+  const [bindingDefault, setBindingDefault] = useState(true);
+  const [bindingsLoading, setBindingsLoading] = useState(false);
+  const [bindingCandidatesLoading, setBindingCandidatesLoading] = useState(false);
+  const [bindingSaving, setBindingSaving] = useState(false);
+  const [bindingError, setBindingError] = useState<string | null>(null);
+  const activeBindingTelegramIdRef = useRef<number | null>(null);
+  const bindingsRequestRef = useRef(0);
+  const bindingCandidatesRequestRef = useRef(0);
   const limit = 20;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
@@ -139,6 +166,144 @@ export function BotProfilesPage() {
   useEffect(() => {
     loadProfiles();
   }, [loadProfiles]);
+
+  useEffect(() => {
+    bindingsRequestRef.current += 1;
+    bindingCandidatesRequestRef.current += 1;
+    activeBindingTelegramIdRef.current = null;
+    setBindingTelegramId(null);
+    setBindingsByTelegramId({});
+    setBindingCandidates([]);
+    setBindingSearchInput("");
+    setBindingSearch("");
+    setBindingError(null);
+  }, [botId]);
+
+  useEffect(() => {
+    if (bindingComposing) return;
+    const timer = window.setTimeout(() => setBindingSearch(bindingSearchInput.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [bindingComposing, bindingSearchInput]);
+
+  const loadBindings = useCallback(
+    async (telegramId: number) => {
+      if (!botId || activeBindingTelegramIdRef.current !== telegramId) return;
+      const requestId = ++bindingsRequestRef.current;
+      setBindingsLoading(true);
+      setBindingError(null);
+      try {
+        const bindings = await getCharacterBindings(botId, telegramId);
+        if (
+          requestId !== bindingsRequestRef.current ||
+          activeBindingTelegramIdRef.current !== telegramId
+        ) {
+          return;
+        }
+        setBindingsByTelegramId((current) => ({ ...current, [telegramId]: bindings }));
+      } catch (err) {
+        if (
+          requestId !== bindingsRequestRef.current ||
+          activeBindingTelegramIdRef.current !== telegramId
+        ) {
+          return;
+        }
+        setBindingError(err instanceof Error ? err.message : t("profiles.bindingsLoadFailed"));
+      } finally {
+        if (requestId === bindingsRequestRef.current) setBindingsLoading(false);
+      }
+    },
+    [botId, t],
+  );
+
+  const loadBindingCandidates = useCallback(async () => {
+    if (!botId || bindingTelegramId === null) return;
+    const telegramId = bindingTelegramId;
+    const requestId = ++bindingCandidatesRequestRef.current;
+    setBindingCandidatesLoading(true);
+    setBindingError(null);
+    try {
+      const result = await listLibraryCharacters(botId, {
+        search: bindingSearch || undefined,
+        page: 1,
+        limit: 20,
+        sort: "recent",
+      });
+      if (
+        requestId !== bindingCandidatesRequestRef.current ||
+        activeBindingTelegramIdRef.current !== telegramId
+      ) {
+        return;
+      }
+      setBindingCandidates(result.data);
+    } catch (err) {
+      if (
+        requestId !== bindingCandidatesRequestRef.current ||
+        activeBindingTelegramIdRef.current !== telegramId
+      ) {
+        return;
+      }
+      setBindingError(err instanceof Error ? err.message : t("profiles.bindingsLoadFailed"));
+    } finally {
+      if (requestId === bindingCandidatesRequestRef.current) setBindingCandidatesLoading(false);
+    }
+  }, [bindingSearch, bindingTelegramId, botId, t]);
+
+  useEffect(() => {
+    if (bindingTelegramId !== null) void loadBindingCandidates();
+  }, [bindingTelegramId, loadBindingCandidates]);
+
+  const toggleBindings = (profile: ProfileItem) => {
+    bindingsRequestRef.current += 1;
+    bindingCandidatesRequestRef.current += 1;
+    setBindingsLoading(false);
+    setBindingCandidatesLoading(false);
+    if (bindingTelegramId === profile.telegramId) {
+      activeBindingTelegramIdRef.current = null;
+      setBindingTelegramId(null);
+      setBindingCandidates([]);
+      setBindingError(null);
+      return;
+    }
+    activeBindingTelegramIdRef.current = profile.telegramId;
+    setBindingTelegramId(profile.telegramId);
+    setBindingSearchInput("");
+    setBindingSearch("");
+    setBindingRelation("representation");
+    setBindingDefault(true);
+    void loadBindings(profile.telegramId);
+  };
+
+  const handleAddBinding = async (telegramId: number, characterId: number) => {
+    if (!botId || !canManageBot) return;
+    setBindingSaving(true);
+    setBindingError(null);
+    try {
+      await setCharacterBinding(botId, telegramId, {
+        characterId,
+        relation: bindingRelation,
+        isDefault: bindingRelation === "representation" && bindingDefault,
+      });
+      await loadBindings(telegramId);
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : t("profiles.bindingSaveFailed"));
+    } finally {
+      setBindingSaving(false);
+    }
+  };
+
+  const handleRemoveBinding = async (telegramId: number, binding: CharacterBinding) => {
+    if (!botId || !canManageBot) return;
+    setBindingSaving(true);
+    setBindingError(null);
+    try {
+      await removeCharacterBinding(botId, telegramId, binding.characterId, binding.relation);
+      await loadBindings(telegramId);
+    } catch (err) {
+      setBindingError(err instanceof Error ? err.message : t("profiles.bindingSaveFailed"));
+    } finally {
+      setBindingSaving(false);
+    }
+  };
 
   const handleSearch = () => {
     setPage(1);
@@ -622,6 +787,46 @@ export function BotProfilesPage() {
                         </span>
                       </button>
                     )}
+                    <div className="border-t pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => toggleBindings(p)}
+                        disabled={bindingSaving}
+                        aria-expanded={bindingTelegramId === p.telegramId}
+                      >
+                        {bindingTelegramId === p.telegramId
+                          ? t("profiles.closeBindings")
+                          : t("profiles.manageBindings")}
+                      </Button>
+                      {bindingTelegramId === p.telegramId && (
+                        <BindingEditor
+                          key={`${botId ?? ""}:${p.telegramId}`}
+                          telegramId={p.telegramId}
+                          bindings={bindingsByTelegramId[p.telegramId] ?? []}
+                          candidates={bindingCandidates}
+                          search={bindingSearchInput}
+                          relation={bindingRelation}
+                          defaultRepresentation={bindingDefault}
+                          canManage={canManageBot}
+                          bindingsLoading={bindingsLoading}
+                          candidatesLoading={bindingCandidatesLoading}
+                          saving={bindingSaving}
+                          error={bindingError}
+                          onSearchChange={setBindingSearchInput}
+                          onCompositionStart={() => setBindingComposing(true)}
+                          onCompositionEnd={() => setBindingComposing(false)}
+                          onRelationChange={(relation) => {
+                            setBindingRelation(relation);
+                            if (relation === "favorite") setBindingDefault(false);
+                          }}
+                          onDefaultChange={setBindingDefault}
+                          onAdd={(characterId) => void handleAddBinding(p.telegramId, characterId)}
+                          onRemove={(binding) => void handleRemoveBinding(p.telegramId, binding)}
+                          t={t}
+                        />
+                      )}
+                    </div>
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-muted-foreground text-xs">
                         {t("profiles.firstSeen", {
@@ -658,6 +863,166 @@ export function BotProfilesPage() {
       )}
 
       <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+    </div>
+  );
+}
+
+function BindingEditor({
+  telegramId,
+  bindings,
+  candidates,
+  search,
+  relation,
+  defaultRepresentation,
+  canManage,
+  bindingsLoading,
+  candidatesLoading,
+  saving,
+  error,
+  onSearchChange,
+  onCompositionStart,
+  onCompositionEnd,
+  onRelationChange,
+  onDefaultChange,
+  onAdd,
+  onRemove,
+  t,
+}: {
+  telegramId: number;
+  bindings: CharacterBinding[];
+  candidates: LibraryCharacter[];
+  search: string;
+  relation: CharacterRelation;
+  defaultRepresentation: boolean;
+  canManage: boolean;
+  bindingsLoading: boolean;
+  candidatesLoading: boolean;
+  saving: boolean;
+  error: string | null;
+  onSearchChange: (value: string) => void;
+  onCompositionStart: () => void;
+  onCompositionEnd: () => void;
+  onRelationChange: (value: CharacterRelation) => void;
+  onDefaultChange: (value: boolean) => void;
+  onAdd: (characterId: number) => void;
+  onRemove: (binding: CharacterBinding) => void;
+  t: ReturnType<typeof useTranslation<"botData">>["t"];
+}) {
+  const hasBinding = (characterId: number, nextRelation: CharacterRelation) =>
+    bindings.some(
+      (binding) => binding.characterId === characterId && binding.relation === nextRelation,
+    );
+
+  return (
+    <div className="bg-muted/40 mt-3 space-y-3 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-sm font-semibold">{t("profiles.bindingsTitle")}</p>
+          <p className="text-muted-foreground text-xs">
+            {t("profiles.bindingsDescription", { id: telegramId })}
+          </p>
+        </div>
+        {!canManage && <Badge variant="muted">{t("profiles.readOnly")}</Badge>}
+      </div>
+
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
+
+      {bindingsLoading ? (
+        <p className="text-muted-foreground text-xs">{t("common.loading")}</p>
+      ) : bindings.length === 0 ? (
+        <p className="text-muted-foreground text-xs">{t("profiles.noBindings")}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {bindings.map((binding) => (
+            <Badge
+              key={`${binding.characterId}-${binding.relation}`}
+              variant={binding.isDefault ? "default" : "muted"}
+            >
+              {binding.character.name} · {t(`profiles.relations.${binding.relation}`)}
+              {binding.isDefault ? ` · ${t("profiles.defaultBinding")}` : ""}
+              {canManage && (
+                <button
+                  type="button"
+                  className="ml-1 rounded-full hover:text-red-600"
+                  onClick={() => onRemove(binding)}
+                  disabled={saving}
+                  aria-label={t("profiles.removeBinding", { name: binding.character.name })}
+                >
+                  ×
+                </button>
+              )}
+            </Badge>
+          ))}
+        </div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <Input
+          value={search}
+          onChange={(event) => onSearchChange(event.target.value)}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
+          placeholder={t("profiles.bindingSearchPlaceholder")}
+          aria-label={t("profiles.bindingSearchPlaceholder")}
+        />
+        <Select
+          value={relation}
+          onChange={(event) => onRelationChange(event.target.value as CharacterRelation)}
+          aria-label={t("profiles.bindingRelation")}
+        >
+          <option value="representation">{t("profiles.relations.representation")}</option>
+          <option value="favorite">{t("profiles.relations.favorite")}</option>
+        </Select>
+      </div>
+      {relation === "representation" && (
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={defaultRepresentation}
+            onChange={(event) => onDefaultChange(event.target.checked)}
+            disabled={!canManage || saving}
+          />
+          {t("profiles.defaultRepresentation")}
+        </label>
+      )}
+
+      {candidatesLoading ? (
+        <p className="text-muted-foreground text-xs">{t("common.loading")}</p>
+      ) : candidates.length === 0 ? (
+        <p className="text-muted-foreground text-xs">{t("profiles.noCharacterMatches")}</p>
+      ) : (
+        <div className="max-h-48 space-y-1 overflow-y-auto">
+          {candidates.map((candidate) => {
+            const alreadyBound = hasBinding(candidate.id, relation);
+            return (
+              <div
+                key={candidate.id}
+                className="flex items-center justify-between gap-3 rounded-md border bg-white px-3 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm">{candidate.name}</p>
+                  <p className="text-muted-foreground text-xs">
+                    {t(`profiles.characterSources.${candidate.source}`)}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onAdd(candidate.id)}
+                  disabled={!canManage || saving || alreadyBound}
+                >
+                  {alreadyBound ? t("profiles.bound") : t("profiles.addBinding")}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

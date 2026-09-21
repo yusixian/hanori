@@ -1,9 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import type { Database } from "@cos-tool-bot/database";
 import {
   botMemories,
   conversationCompactionState,
   conversationMessages,
   engagementSamples,
+  generationCharacters,
   peopleProfiles,
   userPrivacySettings,
 } from "@cos-tool-bot/database";
@@ -21,6 +23,9 @@ export interface ForgetUserDataResult {
 
 export class UserPrivacyService {
   private readonly lock = new KeyedAsyncLock();
+  private readonly heldLocks = new AsyncLocalStorage<
+    ReadonlyMap<string, { botId: string; userId: number; active: boolean }>
+  >();
   private readonly contextResetAt = new Map<string, number>();
 
   constructor(
@@ -29,7 +34,46 @@ export class UserPrivacyService {
   ) {}
 
   runExclusive<T>(botId: string, userId: number, operation: () => Promise<T>): Promise<T> {
-    return this.lock.run(`${botId}:${userId}`, operation);
+    const key = `${botId}:${userId}`;
+    return this.lock.run(key, async () => {
+      const lease = { botId, userId, active: true };
+      const held = new Map(this.heldLocks.getStore());
+      held.set(key, lease);
+      try {
+        return await this.heldLocks.run(held, operation);
+      } finally {
+        // Detached descendants must never treat an already released lock as owned.
+        lease.active = false;
+      }
+    });
+  }
+
+  /** Library tools can execute inside an AI turn which already owns the caller's lock. */
+  runLibraryExclusiveMany<T>(
+    botId: string,
+    userIds: readonly number[],
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const held = this.heldLocks.getStore();
+    const missing = [...new Set(userIds)]
+      .filter((id) => !held?.get(`${botId}:${id}`)?.active)
+      .sort((a, b) => a - b);
+    const owned = [...(held?.values() ?? [])].filter(
+      (lease) => lease.active && lease.botId === botId,
+    );
+    const acquire = (index: number): Promise<T> => {
+      const id = missing[index];
+      if (id === undefined) return operation();
+      // A free inverse lock can be reserved synchronously. Never wait on an inverse
+      // acquisition: another turn could be holding it while waiting on ours.
+      if (owned.some((lease) => id < lease.userId) && this.lock.isLocked(`${botId}:${id}`)) {
+        return Promise.reject(
+          new Error("This user's library is busy; retry or manage it from the panel"),
+        );
+      }
+      return this.runExclusive(botId, id, () => acquire(index + 1));
+    };
+    return acquire(0);
   }
 
   runExclusiveMany<T>(
@@ -166,6 +210,18 @@ export class UserPrivacyService {
           ),
         );
       }
+
+      // Character bindings cascade, including bindings made by other people to this OC.
+      await tx
+        .delete(generationCharacters)
+        .where(
+          and(
+            eq(generationCharacters.botId, botId),
+            eq(generationCharacters.source, "original"),
+            eq(generationCharacters.ownerTelegramId, userId),
+          ),
+        )
+        .returning({ id: generationCharacters.id });
 
       const deletedProfiles = await tx
         .delete(peopleProfiles)

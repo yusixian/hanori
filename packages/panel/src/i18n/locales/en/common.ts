@@ -58,6 +58,7 @@ export const common = {
     debugger: "Debugger",
     conversations: "Conversations",
     profiles: "Profiles",
+    generationLibrary: "Generation library",
     memories: "Memories",
     rss: "RSS",
     chatSummary: "Chat Summaries",

@@ -39,6 +39,15 @@ describe("create_image routing contract", () => {
         prompt: "a realistic product photograph",
         presetKey: "general-default",
         seed: 7,
+        materials: {
+          characterIds: [12],
+          personTelegramId: 42,
+          assetIds: [9],
+          excludedAssetIds: [10],
+          skipPinned: true,
+          skipDefaultOutfit: true,
+          safetyMode: "safe",
+        },
       },
       { abortSignal: new AbortController().signal },
     );
@@ -47,6 +56,15 @@ describe("create_image routing contract", () => {
       purpose: "general_image",
       routingIntent: "explicit",
       prompt: "a realistic product photograph",
+      materials: {
+        characterIds: [12],
+        personTelegramId: 42,
+        assetIds: [9],
+        excludedAssetIds: [10],
+        skipPinned: true,
+        skipDefaultOutfit: true,
+        safetyMode: "safe",
+      },
       presetKey: "general-default",
       seed: 7,
     });

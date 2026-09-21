@@ -1,6 +1,8 @@
 import type {
   AgentToolsConfig,
   BotLogEntry,
+  GenerationLibraryActor,
+  GenerationLibraryPort,
   TimeoutConfig,
   WebToolsConfig,
 } from "@cos-tool-bot/shared";
@@ -11,6 +13,7 @@ import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
 import { createWebTools } from "./web.js";
 import { createDanbooruTools } from "./danbooru.js";
+import { createGenerationLibraryTools } from "./generation-library.js";
 
 interface AgentDefinition {
   systemPrompt: string;
@@ -22,9 +25,22 @@ function buildAgentDefinitions(
   webToolsConfig?: WebToolsConfig,
   agentConfig?: AgentToolsConfig,
   timeoutConfig?: TimeoutConfig,
+  generationLibraryPort?: GenerationLibraryPort,
+  getActor?: () => GenerationLibraryActor,
+  onLog?: (entry: BotLogEntry) => void | Promise<void>,
 ): Record<string, AgentDefinition> {
   // Build web tools for researcher if available
-  let webTools: Record<string, Tool> = { ...createDanbooruTools({ timeoutConfig }) };
+  let webTools: Record<string, Tool> = {
+    ...createDanbooruTools({
+      timeoutConfig,
+      generationLibraryPort,
+      getActor,
+      onLog,
+    }),
+    ...(generationLibraryPort && getActor
+      ? createGenerationLibraryTools({ port: generationLibraryPort, getActor, readOnly: true })
+      : {}),
+  };
   if (webToolsConfig?.enabled) {
     Object.assign(webTools, createWebTools({ config: webToolsConfig, timeoutConfig }));
   }
@@ -85,16 +101,34 @@ export interface AgentToolsOptions {
   webToolsConfig?: WebToolsConfig;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   timeoutConfig?: TimeoutConfig;
+  generationLibraryPort?: GenerationLibraryPort;
+  getActor?: () => GenerationLibraryActor;
 }
 
 export function createAgentTools(options: AgentToolsOptions): Record<string, Tool> {
-  const { provider, model, agentConfig, webToolsConfig, onLog, timeoutConfig } = options;
+  const {
+    provider,
+    model,
+    agentConfig,
+    webToolsConfig,
+    onLog,
+    timeoutConfig,
+    generationLibraryPort,
+    getActor,
+  } = options;
   const researcherTimeoutMs =
     timeoutConfig?.researcherAgentMs ?? DEFAULT_TIMEOUT_CONFIG.researcherAgentMs;
   const defaultAgentTimeoutMs =
     timeoutConfig?.defaultAgentMs ?? DEFAULT_TIMEOUT_CONFIG.defaultAgentMs;
 
-  const agentDefs = buildAgentDefinitions(webToolsConfig, agentConfig, timeoutConfig);
+  const agentDefs = buildAgentDefinitions(
+    webToolsConfig,
+    agentConfig,
+    timeoutConfig,
+    generationLibraryPort,
+    getActor,
+    onLog,
+  );
   const availableAgents = Object.keys(agentDefs);
 
   if (availableAgents.length === 0) return {};

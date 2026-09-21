@@ -103,6 +103,7 @@ import {
   TelegramRichMessagesUnsupportedError,
 } from "./telegram-rich-message-errors.js";
 import { UserPrivacyService } from "./user-privacy-service.js";
+import { GenerationLibraryService } from "./generation-library-service.js";
 import type { ChatAiSelectionService } from "./chat-ai-selection-service.js";
 import type { EngagementSampleService } from "./engagement-sample-service.js";
 import type {
@@ -192,6 +193,7 @@ export class BotPool {
   private profileStore: PeopleProfileStore;
   private botMemoryStore: BotMemoryStore;
   private userPrivacyService: UserPrivacyService;
+  private generationLibraryService: GenerationLibraryService;
   private chatAiSelectionService?: Pick<
     ChatAiSelectionService,
     | "loadRuntimeSnapshot"
@@ -231,6 +233,7 @@ export class BotPool {
     this.profileStore = new PeopleProfileStore(db);
     this.botMemoryStore = new BotMemoryStore(db);
     this.userPrivacyService = new UserPrivacyService(db);
+    this.generationLibraryService = new GenerationLibraryService(db, this.userPrivacyService);
   }
 
   setChatAiSelectionService(
@@ -243,6 +246,10 @@ export class BotPool {
 
   setBackupService(service: BackupService) {
     this.backupService = service;
+  }
+
+  getGenerationLibraryService(): GenerationLibraryService {
+    return this.generationLibraryService;
   }
 
   setMcpClientManager(manager: McpClientManager) {
@@ -1125,6 +1132,7 @@ export class BotPool {
         stickerPacks: aiConfig.stickerPacks,
         webToolsConfig: aiConfig.webToolsConfig,
         imageGenerationPort: this.imageGenerationPort,
+        generationLibraryPort: this.generationLibraryService,
         skills: resolveBotSkills(aiConfig.skillConfig),
         isDelegatedGroupAdmin: (chatId, userId) =>
           this.isDelegatedGroupAdmin(botId, chatId, userId),

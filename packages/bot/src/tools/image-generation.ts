@@ -1,4 +1,9 @@
-import type { ImageGenerationActor, ImageGenerationPort, ImagePurpose } from "@cos-tool-bot/shared";
+import type {
+  GenerationMaterialSelection,
+  ImageGenerationActor,
+  ImageGenerationPort,
+  ImagePurpose,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -50,6 +55,8 @@ export async function createImageGenerationTools({
           description ?? "创建一项异步图片生成，Bot 会在后台恢复并投递结果。",
           "只能从当前可用路由中选择；未列出的路由不可用。不要在失败后自动切换供应商。",
           "只有 anime_illustration 可用时，生图请求使用该路由；不要因照片或写实风格选择未启用的后端。",
+          "用户明确指定已保存角色、群友形象或提示词资产时，通过 materials 传递已检索确认的 id；不要把群友身份或 NSFW 模式当作模型可自行推断的默认值。",
+          "服务端会重新校验 Bot 隔离、角色可见性、安全设置和 pinned 注入；明确选择的素材优先，冲突的 pinned 资产应通过 excludedAssetIds 排除。",
           ...routes.map((route) => `${route.purpose}: ${route.label}。${route.useWhen}`),
         ].join("\n"),
         inputSchema: zodToAiSchema(
@@ -69,13 +76,49 @@ export async function createImageGenerationTools({
               .optional()
               .describe("可选负面提示词；普通成员使用后可能需要管理员批准"),
             seed: z.number().int().min(0).max(4_294_967_295).optional().describe("可选随机种子"),
+            materials: z
+              .object({
+                characterIds: z.array(z.number().int().positive()).max(20).optional(),
+                personTelegramId: z
+                  .number()
+                  .int()
+                  .positive()
+                  .optional()
+                  .describe("仅当用户明确要求画某位群友/本人时填写，不能由模型自行推断"),
+                assetIds: z.array(z.number().int().positive()).max(20).optional(),
+                excludedAssetIds: z.array(z.number().int().positive()).max(100).optional(),
+                skipPinned: z.boolean().optional().describe("本次明确不使用默认 pinned 资产"),
+                skipDefaultOutfit: z
+                  .boolean()
+                  .optional()
+                  .describe("用户明确指定新服装且不希望叠加角色默认服装时使用"),
+                safetyMode: z
+                  .enum(["safe", "nsfw"])
+                  .optional()
+                  .describe("只有用户本次明确要求 NSFW 时才能填写 nsfw；模型不得自行升级"),
+                skipLibrary: z
+                  .boolean()
+                  .optional()
+                  .describe("用户明确要求绕过资产库，或库不可用后用户明确同意重试时使用"),
+              })
+              .optional()
+              .describe("角色与提示词资产选择；服务端会按当前 Bot、权限和安全设置重新校验"),
           }),
         ),
-        execute: async ({ purpose, routingIntent, prompt, presetKey, negativePrompt, seed }) =>
+        execute: async ({
+          purpose,
+          routingIntent,
+          prompt,
+          presetKey,
+          negativePrompt,
+          seed,
+          materials,
+        }) =>
           port.create(getActor(), {
             purpose: purpose as ImagePurpose,
             routingIntent,
             prompt,
+            ...(materials ? { materials: materials as GenerationMaterialSelection } : {}),
             ...(presetKey ? { presetKey } : {}),
             ...(negativePrompt ? { negativePrompt } : {}),
             ...(seed !== undefined ? { seed } : {}),

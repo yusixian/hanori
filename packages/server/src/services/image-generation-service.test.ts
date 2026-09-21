@@ -10,6 +10,20 @@ import {
 } from "./image-generation-service.js";
 
 describe("extractImageGenerationRequestSnapshot", () => {
+  it("preserves trusted material snapshots instead of replacing them with provider metadata", () => {
+    const materials = {
+      originalPrompt: "draw",
+      safetyMode: "safe" as const,
+      characters: [],
+      assets: [{ id: 1, name: "style", content: "watercolor", version: "v1" }],
+    };
+    expect(
+      extractImageGenerationRequestSnapshot(
+        { materials: { assets: [] }, width: 1024 },
+        { materials },
+      ),
+    ).toEqual({ materials, width: 1024 });
+  });
   it("extracts stable parameters from nested MCP request details", () => {
     expect(
       extractImageGenerationRequestSnapshot({
@@ -62,6 +76,77 @@ const ACTOR: ImageGenerationActor = {
   isBotAdmin: true,
   isDelegatedGroupAdmin: false,
 };
+
+describe("generation library admission", () => {
+  it("fails before reserving or submitting when material resolution fails", async () => {
+    const deps = createDependencies();
+    const insert = vi.fn();
+    const resolveMaterials = vi.fn().mockRejectedValue(new Error("private character"));
+    const service = new ImageGenerationService({
+      db: { select: () => query([]), insert } as unknown as Database,
+      ...deps,
+      generationLibrary: { resolveMaterials },
+    } as unknown as ConstructorParameters<typeof ImageGenerationService>[0]);
+    await expect(
+      service.create(ACTOR, {
+        purpose: "anime_illustration",
+        prompt: "draw",
+        materials: { characterIds: [1] },
+      }),
+    ).resolves.toMatchObject({ accepted: false, reason: "invalid_request" });
+    expect(resolveMaterials).toHaveBeenCalledWith(
+      { botId: BOT_ID, source: "telegram", telegramUserId: 42, isAdmin: true },
+      "draw",
+      { characterIds: [1] },
+    );
+    expect(insert).not.toHaveBeenCalled();
+    expect(deps.usageGovernor.reserve).not.toHaveBeenCalled();
+  });
+
+  it("allows an explicit library bypass and persists the ordinary prompt", async () => {
+    const deps = createDependencies();
+    const values = vi.fn().mockRejectedValue(new Error("stop after admission"));
+    const resolveMaterials = vi.fn().mockRejectedValue(new Error("unavailable"));
+    const service = new ImageGenerationService({
+      db: { select: () => query([]), insert: () => ({ values }) } as unknown as Database,
+      ...deps,
+      generationLibrary: { resolveMaterials },
+    } as unknown as ConstructorParameters<typeof ImageGenerationService>[0]);
+    await service.create(ACTOR, {
+      purpose: "anime_illustration",
+      prompt: "draw",
+      materials: { skipLibrary: true },
+    });
+    expect(resolveMaterials).not.toHaveBeenCalled();
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "draw", requestSnapshot: { presetKey: "anime-default" } }),
+    );
+  });
+
+  it("stores the compiled prompt and immutable material snapshot before provider submission", async () => {
+    const deps = createDependencies();
+    const values = vi.fn().mockRejectedValue(new Error("stop after admission"));
+    const snapshot = {
+      originalPrompt: "draw",
+      safetyMode: "safe",
+      characters: [],
+      assets: [{ id: 1, name: "style", content: "watercolor", version: "v1" }],
+    };
+    const resolveMaterials = vi.fn().mockResolvedValue({ prompt: "draw\nwatercolor", snapshot });
+    const service = new ImageGenerationService({
+      db: { select: () => query([]), insert: () => ({ values }) } as unknown as Database,
+      ...deps,
+      generationLibrary: { resolveMaterials },
+    } as unknown as ConstructorParameters<typeof ImageGenerationService>[0]);
+    await service.create(ACTOR, { purpose: "anime_illustration", prompt: "draw" });
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "draw\nwatercolor",
+        requestSnapshot: { presetKey: "anime-default", materials: snapshot },
+      }),
+    );
+  });
+});
 
 function query<T>(limitRows: T[], awaitedRows: unknown[] = limitRows) {
   const builder = Promise.resolve(awaitedRows) as Promise<unknown[]> & {

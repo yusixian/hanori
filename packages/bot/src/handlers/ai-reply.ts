@@ -18,6 +18,8 @@ import type {
   EngagementPolicy,
   EngagementSample,
   GitHubToolsRuntimeConfig,
+  GenerationLibraryActor,
+  GenerationLibraryPort,
   ImageOcrConfig,
   ImageGenerationPort,
   MemoryCallbacks,
@@ -91,6 +93,7 @@ import {
   createAgentTools,
   createBotMemoryTools,
   createDanbooruTools,
+  createGenerationLibraryTools,
   createMemoryTools,
   createMcpTools,
   createGitHubTools,
@@ -215,6 +218,7 @@ export interface AiReplyConfig {
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
   imageGenerationPort?: ImageGenerationPort;
+  generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   usageGovernance?: UsageGovernancePort;
@@ -1327,7 +1331,7 @@ export function createAiReplyHandler(
             selection.providerRuntime.providerFormat,
           ),
           agentToolsFactory: config.agentToolsConfig?.enabled
-            ? () =>
+            ? (actor?: GenerationLibraryActor) =>
                 createAgentTools({
                   provider: (model) => selection.providerFactory(model),
                   model: selection.modelId,
@@ -1335,6 +1339,8 @@ export function createAiReplyHandler(
                   webToolsConfig: config.webToolsConfig,
                   onLog: config.onLog,
                   timeoutConfig: config.timeoutConfig,
+                  generationLibraryPort: config.generationLibraryPort,
+                  getActor: actor ? () => actor : undefined,
                 })
             : undefined,
         });
@@ -1403,6 +1409,7 @@ export function createAiReplyHandler(
       timeoutConfig: config.timeoutConfig,
       webTools,
       imageGenerationPort: config.imageGenerationPort,
+      generationLibraryPort: config.generationLibraryPort,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
       usageGovernance: config.usageGovernance,
       dataFiles: config.dataFiles,
@@ -2217,6 +2224,14 @@ export function createAiReplyHandler(
               isDelegatedGroupAdmin,
             }
           : undefined;
+        const generationLibraryActor = config.generationLibraryPort
+          ? {
+              botId: config.botId,
+              source: "telegram" as const,
+              telegramUserId: userId,
+              isAdmin,
+            }
+          : undefined;
         const repliedGenerationPromise =
           config.imageGenerationPort && imageGenerationActor && replyMsg
             ? config.imageGenerationPort
@@ -2281,6 +2296,8 @@ export function createAiReplyHandler(
             webToolsConfig: config.webToolsConfig,
             onLog: onLog,
             timeoutConfig: config.timeoutConfig,
+            generationLibraryPort: config.generationLibraryPort,
+            getActor: generationLibraryActor ? () => generationLibraryActor : undefined,
           });
         }
 
@@ -2647,8 +2664,23 @@ export function createAiReplyHandler(
           ...artworkTools,
           ...fileTools,
           ...skillTools,
-          ...createDanbooruTools({ timeoutConfig: config.timeoutConfig }),
+          ...createDanbooruTools({
+            timeoutConfig: config.timeoutConfig,
+            generationLibraryPort: config.generationLibraryPort,
+            getActor: generationLibraryActor ? () => generationLibraryActor : undefined,
+            onLog,
+          }),
         };
+
+        if (config.generationLibraryPort && generationLibraryActor) {
+          Object.assign(
+            allTools,
+            createGenerationLibraryTools({
+              port: config.generationLibraryPort,
+              getActor: () => generationLibraryActor,
+            }),
+          );
+        }
 
         // RSS tools (per-request: depends on chatId)
         if (config.rssCallbacks) {

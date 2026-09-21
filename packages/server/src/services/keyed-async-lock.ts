@@ -1,6 +1,10 @@
 export class KeyedAsyncLock {
   private readonly locks = new Map<string, Promise<void>>();
 
+  isLocked(key: string): boolean {
+    return this.locks.has(key);
+  }
+
   run<T>(key: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.locks.get(key) ?? Promise.resolve();
     const result = previous.then(operation, operation);

@@ -1,3 +1,8 @@
+import type {
+  GenerationMaterialSelection,
+  GenerationMaterialSnapshot,
+} from "./generation-library.js";
+
 export type ImagePurpose = "anime_illustration" | "general_image";
 
 export type ImageProviderRoute = "mcp_pixai" | "general_backend";
@@ -67,6 +72,7 @@ export interface ImageGovernanceConfig {
 }
 
 export interface CreateImageRequest {
+  materials?: GenerationMaterialSelection;
   purpose: ImagePurpose;
   prompt: string;
   routingIntent?: "explicit" | "semantic";
@@ -85,6 +91,7 @@ export interface ImageArtifact {
 
 /** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
 export interface ImageGenerationRequestSnapshot {
+  materials?: GenerationMaterialSnapshot;
   presetKey?: string;
   modelId?: string;
   modelVersionId?: string;

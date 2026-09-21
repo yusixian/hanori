@@ -122,6 +122,132 @@ function discoverBotChildTables(): ChildTableInfo[] {
 
 const BATCH_SIZE = 500;
 
+const IMPORT_PRIORITY: Record<string, number> = {
+  peopleProfiles: 10,
+  generationCharacters: 20,
+  promptAssets: 20,
+  generationLibraryConfigs: 20,
+  imageGenerations: 30,
+  peopleCharacterBindings: 40,
+  imageGenerationEvents: 40,
+  generationAssetUses: 40,
+};
+
+type ImportedId = string | number;
+
+interface ImportIdMaps {
+  peopleProfiles: Map<number, number>;
+  generationCharacters: Map<number, number>;
+  promptAssets: Map<number, number>;
+  imageGenerations: Map<string, string>;
+  historicalCharacters: Map<number, number>;
+  historicalAssets: Map<number, number>;
+}
+
+function createImportIdMaps(): ImportIdMaps {
+  return {
+    peopleProfiles: new Map(),
+    generationCharacters: new Map(),
+    promptAssets: new Map(),
+    imageGenerations: new Map(),
+    historicalCharacters: new Map(),
+    historicalAssets: new Map(),
+  };
+}
+
+function getRowBotId(row: Record<string, unknown>): unknown {
+  return row.botId ?? row.bot_id;
+}
+
+function requireMappedId<T extends ImportedId>(
+  map: Map<T, T>,
+  oldId: unknown,
+  dependency: string,
+  dependent: string,
+): T {
+  if (
+    oldId === undefined ||
+    oldId === null ||
+    (typeof oldId === "number" && (!Number.isSafeInteger(oldId) || oldId <= 0))
+  ) {
+    throw new Error(
+      `Cannot import ${dependent}: referenced ${dependency} ${String(oldId)} is missing from the same bot payload`,
+    );
+  }
+  const mapped = map.get(oldId as T);
+  if (mapped === undefined) {
+    throw new Error(
+      `Cannot import ${dependent}: referenced ${dependency} ${String(oldId)} is missing from the same bot payload`,
+    );
+  }
+  return mapped;
+}
+
+function remapHistoricalId(
+  liveMap: Map<number, number>,
+  tombstoneMap: Map<number, number>,
+  oldId: unknown,
+  subject: string,
+): number {
+  const mapped = liveMap.get(oldId as number);
+  if (mapped !== undefined) return mapped;
+  if (typeof oldId !== "number" || !Number.isSafeInteger(oldId) || oldId === 0) {
+    throw new Error(`Cannot import ${subject}: invalid historical id ${String(oldId)}`);
+  }
+  const existingTombstone = tombstoneMap.get(oldId);
+  if (existingTombstone !== undefined) return existingTombstone;
+  // Each source id gets a distinct negative id, avoiding both serial ids and old +/- id collisions.
+  const tombstone = -(tombstoneMap.size + 1);
+  tombstoneMap.set(oldId, tombstone);
+  return tombstone;
+}
+
+function remapGenerationMaterials(requestSnapshot: unknown, maps: ImportIdMaps): unknown {
+  if (!requestSnapshot || typeof requestSnapshot !== "object" || Array.isArray(requestSnapshot)) {
+    return requestSnapshot;
+  }
+
+  const snapshot = { ...(requestSnapshot as Record<string, unknown>) };
+  if (
+    !snapshot.materials ||
+    typeof snapshot.materials !== "object" ||
+    Array.isArray(snapshot.materials)
+  ) {
+    return snapshot;
+  }
+
+  const materials = { ...(snapshot.materials as Record<string, unknown>) };
+  if (Array.isArray(materials.characters)) {
+    materials.characters = materials.characters.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const character = { ...(value as Record<string, unknown>) };
+      character.id = remapHistoricalId(
+        maps.generationCharacters,
+        maps.historicalCharacters,
+        character.id,
+        "generation material character",
+      );
+      return character;
+    });
+  }
+  if (Array.isArray(materials.assets)) {
+    materials.assets = materials.assets.map((value) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+      const asset = { ...(value as Record<string, unknown>) };
+      asset.id = remapHistoricalId(
+        maps.promptAssets,
+        maps.historicalAssets,
+        asset.id,
+        "generation material asset",
+      );
+      return asset;
+    });
+  }
+
+  snapshot.materials = materials;
+  return snapshot;
+}
+
 export class DataTransferService {
   private childTables: ChildTableInfo[];
 
@@ -208,7 +334,44 @@ export class DataTransferService {
       throw new Error("Invalid export format: no bots data");
     }
 
+    const sourceBotIds = new Set<string>();
+    for (const botData of payload.bots) {
+      const sourceBotId = botData.id;
+      if (typeof sourceBotId !== "string" || sourceBotId.length === 0) {
+        throw new Error("Invalid export format: bot id is missing");
+      }
+      if (sourceBotIds.has(sourceBotId)) {
+        throw new Error(`Invalid export format: duplicate bot id ${sourceBotId}`);
+      }
+      sourceBotIds.add(sourceBotId);
+    }
+
+    for (const child of this.childTables) {
+      const tableData = payload[child.schemaKey];
+      if (!Array.isArray(tableData)) continue;
+      for (const value of tableData) {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error(`Invalid export format: ${child.schemaKey} contains a non-object row`);
+        }
+        const rowBotId = getRowBotId(value as Record<string, unknown>);
+        if (typeof rowBotId !== "string" || !sourceBotIds.has(rowBotId)) {
+          throw new Error(
+            `Invalid export format: ${child.schemaKey} row references unknown bot ${String(rowBotId)}`,
+          );
+        }
+      }
+    }
+
     const result: ImportResult = { importedBots: [], counts: {} };
+
+    const importTables = this.childTables
+      .map((child, index) => ({ child, index }))
+      .sort(
+        (a, b) =>
+          (IMPORT_PRIORITY[a.child.schemaKey] ?? 25) - (IMPORT_PRIORITY[b.child.schemaKey] ?? 25) ||
+          a.index - b.index,
+      )
+      .map(({ child }) => child);
 
     await this.db.transaction(async (tx) => {
       for (const botData of payload.bots) {
@@ -238,10 +401,17 @@ export class DataTransferService {
 
         result.importedBots.push({ oldId: oldBotId, newId: newBot.id, name: botName });
 
+        const idMaps = createImportIdMaps();
+
         // Import child table data
-        for (const child of this.childTables) {
+        for (const child of importTables) {
           const tableData = payload[child.schemaKey];
           if (!Array.isArray(tableData) || tableData.length === 0) continue;
+
+          const sourceRows = (tableData as Array<Record<string, unknown>>).filter(
+            (row) => getRowBotId(row) === oldBotId,
+          );
+          if (sourceRows.length === 0) continue;
 
           const config = getTableConfig(child.table);
           const botColName = child.botIdColumn;
@@ -249,31 +419,98 @@ export class DataTransferService {
           const idCol = config.columns.find((c) => c.name === "id" && c.hasDefault);
           const idColName = idCol?.name;
 
-          const rows = tableData.map((row: Record<string, unknown>) => {
+          const rows = sourceRows.map((row) => {
+            const oldId = idColName ? (row[snakeToCamel(idColName)] ?? row[idColName]) : undefined;
             const newRow = rehydrateDates(child.table, row);
             // Replace botId with new UUID
             // Map DB column name to JS field name
             const botField = snakeToCamel(botColName);
-            if (botField in newRow) {
-              newRow[botField] = newBot.id;
-            } else if (botColName in newRow) {
-              newRow[botColName] = newBot.id;
+            newRow[botField] = newBot.id;
+            if (botField !== botColName) delete newRow[botColName];
+
+            if (child.schemaKey === "peopleCharacterBindings") {
+              newRow.profileId = requireMappedId(
+                idMaps.peopleProfiles,
+                newRow.profileId,
+                "people profile",
+                "character binding",
+              );
+              newRow.characterId = requireMappedId(
+                idMaps.generationCharacters,
+                newRow.characterId,
+                "generation character",
+                "character binding",
+              );
+            } else if (child.schemaKey === "generationAssetUses") {
+              newRow.generationId = requireMappedId(
+                idMaps.imageGenerations,
+                newRow.generationId,
+                "image generation",
+                "generation asset usage",
+              );
+              newRow.assetId = remapHistoricalId(
+                idMaps.promptAssets,
+                idMaps.historicalAssets,
+                newRow.assetId,
+                "generation asset usage",
+              );
+            } else if (child.schemaKey === "imageGenerationEvents") {
+              newRow.generationId = requireMappedId(
+                idMaps.imageGenerations,
+                newRow.generationId,
+                "image generation",
+                "image generation event",
+              );
+            } else if (child.schemaKey === "imageGenerations") {
+              newRow.requestSnapshot = remapGenerationMaterials(newRow.requestSnapshot, idMaps);
             }
+
             // Remove serial id to let DB auto-generate
             if (idColName) {
               const idField = snakeToCamel(idColName);
               delete newRow[idField];
               delete newRow[idColName];
             }
-            return newRow;
+            return { oldId, values: newRow };
           });
 
-          // Batch insert
-          for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-            await tx.insert(child.table).values(rows.slice(i, i + BATCH_SIZE));
+          const mapsGeneratedIds =
+            idCol &&
+            (child.schemaKey === "peopleProfiles" ||
+              child.schemaKey === "generationCharacters" ||
+              child.schemaKey === "promptAssets" ||
+              child.schemaKey === "imageGenerations");
+          if (mapsGeneratedIds) {
+            // Insert individually: the old/new id association must not depend on RETURNING row order.
+            for (const row of rows) {
+              const [inserted] = await tx
+                .insert(child.table)
+                .values(row.values)
+                .returning({ id: idCol });
+              const oldId = row.oldId;
+              const newId = inserted?.id;
+              if (oldId === undefined || newId === undefined) {
+                throw new Error(`Cannot map imported ${child.schemaKey} id`);
+              }
+              if (child.schemaKey === "peopleProfiles") {
+                idMaps.peopleProfiles.set(Number(oldId), Number(newId));
+              } else if (child.schemaKey === "generationCharacters") {
+                idMaps.generationCharacters.set(Number(oldId), Number(newId));
+              } else if (child.schemaKey === "promptAssets") {
+                idMaps.promptAssets.set(Number(oldId), Number(newId));
+              } else {
+                idMaps.imageGenerations.set(String(oldId), String(newId));
+              }
+            }
+          } else {
+            // Batch tables whose rows do not need generated-id correlation.
+            for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+              const batch = rows.slice(i, i + BATCH_SIZE);
+              await tx.insert(child.table).values(batch.map((row) => row.values));
+            }
           }
 
-          result.counts[child.schemaKey] = rows.length;
+          result.counts[child.schemaKey] = (result.counts[child.schemaKey] ?? 0) + rows.length;
         }
       }
     });

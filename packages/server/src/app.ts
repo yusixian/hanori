@@ -20,6 +20,7 @@ import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
 import { botFilesRoutes } from "./routes/bot-files.js";
 import { generationRoutes } from "./routes/generations.js";
+import { generationLibraryRoutes } from "./routes/generation-library.js";
 import { apiTestRoutes } from "./routes/api-test.js";
 import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { createMiniAppBotTokenResolver, miniAppRoutes } from "./routes/mini-app.js";
@@ -195,6 +196,7 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", dataTransferRoutes(db, encryptionKey))
     .route("/api/bots", botFilesRoutes(db, botPool))
     .route("/api/bots", generationRoutes(db, botPool, imageGenerationService))
+    .route("/api/bots", generationLibraryRoutes(botPool.getGenerationLibraryService()))
     .route("/api/bots", engagementSampleRoutes(engagementSampleService))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))

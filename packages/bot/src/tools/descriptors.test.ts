@@ -52,6 +52,8 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
   "github_list_issues",
   "github_inspect_workspace",
   "delegate_task",
+  "get_character_bindings",
+  "search_prompt_assets",
 ]);
 
 describe("tool descriptors", () => {

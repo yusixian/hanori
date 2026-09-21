@@ -259,6 +259,8 @@ export { createDanbooruTools, searchDanbooruCharacterTags } from "./danbooru.js"
 export type { DanbooruCharacterTag, DanbooruToolOptions } from "./danbooru.js";
 export { createImageGenerationTools } from "./image-generation.js";
 export type { ImageGenerationToolOptions } from "./image-generation.js";
+export { createGenerationLibraryTools } from "./generation-library.js";
+export type { GenerationLibraryToolOptions } from "./generation-library.js";
 export { createSkillTools } from "./skills.js";
 export type { SkillToolsOptions } from "./skills.js";
 export { createPixAITool, injectPixAITool, PIXAI_DEFAULT_MODEL_ID } from "./pixai.js";

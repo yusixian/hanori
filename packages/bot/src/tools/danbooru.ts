@@ -1,4 +1,10 @@
-import { DEFAULT_TIMEOUT_CONFIG, type TimeoutConfig } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_TIMEOUT_CONFIG,
+  type BotLogEntry,
+  type GenerationLibraryActor,
+  type GenerationLibraryPort,
+  type TimeoutConfig,
+} from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -10,6 +16,7 @@ const MAX_WIKI_SUMMARY_LENGTH = 1_200;
 
 interface CacheEntry<T> {
   expiresAt: number;
+  fetchedAt: number;
   value: T;
 }
 
@@ -43,6 +50,15 @@ export interface DanbooruCharacterTag {
 export interface DanbooruToolOptions {
   fetch?: typeof fetch;
   timeoutConfig?: TimeoutConfig;
+  generationLibraryPort?: GenerationLibraryPort;
+  getActor?: () => GenerationLibraryActor;
+  onLog?: (entry: BotLogEntry) => void | Promise<void>;
+}
+
+interface DanbooruSearchResult {
+  tags: DanbooruCharacterTag[];
+  fetchedAt: Date;
+  stale: boolean;
 }
 
 export async function searchDanbooruCharacterTags(input: {
@@ -51,11 +67,22 @@ export async function searchDanbooruCharacterTags(input: {
   fetch?: typeof fetch;
   timeoutMs?: number;
 }): Promise<DanbooruCharacterTag[]> {
+  return (await searchDanbooruCharacterTagsWithMetadata(input)).tags;
+}
+
+async function searchDanbooruCharacterTagsWithMetadata(input: {
+  query: string;
+  limit?: number;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+}): Promise<DanbooruSearchResult> {
   const query = input.query.trim();
   const limit = Math.min(Math.max(input.limit ?? 8, 1), 20);
   const cacheKey = `${query.toLocaleLowerCase()}:${limit}`;
   const cached = queryCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached && cached.expiresAt > Date.now()) {
+    return { tags: cached.value, fetchedAt: new Date(cached.fetchedAt), stale: false };
+  }
 
   const fetchImpl = input.fetch ?? fetch;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs;
@@ -64,7 +91,15 @@ export async function searchDanbooruCharacterTags(input: {
   autocompleteUrl.searchParams.set("search[type]", "tag_query");
   autocompleteUrl.searchParams.set("limit", String(Math.min(limit * 3, 50)));
 
-  const autocomplete = await fetchJson<unknown>(fetchImpl, autocompleteUrl, timeoutMs);
+  let autocomplete: unknown;
+  try {
+    autocomplete = await fetchJson<unknown>(fetchImpl, autocompleteUrl, timeoutMs);
+  } catch (error) {
+    if (cached) {
+      return { tags: cached.value, fetchedAt: new Date(cached.fetchedAt), stale: true };
+    }
+    throw error;
+  }
   const candidates = Array.isArray(autocomplete)
     ? autocomplete
         .filter(isCharacterAutocomplete)
@@ -93,8 +128,13 @@ export async function searchDanbooruCharacterTags(input: {
     }),
   );
 
-  queryCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, value: enriched });
-  return enriched;
+  const fetchedAt = Date.now();
+  queryCache.set(cacheKey, {
+    expiresAt: fetchedAt + CACHE_TTL_MS,
+    fetchedAt,
+    value: enriched,
+  });
+  return { tags: enriched, fetchedAt: new Date(fetchedAt), stale: false };
 }
 
 export function createDanbooruTools(options: DanbooruToolOptions = {}): Record<string, Tool> {
@@ -113,16 +153,50 @@ export function createDanbooruTools(options: DanbooruToolOptions = {}): Record<s
           limit: z.number().int().min(1).max(20).default(8).describe("最多返回的角色标签数"),
         }),
       ),
-      execute: async ({ query, limit }) => ({
-        query,
-        tags: await searchDanbooruCharacterTags({
+      execute: async ({ query, limit }) => {
+        const result = await searchDanbooruCharacterTagsWithMetadata({
           query,
           limit,
           fetch: options.fetch,
           timeoutMs: options.timeoutConfig?.searchMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs,
-        }),
-        source: DANBOORU_ORIGIN,
-      }),
+        });
+        if (options.generationLibraryPort && options.getActor) {
+          try {
+            await options.generationLibraryPort.recordDanbooru(
+              options.getActor(),
+              result.tags,
+              result.fetchedAt,
+            );
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            try {
+              await options.onLog?.({
+                level: "warn",
+                message: "Failed to record Danbooru character results",
+                meta: {
+                  queryLength: query.length,
+                  resultCount: result.tags.length,
+                  error: message.slice(0, 500),
+                },
+              });
+            } catch {
+              // Diagnostics must not turn a successful external lookup into a tool failure.
+            }
+          }
+        }
+        return {
+          query,
+          tags: result.tags,
+          source: DANBOORU_ORIGIN,
+          fetchedAt: result.fetchedAt.toISOString(),
+          stale: result.stale,
+          ...(result.stale
+            ? {
+                note: "Danbooru refresh failed; returning the last cached result, which may be outdated.",
+              }
+            : {}),
+        };
+      },
     }),
   };
 }
