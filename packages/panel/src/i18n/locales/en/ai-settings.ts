@@ -91,6 +91,11 @@ export const aiSettings = {
   navigation: {
     settingsSection: "Settings section",
     ariaLabel: "AI settings sections",
+    searchSettings: "Search settings…",
+    clearSearch: "Clear search",
+    noSearchResults: "No matching settings",
+    searchResultCount_one: "{{count}} matching setting",
+    searchResultCount_other: "{{count}} matching settings",
     overview: "Overview",
     overviewDescription: "Status and quick actions",
     providers: "Providers & Models",

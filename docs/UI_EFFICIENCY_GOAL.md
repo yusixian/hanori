@@ -45,7 +45,8 @@
 ## 当前迭代
 
 - v0.4.0 导航与工作区已完成审查、CI、合入及 GitHub Release，详见下方证据；完整目标保持进行中。
-- 当前重点：AI 设置批次 A（搜索、稳定深链、移动摘要），Sol 在 `/private/tmp/cos-tool-bot-ai-efficiency-20260922` 隔离工作区实现，另一位 Sol 只读审查；修复搜索焦点、键盘列表与异步加载定位后由主代理整合。暂不改保存/权限/API。
+- 当前重点：v0.5.0 AI 设置批次 A（搜索、稳定深链、移动摘要），已从 Sol 隔离工作区精确整合到 `ui/ai-settings-efficiency-v0.5.0`。独立审查发现的定位/键盘焦点问题已修复；主代理补修 IME Enter 误选、重复清空图标、窄窗口吸顶导航遮挡。未改保存/权限/API。
+- v0.5.0 本地验证：AI 页面 9/9 浏览器回归，Panel typecheck/build、相关 lint、i18n 2277 keys；文档 typecheck/build 和 12/12 浏览器测试；1440×900、900×768、390×844 完整应用 API 夹具验证深链、历史、焦点、草稿保留和定位不遮挡，无页面错误/横向溢出。证据 `.acceptance/ui-efficiency/ai-final-verified/` 和 `docs-v0.5.0/`；尚未 PR/合入/发布。
 - 下一批次：AI 保存状态与草稿保护。站内导航丢草稿已用实际浏览器复现；当前 BrowserRouter 与 useBlocker 兼容性需单独处理。详细证据与范围见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
 - 日志检索批次已由 Sol 在 `/private/tmp/cos-tool-bot-logs-efficiency-20260922` 隔离实现：两个页面的结构化筛选被 DataProvider 丢弃，历史与 SSE 条件不一致；局部筛选布局占用过高；清理确认文案须准确反映 Bot 范围。保留 debounce、IME、SSE、权限和删除契约，单独审查交付。
 - 非阻断导航体验项：1024×768 长菜单底部展开全局管理后还需滚动才能看到入口；搜索已可直接定位，后续评估。
@@ -64,6 +65,7 @@
 - 本地验证：导航浏览器回归 7/7；Panel typecheck、相关 lint/format、i18n 2273 keys；重建旧 shared 产物后 panel 生产构建通过；文档 typecheck/build；整合后文档浏览器 12/12 通过。
 - 浏览器证据：桌面 1440×900、手机 390×844，完整应用 + API 夹具的搜索/清空/范围跳转/唯一当前项/折叠搜索/Escape/关闭回焦通过；无页面错误或横向溢出。截图与脚本在 `.acceptance/ui-efficiency/navigation-final/`，文档在 `.acceptance/ui-efficiency/docs-integrated/`。
 - PR CI 35628346088：completed/success，head `fe2edb3337088edaad10c559a0aacdde9743618f`，完整仓库门禁通过。合并后文件树与该提交完全一致。
+- 合入后 CI 35629273743：completed/success，精确 head 为下述 main/tag SHA。
 - 合入：PR #86 已核实 MERGED，main `5c839e567880e4213b29e948a1eb8e329f5e7447`。
 - 发布：v0.4.0 已公开，非 draft/预发布；远端 tag 与发布目标均核实为上述 main SHA。正文来自 `docs/releases/v0.4.0.md`。
 - 文档：新增公开导航指南、快速开始与 README 入口、版本导航和 v0.4.0 页面；保留旧版本访问。合入后已复核提交文件树与文档同步。
