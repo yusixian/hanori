@@ -21,7 +21,7 @@ function streamResult(text: string) {
     textStream: textStream(),
     text: Promise.resolve(text),
     steps: Promise.resolve([]),
-    usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
   };
 }
 

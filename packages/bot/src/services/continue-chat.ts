@@ -886,7 +886,7 @@ async function doContinueChat(
 
     // Await full results for post-processing
     const steps = await result.steps;
-    const usage = await result.usage;
+    const totalUsage = await result.totalUsage;
     const durationMs = Date.now() - startTime;
 
     // Record token usage
@@ -894,11 +894,11 @@ async function doContinueChat(
       chatId,
       userId: event.userId,
       model: selection.modelId,
-      promptTokens: usage.inputTokens ?? 0,
-      completionTokens: usage.outputTokens ?? 0,
-      totalTokens: usage.totalTokens ?? 0,
+      promptTokens: totalUsage.inputTokens ?? 0,
+      completionTokens: totalUsage.outputTokens ?? 0,
+      totalTokens: totalUsage.totalTokens ?? 0,
       ...extractCacheTokenUsage(
-        usage,
+        totalUsage,
         steps.map((step) => step.usage),
       ),
       providerId: selection.providerId,

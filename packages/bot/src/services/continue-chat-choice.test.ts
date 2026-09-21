@@ -100,7 +100,7 @@ function abortableStreamResult(signal: AbortSignal) {
     textStream: textStream(),
     text,
     steps: Promise.resolve([]),
-    usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
   };
 }
 
@@ -134,6 +134,49 @@ function route(): ImageRouteCapabilities {
 }
 
 describe("choice continuation tools", () => {
+  it.each([1000, undefined])(
+    "records whole-turn usage and preserves unknown cache usage (last-step cache: %s)",
+    async (cachedTokens) => {
+      const onTokenUsage = vi.fn();
+      const { api } = createApi();
+      async function* textStream() {
+        yield "Complete";
+      }
+      streamTextMock.mockReturnValueOnce({
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve(
+          [800, cachedTokens].map((cached) => ({
+            toolCalls: [],
+            toolResults: [],
+            usage: { raw: { prompt_tokens_details: { cached_tokens: cached } } },
+          })),
+        ),
+        usage: Promise.resolve({ inputTokens: 1200, outputTokens: 20, totalTokens: 1220 }),
+        totalUsage: Promise.resolve({ inputTokens: 2200, outputTokens: 30, totalTokens: 2230 }),
+      });
+
+      await expect(
+        continueChat(api, createConfig(createCoordinator(), { onTokenUsage }), {
+          chatId: CHAT_ID,
+          userId: USER_ID,
+          eventDescription: "usage test",
+        }),
+      ).resolves.toBe(true);
+
+      expect(onTokenUsage).toHaveBeenCalledOnce();
+      const record = onTokenUsage.mock.calls[0]![0];
+      expect(record).toMatchObject({
+        promptTokens: 2200,
+        completionTokens: 30,
+        totalTokens: 2230,
+      });
+      if (cachedTokens === undefined) expect(record).not.toHaveProperty("cacheReadTokens");
+      else expect(record.cacheReadTokens / record.promptTokens).toBeCloseTo(1800 / 2200);
+      expect(record).not.toHaveProperty("cacheWriteTokens");
+    },
+  );
+
   it("keeps configured image generation tools bound to the selecting user's identity", async () => {
     const coordinator = createCoordinator();
     const onLog = vi.fn();
@@ -174,7 +217,7 @@ describe("choice continuation tools", () => {
         textStream: textStream(),
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
-        usage: Promise.reject(new Error("usage metadata failed after tool delivery")),
+        totalUsage: Promise.reject(new Error("usage metadata failed after tool delivery")),
       };
     });
     const { api, sendMessage } = createApi();
@@ -239,7 +282,7 @@ describe("choice continuation tools", () => {
       textStream: textStream(),
       text: Promise.resolve("continuation answer"),
       steps: Promise.resolve([]),
-      usage: Promise.resolve({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+      totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
     });
     const { api } = createApi();
 
@@ -301,7 +344,7 @@ describe("choice continuation tools", () => {
           textStream: textStream(),
           text: Promise.resolve(""),
           steps: Promise.resolve([]),
-          usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+          totalUsage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
         };
       },
     );
@@ -490,7 +533,7 @@ describe("choice continuation tools", () => {
         textStream: textStream(),
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
-        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       };
     });
     const { api, sendMessage } = createApi();

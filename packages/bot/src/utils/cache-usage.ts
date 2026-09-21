@@ -46,6 +46,7 @@ function extractSingleCacheTokenUsage(usage: CacheAwareUsage): CacheTokenUsage {
     raw?.["cache_read_input_tokens"],
     raw?.["cached_content_token_count"],
     raw?.["cachedContentTokenCount"],
+    raw?.["prompt_cache_hit_tokens"],
   );
   const rawWrite = firstNumber(
     promptDetails?.["cache_write_tokens"],

@@ -130,6 +130,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -205,6 +206,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("private answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -273,6 +275,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("private answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -319,6 +322,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("ring answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const runtimeConfig = config(conversation(), privacy("normal"));
@@ -384,6 +388,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -442,6 +447,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("public answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -480,6 +486,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("stateless answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const history = conversation();
@@ -555,6 +562,7 @@ describe("AI reply group capture and privacy", () => {
       text: Promise.resolve("answer"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     let releaseCompression!: () => void;

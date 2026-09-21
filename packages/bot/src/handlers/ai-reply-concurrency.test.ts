@@ -143,6 +143,7 @@ function streamResult(text: Promise<string>) {
     text,
     steps: Promise.resolve([]),
     usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
     finishReason: Promise.resolve("stop"),
   };
 }

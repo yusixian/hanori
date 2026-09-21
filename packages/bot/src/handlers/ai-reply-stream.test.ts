@@ -116,6 +116,50 @@ function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
 }
 
 describe("AI reply streaming", () => {
+  it.each([1000, undefined])(
+    "records whole-turn usage and preserves unknown cache usage (last-step cache: %s)",
+    async (cachedTokens) => {
+      const onLog = vi.fn<(entry: BotLogEntry) => void>();
+      const onTokenUsage = vi.fn();
+      const { ctx } = createContext();
+      const lastUsage = { inputTokens: 1200, outputTokens: 20, totalTokens: 1220 };
+      async function* textStream() {
+        yield "Complete";
+      }
+      streamTextMock.mockReturnValue({
+        textStream: textStream(),
+        text: Promise.resolve("Complete"),
+        steps: Promise.resolve(
+          [800, cachedTokens].map((cached) => ({
+            toolCalls: [],
+            toolResults: [],
+            usage: { raw: { prompt_tokens_details: { cached_tokens: cached } } },
+          })),
+        ),
+        usage: Promise.resolve(lastUsage),
+        totalUsage: Promise.resolve({ inputTokens: 2200, outputTokens: 30, totalTokens: 2230 }),
+        finishReason: Promise.resolve("stop"),
+      });
+      const { handler } = createAiReplyHandler({ ...createConfig(onLog), onTokenUsage });
+
+      await handler(ctx, vi.fn());
+
+      expect(onTokenUsage).toHaveBeenCalledOnce();
+      const record = onTokenUsage.mock.calls[0]![0];
+      expect(record).toMatchObject({
+        promptTokens: 2200,
+        completionTokens: 30,
+        totalTokens: 2230,
+      });
+      if (cachedTokens === undefined) expect(record).not.toHaveProperty("cacheReadTokens");
+      else expect(record.cacheReadTokens / record.promptTokens).toBeCloseTo(1800 / 2200);
+      expect(record).not.toHaveProperty("cacheWriteTokens");
+      expect(
+        onLog.mock.calls.find(([entry]) => entry.message === "AI response")?.[0].meta,
+      ).toMatchObject({ usage: lastUsage });
+    },
+  );
+
   it("keeps the original provider error and links it to the request and failed execution", async () => {
     const providerError = Object.assign(new Error("upstream quota exceeded"), {
       statusCode: 429,
@@ -210,6 +254,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve("Complete"),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         finishReason: Promise.resolve("stop"),
       };
     });
@@ -250,6 +295,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve("Complete"),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         finishReason: Promise.resolve("stop"),
       };
     });
@@ -282,6 +328,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve("Complete"),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         finishReason: Promise.resolve("stop"),
       };
     });
@@ -338,6 +385,7 @@ describe("AI reply streaming", () => {
       text: Promise.resolve(" \n"),
       steps: Promise.resolve([]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
       finishReason: Promise.resolve("stop"),
     });
     const onLog = vi.fn<(entry: BotLogEntry) => void>();
@@ -384,6 +432,7 @@ describe("AI reply streaming", () => {
           text: Promise.resolve(""),
           steps: Promise.resolve([]),
           usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
           finishReason: Promise.resolve("tool-calls"),
         };
       });
@@ -416,6 +465,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("tool-calls"),
       };
     });
@@ -449,6 +499,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("tool-calls"),
       };
     });
@@ -514,6 +565,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("stop"),
       });
       const { ctx } = createContext();
@@ -554,6 +606,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("tool-calls"),
       };
     });
@@ -578,6 +631,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("tool-calls"),
       };
     });
@@ -604,6 +658,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve(""),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
         finishReason: Promise.resolve("tool-calls"),
       };
     });
@@ -637,6 +692,7 @@ describe("AI reply streaming", () => {
           text: Promise.resolve("digest"),
           steps: Promise.resolve([]),
           usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
           finishReason: Promise.resolve("stop"),
         };
       });
@@ -686,6 +742,7 @@ describe("AI reply streaming", () => {
         text: Promise.resolve("final text"),
         steps: Promise.resolve([]),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         finishReason: Promise.resolve("stop"),
       };
     });
@@ -722,6 +779,7 @@ describe("AI reply streaming", () => {
         },
       ]),
       usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
       finishReason: Promise.resolve("stop"),
     });
     const { handler } = createAiReplyHandler(createConfig(onLog));

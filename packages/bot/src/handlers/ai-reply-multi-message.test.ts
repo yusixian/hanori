@@ -128,6 +128,7 @@ describe("AI reply multi_message delivery", () => {
         text: Promise.resolve(trailing),
         steps: Promise.resolve(steps),
         usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
         finishReason: Promise.resolve("stop"),
       };
     });
