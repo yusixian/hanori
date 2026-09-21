@@ -44,6 +44,8 @@
 
 ## 当前迭代
 
+- v0.9.1 档案/记忆错误恢复已在 `fix/record-management-v0.9.1` 完成实现和本地审查，基线 main `ce8a93c77925751d8b4939b6e26a72f366e9961f`。补充HTTP/业务错误、保稿、提交锁与旧请求保护；记录见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md)。本地35项相关浏览器回归、两档生产夹具和文档14项检查通过；尚待PR/CI/发布，不把本地验证当作交付。
+
 - v0.9.0 用量页已通过 PR #93 合入并发布，main/tag/Release目标 `e744e658b6237a231084812226b0131f3262077d`；PR CI `35649611905` completed/success，合入后 CI `35650499592` 已核实 completed/success。完整证据见 [用量页复核](UI_USAGE_AUDIT.md)。
 
 - v0.4.0 导航、v0.5.0 AI 设置查找、v0.5.1 日志筛选、v0.6.0 草稿保护、v0.7.0 Bot 列表与管理入口均已完成审查、PR CI、合入、GitHub Release 和合入后 CI。

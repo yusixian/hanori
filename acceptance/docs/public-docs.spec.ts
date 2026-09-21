@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.9.0/");
+  await page.goto("/docs/changelog/v0.9.1/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.9.0");
-  await expect(page.getByText("用量概览与统计范围", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.9.1");
+  await expect(page.getByText("档案与记忆管理错误恢复", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.9.0");
+  await expect(title).toHaveText("v0.9.1");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.9.0.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.9.1.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -68,6 +68,9 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "v0.9.0", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.9.1", exact: true }).filter({ visible: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
@@ -160,6 +163,11 @@ test("search, navigation and theme controls work with the production CSP", async
   await expect(dialog.getByText("隐私、历史与记忆", { exact: true })).toBeVisible();
   await dialog.getByText("隐私、历史与记忆", { exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("隐私、历史与记忆");
+  await expect(
+    page.getByRole("heading", { level: 2, name: /^在面板维护档案与记忆/ }),
+  ).toBeVisible();
+  await expect(page.getByText("刷新列表", { exact: true })).toBeVisible();
+  await page.screenshot({ path: info.outputPath("record-management-guide.png"), fullPage: true });
   await page.locator('a[href="/docs"]').filter({ visible: true }).first().click();
   await expect(page.getByRole("heading", { level: 1 })).toHaveText("cos-tool-bot 文档");
 

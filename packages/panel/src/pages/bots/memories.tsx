@@ -6,8 +6,18 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
-import { Check, Loader2, Pencil, Plus, Search, Trash2, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 
@@ -39,25 +49,62 @@ const emptyCreateForm: CreateForm = {
   telegramId: "",
 };
 
+type LoadError = "initial" | "stale" | null;
+type MutationKind = "create" | "save" | "delete";
+
+async function requireSuccessfulMutation(response: Response, message: string): Promise<void> {
+  let result: { ok?: boolean };
+  try {
+    result = (await response.json()) as { ok?: boolean };
+  } catch {
+    throw new Error(message);
+  }
+  if (!response.ok || result.ok !== true) throw new Error(message);
+}
+
 export function BotMemoriesPage() {
-  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
+  return botId ? <BotMemoriesContent key={botId} botId={botId} /> : null;
+}
+
+function BotMemoriesContent({ botId }: { botId: string }) {
+  const { t, i18n } = useTranslation("botData");
   const [memories, setMemories] = useState<MemoryItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadedQueryKey, setLoadedQueryKey] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<LoadError>(null);
+  const [reloadToken, setReloadToken] = useState(0);
   const [categories, setCategories] = useState<string[]>([]);
+  const [categoriesReloadToken, setCategoriesReloadToken] = useState(0);
   const [filterCategory, setFilterCategory] = useState("");
   const [filterTelegramId, setFilterTelegramId] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
   const [showCreate, setShowCreate] = useState(false);
+  const [pendingMutation, setPendingMutation] = useState<{
+    kind: MutationKind;
+    memoryId?: number;
+  } | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [mutationRecoveryPending, setMutationRecoveryPending] = useState(false);
+  const listRequestRef = useRef(0);
+  const loadedQueryKeyRef = useRef<string | null>(null);
+  const mutationInFlightRef = useRef(false);
+  const mutationRecoveryRef = useRef(false);
+  const mountedRef = useRef(false);
   const limit = 20;
+  const queryKey = JSON.stringify([page, filterCategory, filterTelegramId, search]);
+  const hasCurrentData = loadedQueryKey === queryKey;
+  const hasConfirmedEmptyData =
+    hasCurrentData && memories.length === 0 && !loading && loadError === null;
+  const mutationPending = pendingMutation !== null;
+  const mutationControlsLocked = mutationPending || mutationRecoveryPending;
   const locale = i18n.resolvedLanguage ?? i18n.language;
   const numberFormatter = useMemo(() => new Intl.NumberFormat(locale), [locale]);
   const dateTimeFormatter = useMemo(
@@ -65,72 +112,111 @@ export function BotMemoriesPage() {
     [locale],
   );
 
-  const loadCategories = useCallback(async () => {
-    if (!botId) return;
-    try {
-      const res = await client.api.bots[":botId"].memories.meta.$get({
-        param: { botId },
-      });
-      const json = await res.json();
-      if (json.ok) {
-        setCategories(json.data.categories);
-      }
-    } catch (err) {
-      console.error("Failed to load categories:", err);
-    }
-  }, [botId]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  const loadMemories = useCallback(async () => {
-    if (!botId) return;
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await client.api.bots[":botId"].memories.meta.$get(
+          { param: { botId } },
+          { init: { signal: controller.signal } },
+        );
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error("Categories request failed");
+        if (!controller.signal.aborted) setCategories(result.data.categories);
+      } catch {
+        // The category filter remains usable with its default options when metadata is unavailable.
+      }
+    })();
+    return () => controller.abort();
+  }, [botId, categoriesReloadToken]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const requestId = ++listRequestRef.current;
     setLoading(true);
-    try {
-      const query: Record<string, string> = {
-        page: String(page),
-        limit: String(limit),
-      };
-      if (filterCategory) query.category = filterCategory;
-      if (filterTelegramId) query.telegramId = filterTelegramId;
-      if (search) query.search = search;
+    setLoadError(null);
+    const query: Record<string, string> = {
+      page: String(page),
+      limit: String(limit),
+    };
+    if (filterCategory) query.category = filterCategory;
+    if (filterTelegramId) query.telegramId = filterTelegramId;
+    if (search) query.search = search;
 
-      const res = await client.api.bots[":botId"].memories.$get({
-        param: { botId },
-        query,
-      });
-      const json = await res.json();
-      if (json.ok) {
-        setMemories(json.data as MemoryItem[]);
-        setTotal(json.total);
+    void (async () => {
+      try {
+        const response = await client.api.bots[":botId"].memories.$get(
+          { param: { botId }, query },
+          { init: { signal: controller.signal } },
+        );
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error("Memories request failed");
+        if (controller.signal.aborted || requestId !== listRequestRef.current) return;
+        setMemories(result.data as MemoryItem[]);
+        setTotal(result.total);
+        loadedQueryKeyRef.current = queryKey;
+        setLoadedQueryKey(queryKey);
+      } catch {
+        if (controller.signal.aborted || requestId !== listRequestRef.current) return;
+        setLoadError(loadedQueryKeyRef.current === queryKey ? "stale" : "initial");
+      } finally {
+        if (!controller.signal.aborted && requestId === listRequestRef.current) {
+          setLoading(false);
+          if (mutationRecoveryRef.current) {
+            mutationRecoveryRef.current = false;
+            setMutationRecoveryPending(false);
+          }
+        }
       }
-    } catch (err) {
-      console.error("Failed to load memories:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId, page, filterCategory, filterTelegramId, search]);
+    })();
+
+    return () => controller.abort();
+  }, [botId, filterCategory, filterTelegramId, page, queryKey, reloadToken, search]);
 
   useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
-
-  useEffect(() => {
-    loadMemories();
-  }, [loadMemories]);
+    setMutationError(null);
+    setSuccessMessage(null);
+  }, [queryKey]);
 
   const handleSearch = () => {
+    if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
     setPage(1);
     setSearch(searchInput);
   };
 
   const handleDelete = async (memoryId: number) => {
-    if (!botId || !window.confirm(t("memories.deleteConfirm"))) return;
+    if (
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current ||
+      !window.confirm(t("memories.deleteConfirm"))
+    )
+      return;
+    mutationInFlightRef.current = true;
+    setPendingMutation({ kind: "delete", memoryId });
+    setMutationError(null);
+    setSuccessMessage(null);
     try {
-      await client.api.bots[":botId"].memories[":memoryId"].$delete({
+      const response = await client.api.bots[":botId"].memories[":memoryId"].$delete({
         param: { botId, memoryId: String(memoryId) },
       });
-      loadMemories();
-      loadCategories();
-    } catch (err) {
-      console.error("Failed to delete memory:", err);
+      await requireSuccessfulMutation(response, t("common.deleteFailed"));
+      if (mountedRef.current) {
+        setSuccessMessage(t("common.deleted"));
+        setReloadToken((value) => value + 1);
+        setCategoriesReloadToken((value) => value + 1);
+      }
+    } catch {
+      if (mountedRef.current) setMutationError(t("common.deleteFailed"));
+    } finally {
+      mutationInFlightRef.current = false;
+      if (mountedRef.current) setPendingMutation(null);
     }
   };
 
@@ -149,11 +235,20 @@ export function BotMemoriesPage() {
   };
 
   const handleSave = async () => {
-    if (!botId || !editForm || editingId === null) return;
-    setSaving(true);
+    if (
+      !editForm ||
+      editingId === null ||
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current
+    )
+      return;
+    mutationInFlightRef.current = true;
+    setPendingMutation({ kind: "save", memoryId: editingId });
+    setMutationError(null);
+    setSuccessMessage(null);
     try {
       const tid = editForm.telegramId.trim();
-      await client.api.bots[":botId"].memories[":memoryId"].$put({
+      const response = await client.api.bots[":botId"].memories[":memoryId"].$put({
         param: { botId, memoryId: String(editingId) },
         json: {
           content: editForm.content,
@@ -161,22 +256,31 @@ export function BotMemoriesPage() {
           telegramId: tid ? Number(tid) : null,
         },
       });
-      cancelEdit();
-      loadMemories();
-      loadCategories();
-    } catch (err) {
-      console.error("Failed to save memory:", err);
+      await requireSuccessfulMutation(response, t("common.saveFailed"));
+      if (mountedRef.current) {
+        cancelEdit();
+        setSuccessMessage(t("common.saved"));
+        setReloadToken((value) => value + 1);
+        setCategoriesReloadToken((value) => value + 1);
+      }
+    } catch {
+      if (mountedRef.current) setMutationError(t("common.saveFailed"));
     } finally {
-      setSaving(false);
+      mutationInFlightRef.current = false;
+      if (mountedRef.current) setPendingMutation(null);
     }
   };
 
   const handleCreate = async () => {
-    if (!botId || !createForm.content.trim()) return;
-    setCreating(true);
+    if (!createForm.content.trim() || mutationInFlightRef.current || mutationRecoveryRef.current)
+      return;
+    mutationInFlightRef.current = true;
+    setPendingMutation({ kind: "create" });
+    setMutationError(null);
+    setSuccessMessage(null);
     try {
       const tid = createForm.telegramId.trim();
-      await client.api.bots[":botId"].memories.$post({
+      const response = await client.api.bots[":botId"].memories.$post({
         param: { botId },
         json: {
           content: createForm.content,
@@ -184,14 +288,19 @@ export function BotMemoriesPage() {
           telegramId: tid ? Number(tid) : undefined,
         },
       });
-      setShowCreate(false);
-      setCreateForm(emptyCreateForm);
-      loadMemories();
-      loadCategories();
-    } catch (err) {
-      console.error("Failed to create memory:", err);
+      await requireSuccessfulMutation(response, t("common.createFailed"));
+      if (mountedRef.current) {
+        setShowCreate(false);
+        setCreateForm(emptyCreateForm);
+        setSuccessMessage(t("common.created"));
+        setReloadToken((value) => value + 1);
+        setCategoriesReloadToken((value) => value + 1);
+      }
+    } catch {
+      if (mountedRef.current) setMutationError(t("common.createFailed"));
     } finally {
-      setCreating(false);
+      mutationInFlightRef.current = false;
+      if (mountedRef.current) setPendingMutation(null);
     }
   };
 
@@ -202,20 +311,54 @@ export function BotMemoriesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex items-baseline gap-3">
           <h1 className="text-2xl font-bold">{t("memories.title")}</h1>
-          <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
-            {t("common.total", { value: numberFormatter.format(total) })}
-          </span>
+          {hasCurrentData && (total > 0 || (!loading && loadError === null)) && (
+            <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
+              {t("common.total", { value: numberFormatter.format(total) })}
+            </span>
+          )}
         </div>
         <Button
           variant="outline"
           size="sm"
           className="w-full shrink-0 sm:ml-auto sm:w-auto"
           onClick={() => setShowCreate(!showCreate)}
+          disabled={mutationControlsLocked}
         >
           <Plus className="h-4 w-4" />
           {t("memories.add")}
         </Button>
       </div>
+
+      {mutationError && (
+        <div
+          role="alert"
+          className="border-destructive/30 bg-destructive/5 text-destructive flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>{mutationError}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              mutationRecoveryRef.current = true;
+              setMutationRecoveryPending(true);
+              setMutationError(null);
+              setReloadToken((value) => value + 1);
+              setCategoriesReloadToken((value) => value + 1);
+            }}
+          >
+            <RefreshCw className="size-3.5" />
+            {t("common.refreshList")}
+          </Button>
+        </div>
+      )}
+      {successMessage && (
+        <div
+          role="status"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+        >
+          {successMessage}
+        </div>
+      )}
 
       {showCreate && (
         <Card>
@@ -234,6 +377,7 @@ export function BotMemoriesPage() {
                 value={createForm.content}
                 onChange={(e) => setCreateForm({ ...createForm, content: e.target.value })}
                 placeholder={t("memories.contentPlaceholder")}
+                disabled={mutationControlsLocked}
               />
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -246,6 +390,7 @@ export function BotMemoriesPage() {
                   value={createForm.category}
                   onChange={(e) => setCreateForm({ ...createForm, category: e.target.value })}
                   placeholder={t("memories.categoryPlaceholder")}
+                  disabled={mutationControlsLocked}
                 />
               </div>
               <div>
@@ -257,6 +402,7 @@ export function BotMemoriesPage() {
                   value={createForm.telegramId}
                   onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
                   placeholder={t("memories.generalMemoryPlaceholder")}
+                  disabled={mutationControlsLocked}
                 />
               </div>
             </div>
@@ -264,14 +410,14 @@ export function BotMemoriesPage() {
               <Button
                 size="sm"
                 onClick={handleCreate}
-                disabled={creating || !createForm.content.trim()}
+                disabled={mutationControlsLocked || !createForm.content.trim()}
               >
-                {creating ? (
+                {pendingMutation?.kind === "create" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Check className="h-4 w-4" />
                 )}
-                {t("common.create")}
+                {pendingMutation?.kind === "create" ? t("common.submitting") : t("common.create")}
               </Button>
               <Button
                 variant="ghost"
@@ -280,6 +426,7 @@ export function BotMemoriesPage() {
                   setShowCreate(false);
                   setCreateForm(emptyCreateForm);
                 }}
+                disabled={mutationControlsLocked}
               >
                 <X className="h-4 w-4" />
                 {t("common.cancel")}
@@ -290,15 +437,24 @@ export function BotMemoriesPage() {
       )}
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2">
+      <fieldset
+        className="flex min-w-0 flex-wrap items-center gap-2 border-0 p-0"
+        disabled={mutationControlsLocked}
+      >
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
           placeholder={t("memories.searchPlaceholder")}
           className="max-w-xs"
+          disabled={mutationControlsLocked}
           onKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
-        <Button variant="outline" size="sm" onClick={handleSearch}>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleSearch}
+          disabled={mutationControlsLocked}
+        >
           <Search className="h-4 w-4" />
           {t("common.search")}
         </Button>
@@ -307,9 +463,11 @@ export function BotMemoriesPage() {
           className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
           value={filterCategory}
           onChange={(e) => {
+            if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
             setFilterCategory(e.target.value);
             setPage(1);
           }}
+          disabled={mutationControlsLocked}
         >
           <option value="">{t("memories.allCategories")}</option>
           {categories.map((c) => (
@@ -323,9 +481,11 @@ export function BotMemoriesPage() {
           className="border-input flex h-9 rounded-md border bg-transparent px-3 py-1 text-sm"
           value={filterTelegramId}
           onChange={(e) => {
+            if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
             setFilterTelegramId(e.target.value);
             setPage(1);
           }}
+          disabled={mutationControlsLocked}
         >
           <option value="">{t("memories.allMemories")}</option>
           <option value="general">{t("memories.generalOnly")}</option>
@@ -336,23 +496,60 @@ export function BotMemoriesPage() {
             variant="ghost"
             size="sm"
             onClick={() => {
+              if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
               setSearch("");
               setSearchInput("");
               setFilterCategory("");
               setFilterTelegramId("");
               setPage(1);
             }}
+            disabled={mutationControlsLocked}
           >
             {t("common.clearFilters")}
           </Button>
         )}
-      </div>
+      </fieldset>
 
-      {loading ? (
+      {loadError === "stale" && hasCurrentData && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span className="flex items-start gap-2">
+            <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            {t("common.refreshFailed")}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => setReloadToken((value) => value + 1)}
+          >
+            <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+            {t("common.retry")}
+          </Button>
+        </div>
+      )}
+
+      {loadError === "initial" && !hasCurrentData ? (
+        <Card role="alert">
+          <CardContent className="flex flex-col items-start gap-4 px-5 py-8">
+            <p className="text-sm">{t("common.loadFailed")}</p>
+            <Button
+              size="sm"
+              disabled={loading}
+              onClick={() => setReloadToken((value) => value + 1)}
+            >
+              <RefreshCw className={`size-4 ${loading ? "animate-spin" : ""}`} />
+              {t("common.retry")}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (loading || !hasCurrentData) && !hasCurrentData ? (
         <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
-      ) : memories.length === 0 ? (
+      ) : hasConfirmedEmptyData ? (
         <p className="text-muted-foreground text-sm">{t("memories.empty")}</p>
-      ) : (
+      ) : hasCurrentData ? (
         <div className="space-y-3">
           {memories.map((m) => (
             <Card key={m.id}>
@@ -387,6 +584,7 @@ export function BotMemoriesPage() {
                         rows={3}
                         value={editForm.content}
                         onChange={(e) => setEditForm({ ...editForm, content: e.target.value })}
+                        disabled={mutationControlsLocked}
                       />
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -401,6 +599,7 @@ export function BotMemoriesPage() {
                           id={`edit-mem-category-${m.id}`}
                           value={editForm.category}
                           onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                          disabled={mutationControlsLocked}
                         />
                       </div>
                       <div>
@@ -415,19 +614,27 @@ export function BotMemoriesPage() {
                           value={editForm.telegramId}
                           onChange={(e) => setEditForm({ ...editForm, telegramId: e.target.value })}
                           placeholder={t("memories.emptyMeansGeneral")}
+                          disabled={mutationControlsLocked}
                         />
                       </div>
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={handleSave} disabled={saving}>
-                        {saving ? (
+                      <Button size="sm" onClick={handleSave} disabled={mutationControlsLocked}>
+                        {pendingMutation?.kind === "save" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <Check className="h-4 w-4" />
                         )}
-                        {t("common.save")}
+                        {pendingMutation?.kind === "save"
+                          ? t("common.submitting")
+                          : t("common.save")}
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={cancelEdit}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={cancelEdit}
+                        disabled={mutationControlsLocked}
+                      >
                         <X className="h-4 w-4" />
                         {t("common.cancel")}
                       </Button>
@@ -449,6 +656,7 @@ export function BotMemoriesPage() {
                           onClick={() => startEdit(m)}
                           title={t("memories.editTitle")}
                           aria-label={t("memories.editTitle")}
+                          disabled={mutationControlsLocked}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -458,8 +666,14 @@ export function BotMemoriesPage() {
                           onClick={() => handleDelete(m.id)}
                           title={t("memories.deleteTitle")}
                           aria-label={t("memories.deleteTitle")}
+                          disabled={mutationControlsLocked}
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          {pendingMutation?.kind === "delete" &&
+                          pendingMutation.memoryId === m.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4 text-red-500" />
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -469,9 +683,20 @@ export function BotMemoriesPage() {
             </Card>
           ))}
         </div>
-      )}
+      ) : null}
 
-      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      {hasCurrentData && (
+        <fieldset disabled={mutationControlsLocked} className="min-w-0 border-0 p-0">
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPageChange={(nextPage) => {
+              if (mutationInFlightRef.current || mutationRecoveryRef.current) return;
+              setPage(nextPage);
+            }}
+          />
+        </fieldset>
+      )}
     </div>
   );
 }

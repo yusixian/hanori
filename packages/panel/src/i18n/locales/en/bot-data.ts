@@ -2,6 +2,18 @@ export const botData = {
   common: {
     total: "{{value}} total",
     loading: "Loading…",
+    loadFailed: "Could not load records. Try again.",
+    refreshFailed: "Refresh failed. Showing the last loaded records.",
+    retry: "Retry",
+    refreshList: "Refresh list",
+    createFailed: "Could not confirm creation. Your draft is kept; check the list before retrying.",
+    saveFailed:
+      "Could not confirm the save. Your changes are kept; check the list before retrying.",
+    deleteFailed: "Could not confirm deletion. Refresh the list before retrying.",
+    created: "Created.",
+    saved: "Saved.",
+    deleted: "Deleted.",
+    submitting: "Submitting…",
     create: "Create",
     save: "Save",
     cancel: "Cancel",

@@ -94,20 +94,36 @@ function ProfileAvatarFallback({ label }: { label: string }) {
 }
 
 export function BotProfilesPage() {
-  const { t, i18n } = useTranslation("botData");
   const { botId } = useParams<{ botId: string }>();
+  return <BotProfilesContent key={botId} botId={botId} />;
+}
+
+function BotProfilesContent({ botId }: { botId: string | undefined }) {
+  const { t, i18n } = useTranslation("botData");
   const canManageBot = useCanManageBot();
-  const [profiles, setProfiles] = useState<ProfileItem[]>([]);
-  const [total, setTotal] = useState(0);
+  const [result, setResult] = useState<{
+    key: string;
+    profiles: ProfileItem[];
+    total: number;
+  } | null>(null);
+  const [listState, setListState] = useState({ key: "", pending: true, failed: false });
+  const [refresh, setRefresh] = useState(0);
+  const listRequestRef = useRef(0);
+  const mountedRef = useRef(false);
+  const mutationRef = useRef(false);
+  const recoveryRef = useRef(false);
+  const [pendingAction, setPendingAction] = useState<"create" | "save" | "delete" | null>(null);
+  const [mutationError, setMutationError] = useState<"create" | "save" | "delete" | null>(null);
+  const [success, setSuccess] = useState<"created" | "saved" | "deleted" | null>(null);
+  const busy = pendingAction !== null;
+  const creating = pendingAction === "create";
+  const saving = pendingAction === "save";
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
   const [editForm, setEditForm] = useState<EditForm | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [creating, setCreating] = useState(false);
   const [createForm, setCreateForm] = useState<CreateForm>(emptyCreateForm);
   const [showCreate, setShowCreate] = useState(false);
   const [bindingTelegramId, setBindingTelegramId] = useState<number | null>(null);
@@ -139,33 +155,66 @@ export function BotProfilesPage() {
     [locale],
   );
 
-  const loadProfiles = useCallback(async () => {
-    if (!botId) return;
-    setLoading(true);
-    try {
-      const res = await client.api.bots[":botId"].profiles.$get({
-        param: { botId },
-        query: {
-          page: String(page),
-          limit: String(limit),
-          ...(search ? { search } : {}),
-        },
-      });
-      const json = await res.json();
-      if (json.ok) {
-        setProfiles(json.data as ProfileItem[]);
-        setTotal(json.total);
-      }
-    } catch (err) {
-      console.error("Failed to load profiles:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [botId, page, search]);
+  const queryKey = JSON.stringify([page, search]);
+  const currentResult = result?.key === queryKey ? result : null;
+  const profiles = currentResult?.profiles ?? [];
+  const total = currentResult?.total ?? 0;
+  const loading = listState.key !== queryKey || listState.pending;
+  const loadFailed = listState.key === queryKey && listState.failed;
+  const controlsDisabled = busy || (mutationError !== null && loading);
 
   useEffect(() => {
-    loadProfiles();
-  }, [loadProfiles]);
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      activeBindingTelegramIdRef.current = null;
+      bindingsRequestRef.current += 1;
+      bindingCandidatesRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    const requestId = ++listRequestRef.current;
+    const controller = new AbortController();
+    const isCurrent = () => mountedRef.current && requestId === listRequestRef.current;
+    setListState({ key: queryKey, pending: true, failed: false });
+    const load = async () => {
+      try {
+        if (!botId) throw new Error("Missing Bot");
+        const res = await client.api.bots[":botId"].profiles.$get(
+          {
+            param: { botId },
+            query: { page: String(page), limit: String(limit), ...(search ? { search } : {}) },
+          },
+          { init: { signal: controller.signal } },
+        );
+        if (!res.ok) throw new Error("Profile request failed");
+        const json = await res.json();
+        if (!json.ok) throw new Error("Profile request failed");
+        if (isCurrent()) {
+          setResult({ key: queryKey, profiles: json.data as ProfileItem[], total: json.total });
+          setListState({ key: queryKey, pending: false, failed: false });
+        }
+      } catch {
+        if (isCurrent()) setListState({ key: queryKey, pending: false, failed: true });
+      } finally {
+        if (isCurrent()) recoveryRef.current = false;
+      }
+    };
+    void load();
+    return () => {
+      listRequestRef.current += 1;
+      controller.abort();
+    };
+  }, [botId, page, search, queryKey, refresh]);
+
+  const refreshProfiles = () => {
+    if (mutationError) {
+      recoveryRef.current = true;
+      setListState({ key: queryKey, pending: true, failed: false });
+    }
+    setRefresh((value) => value + 1);
+  };
 
   useEffect(() => {
     bindingsRequestRef.current += 1;
@@ -187,7 +236,8 @@ export function BotProfilesPage() {
 
   const loadBindings = useCallback(
     async (telegramId: number) => {
-      if (!botId || activeBindingTelegramIdRef.current !== telegramId) return;
+      if (!mountedRef.current || !botId || activeBindingTelegramIdRef.current !== telegramId)
+        return;
       const requestId = ++bindingsRequestRef.current;
       setBindingsLoading(true);
       setBindingError(null);
@@ -306,23 +356,53 @@ export function BotProfilesPage() {
   };
 
   const handleSearch = () => {
+    if (mutationRef.current || recoveryRef.current) return;
+    setSuccess(null);
     setPage(1);
     setSearch(searchInput);
   };
 
+  const beginMutation = (action: "create" | "save" | "delete") => {
+    if (mutationRef.current || recoveryRef.current) return false;
+    mutationRef.current = true;
+    setPendingAction(action);
+    setMutationError(null);
+    setSuccess(null);
+    return true;
+  };
+  const finishMutation = () => {
+    mutationRef.current = false;
+    if (mountedRef.current) setPendingAction(null);
+  };
+
   const handleDelete = async (profileId: number) => {
-    if (!botId || !window.confirm(t("profiles.deleteConfirm"))) return;
+    if (
+      !botId ||
+      mutationRef.current ||
+      recoveryRef.current ||
+      !window.confirm(t("profiles.deleteConfirm"))
+    )
+      return;
+    if (!beginMutation("delete")) return;
     try {
-      await client.api.bots[":botId"].profiles[":profileId"].$delete({
+      const res = await client.api.bots[":botId"].profiles[":profileId"].$delete({
         param: { botId, profileId: String(profileId) },
       });
-      loadProfiles();
-    } catch (err) {
-      console.error("Failed to delete profile:", err);
+      if (!res.ok || !(await res.json()).ok) throw new Error("Profile deletion failed");
+      if (!mountedRef.current) return;
+      setSuccess("deleted");
+      refreshProfiles();
+    } catch {
+      if (mountedRef.current) setMutationError("delete");
+    } finally {
+      finishMutation();
     }
   };
 
   const startEdit = (p: ProfileItem) => {
+    if (mutationRef.current || recoveryRef.current) return;
+    setMutationError(null);
+    setSuccess(null);
     setEditingId(p.id);
     setEditForm(profileToEditForm(p));
   };
@@ -337,17 +417,19 @@ export function BotProfilesPage() {
   };
 
   const cancelEdit = () => {
+    if (mutationRef.current || recoveryRef.current) return;
+    setMutationError(null);
     setEditingId(null);
     setEditForm(null);
   };
 
   const handleSave = async () => {
     if (!botId || !editForm || editingId === null) return;
-    setSaving(true);
+    if (!beginMutation("save")) return;
     try {
       const traits = parseList(editForm.traits);
       const interests = parseList(editForm.interests);
-      await client.api.bots[":botId"].profiles[":profileId"].$put({
+      const res = await client.api.bots[":botId"].profiles[":profileId"].$put({
         param: { botId, profileId: String(editingId) },
         json: {
           displayName: emptyToNull(editForm.displayName),
@@ -358,20 +440,27 @@ export function BotProfilesPage() {
           interests: interests.length > 0 ? interests : null,
         },
       });
-      cancelEdit();
-      loadProfiles();
-    } catch (err) {
-      console.error("Failed to save profile:", err);
+      if (!res.ok || !(await res.json()).ok) throw new Error("Profile save failed");
+      if (!mountedRef.current) return;
+      setEditingId(null);
+      setEditForm(null);
+      setSuccess("saved");
+      refreshProfiles();
+    } catch {
+      if (mountedRef.current) setMutationError("save");
     } finally {
-      setSaving(false);
+      finishMutation();
     }
   };
 
   const handleCreate = async () => {
-    if (!botId) return;
+    if (!botId || mutationRef.current || recoveryRef.current) return;
     const telegramId = Number(createForm.telegramId);
-    if (!telegramId || Number.isNaN(telegramId)) return;
-    setCreating(true);
+    if (!telegramId || !Number.isFinite(telegramId)) {
+      setMutationError("create");
+      return;
+    }
+    if (!beginMutation("create")) return;
     try {
       const traits = parseList(createForm.traits);
       const interests = parseList(createForm.interests);
@@ -387,18 +476,31 @@ export function BotProfilesPage() {
           interests: interests.length > 0 ? interests : undefined,
         },
       });
-      if (!response.ok) {
-        throw new Error(`Failed to create profile: HTTP ${response.status}`);
-      }
+      if (!response.ok || !(await response.json()).ok) throw new Error("Profile creation failed");
+      if (!mountedRef.current) return;
       setShowCreate(false);
       setCreateForm(emptyCreateForm);
-      loadProfiles();
-    } catch (err) {
-      console.error("Failed to create profile:", err);
+      setSuccess("created");
+      refreshProfiles();
+    } catch {
+      if (mountedRef.current) setMutationError("create");
     } finally {
-      setCreating(false);
+      finishMutation();
     }
   };
+
+  const renderMutationError = (action: "create" | "save" | "delete") =>
+    mutationError === action && (
+      <div
+        role="alert"
+        className="border-destructive/30 bg-destructive/5 text-destructive flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+      >
+        <p>{t(`common.${action}Failed`)}</p>
+        <Button variant="outline" size="sm" disabled={loading || busy} onClick={refreshProfiles}>
+          {t("common.refreshList")}
+        </Button>
+      </div>
+    );
 
   const totalPages = Math.ceil(total / limit);
 
@@ -407,20 +509,42 @@ export function BotProfilesPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex items-baseline gap-3">
           <h1 className="text-2xl font-bold">{t("profiles.title")}</h1>
-          <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
-            {t("common.total", { value: numberFormatter.format(total) })}
-          </span>
+          {currentResult && !(total === 0 && (loading || loadFailed)) && (
+            <span className="text-muted-foreground shrink-0 text-sm whitespace-nowrap">
+              {t("common.total", { value: numberFormatter.format(total) })}
+            </span>
+          )}
         </div>
         <Button
           variant="outline"
           size="sm"
           className="w-full shrink-0 sm:ml-auto sm:w-auto"
-          onClick={() => setShowCreate(!showCreate)}
+          disabled={controlsDisabled}
+          onClick={() => {
+            setShowCreate(!showCreate);
+            setMutationError(null);
+            setSuccess(null);
+          }}
         >
           <Plus className="h-4 w-4" />
           {t("profiles.add")}
         </Button>
       </div>
+
+      {success && (
+        <p
+          role="status"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+        >
+          {t(`common.${success}`)}
+        </p>
+      )}
+      {busy && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {t("common.submitting")}
+        </p>
+      )}
+      {renderMutationError("delete")}
 
       {showCreate && (
         <Card>
@@ -428,115 +552,119 @@ export function BotProfilesPage() {
             <CardTitle className="text-sm">{t("profiles.new")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="create-telegram-id" className="text-muted-foreground text-xs">
-                  {t("profiles.telegramId")} *
-                </label>
-                <Input
-                  id="create-telegram-id"
-                  value={createForm.telegramId}
-                  onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
-                  placeholder="123456789"
-                />
+            {renderMutationError("create")}
+            <fieldset disabled={controlsDisabled} className="min-w-0 space-y-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="create-telegram-id" className="text-muted-foreground text-xs">
+                    {t("profiles.telegramId")} *
+                  </label>
+                  <Input
+                    id="create-telegram-id"
+                    value={createForm.telegramId}
+                    onChange={(e) => setCreateForm({ ...createForm, telegramId: e.target.value })}
+                    placeholder="123456789"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="create-display-name" className="text-muted-foreground text-xs">
+                    {t("profiles.displayName")}
+                  </label>
+                  <Input
+                    id="create-display-name"
+                    value={createForm.displayName}
+                    onChange={(e) => setCreateForm({ ...createForm, displayName: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="create-username" className="text-muted-foreground text-xs">
+                    {t("profiles.username")}
+                  </label>
+                  <Input
+                    id="create-username"
+                    value={createForm.username}
+                    onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="create-relationship" className="text-muted-foreground text-xs">
+                    {t("profiles.relationship")}
+                  </label>
+                  <Input
+                    id="create-relationship"
+                    value={createForm.relationship}
+                    onChange={(e) => setCreateForm({ ...createForm, relationship: e.target.value })}
+                  />
+                </div>
               </div>
               <div>
-                <label htmlFor="create-display-name" className="text-muted-foreground text-xs">
-                  {t("profiles.displayName")}
+                <label htmlFor="create-notes" className="text-muted-foreground text-xs">
+                  {t("profiles.notes")}
                 </label>
-                <Input
-                  id="create-display-name"
-                  value={createForm.displayName}
-                  onChange={(e) => setCreateForm({ ...createForm, displayName: e.target.value })}
+                <Textarea
+                  id="create-notes"
+                  className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                  rows={3}
+                  value={createForm.notes}
+                  onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })}
                 />
               </div>
-              <div>
-                <label htmlFor="create-username" className="text-muted-foreground text-xs">
-                  {t("profiles.username")}
-                </label>
-                <Input
-                  id="create-username"
-                  value={createForm.username}
-                  onChange={(e) => setCreateForm({ ...createForm, username: e.target.value })}
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="create-traits" className="text-muted-foreground text-xs">
+                    {t("profiles.traits")}
+                  </label>
+                  <Input
+                    id="create-traits"
+                    value={createForm.traits}
+                    onChange={(e) => setCreateForm({ ...createForm, traits: e.target.value })}
+                    placeholder={t("profiles.traitsPlaceholder")}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="create-interests" className="text-muted-foreground text-xs">
+                    {t("profiles.interests")}
+                  </label>
+                  <Input
+                    id="create-interests"
+                    value={createForm.interests}
+                    onChange={(e) => setCreateForm({ ...createForm, interests: e.target.value })}
+                    placeholder={t("profiles.interestsPlaceholder")}
+                  />
+                </div>
               </div>
-              <div>
-                <label htmlFor="create-relationship" className="text-muted-foreground text-xs">
-                  {t("profiles.relationship")}
-                </label>
-                <Input
-                  id="create-relationship"
-                  value={createForm.relationship}
-                  onChange={(e) => setCreateForm({ ...createForm, relationship: e.target.value })}
-                />
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleCreate}
+                  disabled={controlsDisabled || !createForm.telegramId}
+                >
+                  {creating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4" />
+                  )}
+                  {t("common.create")}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowCreate(false);
+                    setCreateForm(emptyCreateForm);
+                    setMutationError(null);
+                  }}
+                >
+                  <X className="h-4 w-4" />
+                  {t("common.cancel")}
+                </Button>
               </div>
-            </div>
-            <div>
-              <label htmlFor="create-notes" className="text-muted-foreground text-xs">
-                {t("profiles.notes")}
-              </label>
-              <Textarea
-                id="create-notes"
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                rows={3}
-                value={createForm.notes}
-                onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })}
-              />
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <label htmlFor="create-traits" className="text-muted-foreground text-xs">
-                  {t("profiles.traits")}
-                </label>
-                <Input
-                  id="create-traits"
-                  value={createForm.traits}
-                  onChange={(e) => setCreateForm({ ...createForm, traits: e.target.value })}
-                  placeholder={t("profiles.traitsPlaceholder")}
-                />
-              </div>
-              <div>
-                <label htmlFor="create-interests" className="text-muted-foreground text-xs">
-                  {t("profiles.interests")}
-                </label>
-                <Input
-                  id="create-interests"
-                  value={createForm.interests}
-                  onChange={(e) => setCreateForm({ ...createForm, interests: e.target.value })}
-                  placeholder={t("profiles.interestsPlaceholder")}
-                />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleCreate}
-                disabled={creating || !createForm.telegramId}
-              >
-                {creating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Check className="h-4 w-4" />
-                )}
-                {t("common.create")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setShowCreate(false);
-                  setCreateForm(emptyCreateForm);
-                }}
-              >
-                <X className="h-4 w-4" />
-                {t("common.cancel")}
-              </Button>
-            </div>
+            </fieldset>
           </CardContent>
         </Card>
       )}
 
-      <div className="flex flex-col gap-2 sm:flex-row">
+      <fieldset disabled={controlsDisabled} className="flex min-w-0 flex-col gap-2 sm:flex-row">
         <Input
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
@@ -554,6 +682,7 @@ export function BotProfilesPage() {
             size="sm"
             className="w-full sm:w-auto"
             onClick={() => {
+              setSuccess(null);
               setSearch("");
               setSearchInput("");
               setPage(1);
@@ -562,11 +691,31 @@ export function BotProfilesPage() {
             {t("common.clear")}
           </Button>
         )}
-      </div>
+      </fieldset>
 
-      {loading ? (
-        <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
-      ) : profiles.length === 0 ? (
+      {loadFailed && (
+        <div
+          role="alert"
+          className={cn(
+            "flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between",
+            currentResult
+              ? "border-amber-200 bg-amber-50 text-amber-950"
+              : "border-destructive/30 bg-destructive/5 text-destructive",
+          )}
+        >
+          <p>{t(currentResult ? "common.refreshFailed" : "common.loadFailed")}</p>
+          <Button variant="outline" size="sm" disabled={controlsDisabled} onClick={refreshProfiles}>
+            {t("common.retry")}
+          </Button>
+        </div>
+      )}
+      {loading && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {t("common.loading")}
+        </p>
+      )}
+      {!currentResult ||
+      (profiles.length === 0 && (loading || loadFailed)) ? null : profiles.length === 0 ? (
         <p className="text-muted-foreground text-sm">{t("profiles.empty")}</p>
       ) : (
         <div className="space-y-3">
@@ -622,121 +771,124 @@ export function BotProfilesPage() {
               </CardHeader>
               <CardContent className="space-y-2 pt-0">
                 {editingId === p.id && editForm ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label
-                          htmlFor={`edit-display-name-${p.id}`}
-                          className="text-muted-foreground text-xs"
-                        >
-                          {t("profiles.displayName")}
-                        </label>
-                        <Input
-                          id={`edit-display-name-${p.id}`}
-                          value={editForm.displayName}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              displayName: e.target.value,
-                            })
-                          }
-                        />
+                  <>
+                    {renderMutationError("save")}
+                    <fieldset disabled={controlsDisabled} className="min-w-0 space-y-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor={`edit-display-name-${p.id}`}
+                            className="text-muted-foreground text-xs"
+                          >
+                            {t("profiles.displayName")}
+                          </label>
+                          <Input
+                            id={`edit-display-name-${p.id}`}
+                            value={editForm.displayName}
+                            onChange={(e) =>
+                              setEditForm({
+                                ...editForm,
+                                displayName: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`edit-username-${p.id}`}
+                            className="text-muted-foreground text-xs"
+                          >
+                            {t("profiles.username")}
+                          </label>
+                          <Input
+                            id={`edit-username-${p.id}`}
+                            value={editForm.username}
+                            onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`edit-relationship-${p.id}`}
+                            className="text-muted-foreground text-xs"
+                          >
+                            {t("profiles.relationship")}
+                          </label>
+                          <Input
+                            id={`edit-relationship-${p.id}`}
+                            value={editForm.relationship}
+                            onChange={(e) =>
+                              setEditForm({
+                                ...editForm,
+                                relationship: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
                       </div>
                       <div>
                         <label
-                          htmlFor={`edit-username-${p.id}`}
+                          htmlFor={`edit-notes-${p.id}`}
                           className="text-muted-foreground text-xs"
                         >
-                          {t("profiles.username")}
+                          {t("profiles.notes")}
                         </label>
-                        <Input
-                          id={`edit-username-${p.id}`}
-                          value={editForm.username}
-                          onChange={(e) => setEditForm({ ...editForm, username: e.target.value })}
+                        <Textarea
+                          id={`edit-notes-${p.id}`}
+                          className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                          rows={3}
+                          value={editForm.notes}
+                          onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
                         />
                       </div>
-                      <div>
-                        <label
-                          htmlFor={`edit-relationship-${p.id}`}
-                          className="text-muted-foreground text-xs"
-                        >
-                          {t("profiles.relationship")}
-                        </label>
-                        <Input
-                          id={`edit-relationship-${p.id}`}
-                          value={editForm.relationship}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              relationship: e.target.value,
-                            })
-                          }
-                        />
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor={`edit-traits-${p.id}`}
+                            className="text-muted-foreground text-xs"
+                          >
+                            {t("profiles.traits")}
+                          </label>
+                          <Input
+                            id={`edit-traits-${p.id}`}
+                            value={editForm.traits}
+                            onChange={(e) => setEditForm({ ...editForm, traits: e.target.value })}
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`edit-interests-${p.id}`}
+                            className="text-muted-foreground text-xs"
+                          >
+                            {t("profiles.interests")}
+                          </label>
+                          <Input
+                            id={`edit-interests-${p.id}`}
+                            value={editForm.interests}
+                            onChange={(e) =>
+                              setEditForm({
+                                ...editForm,
+                                interests: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <label
-                        htmlFor={`edit-notes-${p.id}`}
-                        className="text-muted-foreground text-xs"
-                      >
-                        {t("profiles.notes")}
-                      </label>
-                      <Textarea
-                        id={`edit-notes-${p.id}`}
-                        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
-                        rows={3}
-                        value={editForm.notes}
-                        onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label
-                          htmlFor={`edit-traits-${p.id}`}
-                          className="text-muted-foreground text-xs"
-                        >
-                          {t("profiles.traits")}
-                        </label>
-                        <Input
-                          id={`edit-traits-${p.id}`}
-                          value={editForm.traits}
-                          onChange={(e) => setEditForm({ ...editForm, traits: e.target.value })}
-                        />
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={handleSave} disabled={controlsDisabled}>
+                          {saving ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Check className="h-4 w-4" />
+                          )}
+                          {t("common.save")}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={cancelEdit}>
+                          <X className="h-4 w-4" />
+                          {t("common.cancel")}
+                        </Button>
                       </div>
-                      <div>
-                        <label
-                          htmlFor={`edit-interests-${p.id}`}
-                          className="text-muted-foreground text-xs"
-                        >
-                          {t("profiles.interests")}
-                        </label>
-                        <Input
-                          id={`edit-interests-${p.id}`}
-                          value={editForm.interests}
-                          onChange={(e) =>
-                            setEditForm({
-                              ...editForm,
-                              interests: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={handleSave} disabled={saving}>
-                        {saving ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Check className="h-4 w-4" />
-                        )}
-                        {t("common.save")}
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={cancelEdit}>
-                        <X className="h-4 w-4" />
-                        {t("common.cancel")}
-                      </Button>
-                    </div>
-                  </div>
+                    </fieldset>
+                  </>
                 ) : (
                   <>
                     {p.relationship && (
@@ -792,7 +944,7 @@ export function BotProfilesPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => toggleBindings(p)}
-                        disabled={bindingSaving}
+                        disabled={bindingSaving || controlsDisabled}
                         aria-expanded={bindingTelegramId === p.telegramId}
                       >
                         {bindingTelegramId === p.telegramId
@@ -811,7 +963,7 @@ export function BotProfilesPage() {
                           canManage={canManageBot}
                           bindingsLoading={bindingsLoading}
                           candidatesLoading={bindingCandidatesLoading}
-                          saving={bindingSaving}
+                          saving={bindingSaving || controlsDisabled}
                           error={bindingError}
                           onSearchChange={setBindingSearchInput}
                           onCompositionStart={() => setBindingComposing(true)}
@@ -837,6 +989,7 @@ export function BotProfilesPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={controlsDisabled}
                           onClick={() => startEdit(p)}
                           title={t("profiles.editTitle")}
                           aria-label={t("profiles.editTitle")}
@@ -846,6 +999,7 @@ export function BotProfilesPage() {
                         <Button
                           variant="ghost"
                           size="sm"
+                          disabled={controlsDisabled}
                           onClick={() => handleDelete(p.id)}
                           title={t("profiles.deleteTitle")}
                           aria-label={t("profiles.deleteTitle")}
@@ -862,7 +1016,17 @@ export function BotProfilesPage() {
         </div>
       )}
 
-      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      <fieldset disabled={controlsDisabled} className="min-w-0">
+        <Pagination
+          page={page}
+          totalPages={totalPages}
+          onPageChange={(nextPage) => {
+            if (mutationRef.current || recoveryRef.current) return;
+            setSuccess(null);
+            setPage(nextPage);
+          }}
+        />
+      </fieldset>
     </div>
   );
 }
