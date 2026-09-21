@@ -87,6 +87,11 @@ export const aiSettings = {
   navigation: {
     settingsSection: "设置分类",
     ariaLabel: "AI 设置分类",
+    searchSettings: "搜索设置…",
+    clearSearch: "清除搜索",
+    noSearchResults: "没有匹配的设置",
+    searchResultCount_one: "找到 {{count}} 个设置",
+    searchResultCount_other: "找到 {{count}} 个设置",
     overview: "概览",
     overviewDescription: "状态与快捷操作",
     providers: "服务商与模型",

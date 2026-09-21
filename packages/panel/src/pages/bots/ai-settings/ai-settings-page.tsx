@@ -48,6 +48,7 @@ import {
   type AiSettingsSectionId,
 } from "./components/ai-settings-navigation";
 import { SettingsDisclosureRow } from "./components/settings-disclosure-row";
+import { AiSettingsSearch, type AiSettingsSearchItem } from "./components/ai-settings-search";
 import { OverviewSection } from "./sections/overview-section";
 import { AgentToolsSection } from "./sections/agent-tools-section";
 import { GitHubToolsSection } from "./sections/github-tools-section";
@@ -95,6 +96,12 @@ import {
   renameProviderModelReferences,
   resolveManagedProviderIdAfterSave,
 } from "./utils";
+import {
+  AI_SETTING_DEFINITIONS,
+  findAiSettingDefinition,
+  settingElementId,
+  type AiSettingId,
+} from "./settings-index";
 
 const DEFAULT_SUMMARY_CONFIG: SummaryConfigStored = {
   enabled: false,
@@ -156,6 +163,8 @@ export function BotAiSettingsPage() {
       searchParams.get("githubApp") === "connected" || searchParams.get("githubApp") === "error",
   );
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [pendingFocusSettingId, setPendingFocusSettingId] = useState<AiSettingId | null>(null);
+  const settingsHeaderRef = useRef<HTMLDivElement>(null);
   const [summaryConfig, setSummaryConfig] = useState<SummaryConfigStored>(DEFAULT_SUMMARY_CONFIG);
   const [imageOcrConfig, setImageOcrConfig] = useState<ImageOcrConfig>(DEFAULT_IMAGE_OCR_CONFIG);
   const [executionConfig, setExecutionConfig] = useState<AiExecutionConfigDraft>(() =>
@@ -207,16 +216,77 @@ export function BotAiSettingsPage() {
     ],
     [t],
   );
+  const settingItems: AiSettingsSearchItem[] = useMemo(
+    () =>
+      AI_SETTING_DEFINITIONS.map((setting) => ({
+        id: setting.id,
+        label: t(setting.titleKey),
+        description: t(setting.descriptionKey),
+        sectionLabel:
+          sectionItems.find((section) => section.id === setting.section)?.label ?? setting.section,
+      })),
+    [sectionItems, t],
+  );
   const requestedSection = searchParams.get("section") as AiSettingsSectionId | null;
-  const activeSection = sectionItems.some((item) => item.id === requestedSection)
-    ? requestedSection!
-    : "overview";
+  const requestedSetting = findAiSettingDefinition(searchParams.get("setting"));
+  const activeSection =
+    requestedSetting?.section ??
+    (sectionItems.some((item) => item.id === requestedSection) ? requestedSection! : "overview");
   const setActiveSection = (section: AiSettingsSectionId) => {
     const next = new URLSearchParams(searchParams);
     if (section === "overview") next.delete("section");
     else next.set("section", section);
+    next.delete("setting");
     setSearchParams(next);
   };
+  const setActiveSetting = (settingId: AiSettingId, replace = false) => {
+    const setting = findAiSettingDefinition(settingId);
+    if (!setting) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("section", setting.section);
+    next.set("setting", setting.id);
+    setSearchParams(next, { replace });
+  };
+  const handleSettingOpenChange = (settingId: AiSettingId, open: boolean) => {
+    if (open) {
+      setActiveSetting(settingId, true);
+      return;
+    }
+    if (searchParams.get("setting") !== settingId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("setting");
+    setSearchParams(next, { replace: true });
+  };
+
+  useEffect(() => {
+    if (!requestedSetting || requestedSection === requestedSetting.section) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("section", requestedSetting.section);
+    setSearchParams(next, { replace: true });
+  }, [requestedSection, requestedSetting, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    if (loading || !requestedSetting) return;
+    const frame = window.requestAnimationFrame(() => {
+      const target = document.getElementById(settingElementId(requestedSetting.id));
+      if (!target) return;
+      target.style.scrollMarginTop = `${(settingsHeaderRef.current?.offsetHeight ?? 0) + 16}px`;
+      target.scrollIntoView({ block: "start" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection, loading, requestedSetting]);
+
+  useEffect(() => {
+    if (loading || !pendingFocusSettingId || requestedSetting?.id !== pendingFocusSettingId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const settingId = settingElementId(pendingFocusSettingId);
+      const trigger = document.getElementById(`${settingId}-trigger`);
+      if (!trigger) return;
+      trigger.focus({ preventScroll: true });
+      setPendingFocusSettingId(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSection, loading, pendingFocusSettingId, requestedSetting]);
 
   useEffect(() => {
     const callbackResult = searchParams.get("githubApp");
@@ -234,6 +304,7 @@ export function BotAiSettingsPage() {
     next.delete("githubApp");
     next.delete("message");
     next.set("section", "tools");
+    next.set("setting", "github-tools");
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams, t]);
 
@@ -391,6 +462,11 @@ export function BotAiSettingsPage() {
   );
   const isDirty = isConfigDirty || isSelectionDirty;
   const executionConfigUpdate = toExecutionConfigUpdate(executionConfig);
+  const disclosureProps = (settingId: AiSettingId) => ({
+    settingId,
+    reveal: requestedSetting?.id === settingId,
+    onOpenChange: (open: boolean) => handleSettingOpenChange(settingId, open),
+  });
 
   useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -816,7 +892,10 @@ export function BotAiSettingsPage() {
 
   return (
     <div className="mx-auto max-w-[1180px] space-y-5">
-      <div className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]">
+      <div
+        ref={settingsHeaderRef}
+        className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]"
+      >
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
@@ -862,6 +941,19 @@ export function BotAiSettingsPage() {
             </Button>
           </div>
         </div>
+        <AiSettingsSearch
+          items={settingItems}
+          onSelect={(settingId) => {
+            setPendingFocusSettingId(settingId);
+            setActiveSetting(settingId);
+          }}
+          labels={{
+            search: t("navigation.searchSettings"),
+            clear: t("navigation.clearSearch"),
+            noResults: t("navigation.noSearchResults"),
+            resultCount: (count) => t("navigation.searchResultCount", { count }),
+          }}
+        />
         <AiSettingsNavigation
           items={sectionItems}
           activeId={activeSection}
@@ -1003,6 +1095,7 @@ export function BotAiSettingsPage() {
           {activeSection === "replies" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
+                {...disclosureProps("reply-prompts")}
                 title={t("disclosures.replyPrompts.title")}
                 description={t("disclosures.replyPrompts.description")}
                 defaultOpen
@@ -1014,6 +1107,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("engagement")}
                 title={t("engagement.title")}
                 description={t("engagement.description")}
                 summary={t(`engagement.modes.${config.engagement?.mode ?? "off"}`)}
@@ -1039,6 +1133,7 @@ export function BotAiSettingsPage() {
                 )}
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("triggers")}
                 title={t("disclosures.triggers.title")}
                 description={t("disclosures.triggers.description")}
                 summary={t("disclosures.triggers.summary", {
@@ -1053,6 +1148,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("conversation-context")}
                 title={t("disclosures.conversationContext.title")}
                 description={t("disclosures.conversationContext.description")}
               >
@@ -1064,6 +1160,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("execution")}
                 title={t("disclosures.execution.title")}
                 description={t("disclosures.execution.description")}
                 summary={t("disclosures.execution.summary", {
@@ -1073,6 +1170,7 @@ export function BotAiSettingsPage() {
                 <ExecutionConfigSection config={executionConfig} onUpdate={setExecutionConfig} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("message-delivery")}
                 title={t("disclosures.messageDelivery.title")}
                 description={t("disclosures.messageDelivery.description")}
               >
@@ -1083,12 +1181,14 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("timeouts")}
                 title={t("disclosures.timeouts.title")}
                 description={t("disclosures.timeouts.description")}
               >
                 <TimeoutSection config={timeoutCfg} onUpdate={updateTimeoutConfig} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("sticker-packs")}
                 title={t("disclosures.stickerPacks.title")}
                 description={t("disclosures.stickerPacks.description")}
               >
@@ -1103,6 +1203,7 @@ export function BotAiSettingsPage() {
           {activeSection === "memory" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
+                {...disclosureProps("conversation-memory")}
                 title={t("disclosures.conversationMemory.title")}
                 description={t("disclosures.conversationMemory.description")}
                 summary={memCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1110,6 +1211,7 @@ export function BotAiSettingsPage() {
                 <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("bot-memory")}
                 title={t("disclosures.botMemory.title")}
                 description={t("disclosures.botMemory.description")}
                 summary={botMemCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1117,6 +1219,7 @@ export function BotAiSettingsPage() {
                 <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("embeddings")}
                 title={t("disclosures.embeddings.title")}
                 description={t("disclosures.embeddings.description")}
                 summary={embCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1124,6 +1227,7 @@ export function BotAiSettingsPage() {
                 <EmbeddingSection config={embCfg} onUpdate={updateEmbedding} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("chat-summaries")}
                 title={t("disclosures.chatSummaries.title")}
                 description={t("disclosures.chatSummaries.description")}
                 summary={summaryConfig.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1140,6 +1244,7 @@ export function BotAiSettingsPage() {
           {activeSection === "tools" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
+                {...disclosureProps("web-tools")}
                 title={t("disclosures.webTools.title")}
                 description={t("disclosures.webTools.description")}
                 summary={webCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1154,6 +1259,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("image-generation-receipt")}
                 title={t("disclosures.imageGenerationReceipt.title")}
                 description={t("disclosures.imageGenerationReceipt.description")}
                 summary={t("disclosures.imageGenerationReceipt.summary", {
@@ -1166,6 +1272,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("github-tools")}
                 title={t("disclosures.githubTools.title")}
                 description={t("disclosures.githubTools.description")}
                 summary={githubCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1182,6 +1289,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("agent-tools")}
                 title={t("disclosures.agentTools.title")}
                 description={t("disclosures.agentTools.description")}
                 summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1189,6 +1297,7 @@ export function BotAiSettingsPage() {
                 <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("artwork-tools")}
                 title={t("disclosures.artworkTools.title")}
                 description={t("disclosures.artworkTools.description")}
                 summary={artworkCfg.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1196,6 +1305,7 @@ export function BotAiSettingsPage() {
                 <ArtworkToolsSection config={artworkCfg} onUpdate={updateArtworkTools} />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("mcp-servers")}
                 title={t("disclosures.mcpServers.title")}
                 description={t("disclosures.mcpServers.description")}
                 summary={t("disclosures.mcpServers.summary", {
@@ -1208,6 +1318,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("image-ocr")}
                 title={t("disclosures.imageOcr.title")}
                 description={t("disclosures.imageOcr.description")}
                 summary={imageOcrConfig.enabled ? t("common.enabled") : t("common.disabled")}
@@ -1225,6 +1336,7 @@ export function BotAiSettingsPage() {
           {activeSection === "access" && (
             <div className="space-y-3">
               <SettingsDisclosureRow
+                {...disclosureProps("private-whitelist")}
                 title={t("disclosures.privateWhitelist.title")}
                 description={t("disclosures.privateWhitelist.description")}
                 summary={t("disclosures.privateWhitelist.summary", {
@@ -1250,6 +1362,7 @@ export function BotAiSettingsPage() {
                 />
               </SettingsDisclosureRow>
               <SettingsDisclosureRow
+                {...disclosureProps("group-overrides")}
                 title={t("disclosures.groupOverrides.title")}
                 description={t("disclosures.groupOverrides.description")}
                 summary={t("disclosures.groupOverrides.summary", {
