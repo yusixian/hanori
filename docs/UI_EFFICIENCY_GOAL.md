@@ -44,7 +44,7 @@
 
 ## 当前迭代
 
-- v0.10.0 人物检索与记忆筛选已完成实现、本地验证和独立审查修复，正在走 CI/合入/发布；详见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md) 的 v0.10.0 记录。旧 v0.9.1 后续候选已进入本轮，不重复按未实现问题处理。
+- v0.10.0 人物检索与记忆筛选已通过 PR #95 合入并发布；main/tag/Release目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`，PR CI `35660728032` completed/success。合入后 CI `35661423268` 已核实 completed/success，精确SHA为发布目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`。完整证据见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md)。
 
 - v0.9.1 档案/记忆错误恢复已通过 PR #94 合入并发布，main/tag/Release目标 `fb5f65469f86dff72005085c4b5d745e7b796949`；PR CI `35654979772` completed/success，合入后 CI `35655824699` 已核实 completed/success，精确SHA为发布目标 `fb5f65469f86dff72005085c4b5d745e7b796949`。完整证据见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md)。
 
@@ -165,8 +165,17 @@
 
 - 基线main `60d90dc08437eb2554d81f88a81f2df86f6dc666`；管理人物搜索真实分页/总数，AI搜索仍10条；人物直达用户记忆，紧凑组合筛选、URL、无效ID明确报错。
 - 原范围写入确认、可见编辑草稿、latest history保护和普通read重试分别处理；Sol独立审查与真实浏览器发现已修复，具体触发与证据见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md)。
-- 本地两页50项浏览器回归、后端43项、相关类型/lint/format/i18n2345、Panel构建通过；临时PG真实SQL25条20＋5/隔离/字段/稳定排序通过；桌面手机生产夹具通过，文档类型/构建和14项检查通过。CI、合入、发布待补录。
+- 本地两页50项浏览器回归、后端43项、相关类型/lint/format/i18n2345、Panel构建通过；临时PG真实SQL25条20＋5/隔离/字段/稳定排序通过；桌面手机生产夹具通过，文档类型/构建和14项检查及最终文案4项复验通过。
+- PR #95 已核实MERGED；PR CI 35660728032 completed/success，head `9032321d2a63cb43907036599d60f5ef58fb26fa`。合入文件树与该head完全一致。
+- v0.10.0 已公开、非draft/预发布；main/tag/Release目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`，远端tag及正文与 `docs/releases/v0.10.0.md` 一致。
+- 合入后CI `35661423268` 已核实 completed/success，精确SHA为发布目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`；公共指南、版本导航与发布正文来源一致，合入后已核实文件树。证据 `record-search-final/`、`profile-search-database-final.json` 和 `docs-v0.10.0/` 均在 `.acceptance/ui-efficiency/`。5192预览及55491临时PG已关闭，没有生产部署。
 
 ## 后续工作
 
-先完成 v0.10.0 的CI、合入、发布及合入后文档核对，再复核已确定高频旅程的剩余优先问题。持续授权保持有效，长期目标继续active；不把历史候选未经复现就当作当前缺陷。
+v0.10.0 已完成合入、发布、合入后CI和文档核对；随后复核已确定高频旅程的剩余优先问题。持续授权保持有效，长期目标继续active；不把历史候选未经复现就当作当前缺陷。
+
+下一轮优先处理会话管理错误恢复。会话列表HTTP500误显示空态已在桌面/手机生产夹具复现，详见 [会话管理基线](UI_CONVERSATIONS_AUDIT.md)。其余由Sol在当前源码只读发现的候选仍待浏览器复现，尚未开始实现：
+
+- `packages/panel/src/pages/bots/conversations/index.tsx` 的消息和摘要读取失败缺少可见反馈，可能落入空态；核对HTTP500/网络失败/业务失败与就地重试。
+- 会话列表仅有分页；`messages-pane.tsx` 的角色可见性过滤仅作用当前消息页。先核对实际查找路径和筛选文案，再决定搜索或服务端筛选范围。
+- 单条消息/摘要删除的网络与业务失败缺少可见反馈；整会话删除已有独立错误对话框，后续只围绕已复现的单项操作补确认和恢复，保留权限与服务端删除语义。

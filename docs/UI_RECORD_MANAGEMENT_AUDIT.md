@@ -68,4 +68,10 @@ Sol对当前源码只读追踪确认：Panel传page/limit/search，GET profiles�
 - 最终本地人物26＋记忆24＝50项浏览器回归通过，后端4文件43项通过，Panel/Server类型、相关lint/format、i18n2345 keys和Panel生产构建通过。AI/App共享路由探索期间另跑65项通过；最终未修改App或全局路由配置，不把探索范围算作本轮产品变动。
 - 真实Store SQL复验：25条20＋5分页、total25、Bot隔离、displayName/username/notes/traits/interests字段、同时间id排序、AI10条及通配符。证据 `profile-search-database-final.json`；对应端口55491临时PG已关闭。完整API使用独立Hono契约测试，SQL探针不声称全服务器端到端验证。
 - 生产预览1440×900与390×844分别24/22个模拟请求，覆盖25档案分页、人物Link、reload、快速Back/Forward、长分类、非法ID、初始错误恢复、新建预填；无页面错误/横向溢出，主代理已查看实际截图。证据 `.acceptance/ui-efficiency/record-search-final/`，脚本 `verify-record-search.mjs`。
-- 公共隐私/记忆、导航指南和v0.10.0正文/导航同步；文档typecheck/build与14项匿名访问、搜索、导航及深链桌面手机检查通过。GitHub CI、合入和发布证据在完成后补录。未部署生产。
+- 公共隐私/记忆、导航指南和v0.10.0正文/导航同步；文档typecheck/build与14项匿名访问、搜索、导航及深链桌面手机检查通过。最终文案另复验4项通过，截图归档 `docs-v0.10.0/`。未部署生产。
+
+### v0.10.0 合入与发布
+
+- PR #95 已核实MERGED，PR head `9032321d2a63cb43907036599d60f5ef58fb26fa`；完整CI `35660728032` completed/success，单元/浏览器/公共文档门禁均通过。
+- 合入文件树与已验证head完全一致，main/tag/Release目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`；v0.10.0公开且非预发布，远端tag和Release正文与仓库说明核实一致。
+- 合入后CI `35661423268` 已核实 completed/success，精确SHA为发布目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`。合入后核对公共指南、版本导航及生成页来源一致，临时5192预览和55491 PostgreSQL已关闭，没有生产部署。
