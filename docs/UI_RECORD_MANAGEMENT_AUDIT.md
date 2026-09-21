@@ -40,3 +40,19 @@
 ## 后续效率候选
 
 本轮桌面截图显示记忆的搜索、分类、范围控件各占一行；与人物搜索分页/具体用户筛选一起，后续可单独评估检索效率。该布局观察来自 `record-management-final/1440-memories-created-refresh-error.png`，不列为 v0.9.1 已解决项。类别元数据加载失败仍沿用已有降级行为，未扩大本轮接口范围。
+
+## 合入与发布
+
+- PR #94 已合入，PR head `31ce57ec8e32bbf6d22c795796de8ebe79b58f7e`；完整CI `35654979772` completed/success。
+- 合入文件树与该head完全一致，main/tag/Release目标 `fb5f65469f86dff72005085c4b5d745e7b796949`；v0.9.1公开且非预发布，正文与仓库版本说明核实一致。
+- 合入后CI `35655824699` 已核实 completed/success，精确SHA为发布目标 `fb5f65469f86dff72005085c4b5d745e7b796949`。指南、版本导航和生成版本页来源已经同步，没有生产部署。
+
+## 下一轮检索效率调查
+
+Sol对当前源码只读追踪确认：Panel传page/limit/search，GET profiles搜索分支忽略分页，store.searchProfiles固定limit10且路由把返回长度当total，因此第11项以后的匹配不可达。这是代码路径证据，尚未增加真实数据库或浏览器边界复现。
+
+建议保留供AI memory/tool callback使用的searchProfiles 10条语义，为管理侧listProfiles扩展可选search，统一rows/count筛选并加入lastSeen/id稳定排序。Panel复用现有Pagination。搜索通配符现有语义保持，是否改literal搜索另作明确决定。
+
+验收应覆盖25个匹配档案的20+5两页、真实total、Bot隔离、原搜索字段、清空回第一页和请求切换；数据库测试不能以Panel模拟API代替。
+
+记忆API现有telegramId可选字符串：general对应NULL，可转数字的字符串精确匹配，省略不过滤；非数字目前静默忽略。工作区viewer可读，写要求owner/admin/editor，列表保留Bot范围。面板仅有全部/通用，没有具体用户输入。下一版需决定明确的输入/URL状态、错误处理和紧凑桌面布局，避免用户输入无效ID却看到全部结果。
