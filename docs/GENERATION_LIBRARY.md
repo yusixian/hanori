@@ -1,7 +1,7 @@
 # 生成资产库维护与验收
 
 Issue #53 分成三个可独立关闭的能力：角色沉淀与原创角色、提示词资产、生成时自动注入。
-公共操作指南见 `packages/docs/content/docs/guides/media.mdx`。
+公共操作指南见 `packages/docs/content/docs/guides/generation-library.mdx`。
 
 ## 数据与权限
 
