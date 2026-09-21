@@ -25,8 +25,11 @@ export function BotLogsPage() {
   const [level, setLevel] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [chatIdInput, setChatIdInput] = useState("");
   const [chatId, setChatId] = useState("");
+  const [correlationIdInput, setCorrelationIdInput] = useState("");
   const [correlationId, setCorrelationId] = useState("");
+  const [clearError, setClearError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const composingRef = useRef(false);
   const [livePaused, setLivePaused] = useState(false);
@@ -36,7 +39,7 @@ export function BotLogsPage() {
     if (composingRef.current) return;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      setSearch(searchInput);
+      setSearch(searchInput.trim());
       setPage(1);
     }, 300);
     return () => {
@@ -65,12 +68,22 @@ export function BotLogsPage() {
 
   const clearLogs = async () => {
     if (!window.confirm(t("logs.confirmClear"))) return;
-    await client.api.logs.$delete({ query: { botId: botId! } });
-    clearLiveLogs();
-    setPausedLiveLogs([]);
-    setLivePaused(false);
-    setPage(1);
-    invalidate({ resource: "logs", invalidates: ["list"] });
+    setClearError(null);
+    try {
+      const response = await client.api.logs.$delete({ query: { botId: botId! } });
+      const body = await response.json();
+      if (!response.ok || !body.ok) {
+        setClearError(t("admin:logs.clearFailed"));
+        return;
+      }
+      clearLiveLogs();
+      setPausedLiveLogs([]);
+      setLivePaused(false);
+      setPage(1);
+      invalidate({ resource: "logs", invalidates: ["list"] });
+    } catch {
+      setClearError(t("admin:logs.clearFailed"));
+    }
   };
 
   const logs = data?.data ?? [];
@@ -140,11 +153,15 @@ export function BotLogsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative">
+      <div
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(14rem,1.2fr)_9rem_11rem_minmax(14rem,1fr)]"
+        data-testid="log-filters"
+      >
+        <div className="relative min-w-0">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2" />
           <Input
-            className="w-56 pl-8"
+            className="w-full pl-8"
+            maxLength={500}
             placeholder={t("logs.searchPlaceholder")}
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -153,18 +170,20 @@ export function BotLogsPage() {
             }}
             onCompositionEnd={(e) => {
               composingRef.current = false;
-              setSearch(e.currentTarget.value);
+              setSearch(e.currentTarget.value.trim());
               setPage(1);
             }}
             aria-label={t("logs.searchPlaceholder")}
           />
         </div>
         <Select
+          className="w-full"
           value={level}
           onChange={(e) => {
             setLevel(e.target.value);
             setPage(1);
           }}
+          aria-label={t("logs.allLevels")}
         >
           <option value="">{t("logs.allLevels")}</option>
           <option value="debug">Debug</option>
@@ -173,27 +192,39 @@ export function BotLogsPage() {
           <option value="error">Error</option>
         </Select>
         <Input
-          className="w-44 font-mono"
+          className="w-full font-mono"
           inputMode="numeric"
+          maxLength={32}
           placeholder={t("logs.chatIdPlaceholder")}
-          value={chatId}
+          value={chatIdInput}
           onChange={(event) => {
-            setChatId(event.target.value);
+            const nextValue = event.target.value;
+            if (!/^-?\d*$/.test(nextValue)) return;
+            setChatIdInput(nextValue);
+            setChatId(nextValue === "-" ? "" : nextValue);
             setPage(1);
           }}
           aria-label={t("logs.chatIdPlaceholder")}
         />
         <Input
-          className="min-w-56 flex-1 font-mono"
+          className="w-full min-w-0 font-mono"
+          maxLength={200}
           placeholder={t("logs.correlationIdPlaceholder")}
-          value={correlationId}
+          value={correlationIdInput}
           onChange={(event) => {
-            setCorrelationId(event.target.value);
+            setCorrelationIdInput(event.target.value);
+            setCorrelationId(event.target.value.trim());
             setPage(1);
           }}
           aria-label={t("logs.correlationIdPlaceholder")}
         />
       </div>
+
+      {clearError && (
+        <p className="text-destructive text-sm" role="alert">
+          {clearError}
+        </p>
+      )}
 
       {/* Log list */}
       <Card>

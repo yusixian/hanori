@@ -128,6 +128,8 @@ export const admin = {
     title: "日志",
     clear: "清空日志",
     clearConfirm: "确定清空所有日志吗？",
+    clearBotConfirm: "确定清空“{{botName}}”的所有日志吗？",
+    clearFailed: "日志清空失败，请重试。",
     live: "实时连接",
     disconnected: "已断开",
     realTime: "实时日志",

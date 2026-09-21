@@ -27,8 +27,11 @@ export function LogsListPage() {
   const [botOptions, setBotOptions] = useState<BotWithStatus[]>([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [chatIdInput, setChatIdInput] = useState("");
   const [chatId, setChatId] = useState("");
+  const [correlationIdInput, setCorrelationIdInput] = useState("");
   const [correlationId, setCorrelationId] = useState("");
+  const [clearError, setClearError] = useState<string | null>(null);
   const composingRef = useRef(false);
   const [livePaused, setLivePaused] = useState(false);
   const [pausedLiveLogs, setPausedLiveLogs] = useState<LogEntry[]>([]);
@@ -53,7 +56,7 @@ export function LogsListPage() {
   useEffect(() => {
     if (composingRef.current) return;
     const timeout = window.setTimeout(() => {
-      setSearch(searchInput);
+      setSearch(searchInput.trim());
       setPage(1);
     }, 300);
     return () => window.clearTimeout(timeout);
@@ -76,13 +79,27 @@ export function LogsListPage() {
   const invalidate = useInvalidate();
 
   const clearLogs = async () => {
-    if (!window.confirm(t("logs.clearConfirm"))) return;
-    await client.api.logs.$delete({ query: botId ? { botId } : {} });
-    clearLiveLogs();
-    setPausedLiveLogs([]);
-    setLivePaused(false);
-    setPage(1);
-    invalidate({ resource: "logs", invalidates: ["list"] });
+    const selectedBotName = botOptions.find((bot) => bot.id === botId)?.name ?? botId;
+    const confirmation = botId
+      ? t("logs.clearBotConfirm", { botName: selectedBotName })
+      : t("logs.clearConfirm");
+    if (!window.confirm(confirmation)) return;
+    setClearError(null);
+    try {
+      const response = await client.api.logs.$delete({ query: botId ? { botId } : {} });
+      const body = await response.json();
+      if (!response.ok || !body.ok) {
+        setClearError(t("logs.clearFailed"));
+        return;
+      }
+      clearLiveLogs();
+      setPausedLiveLogs([]);
+      setLivePaused(false);
+      setPage(1);
+      invalidate({ resource: "logs", invalidates: ["list"] });
+    } catch {
+      setClearError(t("logs.clearFailed"));
+    }
   };
 
   const logs = data?.data ?? [];
@@ -153,11 +170,15 @@ export function LogsListPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative">
+      <div
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(12rem,1.2fr)_7.5rem_10rem_9rem_minmax(12rem,1fr)]"
+        data-testid="log-filters"
+      >
+        <div className="relative min-w-0">
           <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
           <Input
-            className="w-56 pl-8"
+            className="w-full pl-8"
+            maxLength={500}
             placeholder={t("logs.searchPlaceholder")}
             value={searchInput}
             onChange={(event) => setSearchInput(event.target.value)}
@@ -166,18 +187,20 @@ export function LogsListPage() {
             }}
             onCompositionEnd={(event) => {
               composingRef.current = false;
-              setSearch(event.currentTarget.value);
+              setSearch(event.currentTarget.value.trim());
               setPage(1);
             }}
             aria-label={t("logs.searchPlaceholder")}
           />
         </div>
         <Select
+          className="w-full"
           value={level}
           onChange={(e) => {
             setLevel(e.target.value);
             setPage(1);
           }}
+          aria-label={t("logs.allLevels")}
         >
           <option value="">{t("logs.allLevels")}</option>
           <option value="debug">Debug</option>
@@ -186,6 +209,7 @@ export function LogsListPage() {
           <option value="error">Error</option>
         </Select>
         <Select
+          className="w-full"
           value={botId}
           onChange={(e) => {
             setBotId(e.target.value);
@@ -199,6 +223,7 @@ export function LogsListPage() {
               setSearchParams({});
             }
           }}
+          aria-label={t("logs.allBots")}
         >
           <option value="">{t("logs.allBots")}</option>
           {botOptions.map((bot) => (
@@ -208,27 +233,39 @@ export function LogsListPage() {
           ))}
         </Select>
         <Input
-          className="w-44 font-mono"
+          className="w-full font-mono"
           inputMode="numeric"
+          maxLength={32}
           placeholder={t("logs.chatIdPlaceholder")}
-          value={chatId}
+          value={chatIdInput}
           onChange={(event) => {
-            setChatId(event.target.value);
+            const nextValue = event.target.value;
+            if (!/^-?\d*$/.test(nextValue)) return;
+            setChatIdInput(nextValue);
+            setChatId(nextValue === "-" ? "" : nextValue);
             setPage(1);
           }}
           aria-label={t("logs.chatIdPlaceholder")}
         />
         <Input
-          className="min-w-56 flex-1 font-mono"
+          className="w-full min-w-0 font-mono"
+          maxLength={200}
           placeholder={t("logs.correlationIdPlaceholder")}
-          value={correlationId}
+          value={correlationIdInput}
           onChange={(event) => {
-            setCorrelationId(event.target.value);
+            setCorrelationIdInput(event.target.value);
+            setCorrelationId(event.target.value.trim());
             setPage(1);
           }}
           aria-label={t("logs.correlationIdPlaceholder")}
         />
       </div>
+
+      {clearError && (
+        <p className="text-destructive text-sm" role="alert">
+          {clearError}
+        </p>
+      )}
 
       {/* Log list */}
       <Card>
