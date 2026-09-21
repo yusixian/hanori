@@ -114,11 +114,13 @@ export function MessageBubble({
   onDelete,
   pendingDelete,
   deleteBusy,
+  deleteDisabled = false,
 }: {
   msg: ConversationMessage;
   onDelete?: (messageId: number) => void;
   pendingDelete?: boolean;
   deleteBusy?: boolean;
+  deleteDisabled?: boolean;
 }) {
   const { t, i18n } = useTranslation("bots");
   const isToolCall = msg.role === "tool_call" && msg.meta;
@@ -169,7 +171,7 @@ export function MessageBubble({
           {onDelete ? (
             <button
               type="button"
-              disabled={deleteBusy}
+              disabled={deleteBusy || deleteDisabled}
               data-active={pendingDelete || deleteBusy ? "true" : undefined}
               className={cn(
                 "hover-action focus-visible:ring-ring flex size-10 items-center justify-center rounded-lg transition-[background-color,color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none",

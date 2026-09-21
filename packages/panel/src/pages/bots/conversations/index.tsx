@@ -2,18 +2,17 @@ import { Button } from "@/components/ui/button";
 import { Pagination } from "@/components/ui/pagination";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Inbox, Loader2, MessageSquareText, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Inbox, Loader2, MessageSquareText, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
-import { toast } from "sonner";
 import { PENDING_DELETE_MS } from "./constants";
 import { ConversationDetailHeader } from "./conversation-detail-header";
 import { ConversationListItem } from "./conversation-list-item";
 import { ConversationToolbar } from "./conversation-toolbar";
 import { MessagesPane } from "./messages-pane";
 import { SummaryCard } from "./summary-card";
-import type { ConversationItem, ConversationMessage, ConversationSummary } from "./types";
+import { useConversationPage } from "./use-conversation-page";
 
 function PaneLoading({ label }: { label: string }) {
   return (
@@ -29,24 +28,54 @@ function PaneLoading({ label }: { label: string }) {
 }
 
 export function BotConversationsPage() {
-  const { t } = useTranslation("bots");
   const { botId } = useParams<{ botId: string }>();
-  const [conversations, setConversations] = useState<ConversationItem[]>([]);
-  const [total, setTotal] = useState(0);
+  return <BotConversationsContent key={botId} botId={botId} />;
+}
+
+function ReadFailure({
+  label,
+  stale,
+  retry,
+  disabled,
+  firstPage,
+}: {
+  label: string;
+  stale: boolean;
+  retry: () => void;
+  disabled: boolean;
+  firstPage?: () => void;
+}) {
+  const { t } = useTranslation("bots");
+  return (
+    <div
+      role="alert"
+      className="m-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"
+    >
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{label}</p>
+        {stale ? <p className="mt-1 text-xs leading-5">{t("conversations.staleData")}</p> : null}
+      </div>
+      {firstPage ? (
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={firstPage}>
+          {t("conversations.firstPage")}
+        </Button>
+      ) : null}
+      <Button variant="outline" size="sm" disabled={disabled} onClick={retry}>
+        {t("conversations.retry")}
+      </Button>
+    </div>
+  );
+}
+
+function BotConversationsContent({ botId }: { botId: string | undefined }) {
+  const { t } = useTranslation("bots");
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
   const [selectedChat, setSelectedChat] = useState<number | null>(null);
-  const [messages, setMessages] = useState<ConversationMessage[]>([]);
-  const [msgTotal, setMsgTotal] = useState(0);
   const [msgPage, setMsgPage] = useState(1);
-  const [msgLoading, setMsgLoading] = useState(false);
   const [showTools, setShowTools] = useState(false);
   const [showSystem, setShowSystem] = useState(false);
   const [detailView, setDetailView] = useState<"messages" | "summaries">("messages");
-  const [summaries, setSummaries] = useState<ConversationSummary[]>([]);
-  const [sumTotal, setSumTotal] = useState(0);
   const [sumPage, setSumPage] = useState(1);
-  const [sumLoading, setSumLoading] = useState(false);
   const [sumPendingDelete, setSumPendingDelete] = useState<number | null>(null);
   const [sumDeleteBusy, setSumDeleteBusy] = useState<number | null>(null);
   const [msgPendingDelete, setMsgPendingDelete] = useState<number | null>(null);
@@ -58,9 +87,20 @@ export function BotConversationsPage() {
   const [confirmDeleteBusy, setConfirmDeleteBusy] = useState(false);
   const [confirmDeleteError, setConfirmDeleteError] = useState<string | null>(null);
 
+  const [notice, setNotice] = useState<{
+    kind: "unknown" | "deleted" | "active";
+    needsRefresh: boolean;
+  } | null>(null);
+  const [recovering, setRecovering] = useState(false);
+  const mountedRef = useRef(false);
+  const mutationRef = useRef(false);
+  const recoveryRequiredRef = useRef(false);
+  const recoveryTargetRef = useRef<{
+    key: string;
+    request: (signal: AbortSignal) => Promise<unknown>;
+  } | null>(null);
+  const recoveryControllerRef = useRef<AbortController | null>(null);
   const msgContainerRef = useRef<HTMLDivElement>(null);
-  const msgReqToken = useRef(0);
-  const sumReqToken = useRef(0);
   const msgPendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sumPendingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deleteDialogRef = useRef<HTMLDivElement>(null);
@@ -74,24 +114,127 @@ export function BotConversationsPage() {
   const msgLimit = 50;
   const sumLimit = 20;
 
+  const requestConversations = useCallback(
+    async (signal: AbortSignal) => {
+      if (!botId) throw new Error("Missing Bot");
+      const response = await client.api.bots[":botId"].conversations.$get(
+        {
+          param: { botId },
+          query: { page: String(page), limit: String(limit) },
+        },
+        { init: { signal } },
+      );
+      if (!response.ok) throw new Error("Conversation request failed");
+      const json = await response.json();
+      if (!json.ok) throw new Error("Conversation request failed");
+      return json;
+    },
+    [botId, page],
+  );
+  const requestMessages = useCallback(
+    async (signal: AbortSignal) => {
+      if (!botId || selectedChat === null) throw new Error("Missing conversation");
+      const response = await client.api.bots[":botId"].conversations[":chatId"].$get(
+        {
+          param: { botId, chatId: String(selectedChat) },
+          query: { page: String(msgPage), limit: String(msgLimit) },
+        },
+        { init: { signal } },
+      );
+      if (!response.ok) throw new Error("Message request failed");
+      const json = await response.json();
+      if (!json.ok) throw new Error("Message request failed");
+      return json;
+    },
+    [botId, selectedChat, msgPage],
+  );
+  const requestSummaries = useCallback(
+    async (signal: AbortSignal) => {
+      if (!botId || selectedChat === null) throw new Error("Missing conversation");
+      const response = await client.api.bots[":botId"].conversations[":chatId"].summaries.$get(
+        {
+          param: { botId, chatId: String(selectedChat) },
+          query: { page: String(sumPage), limit: String(sumLimit) },
+        },
+        { init: { signal } },
+      );
+      if (!response.ok) throw new Error("Summary request failed");
+      const json = await response.json();
+      if (!json.ok) throw new Error("Summary request failed");
+      return json;
+    },
+    [botId, selectedChat, sumPage],
+  );
+  const list = useConversationPage(String(page), requestConversations);
+  const messageList = useConversationPage(
+    selectedChat !== null && detailView === "messages" ? `${selectedChat}:${msgPage}` : null,
+    requestMessages,
+  );
+  const summaryList = useConversationPage(
+    selectedChat !== null && detailView === "summaries" ? `${selectedChat}:${sumPage}` : null,
+    requestSummaries,
+  );
+  const conversations = list.result?.data ?? [];
+  const total = list.result?.total ?? 0;
+  const messages = messageList.result?.data ?? [];
+  const msgTotal = messageList.result?.total ?? 0;
+  const summaries = summaryList.result?.data ?? [];
+  const sumTotal = summaryList.result?.total ?? 0;
+  const loading = list.loading;
+  const msgLoading = messageList.loading;
+  const sumLoading = summaryList.loading;
+  const interactionBusy =
+    confirmDeleteBusy || msgDeleteBusy !== null || sumDeleteBusy !== null || recovering;
+  const writesDisabled =
+    interactionBusy || notice?.needsRefresh === true || loading || list.failed || !list.result;
+
   const resetConversationDetail = useCallback((chatId: number | null) => {
-    msgReqToken.current += 1;
-    sumReqToken.current += 1;
     setSelectedChat(chatId);
-    setMessages([]);
-    setMsgTotal(0);
-    setSummaries([]);
-    setSumTotal(0);
     setMsgPage(1);
     setSumPage(1);
     setDetailView("messages");
-    setMsgLoading(chatId !== null);
-    setSumLoading(false);
     setMsgPendingDelete(null);
     setSumPendingDelete(null);
-    setMsgDeleteBusy(null);
-    setSumDeleteBusy(null);
+    if (msgPendingTimer.current) clearTimeout(msgPendingTimer.current);
+    if (sumPendingTimer.current) clearTimeout(sumPendingTimer.current);
   }, []);
+
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      recoveryControllerRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (list.result && !loading && !list.failed && !interactionBusy) {
+      const lastPage = Math.max(1, Math.ceil(total / limit));
+      if (page > lastPage) setPage(lastPage);
+      if (selectedChat !== null && !conversations.some((item) => item.chatId === selectedChat))
+        resetConversationDetail(null);
+    }
+  }, [
+    list.result,
+    loading,
+    list.failed,
+    total,
+    page,
+    selectedChat,
+    conversations,
+    resetConversationDetail,
+    interactionBusy,
+  ]);
+  useEffect(() => {
+    if (messageList.result && !msgLoading && !messageList.failed) {
+      setMsgPage((current) => Math.min(current, Math.max(1, Math.ceil(msgTotal / msgLimit))));
+      msgContainerRef.current?.scrollTo({ top: 0 });
+    }
+  }, [messageList.result, msgLoading, messageList.failed, msgTotal]);
+  useEffect(() => {
+    if (summaryList.result && !sumLoading && !summaryList.failed)
+      setSumPage((current) => Math.min(current, Math.max(1, Math.ceil(sumTotal / sumLimit))));
+  }, [summaryList.result, sumLoading, summaryList.failed, sumTotal]);
 
   const focusConversationList = useCallback((chatId?: number) => {
     requestAnimationFrame(() => {
@@ -154,137 +297,73 @@ export function BotConversationsPage() {
     };
   }, [confirmDelete]);
 
-  const loadConversations = useCallback(
-    async (silent = false) => {
-      if (!botId) return;
-      if (!silent) setLoading(true);
-      try {
-        const res = await client.api.bots[":botId"].conversations.$get({
-          param: { botId },
-          query: { page: String(page), limit: String(limit) },
-        });
-        const json = await res.json();
-        if (json.ok) {
-          setConversations(json.data);
-          setTotal(json.total);
-        }
-      } catch (err) {
-        console.error("Failed to load conversations:", err);
-      } finally {
-        if (!silent) setLoading(false);
-      }
-    },
-    [botId, page],
-  );
-
-  const loadMessages = useCallback(async () => {
-    if (!botId || selectedChat === null) return;
-    const token = ++msgReqToken.current;
-    setMsgLoading(true);
-    try {
-      const res = await client.api.bots[":botId"].conversations[":chatId"].$get({
-        param: { botId, chatId: String(selectedChat) },
-        query: { page: String(msgPage), limit: String(msgLimit) },
-      });
-      const json = await res.json();
-      if (token !== msgReqToken.current) return;
-      if (json.ok) {
-        setMessages(json.data);
-        setMsgTotal(json.total);
-      }
-    } catch (err) {
-      console.error("Failed to load messages:", err);
-    } finally {
-      if (token === msgReqToken.current) {
-        setMsgLoading(false);
-        msgContainerRef.current?.scrollTo({ top: 0 });
-      }
-    }
-  }, [botId, selectedChat, msgPage]);
-
-  const loadSummaries = useCallback(async () => {
-    if (!botId || selectedChat === null) return;
-    const token = ++sumReqToken.current;
-    setSumLoading(true);
-    try {
-      const res = await client.api.bots[":botId"].conversations[":chatId"].summaries.$get({
-        param: { botId, chatId: String(selectedChat) },
-        query: { page: String(sumPage), limit: String(sumLimit) },
-      });
-      const json = await res.json();
-      if (token !== sumReqToken.current) return;
-      if (json.ok) {
-        setSummaries(json.data);
-        setSumTotal(json.total);
-      }
-    } catch (err) {
-      console.error("Failed to load summaries:", err);
-    } finally {
-      if (token === sumReqToken.current) setSumLoading(false);
-    }
-  }, [botId, selectedChat, sumPage]);
-
-  useEffect(() => {
-    loadConversations();
-  }, [loadConversations]);
-
-  useEffect(() => {
-    if (selectedChat !== null && detailView === "messages") {
-      loadMessages();
-    }
-  }, [loadMessages, selectedChat, detailView]);
-
-  useEffect(() => {
-    if (selectedChat !== null && detailView === "summaries") {
-      loadSummaries();
-    }
-  }, [loadSummaries, selectedChat, detailView]);
-
-  useEffect(() => {
-    setDetailView("messages");
-    setSumPage(1);
-    setSumPendingDelete(null);
-    setMsgPendingDelete(null);
-  }, [selectedChat]);
-
-  const handleClearAll = async () => {
-    if (!botId) return false;
-    try {
-      const response = await client.api.bots[":botId"].conversations.$delete({ param: { botId } });
-      if (!response.ok) throw new Error(`Failed to clear conversations (${response.status})`);
-      setConversations([]);
-      setTotal(0);
-      resetConversationDetail(null);
-      return true;
-    } catch (err) {
-      console.error("Failed to clear conversations:", err);
-      return false;
-    }
+  const refreshDisplayedData = async () => {
+    const results = await Promise.all([
+      list.refresh(),
+      selectedChat === null
+        ? Promise.resolve(true)
+        : detailView === "messages"
+          ? messageList.refresh()
+          : summaryList.refresh(),
+    ]);
+    return results.every(Boolean);
   };
 
-  const handleClearChat = async (chatId: number) => {
-    if (!botId) return false;
+  const recoverDeletion = async () => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
+    confirmDeleteBusyRef.current = true;
+    setRecovering(true);
     try {
-      const response = await client.api.bots[":botId"].conversations[":chatId"].$delete({
-        param: { botId, chatId: String(chatId) },
-      });
-      if (!response.ok) throw new Error(`Failed to delete conversation (${response.status})`);
-      const isLastOnPage = conversations.length === 1;
-      setConversations((prev) => prev.filter((c) => c.chatId !== chatId));
-      setTotal((prev) => Math.max(0, prev - 1));
-      if (selectedChat === chatId) {
-        resetConversationDetail(null);
+      const target = recoveryTargetRef.current;
+      const displayedKeys = [
+        `list:${page}`,
+        detailView === "messages"
+          ? `message:${selectedChat}:${msgPage}`
+          : `summary:${selectedChat}:${sumPage}`,
+      ];
+      const controller = new AbortController();
+      recoveryControllerRef.current = controller;
+      // Navigation remains available after a failure. Verify the original target
+      // too, without letting its old scope replace the page now being viewed.
+      const verifyOriginal = async () => {
+        if (!target || displayedKeys.includes(target.key)) return true;
+        try {
+          await target.request(controller.signal);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      const results = await Promise.all([refreshDisplayedData(), verifyOriginal()]);
+      if (!mountedRef.current) return;
+      if (results.every(Boolean)) {
+        recoveryTargetRef.current = null;
+        recoveryRequiredRef.current = false;
+        setNotice((current) =>
+          current?.kind === "deleted" ? { kind: "deleted", needsRefresh: false } : null,
+        );
+        setConfirmDeleteError(null);
+        if (confirmDelete) {
+          skipDialogFocusRestoreRef.current = true;
+          setConfirmDelete(null);
+          focusConversationList();
+        } else {
+          requestAnimationFrame(() => {
+            const tab = document.getElementById(`conversation-${detailView}-tab`);
+            (tab ?? conversationListHeadingRef.current)?.focus();
+          });
+        }
       }
-      if (isLastOnPage && page > 1) setPage((current) => current - 1);
-      else await loadConversations(true);
-      return true;
-    } catch (err) {
-      console.error("Failed to clear chat:", err);
-      return false;
+    } finally {
+      mutationRef.current = false;
+      confirmDeleteBusyRef.current = false;
+      if (mountedRef.current) setRecovering(false);
     }
   };
 
   const openDeleteDialog = (target: { kind: "all" | "chat"; chatId?: number }) => {
+    if (mutationRef.current || recoveryRequiredRef.current || writesDisabled) return;
     setConfirmDeleteError(null);
     setConfirmDelete(target);
   };
@@ -296,26 +375,48 @@ export function BotConversationsPage() {
   };
 
   const confirmConversationDelete = async () => {
-    if (!confirmDelete || confirmDeleteBusy) return;
-    const target = confirmDelete;
-    confirmDeleteBusyRef.current = true;
-    setConfirmDeleteBusy(true);
-    setConfirmDeleteError(null);
-    const deleted =
-      target.kind === "all"
-        ? await handleClearAll()
-        : target.chatId !== undefined && (await handleClearChat(target.chatId));
-    confirmDeleteBusyRef.current = false;
-    setConfirmDeleteBusy(false);
-
-    if (!deleted) {
-      setConfirmDeleteError(t("conversations.deleteFailed"));
+    if (!confirmDelete || mutationRef.current || !botId) return;
+    if (confirmDeleteError) {
+      await recoverDeletion();
       return;
     }
-
-    skipDialogFocusRestoreRef.current = true;
-    setConfirmDelete(null);
-    focusConversationList();
+    if (recoveryRequiredRef.current) return;
+    const target = confirmDelete;
+    recoveryTargetRef.current = { key: `list:${page}`, request: requestConversations };
+    mutationRef.current = true;
+    confirmDeleteBusyRef.current = true;
+    setConfirmDeleteBusy(true);
+    setNotice(null);
+    try {
+      const response =
+        target.kind === "all"
+          ? await client.api.bots[":botId"].conversations.$delete({ param: { botId } })
+          : await client.api.bots[":botId"].conversations[":chatId"].$delete({
+              param: { botId, chatId: String(target.chatId) },
+            });
+      if (!response.ok || !(await response.json()).ok) throw new Error("Delete not confirmed");
+      if (!mountedRef.current) return;
+      resetConversationDetail(null);
+      setNotice({ kind: "deleted", needsRefresh: false });
+      const refreshed = await list.refresh();
+      if (!mountedRef.current) return;
+      recoveryRequiredRef.current = !refreshed;
+      if (refreshed) recoveryTargetRef.current = null;
+      setNotice({ kind: "deleted", needsRefresh: !refreshed });
+      skipDialogFocusRestoreRef.current = true;
+      setConfirmDelete(null);
+      focusConversationList();
+    } catch {
+      if (mountedRef.current) {
+        recoveryRequiredRef.current = true;
+        setNotice({ kind: "unknown", needsRefresh: true });
+        setConfirmDeleteError(t("conversations.deleteUnconfirmed"));
+      }
+    } finally {
+      mutationRef.current = false;
+      confirmDeleteBusyRef.current = false;
+      if (mountedRef.current) setConfirmDeleteBusy(false);
+    }
   };
 
   const armPendingDelete = (
@@ -342,110 +443,86 @@ export function BotConversationsPage() {
     setPending(null);
   };
 
-  const handleDeleteSummary = async (id: number) => {
-    if (!botId || selectedChat === null) return;
-    if (summaries.some((summary) => summary.id === id && summary.isActive)) {
-      toast.error(t("conversations.activeSummaryDeleteBlocked"));
+  const deleteItem = async (kind: "message" | "summary", id: number) => {
+    if (
+      !botId ||
+      selectedChat === null ||
+      mutationRef.current ||
+      recoveryRequiredRef.current ||
+      writesDisabled
+    )
+      return;
+    const resource = kind === "message" ? messageList : summaryList;
+    if (resource.loading || resource.failed || !resource.result) return;
+    if (kind === "summary" && summaries.some((summary) => summary.id === id && summary.isActive))
+      return;
+    const pending = kind === "message" ? msgPendingDelete : sumPendingDelete;
+    const setPending = kind === "message" ? setMsgPendingDelete : setSumPendingDelete;
+    const timer = kind === "message" ? msgPendingTimer : sumPendingTimer;
+    if (pending !== id) {
+      armPendingDelete(id, setPending, timer);
       return;
     }
-    if (sumPendingDelete !== id) {
-      armPendingDelete(id, setSumPendingDelete, sumPendingTimer);
-      return;
-    }
-    clearPendingDelete(setSumPendingDelete, sumPendingTimer);
-    setSumDeleteBusy(id);
+    clearPendingDelete(setPending, timer);
+    recoveryTargetRef.current =
+      kind === "message"
+        ? { key: `message:${selectedChat}:${msgPage}`, request: requestMessages }
+        : { key: `summary:${selectedChat}:${sumPage}`, request: requestSummaries };
+    mutationRef.current = true;
+    const setBusy = kind === "message" ? setMsgDeleteBusy : setSumDeleteBusy;
+    setBusy(id);
+    setNotice(null);
     try {
-      const res = await client.api.bots[":botId"].conversations[":chatId"].summaries[":id"].$delete(
-        {
-          param: { botId, chatId: String(selectedChat), id: String(id) },
-        },
-      );
-      const json = await res.json();
-      if (!res.ok) {
-        toast.error(
-          res.status === 409
-            ? t("conversations.activeSummaryDeleteBlocked")
-            : t("conversations.deleteFailed"),
-        );
+      const response =
+        kind === "message"
+          ? await client.api.bots[":botId"].conversations[":chatId"].messages[":messageId"].$delete(
+              { param: { botId, chatId: String(selectedChat), messageId: String(id) } },
+            )
+          : await client.api.bots[":botId"].conversations[":chatId"].summaries[":id"].$delete({
+              param: { botId, chatId: String(selectedChat), id: String(id) },
+            });
+      if (kind === "summary" && response.status === 409) {
+        if (mountedRef.current) {
+          recoveryRequiredRef.current = true;
+          setNotice({ kind: "active", needsRefresh: true });
+        }
         return;
       }
-      if (json.ok) {
-        const isLastOnPage = summaries.length === 1;
-        setSummaries((prev) => prev.filter((s) => s.id !== id));
-        setSumTotal((prev) => Math.max(0, prev - 1));
-        setConversations((prev) =>
-          prev.map((c) => {
-            if (c.chatId !== selectedChat) return c;
-            const nextCount = Math.max(0, c.summaryCount - 1);
-            return { ...c, summaryCount: nextCount, hasSummaries: nextCount > 0 };
-          }),
-        );
-        if (sumTotal - 1 === 0) {
-          setDetailView("messages");
-        } else if (isLastOnPage && sumPage > 1) {
-          setSumLoading(true);
-          setSumPage((p) => p - 1);
-        }
+      if (!response.ok || !(await response.json()).ok) throw new Error("Delete not confirmed");
+      if (!mountedRef.current) return;
+      setNotice({ kind: "deleted", needsRefresh: false });
+      const refreshed = await refreshDisplayedData();
+      if (!mountedRef.current) return;
+      recoveryRequiredRef.current = !refreshed;
+      if (refreshed) recoveryTargetRef.current = null;
+      setNotice({ kind: "deleted", needsRefresh: !refreshed });
+    } catch {
+      if (mountedRef.current) {
+        recoveryRequiredRef.current = true;
+        setNotice({ kind: "unknown", needsRefresh: true });
       }
-    } catch (err) {
-      console.error("Failed to delete summary:", err);
     } finally {
-      setSumDeleteBusy(null);
+      mutationRef.current = false;
+      if (mountedRef.current) setBusy(null);
     }
   };
-
-  const handleDeleteMessage = async (messageId: number) => {
-    if (!botId || selectedChat === null) return;
-    if (msgPendingDelete !== messageId) {
-      armPendingDelete(messageId, setMsgPendingDelete, msgPendingTimer);
-      return;
-    }
-    clearPendingDelete(setMsgPendingDelete, msgPendingTimer);
-    setMsgDeleteBusy(messageId);
-    try {
-      const res = await client.api.bots[":botId"].conversations[":chatId"].messages[
-        ":messageId"
-      ].$delete({
-        param: { botId, chatId: String(selectedChat), messageId: String(messageId) },
-      });
-      if (!res.ok) throw new Error(`Failed to delete message (${res.status})`);
-      const json = await res.json();
-      if (json.ok) {
-        const isLastOnPage = messages.length === 1;
-        if (isLastOnPage && msgPage > 1) {
-          setMsgLoading(true);
-          setMsgPage((current) => current - 1);
-        } else {
-          setMessages((prev) => prev.filter((m) => m.id !== messageId));
-        }
-        setMsgTotal((prev) => Math.max(0, prev - 1));
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.chatId === selectedChat ? { ...c, messageCount: Math.max(0, c.messageCount - 1) } : c,
-          ),
-        );
-        await loadConversations(true);
-      }
-    } catch (err) {
-      console.error("Failed to delete message:", err);
-    } finally {
-      setMsgDeleteBusy(null);
-    }
-  };
+  const handleDeleteSummary = (id: number) => deleteItem("summary", id);
+  const handleDeleteMessage = (id: number) => deleteItem("message", id);
 
   const totalPages = Math.ceil(total / limit);
   const msgTotalPages = Math.ceil(msgTotal / msgLimit);
   const sumTotalPages = Math.max(1, Math.ceil(sumTotal / sumLimit));
   const selectedConv = conversations.find((c) => c.chatId === selectedChat) ?? null;
-  const hasSummaries = selectedConv?.hasSummaries ?? false;
+  const hasSummaries = detailView === "summaries" || (selectedConv?.hasSummaries ?? false);
 
   const handleConversationPageChange = (nextPage: number) => {
+    if (mutationRef.current) return;
     setPage(nextPage);
     resetConversationDetail(null);
   };
 
   const handleSelectConversation = (chatId: number) => {
-    if (selectedChat === chatId) return;
+    if (mutationRef.current || selectedChat === chatId) return;
     resetConversationDetail(chatId);
     if (!window.matchMedia("(min-width: 80rem)").matches) {
       requestAnimationFrame(() => backButtonRef.current?.focus());
@@ -453,6 +530,7 @@ export function BotConversationsPage() {
   };
 
   const handleBackToConversations = () => {
+    if (mutationRef.current) return;
     const previousChat = selectedChat;
     resetConversationDetail(null);
     focusConversationList(previousChat ?? undefined);
@@ -474,6 +552,33 @@ export function BotConversationsPage() {
             </p>
           </div>
         </div>
+
+        {notice ? (
+          <div
+            role={notice.needsRefresh ? "alert" : "status"}
+            className="flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"
+          >
+            <p className="min-w-0 flex-1">
+              {notice.kind === "active"
+                ? t("conversations.activeSummaryDeleteBlocked")
+                : notice.kind === "unknown"
+                  ? t("conversations.deleteUnconfirmed")
+                  : notice.needsRefresh
+                    ? t("conversations.deletedRefreshFailed")
+                    : t("conversations.deleted")}
+            </p>
+            {notice.needsRefresh ? (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={interactionBusy}
+                onClick={recoverDeletion}
+              >
+                {recovering ? t("conversations.refreshing") : t("conversations.refreshAndCheck")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid min-h-0 min-w-0 flex-1 overflow-hidden rounded-[20px] bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_-1px_rgb(15_23_42/0.06),0_12px_32px_-20px_rgb(15_23_42/0.2)] xl:grid-cols-[minmax(19rem,21rem)_minmax(0,1fr)]">
           <aside
@@ -497,14 +602,34 @@ export function BotConversationsPage() {
                 </p>
               </div>
               <div className="flex items-center gap-1">
-                <span className="text-muted-foreground rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold tabular-nums">
-                  {total}
-                </span>
+                {list.result ? (
+                  <span
+                    title={loading || list.failed ? t("conversations.staleData") : undefined}
+                    className="text-muted-foreground rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold tabular-nums"
+                  >
+                    {total}
+                  </span>
+                ) : null}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={loading || interactionBusy}
+                  onClick={() => {
+                    void (recoveryRequiredRef.current ? recoverDeletion() : list.refresh());
+                  }}
+                  aria-label={t("conversations.refreshConversations")}
+                >
+                  <RefreshCw
+                    className={cn("size-4", loading && "animate-spin")}
+                    aria-hidden="true"
+                  />
+                </Button>
                 {total > 0 ? (
                   <Button
                     variant="ghost"
                     size="icon"
                     className="text-muted-foreground hover:text-destructive size-10 transition-[background-color,color,scale] active:scale-[0.96]"
+                    disabled={writesDisabled}
                     onClick={() => openDeleteDialog({ kind: "all" })}
                     aria-label={t("conversations.clearAll")}
                     title={t("conversations.clearAll")}
@@ -515,9 +640,29 @@ export function BotConversationsPage() {
               </div>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden p-2" aria-busy={loading}>
-              {loading ? (
-                <PaneLoading label={t("conversations.loadingConversations")} />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2" aria-busy={loading}>
+              {list.failed ? (
+                <ReadFailure
+                  label={t("conversations.loadConversationsFailed")}
+                  firstPage={
+                    !list.result && page > 1 ? () => handleConversationPageChange(1) : undefined
+                  }
+                  stale={list.result !== null}
+                  disabled={interactionBusy}
+                  retry={() => {
+                    void (recoveryRequiredRef.current ? recoverDeletion() : list.refresh());
+                  }}
+                />
+              ) : null}
+              {loading && list.result ? (
+                <p role="status" className="text-muted-foreground px-3 py-2 text-xs">
+                  {t("conversations.refreshing")}
+                </p>
+              ) : null}
+              {!list.result ? (
+                loading ? (
+                  <PaneLoading label={t("conversations.loadingConversations")} />
+                ) : null
               ) : conversations.length === 0 ? (
                 <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
                   <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
@@ -537,6 +682,8 @@ export function BotConversationsPage() {
                       key={conversation.chatId}
                       conv={conversation}
                       selected={selectedChat === conversation.chatId}
+                      navigationDisabled={interactionBusy}
+                      deleteDisabled={writesDisabled}
                       onSelect={() => handleSelectConversation(conversation.chatId)}
                       onClear={() =>
                         openDeleteDialog({ kind: "chat", chatId: conversation.chatId })
@@ -551,6 +698,7 @@ export function BotConversationsPage() {
               <Pagination
                 page={page}
                 totalPages={totalPages}
+                disabled={interactionBusy}
                 onPageChange={handleConversationPageChange}
                 className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 px-3 py-2"
               />
@@ -570,6 +718,7 @@ export function BotConversationsPage() {
                   <button
                     ref={backButtonRef}
                     type="button"
+                    disabled={interactionBusy}
                     onClick={handleBackToConversations}
                     className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
                     aria-label={t("conversations.backToList")}
@@ -585,7 +734,22 @@ export function BotConversationsPage() {
                   summaryCount={selectedConv.summaryCount}
                   showSystem={showSystem}
                   showTools={showTools}
-                  onViewChange={setDetailView}
+                  disabled={interactionBusy}
+                  refreshing={detailView === "messages" ? msgLoading : sumLoading}
+                  onRefresh={() => {
+                    if (!mutationRef.current)
+                      void (recoveryRequiredRef.current
+                        ? recoverDeletion()
+                        : detailView === "messages"
+                          ? messageList.refresh()
+                          : summaryList.refresh());
+                  }}
+                  onViewChange={(next) => {
+                    if (mutationRef.current) return;
+                    setMsgPendingDelete(null);
+                    setSumPendingDelete(null);
+                    setDetailView(next);
+                  }}
                   onToggleSystem={() => setShowSystem((value) => !value)}
                   onToggleTools={() => setShowTools((value) => !value)}
                 />
@@ -598,8 +762,30 @@ export function BotConversationsPage() {
                     className="flex min-h-0 flex-1 flex-col"
                     aria-busy={msgLoading}
                   >
-                    {msgLoading ? (
-                      <PaneLoading label={t("conversations.loadingMessages")} />
+                    {messageList.failed ? (
+                      <ReadFailure
+                        label={t("conversations.loadMessagesFailed")}
+                        firstPage={
+                          !messageList.result && msgPage > 1 ? () => setMsgPage(1) : undefined
+                        }
+                        stale={messageList.result !== null}
+                        disabled={interactionBusy}
+                        retry={() => {
+                          void (recoveryRequiredRef.current
+                            ? recoverDeletion()
+                            : messageList.refresh());
+                        }}
+                      />
+                    ) : null}
+                    {msgLoading && messageList.result ? (
+                      <p role="status" className="text-muted-foreground px-4 py-2 text-xs">
+                        {t("conversations.refreshing")}
+                      </p>
+                    ) : null}
+                    {!messageList.result ? (
+                      msgLoading ? (
+                        <PaneLoading label={t("conversations.loadingMessages")} />
+                      ) : null
                     ) : messages.length === 0 ? (
                       <div className="text-muted-foreground flex min-h-56 flex-1 flex-col items-center justify-center px-6 text-center">
                         <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
@@ -618,10 +804,17 @@ export function BotConversationsPage() {
                         onDelete={handleDeleteMessage}
                         pendingDeleteId={msgPendingDelete}
                         deleteBusyId={msgDeleteBusy}
+                        deleteDisabled={writesDisabled || msgLoading || messageList.failed}
+                        navigationDisabled={interactionBusy}
                         containerRef={msgContainerRef}
                         page={msgPage}
                         totalPages={msgTotalPages}
-                        onPageChange={setMsgPage}
+                        onPageChange={(next) => {
+                          if (!mutationRef.current) {
+                            setMsgPendingDelete(null);
+                            setMsgPage(next);
+                          }
+                        }}
                       />
                     )}
                   </div>
@@ -633,8 +826,30 @@ export function BotConversationsPage() {
                     className="flex min-h-0 flex-1 flex-col"
                     aria-busy={sumLoading}
                   >
-                    {sumLoading ? (
-                      <PaneLoading label={t("conversations.loadingSummaries")} />
+                    {summaryList.failed ? (
+                      <ReadFailure
+                        label={t("conversations.loadSummariesFailed")}
+                        firstPage={
+                          !summaryList.result && sumPage > 1 ? () => setSumPage(1) : undefined
+                        }
+                        stale={summaryList.result !== null}
+                        disabled={interactionBusy}
+                        retry={() => {
+                          void (recoveryRequiredRef.current
+                            ? recoverDeletion()
+                            : summaryList.refresh());
+                        }}
+                      />
+                    ) : null}
+                    {sumLoading && summaryList.result ? (
+                      <p role="status" className="text-muted-foreground px-4 py-2 text-xs">
+                        {t("conversations.refreshing")}
+                      </p>
+                    ) : null}
+                    {!summaryList.result ? (
+                      sumLoading ? (
+                        <PaneLoading label={t("conversations.loadingSummaries")} />
+                      ) : null
                     ) : summaries.length === 0 ? (
                       <div className="text-muted-foreground flex min-h-56 flex-1 items-center justify-center text-sm">
                         {t("conversations.noSummaries")}
@@ -652,6 +867,7 @@ export function BotConversationsPage() {
                                 onDelete={handleDeleteSummary}
                                 pendingDelete={sumPendingDelete === summary.id}
                                 busy={sumDeleteBusy === summary.id}
+                                disabled={writesDisabled || sumLoading || summaryList.failed}
                               />
                             </li>
                           ))}
@@ -660,7 +876,13 @@ export function BotConversationsPage() {
                           <Pagination
                             page={sumPage}
                             totalPages={sumTotalPages}
-                            onPageChange={setSumPage}
+                            disabled={interactionBusy}
+                            onPageChange={(next) => {
+                              if (!mutationRef.current) {
+                                setSumPendingDelete(null);
+                                setSumPage(next);
+                              }
+                            }}
                             className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
                           />
                         ) : null}
@@ -728,7 +950,7 @@ export function BotConversationsPage() {
               <Button
                 ref={cancelDeleteButtonRef}
                 variant="outline"
-                disabled={confirmDeleteBusy}
+                disabled={confirmDeleteBusy || recovering}
                 onClick={closeDeleteDialog}
               >
                 {t("conversations.cancel")}
@@ -736,14 +958,18 @@ export function BotConversationsPage() {
               <Button
                 variant="destructive"
                 className="transition-[background-color,scale] active:scale-[0.96]"
-                disabled={confirmDeleteBusy}
+                disabled={confirmDeleteBusy || recovering}
                 onClick={confirmConversationDelete}
               >
-                {confirmDeleteBusy ? (
+                {recovering ? (
+                  t("conversations.refreshing")
+                ) : confirmDeleteBusy ? (
                   <>
                     <Loader2 className="size-4 animate-spin" aria-hidden="true" />
                     {t("conversations.deleting")}
                   </>
+                ) : confirmDeleteError ? (
+                  t("conversations.refreshAndCheck")
                 ) : (
                   t("conversations.delete")
                 )}

@@ -9,11 +9,13 @@ export function SummaryCard({
   onDelete,
   pendingDelete,
   busy,
+  disabled = false,
 }: {
   summary: ConversationSummary;
   onDelete: (id: number) => void;
   pendingDelete: boolean;
   busy: boolean;
+  disabled?: boolean;
 }) {
   const { t, i18n } = useTranslation("bots");
   return (
@@ -50,7 +52,7 @@ export function SummaryCard({
         </div>
         <button
           type="button"
-          disabled={busy || summary.isActive}
+          disabled={disabled || busy || summary.isActive}
           onClick={() => onDelete(summary.id)}
           aria-label={
             summary.isActive

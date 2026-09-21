@@ -8,16 +8,23 @@ interface PaginationProps {
   totalPages: number;
   onPageChange: (page: number) => void;
   className?: string;
+  disabled?: boolean;
 }
 
-export function Pagination({ page, totalPages, onPageChange, className }: PaginationProps) {
+export function Pagination({
+  page,
+  totalPages,
+  onPageChange,
+  className,
+  disabled = false,
+}: PaginationProps) {
   const { t } = useTranslation("common");
   const [editValue, setEditValue] = useState<string | null>(null);
 
   if (totalPages <= 1) return null;
 
   const handleSubmit = () => {
-    if (editValue === null) return;
+    if (disabled || editValue === null) return;
     const num = Number.parseInt(editValue, 10);
     if (!Number.isNaN(num)) {
       onPageChange(Math.min(Math.max(1, num), totalPages));
@@ -30,7 +37,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
       <Button
         variant="outline"
         size="sm"
-        disabled={page <= 1}
+        disabled={disabled || page <= 1}
         onClick={() => onPageChange(page - 1)}
         aria-label={t("pagination.previous")}
       >
@@ -39,6 +46,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
       {editValue !== null ? (
         <input
           type="text"
+          disabled={disabled}
           inputMode="numeric"
           autoFocus
           className="border-input text-muted-foreground focus:ring-ring/20 h-10 w-14 rounded-lg border bg-white text-center text-sm tabular-nums shadow-sm outline-none focus:ring-2"
@@ -54,6 +62,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
       ) : (
         <button
           type="button"
+          disabled={disabled}
           className="text-muted-foreground hover:text-foreground min-h-10 cursor-pointer rounded-lg px-2 text-sm tabular-nums transition-colors hover:bg-slate-100"
           onClick={() => setEditValue("")}
           title={t("pagination.jumpToPage")}
@@ -64,7 +73,7 @@ export function Pagination({ page, totalPages, onPageChange, className }: Pagina
       <Button
         variant="outline"
         size="sm"
-        disabled={page >= totalPages}
+        disabled={disabled || page >= totalPages}
         onClick={() => onPageChange(page + 1)}
         aria-label={t("pagination.next")}
       >

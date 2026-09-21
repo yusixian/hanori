@@ -29,11 +29,15 @@ export function ConversationListItem({
   selected,
   onSelect,
   onClear,
+  navigationDisabled = false,
+  deleteDisabled = false,
 }: {
   conv: ConversationItem;
   selected: boolean;
   onSelect: () => void;
   onClear: () => void;
+  navigationDisabled?: boolean;
+  deleteDisabled?: boolean;
 }) {
   const { t, i18n } = useTranslation("bots");
   const title = getConversationTitle(conv, t);
@@ -42,6 +46,7 @@ export function ConversationListItem({
     <li data-hover-actions className="group relative min-w-0">
       <button
         type="button"
+        disabled={navigationDisabled}
         data-conversation-id={conv.chatId}
         aria-current={selected ? "true" : undefined}
         onClick={onSelect}
@@ -94,6 +99,7 @@ export function ConversationListItem({
         variant="ghost"
         size="icon"
         className="hover-action text-muted-foreground hover:text-destructive absolute top-1.5 right-1.5 size-10 shrink-0 transition-[background-color,color,opacity,scale] active:scale-[0.96]"
+        disabled={deleteDisabled}
         onClick={onClear}
         aria-label={t("conversations.deleteConversationLabel", { chatId: conv.chatId })}
         title={t("conversations.deleteConversation")}

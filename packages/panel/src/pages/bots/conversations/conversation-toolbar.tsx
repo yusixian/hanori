@@ -1,5 +1,12 @@
 import { cn } from "@/lib/utils";
-import { BookOpen, MessageSquare, Terminal, Wrench, type LucideIcon } from "lucide-react";
+import {
+  BookOpen,
+  MessageSquare,
+  RefreshCw,
+  Terminal,
+  Wrench,
+  type LucideIcon,
+} from "lucide-react";
 import type { KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -54,6 +61,9 @@ export function ConversationToolbar({
   showSystem,
   showTools,
   onViewChange,
+  disabled = false,
+  refreshing = false,
+  onRefresh,
   onToggleSystem,
   onToggleTools,
 }: {
@@ -63,12 +73,15 @@ export function ConversationToolbar({
   showSystem: boolean;
   showTools: boolean;
   onViewChange: (view: DetailView) => void;
+  disabled?: boolean;
+  refreshing?: boolean;
+  onRefresh?: () => void;
   onToggleSystem: () => void;
   onToggleTools: () => void;
 }) {
   const { t } = useTranslation("bots");
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: DetailView) => {
-    if (!hasSummaries) return;
+    if (disabled || !hasSummaries) return;
     let nextView: DetailView | null = null;
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
@@ -87,13 +100,21 @@ export function ConversationToolbar({
   };
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+    <div
+      className={cn(
+        "flex shrink-0 gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:px-4",
+        view === "messages"
+          ? "flex-col sm:flex-row sm:items-center sm:justify-between"
+          : "items-center justify-between",
+      )}
+    >
       <div
         role="tablist"
         aria-label={t("conversations.detailView")}
         className="grid w-full grid-cols-2 rounded-xl bg-slate-100 p-1 sm:w-auto"
       >
         <button
+          disabled={disabled}
           id="conversation-messages-tab"
           type="button"
           role="tab"
@@ -122,7 +143,7 @@ export function ConversationToolbar({
           aria-selected={view === "summaries"}
           aria-controls={view === "summaries" ? "conversation-summaries-panel" : undefined}
           tabIndex={view === "summaries" ? 0 : -1}
-          disabled={!hasSummaries}
+          disabled={disabled || !hasSummaries}
           onClick={() => onViewChange("summaries")}
           onKeyDown={(event) => handleTabKeyDown(event, "summaries")}
           className={cn(
@@ -144,28 +165,45 @@ export function ConversationToolbar({
         </button>
       </div>
 
-      {view === "messages" ? (
-        <div
-          className="flex items-center justify-end gap-1"
-          role="group"
-          aria-label={t("conversations.messageFilters")}
-        >
-          <FilterToggle
-            label={t("conversations.system")}
-            icon={Terminal}
-            pressed={showSystem}
-            tone="violet"
-            onPressedChange={onToggleSystem}
-          />
-          <FilterToggle
-            label={t("conversations.tools")}
-            icon={Wrench}
-            pressed={showTools}
-            tone="amber"
-            onPressedChange={onToggleTools}
-          />
-        </div>
-      ) : null}
+      <div className="flex items-center justify-end gap-1">
+        {view === "messages" ? (
+          <div
+            className="flex items-center justify-end gap-1"
+            role="group"
+            aria-label={t("conversations.messageFilters")}
+          >
+            <FilterToggle
+              label={t("conversations.system")}
+              icon={Terminal}
+              pressed={showSystem}
+              tone="violet"
+              onPressedChange={onToggleSystem}
+            />
+            <FilterToggle
+              label={t("conversations.tools")}
+              icon={Wrench}
+              pressed={showTools}
+              tone="amber"
+              onPressedChange={onToggleTools}
+            />
+          </div>
+        ) : null}
+        {onRefresh ? (
+          <button
+            type="button"
+            disabled={disabled || refreshing}
+            onClick={onRefresh}
+            aria-label={t(
+              view === "messages"
+                ? "conversations.refreshMessages"
+                : "conversations.refreshSummaries",
+            )}
+            className="text-muted-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+          >
+            <RefreshCw className={cn("size-4", refreshing && "animate-spin")} aria-hidden="true" />
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

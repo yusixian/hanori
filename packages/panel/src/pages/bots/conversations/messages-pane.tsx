@@ -55,6 +55,8 @@ export function MessagesPane({
   onDelete,
   pendingDeleteId,
   deleteBusyId,
+  deleteDisabled = false,
+  navigationDisabled = false,
   containerRef,
   page,
   totalPages,
@@ -66,6 +68,8 @@ export function MessagesPane({
   onDelete: (id: number) => void;
   pendingDeleteId: number | null;
   deleteBusyId: number | null;
+  deleteDisabled?: boolean;
+  navigationDisabled?: boolean;
   containerRef: RefObject<HTMLDivElement | null>;
   page: number;
   totalPages: number;
@@ -156,6 +160,7 @@ export function MessagesPane({
                     onDelete={onDelete}
                     pendingDelete={pendingDeleteId === message.id}
                     deleteBusy={deleteBusyId === message.id}
+                    deleteDisabled={deleteDisabled}
                   />
                 </li>
               ))}
@@ -173,6 +178,7 @@ export function MessagesPane({
       <Pagination
         page={page}
         totalPages={totalPages}
+        disabled={navigationDisabled}
         onPageChange={onPageChange}
         className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
       />
