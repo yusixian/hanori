@@ -44,13 +44,17 @@
 
 ## 当前迭代
 
-- v0.4.0 导航与工作区、v0.5.0 AI 设置查找已完成审查、PR CI、合入及 GitHub Release，详见下方证据；完整目标保持进行中。
-- 当前重点：v0.5.1 日志筛选与清理反馈。已从 Sol 隔离工作区按明确文件整合到 `ui/logs-efficiency-v0.5.1`：修复 DataProvider 丢失群聊 ID / 关联 ID；统一历史与实时 applied 筛选；整理桌面/手机布局；准确显示 Bot 清理范围与清理失败。独立审查发现的空白参数、DELETE 失败后误清列表两项 P2 已修复并复审通过。主代理整合后验证：日志浏览器 9/9；1440×900、1280×800、390×844 两个完整页面的 API/SSE 夹具通过，无溢出、非法请求或页面错误；Panel typecheck、相关 lint/format、i18n 2279 keys、文档 typecheck/build 与浏览器 12/12 通过。证据 `.acceptance/ui-efficiency/logs-final/` 和 `docs-v0.5.1/`；尚未提交/发布。
-- 下一批次：AI 保存状态与草稿保护。站内导航丢草稿已复现；最小 wildcard data-router 兼容性 probe 5/5 通过（Link、navigate、真实 history back、query-only 保留草稿、MiniApp 分流）。Sol 在 `/private/tmp/cos-tool-bot-ai-drafts-20260922`（基线 `68b2ef6`）实施；主代理已指出 StrictMode 下 dispose 生命周期风险，修正后须验证实际 Refine/auth/lazy/MiniApp 组装。保持路由表/认证/保存权限和 revision 恢复契约，增加显式保存状态、Live selection Discard 与离开确认。见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。
-- 非阻断导航体验项：1024×768 长菜单底部展开全局管理后还需滚动才能看到入口；搜索已可直接定位，后续评估。
-- 环境：项目专用 CI runner 可用；Docker 当前不可用；3100/5173 属于其他项目，未动。UI 证据使用独立 Vite 5188 + 全量拦截 API，不是生产数据库或 Telegram 验证。
+- v0.4.0 导航与工作区、v0.5.0 AI 设置查找、v0.5.1 日志筛选与清理反馈已完成审查、PR CI、合入及 GitHub Release。完整目标保持进行中。
+- 当前重点：v0.6.0 AI 保存状态与草稿保护，已整合到 `ui/ai-drafts-v0.6.0`（基线为已发布 v0.5.1），尚未提交/发布。
+- 实现范围：持续保存状态、clean 禁用保存、Live selection Discard、站内离开及主动退出登录确认；保留 revision/API、认证失败关闭和 Mini App 入口。根路由使用最小 wildcard data-router 包装。
+- 审查已修复 StrictMode router 生命周期、已保存但应用失败的重试入口、跨 Bot 清理恢复状态、手机长错误撑高 sticky、主动 Logout 先行 signOut、Refine pending 字段和 BetterAuth resolved error。
+- 最终生产预览发现并修复：返回 `success:false` 仍会触发 Refine 认证缓存失效并卸载草稿。改为 throw 后走 Refine onError，独立窄复审通过；真实 HTTP 500 复验确认草稿/弹窗保留、没有额外认证或配置请求，重试成功才退出。错误 toast 和失败后回焦一并补齐。
+- 根目录最终 26 项相关浏览器测试与 Panel typecheck 通过；修复后生产构建通过。相关 lint/format、Mini App entry、i18n 2297 keys、文档 types/build 均通过；文档 12 个场景在修正标题选择器后全部验证通过。完整仓库门禁待 CI。
+- 生产构建全 API 夹具已通过 1440×900、900×768、390×844 的 clean/dirty/saving/error/success、同页草稿、确认/取消离开与历史返回，无溢出或页面错误；证据 `.acceptance/ui-efficiency/ai-drafts-production/`。真实退出失败、会话过期和长错误分别见 `ai-logout-error-production-fixed/`、`ai-expiry-production/`、`ai-long-error-production/`。
+- AI 基线、范围与复现详见 [UI_AI_SETTINGS_AUDIT.md](UI_AI_SETTINGS_AUDIT.md)。非阻断导航体验项：1024×768 长菜单底部展开全局管理后仍需滚动；搜索可直接定位，后续评估。
+- 环境：项目专用 runner 可用；Docker 当前不可用；3100/5173 属于其他项目，未动。浏览器使用独立 5188/5191 开发服务和 5192 生产预览，全量拦截 API，不涉及生产数据库或 Telegram。
 - 无关未跟踪内容 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。
-- 下一步：完成日志批次整体验收、文档/版本同步与 CI 发布闭环；继续 AI 草稿保护的独立审查和完整入口验收。
+- 下一步：完成最终相关检查和验证记录，然后 CI、合入与 v0.6.0 发布。
 
 ## 迭代证据
 
@@ -78,5 +82,17 @@
 - 完整应用 API 夹具：1440×900、900×768、390×844 验证深链、新标签页恢复、慢加载、前进后退、焦点、同页草稿保留和目标不被遮挡；无页面错误/横向溢出。证据 `.acceptance/ui-efficiency/ai-final-verified/` 和 `docs-v0.5.0/`。
 - PR #88 已核实 MERGED。PR CI 35630934214 completed/success，head `68b2ef62e5afd75b8c48f941b473e4e8feba9a7f`；合入文件树完全相同。
 - main/tag/Release 目标均已核实为 `202799c5286dbccd4651f5345e9d0604840f74b1`。v0.5.0 已公开，非 draft/预发布；正文来自 `docs/releases/v0.5.0.md`。
-- 合入后 CI 35632627064 正在运行，尚未记录终态。
+- 合入后 CI 35632627064 completed/success，精确 head 为上述 main/tag SHA。
 - 文档：AI 对话与模型指南、版本导航和 v0.5.0 页面已同步；合入后通过文件树一致性复核。未部署生产。
+
+### v0.5.1 — 日志筛选与清理反馈
+
+- 基线：v0.5.0 `202799c5286dbccd4651f5345e9d0604840f74b1`。
+- 范围：DataProvider 转发群聊 ID / 关联 ID；raw/applied 筛选统一，保留负数输入和 IME；响应式筛选布局；准确提示 Bot 清理范围与失败状态。未改服务端权限、数据保留期、SSE 或导出契约。
+- 审查：独立 Sol 与主代理复核。两项 P2（空白参数导致 400、DELETE 失败后误清本地状态）已修复并窄复审通过，无剩余重要发现。
+- 本地验证：日志页面与 DataProvider 浏览器 9/9；Panel typecheck、相关 lint/format、i18n 2279 keys；文档 typecheck/build、浏览器 12/12。
+- 完整应用夹具：全局和单 Bot 页面，1440×900、1280×800、390×844；真实 SSE 解析、历史/实时条件一致、负 ID 中间态、空白参数、取消清理和清理失败保留列表均通过，无非法请求、页面错误或溢出。证据 `.acceptance/ui-efficiency/logs-final/`，文档 `docs-v0.5.1/`。
+- PR #89 已核实 MERGED。PR CI 35633203020 completed/success，head `25ec2e36ceb8b67312a58103a2b8f89332497e1b`；合入文件树完全相同。
+- main/tag/Release 目标均已核实为 `c17d2ccbbaec643680f0e4dbc49513b0aeb888fd`。v0.5.1 已公开，非 draft/预发布；正文来自 `docs/releases/v0.5.1.md`。
+- 合入后 CI 35634304541 completed/success，精确 head 为上述 main/tag SHA。
+- 文档：导航指南新增日志检索/清理，故障排查入口和版本页同步；合入后核实文件树一致。未部署生产，也未删除真实日志。

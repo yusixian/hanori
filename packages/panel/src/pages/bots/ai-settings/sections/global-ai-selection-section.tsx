@@ -21,6 +21,7 @@ export function GlobalAiSelectionSection({
   retrying,
   onChange,
   onSave,
+  onDiscard,
   onRetry,
 }: {
   selection: GlobalAiSelection;
@@ -30,6 +31,7 @@ export function GlobalAiSelectionSection({
   retrying: boolean;
   onChange: (draft: GlobalAiSelectionDraft) => void;
   onSave: () => void;
+  onDiscard: () => void;
   onRetry: () => void;
 }) {
   const { t } = useTranslation("aiSettings");
@@ -132,10 +134,21 @@ export function GlobalAiSelectionSection({
               </Button>
             )}
             {canManage && (
-              <Button type="button" size="sm" onClick={onSave} disabled={!dirty || busy}>
-                {saving && <Loader2 className="size-4 animate-spin" />}
-                {saving ? t("common.saving") : t("selection.apply")}
-              </Button>
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onDiscard}
+                  disabled={!dirty || busy}
+                >
+                  {t("selection.discard")}
+                </Button>
+                <Button type="button" size="sm" onClick={onSave} disabled={!dirty || busy}>
+                  {saving && <Loader2 className="size-4 animate-spin" />}
+                  {saving ? t("common.saving") : t("selection.apply")}
+                </Button>
+              </>
             )}
           </div>
         </div>

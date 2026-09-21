@@ -27,7 +27,11 @@ export const authProvider: AuthProvider = {
   },
 
   logout: async () => {
-    await authClient.signOut();
+    const result = await authClient.signOut();
+    if (result.error) {
+      // Refine treats resolved failures as success and rechecks auth, which unmounts dirty forms.
+      throw new Error(result.error.message || i18n.t("auth:errors.operationFailed"));
+    }
     return { success: true, redirectTo: "/login" };
   },
 

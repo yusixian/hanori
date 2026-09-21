@@ -1,6 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from "react";
-import { BrowserRouter, useLocation } from "react-router";
+import { createBrowserRouter, RouterProvider, useLocation } from "react-router";
 
 const AdminPanelApp = lazy(() =>
   import("@/admin-panel-app").then((module) => ({ default: module.AdminPanelApp })),
@@ -62,9 +62,9 @@ function SurfaceRouter() {
   );
 }
 
-export function App() {
+function AppRoot() {
   return (
-    <BrowserRouter>
+    <>
       <Suspense
         fallback={
           <div className="surface-loading" role="status" aria-label="Loading">
@@ -75,6 +75,12 @@ export function App() {
         <SurfaceRouter />
       </Suspense>
       <Toaster />
-    </BrowserRouter>
+    </>
   );
+}
+
+const appRouter = createBrowserRouter([{ path: "*", element: <AppRoot /> }]);
+
+export function App() {
+  return <RouterProvider router={appRouter} />;
 }

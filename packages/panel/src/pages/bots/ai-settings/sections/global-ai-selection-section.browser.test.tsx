@@ -44,6 +44,7 @@ const selection: GlobalAiSelection = {
 
 test("edits the live pair separately and exposes retry for pending state", async () => {
   const onSave = vi.fn();
+  const onDiscard = vi.fn();
   const onRetry = vi.fn();
   let latestDraft: GlobalAiSelectionDraft | undefined;
 
@@ -63,6 +64,7 @@ test("edits the live pair separately and exposes retry for pending state", async
         retrying={false}
         onChange={setDraft}
         onSave={onSave}
+        onDiscard={onDiscard}
         onRetry={onRetry}
       />
     );
@@ -84,6 +86,51 @@ test("edits the live pair separately and exposes retry for pending state", async
   expect(onRetry).toHaveBeenCalledOnce();
 });
 
+test("discards provider, model, and display changes back to the saved selection", async () => {
+  let latestDraft: GlobalAiSelectionDraft | undefined;
+
+  function Harness() {
+    const [draft, setDraft] = useState<GlobalAiSelectionDraft>({
+      providerId: "provider-b",
+      modelId: "model-b-fast",
+      displayDefault: "hide",
+    });
+    latestDraft = draft;
+    return (
+      <GlobalAiSelectionSection
+        selection={selection}
+        draft={draft}
+        canManage
+        saving={false}
+        retrying={false}
+        onChange={setDraft}
+        onSave={vi.fn()}
+        onDiscard={() =>
+          setDraft({
+            providerId: selection.selection.providerId,
+            modelId: selection.selection.modelId,
+            displayDefault: selection.displayDefault,
+          })
+        }
+        onRetry={vi.fn()}
+      />
+    );
+  }
+
+  render(<Harness />);
+
+  await page.getByRole("button", { name: "Discard selection draft" }).click();
+  expect(latestDraft).toEqual({
+    providerId: "provider-a",
+    modelId: "model-a",
+    displayDefault: "show",
+  });
+  await expect.element(page.getByText("The panel matches the saved selection.")).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Discard selection draft" }))
+    .toBeDisabled();
+});
+
 test("keeps selection controls read-only for non-admin members", async () => {
   render(
     <GlobalAiSelectionSection
@@ -98,6 +145,7 @@ test("keeps selection controls read-only for non-admin members", async () => {
       retrying={false}
       onChange={vi.fn()}
       onSave={vi.fn()}
+      onDiscard={vi.fn()}
       onRetry={vi.fn()}
     />,
   );

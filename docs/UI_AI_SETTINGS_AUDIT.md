@@ -1,8 +1,8 @@
 # AI 设置页效率审计
 
-状态：静态审计完成；已补充草稿丢失的真实浏览器复现。记录日期：2026-09-22。
+状态：批次 A 已发布为 v0.5.0；批次 B 审查与验收进行中。记录日期：2026-09-22。
 
-本文是 `packages/panel` Bot AI 设置页后续迭代的持久证据。当前迭代先交付导航与工作区调整；本文不表示这些 AI 设置改动已经实现或验收。
+本文保留 `packages/panel` Bot AI 设置页的起始审计与后续证据。前文源码行号对应起始基线；实现、验收和发布状态以文末进展及 UI_EFFICIENCY_GOAL.md 为准。
 
 ## 范围与证据边界
 
@@ -134,4 +134,22 @@ AI 设置页仅注册浏览器 `beforeunload`：`packages/panel/src/pages/bots/a
 
 ## 批次 A 交付进展
 
-v0.5.0 候选已实现 21 项设置搜索、稳定深链、历史恢复和手机摘要，并完成独立审查修复。主树 AI 页面浏览器回归 9/9；完整应用的桌面、窄窗口与手机夹具验收覆盖定位、键盘焦点和切换时草稿保留。该批次不改变保存或站内离开保护，批次 B 的草稿丢失问题仍待修复；发布状态以 UI_EFFICIENCY_GOAL.md 为准。
+v0.5.0 已发布，实现 21 项设置搜索、稳定深链、历史恢复和手机摘要，并完成独立审查修复。主树 AI 页面浏览器回归 9/9；完整应用的桌面、窄窗口与手机夹具验收覆盖定位、键盘焦点和切换时草稿保留。该批次不改变保存或站内离开保护，批次 B 的草稿丢失问题仍待修复；发布状态以 UI_EFFICIENCY_GOAL.md 为准。
+
+## 批次 B 架构决策与审查记录
+
+主代理先完成 wildcard data-router 兼容性 probe 5/5，再决定采用最小根包装：`createBrowserRouter` 只有一条 `*` 根路由，既有管理路由表、Refine 认证、Mini App 分流、lazy/Suspense/错误边界保持原样。新增的站内离开保护仅检查 pathname 变化；同页 section/setting 导航不触发。
+
+Sol 实现后，主代理与限定范围 Astra 审查发现并要求修复：
+
+- StrictMode 的 effect cleanup 不可销毁仍复用的 router；改为模块级实例。
+- 已保存但应用失败时，clean 禁用保存不能封死原来的重试恢复路径；使用独立应用重试状态，不伪造未保存草稿，并在切换 Bot 时清除。
+- 手机长错误曾把 sticky 撑到 2032px；完整错误移到普通内容区后，同一 390×844 夹具的 sticky 高度为 220px。
+- 主动 Logout 曾在确认前 signOut 并卸载草稿；加只作用于用户主动登出的 guard，在 signOut 前复用确认，不拦截真实会话过期或 401 路径。
+- Better Auth 的 HTTP 失败返回 resolved error，而非必然 throw；登出适配层须将其转为失败，避免把失败当成成功跳转。
+
+主代理在完整 StrictMode 应用和全量 API 夹具下验证：三个屏幕尺寸的保存/失败/同页保稿/普通离开确认通过；手机 Escape 回焦正确，修复后 Logout 取消时请求数为零、确认后恰好一次。401 实际经 authFetch 触发原有浏览器 beforeunload 提示，接受后进入登录页，新自定义 guard 未拦截。证据位于 `.acceptance/ui-efficiency/ai-drafts-pre-review/`、`ai-drafts-edges-fixed/`、`ai-drafts-expiry/` 和 `ai-drafts-long-error-fixed/`。
+
+整合后生产构建的三个尺寸保存/普通离开流程通过。最后的真实 BetterAuth HTTP 500 验收另发现：Refine 将 `success:false` 当作 mutation onSuccess，仍失效认证缓存；`Authenticated` 在重新检查时卸载 AI 页面，导致草稿丢失。此前即时返回 getSession 的 mock 掩盖了这一行为。已将 logout 错误抛出，保留成功路径，并补上延迟认证检查和调用数回归。独立窄复审通过；生产预览的真实 HTTP 500 复验确认草稿和弹窗保留、没有额外认证/配置请求、后续重试成功才退出。证据 `.acceptance/ui-efficiency/ai-logout-error-production-fixed/`。
+
+生产构建的会话过期与手机长错误也已复验通过；前者保留原生 beforeunload 提示并最终进入登录页，后者 sticky 高度为 220px。最终根目录 26 项相关浏览器测试、类型与格式/lint、生产构建通过，完整仓库门禁待 CI；不能据上述夹具声明真实 Telegram WebView、生产 Bot 或已部署状态。

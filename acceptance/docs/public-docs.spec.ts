@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.5.1/");
+  await page.goto("/docs/changelog/v0.6.0/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.5.1");
-  await expect(page.getByText("日志筛选与清理反馈", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.6.0");
+  await expect(page.getByText("AI 设置保存状态与草稿保护", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.5.1");
+  await expect(title).toHaveText("v0.6.0");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.5.1.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.6.0.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -57,10 +57,13 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(
     page.getByRole("link", { name: "v0.5.1", exact: true }).filter({ visible: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.6.0", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
-test("navigation guide is searchable and readable on desktop and mobile", async ({
+test("management guides are searchable and readable on desktop and mobile", async ({
   page,
 }, info) => {
   await page.goto("/docs/");
@@ -80,6 +83,12 @@ test("navigation guide is searchable and readable on desktop and mobile", async 
     true,
   );
   await page.screenshot({ path: info.outputPath("panel-navigation-guide.png"), fullPage: true });
+  await page.goto("/docs/guides/ai-chat/");
+  await expect(page.getByRole("heading", { level: 2, name: /^保存设置与保留草稿/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: info.outputPath("ai-settings-guide.png"), fullPage: true });
 });
 
 test("all prerendered pages and local documentation links resolve without a session", async ({

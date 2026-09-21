@@ -1,7 +1,9 @@
 import { sidebarCollapsedAtom, sidebarOpenAtom } from "@/atoms/sidebar";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { BeforeLogoutProvider, useBeforeLogout } from "./before-logout";
 import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
+import { toast } from "sonner";
 import { useAtom } from "jotai";
 import {
   ArrowLeft,
@@ -276,10 +278,11 @@ function SearchField({
   );
 }
 
-export function AppLayout() {
+function AppLayoutContent() {
   const { t } = useTranslation("common");
   const location = useLocation();
-  const { mutate: logout } = useLogout();
+  const { mutateAsync: logout, isLoading: logoutPending } = useLogout();
+  const { requestLogout } = useBeforeLogout();
   const [sidebarOpen, setSidebarOpen] = useAtom(sidebarOpenAtom);
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom);
   const [query, setQuery] = useState("");
@@ -782,7 +785,22 @@ export function AppLayout() {
               variant="ghost"
               size="sm"
               className="h-10 min-h-10 gap-1.5 px-1.5 text-[11px] font-medium text-slate-500"
-              onClick={() => logout()}
+              disabled={logoutPending}
+              onClick={() => {
+                if (isMobile) {
+                  setSidebarOpen(false);
+                  mobileMenuButtonRef.current?.focus();
+                }
+                requestLogout(async () => {
+                  try {
+                    const result = await logout();
+                    if (!result.success) throw result.error ?? new Error("Logout failed");
+                  } catch (error) {
+                    toast.error(t("auth:errors.operationFailed"));
+                    throw error;
+                  }
+                });
+              }}
               title={t("navigation.logout")}
               aria-label={t("navigation.logout")}
             >
@@ -801,5 +819,13 @@ export function AppLayout() {
         </div>
       </main>
     </div>
+  );
+}
+
+export function AppLayout() {
+  return (
+    <BeforeLogoutProvider>
+      <AppLayoutContent />
+    </BeforeLogoutProvider>
   );
 }

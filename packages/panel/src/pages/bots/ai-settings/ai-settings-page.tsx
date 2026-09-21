@@ -1,5 +1,6 @@
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
+import { useBeforeLogout, type LogoutAction } from "@/components/layout/before-logout";
 import { authFetch, client } from "@/lib/client";
 import type {
   AgentToolsConfig,
@@ -29,7 +30,10 @@ import {
   resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
 import {
+  AlertCircle,
   Brain,
+  CheckCircle2,
+  Clock3,
   Eye,
   KeyRound,
   LayoutDashboard,
@@ -41,7 +45,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAiConfigSaveBody } from "./ai-config-save-body";
 import { PromptPreviewDialog } from "./prompt-preview-dialog";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, useBlocker, useParams, useSearchParams } from "react-router";
 import {
   AiSettingsNavigation,
   type AiSettingsNavItem,
@@ -49,6 +53,7 @@ import {
 } from "./components/ai-settings-navigation";
 import { SettingsDisclosureRow } from "./components/settings-disclosure-row";
 import { AiSettingsSearch, type AiSettingsSearchItem } from "./components/ai-settings-search";
+import { UnsavedChangesDialog } from "./components/unsaved-changes-dialog";
 import { OverviewSection } from "./sections/overview-section";
 import { AgentToolsSection } from "./sections/agent-tools-section";
 import { GitHubToolsSection } from "./sections/github-tools-section";
@@ -138,11 +143,17 @@ export function BotAiSettingsPage() {
   const [managedProviderId, setManagedProviderId] = useState<string>();
   const savedDraftRef = useRef("");
   const revisionRef = useRef("");
+  const previousBotIdRef = useRef<string | undefined>(undefined);
   // Draft per-provider api keys: keyed by provider id (or temp "__new_..." id until saved).
   // Cleared on save. Preserve-when-empty: empty string ⇒ keep existing encrypted key.
   const [providerApiKeys, setProviderApiKeys] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [configApplyRetryPending, setConfigApplyRetryPending] = useState(false);
+  const [pendingLogoutAction, setPendingLogoutAction] = useState<LogoutAction | null>(null);
+  const [logoutConfirming, setLogoutConfirming] = useState(false);
+  const confirmedLogoutRef = useRef(false);
+  const logoutInFlightRef = useRef(false);
   const [message, setMessage] = useState<StatusMessage | null>(null);
   const [triggerWordsText, setTriggerWordsText] = useState("");
   const [stickerPacksText, setStickerPacksText] = useState("");
@@ -333,6 +344,7 @@ export function BotAiSettingsPage() {
         const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
         const json = await res.json();
         if (json.ok) {
+          setConfigApplyRetryPending(false);
           revisionRef.current = json.revision;
           const triggerText = json.data.triggerConfig.triggerWords.join(", ");
           const stickersText = json.data.stickerPacks?.join(", ") ?? "";
@@ -382,8 +394,11 @@ export function BotAiSettingsPage() {
   );
 
   useEffect(() => {
+    if (previousBotIdRef.current && previousBotIdRef.current !== botId) setMessage(null);
+    previousBotIdRef.current = botId;
+    setConfigApplyRetryPending(false);
     void loadConfig();
-  }, [loadConfig]);
+  }, [botId, loadConfig]);
 
   const loadGlobalSelection = useCallback(async () => {
     if (!botId) return;
@@ -461,7 +476,73 @@ export function BotAiSettingsPage() {
       globalSelection.displayDefault !== globalSelectionDraft.displayDefault),
   );
   const isDirty = isConfigDirty || isSelectionDirty;
+  const { registerBeforeLogout } = useBeforeLogout();
   const executionConfigUpdate = toExecutionConfigUpdate(executionConfig);
+  const pageBusy = saving || savingSelection || retryingSelection;
+  const saveDisabledReason = pageBusy
+    ? t("page.saveInProgress")
+    : revisionRef.current === ""
+      ? t("page.saveUnavailable")
+      : isSelectionDirty
+        ? t("selection.applyBeforeCatalogSave")
+        : executionConfigUpdate === null
+          ? t("execution.validation.fixErrors")
+          : !isConfigDirty && !configApplyRetryPending
+            ? t("page.noChangesToSave")
+            : null;
+  const saveStatus: {
+    icon: typeof CheckCircle2;
+    label: string;
+    detail?: string;
+    className: string;
+  } = pageBusy
+    ? {
+        icon: Clock3,
+        label: t("page.statusSaving"),
+        className: "bg-blue-50 text-blue-800 ring-blue-200",
+      }
+    : configApplyRetryPending && !isConfigDirty
+      ? {
+          icon: AlertCircle,
+          label: t("page.statusApplyRetry"),
+          detail: message?.text,
+          className: "bg-amber-50 text-amber-900 ring-amber-200",
+        }
+      : message?.type === "error"
+        ? {
+            icon: AlertCircle,
+            label: t("page.statusError"),
+            detail: message.text,
+            className: "bg-red-50 text-red-800 ring-red-200",
+          }
+        : isSelectionDirty
+          ? {
+              icon: AlertCircle,
+              label: t("page.statusSelectionDraft"),
+              className: "bg-amber-50 text-amber-900 ring-amber-200",
+            }
+          : isConfigDirty
+            ? {
+                icon: AlertCircle,
+                label: t("page.statusUnsaved"),
+                className: "bg-amber-50 text-amber-900 ring-amber-200",
+              }
+            : revisionRef.current === ""
+              ? {
+                  icon: AlertCircle,
+                  label: t("page.statusUnavailable"),
+                  className: "bg-red-50 text-red-800 ring-red-200",
+                }
+              : {
+                  icon: CheckCircle2,
+                  label: t("page.statusSaved"),
+                  className: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+                };
+  const navigationBlocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      isDirty && !confirmedLogoutRef.current && currentLocation.pathname !== nextLocation.pathname,
+  );
+  const leaveDialogOpen = navigationBlocker.state === "blocked" || pendingLogoutAction !== null;
   const disclosureProps = (settingId: AiSettingId) => ({
     settingId,
     reveal: requestedSetting?.id === settingId,
@@ -469,16 +550,44 @@ export function BotAiSettingsPage() {
   });
 
   useEffect(() => {
+    if (!isDirty) return;
+    return registerBeforeLogout((action) => setPendingLogoutAction(() => action));
+  }, [isDirty, registerBeforeLogout]);
+
+  useEffect(() => {
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (!isDirty) return;
+      if (!isDirty || confirmedLogoutRef.current) return;
       event.preventDefault();
     };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
   }, [isDirty]);
 
+  const handleStayOnPage = () => {
+    setPendingLogoutAction(null);
+    if (navigationBlocker.state === "blocked") navigationBlocker.reset();
+  };
+
+  const handleLeavePage = () => {
+    if (!pendingLogoutAction) {
+      if (navigationBlocker.state === "blocked") navigationBlocker.proceed();
+      return;
+    }
+    if (logoutInFlightRef.current) return;
+
+    logoutInFlightRef.current = true;
+    confirmedLogoutRef.current = true;
+    setLogoutConfirming(true);
+    void pendingLogoutAction().catch(() => {
+      confirmedLogoutRef.current = false;
+      logoutInFlightRef.current = false;
+      setLogoutConfirming(false);
+    });
+  };
+
   const handleSave = async () => {
-    if (!botId) return;
+    if (!botId || pageBusy || (!isConfigDirty && !configApplyRetryPending) || isSelectionDirty)
+      return;
     if (!executionConfigUpdate) {
       setMessage({ type: "error", text: t("execution.validation.fixErrors") });
       return;
@@ -523,6 +632,7 @@ export function BotAiSettingsPage() {
         );
         if (recovery === "reloaded") {
           await loadGlobalSelection();
+          setConfigApplyRetryPending(true);
           setMessage({ type: "error", text: t("page.saveApplyFailed") });
           return;
         }
@@ -547,6 +657,7 @@ export function BotAiSettingsPage() {
       }
       const json = await res.json();
       if (json.ok) {
+        setConfigApplyRetryPending(false);
         revisionRef.current = json.revision;
         const triggerText = json.data.triggerConfig.triggerWords.join(", ");
         const stickersText = json.data.stickerPacks?.join(", ") ?? "";
@@ -594,7 +705,15 @@ export function BotAiSettingsPage() {
   };
 
   const handleSelectionSave = async () => {
-    if (!botId || !globalSelection || !globalSelectionDraft) return;
+    if (
+      !botId ||
+      !globalSelection ||
+      !globalSelectionDraft ||
+      saving ||
+      savingSelection ||
+      retryingSelection
+    )
+      return;
     setSavingSelection(true);
     try {
       const response = await authFetch(`/api/bots/${encodeURIComponent(botId)}/ai-selection`, {
@@ -646,7 +765,7 @@ export function BotAiSettingsPage() {
   };
 
   const handleSelectionRetry = async () => {
-    if (!botId) return;
+    if (!botId || saving || savingSelection || retryingSelection) return;
     setRetryingSelection(true);
     try {
       const response = await authFetch(
@@ -679,6 +798,16 @@ export function BotAiSettingsPage() {
     } finally {
       setRetryingSelection(false);
     }
+  };
+
+  const handleSelectionDiscard = () => {
+    if (!globalSelection || pageBusy) return;
+    setGlobalSelectionDraft({
+      providerId: globalSelection.selection.providerId,
+      modelId: globalSelection.selection.modelId,
+      displayDefault: globalSelection.displayDefault,
+    });
+    setMessage(null);
   };
 
   // --- updater functions ---
@@ -890,497 +1019,527 @@ export function BotAiSettingsPage() {
     return <p className="text-muted-foreground text-sm">{t("common.loading")}</p>;
   }
 
+  const SaveStatusIcon = saveStatus.icon;
+
   return (
-    <div className="mx-auto max-w-[1180px] space-y-5">
-      <div
-        ref={settingsHeaderRef}
-        className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]"
-      >
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
-            <div className="mt-1 hidden items-center gap-2 text-sm text-slate-500 sm:flex">
-              <span>{t("page.description")}</span>
-              {isDirty && (
-                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  {t("page.unsavedChanges")}
-                </span>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setPreviewOpen(true)}>
-              <Eye className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
-              <span className="sm:hidden">{t("page.preview")}</span>
-            </Button>
-            <Button
-              onClick={handleSave}
-              disabled={
-                saving ||
-                revisionRef.current === "" ||
-                isSelectionDirty ||
-                executionConfigUpdate === null
-              }
-              title={
-                isSelectionDirty
-                  ? t("selection.applyBeforeCatalogSave")
-                  : executionConfigUpdate === null
-                    ? t("execution.validation.fixErrors")
-                    : undefined
-              }
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("common.saving")}
-                </>
-              ) : (
-                t("common.save")
-              )}
-            </Button>
-          </div>
-        </div>
-        <AiSettingsSearch
-          items={settingItems}
-          onSelect={(settingId) => {
-            setPendingFocusSettingId(settingId);
-            setActiveSetting(settingId);
-          }}
-          labels={{
-            search: t("navigation.searchSettings"),
-            clear: t("navigation.clearSearch"),
-            noResults: t("navigation.noSearchResults"),
-            resultCount: (count) => t("navigation.searchResultCount", { count }),
-          }}
-        />
-        <AiSettingsNavigation
-          items={sectionItems}
-          activeId={activeSection}
-          onChange={setActiveSection}
-        />
-      </div>
-
-      <PromptPreviewDialog
-        botId={botId!}
-        config={{
-          ...config,
-          triggerConfig: {
-            ...config.triggerConfig,
-            triggerWords: triggerWordsText
-              .split(",")
-              .map((word) => word.trim())
-              .filter(Boolean),
-          },
-        }}
-        stickerPacks={stickerPacksText
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)}
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-      />
-
-      <fieldset
-        disabled={saving}
-        aria-busy={saving}
-        className="min-w-0 space-y-5 disabled:opacity-70"
-      >
-        <div className="min-w-0">
-          <header className="mb-5 flex items-end justify-between gap-4 px-1">
+    <>
+      <div className="mx-auto max-w-[1180px] space-y-5" inert={leaveDialogOpen ? true : undefined}>
+        <div
+          ref={settingsHeaderRef}
+          data-testid="ai-settings-sticky-header"
+          className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]"
+        >
+          <div className="flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold text-slate-950">
-                {sectionItems.find((item) => item.id === activeSection)?.label}
-              </h2>
-              <p className="mt-1 text-sm text-slate-500">
-                {sectionItems.find((item) => item.id === activeSection)?.description}
-              </p>
+              <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
+              <p className="mt-1 hidden text-sm text-slate-500 sm:block">{t("page.description")}</p>
             </div>
-          </header>
-
-          {activeSection === "overview" && (
-            <OverviewSection
-              config={{ ...config, summaryConfig, imageOcrConfig }}
-              onEnabledChange={(enabled) => setConfig((prev) => ({ ...prev, enabled }))}
-              onNavigate={setActiveSection}
-            />
-          )}
-
-          {activeSection === "providers" && (
-            <div className="space-y-5">
-              {globalSelection && globalSelectionDraft && (
-                <GlobalAiSelectionSection
-                  selection={globalSelection}
-                  draft={globalSelectionDraft}
-                  canManage={canManageAiSelection}
-                  saving={savingSelection}
-                  retrying={retryingSelection}
-                  onChange={setGlobalSelectionDraft}
-                  onSave={() => void handleSelectionSave()}
-                  onRetry={() => void handleSelectionRetry()}
-                />
-              )}
-              <ProvidersSection
-                providers={config.providers ?? []}
-                activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
-                managedProviderId={managedProvider?.id}
-                draftApiKeys={providerApiKeys}
-                canChangeActiveProvider={canManageAiSelection && globalSelectionDraft !== null}
-                onProvidersChange={(providers) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    providers,
-                    conversationConfig:
-                      prev.conversationConfig?.compressionProviderId &&
-                      !providers.some(
-                        (provider) =>
-                          provider.id === prev.conversationConfig?.compressionProviderId,
-                      )
-                        ? { ...prev.conversationConfig, compressionProviderId: undefined }
-                        : prev.conversationConfig,
-                  }))
-                }
-                onActiveProviderChange={(providerId) => {
-                  const provider = globalSelection?.options.find(
-                    (option) => option.id === providerId,
-                  );
-                  if (!provider || !globalSelectionDraft) {
-                    setMessage({ type: "error", text: t("selection.unavailable") });
-                    return;
-                  }
-                  setGlobalSelectionDraft({
-                    ...globalSelectionDraft,
-                    providerId,
-                    modelId: provider.defaultModelId,
-                  });
-                }}
-                onManagedProviderChange={setManagedProviderId}
-                onDraftApiKeyChange={(id, key) =>
-                  setProviderApiKeys((prev) => {
-                    if (!key) {
-                      const { [id]: _, ...rest } = prev;
-                      return rest;
-                    }
-                    return { ...prev, [id]: key };
-                  })
-                }
-              />
-
-              {managedProvider && (
-                <ModelsSection
-                  botId={botId!}
-                  models={managedProvider.models ?? []}
-                  activeModel={managedProvider.defaultModel}
-                  modelCommandAccess={config.modelCommandAccess ?? "admin"}
-                  providerId={managedProvider.id}
-                  providerLabel={managedProvider.label}
-                  baseURL={managedProvider.baseURL}
-                  apiKey={providerApiKeys[managedProvider.id] ?? ""}
-                  modelDiscoveryPath={
-                    managedProvider.modelDiscoveryPath ??
-                    (managedProvider.providerFormat === "openai" ? "/models" : "")
-                  }
-                  onModelsChange={(models) => updateManagedProvider({ models })}
-                  onActiveModelChange={(defaultModel) => updateManagedProvider({ defaultModel })}
-                  onModelRename={renameManagedProviderModel}
-                  onModelCommandAccessChange={(modelCommandAccess) =>
-                    setConfig((prev) => ({ ...prev, modelCommandAccess }))
-                  }
-                  onError={(text) => setMessage({ type: "error", text })}
-                />
-              )}
-            </div>
-          )}
-
-          {activeSection === "replies" && (
-            <div className="space-y-3">
-              <SettingsDisclosureRow
-                {...disclosureProps("reply-prompts")}
-                title={t("disclosures.replyPrompts.title")}
-                description={t("disclosures.replyPrompts.description")}
-                defaultOpen
-                flattenCard={false}
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setPreviewOpen(true)}>
+                <Eye className="h-4 w-4" />
+                <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
+                <span className="sm:hidden">{t("page.preview")}</span>
+              </Button>
+              <Button
+                onClick={handleSave}
+                disabled={saveDisabledReason !== null}
+                aria-describedby="ai-settings-save-help"
               >
-                <GlobalSettingsSection
-                  config={config}
-                  onConfigChange={(updates) => setConfig((prev) => ({ ...prev, ...updates }))}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("engagement")}
-                title={t("engagement.title")}
-                description={t("engagement.description")}
-                summary={t(`engagement.modes.${config.engagement?.mode ?? "off"}`)}
-              >
-                <EngagementSection
-                  config={config.engagement}
-                  apiKey={engagementApiKey}
-                  onApiKeyChange={setEngagementApiKey}
-                  onChange={(engagement) => setConfig((prev) => ({ ...prev, engagement }))}
-                />
-                {botId && (
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
-                    <p className="text-muted-foreground text-xs">
-                      {t("engagement.reviewRecordsHelp")}
-                    </p>
-                    <Link
-                      to={`/bots/${botId}/debugger?tab=engagement`}
-                      className="focus-visible:ring-ring border-input inline-flex h-10 items-center justify-center rounded-lg border bg-white px-3.5 text-sm font-semibold transition-[background-color,border-color,color] hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-2 focus-visible:outline-none"
-                    >
-                      {t("engagement.reviewRecords")}
-                    </Link>
-                  </div>
+                {saving ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t("common.saving")}
+                  </>
+                ) : configApplyRetryPending && !isConfigDirty ? (
+                  t("page.retryApply")
+                ) : (
+                  t("common.save")
                 )}
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("triggers")}
-                title={t("disclosures.triggers.title")}
-                description={t("disclosures.triggers.description")}
-                summary={t("disclosures.triggers.summary", {
-                  count: config.triggerConfig.triggerWords.length,
-                })}
-              >
-                <TriggerSettingsSection
-                  config={config.triggerConfig}
-                  triggerWordsText={triggerWordsText}
-                  onTriggerWordsTextChange={setTriggerWordsText}
-                  onUpdate={updateTrigger}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("conversation-context")}
-                title={t("disclosures.conversationContext.title")}
-                description={t("disclosures.conversationContext.description")}
-              >
-                <ConversationSection
-                  config={convCfg}
-                  providers={config.providers}
-                  activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
-                  onUpdate={updateConv}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("execution")}
-                title={t("disclosures.execution.title")}
-                description={t("disclosures.execution.description")}
-                summary={t("disclosures.execution.summary", {
-                  count: executionConfig.maxConcurrentReplies ?? "–",
-                })}
-              >
-                <ExecutionConfigSection config={executionConfig} onUpdate={setExecutionConfig} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("message-delivery")}
-                title={t("disclosures.messageDelivery.title")}
-                description={t("disclosures.messageDelivery.description")}
-              >
-                <MessageSplittingSection
-                  config={msgCfg}
-                  platform={loadedBot?.id === botId ? loadedBot?.platform : undefined}
-                  onUpdate={updateMessageConfig}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("timeouts")}
-                title={t("disclosures.timeouts.title")}
-                description={t("disclosures.timeouts.description")}
-              >
-                <TimeoutSection config={timeoutCfg} onUpdate={updateTimeoutConfig} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("sticker-packs")}
-                title={t("disclosures.stickerPacks.title")}
-                description={t("disclosures.stickerPacks.description")}
-              >
-                <StickerPacksSection
-                  stickerPacksText={stickerPacksText}
-                  onStickerPacksTextChange={setStickerPacksText}
-                />
-              </SettingsDisclosureRow>
+              </Button>
             </div>
-          )}
-
-          {activeSection === "memory" && (
-            <div className="space-y-3">
-              <SettingsDisclosureRow
-                {...disclosureProps("conversation-memory")}
-                title={t("disclosures.conversationMemory.title")}
-                description={t("disclosures.conversationMemory.description")}
-                summary={memCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("bot-memory")}
-                title={t("disclosures.botMemory.title")}
-                description={t("disclosures.botMemory.description")}
-                summary={botMemCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("embeddings")}
-                title={t("disclosures.embeddings.title")}
-                description={t("disclosures.embeddings.description")}
-                summary={embCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <EmbeddingSection config={embCfg} onUpdate={updateEmbedding} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("chat-summaries")}
-                title={t("disclosures.chatSummaries.title")}
-                description={t("disclosures.chatSummaries.description")}
-                summary={summaryConfig.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <SummaryConfigSection
-                  botId={botId!}
-                  config={summaryConfig}
-                  onUpdate={(updates) => setSummaryConfig((prev) => ({ ...prev, ...updates }))}
-                />
-              </SettingsDisclosureRow>
-            </div>
-          )}
-
-          {activeSection === "tools" && (
-            <div className="space-y-3">
-              <SettingsDisclosureRow
-                {...disclosureProps("web-tools")}
-                title={t("disclosures.webTools.title")}
-                description={t("disclosures.webTools.description")}
-                summary={webCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <WebToolsSection
-                  config={webCfg}
-                  searchApiKey={webSearchApiKey}
-                  imageApiKey={webImageApiKey}
-                  onSearchApiKeyChange={setWebSearchApiKey}
-                  onImageApiKeyChange={setWebImageApiKey}
-                  onUpdate={updateWebTools}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("image-generation-receipt")}
-                title={t("disclosures.imageGenerationReceipt.title")}
-                description={t("disclosures.imageGenerationReceipt.description")}
-                summary={t("disclosures.imageGenerationReceipt.summary", {
-                  count: imageGenerationReceiptConfig.promptPreviewLength,
-                })}
-              >
-                <ImageGenerationReceiptSection
-                  config={imageGenerationReceiptConfig}
-                  onUpdate={updateImageGenerationReceiptConfig}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("github-tools")}
-                title={t("disclosures.githubTools.title")}
-                description={t("disclosures.githubTools.description")}
-                summary={githubCfg.enabled ? t("common.enabled") : t("common.disabled")}
-                defaultOpen={openGitHubAfterCallback}
-              >
-                <GitHubToolsSection
-                  botId={botId!}
-                  canManageCredentials={canManageGitHubCredentials}
-                  authorizationBlocked={isDirty || !config.githubToolsConfig}
-                  providers={config.providers ?? []}
-                  providerApiKeyDrafts={providerApiKeys}
-                  config={githubCfg}
-                  onUpdate={updateGitHubTools}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("agent-tools")}
-                title={t("disclosures.agentTools.title")}
-                description={t("disclosures.agentTools.description")}
-                summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("artwork-tools")}
-                title={t("disclosures.artworkTools.title")}
-                description={t("disclosures.artworkTools.description")}
-                summary={artworkCfg.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <ArtworkToolsSection config={artworkCfg} onUpdate={updateArtworkTools} />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("mcp-servers")}
-                title={t("disclosures.mcpServers.title")}
-                description={t("disclosures.mcpServers.description")}
-                summary={t("disclosures.mcpServers.summary", {
-                  count: config.mcpServerIds?.length ?? 0,
-                })}
-              >
-                <McpServersSection
-                  selectedIds={config.mcpServerIds ?? []}
-                  onUpdate={(ids) => setConfig((prev) => ({ ...prev, mcpServerIds: ids }))}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("image-ocr")}
-                title={t("disclosures.imageOcr.title")}
-                description={t("disclosures.imageOcr.description")}
-                summary={imageOcrConfig.enabled ? t("common.enabled") : t("common.disabled")}
-              >
-                <ImageOcrConfigSection
-                  config={imageOcrConfig}
-                  providers={config.providers}
-                  activeProviderId={config.activeProviderId}
-                  onUpdate={(updates) => setImageOcrConfig((prev) => ({ ...prev, ...updates }))}
-                />
-              </SettingsDisclosureRow>
-            </div>
-          )}
-
-          {activeSection === "access" && (
-            <div className="space-y-3">
-              <SettingsDisclosureRow
-                {...disclosureProps("private-whitelist")}
-                title={t("disclosures.privateWhitelist.title")}
-                description={t("disclosures.privateWhitelist.description")}
-                summary={t("disclosures.privateWhitelist.summary", {
-                  mode: t(
-                    `privateWhitelist.access${
-                      config.privateChatAccess === "admin"
-                        ? "Admin"
-                        : config.privateChatAccess === "allowlist"
-                          ? "Allowlist"
-                          : "All"
-                    }`,
-                  ),
-                })}
-              >
-                <PrivateChatWhitelistSection
-                  whitelist={config.privateChatWhitelist ?? []}
-                  accessMode={config.privateChatAccess ?? "all"}
-                  onAccessModeChange={(privateChatAccess) =>
-                    setConfig((prev) => ({ ...prev, privateChatAccess }))
-                  }
-                  onAdd={addWhitelistUser}
-                  onRemove={removeWhitelistUser}
-                />
-              </SettingsDisclosureRow>
-              <SettingsDisclosureRow
-                {...disclosureProps("group-overrides")}
-                title={t("disclosures.groupOverrides.title")}
-                description={t("disclosures.groupOverrides.description")}
-                summary={t("disclosures.groupOverrides.summary", {
-                  count: Object.keys(config.groupOverrides).length,
-                })}
-              >
-                <GroupOverridesSection
-                  overrides={config.groupOverrides}
-                  engagement={config.engagement}
-                  onAdd={addGroupOverride}
-                  onUpdate={updateOverride}
-                  onRemove={removeOverride}
-                />
-              </SettingsDisclosureRow>
-            </div>
-          )}
+          </div>
+          <div
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+            role="status"
+            aria-live="polite"
+          >
+            <p
+              className={`inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ring-1 ${saveStatus.className}`}
+            >
+              <SaveStatusIcon aria-hidden="true" className="size-3.5" />
+              {saveStatus.label}
+            </p>
+            <p id="ai-settings-save-help" className="min-w-0 text-slate-600">
+              {saveDisabledReason ??
+                t(
+                  configApplyRetryPending && !isConfigDirty
+                    ? "page.readyToRetryApply"
+                    : "page.readyToSave",
+                )}
+            </p>
+          </div>
+          <AiSettingsSearch
+            items={settingItems}
+            onSelect={(settingId) => {
+              setPendingFocusSettingId(settingId);
+              setActiveSetting(settingId);
+            }}
+            labels={{
+              search: t("navigation.searchSettings"),
+              clear: t("navigation.clearSearch"),
+              noResults: t("navigation.noSearchResults"),
+              resultCount: (count) => t("navigation.searchResultCount", { count }),
+            }}
+          />
+          <AiSettingsNavigation
+            items={sectionItems}
+            activeId={activeSection}
+            onChange={setActiveSection}
+          />
         </div>
-      </fieldset>
-    </div>
+
+        {saveStatus.detail && (
+          <p
+            data-testid="ai-settings-error-detail"
+            className="min-w-0 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm break-words text-red-800"
+          >
+            {saveStatus.detail}
+          </p>
+        )}
+
+        <PromptPreviewDialog
+          botId={botId!}
+          config={{
+            ...config,
+            triggerConfig: {
+              ...config.triggerConfig,
+              triggerWords: triggerWordsText
+                .split(",")
+                .map((word) => word.trim())
+                .filter(Boolean),
+            },
+          }}
+          stickerPacks={stickerPacksText
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean)}
+          open={previewOpen}
+          onClose={() => setPreviewOpen(false)}
+        />
+
+        <fieldset
+          disabled={saving}
+          aria-busy={saving}
+          className="min-w-0 space-y-5 disabled:opacity-70"
+        >
+          <div className="min-w-0">
+            <header className="mb-5 flex items-end justify-between gap-4 px-1">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-950">
+                  {sectionItems.find((item) => item.id === activeSection)?.label}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {sectionItems.find((item) => item.id === activeSection)?.description}
+                </p>
+              </div>
+            </header>
+
+            {activeSection === "overview" && (
+              <OverviewSection
+                config={{ ...config, summaryConfig, imageOcrConfig }}
+                onEnabledChange={(enabled) => setConfig((prev) => ({ ...prev, enabled }))}
+                onNavigate={setActiveSection}
+              />
+            )}
+
+            {activeSection === "providers" && (
+              <div className="space-y-5">
+                {globalSelection && globalSelectionDraft && (
+                  <GlobalAiSelectionSection
+                    selection={globalSelection}
+                    draft={globalSelectionDraft}
+                    canManage={canManageAiSelection}
+                    saving={savingSelection}
+                    retrying={retryingSelection}
+                    onChange={setGlobalSelectionDraft}
+                    onSave={() => void handleSelectionSave()}
+                    onDiscard={handleSelectionDiscard}
+                    onRetry={() => void handleSelectionRetry()}
+                  />
+                )}
+                <ProvidersSection
+                  providers={config.providers ?? []}
+                  activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
+                  managedProviderId={managedProvider?.id}
+                  draftApiKeys={providerApiKeys}
+                  canChangeActiveProvider={canManageAiSelection && globalSelectionDraft !== null}
+                  onProvidersChange={(providers) =>
+                    setConfig((prev) => ({
+                      ...prev,
+                      providers,
+                      conversationConfig:
+                        prev.conversationConfig?.compressionProviderId &&
+                        !providers.some(
+                          (provider) =>
+                            provider.id === prev.conversationConfig?.compressionProviderId,
+                        )
+                          ? { ...prev.conversationConfig, compressionProviderId: undefined }
+                          : prev.conversationConfig,
+                    }))
+                  }
+                  onActiveProviderChange={(providerId) => {
+                    const provider = globalSelection?.options.find(
+                      (option) => option.id === providerId,
+                    );
+                    if (!provider || !globalSelectionDraft) {
+                      setMessage({ type: "error", text: t("selection.unavailable") });
+                      return;
+                    }
+                    setGlobalSelectionDraft({
+                      ...globalSelectionDraft,
+                      providerId,
+                      modelId: provider.defaultModelId,
+                    });
+                  }}
+                  onManagedProviderChange={setManagedProviderId}
+                  onDraftApiKeyChange={(id, key) =>
+                    setProviderApiKeys((prev) => {
+                      if (!key) {
+                        const { [id]: _, ...rest } = prev;
+                        return rest;
+                      }
+                      return { ...prev, [id]: key };
+                    })
+                  }
+                />
+
+                {managedProvider && (
+                  <ModelsSection
+                    botId={botId!}
+                    models={managedProvider.models ?? []}
+                    activeModel={managedProvider.defaultModel}
+                    modelCommandAccess={config.modelCommandAccess ?? "admin"}
+                    providerId={managedProvider.id}
+                    providerLabel={managedProvider.label}
+                    baseURL={managedProvider.baseURL}
+                    apiKey={providerApiKeys[managedProvider.id] ?? ""}
+                    modelDiscoveryPath={
+                      managedProvider.modelDiscoveryPath ??
+                      (managedProvider.providerFormat === "openai" ? "/models" : "")
+                    }
+                    onModelsChange={(models) => updateManagedProvider({ models })}
+                    onActiveModelChange={(defaultModel) => updateManagedProvider({ defaultModel })}
+                    onModelRename={renameManagedProviderModel}
+                    onModelCommandAccessChange={(modelCommandAccess) =>
+                      setConfig((prev) => ({ ...prev, modelCommandAccess }))
+                    }
+                    onError={(text) => setMessage({ type: "error", text })}
+                  />
+                )}
+              </div>
+            )}
+
+            {activeSection === "replies" && (
+              <div className="space-y-3">
+                <SettingsDisclosureRow
+                  {...disclosureProps("reply-prompts")}
+                  title={t("disclosures.replyPrompts.title")}
+                  description={t("disclosures.replyPrompts.description")}
+                  defaultOpen
+                  flattenCard={false}
+                >
+                  <GlobalSettingsSection
+                    config={config}
+                    onConfigChange={(updates) => setConfig((prev) => ({ ...prev, ...updates }))}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("engagement")}
+                  title={t("engagement.title")}
+                  description={t("engagement.description")}
+                  summary={t(`engagement.modes.${config.engagement?.mode ?? "off"}`)}
+                >
+                  <EngagementSection
+                    config={config.engagement}
+                    apiKey={engagementApiKey}
+                    onApiKeyChange={setEngagementApiKey}
+                    onChange={(engagement) => setConfig((prev) => ({ ...prev, engagement }))}
+                  />
+                  {botId && (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
+                      <p className="text-muted-foreground text-xs">
+                        {t("engagement.reviewRecordsHelp")}
+                      </p>
+                      <Link
+                        to={`/bots/${botId}/debugger?tab=engagement`}
+                        className="focus-visible:ring-ring border-input inline-flex h-10 items-center justify-center rounded-lg border bg-white px-3.5 text-sm font-semibold transition-[background-color,border-color,color] hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-2 focus-visible:outline-none"
+                      >
+                        {t("engagement.reviewRecords")}
+                      </Link>
+                    </div>
+                  )}
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("triggers")}
+                  title={t("disclosures.triggers.title")}
+                  description={t("disclosures.triggers.description")}
+                  summary={t("disclosures.triggers.summary", {
+                    count: config.triggerConfig.triggerWords.length,
+                  })}
+                >
+                  <TriggerSettingsSection
+                    config={config.triggerConfig}
+                    triggerWordsText={triggerWordsText}
+                    onTriggerWordsTextChange={setTriggerWordsText}
+                    onUpdate={updateTrigger}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("conversation-context")}
+                  title={t("disclosures.conversationContext.title")}
+                  description={t("disclosures.conversationContext.description")}
+                >
+                  <ConversationSection
+                    config={convCfg}
+                    providers={config.providers}
+                    activeProviderId={globalSelectionDraft?.providerId ?? config.activeProviderId}
+                    onUpdate={updateConv}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("execution")}
+                  title={t("disclosures.execution.title")}
+                  description={t("disclosures.execution.description")}
+                  summary={t("disclosures.execution.summary", {
+                    count: executionConfig.maxConcurrentReplies ?? "–",
+                  })}
+                >
+                  <ExecutionConfigSection config={executionConfig} onUpdate={setExecutionConfig} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("message-delivery")}
+                  title={t("disclosures.messageDelivery.title")}
+                  description={t("disclosures.messageDelivery.description")}
+                >
+                  <MessageSplittingSection
+                    config={msgCfg}
+                    platform={loadedBot?.id === botId ? loadedBot?.platform : undefined}
+                    onUpdate={updateMessageConfig}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("timeouts")}
+                  title={t("disclosures.timeouts.title")}
+                  description={t("disclosures.timeouts.description")}
+                >
+                  <TimeoutSection config={timeoutCfg} onUpdate={updateTimeoutConfig} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("sticker-packs")}
+                  title={t("disclosures.stickerPacks.title")}
+                  description={t("disclosures.stickerPacks.description")}
+                >
+                  <StickerPacksSection
+                    stickerPacksText={stickerPacksText}
+                    onStickerPacksTextChange={setStickerPacksText}
+                  />
+                </SettingsDisclosureRow>
+              </div>
+            )}
+
+            {activeSection === "memory" && (
+              <div className="space-y-3">
+                <SettingsDisclosureRow
+                  {...disclosureProps("conversation-memory")}
+                  title={t("disclosures.conversationMemory.title")}
+                  description={t("disclosures.conversationMemory.description")}
+                  summary={memCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <MemorySystemSection config={memCfg} onUpdate={updateMemory} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("bot-memory")}
+                  title={t("disclosures.botMemory.title")}
+                  description={t("disclosures.botMemory.description")}
+                  summary={botMemCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <BotMemorySection config={botMemCfg} onUpdate={updateBotMemory} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("embeddings")}
+                  title={t("disclosures.embeddings.title")}
+                  description={t("disclosures.embeddings.description")}
+                  summary={embCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <EmbeddingSection config={embCfg} onUpdate={updateEmbedding} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("chat-summaries")}
+                  title={t("disclosures.chatSummaries.title")}
+                  description={t("disclosures.chatSummaries.description")}
+                  summary={summaryConfig.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <SummaryConfigSection
+                    botId={botId!}
+                    config={summaryConfig}
+                    onUpdate={(updates) => setSummaryConfig((prev) => ({ ...prev, ...updates }))}
+                  />
+                </SettingsDisclosureRow>
+              </div>
+            )}
+
+            {activeSection === "tools" && (
+              <div className="space-y-3">
+                <SettingsDisclosureRow
+                  {...disclosureProps("web-tools")}
+                  title={t("disclosures.webTools.title")}
+                  description={t("disclosures.webTools.description")}
+                  summary={webCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <WebToolsSection
+                    config={webCfg}
+                    searchApiKey={webSearchApiKey}
+                    imageApiKey={webImageApiKey}
+                    onSearchApiKeyChange={setWebSearchApiKey}
+                    onImageApiKeyChange={setWebImageApiKey}
+                    onUpdate={updateWebTools}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("image-generation-receipt")}
+                  title={t("disclosures.imageGenerationReceipt.title")}
+                  description={t("disclosures.imageGenerationReceipt.description")}
+                  summary={t("disclosures.imageGenerationReceipt.summary", {
+                    count: imageGenerationReceiptConfig.promptPreviewLength,
+                  })}
+                >
+                  <ImageGenerationReceiptSection
+                    config={imageGenerationReceiptConfig}
+                    onUpdate={updateImageGenerationReceiptConfig}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("github-tools")}
+                  title={t("disclosures.githubTools.title")}
+                  description={t("disclosures.githubTools.description")}
+                  summary={githubCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                  defaultOpen={openGitHubAfterCallback}
+                >
+                  <GitHubToolsSection
+                    botId={botId!}
+                    canManageCredentials={canManageGitHubCredentials}
+                    authorizationBlocked={isDirty || !config.githubToolsConfig}
+                    providers={config.providers ?? []}
+                    providerApiKeyDrafts={providerApiKeys}
+                    config={githubCfg}
+                    onUpdate={updateGitHubTools}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("agent-tools")}
+                  title={t("disclosures.agentTools.title")}
+                  description={t("disclosures.agentTools.description")}
+                  summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("artwork-tools")}
+                  title={t("disclosures.artworkTools.title")}
+                  description={t("disclosures.artworkTools.description")}
+                  summary={artworkCfg.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <ArtworkToolsSection config={artworkCfg} onUpdate={updateArtworkTools} />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("mcp-servers")}
+                  title={t("disclosures.mcpServers.title")}
+                  description={t("disclosures.mcpServers.description")}
+                  summary={t("disclosures.mcpServers.summary", {
+                    count: config.mcpServerIds?.length ?? 0,
+                  })}
+                >
+                  <McpServersSection
+                    selectedIds={config.mcpServerIds ?? []}
+                    onUpdate={(ids) => setConfig((prev) => ({ ...prev, mcpServerIds: ids }))}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("image-ocr")}
+                  title={t("disclosures.imageOcr.title")}
+                  description={t("disclosures.imageOcr.description")}
+                  summary={imageOcrConfig.enabled ? t("common.enabled") : t("common.disabled")}
+                >
+                  <ImageOcrConfigSection
+                    config={imageOcrConfig}
+                    providers={config.providers}
+                    activeProviderId={config.activeProviderId}
+                    onUpdate={(updates) => setImageOcrConfig((prev) => ({ ...prev, ...updates }))}
+                  />
+                </SettingsDisclosureRow>
+              </div>
+            )}
+
+            {activeSection === "access" && (
+              <div className="space-y-3">
+                <SettingsDisclosureRow
+                  {...disclosureProps("private-whitelist")}
+                  title={t("disclosures.privateWhitelist.title")}
+                  description={t("disclosures.privateWhitelist.description")}
+                  summary={t("disclosures.privateWhitelist.summary", {
+                    mode: t(
+                      `privateWhitelist.access${
+                        config.privateChatAccess === "admin"
+                          ? "Admin"
+                          : config.privateChatAccess === "allowlist"
+                            ? "Allowlist"
+                            : "All"
+                      }`,
+                    ),
+                  })}
+                >
+                  <PrivateChatWhitelistSection
+                    whitelist={config.privateChatWhitelist ?? []}
+                    accessMode={config.privateChatAccess ?? "all"}
+                    onAccessModeChange={(privateChatAccess) =>
+                      setConfig((prev) => ({ ...prev, privateChatAccess }))
+                    }
+                    onAdd={addWhitelistUser}
+                    onRemove={removeWhitelistUser}
+                  />
+                </SettingsDisclosureRow>
+                <SettingsDisclosureRow
+                  {...disclosureProps("group-overrides")}
+                  title={t("disclosures.groupOverrides.title")}
+                  description={t("disclosures.groupOverrides.description")}
+                  summary={t("disclosures.groupOverrides.summary", {
+                    count: Object.keys(config.groupOverrides).length,
+                  })}
+                >
+                  <GroupOverridesSection
+                    overrides={config.groupOverrides}
+                    engagement={config.engagement}
+                    onAdd={addGroupOverride}
+                    onUpdate={updateOverride}
+                    onRemove={removeOverride}
+                  />
+                </SettingsDisclosureRow>
+              </div>
+            )}
+          </div>
+        </fieldset>
+      </div>
+      {leaveDialogOpen && (
+        <UnsavedChangesDialog
+          title={t("leave.title")}
+          description={t("leave.description")}
+          stayLabel={t("leave.stay")}
+          leaveLabel={t("leave.leave")}
+          busy={logoutConfirming}
+          onStay={handleStayOnPage}
+          onLeave={handleLeavePage}
+        />
+      )}
+    </>
   );
 }

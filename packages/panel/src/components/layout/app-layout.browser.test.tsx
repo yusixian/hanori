@@ -9,7 +9,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { AppLayout } from "./app-layout";
 
 vi.mock("@refinedev/core", () => ({
-  useLogout: () => ({ mutate: vi.fn() }),
+  useLogout: () => ({ mutateAsync: vi.fn(), isLoading: false }),
 }));
 
 function LocationProbe() {
