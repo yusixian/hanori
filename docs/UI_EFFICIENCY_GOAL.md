@@ -44,7 +44,7 @@
 
 ## 当前迭代
 
-- 正在实施 v0.10.1 对话加载与删除恢复，已补消息/摘要读取误空、单项删除静默基线；修复原目标核对范围与失败页退路，独立复审无剩余重要问题，21项浏览器回归与两档生产夹具通过，正在完成提交与发布。证据见 [会话管理验收](UI_CONVERSATIONS_AUDIT.md)。PR CI、合入和发布尚待完成。
+- v0.10.1 对话加载与删除恢复已通过 PR #96 合入并发布；main/tag/Release目标 `ee64f956614ef61d8cf00d984511e601e0958225`，PR CI `35665294298` completed/success。合入后 CI `35665935568` 已核实 completed/success，精确 SHA 与发布目标一致。完整证据见 [会话管理验收](UI_CONVERSATIONS_AUDIT.md)。
 
 - v0.10.0 人物检索与记忆筛选已通过 PR #95 合入并发布；main/tag/Release目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`，PR CI `35660728032` completed/success。合入后 CI `35661423268` 已核实 completed/success，精确SHA为发布目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`。完整证据见 [管理流程验收](UI_RECORD_MANAGEMENT_AUDIT.md)。
 
@@ -57,7 +57,7 @@
 - v0.8.0 PR CI `35644021599` completed/success，合入文件树与已验证 head 一致；合入后 CI `35644859749` 已核实 completed/success，精确 SHA 与发布一致。
 - 本轮所有已确认重要审查发现已修复。长期目标和授权继续保留；后续 UI 优先项从真实用户旅程重新验证，历史巡检记录仅作为候选，不把旧问题直接当成当前事实。
 - 没有执行生产部署、真实模型调用、真实头像读取或 Telegram 消息发送。文档源码/构建与 GitHub 发布已同步，不据此断言线上实例已经更新。
-- 无关 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。5188 已关闭，5192 暂用于本轮隔离 UI 验收；Docker 不可用，3100/5173 属于其他项目，勿动。
+- 无关 `.claude/`、`HANDOFF.md`、`packages/bot/src/skills/$OUT/` 保持原状。5188/5192 验收预览均已关闭；Docker 不可用，3100/5173 属于其他项目，勿动。
 
 ## 迭代证据
 
@@ -172,8 +172,18 @@
 - v0.10.0 已公开、非draft/预发布；main/tag/Release目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`，远端tag及正文与 `docs/releases/v0.10.0.md` 一致。
 - 合入后CI `35661423268` 已核实 completed/success，精确SHA为发布目标 `2aa07ebe503d90813183c3bc4ac873a6af54bb65`；公共指南、版本导航与发布正文来源一致，合入后已核实文件树。证据 `record-search-final/`、`profile-search-database-final.json` 和 `docs-v0.10.0/` 均在 `.acceptance/ui-efficiency/`。5192预览及55491临时PG已关闭，没有生产部署。
 
+### v0.10.1 — 对话加载与删除恢复
+
+- 基线main `acd7b4a41396820c65e202eefe6d1359172e4274`；三种分页读取错误/重试与陈旧结果标识，跨Bot/chat/page请求隔离，失败页返回第一页。
+- 删除未确认和已确认成功后的刷新失败分别提示；同步锁防重复，只读核对当前与原删除范围，活动摘要冲突恢复，最后页缩页。服务端接口与授权未变。
+- 独立Sol与主代理代码/文档复审关闭原目标核对及新页错误退路问题，无剩余P1/P2。21项聚焦Chromium回归通过；相关类型/lint/format、i18n2359、Panel生产构建通过。
+- 1440×900/390×844各24次模拟API完整流程无页面错误或横向溢出；文档类型/构建、14项浏览器检查和终稿4项复验通过。证据 `conversation-recovery-final/`、`docs-v0.10.1/` 和 `conversations-browser-final.log` 均在 `.acceptance/ui-efficiency/`。
+- PR #96 已核实MERGED；PR CI 35665294298 completed/success，head `f0deda61c548ce2ada06627ec9f1ba6209cbe69f`；合入树完全一致。
+- v0.10.1 已公开、非draft/预发布；main/tag/Release目标 `ee64f956614ef61d8cf00d984511e601e0958225`，远端tag与共享Markdown正文均核对。
+- 合入后CI `35665935568` 已核实 completed/success，精确SHA `ee64f956614ef61d8cf00d984511e601e0958225` 与发布目标一致。公共指南和版本站源码/构建同步；未部署生产，未操作真实会话，5192预览已关闭。
+
 ## 后续工作
 
-v0.10.0 已完成合入、发布、合入后CI和文档核对。v0.10.1 已复现并修复会话列表、消息、摘要的读取误空及删除反馈，正在完成回归、提交与发布闭环，详见 [会话管理验收](UI_CONVERSATIONS_AUDIT.md)。持续授权保持有效，长期目标继续 active；不把历史候选未经复现就当作当前缺陷。
+v0.10.1 已完成合入、发布、合入后CI和交付记录复核。持续授权保持有效，长期目标继续 active；不把历史候选未经复现就当作当前缺陷。
 
-会话列表检索与跨页角色过滤是后续效率候选：当前列表只有分页，系统/工具开关只作用当前消息页。先核对实际查找旅程、当前行为与数据边界，再决定搜索或服务端筛选范围；不在本版宣称已经完成。
+下一轮优先“通过已知 Chat ID/名称定位旧会话”。61条会话夹具在桌面/手机均需3次Next、4次列表读取才见第4页目标；当前没有会话搜索，页码跳转不能提供目标位置。先核实真实身份字段和服务端范围，再设计搜索。消息角色开关已明确说明只过滤当前页，分页入口在两档都可见，先保留该语义，不与会话查找混批。证据见 [会话管理验收](UI_CONVERSATIONS_AUDIT.md#后续查找效率基线)。
