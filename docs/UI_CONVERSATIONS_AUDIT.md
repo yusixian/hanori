@@ -91,6 +91,13 @@ Panel 类型、相关 lint/format、i18n2367 keys 与生产构建通过。生产
 
 ### PR CI 收尾
 
-PR #97 首轮 CI 35671437170 在 head `30c7fb0ac49d0bff465319febb95c1e5d4e49edc` completed/failure。Compose、lint、格式、类型、双语、文档构建和单元测试通过；浏览器289项通过、1项失败，包括27项会话回归全部通过。失败是 `App.browser.test.tsx` 的 StrictMode 综合用例在返回 Bot 列表后未及时找到标题，公共文档浏览器步骤随后被跳过。原用例独立运行可通过，不能把单次聚焦通过视为完整 CI 恢复，也不能从截断 DOM 推断页面内容为空；需要修复和新 head 的完整验证后才合入。
+PR #97 首轮 CI 35671437170 在 head `30c7fb0ac49d0bff465319febb95c1e5d4e49edc` completed/failure。Compose、lint、格式、类型、双语、文档构建和单元测试通过；浏览器289项通过、1项失败，包括27项会话回归全部通过。失败是 `App.browser.test.tsx` 的 StrictMode 综合用例在返回 Bot 列表后未及时找到标题，公共文档浏览器步骤随后被跳过。原用例独立运行可通过，不能把单次聚焦通过视为完整 CI 恢复，也不能从截断 DOM 推断页面内容为空；当时保持PR草稿，等待修复和新head的完整验证。
 
-Sol与主代理复核发现测试只关闭一次性延迟开关，没有释放可能已经挂起的认证Promise。测试现显式释放并清除回调，保留失败退出不增加认证调用、草稿和弹窗的原断言；返回列表后额外断言路径为 `/`。没有修改生产代码、增加超时或删除断言。聚焦用例修复前后均通过，临时focus事件probe也未触发挂起请求，因此这次夹具生命周期修复与原CI失败的因果关系尚未证实；临时代码已移除。诊断与限制保存在 `.acceptance/ui-efficiency/app-auth-fixture-diagnosis.md`，仍需新提交完整CI验证。
+Sol与主代理复核发现测试只关闭一次性延迟开关，没有释放可能已经挂起的认证Promise。测试现显式释放并清除回调，保留失败退出不增加认证调用、草稿和弹窗的原断言；返回列表后额外断言路径为 `/`。没有修改生产代码、增加超时或删除断言。聚焦用例修复前后均通过，临时focus事件probe也未触发挂起请求，因此这次夹具生命周期修复与原CI失败的因果关系尚未证实；临时代码已移除。诊断与限制保存在 `.acceptance/ui-efficiency/app-auth-fixture-diagnosis.md`；随后新提交的完整CI结果见下节。
+
+### 合入与发布
+
+- 修复后 CI 35673958683 已核实 completed/success，精确head `cc3074ac96c656850615976a71771af48dc50e44`；包含之前失败的App用例、全部面板浏览器与公共文档检查。主代理最终聚焦App测试1/1通过，原始输出为 `.acceptance/ui-efficiency/app-auth-fixture-final.log`。
+- PR #97 已核实MERGED，合入文件树与上述已验证head完全一致。main/tag/Release目标为 `29acc69a6a08b882b08883b7e9c06dfe440f8731`。
+- v0.11.0 已公开、非draft/预发布；远端tag与目标SHA一致，发布正文逐字核对为 `docs/releases/v0.11.0.md`。
+- 合入后CI `35674641833` 已核实 completed/success，精确SHA为发布目标 `29acc69a6a08b882b08883b7e9c06dfe440f8731`。公共指南、版本导航和共享正文在合入树同步；5192预览及55491临时PG均已关闭，没有生产部署。
