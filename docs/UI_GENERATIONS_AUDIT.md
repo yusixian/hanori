@@ -66,3 +66,10 @@ Sol保存并查看10张截图；主代理查看桌面首次读取错误和手机
 ### 本地门禁
 
 13项聚焦Chromium回归通过；Panel类型、相关lint/format、i18n2376 keys、Panel生产构建通过。文档类型/构建及16项桌面手机检查通过，指南和版本正文终稿另复验4项通过；文档证据 `.acceptance/ui-efficiency/docs-v0.11.1/` 与 `docs-v0.11.1-final/`。没有运行全量本地测试，完整门禁交给本次PR CI。
+
+### 合入、发布与合入后复核
+
+- PR #98 已核实MERGED；审查候选 `466a9698bb5cb9adf7b346a21dc38bd27834c916` 的 PR CI 35679788689 completed/success。
+- 合入SHA `d69c26541fa157648a8dae49a5e575df2ac2845d` 的文件树与已审查候选完全一致。合入后CI 35680398600 completed/success，head匹配，必要job通过。
+- v0.11.1 已公开，非draft/预发布；远端tag及Release目标为上述合入SHA，正文已核对与 `docs/releases/v0.11.1.md` 一致。
+- 合入后复核公共生成记录指南、导航/素材库入口、版本导航及共享发布说明一致。5192验收预览已关闭；未部署生产，未访问或删除真实生成记录。
