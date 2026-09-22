@@ -4,7 +4,7 @@
 
 用户要求基于决策记录分析全面优化 JEV 配置与诊断，经 review 修复后提 PR、发版并同步文档站更新说明。允许本轮实现、验证、提交/push、PR 合入、tag/Release；不包含生产部署、线上策略写入或真实模型/Telegram 调用。
 
-基线：`94a11dfe45fa793403753637c846e9e3631c7498`。分支：`feat/jev-tuning-diagnostics`。拟发布 v0.12.0，前一版本 v0.11.1。
+基线：`94a11dfe45fa793403753637c846e9e3631c7498`。分支：`feat/jev-tuning-diagnostics`。发布 v0.12.0，前一版本 v0.11.1。
 
 ## 验收契约
 
@@ -17,7 +17,16 @@
 
 ## 当前状态
 
-实现、本地验收与交叉审查完成，准备 PR/CI/发布。主代理负责 shared/config 兼容、文档、最终整合；Sol 负责 runtime 与 diagnostics，Luna 负责设置 UI。尚未创建 PR、发布或部署。
+实现、本地验收与交叉审查完成，已通过 PR #99 合入并发布 v0.12.0。主代理负责 shared/config 兼容、文档、最终整合；Sol 负责 runtime 与 diagnostics，Luna 负责设置 UI。没有手动触发生产部署；随后只读确认线上已更新到发布提交。
+
+## 远端交付证据
+
+- PR CI 35692891816：completed/success，精确 head `cacea6abbd27a3ade019fd51feb32f93940617c7`；全量单元测试 1573 passed / 15 skipped、面板浏览器 304 passed、文档浏览器 18 passed。完整门禁通过；本地文档首次间歇失败未在这轮 CI 重现，不据此宣称根因已修复。
+- PR #99 已核实 MERGED，合入提交 `1e9373576f5b6054244b10beee586772eae68b92`；与审查和 CI 候选的文件树完全一致。
+- 远端 `v0.12.0` tag 和 Release target 均核实为上述合入 SHA。Release 已公开、非 draft/预发布，正文与 `docs/releases/v0.12.0.md` 完全一致。
+- 合入后 CI 35694686043 已核实 completed/success，精确 head 为上述合入/tag/Release SHA，全部仓库门禁通过。两轮 CI 的缓存恢复均有较长等待；没有取消或重复触发，复用各自 watcher 等待完成。
+- 文档站 JEV 调参指南、版本导航和 v0.12.0 页面源文件已合入并通过构建/浏览器检查。2026-09-22 14:30 左右，匿名 HTTP 读取 [版本页](https://bot.example.invalid/docs/changelog/v0.12.0) 和 [群聊指南](https://bot.example.invalid/docs/guides/group-behavior) 均为 200，标题及新配置/偏好/筛选正文匹配；`/api/health/ready` 返回 `ready`，version 为发布 SHA `1e9373576f5b6054244b10beee586772eae68b92`。
+- 使用现有登录浏览器进行线上只读核验：新偏好示例及三个字段可见，当前值仍为回复门槛 0.5、参与门槛 0.8/0.8、冷却 30 秒、续聊窗口 120 秒。未编辑或保存配置；临时核验标签页已关闭，原调试器页保留。
 
 ## 本地验证
 
@@ -37,4 +46,4 @@
 
 ## 验证边界
 
-验收没有调用真实 JEV 或发送 Telegram 消息，也没有改变线上 Bot 配置。模拟分类结果不能证明中文接话质量或调参后的真实回复率。迁移、源码、构建、CI、Release 和线上部署分别核实；文档站源码与本地构建更新不代表公开站点已部署。
+验收没有调用真实 JEV 或发送 Telegram 消息，也没有改变线上 Bot 配置。模拟分类结果不能证明中文接话质量或调参后的真实回复率。迁移、源码、构建、CI、Release 和线上状态分别核实；上述线上证据来自实际 HTTP/浏览器读取，没有手动触发部署，也不推断真实聊天效果。
