@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.11.0/");
+  await page.goto("/docs/changelog/v0.11.1/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.11.0");
-  await expect(page.getByText("按 Chat ID 或参与者查找会话", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.11.1");
+  await expect(page.getByText("生成记录读取与删除恢复", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.11.0");
+  await expect(title).toHaveText("v0.11.1");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.11.0.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.11.1.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -81,6 +81,9 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(
     page.getByRole("link", { name: "v0.11.0", exact: true }).filter({ visible: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.11.1", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
@@ -114,6 +117,33 @@ test("management guides are searchable and readable on desktop and mobile", asyn
     true,
   );
   await page.screenshot({ path: info.outputPath("ai-settings-guide.png"), fullPage: true });
+});
+
+test("generation record guide supports search, deep links and recovery instructions", async ({
+  page,
+}, info) => {
+  await page.goto("/docs/");
+  await page
+    .getByRole("button", { name: /搜索文档/ })
+    .filter({ visible: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input").fill("生成记录与问题恢复");
+  await dialog
+    .getByRole("button", { name: "Docs 使用指南 生成记录与问题恢复", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/docs\/guides\/generation-records\/?$/);
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("生成记录与问题恢复");
+  await expect(page.getByRole("heading", { level: 2, name: /^删除与核对结果/ })).toBeVisible();
+  await expect(page.getByText("刷新并核对", { exact: true })).toBeVisible();
+  await expect(page.getByText("已删除，但未能刷新页面数据", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 2, name: /^加载失败时/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: info.outputPath("generation-records-guide.png"), fullPage: true });
 });
 
 test("avatar guidance exposes privacy and recovery limits", async ({ page }, info) => {

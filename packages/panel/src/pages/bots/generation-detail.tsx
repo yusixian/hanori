@@ -5,6 +5,7 @@ import { CodeBlock } from "@/components/ui/code-block";
 import { InlineDisclosure } from "@/components/ui/inline-disclosure";
 import { authFetch } from "@/lib/client";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   Clipboard,
@@ -12,14 +13,23 @@ import {
   Copy,
   FileWarning,
   Loader2,
+  RefreshCw,
   ShieldAlert,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useNavigate, useParams } from "react-router";
+import { GenerationDeleteNotice, type GenerationNoticeKind } from "./generation-delete-notice";
 import { GenerationGallery } from "./generation-gallery";
+import {
+  deleteGeneration,
+  type GenerationTarget,
+  requireGenerationRead,
+  useGenerationResource,
+  verifyGenerationTarget,
+} from "./generation-resource";
 import {
   generationFileUrl,
   isGenerationDeletable,
@@ -45,37 +55,186 @@ export function BotGenerationDetailPage() {
     source: GenerationSource;
     generationId: string;
   }>();
+  if (!botId || !generationId || (source !== "unified" && source !== "legacy")) {
+    return (
+      <div className="text-muted-foreground py-16 text-center">{t("generations.notFound")}</div>
+    );
+  }
+  const scopeKey = `${botId}:${source}:${generationId}`;
+  return (
+    <BotGenerationDetailContent
+      key={scopeKey}
+      botId={botId}
+      source={source}
+      generationId={generationId}
+      locale={i18n.resolvedLanguage ?? i18n.language}
+    />
+  );
+}
+
+function isGenerationDetailResponse(body: unknown): body is GenerationDetailResponse {
+  if (!body || typeof body !== "object") return false;
+  const value = body as Partial<GenerationDetailResponse>;
+  const data = value.data;
+  const validDate = (candidate: unknown) =>
+    typeof candidate === "string" && !Number.isNaN(Date.parse(candidate));
+  const nullableString = (candidate: unknown) =>
+    candidate === null || typeof candidate === "string";
+  const nullableDate = (candidate: unknown) => candidate === null || validDate(candidate);
+  const validScores = (candidate: unknown) =>
+    candidate === null ||
+    (Array.isArray(candidate) &&
+      candidate.every(
+        (score) =>
+          !!score &&
+          typeof score === "object" &&
+          ["porn", "hentai", "sexy"].every(
+            (key) => typeof (score as Record<string, unknown>)[key] === "number",
+          ),
+      ));
+  return (
+    value.ok === true &&
+    !!data &&
+    typeof data === "object" &&
+    (data.source === "unified" || data.source === "legacy") &&
+    (typeof data.id === "string" || typeof data.id === "number") &&
+    typeof data.legacy === "boolean" &&
+    typeof data.provider === "string" &&
+    typeof data.prompt === "string" &&
+    nullableString(data.negativePrompt) &&
+    typeof data.purpose === "string" &&
+    typeof data.state === "string" &&
+    ["active", "succeeded", "failed", "cancelled", "attention"].includes(
+      String(data.statusGroup),
+    ) &&
+    Array.isArray(data.localFiles) &&
+    data.localFiles.every((file) => typeof file === "string") &&
+    validDate(data.createdAt) &&
+    nullableDate(data.completedAt) &&
+    nullableDate(data.deliveredAt) &&
+    (data.requestSnapshot === null ||
+      (!!data.requestSnapshot && typeof data.requestSnapshot === "object")) &&
+    validScores(data.nsfwScores) &&
+    Array.isArray(data.artifacts) &&
+    !!data.technical &&
+    typeof data.technical === "object" &&
+    Array.isArray(data.events) &&
+    data.events.every(
+      (event) =>
+        !!event &&
+        typeof event === "object" &&
+        (typeof event.id === "string" || typeof event.id === "number") &&
+        typeof event.kind === "string" &&
+        nullableString(event.state) &&
+        nullableString(event.providerState) &&
+        validDate(event.createdAt),
+    )
+  );
+}
+
+function BotGenerationDetailContent({
+  botId,
+  source,
+  generationId,
+  locale,
+}: {
+  botId: string;
+  source: GenerationSource;
+  generationId: string;
+  locale: string;
+}) {
+  const { t } = useTranslation("botData");
   const navigate = useNavigate();
-  const [detail, setDetail] = useState<GenerationDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<{
+    kind: GenerationNoticeKind;
+    target: GenerationTarget;
+  } | null>(null);
+  const mountedRef = useRef(false);
+  const mutationRef = useRef(false);
+  const recoveryTargetRef = useRef<GenerationTarget | null>(null);
+  const recoveryControllerRef = useRef<AbortController | null>(null);
+  const deleteNoticeRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const focusAfterReadRef = useRef(false);
   const dateFormatter = useMemo(
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "medium" }),
     [locale],
   );
 
-  const load = useCallback(async () => {
-    if (!botId || !generationId || (source !== "unified" && source !== "legacy")) return;
-    const response = await authFetch(
-      `/api/bots/${encodeURIComponent(botId)}/generations/${source}/${encodeURIComponent(generationId)}`,
-    );
-    if (!response.ok) {
-      setLoading(false);
-      return;
-    }
-    const result = (await response.json()) as GenerationDetailResponse;
-    setDetail(result.data);
-    setLoading(false);
-  }, [botId, generationId, source]);
+  const requestDetail = useCallback(
+    async (signal: AbortSignal) => {
+      const response = await authFetch(
+        `/api/bots/${encodeURIComponent(botId)}/generations/${source}/${encodeURIComponent(generationId)}`,
+        { signal },
+      );
+      const result = await requireGenerationRead<GenerationDetailResponse>(response, {
+        notFound: true,
+        validate: isGenerationDetailResponse,
+      });
+      if (String(result.data.id) !== generationId || result.data.source !== source) {
+        throw new Error("Generation detail scope mismatch");
+      }
+      return result.data;
+    },
+    [botId, generationId, source],
+  );
+  const detailResource = useGenerationResource<GenerationDetail>(
+    JSON.stringify([botId, source, generationId]),
+    requestDetail,
+  );
+  const detail = detailResource.result;
+  const operationBusy = deleteBusy || recovering;
+  const writesLocked =
+    operationBusy ||
+    deleteNotice?.kind === "unknown" ||
+    deleteNotice?.kind === "active" ||
+    deleteNotice?.kind === "bot-missing";
 
-  useEffect(() => void load(), [load]);
+  const refreshDetail = detailResource.refresh;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      recoveryControllerRef.current?.abort();
+    };
+  }, []);
+  useEffect(() => {
+    if (!deleteNotice) return;
+    requestAnimationFrame(() => {
+      deleteNoticeRef.current?.scrollIntoView({ block: "nearest" });
+      deleteNoticeRef.current?.focus();
+    });
+  }, [deleteNotice]);
+  useEffect(() => {
+    if (
+      !focusAfterReadRef.current ||
+      !detailResource.result ||
+      detailResource.loading ||
+      detailResource.failure
+    )
+      return;
+    focusAfterReadRef.current = false;
+    requestAnimationFrame(() => {
+      headingRef.current?.scrollIntoView({ block: "start" });
+      headingRef.current?.focus();
+    });
+  }, [detailResource.failure, detailResource.loading, detailResource.result]);
   useEffect(() => {
     if (!detail || !ACTIVE_STATES.has(detail.state)) return;
-    const timer = window.setInterval(() => void load(), 4_000);
+    let pollPending = false;
+    const timer = window.setInterval(() => {
+      if (pollPending || mutationRef.current) return;
+      pollPending = true;
+      void refreshDetail().finally(() => {
+        pollPending = false;
+      });
+    }, 4_000);
     return () => window.clearInterval(timer);
-  }, [detail, load]);
+  }, [detail, refreshDetail]);
 
-  if (loading) {
+  if (!detail && detailResource.loading) {
     return (
       <div className="text-muted-foreground flex items-center justify-center gap-2 py-20 text-sm">
         <Loader2 className="size-4 animate-spin" />
@@ -83,9 +242,29 @@ export function BotGenerationDetailPage() {
       </div>
     );
   }
-  if (!detail || !botId || !source) {
+  if (!detail && detailResource.failure === "not-found") {
     return (
       <div className="text-muted-foreground py-16 text-center">{t("generations.notFound")}</div>
+    );
+  }
+  if (!detail) {
+    return (
+      <div
+        className="mx-auto flex max-w-xl flex-col items-center gap-4 py-16 text-center"
+        role="alert"
+      >
+        <AlertTriangle className="size-8 text-red-600" aria-hidden="true" />
+        <p className="text-sm text-red-700">{t("generations.detailLoadFailed")}</p>
+        <Button
+          onClick={() => {
+            focusAfterReadRef.current = true;
+            void detailResource.refresh();
+          }}
+        >
+          <RefreshCw className="size-4" aria-hidden="true" />
+          {t("common.retry")}
+        </Button>
+      </div>
     );
   }
 
@@ -107,13 +286,58 @@ export function BotGenerationDetailPage() {
     completedAt: detail.completedAt,
   };
 
+  const recoverDeletion = async () => {
+    const target = recoveryTargetRef.current;
+    if (!target || mutationRef.current) return;
+    mutationRef.current = true;
+    setRecovering(true);
+    const controller = new AbortController();
+    recoveryControllerRef.current?.abort();
+    recoveryControllerRef.current = controller;
+    try {
+      const targetState = await verifyGenerationTarget(target, controller.signal);
+      if (!mountedRef.current || controller.signal.aborted) return;
+      if (targetState === "missing") {
+        recoveryTargetRef.current = null;
+        navigate(`/bots/${encodeURIComponent(botId)}/generations`);
+      } else if (targetState === "present") {
+        focusAfterReadRef.current = true;
+        const refreshed = await detailResource.refresh();
+        if (!mountedRef.current) return;
+        if (refreshed) {
+          recoveryTargetRef.current = null;
+          setDeleteNotice(null);
+        }
+      } else if (targetState === "bot-missing") {
+        setDeleteNotice({ kind: "bot-missing", target });
+      }
+    } finally {
+      mutationRef.current = false;
+      if (mountedRef.current) setRecovering(false);
+    }
+  };
+
   const remove = async () => {
-    if (!window.confirm(t("generations.deleteConfirm"))) return;
-    const response = await authFetch(
-      `/api/bots/${encodeURIComponent(botId)}/generations/${source}/${encodeURIComponent(detail.id)}`,
-      { method: "DELETE" },
-    );
-    if (response.ok) navigate(`/bots/${encodeURIComponent(botId)}/generations`);
+    if (mutationRef.current || writesLocked || !window.confirm(t("generations.deleteConfirm")))
+      return;
+    const target: GenerationTarget = { botId, source, id: String(detail.id) };
+    mutationRef.current = true;
+    recoveryTargetRef.current = target;
+    setDeleteBusy(true);
+    setDeleteNotice(null);
+    try {
+      const result = await deleteGeneration(target);
+      if (!mountedRef.current) return;
+      if (result === "deleted") {
+        recoveryTargetRef.current = null;
+        navigate(`/bots/${encodeURIComponent(botId)}/generations`);
+      } else {
+        setDeleteNotice({ kind: result === "active" ? "active" : "unknown", target });
+      }
+    } finally {
+      mutationRef.current = false;
+      if (mountedRef.current) setDeleteBusy(false);
+    }
   };
 
   return (
@@ -121,6 +345,11 @@ export function BotGenerationDetailPage() {
       <Link
         to={`/bots/${encodeURIComponent(botId)}/generations`}
         className="text-muted-foreground hover:text-foreground inline-flex items-center gap-2 text-sm"
+        aria-disabled={operationBusy}
+        tabIndex={operationBusy ? -1 : undefined}
+        onClick={(event) => {
+          if (operationBusy) event.preventDefault();
+        }}
       >
         <ArrowLeft className="size-4" />
         {t("generations.backToArchive")}
@@ -151,7 +380,11 @@ export function BotGenerationDetailPage() {
                   {t("generations.generationArchive")}
                 </span>
               </div>
-              <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+              <h1
+                ref={headingRef}
+                tabIndex={-1}
+                className="text-2xl font-semibold tracking-tight outline-none sm:text-3xl"
+              >
                 {t("generations.taskDetail")}
               </h1>
               <p className="mt-2 font-mono text-xs break-all text-slate-400">{detail.id}</p>
@@ -163,6 +396,41 @@ export function BotGenerationDetailPage() {
           />
         </div>
       </header>
+
+      {detailResource.failure ? (
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          role="alert"
+        >
+          <span className="flex items-center gap-2">
+            <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
+            {t("common.refreshFailed")}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={operationBusy || detailResource.loading}
+            onClick={() => {
+              if (recoveryTargetRef.current) {
+                void recoverDeletion();
+              } else {
+                focusAfterReadRef.current = true;
+                void detailResource.refresh();
+              }
+            }}
+          >
+            <RefreshCw className="size-4" aria-hidden="true" />
+            {t("common.retry")}
+          </Button>
+        </div>
+      ) : null}
+
+      {detailResource.loading ? (
+        <p className="text-muted-foreground flex items-center gap-2 text-sm" role="status">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          {t("generations.refreshing")}
+        </p>
+      ) : null}
 
       {images.length > 0 ? (
         <Card className="overflow-hidden">
@@ -306,6 +574,16 @@ export function BotGenerationDetailPage() {
             </CodeBlock>
           </InlineDisclosure>
 
+          {deleteNotice ? (
+            <div ref={deleteNoticeRef} tabIndex={-1} className="outline-none">
+              <GenerationDeleteNotice
+                kind={deleteNotice.kind}
+                busy={recovering}
+                onRecover={() => void recoverDeletion()}
+              />
+            </div>
+          ) : null}
+
           <Card className="border-red-200">
             <CardHeader>
               <div className="flex items-center gap-2 text-red-700">
@@ -319,9 +597,18 @@ export function BotGenerationDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <Button variant="destructive" onClick={remove} disabled={!canDelete}>
-                <Trash2 className="size-4" />
-                {t("generations.deleteTitle")}
+              <Button
+                variant="destructive"
+                onClick={remove}
+                disabled={!canDelete || writesLocked || !!detailResource.failure}
+                aria-label={t("generations.deleteTitle")}
+              >
+                {deleteBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+                {t(deleteBusy ? "generations.deleting" : "generations.deleteTitle")}
               </Button>
             </CardContent>
           </Card>

@@ -8,6 +8,7 @@
     "commands",
     "media",
     "generation-library",
+    "generation-records",
     "automation",
     "private-relay",
     "mini-app"
