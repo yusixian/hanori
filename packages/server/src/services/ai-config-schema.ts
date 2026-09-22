@@ -49,6 +49,9 @@ export const engagementPolicySchema = z.object({
   keywordDirect: z.boolean(),
   cooldownSeconds: z.number().int().min(0).max(3_600),
   confidenceThreshold: z.number().min(0).max(1),
+  addressedConfidenceThreshold: z.number().min(0).max(1).optional(),
+  continueConfidenceThreshold: z.number().min(0).max(1).optional(),
+  continuationWindowSeconds: z.number().int().min(0).max(300).optional(),
   contextMessages: z.number().int().min(1).max(20),
   timeoutMs: z.number().int().min(100).max(5_000),
 });

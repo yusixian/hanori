@@ -670,11 +670,32 @@ function resolveGroupConfig(
           keywordDirect: config.engagement.keywordDirect,
           cooldownSeconds: config.engagement.cooldownSeconds,
           confidenceThreshold: config.engagement.confidenceThreshold,
+          addressedConfidenceThreshold:
+            config.engagement.addressedConfidenceThreshold ??
+            DEFAULT_ENGAGEMENT_POLICY.addressedConfidenceThreshold,
+          continueConfidenceThreshold:
+            config.engagement.continueConfidenceThreshold ??
+            DEFAULT_ENGAGEMENT_POLICY.continueConfidenceThreshold,
+          continuationWindowSeconds:
+            config.engagement.continuationWindowSeconds ??
+            DEFAULT_ENGAGEMENT_POLICY.continuationWindowSeconds,
           contextMessages: config.engagement.contextMessages,
           timeoutMs: config.engagement.timeoutMs,
         }
       : {}),
     ...override?.engagement,
+    addressedConfidenceThreshold:
+      override?.engagement?.addressedConfidenceThreshold ??
+      config.engagement?.addressedConfidenceThreshold ??
+      DEFAULT_ENGAGEMENT_POLICY.addressedConfidenceThreshold,
+    continueConfidenceThreshold:
+      override?.engagement?.continueConfidenceThreshold ??
+      config.engagement?.continueConfidenceThreshold ??
+      DEFAULT_ENGAGEMENT_POLICY.continueConfidenceThreshold,
+    continuationWindowSeconds:
+      override?.engagement?.continuationWindowSeconds ??
+      config.engagement?.continuationWindowSeconds ??
+      DEFAULT_ENGAGEMENT_POLICY.continuationWindowSeconds,
   };
   if (!override) {
     return {
@@ -1912,9 +1933,14 @@ export function createAiReplyHandler(
               } else if (sample.errorCategory) {
                 triggerResult = legacyTrigger;
               } else if (sample.engagement === "answer" && sample.choice !== "silent") {
-                const recentBotUtterance = prepared.contextSnapshot.some(
-                  (message) => message.isBot && Date.now() - message.timestamp <= 120_000,
-                );
+                const continuationWindowMs =
+                  Math.max(0, engagementPolicy.continuationWindowSeconds) * 1_000;
+                const recentBotUtterance =
+                  continuationWindowMs > 0 &&
+                  prepared.contextSnapshot.some(
+                    (message) =>
+                      message.isBot && Date.now() - message.timestamp <= continuationWindowMs,
+                  );
                 const skipsCooldown =
                   sample.addressed === true || (sample.choice === "continue" && recentBotUtterance);
                 const lastEngagement = engagementCooldownMap.get(engagementCooldownKey) ?? 0;

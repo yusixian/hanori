@@ -20,6 +20,8 @@ const querySchema = z
     actualTrigger: z.string().trim().min(1).max(100).optional(),
     errorCategory: z.string().trim().min(1).max(100).optional(),
     label: z.enum(["answer", "silent", "uncertain", "unreviewed"]).optional(),
+    decisionFormat: z.enum(["all", "two_stage", "legacy"]).optional().default("all"),
+    configVersion: z.string().trim().min(1).max(100).optional(),
     createdFrom: isoDateTime.optional(),
     createdTo: isoDateTime.optional(),
   })

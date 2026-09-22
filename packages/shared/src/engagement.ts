@@ -10,6 +10,10 @@ export interface EngagementPolicy {
   keywordDirect: boolean;
   cooldownSeconds: number;
   confidenceThreshold: number;
+  addressedConfidenceThreshold: number;
+  continueConfidenceThreshold: number;
+  /** Zero disables the recent-conversation cooldown exemption. */
+  continuationWindowSeconds: number;
   contextMessages: number;
   timeoutMs: number;
 }
@@ -20,6 +24,9 @@ export const DEFAULT_ENGAGEMENT_POLICY: EngagementPolicy = {
   keywordDirect: false,
   cooldownSeconds: 60,
   confidenceThreshold: 0.8,
+  addressedConfidenceThreshold: 0.8,
+  continueConfidenceThreshold: 0.8,
+  continuationWindowSeconds: 120,
   contextMessages: 20,
   timeoutMs: 1000,
 };
@@ -44,6 +51,10 @@ export interface EngagementContextMessage {
   /** Earliest captured source, retained when a later assistant response derives from it. */
   privacyCapturedAt?: number;
 }
+export interface EngagementParticipationDecision {
+  choice: "addressed" | "continue" | "join";
+  confidence: number;
+}
 export interface EngagementSample {
   chatId: number;
   messageId: number;
@@ -54,6 +65,8 @@ export interface EngagementSample {
   addressed?: boolean;
   engagement: "answer" | "silent";
   confidence: number | null;
+  /** Provider decision before local routing thresholds; absent in older samples. */
+  participation?: EngagementParticipationDecision;
   /** Current samples store independent answer/silent and addressed/continue/join distributions.
    * Legacy samples have a single continue/join/silent distribution (no answer key).
    */

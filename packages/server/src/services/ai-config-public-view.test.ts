@@ -74,6 +74,43 @@ const secretStored: AiConfigStored = {
 };
 
 describe("toAiConfigPublic", () => {
+  it("fills missing routing fields for older persisted configs without replacing zero", () => {
+    const legacy = JSON.parse(
+      JSON.stringify(secretStored, (key, value) =>
+        [
+          "addressedConfidenceThreshold",
+          "continueConfidenceThreshold",
+          "continuationWindowSeconds",
+        ].includes(key)
+          ? undefined
+          : value,
+      ),
+    );
+    expect(toAiConfigPublic(legacy).engagement).toMatchObject({
+      addressedConfidenceThreshold: 0.8,
+      continueConfidenceThreshold: 0.8,
+      continuationWindowSeconds: 120,
+      hasApiKey: true,
+    });
+    expect(
+      toAiConfigPublic({
+        ...baseStored,
+        engagement: {
+          ...DEFAULT_ENGAGEMENT_POLICY,
+          encryptedApiKey: null,
+          addressedConfidenceThreshold: 0,
+          continueConfidenceThreshold: 0.6,
+          continuationWindowSeconds: 0,
+        },
+      }).engagement,
+    ).toMatchObject({
+      addressedConfidenceThreshold: 0,
+      continueConfidenceThreshold: 0.6,
+      continuationWindowSeconds: 0,
+      hasApiKey: false,
+    });
+  });
+
   it("returns the empty default view without a stored config", () => {
     expect(toAiConfigPublic(null)).toEqual({
       engagement: { ...DEFAULT_ENGAGEMENT_POLICY, hasApiKey: false },

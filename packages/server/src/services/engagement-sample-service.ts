@@ -34,6 +34,8 @@ export interface EngagementSampleFilters {
   actualOutcome?: "answer" | "silent";
   errorCategory?: string;
   label?: EngagementLabel | "unreviewed";
+  decisionFormat?: "all" | "two_stage" | "legacy";
+  configVersion?: string;
   createdFrom?: Date;
   createdTo?: Date;
 }
@@ -57,8 +59,26 @@ function safePolicy(policy: EngagementPolicy): EngagementPolicy {
     keywordDirect: policy.keywordDirect,
     cooldownSeconds: policy.cooldownSeconds,
     confidenceThreshold: policy.confidenceThreshold,
+    addressedConfidenceThreshold: policy.addressedConfidenceThreshold,
+    continueConfidenceThreshold: policy.continueConfidenceThreshold,
+    continuationWindowSeconds: policy.continuationWindowSeconds,
     contextMessages: policy.contextMessages,
     timeoutMs: policy.timeoutMs,
+  };
+}
+
+function safeParticipation(participation: EngagementSample["participation"]) {
+  if (!participation) return null;
+  if (!["addressed", "continue", "join"].includes(participation.choice)) return null;
+  if (
+    !Number.isFinite(participation.confidence) ||
+    participation.confidence < 0 ||
+    participation.confidence > 1
+  )
+    return null;
+  return {
+    choice: participation.choice,
+    confidence: participation.confidence,
   };
 }
 
@@ -139,6 +159,7 @@ export function projectEngagementSampleRow(row: EngagementSampleRow, now: Date) 
   const expired = row.contextExpiresAt.getTime() <= now.getTime();
   return {
     ...row,
+    participation: safeParticipation(row.participation ?? undefined),
     context: expired ? null : row.context,
     contextExpiresAt: row.contextExpiresAt.toISOString(),
     contextPurgedAt: row.contextPurgedAt?.toISOString() ?? null,
@@ -187,6 +208,7 @@ export class EngagementSampleService {
         sample.confidence !== null && Number.isFinite(sample.confidence)
           ? Math.max(0, Math.min(1, sample.confidence))
           : null,
+      participation: safeParticipation(sample.participation),
       probabilities: safeProbabilities(sample.probabilities),
       reasonCode: bounded(sample.reasonCode, 100) ?? "unknown",
       actualTrigger: bounded(sample.actualTrigger, 100),
@@ -287,6 +309,62 @@ export class EngagementSampleService {
             sql<number>`coalesce(sum(${engagementSamples.inputTokens}) filter (where ${engagementSamples.source} <> 'local'), 0)::double precision`.mapWith(
               Number,
             ),
+          twoStageSampleCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null))::int`.mapWith(
+              Number,
+            ),
+          twoStageLabeledCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.label} is not null))::int`.mapWith(
+              Number,
+            ),
+          twoStageEvaluatedCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.label} in ('answer', 'silent')))::int`.mapWith(
+              Number,
+            ),
+          twoStageLabelAnswerCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.label} = 'answer'))::int`.mapWith(
+              Number,
+            ),
+          twoStageLabelSilentCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.label} = 'silent'))::int`.mapWith(
+              Number,
+            ),
+          twoStageFalsePositiveCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.engagement} = 'answer' and ${engagementSamples.label} = 'silent'))::int`.mapWith(
+              Number,
+            ),
+          twoStageFalseNegativeCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null and ${engagementSamples.engagement} = 'silent' and ${engagementSamples.label} = 'answer'))::int`.mapWith(
+              Number,
+            ),
+          legacySampleCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null))::int`.mapWith(
+              Number,
+            ),
+          legacyLabeledCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.label} is not null))::int`.mapWith(
+              Number,
+            ),
+          legacyEvaluatedCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.label} in ('answer', 'silent')))::int`.mapWith(
+              Number,
+            ),
+          legacyLabelAnswerCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.label} = 'answer'))::int`.mapWith(
+              Number,
+            ),
+          legacyLabelSilentCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.label} = 'silent'))::int`.mapWith(
+              Number,
+            ),
+          legacyFalsePositiveCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.engagement} = 'answer' and ${engagementSamples.label} = 'silent'))::int`.mapWith(
+              Number,
+            ),
+          legacyFalseNegativeCount:
+            sql<number>`(count(*) filter (where ${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null and ${engagementSamples.engagement} = 'silent' and ${engagementSamples.label} = 'answer'))::int`.mapWith(
+              Number,
+            ),
         })
         .from(engagementSamples)
         .where(where),
@@ -299,6 +377,26 @@ export class EngagementSampleService {
     const labelSilentCount = toNumber(metrics?.labelSilentCount);
     const falsePositiveCount = toNumber(metrics?.falsePositiveCount);
     const falseNegativeCount = toNumber(metrics?.falseNegativeCount);
+    const evaluationGroup = (prefix: "twoStage" | "legacy") => {
+      const sampleCount = toNumber(metrics?.[`${prefix}SampleCount`]);
+      const labeledCount = toNumber(metrics?.[`${prefix}LabeledCount`]);
+      const evaluatedCount = toNumber(metrics?.[`${prefix}EvaluatedCount`]);
+      const labelAnswerCount = toNumber(metrics?.[`${prefix}LabelAnswerCount`]);
+      const labelSilentCount = toNumber(metrics?.[`${prefix}LabelSilentCount`]);
+      const falsePositiveCount = toNumber(metrics?.[`${prefix}FalsePositiveCount`]);
+      const falseNegativeCount = toNumber(metrics?.[`${prefix}FalseNegativeCount`]);
+      return {
+        sampleCount,
+        labeledCount,
+        evaluatedCount,
+        labelAnswerCount,
+        labelSilentCount,
+        falsePositiveCount,
+        falseNegativeCount,
+        falsePositiveRate: labelSilentCount === 0 ? null : falsePositiveCount / labelSilentCount,
+        falseNegativeRate: labelAnswerCount === 0 ? null : falseNegativeCount / labelAnswerCount,
+      };
+    };
     return {
       items: rows.map((row) => projectEngagementSampleRow(row, now)),
       total,
@@ -322,6 +420,10 @@ export class EngagementSampleService {
         errorCount: toNumber(metrics?.errorCount),
         timeoutCount: toNumber(metrics?.timeoutCount),
         inputTokens: toNumber(metrics?.inputTokens),
+        evaluationByFormat: {
+          twoStage: evaluationGroup("twoStage"),
+          legacy: evaluationGroup("legacy"),
+        },
         actorCostStatus: "unpriced" as const,
         actorCostReason: "Token usage records do not contain model pricing",
         actorUsagePath: `/api/usage/summary?botId=${encodeURIComponent(input.botId)}`,
@@ -375,6 +477,17 @@ export class EngagementSampleService {
       conditions.push(eq(engagementSamples.errorCategory, input.errorCategory));
     if (input.label === "unreviewed") conditions.push(isNull(engagementSamples.label));
     else if (input.label) conditions.push(eq(engagementSamples.label, input.label));
+    if (input.configVersion)
+      conditions.push(eq(engagementSamples.configVersion, input.configVersion));
+    if (input.decisionFormat === "two_stage") {
+      conditions.push(
+        sql`${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} ->> 'answer' is not null`,
+      );
+    } else if (input.decisionFormat === "legacy") {
+      conditions.push(
+        sql`${engagementSamples.source} = 'jev' and ${engagementSamples.probabilities} is not null and ${engagementSamples.probabilities} ->> 'answer' is null`,
+      );
+    }
     if (input.createdFrom) conditions.push(gte(engagementSamples.createdAt, input.createdFrom));
     if (input.createdTo) conditions.push(lte(engagementSamples.createdAt, input.createdTo));
     return conditions;

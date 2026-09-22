@@ -119,6 +119,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     const suppliedApiKey = engagementApiKey?.trim();
     engagement = {
       ...DEFAULT_ENGAGEMENT_POLICY,
+      ...existingMigrated?.engagement,
       ...policy,
       encryptedApiKey: suppliedApiKey
         ? encrypt(suppliedApiKey, encryptionKey)
@@ -215,7 +216,12 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     Object.entries(patch.groupOverrides).map(([chatId, incoming]) => {
       const { engagement: engagementPatch, ...rest } = incoming;
       const existingEngagement = existingMigrated?.groupOverrides[chatId]?.engagement;
-      const engagement = engagementPatch === undefined ? existingEngagement : engagementPatch;
+      const engagement =
+        engagementPatch === undefined
+          ? existingEngagement
+          : engagementPatch === null
+            ? null
+            : { ...existingEngagement, ...engagementPatch };
       return [
         chatId,
         {

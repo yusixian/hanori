@@ -14,7 +14,11 @@ export const engagementSamples = {
   falseNegative: "False negative",
   humanEvaluation: "Human evaluation · {{count}} labeled JEV samples",
   humanEvaluationHelp:
-    "Fractions use only human labels Should answer / Should stay silent where source=jev. Uncertain and local-rule samples are excluded from the denominator.",
+    "Current two-stage and legacy three-class decisions are evaluated separately. Two-stage describes the decision format, not the currently active config; compare tuning results with one exact config version selected. Fractions use only Should answer / Should stay silent labels; uncertain, unreviewed, errors, and local rules are excluded. Labels support manual analysis and do not train the model.",
+  evaluationCoverage:
+    "{{evaluated}} evaluable labels · {{labeled}} labeled · {{unreviewed}} unreviewed · {{total}} samples",
+  groupedEvaluationUnavailable:
+    "Separated evaluation is unavailable from this server response; no combined rate is shown.",
   classifierCostOnly:
     "Classifier cost only; reply usage is tracked separately and is not priced here.",
   resultCount: "{{count}} samples",
@@ -53,16 +57,23 @@ export const engagementSamples = {
   latency: "{{value}} ms",
   model: "Model {{value}}",
   config: "Config {{value}}",
+  filterByConfig: "Filter by this exact config version",
   source: "Source {{value}}",
   pricingSource: "Pricing {{value}}",
   tokens: "{{value}} input tokens",
   cost: "Classifier {{value}}",
-  participationChoice: "Participation route: {{choice}}",
+  participationChoice: "Policy participation route: {{choice}}",
+  actualParticipationRoute: "Actual admitted route: {{choice}}",
   legacyChoice: "Legacy JEV choice: {{choice}}",
   localRule: "Local rule: {{choice}}",
   fallbackChoice: "Fallback route: {{choice}}",
   replyProbabilities: "Reply-decision probabilities",
   participationProbabilities: "Participation probabilities",
+  rawParticipation: "Raw participation recommendation: {{choice}} · confidence {{confidence}}",
+  rawParticipationUnavailable:
+    "Raw participation recommendation was not retained for this historical sample.",
+  participationHelp:
+    "Participation describes the route only. Its probability is not the model's willingness to reply; the reply decision above is evaluated first.",
   legacyProbabilities: "Legacy model probabilities",
   reviewLabel: "Review",
   reviewLabelFor: "Review label for message {{messageId}}",
@@ -71,11 +82,23 @@ export const engagementSamples = {
   contextExpired: "This context has expired and is no longer displayed.",
   contextUnavailable: "No context was retained for this sample.",
   configSnapshot: "Policy snapshot",
+  configSnapshotFields: {
+    confidenceThreshold: "Reply threshold",
+    addressedConfidenceThreshold: "Direct-address threshold",
+    continueConfidenceThreshold: "Continuation threshold",
+    continuationWindowSeconds: "Continuation window (seconds)",
+  },
+  legacyConfigDefaults:
+    "Historical snapshot: omitted routing settings used the former fixed defaults (direct address 0.8, continuation 0.8, window 120 seconds).",
   expired: "Context expired",
   modes: {
     off: "Off",
     shadow: "Shadow",
     active: "Active",
+  },
+  formats: {
+    twoStage: "Current two-stage decisions",
+    legacy: "Legacy three-class decisions",
   },
   choices: {
     continue: "Continue",
@@ -92,6 +115,11 @@ export const engagementSamples = {
     continue: "Continue {{value}}",
     join: "Join {{value}}",
   },
+  participationNames: {
+    addressed: "Direct address",
+    continue: "Continue",
+    join: "Join",
+  },
   actualOutcomes: {
     answer: "Admitted to the reply pipeline",
     silent: "Not admitted to the reply pipeline",
@@ -105,6 +133,17 @@ export const engagementSamples = {
       "Below policy threshold: reply-decision confidence {{confidence}}, {{threshold}} required",
     belowLegacyThreshold:
       "Below policy threshold: legacy choice confidence {{confidence}}, {{threshold}} required",
+    jev_answer: "JEV selected reply and passed the policy threshold",
+    jev_silent: "JEV selected silence",
+    keyword_direct: "Matched the deterministic direct-answer rule",
+    engagement_cooldown: "Blocked by proactive-reply cooldown",
+    queue_full: "Skipped because the decision queue was full",
+    usage_denied: "Blocked by usage policy",
+    timeout: "JEV decision timed out",
+    overloaded: "Skipped because the JEV concurrency limit was reached",
+    invalid_response: "JEV returned an invalid response",
+    response_too_large: "JEV response exceeded the size limit",
+    model_mismatch: "JEV returned an unexpected model version",
   },
   labels: {
     answer: "Should answer",
@@ -129,6 +168,9 @@ export const engagementSamples = {
     allActualOutcomes: "All actual admissions",
     actualTrigger: "Actual trigger",
     errorCategory: "Error category",
+    configVersion: "Exact config version",
+    decisionFormat: "Decision format",
+    allDecisionFormats: "All decision formats",
     label: "Review label",
     allLabels: "All labels",
     from: "From",

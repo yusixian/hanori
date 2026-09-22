@@ -1,5 +1,5 @@
 import type { AiConfigStored, AiGroupOverride } from "@cos-tool-bot/shared";
-import { DEFAULT_MESSAGE_CONFIG } from "@cos-tool-bot/shared";
+import { DEFAULT_ENGAGEMENT_POLICY, DEFAULT_MESSAGE_CONFIG } from "@cos-tool-bot/shared";
 import { describe, expect, it } from "vitest";
 import { encrypt } from "../utils/crypto.js";
 import {
@@ -194,6 +194,7 @@ describe("toAiConfigRuntime embedding key", () => {
 
 describe("toAiConfigRuntime engagement key", () => {
   const policy = {
+    ...DEFAULT_ENGAGEMENT_POLICY,
     mode: "shadow" as const,
     style: "natural" as const,
     preferences: "join art discussions",
@@ -203,6 +204,50 @@ describe("toAiConfigRuntime engagement key", () => {
     contextMessages: 20,
     timeoutMs: 1_000,
   };
+
+  it("restores historical routing defaults and preserves explicit zero values", () => {
+    const legacy = JSON.parse(
+      JSON.stringify(
+        baseConfig({
+          engagement: {
+            ...policy,
+            encryptedApiKey: null,
+          },
+        }),
+        (key, value) =>
+          [
+            "addressedConfidenceThreshold",
+            "continueConfidenceThreshold",
+            "continuationWindowSeconds",
+          ].includes(key)
+            ? undefined
+            : value,
+      ),
+    );
+    expect(toAiConfigRuntime(legacy, KEY)?.engagement).toMatchObject({
+      addressedConfidenceThreshold: 0.8,
+      continueConfidenceThreshold: 0.8,
+      continuationWindowSeconds: 120,
+    });
+    expect(
+      toAiConfigRuntime(
+        baseConfig({
+          engagement: {
+            ...policy,
+            encryptedApiKey: null,
+            addressedConfidenceThreshold: 0,
+            continueConfidenceThreshold: 0.65,
+            continuationWindowSeconds: 0,
+          },
+        }),
+        KEY,
+      )?.engagement,
+    ).toMatchObject({
+      addressedConfidenceThreshold: 0,
+      continueConfidenceThreshold: 0.65,
+      continuationWindowSeconds: 0,
+    });
+  });
 
   it("decrypts the JEV key into the runtime-only projection", () => {
     const runtime = toAiConfigRuntime(

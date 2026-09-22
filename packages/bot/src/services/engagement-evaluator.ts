@@ -15,7 +15,6 @@ const MAX_CONTEXT_CHARS = 6_000;
 const MAX_RESPONSE_CHARS = 64 * 1024;
 const DEFAULT_MAX_CONCURRENT = 8;
 const DECISION_PROMPT_VERSION = 4;
-const PARTICIPATION_CONFIDENCE_THRESHOLD = 0.8;
 const INPUT_COST_USD_PER_TOKEN = 0.042 / 1_000_000;
 
 export interface EngagementContextCandidate extends EngagementContextMessage {
@@ -162,6 +161,9 @@ function snapshotPolicy(policy: EngagementPolicy): EngagementPolicy {
     keywordDirect: policy.keywordDirect,
     cooldownSeconds: policy.cooldownSeconds,
     confidenceThreshold: policy.confidenceThreshold,
+    addressedConfidenceThreshold: policy.addressedConfidenceThreshold,
+    continueConfidenceThreshold: policy.continueConfidenceThreshold,
+    continuationWindowSeconds: policy.continuationWindowSeconds,
     contextMessages: policy.contextMessages,
     timeoutMs: policy.timeoutMs,
   };
@@ -453,14 +455,15 @@ export class EngagementEvaluator {
         }
         const answer = parsed.answers.reply;
         const participation = parsed.answers.participation;
+        const addressed =
+          participation.choice === "addressed" &&
+          participation.confidence >= input.policy.addressedConfidenceThreshold;
         // Uncertain participation must not earn the continuation cooldown exemption.
+        const continues =
+          participation.choice === "continue" &&
+          participation.confidence >= input.policy.continueConfidenceThreshold;
         const choice: EngagementChoice =
-          answer.choice === "silent"
-            ? "silent"
-            : participation.choice === "continue" &&
-                participation.confidence >= PARTICIPATION_CONFIDENCE_THRESHOLD
-              ? "continue"
-              : "join";
+          answer.choice === "silent" ? "silent" : continues ? "continue" : "join";
         const inputTokens = parsed.usage?.input_tokens ?? null;
         const passesThreshold =
           answer.choice !== "silent" && answer.confidence >= input.policy.confidenceThreshold;
@@ -470,11 +473,13 @@ export class EngagementEvaluator {
           mode: input.policy.mode,
           style: input.policy.style,
           choice,
-          addressed:
-            participation.choice === "addressed" &&
-            participation.confidence >= PARTICIPATION_CONFIDENCE_THRESHOLD,
+          addressed,
           engagement: passesThreshold ? "answer" : "silent",
           confidence: answer.confidence,
+          participation: {
+            choice: participation.choice,
+            confidence: participation.confidence,
+          },
           // Two independent distributions; retained separately in the existing JSON column.
           probabilities: { ...answer.probabilities, ...participation.probabilities },
           reasonCode:

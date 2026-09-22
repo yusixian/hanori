@@ -30,15 +30,45 @@ export const aiSettings = {
     },
     preferences: "补充接话偏好",
     preferencesPlaceholder: "例如：可以接动漫梗，争论时少插话。",
+    preferencesHelp:
+      "这些偏好只提供给 JEV 的是否回复判断，独立于回复模型提示词，也不会改写回复模型提示词。",
+    preferencesExample: "接话偏好示例",
+    preferencesExampleNone: "选择示例以预览",
+    preferencesExampleHelp:
+      "示例只用于预览。请选择后先查看内容，再点击明确按钮填入或替换上方的接话偏好。",
+    preferencesExamplePreview: "预览：{{name}}",
+    preferencesExampleUse: "使用此示例",
+    preferencesExampleReplace: "替换现有偏好",
+    preferencesExamples: {
+      active: {
+        label: "活跃群友",
+        text: "即使没有被点名，也可以参与生活吐槽、接梗、技术交流和情绪表达；能补充具体、有用或有趣的内容时再接话。对方连续讲故事时等表达完整后再回应。纯附和、重复内容、明显面向其他人的对话，或明确说不要回复时保持沉默。",
+      },
+      restrained: {
+        label: "克制帮助",
+        text: "优先回答具体问题，补充有用的细节、纠正或下一步建议。生活闲聊、纯附和、重复信息、明显面向其他人的对话，或明确说不要回复时保持沉默。",
+      },
+    },
     keywordDirect: "命中触发词时直接回答",
     cooldownSeconds: "主动插话冷却（秒）",
-    continuationHelp: "Bot 发言后 2 分钟内，高置信度的延续对话可跳过此冷却，仍遵守用量和并发限制。",
+    continuationHelp:
+      "延续对话只有在置信度达到配置门槛且仍在窗口内时才可跳过主动插话冷却。将窗口设为 0 可关闭此豁免，仍遵守用量和并发限制。",
     advanced: "高级设置",
-    confidenceThreshold: "最低置信度",
+    replyDecision: "是否回复",
+    replyDecisionHelp:
+      "置信度表示 JEV 判断有多确定，不是回复概率，也不是实测准确率。此阈值控制已选择“回复”的请求能否进入回复流程，不控制参与方式路由。",
+    confidenceThreshold: "回复判断置信度门槛",
+    participationRouting: "参与路由与冷却",
+    participationRoutingHelp:
+      "参与方式门槛只影响直接招呼和延续对话如何路由，以及是否可以跳过主动插话冷却；它不决定 Bot 是否应该回复。",
+    addressedConfidenceThreshold: "直接招呼置信度门槛",
+    continueConfidenceThreshold: "延续对话置信度门槛",
+    continuationWindowSeconds: "延续窗口（秒）",
+    requestBudget: "请求预算",
+    requestBudgetHelp:
+      "上下文消息数和判断超时限制每次 JEV 请求。上下文过少可能缺少有用历史，超时时间过短则更容易回退。",
     contextMessages: "上下文消息数",
     timeoutMs: "判断超时（毫秒）",
-    confidenceHelp:
-      "是否回复与参与方式分别判断，参与方式不确定不会直接导致沉默。JEV 选择回复且回复判断置信度达到此配置阈值时才允许回复；降低阈值会增加接话，建议结合人工标记校准。“直接招呼”和“延续对话”跳过冷却均采用固定 0.8 的参与方式置信度门槛；不足时按主动加入处理，仍受冷却限制。置信度表示模型判断的确定程度，不是实测准确率。上下文限制为最近 5 分钟、最多 6,000 字符；判断失败时沿用原有触发规则。",
     reviewRecords: "查看决策记录",
     reviewRecordsHelp: "前往 Bot 调试器复核并标注接话决策样本。",
     apiKey: "TypeSafe API Key",

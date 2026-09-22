@@ -1,4 +1,5 @@
 import type { AiConfigStored } from "@cos-tool-bot/shared";
+import { DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
 import { describe, expect, it } from "vitest";
 import { decrypt } from "../utils/crypto.js";
 import { AiConfigPatchError, absorbAiConfigPatch } from "./ai-config-patch.js";
@@ -36,6 +37,38 @@ function expectPatchError(absorbCall: () => AiConfigStored, message: string) {
 }
 
 describe("engagement config validation", () => {
+  it.each([
+    ["addressedConfidenceThreshold", -0.1],
+    ["addressedConfidenceThreshold", 1.1],
+    ["continueConfidenceThreshold", -0.1],
+    ["continueConfidenceThreshold", 1.1],
+    ["continuationWindowSeconds", -1],
+    ["continuationWindowSeconds", 301],
+    ["continuationWindowSeconds", 1.5],
+  ])("rejects invalid %s=%s for Bot defaults and group overrides", (key, value) => {
+    expect(() =>
+      buildPatch({ enabled: false, engagement: { ...DEFAULT_ENGAGEMENT_POLICY, [key]: value } }),
+    ).toThrow();
+    expect(() =>
+      buildPatch({
+        enabled: false,
+        groupOverrides: {
+          "-100": { chatId: -100, whitelisted: true, engagement: { [key]: value } },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("accepts independent boundary thresholds and a disabled continuation window", () => {
+    const policy = {
+      ...DEFAULT_ENGAGEMENT_POLICY,
+      addressedConfidenceThreshold: 0,
+      continueConfidenceThreshold: 1,
+      continuationWindowSeconds: 0,
+    };
+    expect(buildPatch({ enabled: false, engagement: policy }).engagement).toEqual(policy);
+  });
+
   it("caps the evaluator context at the runtime-supported 20 messages", () => {
     expect(() =>
       buildPatch({
@@ -344,6 +377,7 @@ describe("absorbAiConfigPatch preserved sections", () => {
   it("preserves engagement secrets and group policies omitted by older settings clients", () => {
     const current = storedConfig({
       engagement: {
+        ...DEFAULT_ENGAGEMENT_POLICY,
         mode: "shadow",
         style: "natural",
         preferences: "join art discussions",
@@ -372,6 +406,59 @@ describe("absorbAiConfigPatch preserved sections", () => {
 
     expect(result.engagement).toEqual(current.engagement);
     expect(result.groupOverrides["-100"]?.engagement).toEqual({ style: "assistant" });
+  });
+
+  it("preserves newly configured routing fields when an older client saves its known fields", () => {
+    const current = storedConfig({
+      engagement: {
+        ...DEFAULT_ENGAGEMENT_POLICY,
+        encryptedApiKey: "stored-key",
+        addressedConfidenceThreshold: 0.7,
+        continueConfidenceThreshold: 0.6,
+        continuationWindowSeconds: 0,
+      },
+      groupOverrides: {
+        "-100": {
+          chatId: -100,
+          whitelisted: true,
+          engagement: { addressedConfidenceThreshold: 0.55, continuationWindowSeconds: 60 },
+        },
+      },
+    });
+    const {
+      addressedConfidenceThreshold: _addressed,
+      continueConfidenceThreshold: _continue,
+      continuationWindowSeconds: _window,
+      ...legacyPolicy
+    } = DEFAULT_ENGAGEMENT_POLICY;
+    const result = absorb(
+      current,
+      buildPatch({
+        enabled: false,
+        engagement: { ...legacyPolicy, preferences: "join specific questions" },
+        groupOverrides: {
+          "-100": { chatId: -100, whitelisted: true, engagement: { style: "assistant" } },
+        },
+      }),
+    );
+    expect(result.engagement).toMatchObject({
+      addressedConfidenceThreshold: 0.7,
+      continueConfidenceThreshold: 0.6,
+      continuationWindowSeconds: 0,
+      preferences: "join specific questions",
+      encryptedApiKey: "stored-key",
+    });
+    expect(result.groupOverrides["-100"]?.engagement).toEqual({
+      addressedConfidenceThreshold: 0.55,
+      continuationWindowSeconds: 60,
+      style: "assistant",
+    });
+    const fresh = absorb(null, buildPatch({ enabled: false, engagement: legacyPolicy }));
+    expect(fresh.engagement).toMatchObject({
+      addressedConfidenceThreshold: 0.8,
+      continueConfidenceThreshold: 0.8,
+      continuationWindowSeconds: 120,
+    });
   });
 
   it("encrypts a new engagement key and supports an explicit group inheritance reset", () => {

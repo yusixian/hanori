@@ -77,6 +77,13 @@ function toEngagementConfigPublic(stored: AiConfigStored["engagement"]) {
     cooldownSeconds: stored?.cooldownSeconds ?? DEFAULT_ENGAGEMENT_POLICY.cooldownSeconds,
     confidenceThreshold:
       stored?.confidenceThreshold ?? DEFAULT_ENGAGEMENT_POLICY.confidenceThreshold,
+    addressedConfidenceThreshold:
+      stored?.addressedConfidenceThreshold ??
+      DEFAULT_ENGAGEMENT_POLICY.addressedConfidenceThreshold,
+    continueConfidenceThreshold:
+      stored?.continueConfidenceThreshold ?? DEFAULT_ENGAGEMENT_POLICY.continueConfidenceThreshold,
+    continuationWindowSeconds:
+      stored?.continuationWindowSeconds ?? DEFAULT_ENGAGEMENT_POLICY.continuationWindowSeconds,
     contextMessages: stored?.contextMessages ?? DEFAULT_ENGAGEMENT_POLICY.contextMessages,
     timeoutMs: stored?.timeoutMs ?? DEFAULT_ENGAGEMENT_POLICY.timeoutMs,
     hasApiKey: !!stored?.encryptedApiKey,

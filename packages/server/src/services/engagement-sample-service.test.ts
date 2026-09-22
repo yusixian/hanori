@@ -18,6 +18,9 @@ const POLICY = {
   keywordDirect: false,
   cooldownSeconds: 60,
   confidenceThreshold: 0.8,
+  addressedConfidenceThreshold: 0.8,
+  continueConfidenceThreshold: 0.8,
+  continuationWindowSeconds: 120,
   contextMessages: 20,
   timeoutMs: 1_000,
 };
@@ -31,6 +34,7 @@ function sample(overrides: Partial<EngagementSample> = {}): EngagementSample {
     choice: "join",
     engagement: "answer",
     confidence: 0.9,
+    participation: { choice: "join", confidence: 0.86 },
     probabilities: { continue: 0.05, join: 0.9, silent: 0.05 },
     reasonCode: "model_choice",
     actualTrigger: null,
@@ -61,7 +65,25 @@ describe("EngagementSampleService persistence", () => {
     } as unknown as Database);
     const probabilities = { answer: 0.95, silent: 0.05, addressed: 0.1, continue: 0.5, join: 0.4 };
     await service.persist("00000000-0000-4000-8000-000000000001", sample({ probabilities }));
-    expect(values.mock.calls[0]![0]).toMatchObject({ probabilities, source: "jev" });
+    expect(values.mock.calls[0]![0]).toMatchObject({
+      probabilities,
+      participation: { choice: "join", confidence: 0.86 },
+      source: "jev",
+    });
+  });
+
+  it("rejects malformed raw participation metadata instead of inferring or clamping it", async () => {
+    const values = vi.fn(async (_value: Record<string, unknown>) => undefined);
+    const service = new EngagementSampleService({
+      insert: () => ({ values }),
+    } as unknown as Database);
+
+    await service.persist(
+      "00000000-0000-4000-8000-000000000001",
+      sample({ participation: { choice: "join", confidence: 1.2 } }),
+    );
+
+    expect(values.mock.calls[0]![0]).toMatchObject({ participation: null });
   });
 
   it("stores a redacted bounded context and immutable pricing snapshot without credentials", async () => {
@@ -160,6 +182,20 @@ describe("EngagementSampleService persistence", () => {
                   errorCount: 4,
                   timeoutCount: 3,
                   inputTokens: 100,
+                  twoStageSampleCount: 5,
+                  twoStageLabeledCount: 2,
+                  twoStageEvaluatedCount: 2,
+                  twoStageLabelAnswerCount: 1,
+                  twoStageLabelSilentCount: 1,
+                  twoStageFalsePositiveCount: 0,
+                  twoStageFalseNegativeCount: 1,
+                  legacySampleCount: 3,
+                  legacyLabeledCount: 1,
+                  legacyEvaluatedCount: 1,
+                  legacyLabelAnswerCount: 0,
+                  legacyLabelSilentCount: 1,
+                  legacyFalsePositiveCount: 1,
+                  legacyFalseNegativeCount: 0,
                 },
               ];
             },
@@ -177,18 +213,53 @@ describe("EngagementSampleService persistence", () => {
       page: 1,
       pageSize: 20,
       label: "unreviewed",
+      configVersion: "config-v1",
+      decisionFormat: "two_stage",
       createdFrom,
       createdTo,
     });
 
     expect(result?.metrics).toMatchObject({ total: 8, errorCount: 4, timeoutCount: 3 });
+    expect(result?.metrics.evaluationByFormat).toEqual({
+      twoStage: {
+        sampleCount: 5,
+        labeledCount: 2,
+        evaluatedCount: 2,
+        labelAnswerCount: 1,
+        labelSilentCount: 1,
+        falsePositiveCount: 0,
+        falseNegativeCount: 1,
+        falsePositiveRate: 0,
+        falseNegativeRate: 1,
+      },
+      legacy: {
+        sampleCount: 3,
+        labeledCount: 1,
+        evaluatedCount: 1,
+        labelAnswerCount: 0,
+        labelSilentCount: 1,
+        falsePositiveCount: 1,
+        falseNegativeCount: 0,
+        falsePositiveRate: 1,
+        falseNegativeRate: null,
+      },
+    });
     const dialect = new PgDialect();
     const listQuery = dialect.sqlToQuery(listWhere!);
     const metricsQuery = dialect.sqlToQuery(metricsWhere!);
     expect(listQuery.sql).toContain('"engagement_samples"."label" is null');
     expect(listQuery.sql).toContain('"engagement_samples"."created_at" >=');
     expect(listQuery.sql).toContain('"engagement_samples"."created_at" <=');
-    expect(listQuery.params).toEqual(["bot-a", createdFrom.toISOString(), createdTo.toISOString()]);
+    expect(listQuery.sql).toContain('"engagement_samples"."config_version" =');
+    expect(listQuery.sql).toContain(
+      `"engagement_samples"."probabilities" ->> 'answer' is not null`,
+    );
+    expect(listQuery.params).toEqual([
+      "bot-a",
+      "config-v1",
+      createdFrom.toISOString(),
+      createdTo.toISOString(),
+    ]);
     expect(metricsQuery).toEqual(listQuery);
   });
 
@@ -289,5 +360,6 @@ describe("engagement context retention", () => {
     );
 
     expect(projected.context).toBeNull();
+    expect(projected.participation).toBeNull();
   });
 });

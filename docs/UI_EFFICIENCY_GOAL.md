@@ -44,6 +44,8 @@
 
 ## 当前迭代
 
+- v0.12.0 JEV 接话调参与决策诊断进行中。用户本轮明确授权全面优化、独立 review 后修复、PR 合入、发版及文档站更新说明；没有生产部署或修改线上 Bot 配置授权。基线 `94a11dfe45fa793403753637c846e9e3631c7498`，分支 `feat/jev-tuning-diagnostics`。范围为独立参与阈值、续聊窗口、显式偏好示例、原始参与判断记录、按决策格式分开的评估及配置版本筛选；不自动改变已有默认行为，不增加真实模型回放或消息发送。主代理负责配置兼容、文档、验收与交付，Sol 分担 runtime/diagnostics，Luna 负责设置面板；实现后安排非实现者审查。交付证据将记录到 `docs/JEV_TUNING_DELIVERY.md`。
+
 - v0.11.1 生成记录读取与删除恢复已通过 PR #98 合入并发布；main/tag/Release目标 `d69c26541fa157648a8dae49a5e575df2ac2845d`。PR CI `35679788689` 与合入后CI `35680398600` 均已核实 completed/success，各自精确SHA匹配；合入树与审查候选一致。完整证据见 [生成记录验收](UI_GENERATIONS_AUDIT.md)。
 
 - v0.11.0 会话搜索已通过 PR #97 合入并发布；main/tag/Release目标 `29acc69a6a08b882b08883b7e9c06dfe440f8731`。最终PR CI `35673958683` completed/success，合入文件树与已验证候选一致；合入后CI `35674641833` 已核实 completed/success，精确SHA与发布目标一致。完整证据见 [会话管理验收](UI_CONVERSATIONS_AUDIT.md)。

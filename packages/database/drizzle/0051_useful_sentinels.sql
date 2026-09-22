@@ -1,0 +1,1 @@
+ALTER TABLE "engagement_samples" ADD COLUMN "participation" json;

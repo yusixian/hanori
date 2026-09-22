@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.11.1/");
+  await page.goto("/docs/changelog/v0.12.0/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.11.1");
-  await expect(page.getByText("生成记录读取与删除恢复", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.12.0");
+  await expect(page.getByText("JEV 接话调参与决策诊断", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.11.1");
+  await expect(title).toHaveText("v0.12.0");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.11.1.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.12.0.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -84,7 +84,39 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(
     page.getByRole("link", { name: "v0.11.1", exact: true }).filter({ visible: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.12.0", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
+});
+
+test("JEV tuning guide is searchable and explains independent thresholds", async ({
+  page,
+}, info) => {
+  await page.goto("/docs/");
+  await page
+    .getByRole("button", { name: /搜索文档/ })
+    .filter({ visible: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input").fill("群聊行为与参与控制");
+  await dialog
+    .getByRole("button", { name: "Docs 使用指南 群聊行为与参与控制", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/docs\/guides\/group-behavior\/?$/);
+  await expect(page.getByRole("heading", { name: "配置接话门槛与偏好" })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "直接招呼置信度", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "延续对话置信度", exact: true })).toBeVisible();
+  await expect(
+    page.getByText("置信度不是回复概率，也不是实测准确率。", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "经常不接话时怎么调" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: info.outputPath("jev-tuning-guide.png"), fullPage: true });
 });
 
 test("management guides are searchable and readable on desktop and mobile", async ({

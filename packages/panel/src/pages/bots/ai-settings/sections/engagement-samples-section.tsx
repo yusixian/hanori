@@ -27,6 +27,8 @@ type FilterState = {
   actualOutcome: "" | "answer" | "silent";
   actualTrigger: string;
   errorCategory: string;
+  configVersion: string;
+  decisionFormat: "" | "two_stage" | "legacy";
   label: "" | "answer" | "silent" | "uncertain" | "unreviewed";
   createdFrom: string;
   createdTo: string;
@@ -40,6 +42,8 @@ const EMPTY_FILTERS: FilterState = {
   actualOutcome: "",
   actualTrigger: "",
   errorCategory: "",
+  configVersion: "",
+  decisionFormat: "",
   label: "",
   createdFrom: "",
   createdTo: "",
@@ -117,7 +121,8 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
     if (
       filters.chatId === settledFilters.chatId &&
       filters.actualTrigger === settledFilters.actualTrigger &&
-      filters.errorCategory === settledFilters.errorCategory
+      filters.errorCategory === settledFilters.errorCategory &&
+      filters.configVersion === settledFilters.configVersion
     ) {
       return;
     }
@@ -125,7 +130,13 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
       settleFilters(filters);
     }, 300);
     return () => window.clearTimeout(timeout);
-  }, [filters.chatId, filters.actualTrigger, filters.errorCategory, settleFilters]);
+  }, [
+    filters.chatId,
+    filters.actualTrigger,
+    filters.errorCategory,
+    filters.configVersion,
+    settleFilters,
+  ]);
 
   const load = useCallback(async () => {
     if (!botId || filterError) return;
@@ -193,13 +204,18 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
     const next = { ...filters, [key]: value };
     clearSelection();
     setFilters(next);
-    if (key !== "chatId" && key !== "actualTrigger" && key !== "errorCategory") {
+    if (
+      key !== "chatId" &&
+      key !== "actualTrigger" &&
+      key !== "errorCategory" &&
+      key !== "configVersion"
+    ) {
       settleFilters(next);
     }
   };
 
   const handleCompositionEnd = (
-    key: "chatId" | "actualTrigger" | "errorCategory",
+    key: "chatId" | "actualTrigger" | "errorCategory" | "configVersion",
     value: string,
   ) => {
     composingText.current = false;
@@ -334,7 +350,7 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
         </div>
       </CardHeader>
       <CardContent className="min-w-0 space-y-4">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           <Input
             value={filters.chatId}
             onChange={(event) => updateFilter("chatId", event.target.value)}
@@ -355,6 +371,17 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
             <option value="off">{t("engagementSamples.modes.off")}</option>
             <option value="shadow">{t("engagementSamples.modes.shadow")}</option>
             <option value="active">{t("engagementSamples.modes.active")}</option>
+          </Select>
+          <Select
+            value={filters.decisionFormat}
+            onChange={(event) =>
+              updateFilter("decisionFormat", event.target.value as FilterState["decisionFormat"])
+            }
+            aria-label={t("engagementSamples.filters.decisionFormat")}
+          >
+            <option value="">{t("engagementSamples.filters.allDecisionFormats")}</option>
+            <option value="two_stage">{t("engagementSamples.formats.twoStage")}</option>
+            <option value="legacy">{t("engagementSamples.formats.legacy")}</option>
           </Select>
           <Select
             value={filters.engagement}
@@ -434,6 +461,19 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
               }
               placeholder={t("engagementSamples.filters.errorCategory")}
               aria-label={t("engagementSamples.filters.errorCategory")}
+            />
+            <Input
+              value={filters.configVersion}
+              maxLength={100}
+              onChange={(event) => updateFilter("configVersion", event.target.value)}
+              onCompositionStart={() => {
+                composingText.current = true;
+              }}
+              onCompositionEnd={(event) =>
+                handleCompositionEnd("configVersion", event.currentTarget.value)
+              }
+              placeholder={t("engagementSamples.filters.configVersion")}
+              aria-label={t("engagementSamples.filters.configVersion")}
             />
             <label className="space-y-1 text-xs">
               <span className="text-muted-foreground">{t("engagementSamples.filters.from")}</span>
@@ -568,6 +608,7 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
                   })
                 }
                 onLabelChange={(label) => void saveLabel(item, label)}
+                onConfigFilter={(configVersion) => updateFilter("configVersion", configVersion)}
               />
             ))}
           </div>
@@ -581,6 +622,7 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
 
 function MetricsSummary({ metrics }: { metrics: EngagementSamplesResponse["metrics"] }) {
   const { t } = useTranslation("aiSettings");
+  const evaluation = metrics.evaluationByFormat;
   return (
     <div className="space-y-2 rounded-lg border bg-slate-50 px-3 py-2.5 text-xs">
       <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -621,16 +663,22 @@ function MetricsSummary({ metrics }: { metrics: EngagementSamplesResponse["metri
           <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
           {t("engagementSamples.humanEvaluation", { count: metrics.evaluatedCount ?? 0 })}
         </summary>
-        <dl className="mt-2 grid gap-2 sm:grid-cols-2">
-          <Metric
-            label={t("engagementSamples.falsePositive")}
-            value={formatMetricFraction(metrics.falsePositiveCount, metrics.labelSilentCount)}
-          />
-          <Metric
-            label={t("engagementSamples.falseNegative")}
-            value={formatMetricFraction(metrics.falseNegativeCount, metrics.labelAnswerCount)}
-          />
-        </dl>
+        {evaluation ? (
+          <div className="mt-2 grid gap-2 lg:grid-cols-2">
+            <EvaluationGroup
+              title={t("engagementSamples.formats.twoStage")}
+              metrics={evaluation.twoStage}
+            />
+            <EvaluationGroup
+              title={t("engagementSamples.formats.legacy")}
+              metrics={evaluation.legacy}
+            />
+          </div>
+        ) : (
+          <p className="text-muted-foreground mt-2 text-[11px]">
+            {t("engagementSamples.groupedEvaluationUnavailable")}
+          </p>
+        )}
         <p className="text-muted-foreground mt-2 text-[11px]">
           {t("engagementSamples.humanEvaluationHelp")}
         </p>
@@ -639,6 +687,39 @@ function MetricsSummary({ metrics }: { metrics: EngagementSamplesResponse["metri
         {t("engagementSamples.classifierCostOnly")}
       </p>
     </div>
+  );
+}
+
+function EvaluationGroup({
+  title,
+  metrics,
+}: {
+  title: string;
+  metrics: EngagementSamplesResponse["metrics"]["evaluationByFormat"]["twoStage"];
+}) {
+  const { t } = useTranslation("aiSettings");
+  return (
+    <section className="rounded-md border bg-white p-2">
+      <h4 className="font-medium">{title}</h4>
+      <p className="text-muted-foreground mt-0.5 text-[11px]">
+        {t("engagementSamples.evaluationCoverage", {
+          evaluated: metrics.evaluatedCount,
+          labeled: metrics.labeledCount,
+          total: metrics.sampleCount,
+          unreviewed: Math.max(0, metrics.sampleCount - metrics.labeledCount),
+        })}
+      </p>
+      <dl className="mt-2 grid grid-cols-2 gap-2">
+        <Metric
+          label={t("engagementSamples.falsePositive")}
+          value={formatMetricFraction(metrics.falsePositiveCount, metrics.labelSilentCount)}
+        />
+        <Metric
+          label={t("engagementSamples.falseNegative")}
+          value={formatMetricFraction(metrics.falseNegativeCount, metrics.labelAnswerCount)}
+        />
+      </dl>
+    </section>
   );
 }
 
@@ -658,6 +739,7 @@ function EngagementSampleRowView({
   disabled,
   onSelectedChange,
   onLabelChange,
+  onConfigFilter,
 }: {
   row: EngagementSampleRow;
   dateFormatter: Intl.DateTimeFormat;
@@ -665,6 +747,7 @@ function EngagementSampleRowView({
   disabled: boolean;
   onSelectedChange: (checked: boolean) => void;
   onLabelChange: (label: ReviewLabel) => void;
+  onConfigFilter: (configVersion: string) => void;
 }) {
   const { t } = useTranslation("aiSettings");
   const expired = isContextExpired(row);
@@ -754,7 +837,18 @@ function EngagementSampleRowView({
                 </span>
                 {row.model && <span>{t("engagementSamples.model", { value: row.model })}</span>}
                 {row.configVersion && (
-                  <span>{t("engagementSamples.config", { value: row.configVersion })}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto max-w-full px-1 py-0 text-[11px] font-normal"
+                    onClick={() => onConfigFilter(row.configVersion)}
+                    title={t("engagementSamples.filterByConfig")}
+                  >
+                    <span className="truncate">
+                      {t("engagementSamples.config", { value: row.configVersion })}
+                    </span>
+                  </Button>
                 )}
                 {row.source && <span>{t("engagementSamples.source", { value: row.source })}</span>}
                 {row.inputTokens !== null && row.inputTokens !== undefined && (
@@ -766,6 +860,22 @@ function EngagementSampleRowView({
                   </span>
                 )}
               </div>
+
+              {hasReplyDecision && (
+                <div className="text-muted-foreground space-y-1 text-[11px]">
+                  <p className="text-foreground font-medium">
+                    {row.participation
+                      ? t("engagementSamples.rawParticipation", {
+                          choice: t(
+                            `engagementSamples.participationNames.${row.participation.choice}`,
+                          ),
+                          confidence: formatConfidence(row.participation.confidence),
+                        })
+                      : t("engagementSamples.rawParticipationUnavailable")}
+                  </p>
+                  <p>{t("engagementSamples.participationHelp")}</p>
+                </div>
+              )}
 
               {row.probabilities &&
                 (hasReplyDecision ? (
@@ -837,7 +947,12 @@ function EngagementSampleRowView({
                     {t("engagementSamples.contextUnavailable")}
                   </p>
                 )}
-                {row.configSnapshot && <ConfigSnapshot snapshot={row.configSnapshot} />}
+                {row.configSnapshot && (
+                  <ConfigSnapshot
+                    snapshot={row.configSnapshot}
+                    hasReplyDecision={hasReplyDecision}
+                  />
+                )}
               </div>
             </div>
           </details>
@@ -900,16 +1015,48 @@ function ContextMessage({ message }: { message: EngagementContextMessage }) {
   );
 }
 
-function ConfigSnapshot({ snapshot }: { snapshot: object }) {
+function ConfigSnapshot({
+  snapshot,
+  hasReplyDecision,
+}: {
+  snapshot: object;
+  hasReplyDecision: boolean;
+}) {
   const { t } = useTranslation("aiSettings");
+  const snapshotRecord = snapshot as Record<string, unknown>;
+  const missingRoutingSettings =
+    hasReplyDecision &&
+    [
+      "addressedConfidenceThreshold",
+      "continueConfidenceThreshold",
+      "continuationWindowSeconds",
+    ].some((key) => !(key in snapshotRecord));
   const visibleEntries = Object.entries(snapshot).filter(
     ([key]) => key !== "apiKey" && !key.toLowerCase().includes("secret"),
   );
   if (visibleEntries.length === 0) return null;
   return (
-    <div className="text-muted-foreground mt-2 border-t pt-2 text-[11px] break-words">
-      <span className="text-foreground font-medium">{t("engagementSamples.configSnapshot")}</span>{" "}
-      <span>{visibleEntries.map(([key, value]) => `${key}: ${String(value)}`).join(" · ")}</span>
+    <div className="text-muted-foreground mt-2 space-y-1 border-t pt-2 text-[11px] break-words">
+      <p>
+        <span className="text-foreground font-medium">{t("engagementSamples.configSnapshot")}</span>{" "}
+        <span>
+          {visibleEntries
+            .map(([key, value]) => {
+              const translatedKeys = new Set([
+                "confidenceThreshold",
+                "addressedConfidenceThreshold",
+                "continueConfidenceThreshold",
+                "continuationWindowSeconds",
+              ]);
+              const label = translatedKeys.has(key)
+                ? t(`engagementSamples.configSnapshotFields.${key}`)
+                : key;
+              return `${label}: ${String(value)}`;
+            })
+            .join(" · ")}
+        </span>
+      </p>
+      {missingRoutingSettings && <p>{t("engagementSamples.legacyConfigDefaults")}</p>}
     </div>
   );
 }
@@ -949,7 +1096,15 @@ function decisionLabel(
 ): string {
   const choice = t(`engagementSamples.choices.${row.choice ?? "unknown"}`);
   if (row.source === "local") return t("engagementSamples.localRule", { choice });
-  if (hasReplyDecision) return t("engagementSamples.participationChoice", { choice });
+  if (hasReplyDecision) {
+    const actualRoute = row.actualTrigger?.match(/^engagement_(addressed|continue|join)$/)?.[1];
+    if (actualRoute) {
+      return t("engagementSamples.actualParticipationRoute", {
+        choice: t(`engagementSamples.participationNames.${actualRoute}`),
+      });
+    }
+    return t("engagementSamples.participationChoice", { choice });
+  }
   if (row.source === "jev") return t("engagementSamples.legacyChoice", { choice });
   return t("engagementSamples.fallbackChoice", { choice });
 }
@@ -959,8 +1114,25 @@ function formatReason(
   hasReplyDecision: boolean,
   t: (key: string, options?: Record<string, unknown>) => string,
 ): string {
-  if (row.reasonCode !== "below_threshold")
+  if (row.reasonCode !== "below_threshold") {
+    const knownReasonCodes = new Set([
+      "jev_answer",
+      "jev_silent",
+      "keyword_direct",
+      "engagement_cooldown",
+      "queue_full",
+      "usage_denied",
+      "timeout",
+      "overloaded",
+      "invalid_response",
+      "response_too_large",
+      "model_mismatch",
+    ]);
+    if (knownReasonCodes.has(row.reasonCode)) {
+      return t(`engagementSamples.reasonCodes.${row.reasonCode}`);
+    }
     return row.reasonCode || t("engagementSamples.notAvailable");
+  }
   return t(
     hasReplyDecision
       ? "engagementSamples.reasonCodes.belowReplyThreshold"

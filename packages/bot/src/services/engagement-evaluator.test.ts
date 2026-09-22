@@ -4,7 +4,11 @@ import {
   type EngagementPolicy,
 } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
-import { EngagementEvaluator, selectEngagementContext } from "./engagement-evaluator.js";
+import {
+  createEngagementConfigVersion,
+  EngagementEvaluator,
+  selectEngagementContext,
+} from "./engagement-evaluator.js";
 
 const policy: EngagementPolicy = {
   ...DEFAULT_ENGAGEMENT_POLICY,
@@ -160,6 +164,7 @@ describe("EngagementEvaluator", () => {
       ).resolves.toMatchObject({
         choice: "join",
         confidence: 0.4,
+        participation: { choice: "join", confidence: 0.1 },
         engagement,
         reasonCode,
         probabilities: { answer: 0.7, silent: 0.3, continue: 0.45, join: 0.55 },
@@ -176,6 +181,7 @@ describe("EngagementEvaluator", () => {
     expect(sample).toMatchObject({
       choice: "continue",
       engagement: "answer",
+      participation: { choice: "continue", confidence: 0.9 },
       model: ENGAGEMENT_MODEL,
       inputTokens: 100,
       actualTrigger: null,
@@ -268,6 +274,7 @@ describe("EngagementEvaluator", () => {
       choice: "join",
       engagement: "answer",
       confidence: 0.9,
+      participation: { choice: "continue", confidence: 0.1 },
       reasonCode: "jev_answer",
       probabilities: { answer: 0.95, silent: 0.05, continue: 0.55, join: 0.45 },
     });
@@ -292,9 +299,52 @@ describe("EngagementEvaluator", () => {
     ).resolves.toMatchObject({
       choice: "silent",
       engagement: "silent",
+      participation: { choice: "continue", confidence: 1 },
       reasonCode: "jev_silent",
     });
   });
+
+  it.each([
+    {
+      name: "addressed",
+      participationChoice: "addressed",
+      policyOverrides: { addressedConfidenceThreshold: 0.6, continueConfidenceThreshold: 0.8 },
+      expected: { choice: "join", addressed: true },
+    },
+    {
+      name: "continue",
+      participationChoice: "continue",
+      policyOverrides: { addressedConfidenceThreshold: 0.8, continueConfidenceThreshold: 0.6 },
+      expected: { choice: "continue", addressed: false },
+    },
+  ] as const)(
+    "applies the configured $name confidence threshold independently",
+    async (testCase) => {
+      const payload = jevResponseBody("join");
+      payload.answers.participation = {
+        type: "choice",
+        choice: testCase.participationChoice,
+        confidence: 0.7,
+        probabilities:
+          testCase.participationChoice === "addressed"
+            ? { addressed: 0.85, continue: 0.1, join: 0.05 }
+            : { addressed: 0.1, continue: 0.85, join: 0.05 },
+      };
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify(payload)));
+
+      await expect(
+        new EngagementEvaluator(fetchMock).evaluate(
+          evaluateInput({ policy: { ...policy, ...testCase.policyOverrides } }),
+        ),
+      ).resolves.toMatchObject({
+        ...testCase.expected,
+        engagement: "answer",
+        participation: { choice: testCase.participationChoice, confidence: 0.7 },
+      });
+    },
+  );
 
   it("does not loosen continuation eligibility when the reply threshold is lowered", async () => {
     const payload = jevResponseBody("continue");
@@ -309,6 +359,16 @@ describe("EngagementEvaluator", () => {
         }),
       ),
     ).resolves.toMatchObject({ choice: "join", engagement: "answer", addressed: false });
+  });
+
+  it.each([
+    ["addressedConfidenceThreshold", 0.7],
+    ["continueConfidenceThreshold", 0.7],
+    ["continuationWindowSeconds", 90],
+  ] as const)("includes %s in the configuration version", (key, value) => {
+    expect(createEngagementConfigVersion({ ...policy, [key]: value })).not.toBe(
+      createEngagementConfigVersion(policy),
+    );
   });
 
   it.each(["reply", "participation"])("rejects a missing %s answer", async (missing) => {

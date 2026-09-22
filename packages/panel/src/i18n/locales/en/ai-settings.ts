@@ -31,16 +31,45 @@ export const aiSettings = {
     },
     preferences: "Additional preferences",
     preferencesPlaceholder: "For example: anime jokes are welcome; avoid joining arguments.",
+    preferencesHelp:
+      "These preferences guide JEV's reply decision only. They are separate from the reply model's prompt and do not rewrite it.",
+    preferencesExample: "Preference example",
+    preferencesExampleNone: "Choose an example to preview",
+    preferencesExampleHelp:
+      "Examples are only previews. Select one, review it, then apply it explicitly to fill or replace the preferences above.",
+    preferencesExamplePreview: "Preview: {{name}}",
+    preferencesExampleUse: "Use this example",
+    preferencesExampleReplace: "Replace existing preferences",
+    preferencesExamples: {
+      active: {
+        label: "Active group member",
+        text: "Join everyday complaints, jokes, technical conversations, and emotional sharing when you can add something specific, useful, or fun, even when nobody calls on you. Let people finish a story before responding. Stay silent for pure agreement, repeated content, conversations clearly directed at other people, or explicit requests not to reply.",
+      },
+      restrained: {
+        label: "Restrained helper",
+        text: "Prefer concrete questions where you can add a useful detail, correction, or next step. Stay silent for casual remarks, pure agreement, repeated information, conversations directed at other people, and explicit requests not to reply.",
+      },
+    },
     keywordDirect: "Reply directly to trigger words",
     cooldownSeconds: "Proactive reply cooldown (seconds)",
     continuationHelp:
-      "A confident continuation within 2 minutes of a bot message may bypass this cooldown. Usage and concurrency limits still apply.",
+      "A continuation can bypass proactive cooldown only when its confidence reaches the configured threshold and the window is still open. Set the window to 0 to disable this exemption. Usage and concurrency limits still apply.",
     advanced: "Advanced settings",
-    confidenceThreshold: "Minimum confidence",
+    replyDecision: "Reply decision",
+    replyDecisionHelp:
+      "Confidence is how decisive JEV is, not a reply probability or measured accuracy. This threshold controls whether a selected reply is admitted; it does not control participation routing.",
+    confidenceThreshold: "Reply confidence threshold",
+    participationRouting: "Participation routing and cooldown",
+    participationRoutingHelp:
+      "These participation thresholds only choose how direct addresses and continuations are routed and whether they can bypass proactive cooldown. They do not decide whether the bot should reply.",
+    addressedConfidenceThreshold: "Direct address confidence threshold",
+    continueConfidenceThreshold: "Continuation confidence threshold",
+    continuationWindowSeconds: "Continuation window (seconds)",
+    requestBudget: "Request budget",
+    requestBudgetHelp:
+      "Context messages and the decision timeout bound each JEV request. A smaller context may omit useful history, while a shorter timeout makes fallback more likely.",
     contextMessages: "Context messages",
     timeoutMs: "Decision timeout (ms)",
-    confidenceHelp:
-      "Reply and participation are judged independently; uncertain participation does not by itself cause silence. A reply is admitted only when JEV selects Reply and the reply-decision confidence reaches this configured threshold. Lowering it increases replies. Direct Address and the Continue cooldown exception use a fixed 0.8 participation-confidence threshold; lower-confidence participation is routed as Join and still observes the cooldown. Confidence describes how decisive the model is, not measured accuracy. Calibrate with labeled samples. Context is limited to 5 minutes and 6,000 characters; failures use existing triggers.",
     reviewRecords: "View decision records",
     reviewRecordsHelp: "Review and label decision samples in the Bot debugger.",
     apiKey: "TypeSafe API key",

@@ -94,6 +94,9 @@ function config(
       keywordDirect: false,
       cooldownSeconds: 60,
       confidenceThreshold: 0.8,
+      addressedConfidenceThreshold: 0.8,
+      continueConfidenceThreshold: 0.8,
+      continuationWindowSeconds: 120,
       contextMessages: 20,
       timeoutMs: 1000,
     },
@@ -525,6 +528,128 @@ describe("AI engagement decisions", () => {
     expect(streamTextMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    {
+      name: "at the configured boundary",
+      continuationWindowSeconds: 30,
+      elapsedMs: 30_000,
+      expectedReplies: 2,
+      expectedSecondTrigger: "engagement_continue",
+    },
+    {
+      name: "after the configured boundary",
+      continuationWindowSeconds: 30,
+      elapsedMs: 30_001,
+      expectedReplies: 1,
+      expectedSecondTrigger: null,
+    },
+    {
+      name: "when the exemption is disabled",
+      continuationWindowSeconds: 0,
+      elapsedMs: 0,
+      expectedReplies: 1,
+      expectedSecondTrigger: null,
+    },
+  ] as const)(
+    "applies the continuation window $name",
+    async ({ continuationWindowSeconds, elapsedMs, expectedReplies, expectedSecondTrigger }) => {
+      let now = 1_000_000;
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockImplementationOnce(async () => response("join"))
+        .mockImplementationOnce(async () => response("continue"));
+      vi.stubGlobal("fetch", fetchMock);
+      streamTextMock.mockReturnValue(streamResult());
+      const onSample = vi.fn<(sample: EngagementSample) => void>();
+      const runtimeConfig = config("active", onSample);
+      runtimeConfig.engagement = {
+        ...runtimeConfig.engagement!,
+        continuationWindowSeconds,
+      };
+      const runtime = createAiReplyHandler(runtimeConfig);
+      runtimes.push(runtime);
+
+      await runtime.handler(context("join this discussion", { messageId: 1 }), vi.fn());
+      now += elapsedMs;
+      await runtime.handler(context("and what next?", { messageId: 2 }), vi.fn());
+      await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(streamTextMock).toHaveBeenCalledTimes(expectedReplies);
+      expect(onSample.mock.calls[1]?.[0]).toMatchObject({
+        participation: { choice: "continue", confidence: 0.9 },
+        actualTrigger: expectedSecondTrigger,
+        ...(expectedSecondTrigger === null ? { reasonCode: "engagement_cooldown" } : {}),
+      });
+    },
+  );
+
+  it("applies a group override for the continuation confidence threshold", async () => {
+    const continuation = responseBody("continue");
+    continuation.answers.participation.confidence = 0.7;
+    continuation.answers.participation.probabilities = {
+      addressed: 0.1,
+      continue: 0.85,
+      join: 0.05,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(continuation))),
+    );
+    streamTextMock.mockReturnValue(streamResult());
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtimeConfig = config("active", onSample);
+    runtimeConfig.groupOverrides["-100"]!.engagement = {
+      continueConfidenceThreshold: 0.6,
+    };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("continue this exchange"), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({
+        choice: "continue",
+        actualTrigger: "engagement_continue",
+        participation: { choice: "continue", confidence: 0.7 },
+        configSnapshot: expect.objectContaining({ continueConfidenceThreshold: 0.6 }),
+      }),
+    );
+  });
+
+  it("uses participation defaults when legacy global and group configuration omit them", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(response("silent")));
+    const onSample = vi.fn<(sample: EngagementSample) => void>();
+    const runtimeConfig = config("shadow", onSample);
+    const legacyEngagement = runtimeConfig.engagement as unknown as Record<string, unknown>;
+    delete legacyEngagement["addressedConfidenceThreshold"];
+    delete legacyEngagement["continueConfidenceThreshold"];
+    delete legacyEngagement["continuationWindowSeconds"];
+    runtimeConfig.groupOverrides["-100"]!.engagement = {
+      addressedConfidenceThreshold: undefined,
+      continueConfidenceThreshold: undefined,
+      continuationWindowSeconds: undefined,
+    };
+    const runtime = createAiReplyHandler(runtimeConfig);
+    runtimes.push(runtime);
+
+    await runtime.handler(context("legacy configuration"), vi.fn());
+    await vi.waitFor(() => expect(onSample).toHaveBeenCalledOnce());
+
+    expect(onSample).toHaveBeenCalledWith(
+      expect.objectContaining({
+        configSnapshot: expect.objectContaining({
+          addressedConfidenceThreshold: 0.8,
+          continueConfidenceThreshold: 0.8,
+          continuationWindowSeconds: 120,
+        }),
+      }),
+    );
+  });
+
   it("blocks another ordinary join while the active engagement cooldown is running", async () => {
     vi.stubGlobal(
       "fetch",
@@ -573,9 +698,13 @@ describe("AI engagement decisions", () => {
     });
   });
 
-  it.each([0.9, 0.5])(
-    "requires a confident direct invitation to bypass cooldown (%s)",
-    async (confidence) => {
+  it.each([
+    [0.9, 0.8],
+    [0.5, 0.8],
+    [0.5, 0.4],
+  ] as const)(
+    "applies direct-invitation confidence %s against threshold %s",
+    async (confidence, threshold) => {
       const addressed = responseBody("join");
       addressed.answers.participation.choice = "addressed";
       addressed.answers.participation.confidence = confidence;
@@ -593,15 +722,21 @@ describe("AI engagement decisions", () => {
       );
       streamTextMock.mockReturnValue(streamResult());
       const onSample = vi.fn<(sample: EngagementSample) => void>();
-      const runtime = createAiReplyHandler(config("active", onSample));
+      const runtimeConfig = config("active", onSample);
+      runtimeConfig.engagement = {
+        ...runtimeConfig.engagement!,
+        addressedConfidenceThreshold: threshold,
+      };
+      const runtime = createAiReplyHandler(runtimeConfig);
       runtimes.push(runtime);
       await runtime.handler(context("first join", { messageId: 1 }), vi.fn());
       await runtime.handler(context("助手你怎么看", { messageId: 2 }), vi.fn());
       await vi.waitFor(() => expect(onSample).toHaveBeenCalledTimes(2));
-      expect(streamTextMock).toHaveBeenCalledTimes(confidence >= 0.8 ? 2 : 1);
+      expect(streamTextMock).toHaveBeenCalledTimes(confidence >= threshold ? 2 : 1);
       expect(onSample.mock.calls[1]?.[0]).toMatchObject({
-        addressed: confidence >= 0.8,
-        actualTrigger: confidence >= 0.8 ? "engagement_addressed" : null,
+        addressed: confidence >= threshold,
+        actualTrigger: confidence >= threshold ? "engagement_addressed" : null,
+        participation: { choice: "addressed", confidence },
       });
     },
   );

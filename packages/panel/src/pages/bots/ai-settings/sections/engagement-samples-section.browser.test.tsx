@@ -17,6 +17,7 @@ const sample = {
   choice: "join",
   engagement: "silent",
   confidence: 0.6,
+  participation: { choice: "join" as const, confidence: 0.72 },
   probabilities: { answer: 0.6, silent: 0.4, addressed: 0.2, continue: 0.3, join: 0.5 },
   reasonCode: "below_threshold",
   actualTrigger: "random",
@@ -29,6 +30,9 @@ const sample = {
     keywordDirect: false,
     cooldownSeconds: 60,
     confidenceThreshold: 0.8,
+    addressedConfidenceThreshold: 0.8,
+    continueConfidenceThreshold: 0.8,
+    continuationWindowSeconds: 120,
     contextMessages: 20,
     timeoutMs: 1000,
   },
@@ -60,7 +64,18 @@ const secondSample = {
   id: 18,
   messageId: 51,
   engagement: "answer",
-  actualTrigger: null,
+  participation: null,
+  actualTrigger: "engagement_addressed",
+  configSnapshot: {
+    mode: "shadow",
+    style: "natural",
+    preferences: "",
+    keywordDirect: false,
+    cooldownSeconds: 60,
+    confidenceThreshold: 0.8,
+    contextMessages: 20,
+    timeoutMs: 1000,
+  },
   context: [{ messageId: 51, userId: 8, text: "A second current message", timestamp: 3 }],
   errorCategory: null,
 };
@@ -83,6 +98,17 @@ const legacySample = {
   messageId: 71,
   probabilities: { continue: 0.2, join: 0.3, silent: 0.5 },
   confidence: 0.5,
+  participation: null,
+  configSnapshot: {
+    mode: "shadow",
+    style: "natural",
+    preferences: "",
+    keywordDirect: false,
+    cooldownSeconds: 60,
+    confidenceThreshold: 0.8,
+    contextMessages: 20,
+    timeoutMs: 1000,
+  },
   context: [{ messageId: 71, userId: 10, text: "A legacy decision", timestamp: 5 }],
   errorCategory: null,
 };
@@ -108,6 +134,30 @@ const metrics = {
   actorCostStatus: "unpriced",
   actorCostReason: "not priced",
   actorUsagePath: "/api/usage/summary?botId=bot-1",
+  evaluationByFormat: {
+    twoStage: {
+      sampleCount: 2,
+      labeledCount: 1,
+      evaluatedCount: 1,
+      labelAnswerCount: 1,
+      labelSilentCount: 0,
+      falsePositiveCount: 0,
+      falseNegativeCount: 1,
+      falsePositiveRate: null,
+      falseNegativeRate: 1,
+    },
+    legacy: {
+      sampleCount: 1,
+      labeledCount: 1,
+      evaluatedCount: 1,
+      labelAnswerCount: 0,
+      labelSilentCount: 1,
+      falsePositiveCount: 1,
+      falseNegativeCount: 0,
+      falsePositiveRate: 1,
+      falseNegativeRate: null,
+    },
+  },
 };
 
 function response(body: unknown, status = 200) {
@@ -164,6 +214,9 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
   await expect
     .element(current.getByText("Reason: Below policy threshold", { exact: false }))
     .toBeVisible();
+  await expect
+    .element(current.getByText("Policy participation route: Join", { exact: true }))
+    .toBeVisible();
   await expect.element(local.getByText("Local rule: Join", { exact: true })).toBeVisible();
   expect(local.element().textContent).not.toContain("Legacy JEV choice");
   expect(page.getByText("Records").element().parentElement?.textContent).toContain("4");
@@ -181,14 +234,27 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
   window.scrollTo(0, 0);
 
   await page.getByText("Human evaluation · 2 labeled JEV samples", { exact: true }).click();
-  await expect.element(page.getByText("1/1", { exact: true })).toBeVisible();
-  await expect.element(page.getByText("0/1", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByText("Current two-stage decisions", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("Legacy three-class decisions", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(page.getByText("1 evaluable labels · 1 labeled · 1 unreviewed · 2 samples"))
+    .toBeVisible();
 
   await current.getByText("Details, context, probabilities, and cost", { exact: true }).click();
   await expect.element(current.getByText("Reply-decision probabilities")).toBeVisible();
   await expect.element(current.getByText("Reply 60%", { exact: true })).toBeVisible();
   await expect.element(current.getByText("Silent 40%", { exact: true })).toBeVisible();
   await expect.element(current.getByText("Participation probabilities")).toBeVisible();
+  await expect
+    .element(current.getByText("Raw participation recommendation: Join · confidence 72%"))
+    .toBeVisible();
+  await expect
+    .element(current.getByText("Its probability is not the model's willingness", { exact: false }))
+    .toBeVisible();
   await expect.element(current.getByText("Direct address 20%", { exact: true })).toBeVisible();
   await expect.element(current.getByText("Continue 30%", { exact: true })).toBeVisible();
   await expect.element(current.getByText("Join 50%", { exact: true })).toBeVisible();
@@ -197,9 +263,34 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
     .toBeVisible();
   await expect.element(current.getByText("Keep jokes light", { exact: false })).toBeVisible();
 
+  const historicalCurrent = rows.nth(1);
+  await historicalCurrent
+    .getByText("Details, context, probabilities, and cost", { exact: true })
+    .click();
+  await expect
+    .element(
+      historicalCurrent.getByText(
+        "Raw participation recommendation was not retained for this historical sample.",
+      ),
+    )
+    .toBeVisible();
+  await expect
+    .element(historicalCurrent.getByText("Actual admitted route: Direct address", { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(
+      historicalCurrent.getByText("Historical snapshot: omitted routing settings", {
+        exact: false,
+      }),
+    )
+    .toBeVisible();
+
   const legacy = rows.nth(3);
   await legacy.getByText("Details, context, probabilities, and cost", { exact: true }).click();
   await expect.element(legacy.getByText("Legacy model probabilities")).toBeVisible();
+  expect(legacy.element().textContent).not.toContain(
+    "Historical snapshot: omitted routing settings",
+  );
   expect(legacy.element().textContent).not.toContain("Reply-decision probabilities");
   expect(legacy.element().textContent).not.toContain("Participation probabilities");
 });
@@ -408,6 +499,48 @@ test("validates text and time filters without starting request loops", async () 
   await page.getByLabelText("From").fill("2026-09-22T00:00");
   await page.getByLabelText("To").fill("2026-09-21T00:00");
   await expect.element(page.getByRole("alert")).toHaveTextContent("end time");
+});
+
+test("filters both rows and metrics by decision format and exact config version", async () => {
+  const requests: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      requests.push(String(input));
+      return listResponse([sample]);
+    }),
+  );
+
+  render(<EngagementSamplesSection botId="bot-1" />);
+  await expect.element(page.getByText("Message 41", { exact: true })).toBeVisible();
+
+  await page.getByRole("combobox", { name: "Decision format" }).click();
+  await page.getByRole("option", { name: "Current two-stage decisions" }).click();
+  await vi.waitFor(() =>
+    expect(
+      requests.some(
+        (url) =>
+          new URL(url, window.location.origin).searchParams.get("decisionFormat") === "two_stage",
+      ),
+    ).toBe(true),
+  );
+
+  await page.getByText("Details, context, probabilities, and cost", { exact: true }).click();
+  await page.getByRole("button", { name: "Config policy-7" }).click();
+  await vi.waitFor(() =>
+    expect(
+      requests.some((url) => {
+        const query = new URL(url, window.location.origin).searchParams;
+        return (
+          query.get("decisionFormat") === "two_stage" && query.get("configVersion") === "policy-7"
+        );
+      }),
+    ).toBe(true),
+  );
+  await page.getByText("More filters", { exact: true }).click();
+  await expect
+    .element(page.getByRole("textbox", { name: "Exact config version" }))
+    .toHaveValue("policy-7");
 });
 
 test("blocks review writes until the current filter collection is presented", async () => {

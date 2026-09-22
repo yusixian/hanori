@@ -24,7 +24,7 @@ describe("engagement sample routes", () => {
     const app = new Hono().route("/api/bots", engagementSampleRoutes(service({ list })));
 
     const response = await app.request(
-      "/api/bots/bot-a/engagement-samples?page=2&pageSize=25&chatId=-100&mode=shadow&choice=join&engagement=answer&actualOutcome=answer&actualTrigger=engagement_join&errorCategory=timeout&label=unreviewed&createdFrom=2026-09-20T00%3A00%3A00.000Z&createdTo=2026-09-21T00%3A00%3A00.000Z",
+      "/api/bots/bot-a/engagement-samples?page=2&pageSize=25&chatId=-100&mode=shadow&choice=join&engagement=answer&actualOutcome=answer&actualTrigger=engagement_join&errorCategory=timeout&label=unreviewed&decisionFormat=two_stage&configVersion=config-v1&createdFrom=2026-09-20T00%3A00%3A00.000Z&createdTo=2026-09-21T00%3A00%3A00.000Z",
     );
 
     expect(response.status).toBe(200);
@@ -40,6 +40,8 @@ describe("engagement sample routes", () => {
       actualTrigger: "engagement_join",
       errorCategory: "timeout",
       label: "unreviewed",
+      decisionFormat: "two_stage",
+      configVersion: "config-v1",
       createdFrom: new Date("2026-09-20T00:00:00.000Z"),
       createdTo: new Date("2026-09-21T00:00:00.000Z"),
     });
@@ -100,6 +102,8 @@ describe("engagement sample routes", () => {
     const invalidRequests = [
       app.request("/api/bots/bot-a/engagement-samples?page=1000001"),
       app.request("/api/bots/bot-a/engagement-samples?createdFrom=not-a-date"),
+      app.request("/api/bots/bot-a/engagement-samples?decisionFormat=current"),
+      app.request(`/api/bots/bot-a/engagement-samples?configVersion=${"x".repeat(101)}`),
       app.request(
         "/api/bots/bot-a/engagement-samples?createdFrom=2026-09-22T00%3A00%3A00.000Z&createdTo=2026-09-21T00%3A00%3A00.000Z",
       ),
