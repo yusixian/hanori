@@ -1,6 +1,6 @@
 import { i18n } from "@/i18n";
 import { act } from "react";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { Link, MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -87,6 +87,14 @@ function countRequests(fetchMock: ReturnType<typeof vi.fn>, method: string, path
     const request = requestParts(input as RequestInfo | URL, init as RequestInit | undefined);
     return request.method === method && request.url.pathname === pathname;
   }).length;
+}
+
+function matchingRequests(fetchMock: ReturnType<typeof vi.fn>, method: string, pathname: string) {
+  return fetchMock.mock.calls
+    .map(([input, init]) =>
+      requestParts(input as RequestInfo | URL, init as RequestInit | undefined),
+    )
+    .filter((request) => request.method === method && request.url.pathname === pathname);
 }
 
 async function selectConversation(name: string) {
@@ -419,6 +427,263 @@ describe("conversation reads", () => {
   });
 });
 
+describe("conversation search", () => {
+  test("applies a trimmed query only on submit, resets page and detail, and clears it", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url } = requestParts(input, init);
+      if (!url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [message(8, "Page two message")], total: 1 });
+      }
+      const search = url.searchParams.get("search");
+      if (search === "Alice") {
+        return jsonResponse({ ok: true, data: [conversation(301, "Alice result")], total: 1 });
+      }
+      if (search === "-100123") {
+        return jsonResponse({ ok: true, data: [conversation(-100123, "Negative ID")], total: 1 });
+      }
+      if (url.searchParams.get("page") === "2") {
+        return jsonResponse({ ok: true, data: [conversation(202, "Page two chat")], total: 21 });
+      }
+      return jsonResponse({ ok: true, data: [conversation(101, "Unfiltered chat")], total: 21 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await expect.element(page.getByRole("button", { name: /Unfiltered chat/ })).toBeVisible();
+    const search = page.getByRole("searchbox", { name: "Chat ID or participant name" });
+    await expect.element(search).toHaveAttribute("maxlength", "100");
+
+    await page.getByRole("button", { name: "Next page" }).click();
+    await selectConversation("Page two chat");
+    await expect.element(page.getByText("Page two message", { exact: true })).toBeVisible();
+    expect(matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations")).toHaveLength(2);
+
+    await search.fill("  Alice  ");
+    expect(matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations")).toHaveLength(2);
+    await expect.element(page.getByText("Page two message", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Search conversations" }).click();
+
+    await expect.element(page.getByRole("button", { name: /Alice result/ })).toBeVisible();
+    await expect.element(page.getByText("Search results", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Results for “Alice”", { exact: true })).toBeVisible();
+    await expect.element(search).toHaveValue("Alice");
+    expect(page.getByText("Page two message", { exact: true }).query()).toBeNull();
+    const aliceRequest = matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations").at(
+      -1,
+    )!;
+    expect(aliceRequest.url.searchParams.get("page")).toBe("1");
+    expect(aliceRequest.url.searchParams.get("search")).toBe("Alice");
+
+    await page.getByRole("button", { name: "Clear search" }).click();
+    await expect.element(page.getByRole("button", { name: /Unfiltered chat/ })).toBeVisible();
+    await expect.element(search).toHaveValue("");
+    const clearedRequest = matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations").at(
+      -1,
+    )!;
+    expect(clearedRequest.url.searchParams.get("page")).toBe("1");
+    expect(clearedRequest.url.searchParams.has("search")).toBe(false);
+
+    await search.fill("-100123");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect.element(page.getByRole("button", { name: /Negative ID/ })).toBeVisible();
+    expect(
+      matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations")
+        .at(-1)!
+        .url.searchParams.get("search"),
+    ).toBe("-100123");
+  });
+
+  test("distinguishes a confirmed empty search from a failed search", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url } = requestParts(input, init);
+      const search = url.searchParams.get("search");
+      if (search === "none") return jsonResponse({ ok: true, data: [], total: 0 });
+      if (search === "broken") return jsonResponse({ ok: false, error: "offline" }, 500);
+      return jsonResponse({ ok: true, data: [conversation(101, "Initial chat")], total: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await expect.element(page.getByRole("button", { name: /Initial chat/ })).toBeVisible();
+    const search = page.getByRole("searchbox", { name: "Chat ID or participant name" });
+    await search.fill("none");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect
+      .element(page.getByText("No matching conversations", { exact: true }))
+      .toBeVisible();
+    expect(page.getByText("No conversations yet", { exact: true }).query()).toBeNull();
+    const clearAll = page.getByRole("button", { name: "Clear all Bot conversations" });
+    await expect.element(clearAll).toBeEnabled();
+    await clearAll.click();
+    await expect
+      .element(page.getByRole("alertdialog"))
+      .toHaveTextContent("including conversations outside the current search");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+    await search.fill("broken");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("Could not load conversations.");
+    expect(page.getByText("No matching conversations", { exact: true }).query()).toBeNull();
+    await expect.element(page.getByText("Results for “broken”", { exact: true })).toBeVisible();
+  });
+
+  test("keeps the global clear action visible but disabled for a confirmed empty Bot", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ok: true, data: [], total: 0 })),
+    );
+
+    renderPage();
+
+    await expect.element(page.getByText("No conversations yet", { exact: true })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Clear all Bot conversations" }))
+      .toBeDisabled();
+  });
+
+  test("ignores a late result from the previous search query", async () => {
+    const oldSearch = deferred<Response>();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url } = requestParts(input, init);
+      const search = url.searchParams.get("search");
+      if (search === "old") return oldSearch.promise;
+      if (search === "new") {
+        return jsonResponse({ ok: true, data: [conversation(202, "New result")], total: 1 });
+      }
+      return jsonResponse({ ok: true, data: [conversation(101, "Initial chat")], total: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await expect.element(page.getByRole("button", { name: /Initial chat/ })).toBeVisible();
+    const search = page.getByRole("searchbox", { name: "Chat ID or participant name" });
+    await search.fill("old");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await vi.waitFor(() =>
+      expect(
+        matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations").some(
+          (request) => request.url.searchParams.get("search") === "old",
+        ),
+      ).toBe(true),
+    );
+
+    await search.fill("new");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect.element(page.getByRole("button", { name: /New result/ })).toBeVisible();
+    await act(async () => {
+      oldSearch.resolve(
+        jsonResponse({ ok: true, data: [conversation(303, "Old result")], total: 1 }),
+      );
+      await oldSearch.promise;
+    });
+
+    await vi.waitFor(() =>
+      expect(page.getByText("Old result", { exact: true }).query()).toBeNull(),
+    );
+    await expect.element(page.getByRole("button", { name: /New result/ })).toBeVisible();
+    await expect.element(page.getByText("Results for “new”", { exact: true })).toBeVisible();
+  });
+
+  test("does not submit the search while Enter confirms IME composition", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ ok: true, data: [conversation(101, "Initial chat")], total: 1 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await expect.element(page.getByRole("button", { name: /Initial chat/ })).toBeVisible();
+    const search = page.getByRole("searchbox", { name: "Chat ID or participant name" });
+    await search.fill("测试");
+    const input = search.element();
+    input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    const composingEnter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    });
+    input.dispatchEvent(composingEnter);
+    expect(composingEnter.defaultPrevented).toBe(true);
+    const safariCompositionEnter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(safariCompositionEnter, "keyCode", { value: 229 });
+    input.dispatchEvent(safariCompositionEnter);
+    expect(safariCompositionEnter.defaultPrevented).toBe(true);
+    expect(matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations")).toHaveLength(1);
+    input.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "测试" }));
+
+    await search.click();
+    await userEvent.keyboard("{Enter}");
+    await vi.waitFor(() =>
+      expect(
+        matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations")
+          .at(-1)!
+          .url.searchParams.get("search"),
+      ).toBe("测试"),
+    );
+  });
+
+  test("checks the failed deletion's original search before unlocking the current search", async () => {
+    const reads = { alpha: 0, beta: 0 };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (method === "DELETE") return jsonResponse({ ok: false, error: "unconfirmed" }, 500);
+      const search = url.searchParams.get("search");
+      if (search === "alpha") {
+        reads.alpha += 1;
+        if (reads.alpha === 2) return jsonResponse({ ok: false, error: "offline" }, 500);
+        return jsonResponse({ ok: true, data: [conversation(101, "Alpha chat")], total: 1 });
+      }
+      if (search === "beta") {
+        reads.beta += 1;
+        return jsonResponse({ ok: true, data: [conversation(202, "Beta chat")], total: 1 });
+      }
+      return jsonResponse({ ok: true, data: [conversation(1, "Initial chat")], total: 1 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await expect.element(page.getByRole("button", { name: /Initial chat/ })).toBeVisible();
+    const search = page.getByRole("searchbox", { name: "Chat ID or participant name" });
+    await search.fill("alpha");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect.element(page.getByRole("button", { name: /Alpha chat/ })).toBeVisible();
+    await page.getByRole("button", { name: "Delete conversation 101" }).click();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect
+      .element(page.getByRole("alertdialog"))
+      .toHaveTextContent("Could not confirm deletion.");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+
+    await search.fill("beta");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect.element(page.getByRole("button", { name: /Beta chat/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Delete conversation 202" }))
+      .toBeDisabled();
+
+    await page.getByRole("button", { name: "Refresh and check" }).click();
+    await vi.waitFor(() => expect(reads.alpha).toBe(2));
+    expect(reads.beta).toBe(2);
+    await expect
+      .element(page.getByRole("button", { name: "Delete conversation 202" }))
+      .toBeDisabled();
+
+    await page.getByRole("button", { name: "Refresh and check" }).click();
+    await expect
+      .element(page.getByRole("button", { name: "Delete conversation 202" }))
+      .toBeEnabled();
+    expect(reads.alpha).toBe(3);
+    expect(reads.beta).toBe(3);
+    expect(countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101")).toBe(1);
+  });
+});
+
 describe("conversation deletion recovery", () => {
   test("keeps a message and locks repeated deletion after an HTTP failure until refresh", async () => {
     let messageReads = 0;
@@ -717,6 +982,7 @@ describe("conversation deletion recovery", () => {
 
     renderPage();
     await selectConversation("Chat A");
+    await page.getByRole("searchbox", { name: "Chat ID or participant name" }).fill("draft search");
     await page.getByRole("button", { name: "Delete this message" }).click();
     await page.getByRole("button", { name: "Confirm deleting this message" }).dblClick();
     await vi.waitFor(() =>
@@ -728,6 +994,11 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByRole("button", { name: /Chat B/ })).toBeDisabled();
     await expect.element(page.getByRole("tab", { name: /Summaries/ })).toBeDisabled();
     await expect.element(page.getByRole("button", { name: "Next page" })).toBeDisabled();
+    await expect
+      .element(page.getByRole("searchbox", { name: "Chat ID or participant name" }))
+      .toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Search conversations" })).toBeDisabled();
+    await expect.element(page.getByRole("button", { name: "Clear search" })).toBeDisabled();
     await expect
       .element(page.getByRole("button", { name: "Deleting this message" }))
       .toBeDisabled();
@@ -771,7 +1042,13 @@ describe("conversation deletion recovery", () => {
 
     renderPage();
     await expect.element(page.getByRole("button", { name: /Chat one/ })).toBeVisible();
-    await page.getByRole("button", { name: "Clear all" }).click();
+    await page.getByRole("searchbox", { name: "Chat ID or participant name" }).fill("Chat one");
+    await page.getByRole("button", { name: "Search conversations" }).click();
+    await expect.element(page.getByText("Results for “Chat one”", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Clear all Bot conversations" }).click();
+    await expect
+      .element(page.getByRole("alertdialog"))
+      .toHaveTextContent("including conversations outside the current search");
     await page.getByRole("button", { name: "Delete", exact: true }).click();
 
     await expect.element(page.getByRole("button", { name: /Chat one/ })).toBeVisible();
@@ -781,5 +1058,11 @@ describe("conversation deletion recovery", () => {
         "Could not confirm deletion. Refresh to check the result before deleting again.",
       );
     expect(countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations")).toBe(1);
+    const deleteRequest = matchingRequests(
+      fetchMock,
+      "DELETE",
+      "/api/bots/test-id/conversations",
+    )[0]!;
+    expect(deleteRequest.url.searchParams.has("search")).toBe(false);
   });
 });

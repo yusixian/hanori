@@ -1125,8 +1125,32 @@ export class ConversationStore {
     });
   }
 
-  async getConversationList(botId: string, page: number, limit: number) {
+  async getConversationList(botId: string, page: number, limit: number, search?: string) {
     const offset = (page - 1) * limit;
+    const normalizedSearch = search?.trim() || undefined;
+    const numericSearch =
+      normalizedSearch && /^-?\d+$/.test(normalizedSearch) ? Number(normalizedSearch) : undefined;
+    const searchChatId = Number.isSafeInteger(numericSearch) ? numericSearch : undefined;
+    const matchingChatIds = normalizedSearch
+      ? this.db
+          .selectDistinct({ chatId: conversationMessages.chatId })
+          .from(conversationMessages)
+          .where(
+            and(
+              eq(conversationMessages.botId, botId),
+              or(
+                ilike(conversationMessages.userName, `%${escapeLike(normalizedSearch)}%`),
+                searchChatId === undefined
+                  ? undefined
+                  : eq(conversationMessages.chatId, searchChatId),
+              ),
+            ),
+          )
+      : null;
+    const conversationScope = and(
+      eq(conversationMessages.botId, botId),
+      matchingChatIds === null ? undefined : inArray(conversationMessages.chatId, matchingChatIds),
+    );
 
     // 1a. Main aggregate query with role counts and user info
     const rows = await this.db
@@ -1163,9 +1187,9 @@ export class ConversationStore {
           ),
       })
       .from(conversationMessages)
-      .where(eq(conversationMessages.botId, botId))
+      .where(conversationScope)
       .groupBy(conversationMessages.chatId)
-      .orderBy(sql`last_active desc`)
+      .orderBy(desc(sql`max(${conversationMessages.createdAt})`), asc(conversationMessages.chatId))
       .limit(limit)
       .offset(offset);
 
@@ -1174,7 +1198,7 @@ export class ConversationStore {
         total: sql<number>`count(distinct ${conversationMessages.chatId})`,
       })
       .from(conversationMessages)
-      .where(eq(conversationMessages.botId, botId));
+      .where(conversationScope);
 
     if (rows.length === 0) {
       return { data: [], total: Number(totalResult?.total ?? 0) };

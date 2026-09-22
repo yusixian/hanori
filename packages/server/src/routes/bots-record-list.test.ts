@@ -14,10 +14,12 @@ vi.hoisted(() => {
 const listProfiles = vi.fn();
 const searchProfiles = vi.fn();
 const listMemories = vi.fn();
+const getConversationList = vi.fn();
 
 const botPool = {
   getProfileStore: () => ({ listProfiles, searchProfiles }),
   getBotMemoryStore: () => ({ listMemories }),
+  getConversationStore: () => ({ getConversationList }),
 } as unknown as BotPool;
 
 const app = new Hono().route(
@@ -28,6 +30,7 @@ const app = new Hono().route(
 beforeEach(() => {
   vi.clearAllMocks();
   listMemories.mockResolvedValue({ data: [], total: 0 });
+  getConversationList.mockResolvedValue({ data: [], total: 0 });
 });
 
 describe("GET /bots/:botId/profiles", () => {
@@ -84,4 +87,34 @@ describe("GET /bots/:botId/memories telegramId", () => {
       expect(listMemories).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("GET /bots/:botId/conversations", () => {
+  it("normalizes and forwards the optional search with the existing pagination", async () => {
+    getConversationList.mockResolvedValue({ data: [{ chatId: 25 }], total: 25 });
+
+    const response = await app.request(
+      "/bots/bot-a/conversations?search=%20Alice%20&page=2&limit=20",
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ ok: true, total: 25 });
+    expect(getConversationList).toHaveBeenCalledWith("bot-a", 2, 20, "Alice");
+  });
+
+  it("accepts blank search as the unfiltered form", async () => {
+    const response = await app.request("/bots/bot-a/conversations?search=%20%20");
+
+    expect(response.status).toBe(200);
+    expect(getConversationList).toHaveBeenCalledWith("bot-a", 1, 20, "");
+  });
+
+  it("rejects searches longer than 100 characters before querying the store", async () => {
+    const response = await app.request(
+      `/bots/bot-a/conversations?search=${encodeURIComponent("a".repeat(101))}`,
+    );
+
+    expect(response.status).toBe(400);
+    expect(getConversationList).not.toHaveBeenCalled();
+  });
 });

@@ -160,6 +160,8 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   const stayAfterFailedLogout = page.getByRole("button", { name: "Stay and keep editing" });
   await expect.element(stayAfterFailedLogout).toBeEnabled();
   authState.delayNextSessionCheck = false;
+  authState.releaseSessionCheck?.();
+  authState.releaseSessionCheck = null;
   await stayAfterFailedLogout.click();
   await expect.element(page.getByRole("button", { name: "Open menu" })).toHaveFocus();
   const errorToast = page.getByText("Operation failed", { exact: true });
@@ -178,6 +180,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await page.getByRole("link", { name: "Back to Bots" }).click();
   await expect.element(leaveDialog).toBeVisible();
   await page.getByRole("button", { name: "Leave without saving" }).click();
+  await vi.waitFor(() => expect(window.location.pathname).toBe("/"));
   await expect.element(page.getByRole("heading", { name: "Bots", exact: true })).toBeVisible();
 
   await page.getByRole("link", { name: /Test Bot/ }).click();

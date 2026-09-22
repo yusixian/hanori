@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.10.1/");
+  await page.goto("/docs/changelog/v0.11.0/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.10.1");
-  await expect(page.getByText("对话加载与删除恢复", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.11.0");
+  await expect(page.getByText("按 Chat ID 或参与者查找会话", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.10.1");
+  await expect(title).toHaveText("v0.11.0");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.10.1.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.11.0.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -77,6 +77,9 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "v0.10.1", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.11.0", exact: true }).filter({ visible: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
@@ -129,6 +132,8 @@ test("avatar guidance exposes privacy and recovery limits", async ({ page }, inf
     page.getByRole("heading", { level: 2, name: /^在面板查看与清理对话/ }),
   ).toBeVisible();
   await expect(page.getByText("已删除，但未能刷新页面数据", { exact: true })).toBeVisible();
+  await expect(page.getByText("清空此 Bot 的全部对话", { exact: true })).toBeVisible();
+  await expect(page.getByText(/搜索覆盖当前 Bot 的全部会话/)).toBeVisible();
 });
 
 test("all prerendered pages and local documentation links resolve without a session", async ({

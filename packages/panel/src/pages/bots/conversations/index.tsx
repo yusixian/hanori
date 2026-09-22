@@ -1,8 +1,17 @@
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
 import { client } from "@/lib/client";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Inbox, Loader2, MessageSquareText, RefreshCw, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  Inbox,
+  Loader2,
+  MessageSquareText,
+  RefreshCw,
+  Search,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -70,6 +79,9 @@ function ReadFailure({
 function BotConversationsContent({ botId }: { botId: string | undefined }) {
   const { t } = useTranslation("bots");
   const [page, setPage] = useState(1);
+  const [searchDraft, setSearchDraft] = useState("");
+  const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [selectedChat, setSelectedChat] = useState<number | null>(null);
   const [msgPage, setMsgPage] = useState(1);
   const [showTools, setShowTools] = useState(false);
@@ -120,7 +132,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
       const response = await client.api.bots[":botId"].conversations.$get(
         {
           param: { botId },
-          query: { page: String(page), limit: String(limit) },
+          query: { page: String(page), limit: String(limit), search: search || undefined },
         },
         { init: { signal } },
       );
@@ -129,7 +141,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
       if (!json.ok) throw new Error("Conversation request failed");
       return json;
     },
-    [botId, page],
+    [botId, page, search],
   );
   const requestMessages = useCallback(
     async (signal: AbortSignal) => {
@@ -165,7 +177,8 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     },
     [botId, selectedChat, sumPage],
   );
-  const list = useConversationPage(String(page), requestConversations);
+  const listKey = JSON.stringify([page, search]);
+  const list = useConversationPage(listKey, requestConversations);
   const messageList = useConversationPage(
     selectedChat !== null && detailView === "messages" ? `${selectedChat}:${msgPage}` : null,
     requestMessages,
@@ -317,7 +330,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     try {
       const target = recoveryTargetRef.current;
       const displayedKeys = [
-        `list:${page}`,
+        `list:${listKey}`,
         detailView === "messages"
           ? `message:${selectedChat}:${msgPage}`
           : `summary:${selectedChat}:${sumPage}`,
@@ -382,7 +395,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     }
     if (recoveryRequiredRef.current) return;
     const target = confirmDelete;
-    recoveryTargetRef.current = { key: `list:${page}`, request: requestConversations };
+    recoveryTargetRef.current = { key: `list:${listKey}`, request: requestConversations };
     mutationRef.current = true;
     confirmDeleteBusyRef.current = true;
     setConfirmDeleteBusy(true);
@@ -521,6 +534,16 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     resetConversationDetail(null);
   };
 
+  const applySearch = (value: string) => {
+    if (mutationRef.current) return;
+    const next = value.trim();
+    setSearchDraft(next);
+    if (next === search && page === 1) return;
+    setSearch(next);
+    setPage(1);
+    resetConversationDetail(null);
+  };
+
   const handleSelectConversation = (chatId: number) => {
     if (mutationRef.current || selectedChat === chatId) return;
     resetConversationDetail(chatId);
@@ -595,7 +618,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                   tabIndex={-1}
                   className="text-sm font-semibold focus:outline-none"
                 >
-                  {t("conversations.all")}
+                  {t(search ? "conversations.searchResults" : "conversations.all")}
                 </h2>
                 <p className="text-muted-foreground mt-0.5 text-xs">
                   {t("conversations.recentFirst")}
@@ -624,21 +647,89 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                     aria-hidden="true"
                   />
                 </Button>
-                {total > 0 ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-muted-foreground hover:text-destructive size-10 transition-[background-color,color,scale] active:scale-[0.96]"
-                    disabled={writesDisabled}
-                    onClick={() => openDeleteDialog({ kind: "all" })}
-                    aria-label={t("conversations.clearAll")}
-                    title={t("conversations.clearAll")}
-                  >
-                    <Trash2 className="size-4" aria-hidden="true" />
-                  </Button>
-                ) : null}
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground hover:text-destructive size-10 transition-[background-color,color,scale] active:scale-[0.96]"
+                  disabled={writesDisabled || (!search && total === 0)}
+                  onClick={() => openDeleteDialog({ kind: "all" })}
+                  aria-label={t("conversations.clearAll")}
+                  title={t("conversations.clearAll")}
+                >
+                  <Trash2 className="size-4" aria-hidden="true" />
+                </Button>
               </div>
             </div>
+
+            <form
+              role="search"
+              aria-label={t("conversations.searchConversations")}
+              className="shrink-0 border-b border-slate-200/80 px-4 py-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                applySearch(searchDraft);
+              }}
+            >
+              <label htmlFor="conversation-search" className="mb-1.5 block text-xs font-medium">
+                {t("conversations.searchLabel")}
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  ref={searchInputRef}
+                  id="conversation-search"
+                  className="[&::-webkit-search-cancel-button]:hidden"
+                  type="search"
+                  value={searchDraft}
+                  maxLength={100}
+                  disabled={interactionBusy}
+                  aria-describedby="conversation-search-hint"
+                  onChange={(event) => setSearchDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)
+                    )
+                      event.preventDefault();
+                  }}
+                />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0"
+                  disabled={interactionBusy}
+                  aria-label={t("conversations.searchConversations")}
+                >
+                  <Search className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+              <p
+                id="conversation-search-hint"
+                className="text-muted-foreground mt-2 text-xs leading-5"
+              >
+                {t("conversations.searchHint")}
+              </p>
+              {search || searchDraft ? (
+                <div className="mt-1 flex items-start justify-between gap-2">
+                  <p role="status" className="min-w-0 text-xs leading-5 break-words">
+                    {search ? t("conversations.searchApplied", { query: search }) : null}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 shrink-0 px-2 text-xs"
+                    disabled={interactionBusy}
+                    onClick={() => {
+                      applySearch("");
+                      searchInputRef.current?.focus();
+                    }}
+                  >
+                    {t("conversations.clearSearch")}
+                  </Button>
+                </div>
+              ) : null}
+            </form>
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2" aria-busy={loading}>
               {list.failed ? (
@@ -669,10 +760,14 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                     <Inbox className="size-5" aria-hidden="true" />
                   </span>
                   <p className="text-foreground mt-3 text-sm font-semibold">
-                    {t("conversations.empty")}
+                    {t(search ? "conversations.searchEmpty" : "conversations.empty")}
                   </p>
                   <p className="mt-1 max-w-52 text-xs leading-5">
-                    {t("conversations.emptyDescription")}
+                    {t(
+                      search
+                        ? "conversations.searchEmptyDescription"
+                        : "conversations.emptyDescription",
+                    )}
                   </p>
                 </div>
               ) : (

@@ -1092,13 +1092,14 @@ export function botsRoutes(
         z.object({
           page: z.coerce.number().int().positive().optional().default(1),
           limit: z.coerce.number().int().positive().max(100).optional().default(20),
+          search: z.string().trim().max(100).optional(),
         }),
       ),
       async (c) => {
         const botId = c.req.param("botId");
-        const { page, limit } = c.req.valid("query");
+        const { page, limit, search } = c.req.valid("query");
         const store = botPool.getConversationStore();
-        const result = await store.getConversationList(botId, page, limit);
+        const result = await store.getConversationList(botId, page, limit, search);
         return c.json({ ok: true as const, ...result });
       },
     )
