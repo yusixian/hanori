@@ -87,6 +87,9 @@ export const common = {
     files: "Files",
     export: "Export",
     settings: "Settings",
+    account: "Account menu",
+    accountName: "Account",
+    accountMenu: "Account options",
     logout: "Log out",
   },
   errors: {

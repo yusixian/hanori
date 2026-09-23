@@ -73,6 +73,11 @@ function requestUrl(input: RequestInfo | URL) {
   return input instanceof Request ? input.url : String(input);
 }
 
+async function clickLogout() {
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("button", { name: "Log out" }).click();
+}
+
 beforeEach(async () => {
   authState.authenticated = false;
   authState.failNextSignOut = false;
@@ -138,7 +143,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await enableAi.click();
 
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("button", { name: "Log out" }).click();
+  await clickLogout();
   const leaveDialog = page.getByRole("alertdialog", { name: "Leave with unsaved changes?" });
   await expect.element(leaveDialog).toBeVisible();
   expect(authState.signOutCalls).toBe(0);
@@ -150,7 +155,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   authState.delayNextSessionCheck = true;
   const sessionChecksBeforeFailedLogout = authState.getSessionCalls;
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("button", { name: "Log out" }).click();
+  await clickLogout();
   await page.getByRole("button", { name: "Leave without saving" }).click();
   await expect.element(leaveDialog).toBeVisible();
   expect(authState.signOutCalls).toBe(1);
@@ -193,7 +198,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await expect.element(page.getByRole("heading", { name: "AI Settings" })).toBeVisible();
   await page.getByRole("switch", { name: "Enable AI Replies" }).click();
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("button", { name: "Log out" }).click();
+  await clickLogout();
   await expect.element(leaveDialog).toBeVisible();
   await page.getByRole("button", { name: "Leave without saving" }).click();
   await expect.element(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
@@ -212,7 +217,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
     .click();
   await expect.element(page.getByRole("heading", { name: "AI Settings" })).toBeVisible();
   await page.getByRole("button", { name: "Open menu" }).click();
-  await page.getByRole("button", { name: "Log out" }).click();
+  await clickLogout();
   await expect.element(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
   expect(authState.signOutCalls).toBe(3);
 

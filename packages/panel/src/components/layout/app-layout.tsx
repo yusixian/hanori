@@ -1,5 +1,6 @@
 import { sidebarCollapsedAtom, sidebarOpenAtom } from "@/atoms/sidebar";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { authClient } from "@/lib/auth-client";
 import { BeforeLogoutProvider, useBeforeLogout } from "./before-logout";
 import { cn } from "@/lib/utils";
 import { useLogout } from "@refinedev/core";
@@ -36,6 +37,7 @@ import {
   Sparkles,
   Timer,
   Users,
+  UserRound,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -151,6 +153,16 @@ function useMobileViewport() {
   }, []);
 
   return isMobile;
+}
+
+function accountInitials(name: string | null | undefined, email: string | null | undefined) {
+  const parts = name?.trim().split(/\s+/).filter(Boolean);
+  if (parts?.length) {
+    return (
+      parts.length > 1 ? `${parts[0]![0]}${parts.at(-1)![0]}` : parts[0]!.slice(0, 2)
+    ).toLocaleUpperCase();
+  }
+  return email?.trim().slice(0, 1).toLocaleUpperCase() || null;
 }
 
 function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolean }) {
@@ -287,13 +299,34 @@ function AppLayoutContent() {
   const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom);
   const [query, setQuery] = useState("");
   const [globalOpen, setGlobalOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountUser, setAccountUser] = useState<{ name?: string | null; email?: string | null }>();
   const [focusSearchAfterExpand, setFocusSearchAfterExpand] = useState(false);
   const isMobile = useMobileViewport();
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const languageEscapeEvents = useRef(new WeakSet<KeyboardEvent>());
   const showCollapsed = collapsed && !isMobile;
+  const accountName =
+    accountUser?.name?.trim() || accountUser?.email?.trim() || t("navigation.accountName");
+  const initials = accountInitials(accountUser?.name, accountUser?.email);
+
+  useEffect(() => {
+    let active = true;
+    void authClient
+      .getSession()
+      .then(({ data }) => {
+        if (active) setAccountUser(data?.user ?? undefined);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const botIdMatch = location.pathname.match(/^\/bots\/([^/]+)/);
   const botId = botIdMatch?.[1];
@@ -404,6 +437,7 @@ function AppLayoutContent() {
   const settingsActive = !query.trim() && isPathActive(settingsNavItem.path, location.pathname);
 
   const handleMobileNavigation = (event: ReactMouseEvent<HTMLElement>) => {
+    if ((event.target as Element).closest("a[href]")) setAccountOpen(false);
     if (!isMobile || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (!(event.target as Element).closest("a[href]")) return;
     setSidebarOpen(false);
@@ -412,8 +446,50 @@ function AppLayoutContent() {
 
   useEffect(() => {
     setSidebarOpen(false);
+    setAccountOpen(false);
     setQuery("");
   }, [location.pathname, setSidebarOpen]);
+
+  useEffect(() => {
+    if (isMobile && !sidebarOpen) setAccountOpen(false);
+  }, [isMobile, sidebarOpen]);
+
+  useEffect(() => {
+    if (showCollapsed) setAccountOpen(false);
+  }, [showCollapsed]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        !accountRef.current?.contains(event.target as Node) &&
+        !(event.target as Element).closest('[role="listbox"]')
+      ) {
+        setAccountOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [accountOpen]);
+
+  useEffect(() => {
+    if (!accountOpen) return;
+    const handleLanguageEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const trigger = accountRef.current?.querySelector<HTMLElement>(
+        '[role="combobox"][aria-expanded="true"]',
+      );
+      if (!trigger) return;
+      languageEscapeEvents.current.add(event);
+      requestAnimationFrame(() => {
+        if (trigger.isConnected && trigger.getAttribute("aria-expanded") === "false") {
+          trigger.focus();
+        }
+      });
+    };
+    document.addEventListener("keydown", handleLanguageEscape, true);
+    return () => document.removeEventListener("keydown", handleLanguageEscape, true);
+  }, [accountOpen]);
 
   useEffect(() => {
     if (!focusSearchAfterExpand || collapsed) return;
@@ -424,10 +500,21 @@ function AppLayoutContent() {
   useEffect(() => {
     if (!isMobile || !sidebarOpen) return;
     mobileCloseButtonRef.current?.focus();
+  }, [isMobile, sidebarOpen]);
 
+  useEffect(() => {
+    if (!isMobile || !sidebarOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (languageEscapeEvents.current.has(event) || event.defaultPrevented) return;
+        const inSidebar = sidebarRef.current?.contains(event.target as Node);
+        if (!inSidebar && !(accountOpen && event.target === document.body)) return;
         event.preventDefault();
+        if (accountOpen) {
+          setAccountOpen(false);
+          accountButtonRef.current?.focus();
+          return;
+        }
         setSidebarOpen(false);
         mobileMenuButtonRef.current?.focus();
         return;
@@ -453,7 +540,25 @@ function AppLayoutContent() {
 
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isMobile, setSidebarOpen, sidebarOpen]);
+  }, [accountOpen, isMobile, setSidebarOpen, sidebarOpen]);
+
+  useEffect(() => {
+    if (!accountOpen || isMobile) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        languageEscapeEvents.current.has(event) ||
+        event.defaultPrevented ||
+        (!sidebarRef.current?.contains(event.target as Node) && event.target !== document.body)
+      )
+        return;
+      event.preventDefault();
+      setAccountOpen(false);
+      accountButtonRef.current?.focus();
+    };
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [accountOpen, isMobile]);
 
   const renderGlobalGroups = () =>
     globalNavGroups.map((group) => (
@@ -654,7 +759,7 @@ function AppLayoutContent() {
           </Button>
         </div>
 
-        <div className="shrink-0 px-3 pt-3 pb-2">
+        <div className="shrink-0 px-3 pt-3 pb-2" inert={accountOpen}>
           <SearchField
             collapsed={showCollapsed}
             query={query}
@@ -673,6 +778,7 @@ function AppLayoutContent() {
         <nav
           className="flex flex-1 flex-col overflow-y-auto px-3 py-2"
           aria-label={t("navigation.primary")}
+          inert={accountOpen}
         >
           {query.trim() ? (
             renderSearchResults()
@@ -747,69 +853,104 @@ function AppLayoutContent() {
           )}
         </nav>
 
-        <div className="shrink-0 border-t border-slate-200/80 bg-slate-50/70 p-2.5">
-          {!showCollapsed && (
-            <LanguageSwitcher className="mb-2 block" selectClassName="h-10 w-full" />
-          )}
-          <div className={cn("grid gap-1", showCollapsed ? "grid-cols-1" : "grid-cols-2")}>
-            {externalNavItems.map((item) => (
-              <a
-                key={item.path}
-                href={item.path}
-                title={t(item.labelKey)}
-                aria-label={t(item.labelKey)}
-                className="focus-visible:ring-ring flex min-h-10 items-center justify-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:ring-2 focus-visible:outline-none"
-              >
-                <item.icon className="size-3.5 shrink-0" />
-                <span className={cn("truncate", showCollapsed && "md:hidden")}>
-                  {t(item.labelKey)}
-                </span>
-              </a>
-            ))}
-            <Link
-              to={settingsNavItem.path}
-              title={t(settingsNavItem.labelKey)}
-              aria-label={t(settingsNavItem.labelKey)}
-              aria-current={settingsActive ? "page" : undefined}
+        <div
+          ref={accountRef}
+          className="relative shrink-0 border-t border-slate-200/80 bg-slate-50/70 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]"
+        >
+          <button
+            ref={accountButtonRef}
+            type="button"
+            className={cn(
+              "flex min-h-12 w-full items-center gap-2.5 rounded-lg px-2 text-left hover:bg-white focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+              showCollapsed && "md:justify-center md:px-0",
+              accountOpen && "bg-white",
+            )}
+            onClick={() => {
+              if (showCollapsed) setCollapsed(false);
+              setAccountOpen((open) => !open);
+            }}
+            aria-label={t("navigation.account")}
+            aria-expanded={accountOpen}
+            aria-controls="sidebar-account-menu"
+            title={accountName}
+          >
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+              {initials ?? <UserRound className="size-4" />}
+            </span>
+            <span
               className={cn(
-                "flex min-h-10 items-center justify-center gap-1.5 rounded-md px-1.5 text-[11px] font-medium text-slate-500 hover:bg-white hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                settingsActive && "bg-blue-50 text-blue-700",
+                "min-w-0 flex-1 truncate text-sm font-medium text-slate-700",
+                showCollapsed && "md:hidden",
               )}
             >
-              <Settings className="size-3.5 shrink-0" />
-              <span className={cn("truncate", showCollapsed && "md:hidden")}>
-                {t(settingsNavItem.labelKey)}
-              </span>
-            </Link>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-10 min-h-10 gap-1.5 px-1.5 text-[11px] font-medium text-slate-500"
-              disabled={logoutPending}
-              onClick={() => {
-                if (isMobile) {
-                  setSidebarOpen(false);
-                  mobileMenuButtonRef.current?.focus();
-                }
-                requestLogout(async () => {
-                  try {
-                    const result = await logout();
-                    if (!result.success) throw result.error ?? new Error("Logout failed");
-                  } catch (error) {
-                    toast.error(t("auth:errors.operationFailed"));
-                    throw error;
-                  }
-                });
-              }}
-              title={t("navigation.logout")}
-              aria-label={t("navigation.logout")}
+              {accountName}
+            </span>
+            <ChevronDown
+              className={cn(
+                "size-4 shrink-0 text-slate-400 transition-transform",
+                accountOpen && "rotate-180",
+                showCollapsed && "md:hidden",
+              )}
+            />
+          </button>
+          {accountOpen && (
+            <div
+              id="sidebar-account-menu"
+              role="group"
+              aria-label={t("navigation.accountMenu")}
+              className="absolute right-2.5 bottom-full left-2.5 max-h-[calc(100dvh-8rem)] space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-[0_-10px_32px_rgb(15_23_42/0.12)]"
             >
-              <LogOut className="size-3.5 shrink-0" />
-              <span className={cn("truncate", showCollapsed && "md:hidden")}>
-                {t("navigation.logout")}
-              </span>
-            </Button>
-          </div>
+              <Link
+                to={settingsNavItem.path}
+                aria-current={settingsActive ? "page" : undefined}
+                className={cn(
+                  "flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                  settingsActive && "bg-blue-50 text-blue-700",
+                )}
+              >
+                <Settings className="size-4 shrink-0 text-slate-400" />
+                {t(settingsNavItem.labelKey)}
+              </Link>
+              <LanguageSwitcher className="block px-1 py-1" selectClassName="h-10 w-full" />
+              {externalNavItems.map((item) => (
+                <a
+                  key={item.path}
+                  href={item.path}
+                  className="focus-visible:ring-ring flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none"
+                >
+                  <item.icon className="size-4 shrink-0 text-slate-400" />
+                  {t(item.labelKey)}
+                </a>
+              ))}
+              <div className="border-t border-slate-200 pt-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-10 w-full justify-start gap-2.5 px-2.5 text-sm font-medium text-slate-700"
+                  disabled={logoutPending}
+                  onClick={() => {
+                    setAccountOpen(false);
+                    if (isMobile) {
+                      setSidebarOpen(false);
+                      mobileMenuButtonRef.current?.focus();
+                    }
+                    requestLogout(async () => {
+                      try {
+                        const result = await logout();
+                        if (!result.success) throw result.error ?? new Error("Logout failed");
+                      } catch (error) {
+                        toast.error(t("auth:errors.operationFailed"));
+                        throw error;
+                      }
+                    });
+                  }}
+                >
+                  <LogOut className="size-4 shrink-0" />
+                  {t("navigation.logout")}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       </aside>
 

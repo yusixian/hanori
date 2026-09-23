@@ -87,6 +87,9 @@ export const common = {
     files: "文件",
     export: "导出",
     settings: "设置",
+    account: "账户菜单",
+    accountName: "账户",
+    accountMenu: "账户选项",
     logout: "退出登录",
   },
   errors: {
