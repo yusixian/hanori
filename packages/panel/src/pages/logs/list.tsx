@@ -18,6 +18,35 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 
+const BOT_OPTIONS_PAGE_SIZE = 100;
+
+async function loadAllBotOptions(signal: AbortSignal): Promise<BotWithStatus[]> {
+  const options = new Map<string, BotWithStatus>();
+  let page = 1;
+  let expectedTotal: number | undefined;
+
+  while (true) {
+    const response = await client.api.bots.$get(
+      { query: { page: String(page), limit: String(BOT_OPTIONS_PAGE_SIZE) } },
+      { init: { signal } },
+    );
+    if (!response.ok) throw new Error("Bot list request failed");
+    const result = await response.json();
+    if (!result.ok) throw new Error("Bot list request failed");
+    expectedTotal ??= result.total;
+    if (result.total !== expectedTotal) throw new Error("Bot list changed during pagination");
+    for (const bot of result.data) options.set(bot.id, bot);
+
+    const totalPages = Math.max(1, Math.ceil(expectedTotal / BOT_OPTIONS_PAGE_SIZE));
+    if (page >= totalPages) {
+      if (options.size !== expectedTotal) throw new Error("Bot list pagination was incomplete");
+      return [...options.values()];
+    }
+    if (result.data.length === 0) throw new Error("Bot list pagination was incomplete");
+    page += 1;
+  }
+}
+
 export function LogsListPage() {
   const { t, i18n } = useTranslation("admin");
   const [searchParams, setSearchParams] = useSearchParams();
@@ -25,6 +54,9 @@ export function LogsListPage() {
   const [level, setLevel] = useState("");
   const [botId, setBotId] = useState(searchParams.get("botId") ?? "");
   const [botOptions, setBotOptions] = useState<BotWithStatus[]>([]);
+  const [botOptionsError, setBotOptionsError] = useState(false);
+  const [botOptionsRetry, setBotOptionsRetry] = useState(0);
+  const [botOptionsLoading, setBotOptionsLoading] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [chatIdInput, setChatIdInput] = useState("");
@@ -33,6 +65,7 @@ export function LogsListPage() {
   const [correlationId, setCorrelationId] = useState("");
   const [clearError, setClearError] = useState<string | null>(null);
   const composingRef = useRef(false);
+  const retryInProgressRef = useRef(false);
   const [livePaused, setLivePaused] = useState(false);
   const [pausedLiveLogs, setPausedLiveLogs] = useState<LogEntry[]>([]);
 
@@ -44,14 +77,31 @@ export function LogsListPage() {
 
   // Fetch bot options for filter
   useEffect(() => {
-    client.api.bots
-      .$get({ query: { page: "1", limit: "100" } })
-      .then((res) => res.json())
-      .then((json) => {
-        if (json.ok) setBotOptions(json.data as BotWithStatus[]);
+    const controller = new AbortController();
+    let active = true;
+    void loadAllBotOptions(controller.signal)
+      .then((options) => {
+        if (!active) return;
+        const retryButtonWasFocused =
+          retryInProgressRef.current && document.activeElement?.id === "logs-bot-options-retry";
+        retryInProgressRef.current = false;
+        if (retryButtonWasFocused) document.getElementById("logs-bot-filter")?.focus();
+        setBotOptions(options);
+        setBotOptionsError(false);
+        setBotOptionsLoading(false);
       })
-      .catch((err) => console.error("Failed to fetch bot options", err));
-  }, []);
+      .catch(() => {
+        if (!active || controller.signal.aborted) return;
+        retryInProgressRef.current = false;
+        setBotOptionsError(true);
+        setBotOptionsLoading(false);
+      });
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [botOptionsRetry]);
 
   useEffect(() => {
     if (composingRef.current) return;
@@ -209,6 +259,7 @@ export function LogsListPage() {
           <option value="error">Error</option>
         </Select>
         <Select
+          id="logs-bot-filter"
           className="w-full"
           value={botId}
           onChange={(e) => {
@@ -226,6 +277,9 @@ export function LogsListPage() {
           aria-label={t("logs.allBots")}
         >
           <option value="">{t("logs.allBots")}</option>
+          {botId && !botOptions.some((bot) => bot.id === botId) && (
+            <option value={botId}>{botId}</option>
+          )}
           {botOptions.map((bot) => (
             <option key={bot.id} value={bot.id}>
               {bot.name}
@@ -260,6 +314,35 @@ export function LogsListPage() {
           aria-label={t("logs.correlationIdPlaceholder")}
         />
       </div>
+
+      {botOptionsError && (
+        <div
+          role={botOptionsLoading ? "status" : "alert"}
+          aria-live="polite"
+          className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+        >
+          <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
+          <span className="flex-1">
+            {t(botOptionsLoading ? "logs.botOptionsLoading" : "logs.botOptionsLoadError")}
+          </span>
+          <Button
+            id="logs-bot-options-retry"
+            variant="outline"
+            size="sm"
+            aria-disabled={botOptionsLoading}
+            className="shrink-0 aria-disabled:cursor-wait aria-disabled:opacity-60"
+            onClick={() => {
+              if (botOptionsLoading) return;
+              retryInProgressRef.current = true;
+              setBotOptionsLoading(true);
+              setBotOptionsRetry((retry) => retry + 1);
+            }}
+          >
+            <RotateCw className={`size-3.5 ${botOptionsLoading ? "animate-spin" : ""}`} />
+            {t(botOptionsLoading ? "logs.loading" : "logs.retry")}
+          </Button>
+        </div>
+      )}
 
       {clearError && (
         <p className="text-destructive text-sm" role="alert">

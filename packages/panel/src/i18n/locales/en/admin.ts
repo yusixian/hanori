@@ -140,6 +140,8 @@ export const admin = {
     resumeLive: "Resume live updates",
     allLevels: "All Levels",
     allBots: "All Bots",
+    botOptionsLoadError: "Bot filter options could not be loaded.",
+    botOptionsLoading: "Loading all Bot filter options…",
     searchPlaceholder: "Search messages and details…",
     chatIdPlaceholder: "Chat ID",
     correlationIdPlaceholder: "Correlation ID",

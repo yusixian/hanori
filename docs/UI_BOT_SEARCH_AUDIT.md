@@ -23,4 +23,5 @@
 
 - main/tag/Release 目标：`ed552c5925c722d2f3be023739d74602c8a33f82`，已分别核实远端 main、tag 和 Release 指向；Release 公开、非草稿/预发布，正文精确匹配 `docs/releases/v0.13.0.md`。
 - CI 35841752963 已核实 completed/success，精确 SHA 匹配；`check` job 中类型、i18n、文档构建、单元、面板浏览器和文档浏览器均成功。
+- 发布后证据记录提交 `3105b94dd07438572815f65a08f11954c12f8792` 已推送 main，CI 35842743625 completed/success，精确 SHA 匹配；v0.13.0 tag/Release 仍指向原发布提交。
 - GitHub 发布与当前运行实例分开记录；没有执行生产部署，未核实线上实例或真实 Bot 行为。

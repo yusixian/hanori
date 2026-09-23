@@ -138,6 +138,8 @@ export const admin = {
     resumeLive: "继续实时更新",
     allLevels: "全部级别",
     allBots: "全部 Bot",
+    botOptionsLoadError: "Bot 筛选列表加载失败，请重试。",
+    botOptionsLoading: "正在加载全部 Bot 筛选项…",
     searchPlaceholder: "搜索消息和详情…",
     chatIdPlaceholder: "群聊 ID",
     correlationIdPlaceholder: "关联 ID",
