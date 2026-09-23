@@ -1,12 +1,13 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botMemories } from "@cos-tool-bot/database";
-import type { BotMemory } from "@cos-tool-bot/shared";
+import type { BotMemory, BotMemoryKind } from "@cos-tool-bot/shared";
 import {
   and,
   count,
   cosineDistance,
   desc,
   eq,
+  gt,
   ilike,
   isNotNull,
   isNull,
@@ -23,6 +24,13 @@ function toDto(row: typeof botMemories.$inferSelect): BotMemory {
     telegramId: row.telegramId,
     content: row.content,
     category: row.category,
+    kind: row.kind,
+    scopeChatId: row.scopeChatId,
+    origin: row.origin,
+    sourceChatId: row.sourceChatId,
+    sourceMessageId: row.sourceMessageId,
+    sourceUserId: row.sourceUserId,
+    expiresAt: row.expiresAt?.toISOString() ?? null,
     factValidAt: row.factValidAt?.toISOString() ?? null,
     isActive: row.isActive,
     createdAt: row.createdAt.toISOString(),
@@ -39,6 +47,13 @@ export class BotMemoryStore {
       content: string;
       category?: string;
       telegramId?: number;
+      kind?: BotMemoryKind;
+      scopeChatId?: number;
+      origin?: string;
+      sourceChatId?: number;
+      sourceMessageId?: number;
+      sourceUserId?: number;
+      expiresAt?: string;
       factValidAt?: string;
       embedding?: number[];
     },
@@ -50,6 +65,13 @@ export class BotMemoryStore {
         content: data.content,
         category: data.category,
         telegramId: data.telegramId,
+        kind: data.kind,
+        scopeChatId: data.scopeChatId,
+        origin: data.origin,
+        sourceChatId: data.sourceChatId,
+        sourceMessageId: data.sourceMessageId,
+        sourceUserId: data.sourceUserId,
+        expiresAt: data.expiresAt ? new Date(data.expiresAt) : undefined,
         factValidAt: data.factValidAt ? new Date(data.factValidAt) : undefined,
         embedding: data.embedding,
       })
@@ -63,6 +85,7 @@ export class BotMemoryStore {
       query?: string;
       category?: string;
       telegramId?: number;
+      scopeChatId?: number;
       scope?: "general_only" | "user_only" | "all";
       limit?: number;
       queryEmbedding?: number[];
@@ -73,7 +96,14 @@ export class BotMemoryStore {
 
     // Build shared scope/category filter conditions
     const buildConditions = () => {
-      const conditions = [eq(botMemories.botId, botId), eq(botMemories.isActive, true)];
+      const conditions = [
+        eq(botMemories.botId, botId),
+        eq(botMemories.isActive, true),
+        or(isNull(botMemories.expiresAt), gt(botMemories.expiresAt, new Date()))!,
+        params.scopeChatId == null
+          ? isNull(botMemories.scopeChatId)
+          : or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, params.scopeChatId))!,
+      ];
 
       const scope = params.scope ?? "all";
       if (scope === "general_only") {
@@ -210,17 +240,57 @@ export class BotMemoryStore {
   async updateMemory(
     botId: string,
     memoryId: number,
-    data: { content?: string; category?: string | null; telegramId?: number | null },
+    data: {
+      content?: string;
+      category?: string | null;
+      telegramId?: number | null;
+      kind?: BotMemoryKind | null;
+      scopeChatId?: number | null;
+      origin?: string | null;
+      sourceChatId?: number | null;
+      sourceMessageId?: number | null;
+      sourceUserId?: number | null;
+      factValidAt?: string | null;
+      expiresAt?: string | null;
+    },
   ): Promise<BotMemory | null> {
     const updates: Partial<typeof botMemories.$inferInsert> = {};
-    if (data.content !== undefined) updates.content = data.content;
+    if (data.content !== undefined) {
+      updates.content = data.content;
+    }
     if (data.category !== undefined) updates.category = data.category;
     if (data.telegramId !== undefined) updates.telegramId = data.telegramId;
+    if (data.kind !== undefined) updates.kind = data.kind;
+    if (data.scopeChatId !== undefined) updates.scopeChatId = data.scopeChatId;
+    if (data.origin !== undefined) updates.origin = data.origin;
+    if (data.sourceChatId !== undefined) updates.sourceChatId = data.sourceChatId;
+    if (data.sourceMessageId !== undefined) updates.sourceMessageId = data.sourceMessageId;
+    if (data.sourceUserId !== undefined) updates.sourceUserId = data.sourceUserId;
+    if (data.factValidAt !== undefined) {
+      updates.factValidAt = data.factValidAt === null ? null : new Date(data.factValidAt);
+    }
+    if (data.expiresAt !== undefined) {
+      updates.expiresAt = data.expiresAt === null ? null : new Date(data.expiresAt);
+    }
 
     const [updated] = await this.db
       .update(botMemories)
-      .set(updates)
-      .where(and(eq(botMemories.botId, botId), eq(botMemories.id, memoryId)))
+      .set({
+        ...updates,
+        ...(data.content === undefined
+          ? {}
+          : {
+              embedding: sql`case when ${botMemories.content} is distinct from ${data.content}
+                then null else ${botMemories.embedding} end`,
+            }),
+      })
+      .where(
+        and(
+          eq(botMemories.botId, botId),
+          eq(botMemories.id, memoryId),
+          eq(botMemories.isActive, true),
+        ),
+      )
       .returning();
     return updated ? toDto(updated) : null;
   }
@@ -239,10 +309,17 @@ export class BotMemoryStore {
 
   async getMemoriesForPrompt(
     botId: string,
-    params: { telegramId?: number; limit?: number },
+    params: { telegramId?: number; scopeChatId?: number; limit?: number },
   ): Promise<BotMemory[]> {
     const limit = params.limit ?? 20;
-    const conditions = [eq(botMemories.botId, botId), eq(botMemories.isActive, true)];
+    const conditions = [
+      eq(botMemories.botId, botId),
+      eq(botMemories.isActive, true),
+      or(isNull(botMemories.expiresAt), gt(botMemories.expiresAt, new Date()))!,
+      params.scopeChatId == null
+        ? isNull(botMemories.scopeChatId)
+        : or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, params.scopeChatId))!,
+    ];
     if (params.telegramId != null) {
       conditions.push(
         or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
@@ -274,21 +351,23 @@ export class BotMemoryStore {
     botId: string,
     embedding: number[],
     threshold: number,
-    opts?: { telegramId?: number; limit?: number },
+    opts?: { telegramId?: number; scopeChatId?: number; limit?: number },
   ): Promise<Array<BotMemory & { distance: number }>> {
     const limit = opts?.limit ?? 5;
     const distance = cosineDistance(botMemories.embedding, embedding);
     const conditions = [
       eq(botMemories.botId, botId),
       eq(botMemories.isActive, true),
+      or(isNull(botMemories.expiresAt), gt(botMemories.expiresAt, new Date()))!,
       isNotNull(botMemories.embedding),
       lt(distance, threshold),
+      opts?.scopeChatId == null
+        ? isNull(botMemories.scopeChatId)
+        : eq(botMemories.scopeChatId, opts.scopeChatId),
     ];
-    // Scope: match general memories OR memories belonging to the same user
+    // Dedup only within the exact owner scope. General and personal facts must not collapse.
     if (opts?.telegramId != null) {
-      conditions.push(
-        or(isNull(botMemories.telegramId), eq(botMemories.telegramId, opts.telegramId))!,
-      );
+      conditions.push(eq(botMemories.telegramId, opts.telegramId));
     } else {
       conditions.push(isNull(botMemories.telegramId));
     }
@@ -305,11 +384,35 @@ export class BotMemoryStore {
     return rows.map((r) => ({ ...toDto(r.row), distance: Number(r.distance) }));
   }
 
-  /** Mark a memory as inactive (soft delete) and optionally point to its successor. */
-  async deactivateMemory(memoryId: number, supersededById?: number): Promise<void> {
+  /** Retire an active memory, optionally linking a successor in the same Bot. */
+  async retireMemory(botId: string, memoryId: number, supersededById?: number): Promise<boolean> {
+    if (supersededById === memoryId) return false;
     const updates: Partial<typeof botMemories.$inferInsert> = { isActive: false };
     if (supersededById != null) updates.supersededById = supersededById;
-    await this.db.update(botMemories).set(updates).where(eq(botMemories.id, memoryId));
+    const successorCondition =
+      supersededById == null
+        ? undefined
+        : sql`exists (
+            select 1 from bot_memories successor
+            where successor.id = ${supersededById}
+              and successor.bot_id = ${botId}
+              and successor.is_active = true
+              and successor.telegram_id is not distinct from ${botMemories.telegramId}
+              and successor.scope_chat_id is not distinct from ${botMemories.scopeChatId}
+          )`;
+    const retired = await this.db
+      .update(botMemories)
+      .set(updates)
+      .where(
+        and(
+          eq(botMemories.botId, botId),
+          eq(botMemories.id, memoryId),
+          eq(botMemories.isActive, true),
+          successorCondition,
+        ),
+      )
+      .returning({ id: botMemories.id });
+    return retired.length > 0;
   }
 
   /** Touch updatedAt of an existing memory (for dedup "seen again" scenario). */

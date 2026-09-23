@@ -570,12 +570,21 @@ export const DEFAULT_ARTWORK_TOOLS_CONFIG: ArtworkToolsConfig = {
 };
 
 // Bot Memory types
+export type BotMemoryKind = "fact" | "preference" | "event" | "commitment" | "relationship";
+
 export interface BotMemory {
   id: number;
   botId: string;
   telegramId: number | null;
   content: string;
   category: string | null;
+  kind: BotMemoryKind | null;
+  scopeChatId: number | null;
+  origin: string | null;
+  sourceChatId: number | null;
+  sourceMessageId: number | null;
+  sourceUserId: number | null;
+  expiresAt: string | null;
   factValidAt: string | null;
   isActive: boolean;
   createdAt: string;

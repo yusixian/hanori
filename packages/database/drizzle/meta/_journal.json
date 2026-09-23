@@ -365,6 +365,13 @@
       "when": 1790055421667,
       "tag": "0051_useful_sentinels",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1790180896997,
+      "tag": "0052_thin_lethal_legion",
+      "breakpoints": true
     }
   ]
 }
