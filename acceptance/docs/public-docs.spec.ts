@@ -26,16 +26,16 @@ test("public release deep links render and hydrate on desktop and mobile", async
 });
 
 test("release titles and navigation stay concise", async ({ page }, info) => {
-  await page.goto("/docs/changelog/v0.14.0/");
+  await page.goto("/docs/changelog/v0.14.1/");
   const title = page.getByRole("heading", { level: 1 });
-  await expect(title).toHaveText("v0.14.0");
-  await expect(page.getByText("更紧凑的侧栏账户入口", { exact: true })).toBeVisible();
+  await expect(title).toHaveText("v0.14.1");
+  await expect(page.getByText("按名称查找日志中的 Bot", { exact: true })).toBeVisible();
   await page.reload();
-  await expect(title).toHaveText("v0.14.0");
+  await expect(title).toHaveText("v0.14.1");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: info.outputPath("release-v0.14.0.png"), fullPage: true });
+  await page.screenshot({ path: info.outputPath("release-v0.14.1.png"), fullPage: true });
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();
   }
@@ -86,6 +86,9 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "v0.12.0", exact: true }).filter({ visible: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "v0.14.0", exact: true }).filter({ visible: true }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });

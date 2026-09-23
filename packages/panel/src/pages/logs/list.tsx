@@ -8,13 +8,24 @@ import { Pagination } from "@/components/ui/pagination";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Popover } from "@/components/ui/popover";
 import { Select } from "@/components/ui/select";
 import { useSSEConnection } from "@/hooks/use-sse-connection";
 import { client } from "@/lib/client";
 import type { BotWithStatus, LogEntry } from "@cos-tool-bot/shared";
 import { useInvalidate, useList } from "@refinedev/core";
-import { AlertCircle, Pause, Play, Radio, RotateCw, Search, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  Pause,
+  Play,
+  Radio,
+  RotateCw,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
 
@@ -52,11 +63,19 @@ export function LogsListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [level, setLevel] = useState("");
-  const [botId, setBotId] = useState(searchParams.get("botId") ?? "");
+  const botId = searchParams.get("botId") ?? "";
+  const previousBotIdRef = useRef(botId);
   const [botOptions, setBotOptions] = useState<BotWithStatus[]>([]);
   const [botOptionsError, setBotOptionsError] = useState(false);
   const [botOptionsRetry, setBotOptionsRetry] = useState(0);
-  const [botOptionsLoading, setBotOptionsLoading] = useState(false);
+  const [botOptionsLoading, setBotOptionsLoading] = useState(true);
+  const [botPickerOpen, setBotPickerOpen] = useState(false);
+  const [botQuery, setBotQuery] = useState("");
+  const [activeBotIndex, setActiveBotIndex] = useState(-1);
+  const botListboxId = useId();
+  const botListboxRef = useRef<HTMLDivElement>(null);
+  const allBotsOptionRef = useRef<HTMLButtonElement>(null);
+  const botPickerInputRef = useRef<HTMLInputElement>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [chatIdInput, setChatIdInput] = useState("");
@@ -74,6 +93,15 @@ export function LogsListPage() {
     [botId],
   );
   const { connected, liveLogs, clearLiveLogs } = useSSEConnection(sseUrl);
+
+  useEffect(() => {
+    if (previousBotIdRef.current === botId) return;
+    previousBotIdRef.current = botId;
+    setPage(1);
+    clearLiveLogs();
+    setPausedLiveLogs([]);
+    setLivePaused(false);
+  }, [botId, clearLiveLogs]);
 
   // Fetch bot options for filter
   useEffect(() => {
@@ -127,6 +155,70 @@ export function LogsListPage() {
   });
 
   const invalidate = useInvalidate();
+
+  const selectedBot = botOptions.find((bot) => bot.id === botId);
+  const normalizedBotQuery = botQuery.trim().toLocaleLowerCase();
+  const filteredBotOptions = useMemo(
+    () => botOptions.filter((bot) => bot.name.toLocaleLowerCase().includes(normalizedBotQuery)),
+    [botOptions, normalizedBotQuery],
+  );
+  const visibleBotOptions = useMemo(() => {
+    if (!botId || filteredBotOptions.some((bot) => bot.id === botId)) return filteredBotOptions;
+    return [{ id: botId, name: selectedBot?.name ?? botId }, ...filteredBotOptions];
+  }, [botId, filteredBotOptions, selectedBot?.name]);
+  const activeBotOptionCount = visibleBotOptions.length + 1;
+  const defaultActiveBotId =
+    normalizedBotQuery && filteredBotOptions.length > 0 ? filteredBotOptions[0]?.id : botId;
+  const defaultActiveBotIndex = defaultActiveBotId
+    ? visibleBotOptions.findIndex((bot) => bot.id === defaultActiveBotId) + 1
+    : 0;
+  const safeActiveBotIndex =
+    activeBotIndex < 0 ? defaultActiveBotIndex : Math.min(activeBotIndex, activeBotOptionCount - 1);
+
+  useEffect(() => {
+    if (!botPickerOpen) return;
+    botPickerInputRef.current?.focus();
+  }, [botPickerOpen]);
+
+  useEffect(() => {
+    if (!botPickerOpen || safeActiveBotIndex === 0) return;
+    const option = document.getElementById(`${botListboxId}-${safeActiveBotIndex}`);
+    const listbox = botListboxRef.current;
+    if (!option || !listbox?.contains(option)) return;
+    const optionBounds = option.getBoundingClientRect();
+    const listboxBounds = listbox.getBoundingClientRect();
+    const visibleTop = Math.max(
+      listboxBounds.top,
+      allBotsOptionRef.current?.getBoundingClientRect().bottom ?? listboxBounds.top,
+    );
+    if (optionBounds.top < visibleTop) listbox.scrollTop += optionBounds.top - visibleTop;
+    else if (optionBounds.bottom > listboxBounds.bottom)
+      listbox.scrollTop += optionBounds.bottom - listboxBounds.bottom;
+  }, [botListboxId, botPickerOpen, safeActiveBotIndex, visibleBotOptions]);
+
+  const closeBotPicker = (focusTarget: "trigger" | "chatId" = "trigger") => {
+    setBotPickerOpen(false);
+    setBotQuery("");
+    setActiveBotIndex(-1);
+    window.requestAnimationFrame(() =>
+      document
+        .getElementById(focusTarget === "chatId" ? "logs-chat-id-filter" : "logs-bot-filter")
+        ?.focus(),
+    );
+  };
+
+  const selectBot = (nextBotId: string) => {
+    setSearchParams(nextBotId ? { botId: nextBotId } : {});
+    closeBotPicker();
+  };
+
+  const retryBotOptions = (fromPicker: boolean) => {
+    if (botOptionsLoading) return;
+    retryInProgressRef.current = !fromPicker;
+    if (fromPicker) botPickerInputRef.current?.focus();
+    setBotOptionsLoading(true);
+    setBotOptionsRetry((retry) => retry + 1);
+  };
 
   const clearLogs = async () => {
     const selectedBotName = botOptions.find((bot) => bot.id === botId)?.name ?? botId;
@@ -258,35 +350,165 @@ export function LogsListPage() {
           <option value="warn">Warn</option>
           <option value="error">Error</option>
         </Select>
-        <Select
-          id="logs-bot-filter"
-          className="w-full"
-          value={botId}
-          onChange={(e) => {
-            setBotId(e.target.value);
-            setPage(1);
-            clearLiveLogs();
-            setPausedLiveLogs([]);
-            setLivePaused(false);
-            if (e.target.value) {
-              setSearchParams({ botId: e.target.value });
-            } else {
-              setSearchParams({});
+        <Popover
+          open={botPickerOpen}
+          onOpenChange={(open) => {
+            setBotPickerOpen(open);
+            if (!open) {
+              setBotQuery("");
+              setActiveBotIndex(-1);
             }
           }}
-          aria-label={t("logs.allBots")}
+          className="w-[min(24rem,calc(100vw-2rem))] p-2"
+          trigger={
+            <Button
+              id="logs-bot-filter"
+              type="button"
+              variant="outline"
+              aria-label={t("logs.botFilterLabel", {
+                botName: botId ? (selectedBot?.name ?? botId) : t("logs.allBots"),
+              })}
+              aria-expanded={botPickerOpen}
+              className="w-full min-w-0 justify-between px-3 font-normal"
+            >
+              <span className={botId ? "truncate" : "text-muted-foreground truncate"}>
+                {botId ? (selectedBot?.name ?? botId) : t("logs.allBots")}
+              </span>
+              <ChevronDown className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
+            </Button>
+          }
         >
-          <option value="">{t("logs.allBots")}</option>
-          {botId && !botOptions.some((bot) => bot.id === botId) && (
-            <option value={botId}>{botId}</option>
-          )}
-          {botOptions.map((bot) => (
-            <option key={bot.id} value={bot.id}>
-              {bot.name}
-            </option>
-          ))}
-        </Select>
+          <div className="relative mb-2">
+            <Search
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+              aria-hidden="true"
+            />
+            <input
+              ref={botPickerInputRef}
+              autoFocus
+              type="search"
+              autoComplete="off"
+              value={botQuery}
+              onChange={(event) => {
+                setBotQuery(event.target.value);
+                setActiveBotIndex(-1);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Tab") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (!event.shiftKey && botOptionsError && !botOptionsLoading) {
+                    document.getElementById("logs-bot-options-retry-popover")?.focus();
+                  } else {
+                    closeBotPicker(event.shiftKey ? "trigger" : "chatId");
+                  }
+                  return;
+                }
+                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+                if (event.key === "ArrowDown") {
+                  event.preventDefault();
+                  setActiveBotIndex(Math.min(safeActiveBotIndex + 1, activeBotOptionCount - 1));
+                } else if (event.key === "ArrowUp") {
+                  event.preventDefault();
+                  setActiveBotIndex(Math.max(safeActiveBotIndex - 1, 0));
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  if (safeActiveBotIndex === 0) selectBot("");
+                  else {
+                    const activeBot = visibleBotOptions[safeActiveBotIndex - 1];
+                    if (activeBot) selectBot(activeBot.id);
+                  }
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeBotPicker();
+                }
+              }}
+              className="focus-visible:border-primary focus-visible:ring-ring/20 border-input placeholder:text-muted-foreground h-10 w-full rounded-lg border bg-white pr-3 pl-9 text-sm shadow-sm outline-none focus-visible:ring-2"
+              placeholder={t("logs.searchBots")}
+              aria-label={t("logs.searchBots")}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded="true"
+              aria-controls={botListboxId}
+              aria-activedescendant={`${botListboxId}-${safeActiveBotIndex}`}
+            />
+          </div>
+          <div
+            ref={botListboxRef}
+            id={botListboxId}
+            role="listbox"
+            aria-label={t("logs.allBots")}
+            className="max-h-64 space-y-1 overflow-y-auto"
+          >
+            <button
+              ref={allBotsOptionRef}
+              id={`${botListboxId}-0`}
+              type="button"
+              role="option"
+              tabIndex={-1}
+              aria-selected={!botId}
+              onPointerMove={() => setActiveBotIndex(0)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => selectBot("")}
+              className={`sticky top-0 z-10 flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm ${safeActiveBotIndex === 0 ? "bg-accent" : "bg-popover hover:bg-accent"}`}
+            >
+              <span className="truncate">{t("logs.allBots")}</span>
+              {!botId && <Check className="size-4 shrink-0" aria-hidden="true" />}
+            </button>
+            {botOptionsLoading ? (
+              <p role="status" className="text-muted-foreground px-3 py-3 text-sm">
+                {t("logs.botOptionsLoading")}
+              </p>
+            ) : botOptionsError ? (
+              <div className="space-y-2 px-3 py-3">
+                <p role="alert" className="text-destructive text-sm">
+                  {t("logs.botOptionsLoadError")}
+                </p>
+                <Button
+                  id="logs-bot-options-retry-popover"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => retryBotOptions(true)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Tab") return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    if (event.shiftKey) botPickerInputRef.current?.focus();
+                    else closeBotPicker("chatId");
+                  }}
+                >
+                  <RotateCw className="size-3.5" aria-hidden="true" />
+                  {t("logs.retry")}
+                </Button>
+              </div>
+            ) : filteredBotOptions.length === 0 ? (
+              <p role="status" className="text-muted-foreground px-3 py-3 text-sm">
+                {t("logs.noBotsFound")}
+              </p>
+            ) : null}
+            {visibleBotOptions.map((bot, index) => (
+              <button
+                key={bot.id}
+                id={`${botListboxId}-${index + 1}`}
+                type="button"
+                role="option"
+                tabIndex={-1}
+                aria-selected={bot.id === botId}
+                onPointerMove={() => setActiveBotIndex(index + 1)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectBot(bot.id)}
+                className={`hover:bg-accent flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm ${safeActiveBotIndex === index + 1 ? "bg-accent" : ""}`}
+              >
+                <span className="truncate">{bot.name}</span>
+                {bot.id === botId && <Check className="size-4 shrink-0" aria-hidden="true" />}
+              </button>
+            ))}
+          </div>
+        </Popover>
         <Input
+          id="logs-chat-id-filter"
           className="w-full font-mono"
           inputMode="numeric"
           maxLength={32}
@@ -331,12 +553,7 @@ export function LogsListPage() {
             size="sm"
             aria-disabled={botOptionsLoading}
             className="shrink-0 aria-disabled:cursor-wait aria-disabled:opacity-60"
-            onClick={() => {
-              if (botOptionsLoading) return;
-              retryInProgressRef.current = true;
-              setBotOptionsLoading(true);
-              setBotOptionsRetry((retry) => retry + 1);
-            }}
+            onClick={() => retryBotOptions(false)}
           >
             <RotateCw className={`size-3.5 ${botOptionsLoading ? "animate-spin" : ""}`} />
             {t(botOptionsLoading ? "logs.loading" : "logs.retry")}
