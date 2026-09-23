@@ -324,4 +324,27 @@ describe("BotMemoryStore lifecycle", () => {
     expect(rendered.sql).toContain('"bot_memories"."updated_at" =');
     expect(rendered.params).toContain(expectedUpdatedAt);
   });
+
+  it("limits an Agent's permanent deletion to the current user's own memory", async () => {
+    const whereClauses: SQL[] = [];
+    const query = {
+      where: (where: SQL) => {
+        whereClauses.push(where);
+        return query;
+      },
+      returning: async () => [{ id: 1 }],
+    };
+    const store = new BotMemoryStore({ delete: () => query } as unknown as Database);
+    await expect(store.deleteMemory(memoryRow().botId, 1, { chatId: -100 })).resolves.toBe(false);
+    await expect(
+      store.deleteMemory(memoryRow().botId, 1, { userId: 42, chatId: -100 }),
+    ).resolves.toBe(true);
+
+    expect(whereClauses).toHaveLength(1);
+    const rendered = renderWhere(whereClauses[0]!);
+    expect(rendered.sql).toContain('"bot_memories"."telegram_id" =');
+    expect(rendered.sql).not.toContain('"bot_memories"."telegram_id" is null');
+    expect(rendered.params).toContain(42);
+    expect(rendered.params).toContain(-100);
+  });
 });

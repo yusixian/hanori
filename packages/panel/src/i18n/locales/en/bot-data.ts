@@ -390,6 +390,32 @@ export const botData = {
     deleteConfirm: "Delete this memory?",
     editTitle: "Edit memory",
     deleteTitle: "Delete memory",
+    duplicateCleanup: {
+      title: "Historical exact duplicates",
+      description:
+        "Preview memories with identical user, chat, type, category, validity times, and text. Similar wording is excluded.",
+      reviewAction: "Review exact duplicates",
+      hidePreview: "Hide preview",
+      loading: "Checking for exact duplicates…",
+      previewFailed: "Could not load the preview. Refresh it before retrying.",
+      empty: "No exact duplicates found.",
+      batchSummary: "{{count}} exact duplicates in this batch (up to {{max}}).",
+      candidateAndSurvivor: "Retire #{{candidateId}} · keep #{{survivorId}}",
+      moreBatches: "More duplicates remain. Review each batch of up to {{max}} separately.",
+      finishEditing: "Save or cancel the current edit before retiring duplicates.",
+      retireBatch: "Retire this batch ({{count}})",
+      refreshPreview: "Refresh preview",
+      confirm:
+        "Retire {{count}} exact duplicate memories? Each copy will be marked inactive and linked to its survivor.",
+      retiredSuccess: "Retired {{count}} exact duplicate memories.",
+      stale: "Memories changed after this preview. We refreshed it; review the new batch.",
+      stalePreviewFailed:
+        "Memories changed after this preview. Could not reload it; refresh before retrying.",
+      outcomeUnknown:
+        "The result could not be confirmed. We loaded a fresh preview; review the current batch before acting.",
+      outcomeUnknownPreviewFailed:
+        "The result could not be confirmed and the preview could not be reloaded. Refresh before acting.",
+    },
   },
   debugger: {
     eyebrow: "Bot operations",

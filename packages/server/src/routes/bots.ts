@@ -29,6 +29,10 @@ import {
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
+import {
+  MemoryLegacyCleanup,
+  MEMORY_DUPLICATE_BATCH_MAX,
+} from "../services/memory-legacy-cleanup.js";
 import { AiConfigPatchError, absorbAiConfigPatch } from "../services/ai-config-patch.js";
 import {
   aiConfigRevision,
@@ -1513,6 +1517,50 @@ export function botsRoutes(
       const categories = await store.getCategories(botId);
       return c.json({ ok: true as const, data: { categories } });
     })
+    .get("/:botId/memories/duplicate-preview", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role))
+        return c.json({ ok: false as const, error: "Forbidden" }, 403);
+      const result = await new MemoryLegacyCleanup(db).preview(c.req.param("botId"));
+      return c.json({ ok: true as const, ...result });
+    })
+    .post(
+      "/:botId/memories/retire-duplicates",
+      zValidator(
+        "json",
+        z.object({
+          candidates: z
+            .array(
+              z.object({
+                candidateId: z.number().int().positive().safe(),
+                survivorId: z.number().int().positive().safe(),
+                expectedCandidateUpdatedAt: z.string().datetime({ offset: true }),
+                expectedSurvivorUpdatedAt: z.string().datetime({ offset: true }),
+              }),
+            )
+            .min(1)
+            .max(MEMORY_DUPLICATE_BATCH_MAX)
+            .refine((candidates) => {
+              const candidateIds = candidates.map(({ candidateId }) => candidateId);
+              const unique = new Set(candidateIds);
+              return (
+                unique.size === candidateIds.length &&
+                candidates.every(({ survivorId }) => !unique.has(survivorId))
+              );
+            }, "Duplicate or chained cleanup candidates are not allowed"),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const result = await new MemoryLegacyCleanup(db).retireBatch(
+          c.req.param("botId"),
+          c.req.valid("json").candidates,
+        );
+        if (!result)
+          return c.json({ ok: false as const, error: "Memories changed; refresh preview" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
     .get(
       "/:botId/memories",
       zValidator(

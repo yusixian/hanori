@@ -25,6 +25,7 @@ interface PendingRequest {
 
 let listRequests: PendingRequest[];
 let mutationRequests: PendingRequest[];
+let duplicatePreviewRequests: PendingRequest[];
 
 const memory = (id: number, content: string, botId = "bot-a") => ({
   id,
@@ -55,6 +56,27 @@ const listResponse = (
 
 const mutationResponse = (ok = true, status = 200) =>
   new Response(JSON.stringify({ ok }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+const duplicateCandidate = (candidateId: number, survivorId: number, content = "Prefers tea") => ({
+  candidateId,
+  survivorId,
+  expectedCandidateUpdatedAt: "2026-09-02T00:00:00.000Z",
+  expectedSurvivorUpdatedAt: "2026-09-01T00:00:00.000Z",
+  content,
+  telegramId: 42,
+  scopeChatId: -100,
+  kind: "preference",
+  category: "fact",
+});
+
+const duplicatePreviewResponse = (
+  data: ReturnType<typeof duplicateCandidate>[],
+  { hasMore = false, batchMax = 50, status = 200, ok = true } = {},
+) =>
+  new Response(JSON.stringify({ ok, data, hasMore, batchMax }), {
     status,
     headers: { "content-type": "application/json" },
   });
@@ -136,6 +158,7 @@ async function resolveInitial(
 beforeEach(async () => {
   listRequests = [];
   mutationRequests = [];
+  duplicatePreviewRequests = [];
   await i18n.changeLanguage("en");
   vi.stubGlobal(
     "fetch",
@@ -147,6 +170,11 @@ beforeEach(async () => {
             headers: { "content-type": "application/json" },
           }),
         );
+      }
+      if (details.url.pathname.endsWith("/memories/duplicate-preview")) {
+        return new Promise<Response>((resolve, reject) => {
+          duplicatePreviewRequests.push({ ...details, resolve, reject });
+        });
       }
       return new Promise<Response>((resolve, reject) => {
         const pending = { ...details, resolve, reject };
@@ -489,6 +517,143 @@ test("retires an active memory with refresh recovery and leaves retired records 
   await expect
     .element(page.getByRole("button", { name: "Edit memory", exact: true }))
     .toBeDisabled();
+});
+
+test("keeps exact duplicate cleanup opt-in, preserves edit drafts, and confirms each batch", async () => {
+  await resolveInitial([memory(1, "Original memory")]);
+  await page.getByRole("button", { name: "Edit memory", exact: true }).click();
+  const editContent = page.getByLabelText("Content", { exact: true });
+  await editContent.fill("Unsaved edit draft");
+
+  expect(duplicatePreviewRequests).toHaveLength(0);
+  expect(mutationRequests).toHaveLength(0);
+  await page.getByRole("button", { name: "Review exact duplicates", exact: true }).click();
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(1));
+  duplicatePreviewRequests[0]!.resolve(
+    duplicatePreviewResponse([duplicateCandidate(3, 2)], { hasMore: true }),
+  );
+  await expect.element(page.getByText("Similar wording is excluded.")).toBeVisible();
+  await expect.element(page.getByText("Retire #3 · keep #2", { exact: true })).toBeVisible();
+  await expect.element(editContent).toHaveValue("Unsaved edit draft");
+  await expect
+    .element(page.getByRole("button", { name: "Retire this batch (1)", exact: true }))
+    .toBeDisabled();
+  expect(mutationRequests).toHaveLength(0);
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  const confirmation = vi.spyOn(window, "confirm").mockReturnValue(false);
+  const retireBatch = page.getByRole("button", { name: "Retire this batch (1)", exact: true });
+  await retireBatch.click();
+  expect(confirmation).toHaveBeenCalledOnce();
+  expect(mutationRequests).toHaveLength(0);
+
+  confirmation.mockReturnValue(true);
+  await retireBatch.click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  expect(mutationRequests[0]!.url.pathname).toContain("/memories/retire-duplicates");
+  expect(await requestJson(mutationRequests[0]!)).toEqual({
+    candidates: [
+      {
+        candidateId: 3,
+        survivorId: 2,
+        expectedCandidateUpdatedAt: "2026-09-02T00:00:00.000Z",
+        expectedSurvivorUpdatedAt: "2026-09-01T00:00:00.000Z",
+      },
+    ],
+  });
+  mutationRequests[0]!.resolve(mutationResponse());
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(2));
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  duplicatePreviewRequests[1]!.resolve(duplicatePreviewResponse([duplicateCandidate(5, 4)]));
+  listRequests[1]!.resolve(listResponse([memory(1, "Original memory")]));
+  await expect
+    .element(
+      page.getByText("Retired 1 exact duplicate memories.", {
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+  await expect.element(page.getByText("Retire #5 · keep #4", { exact: true })).toBeVisible();
+  expect(confirmation).toHaveBeenCalledTimes(2);
+  confirmation.mockReturnValue(false);
+  await page.getByRole("button", { name: "Retire this batch (1)", exact: true }).click();
+  expect(confirmation).toHaveBeenCalledTimes(3);
+  expect(mutationRequests).toHaveLength(1);
+  await expect
+    .element(page.getByLabelText("Current address"))
+    .toHaveTextContent("/bots/bot-a/memories");
+});
+
+test("limits duplicate cleanup to 50 and refreshes the batch after a stale 409", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  start("/bots/bot-a/memories?telegramId=42&search=tea");
+  await vi.waitFor(() => expect(listRequests).toHaveLength(1));
+  listRequests[0]!.resolve(listResponse([memory(1, "Tea preference")]));
+  await expect.element(page.getByText("Tea preference", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Review exact duplicates", exact: true }).click();
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(1));
+  const firstBatch = Array.from({ length: 50 }, (_, index) =>
+    duplicateCandidate(index + 100, index + 1, `Memory ${index + 1}`),
+  );
+  duplicatePreviewRequests[0]!.resolve(
+    duplicatePreviewResponse(firstBatch, { hasMore: true, batchMax: 50 }),
+  );
+  await page.getByRole("button", { name: "Retire this batch (50)", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  const body = await requestJson(mutationRequests[0]!);
+  expect(body.candidates).toHaveLength(50);
+  expect((body.candidates as Array<Record<string, unknown>>).length).toBeLessThanOrEqual(50);
+  expect(window.confirm).toHaveBeenCalledWith(
+    "Retire 50 exact duplicate memories? Each copy will be marked inactive and linked to its survivor.",
+  );
+  mutationRequests[0]!.resolve(mutationResponse(false, 409));
+
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(2));
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  duplicatePreviewRequests[1]!.resolve(
+    duplicatePreviewResponse([duplicateCandidate(250, 249, "Changed after preview")]),
+  );
+  listRequests[1]!.resolve(listResponse([memory(1, "Tea preference")]));
+  await expect
+    .element(
+      page.getByText("Memories changed after this preview. We refreshed it; review the new batch."),
+    )
+    .toBeVisible();
+  await expect.element(page.getByText("Changed after preview", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByLabelText("Current address"))
+    .toHaveTextContent("/bots/bot-a/memories?telegramId=42&search=tea");
+  expect(mutationRequests).toHaveLength(1);
+});
+
+test("reads back an uncertain duplicate cleanup result and fits the Chinese preview on mobile", async () => {
+  await page.viewport(390, 844);
+  await i18n.changeLanguage("zh-CN");
+  await resolveInitial([memory(1, "保留当前筛选和列表状态")]);
+  await page.getByRole("button", { name: "检查完全重复项", exact: true }).click();
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(1));
+  duplicatePreviewRequests[0]!.resolve(
+    duplicatePreviewResponse([
+      duplicateCandidate(2, 1, "这是一段较长的重复记忆文本，用于检查窄屏上的换行和水平溢出。"),
+      duplicateCandidate(3, 1, "另一段较长的重复记忆文本，用于检查预览列表在手机视口中的布局。"),
+    ]),
+  );
+  await expect.element(page.getByText("停用本批（2）", { exact: true })).toBeVisible();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await page.getByRole("button", { name: "停用本批（2）", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  mutationRequests[0]!.reject(new Error("offline"));
+  await vi.waitFor(() => expect(duplicatePreviewRequests).toHaveLength(2));
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  duplicatePreviewRequests[1]!.resolve(duplicatePreviewResponse([duplicateCandidate(3, 1)]));
+  listRequests[1]!.resolve(listResponse([memory(1, "保留当前筛选和列表状态")]));
+  await expect
+    .element(page.getByText("无法确认操作结果。已加载最新预览，请检查当前批次后再操作。"))
+    .toBeVisible();
+  await expect.element(page.getByText("停用 #3 · 保留 #1", { exact: true })).toBeVisible();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
 test("keeps memory details and edit controls within a mobile viewport", async () => {
