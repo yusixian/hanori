@@ -355,7 +355,7 @@ export async function continueChat(
         requireContinuationDelivery(event, "privacy_off");
         return false;
       }
-      return doContinueChat(api, executionConfig, event, executionContext);
+      return doContinueChat(api, executionConfig, event, executionContext, privacyMode);
     });
   };
 
@@ -401,6 +401,7 @@ async function doContinueChat(
   config: ContinueChatConfig,
   event: ContinueChatEvent,
   executionContext?: ContinueChatRunContext,
+  privacyMode?: "normal" | "isolated" | "off",
 ): Promise<boolean> {
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
@@ -442,7 +443,14 @@ async function doContinueChat(
     let botMemoryTools: Record<string, Tool> | undefined;
     if (botMemCfg.enabled && config.botMemory) {
       const { createBotMemoryTools } = await import("../tools/bot-memory.js");
-      botMemoryTools = createBotMemoryTools(config.botMemory);
+      botMemoryTools = createBotMemoryTools(config.botMemory, {
+        chatId,
+        userId: event.userId,
+        privacyMode,
+        allowSave: false,
+        allowMutations: false,
+        allowHardDelete: false,
+      });
     }
 
     // Build messages using ContextAssembler
@@ -470,6 +478,7 @@ async function doContinueChat(
       botMemory: config.botMemory,
       retrievalQuery: eventDescription,
       userId: event.userId,
+      privacyMode,
       timerMaxSeconds: config.timerMaxSeconds,
     });
 

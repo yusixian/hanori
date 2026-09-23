@@ -682,23 +682,63 @@ export interface BotMemoryCallbacks {
     content: string;
     category?: string;
     telegramId?: number;
+    kind?: BotMemoryKind;
+    scopeChatId?: number;
+    origin?: string;
+    sourceChatId?: number;
+    sourceMessageId?: number;
+    sourceUserId?: number;
+    expiresAt?: string;
     factValidAt?: string;
   }): Promise<BotMemory>;
   recallMemories(params: {
     query?: string;
     category?: string;
     telegramId?: number;
+    scopeChatId?: number;
+    includeUnscopedPersonal?: boolean;
     scope?: "general_only" | "user_only" | "all";
     limit?: number;
   }): Promise<BotMemory[]>;
-  deleteMemory(memoryId: number): Promise<boolean>;
-  getMemoriesForPrompt(telegramId?: number, limit?: number): Promise<BotMemory[]>;
+  updateMemory(
+    memoryId: number,
+    data: {
+      content?: string;
+      expectedContent?: string;
+      category?: string | null;
+      kind?: BotMemoryKind | null;
+      expiresAt?: string | null;
+      factValidAt?: string | null;
+    },
+    access: BotMemoryAccess,
+  ): Promise<BotMemory | null>;
+  retireMemory(
+    memoryId: number,
+    supersededById: number | undefined,
+    access: BotMemoryAccess,
+    expectedContent: string,
+  ): Promise<boolean>;
+  deleteMemory(memoryId: number, access: BotMemoryAccess): Promise<boolean>;
+  getMemoriesForPrompt(
+    telegramId?: number,
+    limit?: number,
+    scopeChatId?: number,
+    includeUnscopedPersonal?: boolean,
+  ): Promise<BotMemory[]>;
   getMemoriesForQuery?(params: {
     query?: string;
     telegramId?: number;
+    scopeChatId?: number;
+    includeUnscopedPersonal?: boolean;
     limit?: number;
   }): Promise<BotMemory[]>;
   searchProfiles?(query: string, telegramId?: number): Promise<PeopleProfile[]>;
+}
+
+export interface BotMemoryAccess {
+  userId?: number;
+  chatId: number;
+  includeUnscopedPersonal?: boolean;
 }
 
 export interface AiProviderEntry {

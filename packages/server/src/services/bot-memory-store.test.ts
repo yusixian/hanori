@@ -144,6 +144,23 @@ describe("BotMemoryStore scopes", () => {
     expect(rendered.sql).toContain('"bot_memories"."expires_at" is null');
     expect(rendered.sql).toContain('"bot_memories"."expires_at" >');
   });
+
+  it("excludes unscoped personal memories in isolated mode", async () => {
+    const { db, whereClauses } = createDb();
+    const store = new BotMemoryStore(db);
+    await store.recallMemories(memoryRow().botId, {
+      telegramId: 42,
+      scopeChatId: -100,
+      includeUnscopedPersonal: false,
+    });
+
+    const rendered = renderWhere(whereClauses[0]!);
+    expect(rendered.sql).toContain('"bot_memories"."telegram_id" is null');
+    expect(rendered.sql).toContain('"bot_memories"."telegram_id" =');
+    expect(rendered.sql).toContain('"bot_memories"."scope_chat_id" =');
+    expect(rendered.params).toContain(42);
+    expect(rendered.params).toContain(-100);
+  });
 });
 
 describe("BotMemoryStore semantic threshold", () => {
@@ -254,5 +271,57 @@ describe("BotMemoryStore lifecycle", () => {
     expect(rendered.sql).toContain("successor.telegram_id is not distinct from");
     expect(rendered.sql).toContain("successor.scope_chat_id is not distinct from");
     expect(rendered.params).toContain(2);
+  });
+
+  it("guards agent edits by the current user or current chat", async () => {
+    const { db, whereClauses } = createUpdateDb([memoryRow()]);
+    const store = new BotMemoryStore(db);
+    await store.updateMemory(
+      memoryRow().botId,
+      1,
+      { content: "dogs", expectedContent: "cats" },
+      {
+        userId: 42,
+        chatId: -100,
+        includeUnscopedPersonal: false,
+      },
+    );
+
+    const rendered = renderWhere(whereClauses[0]!);
+    expect(rendered.sql).toContain('"bot_memories"."scope_chat_id" =');
+    expect(rendered.sql).toContain('"bot_memories"."telegram_id" =');
+    expect(rendered.sql).toContain('"bot_memories"."telegram_id" is null');
+    expect(rendered.params).toContain(42);
+    expect(rendered.params).toContain(-100);
+    expect(rendered.params).toContain("cats");
+  });
+
+  it("requires current-chat scope when an agent changes a memory into a shared experience", async () => {
+    const { db, whereClauses } = createUpdateDb([memoryRow()]);
+    const store = new BotMemoryStore(db);
+    await store.updateMemory(
+      memoryRow().botId,
+      1,
+      { kind: "event", expectedContent: "cats" },
+      { userId: 42, chatId: -100 },
+    );
+
+    const rendered = renderWhere(whereClauses[0]!);
+    expect(rendered.sql).toContain('"bot_memories"."scope_chat_id" =');
+    expect(rendered.params.filter((value) => value === -100)).toHaveLength(3);
+  });
+
+  it("guards admin edits against a newer memory version", async () => {
+    const { db, whereClauses } = createUpdateDb([memoryRow()]);
+    const store = new BotMemoryStore(db);
+    const expectedUpdatedAt = "2026-09-01T12:00:00.000Z";
+    await store.updateMemory(memoryRow().botId, 1, {
+      category: "updated",
+      expectedUpdatedAt,
+    });
+
+    const rendered = renderWhere(whereClauses[0]!);
+    expect(rendered.sql).toContain('"bot_memories"."updated_at" =');
+    expect(rendered.params).toContain(expectedUpdatedAt);
   });
 });

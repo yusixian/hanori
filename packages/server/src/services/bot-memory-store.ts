@@ -1,6 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botMemories } from "@cos-tool-bot/database";
-import type { BotMemory, BotMemoryKind } from "@cos-tool-bot/shared";
+import type { BotMemory, BotMemoryAccess, BotMemoryKind } from "@cos-tool-bot/shared";
 import {
   and,
   count,
@@ -38,8 +38,32 @@ function toDto(row: typeof botMemories.$inferSelect): BotMemory {
   };
 }
 
+function agentMutationScope(access?: BotMemoryAccess) {
+  if (!access) return undefined;
+  const chatScope = eq(botMemories.scopeChatId, access.chatId);
+  const personalScope =
+    access.userId == null
+      ? undefined
+      : and(
+          eq(botMemories.telegramId, access.userId),
+          access.includeUnscopedPersonal === false
+            ? chatScope
+            : or(isNull(botMemories.scopeChatId), chatScope),
+        );
+  return or(and(isNull(botMemories.telegramId), chatScope), personalScope);
+}
+
 export class BotMemoryStore {
   constructor(private db: Database) {}
+
+  async getMemory(botId: string, memoryId: number): Promise<BotMemory | null> {
+    const [row] = await this.db
+      .select()
+      .from(botMemories)
+      .where(and(eq(botMemories.botId, botId), eq(botMemories.id, memoryId)))
+      .limit(1);
+    return row ? toDto(row) : null;
+  }
 
   async saveMemory(
     botId: string,
@@ -86,6 +110,7 @@ export class BotMemoryStore {
       category?: string;
       telegramId?: number;
       scopeChatId?: number;
+      includeUnscopedPersonal?: boolean;
       scope?: "general_only" | "user_only" | "all";
       limit?: number;
       queryEmbedding?: number[];
@@ -111,13 +136,30 @@ export class BotMemoryStore {
       } else if (scope === "user_only") {
         if (params.telegramId != null) {
           conditions.push(eq(botMemories.telegramId, params.telegramId));
+          if (params.includeUnscopedPersonal === false) {
+            conditions.push(
+              params.scopeChatId == null
+                ? sql`1=0`
+                : eq(botMemories.scopeChatId, params.scopeChatId),
+            );
+          }
         } else {
           conditions.push(sql`1=0`);
         }
       } else if (scope === "all") {
         if (params.telegramId != null) {
           conditions.push(
-            or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
+            or(
+              isNull(botMemories.telegramId),
+              and(
+                eq(botMemories.telegramId, params.telegramId),
+                params.includeUnscopedPersonal === false
+                  ? params.scopeChatId == null
+                    ? sql`1=0`
+                    : eq(botMemories.scopeChatId, params.scopeChatId)
+                  : undefined,
+              ),
+            )!,
           );
         } else {
           // Never broaden an unscoped lookup to every user's private memories.
@@ -242,6 +284,8 @@ export class BotMemoryStore {
     memoryId: number,
     data: {
       content?: string;
+      expectedContent?: string;
+      expectedUpdatedAt?: string;
       category?: string | null;
       telegramId?: number | null;
       kind?: BotMemoryKind | null;
@@ -253,6 +297,7 @@ export class BotMemoryStore {
       factValidAt?: string | null;
       expiresAt?: string | null;
     },
+    access?: BotMemoryAccess,
   ): Promise<BotMemory | null> {
     const updates: Partial<typeof botMemories.$inferInsert> = {};
     if (data.content !== undefined) {
@@ -289,6 +334,23 @@ export class BotMemoryStore {
           eq(botMemories.botId, botId),
           eq(botMemories.id, memoryId),
           eq(botMemories.isActive, true),
+          data.expectedContent === undefined
+            ? undefined
+            : eq(botMemories.content, data.expectedContent),
+          data.expectedUpdatedAt === undefined
+            ? undefined
+            : or(
+                eq(botMemories.updatedAt, new Date(data.expectedUpdatedAt)),
+                and(
+                  isNull(botMemories.updatedAt),
+                  eq(botMemories.createdAt, new Date(data.expectedUpdatedAt)),
+                ),
+              ),
+          agentMutationScope(access),
+          access &&
+            (data.kind === "event" || data.kind === "commitment" || data.kind === "relationship")
+            ? eq(botMemories.scopeChatId, access.chatId)
+            : undefined,
         ),
       )
       .returning();
@@ -299,17 +361,45 @@ export class BotMemoryStore {
     await this.db.update(botMemories).set({ embedding }).where(eq(botMemories.id, memoryId));
   }
 
-  async deleteMemory(botId: string, memoryId: number): Promise<boolean> {
+  async updateEmbeddingIfContentMatches(
+    botId: string,
+    memoryId: number,
+    content: string,
+    embedding: number[],
+  ): Promise<boolean> {
+    const updated = await this.db
+      .update(botMemories)
+      .set({ embedding })
+      .where(
+        and(
+          eq(botMemories.botId, botId),
+          eq(botMemories.id, memoryId),
+          eq(botMemories.content, content),
+          eq(botMemories.isActive, true),
+        ),
+      )
+      .returning({ id: botMemories.id });
+    return updated.length > 0;
+  }
+
+  async deleteMemory(botId: string, memoryId: number, access?: BotMemoryAccess): Promise<boolean> {
     const result = await this.db
       .delete(botMemories)
-      .where(and(eq(botMemories.botId, botId), eq(botMemories.id, memoryId)))
+      .where(
+        and(eq(botMemories.botId, botId), eq(botMemories.id, memoryId), agentMutationScope(access)),
+      )
       .returning({ id: botMemories.id });
     return result.length > 0;
   }
 
   async getMemoriesForPrompt(
     botId: string,
-    params: { telegramId?: number; scopeChatId?: number; limit?: number },
+    params: {
+      telegramId?: number;
+      scopeChatId?: number;
+      includeUnscopedPersonal?: boolean;
+      limit?: number;
+    },
   ): Promise<BotMemory[]> {
     const limit = params.limit ?? 20;
     const conditions = [
@@ -322,7 +412,17 @@ export class BotMemoryStore {
     ];
     if (params.telegramId != null) {
       conditions.push(
-        or(isNull(botMemories.telegramId), eq(botMemories.telegramId, params.telegramId))!,
+        or(
+          isNull(botMemories.telegramId),
+          and(
+            eq(botMemories.telegramId, params.telegramId),
+            params.includeUnscopedPersonal === false
+              ? params.scopeChatId == null
+                ? sql`1=0`
+                : eq(botMemories.scopeChatId, params.scopeChatId)
+              : undefined,
+          ),
+        )!,
       );
     } else {
       conditions.push(isNull(botMemories.telegramId));
@@ -385,7 +485,13 @@ export class BotMemoryStore {
   }
 
   /** Retire an active memory, optionally linking a successor in the same Bot. */
-  async retireMemory(botId: string, memoryId: number, supersededById?: number): Promise<boolean> {
+  async retireMemory(
+    botId: string,
+    memoryId: number,
+    supersededById?: number,
+    access?: BotMemoryAccess,
+    expectedContent?: string,
+  ): Promise<boolean> {
     if (supersededById === memoryId) return false;
     const updates: Partial<typeof botMemories.$inferInsert> = { isActive: false };
     if (supersededById != null) updates.supersededById = supersededById;
@@ -408,6 +514,8 @@ export class BotMemoryStore {
           eq(botMemories.botId, botId),
           eq(botMemories.id, memoryId),
           eq(botMemories.isActive, true),
+          expectedContent === undefined ? undefined : eq(botMemories.content, expectedContent),
+          agentMutationScope(access),
           successorCondition,
         ),
       )

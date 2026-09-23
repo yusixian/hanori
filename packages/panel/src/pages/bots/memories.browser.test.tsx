@@ -17,6 +17,8 @@ interface PendingRequest {
   url: URL;
   method: string;
   signal: AbortSignal | null;
+  request: Request | null;
+  body: BodyInit | null;
   resolve: (response: Response) => void;
   reject: (error: Error) => void;
 }
@@ -30,6 +32,14 @@ const memory = (id: number, content: string, botId = "bot-a") => ({
   telegramId: null,
   content,
   category: "fact",
+  kind: null as null | "fact" | "preference" | "event" | "commitment" | "relationship",
+  scopeChatId: null as number | null,
+  origin: null as string | null,
+  sourceChatId: null as number | null,
+  sourceMessageId: null as number | null,
+  sourceUserId: null as number | null,
+  expiresAt: null as string | null,
+  isActive: true as boolean,
   createdAt: "2026-09-01T00:00:00.000Z",
   updatedAt: "2026-09-02T00:00:00.000Z",
 });
@@ -55,7 +65,15 @@ function requestDetails(input: RequestInfo | URL, init?: RequestInit) {
     url: new URL(request?.url ?? String(input), location.origin),
     method: request?.method ?? init?.method ?? "GET",
     signal: request?.signal ?? init?.signal ?? null,
+    request,
+    body: init?.body ?? null,
   };
+}
+
+async function requestJson(pending: PendingRequest): Promise<Record<string, unknown>> {
+  return (
+    pending.request ? await pending.request.clone().json() : JSON.parse(String(pending.body))
+  ) as Record<string, unknown>;
 }
 
 function TestRoutes() {
@@ -330,13 +348,25 @@ test("keeps an edit draft on an application failure and only closes after succes
   await page.getByRole("button", { name: "Edit memory", exact: true }).click();
   const content = page.getByLabelText("Content", { exact: true });
   await content.fill("Edited memory");
+  await page.getByRole("combobox", { name: "Type" }).click();
+  await page.getByRole("option", { name: "Commitment" }).click();
+  await page.getByLabelText("Chat ID (optional)").fill("-42");
+  await page.getByLabelText("Expires (optional)").fill("2026-12-20T09:15");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  expect(await requestJson(mutationRequests[0]!)).toMatchObject({
+    content: "Edited memory",
+    expectedUpdatedAt: "2026-09-02T00:00:00.000Z",
+    kind: "commitment",
+    scopeChatId: -42,
+    expiresAt: new Date("2026-12-20T09:15").toISOString(),
+  });
   await expect.element(content).toBeDisabled();
   mutationRequests[0]!.resolve(mutationResponse(false));
 
   await expect.element(page.getByRole("alert")).toHaveTextContent("Your changes are kept");
   await expect.element(content).toHaveValue("Edited memory");
+  await expect.element(page.getByLabelText("Chat ID (optional)")).toHaveValue("-42");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await vi.waitFor(() => expect(mutationRequests).toHaveLength(2));
   mutationRequests[1]!.resolve(mutationResponse());
@@ -370,6 +400,115 @@ test("keeps a record after a delete network failure and removes it after success
   listRequests[2]!.resolve(listResponse([]));
   await expect.element(page.getByText("Deleted.", { exact: true })).toBeVisible();
   await expect.element(page.getByText("No memories found.", { exact: true })).toBeVisible();
+});
+
+test("shows lifecycle details and submits typed, scoped memory fields", async () => {
+  await resolveInitial([
+    {
+      ...memory(1, "We finished the trip plan"),
+      kind: "event" as const,
+      scopeChatId: -100,
+      origin: "agent",
+      sourceChatId: -100,
+      sourceMessageId: 42,
+      sourceUserId: 7,
+      expiresAt: "2026-12-01T10:30:00.000Z",
+    },
+  ]);
+  await expect.element(page.getByText("Shared event", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Chat -100", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Source chat -100", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Message 42", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Source user 7", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Origin: Saved by the Bot", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Add memory", exact: true }).click();
+  await page.getByPlaceholder("Memory content…").fill("Prefers tea");
+  await page.getByRole("combobox", { name: "Type" }).click();
+  await page.getByRole("option", { name: "Preference" }).click();
+  await page.getByLabelText("Chat ID (optional)").fill("-100");
+  await page.getByLabelText("Expires (optional)").fill("2026-12-01T10:30");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  const createBody = await requestJson(mutationRequests[0]!);
+  expect(createBody).toMatchObject({
+    content: "Prefers tea",
+    kind: "preference",
+    scopeChatId: -100,
+  });
+  expect(createBody["expiresAt"]).toBe(new Date("2026-12-01T10:30").toISOString());
+  mutationRequests[0]!.resolve(mutationResponse());
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.resolve(listResponse([memory(2, "Prefers tea")]));
+  await expect.element(page.getByText("Created.", { exact: true })).toBeVisible();
+});
+
+test("keeps expiry seconds on unrelated edits and marks expired memories accurately", async () => {
+  await resolveInitial([
+    { ...memory(1, "Past appointment"), expiresAt: "2026-01-01T10:30:45.000Z" },
+  ]);
+  await expect.element(page.getByText("Expired", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit memory", exact: true }).click();
+  await page.getByRole("textbox", { name: "Category", exact: true }).fill("history");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  expect(await requestJson(mutationRequests[0]!)).toMatchObject({
+    expiresAt: "2026-01-01T10:30:45.000Z",
+    expectedUpdatedAt: "2026-09-02T00:00:00.000Z",
+  });
+});
+
+test("retires an active memory with refresh recovery and leaves retired records read only", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  await resolveInitial([memory(1, "Outdated preference")]);
+  await page.getByRole("button", { name: "Retire", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
+  expect(mutationRequests[0]!.method).toBe("POST");
+  expect(mutationRequests[0]!.url.pathname).toContain("/memories/1/retire");
+  expect(await requestJson(mutationRequests[0]!)).toEqual({});
+  mutationRequests[0]!.reject(new Error("offline"));
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Refresh the list before retrying");
+  await expect.element(page.getByText("Outdated preference", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh list", exact: true }).click();
+  await vi.waitFor(() => expect(listRequests).toHaveLength(2));
+  listRequests[1]!.resolve(listResponse([memory(1, "Outdated preference")]));
+  await page.getByRole("button", { name: "Retire", exact: true }).click();
+  await vi.waitFor(() => expect(mutationRequests).toHaveLength(2));
+  mutationRequests[1]!.resolve(mutationResponse());
+  await vi.waitFor(() => expect(listRequests).toHaveLength(3));
+  listRequests[2]!.resolve(
+    listResponse([{ ...memory(1, "Outdated preference"), isActive: false }]),
+  );
+  await expect.element(page.getByText("Memory retired.", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Retired", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Retire", exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("button", { name: "Edit memory", exact: true }))
+    .toBeDisabled();
+});
+
+test("keeps memory details and edit controls within a mobile viewport", async () => {
+  await page.viewport(390, 844);
+  await i18n.changeLanguage("zh-CN");
+  await resolveInitial([
+    {
+      ...memory(1, "曾经一起讨论过一次很长的旅行安排"),
+      kind: "event" as const,
+      scopeChatId: -1000000000042,
+      sourceChatId: -1000000000042,
+      sourceMessageId: 42001,
+      origin: "agent",
+    },
+  ]);
+  await expect.element(page.getByText("共同经历", { exact: true })).toBeVisible();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  await page.getByRole("button", { name: "编辑记忆" }).click();
+  await expect.element(page.getByLabelText("聊天 ID（可选）")).toHaveValue("-1000000000042");
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
 test("restores submitted user filters through history and keeps pagination scoped", async () => {

@@ -6,6 +6,8 @@ interface PromptMemorySelectorInput {
   botId: string;
   query?: string;
   telegramId?: number;
+  scopeChatId?: number;
+  includeUnscopedPersonal?: boolean;
   limit: number;
   store: Pick<BotMemoryStore, "getMemoriesForPrompt" | "recallMemories">;
   embeddingService?: Pick<EmbeddingService, "generateEmbedding">;
@@ -45,6 +47,10 @@ export async function selectMemoriesForPrompt(
   if (!query) {
     return input.store.getMemoriesForPrompt(input.botId, {
       telegramId: input.telegramId,
+      ...(input.scopeChatId === undefined ? {} : { scopeChatId: input.scopeChatId }),
+      ...(input.includeUnscopedPersonal === undefined
+        ? {}
+        : { includeUnscopedPersonal: input.includeUnscopedPersonal }),
       limit: input.limit,
     });
   }
@@ -58,6 +64,10 @@ export async function selectMemoriesForPrompt(
   const memories = await input.store.recallMemories(input.botId, {
     query,
     telegramId: input.telegramId,
+    ...(input.scopeChatId === undefined ? {} : { scopeChatId: input.scopeChatId }),
+    ...(input.includeUnscopedPersonal === undefined
+      ? {}
+      : { includeUnscopedPersonal: input.includeUnscopedPersonal }),
     scope: input.telegramId == null ? "general_only" : "all",
     limit: input.limit,
     queryEmbedding,
@@ -67,6 +77,10 @@ export async function selectMemoriesForPrompt(
 
   return input.store.getMemoriesForPrompt(input.botId, {
     telegramId: input.telegramId,
+    ...(input.scopeChatId === undefined ? {} : { scopeChatId: input.scopeChatId }),
+    ...(input.includeUnscopedPersonal === undefined
+      ? {}
+      : { includeUnscopedPersonal: input.includeUnscopedPersonal }),
     limit: input.limit,
   });
 }
