@@ -1145,7 +1145,67 @@ export function botsRoutes(
         return c.json({ ok: true as const, ...result });
       },
     )
+    .get("/:botId/conversations/:chatId/summaries/cleanup-preview", async (c) => {
+      const chatId = Number(c.req.param("chatId"));
+      if (!Number.isSafeInteger(chatId))
+        return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+      const store = botPool.getConversationStore();
+      const result = await store.previewConversationSummaryCleanup(c.req.param("botId"), chatId);
+      return c.json({ ok: true as const, ...result });
+    })
+    .post(
+      "/:botId/conversations/:chatId/summaries/cleanup-batch",
+      zValidator(
+        "json",
+        z.object({
+          expectedActiveSummaryId: z.number().int().positive().nullable(),
+          limit: z.number().int().positive().max(100).optional().default(100),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const chatId = Number(c.req.param("chatId"));
+        if (!Number.isSafeInteger(chatId))
+          return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+        const store = botPool.getConversationStore();
+        const result = await store.cleanupConversationSummaryBatch({
+          botId: c.req.param("botId"),
+          chatId,
+          ...c.req.valid("json"),
+        });
+        if (!result) return c.json({ ok: false as const, error: "Active summary changed" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .patch(
+      "/:botId/conversations/:chatId/summaries/active",
+      zValidator(
+        "json",
+        z.object({
+          expectedActiveSummaryId: z.number().int().positive(),
+          content: z.string().trim().min(1).max(40_000),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const chatId = Number(c.req.param("chatId"));
+        if (!Number.isSafeInteger(chatId))
+          return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+        const store = botPool.getConversationStore();
+        const result = await store.editActiveConversationSummary({
+          botId: c.req.param("botId"),
+          chatId,
+          ...c.req.valid("json"),
+        });
+        if (!result) return c.json({ ok: false as const, error: "Active summary changed" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
     .delete("/:botId/conversations/:chatId/summaries/:id", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role))
+        return c.json({ ok: false as const, error: "Forbidden" }, 403);
       const botId = c.req.param("botId");
       const chatId = Number(c.req.param("chatId"));
       const id = Number(c.req.param("id"));

@@ -313,6 +313,8 @@ describe("BotPool failed runtime cleanup", () => {
         chatId: 42,
         baseURL: "https://compression.example/v1",
         model: "summary-model",
+        force: true,
+        keepRecent: 0,
       }),
     );
   });

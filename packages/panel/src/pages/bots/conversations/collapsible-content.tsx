@@ -3,24 +3,29 @@ import { useTranslation } from "react-i18next";
 import { COLLAPSE_CHARACTER_THRESHOLD, COLLAPSE_LINE_THRESHOLD } from "./constants";
 import { DisclosureIcon } from "./disclosure-icon";
 
-export function CollapsibleContent({ content }: { content: string }) {
+export function CollapsibleContent({
+  content,
+  characterThreshold = COLLAPSE_CHARACTER_THRESHOLD,
+  lineThreshold = COLLAPSE_LINE_THRESHOLD,
+}: {
+  content: string;
+  characterThreshold?: number;
+  lineThreshold?: number;
+}) {
   const { t } = useTranslation("bots");
   const [expanded, setExpanded] = useState(false);
   const contentId = useId();
   const lines = content.split("\n");
-  const exceedsLineLimit = lines.length > COLLAPSE_LINE_THRESHOLD;
-  const exceedsCharacterLimit = content.length > COLLAPSE_CHARACTER_THRESHOLD;
+  const exceedsLineLimit = lines.length > lineThreshold;
+  const exceedsCharacterLimit = content.length > characterThreshold;
   const shouldCollapse = exceedsLineLimit || exceedsCharacterLimit;
 
   if (!shouldCollapse) {
     return <p className="break-words whitespace-pre-wrap">{content}</p>;
   }
 
-  const linePreview = lines
-    .slice(0, COLLAPSE_LINE_THRESHOLD)
-    .join("\n")
-    .slice(0, COLLAPSE_CHARACTER_THRESHOLD);
-  const preview = (exceedsLineLimit ? linePreview : content.slice(0, COLLAPSE_CHARACTER_THRESHOLD))
+  const linePreview = lines.slice(0, lineThreshold).join("\n").slice(0, characterThreshold);
+  const preview = (exceedsLineLimit ? linePreview : content.slice(0, characterThreshold))
     .trimEnd()
     .concat("…");
 

@@ -868,7 +868,7 @@ export class BotPool {
           providerFormat: compressionProvider.providerFormat,
           logger: this.logger,
           force: true,
-          keepRecent: 1,
+          keepRecent: 0,
           abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
         });
       runInitialHistoryGovernance = async () => {

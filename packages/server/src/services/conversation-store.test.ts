@@ -11,7 +11,9 @@ import {
   buildConversationHistoryBoundary,
   COMPACTION_MAX_BATCH_JSON_CHARS,
   COMPACTION_MAX_BATCH_MESSAGES,
+  CONVERSATION_SUMMARY_RECENT_VERSIONS,
   ConversationStore,
+  retainedConversationSummaryIds,
   selectHistoryWithinTokenBudget,
 } from "./conversation-store.js";
 
@@ -417,6 +419,7 @@ function createCommitDb(options?: {
   };
 
   function createTransaction(draft: typeof state) {
+    let summarySelectionCount = 0;
     return {
       select: () => {
         let selectedTable: unknown;
@@ -432,7 +435,22 @@ function createCommitDb(options?: {
             selectedTable === conversationMessages
               ? draft.sourceMessageIds.map((id) => ({ id }))
               : [],
-          limit: async () => {
+          limit: async (limit: number) => {
+            if (selectedTable === conversationSummaries) {
+              summarySelectionCount++;
+              const recent = [...draft.summaries].sort((a, b) => b.id - a.id);
+              if (summarySelectionCount === 1)
+                return recent.slice(0, limit).map(({ id }) => ({ id }));
+              const retained = retainedConversationSummaryIds(
+                recent.slice(0, CONVERSATION_SUMMARY_RECENT_VERSIONS + 1).map((row) => row.id),
+                draft.activeSummaryId,
+              );
+              return [...draft.summaries]
+                .filter((row) => !retained.includes(row.id))
+                .sort((a, b) => a.id - b.id)
+                .slice(0, limit)
+                .map(({ id }) => ({ id }));
+            }
             if (options?.currentSelectionMissing || draft.activeSummaryId === null) return [];
             const summary = draft.summaries.find((row) => row.id === draft.activeSummaryId);
             return summary ? [{ cursorId: summary.summarizedUpToId }] : [];
@@ -470,6 +488,20 @@ function createCommitDb(options?: {
               return [{ activeSummaryId: draft.activeSummaryId }];
             },
           }),
+        }),
+      }),
+      delete: (table: unknown) => ({
+        where: () => ({
+          returning: async () => {
+            if (table !== conversationSummaries) return [];
+            const retained = retainedConversationSummaryIds(
+              [...draft.summaries].sort((a, b) => b.id - a.id).map((row) => row.id),
+              draft.activeSummaryId,
+            );
+            const deleted = draft.summaries.filter((row) => !retained.includes(row.id));
+            draft.summaries = draft.summaries.filter((row) => retained.includes(row.id));
+            return deleted.map(({ id }) => ({ id }));
+          },
         }),
       }),
     };
@@ -521,6 +553,22 @@ describe("ConversationStore.commitCompaction", () => {
         messageCount: 10,
       }),
     ]);
+  });
+
+  it("keeps the active cumulative snapshot and three recent versions", async () => {
+    const summaries = Array.from({ length: 7 }, (_, index) => ({
+      id: index + 1,
+      summarizedUpToId: 0,
+    }));
+    const { db, state } = createCommitDb({ summaries, activeSummaryId: 7 });
+    const store = new ConversationStore(db);
+
+    await expect(
+      store.commitCompaction({ ...baseParams, expectedActiveSummaryId: 7 }),
+    ).resolves.toBe(true);
+
+    expect(state.activeSummaryId).toBe(8);
+    expect(state.summaries.map((summary) => summary.id)).toEqual([5, 6, 7, 8]);
   });
 
   it("rolls back the summary when the expected active cursor is stale", async () => {
@@ -579,6 +627,133 @@ describe("ConversationStore.commitCompaction", () => {
     ).resolves.toBe(false);
 
     expect(state.activeSummaryId).toBe(3);
+    expect(state.summaries).toHaveLength(1);
+  });
+});
+
+describe("conversation summary versions", () => {
+  it("protects a legacy active snapshot outside the recent versions", () => {
+    expect(retainedConversationSummaryIds([10, 9, 8, 7], 2)).toEqual([10, 9, 8, 2]);
+    expect(retainedConversationSummaryIds([10, 9, 8, 7], 10)).toEqual([9, 8, 7, 10]);
+    expect(retainedConversationSummaryIds([10, 9, 8, 7], null)).toEqual([10, 9, 8]);
+  });
+
+  function createEditDb(options?: { activeId?: number | null; loseRace?: boolean }) {
+    const state = {
+      activeId: options?.activeId === undefined ? 5 : options.activeId,
+      summaries: [
+        {
+          id: 5,
+          botId: baseParams.botId,
+          chatId: baseParams.chatId,
+          content: "Earlier summary",
+          previousSummarizedUpToId: 4,
+          summarizedUpToId: 10,
+          messageCount: 6,
+          createdAt: new Date("2026-09-23T00:00:00Z"),
+        },
+      ],
+    };
+    const db = {
+      transaction: async (callback: (tx: unknown) => Promise<unknown>) => {
+        const draft = {
+          activeId: state.activeId,
+          summaries: state.summaries.map((row) => ({ ...row })),
+        };
+        let selectedTable: unknown;
+        let summaryReads = 0;
+        const query = {
+          from: (table: unknown) => {
+            selectedTable = table;
+            return query;
+          },
+          innerJoin: () => query,
+          where: () => query,
+          orderBy: () => query,
+          limit: () => {
+            if (selectedTable === conversationSummaries) {
+              summaryReads++;
+              const rows = summaryReads === 1 ? draft.summaries.map(({ id }) => ({ id })) : [];
+              return Promise.resolve(rows);
+            }
+            return { for: query.for };
+          },
+          for: async () =>
+            selectedTable === conversationCompactionState && draft.activeId !== null
+              ? draft.summaries.filter((row) => row.id === draft.activeId)
+              : [],
+        };
+        const tx = {
+          select: () => query,
+          insert: () => ({
+            values: (value: Record<string, unknown>) => ({
+              returning: async () => {
+                const row = {
+                  ...draft.summaries[0]!,
+                  ...value,
+                  id: 6,
+                  createdAt: new Date("2026-09-24T00:00:00Z"),
+                };
+                draft.summaries.push(row);
+                return [{ id: row.id, createdAt: row.createdAt }];
+              },
+            }),
+          }),
+          update: () => ({
+            set: (value: Record<string, unknown>) => ({
+              where: () => ({
+                returning: async () => {
+                  if (options?.loseRace) return [];
+                  draft.activeId = value["activeSummaryId"] as number;
+                  return [{ activeSummaryId: draft.activeId }];
+                },
+              }),
+            }),
+          }),
+        };
+        const result = await callback(tx);
+        state.activeId = draft.activeId;
+        state.summaries = draft.summaries;
+        return result;
+      },
+    } as unknown as Database;
+    return { db, state };
+  }
+
+  it("edits the active snapshot as a new version without advancing the cursor", async () => {
+    const { db, state } = createEditDb();
+    const result = await new ConversationStore(db).editActiveConversationSummary({
+      botId: baseParams.botId,
+      chatId: baseParams.chatId,
+      expectedActiveSummaryId: 5,
+      content: "Corrected summary",
+    });
+    expect(result).toEqual({ id: 6, createdAt: "2026-09-24T00:00:00.000Z" });
+    expect(state.activeId).toBe(6);
+    expect(state.summaries[0]?.content).toBe("Earlier summary");
+    expect(state.summaries[1]).toMatchObject({
+      content: "Corrected summary",
+      previousSummarizedUpToId: 4,
+      summarizedUpToId: 10,
+      messageCount: 6,
+    });
+  });
+
+  it.each([
+    { activeId: 7, loseRace: false },
+    { activeId: 5, loseRace: true },
+    { activeId: null, loseRace: false },
+  ])("rejects stale, racing, or invalidated active snapshots: %j", async (options) => {
+    const { db, state } = createEditDb(options);
+    await expect(
+      new ConversationStore(db).editActiveConversationSummary({
+        botId: baseParams.botId,
+        chatId: baseParams.chatId,
+        expectedActiveSummaryId: 5,
+        content: "Should not persist",
+      }),
+    ).resolves.toBeNull();
+    expect(state.activeId).toBe(options.activeId);
     expect(state.summaries).toHaveLength(1);
   });
 });
