@@ -46,7 +46,7 @@ type Source = Pick<
 
 /** Match /privacy forget's privacy-row -> source-message lock order. */
 export async function lockConsolidationInputs(
-  tx: Database,
+  tx: Pick<Database, "select" | "execute">,
   botId: string,
   participantIds: readonly number[],
   sourceIds: readonly number[],
@@ -178,6 +178,11 @@ export interface HistoricalBatchPreview {
   messageIds: number[];
   participantIds: number[];
   excerpts: string[];
+}
+
+export interface HistoricalBatchPage {
+  data: HistoricalBatchPreview[];
+  nextAfterMessageId: number | null;
 }
 
 function integerIds(value: unknown): number[] | null {
@@ -384,17 +389,29 @@ export class MemoryConsolidator {
   async previewHistoricalBatches(
     botId: string,
     options: { afterMessageId?: number; limit?: number } = {},
-  ): Promise<HistoricalBatchPreview[]> {
+  ): Promise<HistoricalBatchPage> {
     const [state] = await this.db
       .select()
       .from(memoryConsolidationState)
       .where(eq(memoryConsolidationState.botId, botId));
     const cursor = state?.cursorMessageId ?? 0;
     const limit = Math.min(Math.max(options.limit ?? 3, 1), 5);
-    const rows = (
-      await this.readWindow(botId, Math.max(options.afterMessageId ?? 0, 0), limit * MAX_MESSAGES)
-    ).filter((row) => eligible(row, new Date()));
-    if (!(await this.privacyModesForSources(botId, rows))) return [];
+    const scanLimit = limit * MAX_MESSAGES;
+    const lookahead = await this.readWindow(
+      botId,
+      Math.max(options.afterMessageId ?? 0, 0),
+      scanLimit + 1,
+    );
+    const scanned = lookahead.slice(0, scanLimit);
+    const now = new Date();
+    const eligibleRows = scanned.filter((row) => eligible(row, now));
+    const privacyModes = await this.loadPrivacyModes(botId, eligibleRows);
+    const rows = privacyModes
+      ? eligibleRows.filter((row) => {
+          const mode = privacyModes.get(row.userId!);
+          return mode !== "off" && (mode !== "isolated" || row.chatId === row.userId);
+        })
+      : [];
     const previews: HistoricalBatchPreview[] = [];
     for (const row of rows) {
       const last = previews.at(-1);
@@ -415,13 +432,21 @@ export class MemoryConsolidator {
         preview.participantIds.push(row.userId);
       preview.excerpts.push((row.userAuthoredContent ?? "").slice(0, 160));
     }
-    return previews.slice(0, limit).map((preview) => ({
+    const visible = previews.slice(0, limit).map((preview) => ({
       ...preview,
       processed: preview.messageIds.every((id) => id <= cursor),
     }));
+    const overflow = previews.length > limit;
+    return {
+      data: visible,
+      nextAfterMessageId:
+        overflow || lookahead.length > scanLimit
+          ? ((overflow ? visible.at(-1)?.messageIds.at(-1) : scanned.at(-1)?.id) ?? null)
+          : null,
+    };
   }
 
-  private async privacyModesForSources(
+  private async loadPrivacyModes(
     botId: string,
     sources: readonly Source[],
   ): Promise<Map<number, UserPrivacyMode> | null> {
@@ -440,7 +465,16 @@ export class MemoryConsolidator {
       if (row.mode !== "normal" && row.mode !== "isolated" && row.mode !== "off") return null;
       byUser.set(row.userId, row.mode);
     }
+    return byUser;
+  }
+
+  private async privacyModesForSources(
+    botId: string,
+    sources: readonly Source[],
+  ): Promise<Map<number, UserPrivacyMode> | null> {
+    const byUser = await this.loadPrivacyModes(botId, sources);
     if (
+      !byUser ||
       sources.some((source) => {
         const mode = byUser.get(source.userId!);
         return mode === "off" || (mode === "isolated" && source.chatId !== source.userId);
@@ -666,8 +700,7 @@ export class MemoryConsolidator {
     expectedPrivacyModes: ReadonlyMap<number, UserPrivacyMode>,
   ): Promise<void> {
     await this.db.transaction(async (tx) => {
-      // The store's current constructor is typed to the pool, while these methods also run on a transaction.
-      const memoryStore = new BotMemoryStore(tx as unknown as Database);
+      const memoryStore = new BotMemoryStore(tx);
       const [lease] = await tx
         .select()
         .from(memoryConsolidationState)
@@ -683,7 +716,7 @@ export class MemoryConsolidator {
       if (!lease) throw new Error("Memory consolidation lease lost");
       const participantIds = [...new Set(sources.map((row) => row.userId!))];
       const { current, privacy } = await lockConsolidationInputs(
-        tx as unknown as Database,
+        tx,
         botId,
         participantIds,
         sources.map((row) => row.id),
