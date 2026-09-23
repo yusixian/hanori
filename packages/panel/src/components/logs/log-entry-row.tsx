@@ -92,11 +92,14 @@ export function LogEntryRow({
     <article className={live ? "bg-blue-50/50" : undefined} data-log-id={log.id}>
       <details className="group">
         <summary className="focus-visible:ring-ring cursor-pointer list-none px-4 py-3.5 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
-          <div className="flex min-w-0 items-start gap-3">
-            <Badge variant={levelBadge[log.level] ?? "muted"} className="mt-0.5 shrink-0 uppercase">
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 sm:flex sm:gap-3">
+            <Badge
+              variant={levelBadge[log.level] ?? "muted"}
+              className="col-start-1 row-start-1 mt-0.5 shrink-0 justify-self-start uppercase"
+            >
               {log.level}
             </Badge>
-            <div className="min-w-0 flex-1 space-y-2">
+            <div className="col-span-2 row-start-2 min-w-0 space-y-2 sm:col-auto sm:row-auto sm:flex-1">
               <p className="text-foreground font-mono text-sm leading-5 break-words whitespace-pre-wrap">
                 {log.message}
               </p>
@@ -110,7 +113,7 @@ export function LogEntryRow({
                 ))}
               </div>
             </div>
-            <span className="text-muted-foreground mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs">
+            <span className="text-muted-foreground col-start-2 row-start-1 mt-0.5 inline-flex shrink-0 items-center gap-1 text-xs sm:col-auto sm:row-auto">
               <span className="hidden sm:inline">{labels.details}</span>
               <ChevronDown
                 className="size-4 transition-transform duration-150 group-open:rotate-180"
