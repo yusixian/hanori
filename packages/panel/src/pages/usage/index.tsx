@@ -309,6 +309,10 @@ export function UsagePage() {
   const selectedBotName = botId
     ? (bots.find((bot) => bot.id === botId)?.name ?? t("usage.selectedBot"))
     : t("usage.allBots");
+  const maxModelTokens = byModel.reduce(
+    (max, model) => Math.max(max, model.promptTokens + model.completionTokens),
+    0,
+  );
 
   return (
     <div className="mx-auto max-w-6xl min-w-0 space-y-6">
@@ -454,33 +458,46 @@ export function UsagePage() {
                   {t("usage.noData")}
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height={Math.max(byModel.length * 40, 120)}>
-                  <BarChart data={byModel} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                    <XAxis type="number" tickFormatter={formatTokens} className="text-xs" />
-                    <YAxis
-                      type="category"
-                      dataKey="model"
-                      width={140}
-                      className="text-xs"
-                      tick={{ fontSize: 11 }}
-                    />
-                    <Tooltip formatter={(value) => formatTokens(Number(value))} />
-                    <Legend />
-                    <Bar
-                      dataKey="promptTokens"
-                      name={t("usage.prompt")}
-                      fill="#3b82f6"
-                      stackId="a"
-                    />
-                    <Bar
-                      dataKey="completionTokens"
-                      name={t("usage.completion")}
-                      fill="#f97316"
-                      stackId="a"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
+                <ul className="space-y-4">
+                  {byModel.map((model) => (
+                    <li key={model.model} className="min-w-0 space-y-2">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+                        <span className="min-w-0 font-medium break-all">{model.model}</span>
+                        <span className="text-muted-foreground shrink-0 tabular-nums">
+                          <span className="sr-only">{t("usage.totalTokens")}: </span>
+                          {formatTokens(model.totalTokens)}
+                        </span>
+                      </div>
+                      <div
+                        className="bg-muted flex h-3 overflow-hidden rounded-full"
+                        aria-hidden="true"
+                      >
+                        <div
+                          className="bg-blue-500"
+                          style={{
+                            width: `${(model.promptTokens / maxModelTokens) * 100 || 0}%`,
+                          }}
+                        />
+                        <div
+                          className="bg-orange-500"
+                          style={{
+                            width: `${(model.completionTokens / maxModelTokens) * 100 || 0}%`,
+                          }}
+                        />
+                      </div>
+                      <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
+                        <span className="flex items-center gap-1.5">
+                          <span className="size-2.5 rounded-sm bg-blue-500" aria-hidden="true" />
+                          {t("usage.prompt")}: {formatTokens(model.promptTokens)}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          <span className="size-2.5 rounded-sm bg-orange-500" aria-hidden="true" />
+                          {t("usage.completion")}: {formatTokens(model.completionTokens)}
+                        </span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               )}
             </CardContent>
           </Card>

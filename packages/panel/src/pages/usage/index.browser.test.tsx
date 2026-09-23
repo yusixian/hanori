@@ -129,13 +129,13 @@ test("late old responses cannot overwrite the current filter", async () => {
     Array.from(document.querySelectorAll(".recharts-cartesian-axis-tick-value")).map(
       (node) => node.textContent,
     );
-  await vi.waitFor(() =>
-    expect(chartLabels()).toEqual(expect.arrayContaining(["Model 222", "Bot 222", "1/2"])),
-  );
+  await expect.element(page.getByText("Model 222", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(chartLabels()).toEqual(expect.arrayContaining(["Bot 222", "1/2"])));
   completeStats(old, 111);
   await flushResponses();
-  expect(chartLabels()).toEqual(expect.arrayContaining(["Model 222", "Bot 222", "1/2"]));
-  expect(chartLabels()).not.toEqual(expect.arrayContaining(["Model 111"]));
+  expect(chartLabels()).toEqual(expect.arrayContaining(["Bot 222", "1/2"]));
+  await expect.element(page.getByText("Model 222", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Model 111", { exact: true })).not.toBeInTheDocument();
   expect(chartLabels()).not.toContain("Bot 111");
   expect(chartLabels()).not.toContain("1/1");
   await expect.element(page.getByText("222", { exact: true })).toBeVisible();
@@ -291,6 +291,50 @@ for (const width of [1440, 390]) {
     completeStats(stats().slice(8), 333);
     await expect.element(page.getByText("333", { exact: true })).toBeVisible();
     expect(heatmaps()).toHaveLength(1);
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`${width}px shows complete model IDs and token breakdowns`, async () => {
+    const modelId = "gemini-2.5-flash-preview-09-2025";
+    const longModelId = `model-${"very-long-id-".repeat(20)}`;
+    await page.viewport(width, width === 390 ? 844 : 900);
+    await start();
+    const modelRequest = stats().find((request) => request.url.pathname.endsWith("/by-model"))!;
+    completeStats(
+      stats().filter((request) => request !== modelRequest),
+      111,
+    );
+    modelRequest.resolve(
+      response([
+        {
+          model: modelId,
+          totalTokens: 875_000,
+          promptTokens: 700_000,
+          completionTokens: 175_000,
+          requestCount: 42,
+        },
+        {
+          model: longModelId,
+          totalTokens: 100_000,
+          promptTokens: 80_000,
+          completionTokens: 20_000,
+          requestCount: 5,
+        },
+      ]),
+    );
+    heatmaps()[0]!.resolve(response([]));
+
+    await expect.element(page.getByText(modelId, { exact: true })).toBeVisible();
+    await expect.element(page.getByText(longModelId, { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Total Tokens: 875.0K", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Prompt: 700.0K", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Completion: 175.0K", { exact: true })).toBeVisible();
+    const longLabel = Array.from(document.querySelectorAll("li span")).find(
+      (span) => span.textContent === longModelId,
+    )!;
+    expect(longLabel.getBoundingClientRect().height).toBeGreaterThan(20);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
   });
 }
 
