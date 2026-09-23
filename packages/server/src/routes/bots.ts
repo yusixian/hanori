@@ -15,7 +15,7 @@ import type {
   EmailEventType,
 } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { asc, count, eq } from "drizzle-orm";
+import { asc, count, eq, ilike } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import * as fs from "node:fs/promises";
 import { HTTPException } from "hono/http-exception";
@@ -50,6 +50,7 @@ import {
   migrateAiConfig,
 } from "../utils/ai-config-migrate.js";
 import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
+import { escapeLike } from "../utils/search.js";
 
 const emailForwardFilterSchema = z.object({
   senderPattern: z.string().optional(),
@@ -419,20 +420,23 @@ export function botsRoutes(
         z.object({
           page: z.coerce.number().int().positive().optional().default(1),
           limit: z.coerce.number().int().positive().max(100).optional().default(20),
+          search: z.string().max(100).trim().optional(),
         }),
       ),
       async (c) => {
-        const { page, limit } = c.req.valid("query");
+        const { page, limit, search } = c.req.valid("query");
         const offset = (page - 1) * limit;
+        const nameFilter = search ? ilike(bots.name, `%${escapeLike(search)}%`) : undefined;
 
         const [allBots, [countResult]] = await Promise.all([
           db
             .select()
             .from(bots)
+            .where(nameFilter)
             .orderBy(asc(bots.createdAt), asc(bots.id))
             .limit(limit)
             .offset(offset),
-          db.select({ total: count() }).from(bots),
+          db.select({ total: count() }).from(bots).where(nameFilter),
         ]);
 
         const data = allBots.map((b) => toBotWithStatus(b, botPool));

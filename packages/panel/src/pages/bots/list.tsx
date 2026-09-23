@@ -1,12 +1,13 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
 import { getUptimeParts, statusBadgeVariant } from "@/lib/bot-utils";
 import { client } from "@/lib/client";
 import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { useInvalidate, useList } from "@refinedev/core";
-import { AlertTriangle, Bot, Play, Plus, RefreshCw, Square } from "lucide-react";
+import { AlertTriangle, Bot, Play, Plus, RefreshCw, Search, Square, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { useTranslation } from "react-i18next";
@@ -18,13 +19,40 @@ export function BotListPage() {
   const navigate = useNavigate();
   const [busy, setBusy] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const composingRef = useRef(false);
   const pendingPageFocusRef = useRef(false);
   const invalidate = useInvalidate();
+
+  useEffect(() => {
+    if (composingRef.current || searchInput.trim() === search) return;
+    const timeout = window.setTimeout(() => {
+      if (composingRef.current) return;
+      pendingPageFocusRef.current = false;
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [searchInput, search]);
+
+  const clearSearch = () => {
+    composingRef.current = false;
+    pendingPageFocusRef.current = false;
+    setSearchInput("");
+    setSearch("");
+    setPage(1);
+    searchInputRef.current?.focus();
+  };
+
+  const filters = search ? [{ field: "search", operator: "eq" as const, value: search }] : [];
 
   const { data, isLoading, isFetching, isError, refetch } = useList<BotWithStatus>({
     resource: "bots",
     pagination: { current: page, pageSize: PAGE_SIZE },
-    queryOptions: { refetchInterval: 5000 },
+    filters,
+    queryOptions: { refetchInterval: 5000, keepPreviousData: false },
   });
 
   const bots = data?.data ?? [];
@@ -42,6 +70,7 @@ export function BotListPage() {
     if (!pendingPageFocusRef.current || isLoading || isFetching || pageOutOfRange || !data) return;
 
     const frame = requestAnimationFrame(() => {
+      if (!pendingPageFocusRef.current) return;
       const heading = document.getElementById("bot-list-heading");
       if (!heading) return;
       heading.scrollIntoView({ block: "start" });
@@ -91,7 +120,9 @@ export function BotListPage() {
         <div className="flex flex-wrap items-center gap-3">
           {data && (
             <div>
-              <p className="text-xs text-slate-500">{t("list.botCount")}</p>
+              <p className="text-xs text-slate-500">
+                {search ? t("list.matchCount") : t("list.botCount")}
+              </p>
               <p
                 className="mt-0.5 text-lg font-semibold text-slate-900 tabular-nums"
                 data-testid="bot-total"
@@ -105,6 +136,66 @@ export function BotListPage() {
             {t("list.addBot")}
           </Button>
         </div>
+      </div>
+
+      <div className="max-w-md">
+        <label htmlFor="bot-search" className="mb-2 block text-sm font-medium text-slate-900">
+          {t("list.searchLabel")}
+        </label>
+        <div className="relative">
+          <Search
+            className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+            aria-hidden="true"
+          />
+          <Input
+            ref={searchInputRef}
+            id="bot-search"
+            className="pr-10 pl-10"
+            maxLength={100}
+            placeholder={t("list.searchPlaceholder")}
+            value={searchInput}
+            onFocus={() => {
+              pendingPageFocusRef.current = false;
+            }}
+            onChange={(event) => setSearchInput(event.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={(event) => {
+              composingRef.current = false;
+              pendingPageFocusRef.current = false;
+              setSearch(event.currentTarget.value.trim());
+              setPage(1);
+            }}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Enter" &&
+                !composingRef.current &&
+                !event.nativeEvent.isComposing &&
+                event.nativeEvent.keyCode !== 229
+              ) {
+                pendingPageFocusRef.current = false;
+                setSearch(event.currentTarget.value.trim());
+                setPage(1);
+              }
+            }}
+          />
+          {searchInput && (
+            <button
+              type="button"
+              className="text-muted-foreground hover:text-foreground focus-visible:ring-ring absolute top-1/2 right-2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
+              aria-label={t("list.clearSearch")}
+              onClick={clearSearch}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </button>
+          )}
+        </div>
+        <span className="sr-only" role="status">
+          {search && data && !isLoading && searchInput.trim() === search
+            ? t("list.matchAnnouncement", { count: total })
+            : ""}
+        </span>
       </div>
 
       {isError && data && (
@@ -143,6 +234,18 @@ export function BotListPage() {
             <Button disabled={isFetching} onClick={() => void refetch()}>
               <RefreshCw className={`size-4 ${isFetching ? "animate-spin" : ""}`} />
               {t("list.retry")}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : bots.length === 0 && search ? (
+        <Card>
+          <CardContent className="flex flex-col items-start gap-4 px-5 py-8 sm:px-6">
+            <div>
+              <h2 className="font-semibold text-slate-900">{t("list.noMatchesTitle")}</h2>
+              <p className="text-muted-foreground mt-1 text-sm">{t("list.noMatchesDescription")}</p>
+            </div>
+            <Button variant="outline" onClick={clearSearch}>
+              {t("list.clearSearch")}
             </Button>
           </CardContent>
         </Card>

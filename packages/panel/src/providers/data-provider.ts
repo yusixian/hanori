@@ -48,9 +48,10 @@ export const dataProvider: DataProvider = {
     if (resource === "bots") {
       const page = pagination?.current ?? 1;
       const limit = pagination?.pageSize ?? 20;
+      const search = getFilterValue(filters, "search")?.trim();
 
       const res = await client.api.bots.$get({
-        query: { page: String(page), limit: String(limit) },
+        query: { page: String(page), limit: String(limit), ...(search ? { search } : {}) },
       });
       const json = await res.json();
       if (json.ok) {

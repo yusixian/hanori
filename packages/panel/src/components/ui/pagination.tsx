@@ -46,6 +46,7 @@ export function Pagination({
       {editValue !== null ? (
         <input
           type="text"
+          aria-label={t("pagination.jumpToPage")}
           disabled={disabled}
           inputMode="numeric"
           autoFocus

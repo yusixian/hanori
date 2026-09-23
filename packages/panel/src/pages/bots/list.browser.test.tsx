@@ -143,7 +143,7 @@ test("pages beyond 100 bots, corrects a shrunken last page, and keeps mobile car
   expect(mocks.useList.mock.calls.at(-1)?.[0].pagination).toEqual({ current: 1, pageSize: 12 });
 
   await page.getByRole("button", { name: "1 / 11" }).click();
-  const pageInput = page.getByRole("textbox");
+  const pageInput = page.getByRole("textbox", { name: "Click to jump to a page" });
   await pageInput.fill("11");
   await userEvent.keyboard("{Enter}");
   await expect.element(page.getByRole("link", { name: /Bot 121/ })).toBeVisible();
@@ -157,6 +157,98 @@ test("pages beyond 100 bots, corrects a shrunken last page, and keeps mobile car
   await expect.element(page.getByRole("link", { name: /Bot 13/ })).toBeVisible();
   expect(mocks.useList.mock.calls.at(-1)?.[0].pagination).toEqual({ current: 2, pageSize: 12 });
   await expect.element(page.getByText("Showing 13–13 of 13 bots")).toBeVisible();
+});
+
+test("finds a Bot beyond the current page and clears the search without losing focus", async () => {
+  await page.viewport(390, 844);
+  mocks.useList.mockImplementation(({ filters }: { filters: { value: string }[] }) => {
+    const search = filters[0]?.value;
+    const bots = search === "Bot 125" ? [makeBot(125)] : search ? [] : [makeBot(1)];
+    return {
+      data: { data: bots, total: search ? bots.length : 125 },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      refetch: mocks.refetch,
+    };
+  });
+  await renderList();
+
+  const searchInput = page.getByRole("textbox", { name: "Find a bot" });
+  await searchInput.fill("Bot 125");
+  await vi.waitFor(() => {
+    expect(mocks.useList.mock.calls.at(-1)?.[0]).toMatchObject({
+      pagination: { current: 1, pageSize: 12 },
+      filters: [{ field: "search", value: "Bot 125" }],
+      queryOptions: { keepPreviousData: false },
+    });
+  });
+  await expect.element(page.getByRole("link", { name: /Bot 125/ })).toBeVisible();
+  await expect.element(page.getByTestId("bot-total")).toHaveTextContent("1");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Matching bots: 1");
+
+  await searchInput.fill("missing");
+  await expect.element(page.getByText("No matching bots")).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "No matching bots" })).toBeVisible();
+  await expect.element(page.getByRole("status")).toHaveTextContent("Matching bots: 0");
+  await expect.element(page.getByText("No bots yet")).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Clear search" }).first().click();
+  await expect.element(searchInput).toHaveFocus();
+  await expect.element(page.getByTestId("bot-total")).toHaveTextContent("125");
+  expect(mocks.useList.mock.calls.at(-1)?.[0].filters).toEqual([]);
+});
+
+test("waits until text composition finishes before searching", async () => {
+  mocks.useList.mockReturnValue({
+    data: { data: [], total: 0 },
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    refetch: mocks.refetch,
+  });
+  await renderList();
+
+  const input = page.getByRole("textbox", { name: "Find a bot" });
+  await input.fill("中");
+  input.element().dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+  await input.fill("中文");
+  await userEvent.keyboard("{Enter}");
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  expect(mocks.useList.mock.calls.at(-1)?.[0].filters).toEqual([]);
+
+  input.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+  await vi.waitFor(() => {
+    expect(mocks.useList.mock.calls.at(-1)?.[0].filters).toEqual([
+      { field: "search", operator: "eq", value: "中文" },
+    ]);
+  });
+});
+
+test("keeps search focus when an earlier page request finishes", async () => {
+  let pageTwoReady = false;
+  mocks.useList.mockImplementation(({ pagination }: { pagination: { current: number } }) => ({
+    data:
+      pagination.current === 2 && !pageTwoReady
+        ? undefined
+        : { data: [makeBot(pagination.current === 2 ? 13 : 1)], total: 24 },
+    isLoading: pagination.current === 2 && !pageTwoReady,
+    isFetching: pagination.current === 2 && !pageTwoReady,
+    isError: false,
+    refetch: mocks.refetch,
+  }));
+  const rendered = await renderList();
+
+  await page.getByRole("button", { name: "Next page" }).click();
+  const searchInput = page.getByRole("textbox", { name: "Find a bot" });
+  await searchInput.click();
+  pageTwoReady = true;
+  await rendered.rerender(
+    <MemoryRouter>
+      <BotListPage />
+    </MemoryRouter>,
+  );
+  await expect.element(page.getByRole("link", { name: /Bot 13/ })).toBeVisible();
+  await expect.element(searchInput).toHaveFocus();
 });
 
 test("focuses the list heading after an uncached page finishes loading", async () => {
