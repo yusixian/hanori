@@ -16,6 +16,13 @@ const COMPACTION_MAX_EXISTING_SUMMARY_CHARS = 40_000;
 const COMPACTION_MAX_OUTPUT_TOKENS = 2_048;
 const COMPRESSION_RETRY_BASE_MS = 60_000;
 const COMPRESSION_RETRY_MAX_MS = 60 * 60_000;
+const COMPACTION_CONFLICT_MAX_ATTEMPTS = 2;
+
+class CompactionConflictError extends Error {
+  constructor() {
+    super("Conversation compaction changed during summarization");
+  }
+}
 
 function boundExistingSummary(summary: string): string {
   if (summary.length <= COMPACTION_MAX_EXISTING_SUMMARY_CHARS) return summary;
@@ -200,7 +207,10 @@ async function runCompressionLoop(key: string, flight: CompressionFlight) {
       const result = await runCompression(options);
       if (result === "failed") {
         recordCompressionFailure(options.store, key, configurationHash);
-        if (flight.pending && getRetryConfigurationHash(flight.options) !== configurationHash) {
+        if (
+          flight.pending &&
+          (getRetryConfigurationHash(flight.options) !== configurationHash || flight.options.force)
+        ) {
           continue;
         }
         return;
@@ -208,6 +218,9 @@ async function runCompressionLoop(key: string, flight: CompressionFlight) {
       clearCompressionFailures(options.store, key);
     } catch (error) {
       if (!flight.pending) throw error;
+      if (error instanceof CompactionConflictError && options.force) {
+        flight.options = { ...flight.options, force: true, keepRecent: options.keepRecent };
+      }
     }
     if (!flight.pending) return;
   }
@@ -241,6 +254,13 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
     }
     return "complete";
   } catch (err) {
+    if (err instanceof CompactionConflictError) {
+      logger.warn(
+        `Conversation compaction conflicted for bot=${botId} chat=${chatId}; raw history retained`,
+      );
+      if (options.force) throw err;
+      return "failed";
+    }
     logger.warn(
       sanitizeProviderError(err),
       `LLM summarization failed for bot=${botId} chat=${chatId}; raw history retained`,
@@ -261,50 +281,53 @@ async function compressWithLLM(
   keepRecent = cfg.maxContextMessages,
   abortSignal?: AbortSignal,
 ) {
-  const candidate = await store.getCompactionCandidate(botId, chatId, keepRecent);
-  if (!candidate) return true;
+  for (let attempt = 0; attempt < COMPACTION_CONFLICT_MAX_ATTEMPTS; attempt++) {
+    const candidate = await store.getCompactionCandidate(botId, chatId, keepRecent);
+    if (!candidate) return true;
 
-  let contextText = "";
-  if (candidate.existingSummary) {
-    contextText += `[已有摘要]\n${boundExistingSummary(candidate.existingSummary)}\n\n`;
+    let contextText = "";
+    if (candidate.existingSummary) {
+      contextText += `[已有摘要]\n${boundExistingSummary(candidate.existingSummary)}\n\n`;
+    }
+    contextText += "[需要压缩的对话 JSONL]\n";
+    for (const msg of candidate.messages) {
+      contextText += `${JSON.stringify({
+        id: msg.id,
+        role: msg.role,
+        userName: msg.userName,
+        forwardOrigin: msg.forwardOrigin,
+        relayOrigin: msg.relayOrigin,
+        content: msg.content,
+      })}\n`;
+    }
+
+    const result = await generateText({
+      model:
+        providerFormat === "gemini"
+          ? createGoogleGenerativeAI({ baseURL, apiKey })(model)
+          : createOpenAICompatible({ name: "custom", baseURL, apiKey })(model),
+      messages: [
+        { role: "system", content: SUMMARIZE_PROMPT },
+        { role: "user", content: contextText },
+      ],
+      maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
+      abortSignal,
+    });
+
+    const summaryText = result.text?.trim();
+    if (!summaryText) return false;
+
+    const committed = await store.commitCompaction({
+      botId,
+      chatId,
+      expectedActiveSummaryId: candidate.activeSummaryId,
+      oldCursorId: candidate.oldCursorId,
+      newCursorId: candidate.newCursorId,
+      summaryText,
+      messageCount: candidate.messages.length,
+      sourceMessageIds: candidate.sourceMessageIds,
+    });
+    if (committed) return true;
   }
-  contextText += "[需要压缩的对话 JSONL]\n";
-  for (const msg of candidate.messages) {
-    contextText += `${JSON.stringify({
-      id: msg.id,
-      role: msg.role,
-      userName: msg.userName,
-      forwardOrigin: msg.forwardOrigin,
-      relayOrigin: msg.relayOrigin,
-      content: msg.content,
-    })}\n`;
-  }
-
-  const result = await generateText({
-    model:
-      providerFormat === "gemini"
-        ? createGoogleGenerativeAI({ baseURL, apiKey })(model)
-        : createOpenAICompatible({ name: "custom", baseURL, apiKey })(model),
-    messages: [
-      { role: "system", content: SUMMARIZE_PROMPT },
-      { role: "user", content: contextText },
-    ],
-    maxOutputTokens: COMPACTION_MAX_OUTPUT_TOKENS,
-    abortSignal,
-  });
-
-  const summaryText = result.text?.trim();
-  if (!summaryText) return false;
-
-  await store.commitCompaction({
-    botId,
-    chatId,
-    expectedActiveSummaryId: candidate.activeSummaryId,
-    oldCursorId: candidate.oldCursorId,
-    newCursorId: candidate.newCursorId,
-    summaryText,
-    messageCount: candidate.messages.length,
-    sourceMessageIds: candidate.sourceMessageIds,
-  });
-  return true;
+  throw new CompactionConflictError();
 }

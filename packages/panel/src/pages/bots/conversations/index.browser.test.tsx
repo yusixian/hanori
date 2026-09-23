@@ -116,6 +116,11 @@ async function confirmSummaryDelete() {
   await page.getByRole("button", { name: "Confirm deleting this summary" }).click();
 }
 
+async function requestJsonBody(input: RequestInfo | URL, init?: RequestInit) {
+  const body = init?.body ?? (input instanceof Request ? await input.clone().text() : null);
+  return JSON.parse(String(body)) as Record<string, unknown>;
+}
+
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -1064,5 +1069,425 @@ describe("conversation deletion recovery", () => {
       "/api/bots/test-id/conversations",
     )[0]!;
     expect(deleteRequest.url.searchParams.has("search")).toBe(false);
+  });
+});
+
+describe("summary version management", () => {
+  test.each([1440, 390])(
+    "previews cleanup and requires a fresh confirmation for one bounded batch at %ipx",
+    async (width) => {
+      await page.viewport(width, width === 390 ? 844 : 900);
+      let cleaned = false;
+      const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const { url, method } = requestParts(input, init);
+        if (url.pathname.endsWith("/conversations")) {
+          return jsonResponse({
+            ok: true,
+            data: [conversation(101, "Chat one", { summaryCount: cleaned ? 6 : 9 })],
+            total: 1,
+          });
+        }
+        if (url.pathname.endsWith("/conversations/101")) {
+          return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+        }
+        if (url.pathname.endsWith("/cleanup-preview")) {
+          return jsonResponse({
+            ok: true,
+            activeSummaryId: 3,
+            totalCount: cleaned ? 6 : 9,
+            eligibleCount: cleaned ? 2 : 5,
+            retainedIds: [9, 8, 7, 3],
+            batchMax: 3,
+          });
+        }
+        if (url.pathname.endsWith("/cleanup-batch") && method === "POST") {
+          cleaned = true;
+          return jsonResponse({ ok: true, deletedCount: 3, remainingCount: 6 });
+        }
+        if (url.pathname.endsWith("/summaries")) {
+          return jsonResponse({
+            ok: true,
+            data: [summary(9, "Recent version"), summary(3, "Active version", true)],
+            total: cleaned ? 6 : 9,
+          });
+        }
+        throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderPage();
+      await selectConversation("Chat one");
+      await openSummaries();
+      await expect.element(page.getByText("Earlier version", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Active", { exact: true })).toBeVisible();
+      expect(
+        countRequests(
+          fetchMock,
+          "POST",
+          "/api/bots/test-id/conversations/101/summaries/cleanup-batch",
+        ),
+      ).toBe(0);
+
+      await page.getByRole("button", { name: "Preview cleanup" }).click();
+      await expect.element(page.getByText("9 versions · 5 can be removed")).toBeVisible();
+      if (width === 390) {
+        expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+      }
+      await page.getByRole("button", { name: "Review cleanup" }).click();
+      await expect
+        .element(page.getByRole("group", { name: "Remove older versions?" }))
+        .toHaveTextContent("raw messages stay intact");
+      await page.getByRole("button", { name: "Cancel" }).click();
+      expect(
+        countRequests(
+          fetchMock,
+          "POST",
+          "/api/bots/test-id/conversations/101/summaries/cleanup-batch",
+        ),
+      ).toBe(0);
+
+      await page.getByRole("button", { name: "Review cleanup" }).click();
+      await page.getByRole("button", { name: "Remove up to 3" }).click();
+      await expect.element(page.getByText("Removed 3 older summary versions.")).toBeVisible();
+      await expect.element(page.getByText("6 versions · 2 can be removed")).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Review cleanup" })).toBeVisible();
+      expect(
+        countRequests(
+          fetchMock,
+          "POST",
+          "/api/bots/test-id/conversations/101/summaries/cleanup-batch",
+        ),
+      ).toBe(1);
+      if (width === 390) {
+        expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+      }
+      const request = fetchMock.mock.calls.find(([input, init]) => {
+        const { url, method } = requestParts(input as RequestInfo | URL, init as RequestInit);
+        return method === "POST" && url.pathname.endsWith("/cleanup-batch");
+      })!;
+      expect(
+        await requestJsonBody(request[0] as RequestInfo | URL, request[1] as RequestInit),
+      ).toEqual({
+        expectedActiveSummaryId: 3,
+        limit: 3,
+      });
+    },
+  );
+
+  test("edits the active summary as a new version and sends the expected ID", async () => {
+    let edited = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [conversation(101, "Chat one")], total: 1 });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/summaries/active") && method === "PATCH") {
+        edited = true;
+        return jsonResponse({ ok: true, id: 10, createdAt: "2026-09-24T00:00:00.000Z" });
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: 10,
+          totalCount: 2,
+          eligibleCount: 0,
+          retainedIds: [10, 9],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        return jsonResponse({
+          ok: true,
+          data: edited
+            ? [summary(10, "Corrected summary", true), summary(9, "Old summary")]
+            : [summary(9, "Old summary", true)],
+          total: edited ? 2 : 1,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Edit active summary" }).click();
+    await page.getByRole("textbox", { name: "Active summary text" }).fill(" Corrected summary ");
+    await page.getByRole("button", { name: "Save new version" }).click();
+    await expect.element(page.getByText("Corrected summary", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Active summary saved as a new version.")).toBeVisible();
+    const request = fetchMock.mock.calls.find(([input, init]) => {
+      const { url, method } = requestParts(input as RequestInfo | URL, init as RequestInit);
+      return method === "PATCH" && url.pathname.endsWith("/summaries/active");
+    })!;
+    expect(
+      await requestJsonBody(request[0] as RequestInfo | URL, request[1] as RequestInit),
+    ).toEqual({
+      expectedActiveSummaryId: 9,
+      content: "Corrected summary",
+    });
+  });
+
+  test("returns from a later summary page after editing without a false refresh failure", async () => {
+    let edited = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [conversation(101, "Chat one")], total: 1 });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/summaries/active") && method === "PATCH") {
+        edited = true;
+        return jsonResponse({ ok: true, id: 22 });
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: edited ? 22 : 1,
+          totalCount: edited ? 22 : 21,
+          eligibleCount: 0,
+          retainedIds: edited ? [22, 1] : [1],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        return jsonResponse({
+          ok: true,
+          data:
+            url.searchParams.get("page") === "2"
+              ? [summary(1, "Old active", !edited)]
+              : [summary(edited ? 22 : 21, edited ? "New active" : "Recent history", edited)],
+          total: edited ? 22 : 21,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Next page" }).click();
+    await expect.element(page.getByText("Old active", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Edit active summary" }).click();
+    await page.getByRole("textbox", { name: "Active summary text" }).fill("New active");
+    await page.getByRole("button", { name: "Save new version" }).click();
+
+    await expect.element(page.getByText("New active", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("Active summary saved as a new version.")).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Refresh preview" })).toBeEnabled();
+  });
+
+  test("refreshes after a 409 without retrying the edit and keeps the draft available", async () => {
+    let conflict = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [conversation(101, "Chat one")], total: 1 });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/summaries/active") && method === "PATCH") {
+        conflict = true;
+        return jsonResponse({ ok: false, error: "Active summary changed" }, 409);
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: 10,
+          totalCount: 2,
+          eligibleCount: 0,
+          retainedIds: [10, 9],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        return jsonResponse({
+          ok: true,
+          data: conflict
+            ? [summary(10, "New active summary", true), summary(9, "Old summary")]
+            : [summary(9, "Old summary", true)],
+          total: conflict ? 2 : 1,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Edit active summary" }).click();
+    await page.getByRole("textbox", { name: "Active summary text" }).fill("My unsaved correction");
+    await page.getByRole("button", { name: "Save new version" }).click();
+    await expect.element(page.getByText("New active summary", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(/The active summary changed/)).toBeVisible();
+    await page.getByText("Show your unsaved draft").click();
+    await expect.element(page.getByText("My unsaved correction", { exact: true })).toBeVisible();
+    expect(
+      countRequests(fetchMock, "PATCH", "/api/bots/test-id/conversations/101/summaries/active"),
+    ).toBe(1);
+  });
+
+  test("locates an older active version without loading every version into the page", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({
+          ok: true,
+          data: [conversation(101, "Chat one", { summaryCount: 121 })],
+          total: 1,
+        });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: 1,
+          totalCount: 121,
+          eligibleCount: 117,
+          retainedIds: [121, 120, 119, 1],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        const limit = Number(url.searchParams.get("limit"));
+        const requestedPage = Number(url.searchParams.get("page"));
+        const start = 121 - (requestedPage - 1) * limit;
+        const ids = Array.from({ length: Math.min(limit, start) }, (_, index) => start - index);
+        return jsonResponse({
+          ok: true,
+          data: ids.map((id) =>
+            summary(id, id === 1 ? "Older active version" : `Snapshot ${id}`, id === 1),
+          ),
+          total: 121,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Preview cleanup" }).click();
+    await page.getByRole("button", { name: "Go to active" }).click();
+    await expect.element(page.getByText("Older active version", { exact: true })).toBeVisible();
+    expect(
+      matchingRequests(fetchMock, "GET", "/api/bots/test-id/conversations/101/summaries").filter(
+        (request) => request.url.searchParams.get("limit") === "100",
+      ),
+    ).toHaveLength(2);
+  });
+
+  test("refreshes a changed active version after cleanup 409 without another batch", async () => {
+    let conflicted = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [conversation(101, "Chat one")], total: 1 });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: conflicted ? 4 : 3,
+          totalCount: 8,
+          eligibleCount: 4,
+          retainedIds: conflicted ? [8, 7, 6, 4] : [8, 7, 6, 3],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/cleanup-batch") && method === "POST") {
+        conflicted = true;
+        return jsonResponse({ ok: false, error: "Active summary changed" }, 409);
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        return jsonResponse({
+          ok: true,
+          data: [summary(conflicted ? 4 : 3, "Active content", true)],
+          total: 8,
+        });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Preview cleanup" }).click();
+    await page.getByRole("button", { name: "Review cleanup" }).click();
+    await page.getByRole("button", { name: "Remove up to 4" }).click();
+    await expect.element(page.getByText("Active #4", { exact: true })).toBeVisible();
+    await expect.element(page.getByText(/The active summary changed/)).toBeVisible();
+    expect(
+      countRequests(
+        fetchMock,
+        "POST",
+        "/api/bots/test-id/conversations/101/summaries/cleanup-batch",
+      ),
+    ).toBe(1);
+  });
+
+  test("requires read-back after an unconfirmed cleanup response", async () => {
+    let failed = false;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const { url, method } = requestParts(input, init);
+      if (url.pathname.endsWith("/conversations")) {
+        return jsonResponse({ ok: true, data: [conversation(101, "Chat one")], total: 1 });
+      }
+      if (url.pathname.endsWith("/conversations/101")) {
+        return jsonResponse({ ok: true, data: [message(1, "Loaded message")], total: 1 });
+      }
+      if (url.pathname.endsWith("/cleanup-preview")) {
+        return jsonResponse({
+          ok: true,
+          activeSummaryId: 3,
+          totalCount: 8,
+          eligibleCount: 4,
+          retainedIds: [8, 7, 6, 3],
+          batchMax: 100,
+        });
+      }
+      if (url.pathname.endsWith("/cleanup-batch") && method === "POST") {
+        failed = true;
+        throw new TypeError("fixture network failure");
+      }
+      if (url.pathname.endsWith("/summaries")) {
+        return jsonResponse({ ok: true, data: [summary(3, "Active content", true)], total: 8 });
+      }
+      throw new Error(`Unexpected request: ${method} ${url.pathname}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderPage();
+    await selectConversation("Chat one");
+    await openSummaries();
+    await page.getByRole("button", { name: "Preview cleanup" }).click();
+    await page.getByRole("button", { name: "Review cleanup" }).click();
+    await page.getByRole("button", { name: "Remove up to 4" }).click();
+    await expect.element(page.getByText(/The result could not be confirmed/)).toBeVisible();
+    expect(failed).toBe(true);
+    await expect.element(page.getByRole("button", { name: "Review cleanup" })).toBeDisabled();
+    await page.getByRole("button", { name: "Refresh and check" }).click();
+    await expect.element(page.getByRole("button", { name: "Review cleanup" })).toBeEnabled();
+    expect(
+      countRequests(
+        fetchMock,
+        "POST",
+        "/api/bots/test-id/conversations/101/summaries/cleanup-batch",
+      ),
+    ).toBe(1);
   });
 });

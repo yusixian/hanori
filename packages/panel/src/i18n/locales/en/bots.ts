@@ -284,6 +284,45 @@ export const bots = {
     activeSummaryDescription: "This summary currently anchors the conversation context.",
     activeSummaryDeleteBlocked:
       "The active summary cannot be deleted. Delete or clear its source history instead.",
+    historicalSummary: "Earlier version",
+    editActiveSummary: "Edit active summary",
+    summaryEditLabel: "Active summary text",
+    summaryEditHint: "Saving creates a new version with the same message range.",
+    saveSummary: "Save new version",
+    savingSummary: "Saving…",
+    summaryRetention:
+      "Retention protects the active version and three recent versions. Preview older versions for batch cleanup; raw messages stay intact.",
+    previewCleanup: "Preview cleanup",
+    refreshCleanupPreview: "Refresh preview",
+    loadingCleanupPreview: "Checking…",
+    cleanupPreviewFailed: "Could not check older summary versions. Try the preview again.",
+    cleanupPreviewCounts: "{{total}} versions · {{eligible}} can be removed",
+    noActiveSummary: "No active summary",
+    activeSummaryNumber: "Active #{{id}}",
+    retainedSummaryIds: "Kept: {{ids}}",
+    findActiveSummary: "Go to active",
+    findingActiveSummary: "Finding active…",
+    findActiveSummaryFailed: "Could not locate the active summary. Refresh and try again.",
+    reviewSummaryCleanup: "Review cleanup",
+    confirmSummaryCleanupTitle: "Remove older versions?",
+    confirmSummaryCleanupDescription:
+      "This removes at most {{count}} older, inactive summaries in this chat. The active summary, three recent versions, and raw messages stay intact. Another batch needs a new confirmation.",
+    confirmSummaryCleanup: "Remove up to {{count}}",
+    summaryCleanupDone: "Removed {{count}} older summary versions.",
+    unsavedSummaryDraft: "Show your unsaved draft",
+    summaryAction: {
+      edited: "Active summary saved as a new version.",
+      conflict:
+        "The active summary changed. The list was refreshed; review it before trying again.",
+      conflictRefreshFailed:
+        "The active summary changed, but the latest list could not be loaded. Refresh and check before trying again.",
+      unknown: "The result could not be confirmed. Refresh and check before another change.",
+      refreshFailed:
+        "The change succeeded, but the updated list could not be loaded. Refresh and check.",
+      forbidden: "Your account cannot edit or clean up summaries.",
+      draft:
+        "Check the current summary before editing again. Your draft is kept below for copying.",
+    },
     roles: {
       user: "User",
       assistant: "AI",

@@ -21,6 +21,7 @@ import { ConversationListItem } from "./conversation-list-item";
 import { ConversationToolbar } from "./conversation-toolbar";
 import { MessagesPane } from "./messages-pane";
 import { SummaryCard } from "./summary-card";
+import type { ConversationSummary, SummaryCleanupPreview } from "./types";
 import { useConversationPage } from "./use-conversation-page";
 
 function PaneLoading({ label }: { label: string }) {
@@ -90,6 +91,30 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   const [sumPage, setSumPage] = useState(1);
   const [sumPendingDelete, setSumPendingDelete] = useState<number | null>(null);
   const [sumDeleteBusy, setSumDeleteBusy] = useState<number | null>(null);
+  const [summaryEdit, setSummaryEdit] = useState<{ id: number; draft: string } | null>(null);
+  const [summaryActionBusy, setSummaryActionBusy] = useState(false);
+  const [summaryNeedsRefresh, setSummaryNeedsRefresh] = useState(false);
+  const [summaryFeedback, setSummaryFeedback] = useState<{
+    kind:
+      | "edited"
+      | "cleaned"
+      | "conflict"
+      | "conflictRefreshFailed"
+      | "unknown"
+      | "refreshFailed"
+      | "forbidden"
+      | "draft";
+    count?: number;
+    draft?: string;
+  } | null>(null);
+  const [cleanupPreview, setCleanupPreview] = useState<SummaryCleanupPreview | null>(null);
+  const [cleanupPreviewBusy, setCleanupPreviewBusy] = useState(false);
+  const [cleanupPreviewFailed, setCleanupPreviewFailed] = useState(false);
+  const [cleanupConfirm, setCleanupConfirm] = useState(false);
+  const cleanupPreviewRequestRef = useRef(0);
+  const [findingActiveSummary, setFindingActiveSummary] = useState(false);
+  const [findActiveSummaryFailed, setFindActiveSummaryFailed] = useState(false);
+  const findActiveControllerRef = useRef<AbortController | null>(null);
   const [msgPendingDelete, setMsgPendingDelete] = useState<number | null>(null);
   const [msgDeleteBusy, setMsgDeleteBusy] = useState<number | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{
@@ -177,6 +202,33 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     },
     [botId, selectedChat, sumPage],
   );
+  const loadCleanupPreview = useCallback(async () => {
+    if (!botId || selectedChat === null) return false;
+    const requestId = ++cleanupPreviewRequestRef.current;
+    setCleanupPreviewBusy(true);
+    setCleanupPreviewFailed(false);
+    try {
+      const response = await client.api.bots[":botId"].conversations[":chatId"].summaries[
+        "cleanup-preview"
+      ].$get({ param: { botId, chatId: String(selectedChat) } });
+      if (!response.ok) throw new Error("Summary cleanup preview failed");
+      const result = await response.json();
+      if (!result.ok) throw new Error("Summary cleanup preview failed");
+      if (requestId !== cleanupPreviewRequestRef.current) return false;
+      setCleanupPreview(result);
+      setFindActiveSummaryFailed(false);
+      return true;
+    } catch {
+      if (requestId === cleanupPreviewRequestRef.current) {
+        setCleanupPreview(null);
+        setCleanupConfirm(false);
+        setCleanupPreviewFailed(true);
+      }
+      return false;
+    } finally {
+      if (requestId === cleanupPreviewRequestRef.current) setCleanupPreviewBusy(false);
+    }
+  }, [botId, selectedChat]);
   const listKey = JSON.stringify([page, search]);
   const list = useConversationPage(listKey, requestConversations);
   const messageList = useConversationPage(
@@ -197,9 +249,20 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   const msgLoading = messageList.loading;
   const sumLoading = summaryList.loading;
   const interactionBusy =
-    confirmDeleteBusy || msgDeleteBusy !== null || sumDeleteBusy !== null || recovering;
+    confirmDeleteBusy ||
+    msgDeleteBusy !== null ||
+    sumDeleteBusy !== null ||
+    summaryActionBusy ||
+    findingActiveSummary ||
+    recovering;
+  const navigationDisabled = interactionBusy || summaryEdit !== null;
   const writesDisabled =
-    interactionBusy || notice?.needsRefresh === true || loading || list.failed || !list.result;
+    interactionBusy ||
+    summaryNeedsRefresh ||
+    notice?.needsRefresh === true ||
+    loading ||
+    list.failed ||
+    !list.result;
 
   const resetConversationDetail = useCallback((chatId: number | null) => {
     setSelectedChat(chatId);
@@ -208,6 +271,17 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     setDetailView("messages");
     setMsgPendingDelete(null);
     setSumPendingDelete(null);
+    cleanupPreviewRequestRef.current += 1;
+    setCleanupPreview(null);
+    setCleanupPreviewBusy(false);
+    setCleanupPreviewFailed(false);
+    setCleanupConfirm(false);
+    setSummaryEdit(null);
+    setSummaryFeedback(null);
+    setSummaryNeedsRefresh(false);
+    findActiveControllerRef.current?.abort();
+    setFindingActiveSummary(false);
+    setFindActiveSummaryFailed(false);
     if (msgPendingTimer.current) clearTimeout(msgPendingTimer.current);
     if (sumPendingTimer.current) clearTimeout(sumPendingTimer.current);
   }, []);
@@ -216,7 +290,9 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      cleanupPreviewRequestRef.current += 1;
       recoveryControllerRef.current?.abort();
+      findActiveControllerRef.current?.abort();
     };
   }, []);
 
@@ -505,6 +581,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
       if (!mountedRef.current) return;
       setNotice({ kind: "deleted", needsRefresh: false });
       const refreshed = await refreshDisplayedData();
+      if (kind === "summary" && cleanupPreview) await loadCleanupPreview();
       if (!mountedRef.current) return;
       recoveryRequiredRef.current = !refreshed;
       if (refreshed) recoveryTargetRef.current = null;
@@ -522,6 +599,206 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   const handleDeleteSummary = (id: number) => deleteItem("summary", id);
   const handleDeleteMessage = (id: number) => deleteItem("message", id);
 
+  const refreshSummaryManagement = async () => {
+    const results = await Promise.all([
+      summaryList.refresh(),
+      list.refresh(),
+      loadCleanupPreview(),
+    ]);
+    return results.every(Boolean);
+  };
+
+  const startSummaryEdit = (summary: ConversationSummary) => {
+    if (writesDisabled || sumLoading || summaryList.failed || !summary.isActive) return;
+    setSummaryFeedback(null);
+    setCleanupConfirm(false);
+    setSummaryEdit({ id: summary.id, draft: summary.content });
+  };
+
+  const saveSummaryEdit = async () => {
+    if (
+      !botId ||
+      selectedChat === null ||
+      !summaryEdit ||
+      !summaryEdit.draft.trim() ||
+      !summaries.some((summary) => summary.id === summaryEdit.id && summary.isActive) ||
+      mutationRef.current ||
+      writesDisabled
+    )
+      return;
+    const { id, draft } = summaryEdit;
+    mutationRef.current = true;
+    setSummaryActionBusy(true);
+    setSummaryFeedback(null);
+    try {
+      const response = await client.api.bots[":botId"].conversations[
+        ":chatId"
+      ].summaries.active.$patch({
+        param: { botId, chatId: String(selectedChat) },
+        json: { expectedActiveSummaryId: id, content: draft.trim() },
+      });
+      if (!mountedRef.current) return;
+      if (response.status === 409) {
+        setSummaryEdit(null);
+        const refreshed = await refreshSummaryManagement();
+        if (!mountedRef.current) return;
+        setSummaryNeedsRefresh(!refreshed);
+        setSummaryFeedback({ kind: refreshed ? "conflict" : "conflictRefreshFailed", draft });
+        return;
+      }
+      if (response.status === 403) {
+        setSummaryEdit(null);
+        setSummaryFeedback({ kind: "forbidden", draft });
+        return;
+      }
+      if (!response.ok || !(await response.json()).ok)
+        throw new Error("Summary edit not confirmed");
+      setSummaryEdit(null);
+      const refreshed = await refreshSummaryManagement();
+      if (!mountedRef.current) return;
+      setSumPage(1);
+      setSummaryNeedsRefresh(!refreshed);
+      setSummaryFeedback({ kind: refreshed ? "edited" : "refreshFailed" });
+    } catch {
+      if (mountedRef.current) {
+        setSummaryEdit(null);
+        setSummaryNeedsRefresh(true);
+        setSummaryFeedback({ kind: "unknown", draft });
+      }
+    } finally {
+      mutationRef.current = false;
+      if (mountedRef.current) setSummaryActionBusy(false);
+    }
+  };
+
+  const cleanupSummaryBatch = async () => {
+    if (
+      !botId ||
+      selectedChat === null ||
+      !cleanupConfirm ||
+      !cleanupPreview ||
+      cleanupPreview.eligibleCount < 1 ||
+      mutationRef.current ||
+      writesDisabled
+    )
+      return;
+    mutationRef.current = true;
+    setSummaryActionBusy(true);
+    setSummaryFeedback(null);
+    setCleanupConfirm(false);
+    try {
+      const response = await client.api.bots[":botId"].conversations[":chatId"].summaries[
+        "cleanup-batch"
+      ].$post({
+        param: { botId, chatId: String(selectedChat) },
+        json: {
+          expectedActiveSummaryId: cleanupPreview.activeSummaryId,
+          limit: Math.min(cleanupPreview.batchMax, 100, cleanupPreview.eligibleCount),
+        },
+      });
+      if (!mountedRef.current) return;
+      if (response.status === 409) {
+        const refreshed = await refreshSummaryManagement();
+        if (!mountedRef.current) return;
+        setSummaryNeedsRefresh(!refreshed);
+        setSummaryFeedback({ kind: refreshed ? "conflict" : "conflictRefreshFailed" });
+        return;
+      }
+      if (response.status === 403) {
+        setSummaryFeedback({ kind: "forbidden" });
+        return;
+      }
+      if (!response.ok) throw new Error("Summary cleanup not confirmed");
+      const result = await response.json();
+      if (!result.ok) throw new Error("Summary cleanup not confirmed");
+      const refreshed = await refreshSummaryManagement();
+      if (!mountedRef.current) return;
+      setSumPage(1);
+      setSummaryNeedsRefresh(!refreshed);
+      setSummaryFeedback({
+        kind: refreshed ? "cleaned" : "refreshFailed",
+        count: result.deletedCount,
+      });
+    } catch {
+      if (mountedRef.current) {
+        setSummaryNeedsRefresh(true);
+        setSummaryFeedback({ kind: "unknown" });
+      }
+    } finally {
+      mutationRef.current = false;
+      if (mountedRef.current) setSummaryActionBusy(false);
+    }
+  };
+
+  const refreshSummaryAfterUncertainAction = async () => {
+    if (mutationRef.current) return;
+    mutationRef.current = true;
+    setSummaryActionBusy(true);
+    try {
+      const refreshed = await refreshSummaryManagement();
+      if (!mountedRef.current) return;
+      setSummaryNeedsRefresh(!refreshed);
+      if (refreshed)
+        setSummaryFeedback((current) =>
+          current?.draft ? { kind: "draft", draft: current.draft } : null,
+        );
+    } finally {
+      mutationRef.current = false;
+      if (mountedRef.current) setSummaryActionBusy(false);
+    }
+  };
+
+  const findActiveSummary = async () => {
+    if (
+      !botId ||
+      selectedChat === null ||
+      !cleanupPreview?.activeSummaryId ||
+      findingActiveSummary ||
+      summaryEdit !== null ||
+      mutationRef.current
+    )
+      return;
+    const targetId = cleanupPreview.activeSummaryId;
+    const controller = new AbortController();
+    findActiveControllerRef.current?.abort();
+    findActiveControllerRef.current = controller;
+    setFindingActiveSummary(true);
+    setFindActiveSummaryFailed(false);
+    try {
+      const lookupLimit = 100;
+      const lookupPages = Math.ceil(cleanupPreview.totalCount / lookupLimit);
+      for (let lookupPage = 1; lookupPage <= lookupPages; lookupPage++) {
+        const response = await client.api.bots[":botId"].conversations[":chatId"].summaries.$get(
+          {
+            param: { botId, chatId: String(selectedChat) },
+            query: { page: String(lookupPage), limit: String(lookupLimit) },
+          },
+          { init: { signal: controller.signal } },
+        );
+        if (!response.ok) throw new Error("Active summary lookup failed");
+        const result = await response.json();
+        if (!result.ok) throw new Error("Active summary lookup failed");
+        if (controller.signal.aborted) return;
+        const index = result.data.findIndex((summary) => summary.id === targetId);
+        if (index >= 0) {
+          const position = (lookupPage - 1) * lookupLimit + index;
+          setSumPage(Math.floor(position / sumLimit) + 1);
+          return;
+        }
+        const lastId = result.data.at(-1)?.id;
+        if (lastId !== undefined && lastId < targetId) break;
+      }
+      setFindActiveSummaryFailed(true);
+    } catch {
+      if (!controller.signal.aborted) setFindActiveSummaryFailed(true);
+    } finally {
+      if (findActiveControllerRef.current === controller) {
+        findActiveControllerRef.current = null;
+        setFindingActiveSummary(false);
+      }
+    }
+  };
+
   const totalPages = Math.ceil(total / limit);
   const msgTotalPages = Math.ceil(msgTotal / msgLimit);
   const sumTotalPages = Math.max(1, Math.ceil(sumTotal / sumLimit));
@@ -529,13 +806,13 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   const hasSummaries = detailView === "summaries" || (selectedConv?.hasSummaries ?? false);
 
   const handleConversationPageChange = (nextPage: number) => {
-    if (mutationRef.current) return;
+    if (mutationRef.current || summaryEdit) return;
     setPage(nextPage);
     resetConversationDetail(null);
   };
 
   const applySearch = (value: string) => {
-    if (mutationRef.current) return;
+    if (mutationRef.current || summaryEdit) return;
     const next = value.trim();
     setSearchDraft(next);
     if (next === search && page === 1) return;
@@ -545,7 +822,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   };
 
   const handleSelectConversation = (chatId: number) => {
-    if (mutationRef.current || selectedChat === chatId) return;
+    if (mutationRef.current || summaryEdit || selectedChat === chatId) return;
     resetConversationDetail(chatId);
     if (!window.matchMedia("(min-width: 80rem)").matches) {
       requestAnimationFrame(() => backButtonRef.current?.focus());
@@ -553,7 +830,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
   };
 
   const handleBackToConversations = () => {
-    if (mutationRef.current) return;
+    if (mutationRef.current || summaryEdit) return;
     const previousChat = selectedChat;
     resetConversationDetail(null);
     focusConversationList(previousChat ?? undefined);
@@ -777,7 +1054,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                       key={conversation.chatId}
                       conv={conversation}
                       selected={selectedChat === conversation.chatId}
-                      navigationDisabled={interactionBusy}
+                      navigationDisabled={navigationDisabled}
                       deleteDisabled={writesDisabled}
                       onSelect={() => handleSelectConversation(conversation.chatId)}
                       onClear={() =>
@@ -813,7 +1090,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                   <button
                     ref={backButtonRef}
                     type="button"
-                    disabled={interactionBusy}
+                    disabled={navigationDisabled}
                     onClick={handleBackToConversations}
                     className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
                     aria-label={t("conversations.backToList")}
@@ -829,7 +1106,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                   summaryCount={selectedConv.summaryCount}
                   showSystem={showSystem}
                   showTools={showTools}
-                  disabled={interactionBusy}
+                  disabled={navigationDisabled}
                   refreshing={detailView === "messages" ? msgLoading : sumLoading}
                   onRefresh={() => {
                     if (!mutationRef.current)
@@ -837,12 +1114,15 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                         ? recoverDeletion()
                         : detailView === "messages"
                           ? messageList.refresh()
-                          : summaryList.refresh());
+                          : cleanupPreview
+                            ? Promise.all([summaryList.refresh(), loadCleanupPreview()])
+                            : summaryList.refresh());
                   }}
                   onViewChange={(next) => {
-                    if (mutationRef.current) return;
+                    if (mutationRef.current || summaryEdit) return;
                     setMsgPendingDelete(null);
                     setSumPendingDelete(null);
+                    setCleanupConfirm(false);
                     setDetailView(next);
                   }}
                   onToggleSystem={() => setShowSystem((value) => !value)}
@@ -941,6 +1221,181 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                         {t("conversations.refreshing")}
                       </p>
                     ) : null}
+                    {summaryList.result ? (
+                      <div className="shrink-0 space-y-2 border-b border-amber-200/70 bg-amber-50/40 px-3 py-2.5 text-xs sm:px-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="min-w-0 flex-1 leading-5 text-slate-700">
+                            {t("conversations.summaryRetention")}
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={cleanupPreviewBusy || interactionBusy}
+                            onClick={() => {
+                              setCleanupConfirm(false);
+                              void loadCleanupPreview();
+                            }}
+                          >
+                            {cleanupPreviewBusy
+                              ? t("conversations.loadingCleanupPreview")
+                              : cleanupPreview
+                                ? t("conversations.refreshCleanupPreview")
+                                : t("conversations.previewCleanup")}
+                          </Button>
+                        </div>
+                        {cleanupPreviewFailed ? (
+                          <p role="alert" className="text-red-700">
+                            {t("conversations.cleanupPreviewFailed")}
+                          </p>
+                        ) : null}
+                        {cleanupPreview ? (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 tabular-nums">
+                            <span>
+                              {t("conversations.cleanupPreviewCounts", {
+                                total: cleanupPreview.totalCount,
+                                eligible: cleanupPreview.eligibleCount,
+                              })}
+                            </span>
+                            <span>
+                              {cleanupPreview.activeSummaryId === null
+                                ? t("conversations.noActiveSummary")
+                                : t("conversations.activeSummaryNumber", {
+                                    id: cleanupPreview.activeSummaryId,
+                                  })}
+                            </span>
+                            {cleanupPreview.activeSummaryId !== null &&
+                            !summaries.some(
+                              (summary) => summary.id === cleanupPreview.activeSummaryId,
+                            ) ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={navigationDisabled || sumLoading}
+                                onClick={() => void findActiveSummary()}
+                              >
+                                {findingActiveSummary
+                                  ? t("conversations.findingActiveSummary")
+                                  : t("conversations.findActiveSummary")}
+                              </Button>
+                            ) : null}
+                            {cleanupPreview.retainedIds.length > 0 ? (
+                              <span>
+                                {t("conversations.retainedSummaryIds", {
+                                  ids: cleanupPreview.retainedIds.map((id) => `#${id}`).join(", "),
+                                })}
+                              </span>
+                            ) : null}
+                            {cleanupPreview.eligibleCount > 0 && !cleanupConfirm ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={
+                                  writesDisabled || cleanupPreviewBusy || summaryEdit !== null
+                                }
+                                onClick={() => setCleanupConfirm(true)}
+                              >
+                                {t("conversations.reviewSummaryCleanup")}
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {findActiveSummaryFailed ? (
+                          <p role="alert" className="text-red-700">
+                            {t("conversations.findActiveSummaryFailed")}
+                          </p>
+                        ) : null}
+                        {cleanupConfirm && cleanupPreview && cleanupPreview.eligibleCount > 0 ? (
+                          <div
+                            className="rounded-lg border border-amber-300 bg-white p-3"
+                            role="group"
+                            aria-label={t("conversations.confirmSummaryCleanupTitle")}
+                          >
+                            <p className="font-medium text-slate-900">
+                              {t("conversations.confirmSummaryCleanupTitle")}
+                            </p>
+                            <p className="mt-1 leading-5 text-slate-600">
+                              {t("conversations.confirmSummaryCleanupDescription", {
+                                count: Math.min(
+                                  cleanupPreview.batchMax,
+                                  100,
+                                  cleanupPreview.eligibleCount,
+                                ),
+                              })}
+                            </p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="destructive"
+                                disabled={writesDisabled || summaryEdit !== null}
+                                onClick={() => void cleanupSummaryBatch()}
+                              >
+                                {t("conversations.confirmSummaryCleanup", {
+                                  count: Math.min(
+                                    cleanupPreview.batchMax,
+                                    100,
+                                    cleanupPreview.eligibleCount,
+                                  ),
+                                })}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={interactionBusy}
+                                onClick={() => setCleanupConfirm(false)}
+                              >
+                                {t("conversations.cancel")}
+                              </Button>
+                            </div>
+                          </div>
+                        ) : null}
+                        {summaryFeedback ? (
+                          <div
+                            role={
+                              summaryFeedback.kind === "edited" ||
+                              summaryFeedback.kind === "cleaned"
+                                ? "status"
+                                : "alert"
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 leading-5"
+                          >
+                            <p>
+                              {summaryFeedback.kind === "cleaned"
+                                ? t("conversations.summaryCleanupDone", {
+                                    count: summaryFeedback.count,
+                                  })
+                                : t(`conversations.summaryAction.${summaryFeedback.kind}`)}
+                            </p>
+                            {summaryFeedback.draft ? (
+                              <details className="mt-1">
+                                <summary className="cursor-pointer font-medium">
+                                  {t("conversations.unsavedSummaryDraft")}
+                                </summary>
+                                <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-50 p-2 text-xs break-words whitespace-pre-wrap">
+                                  {summaryFeedback.draft}
+                                </pre>
+                              </details>
+                            ) : null}
+                            {summaryNeedsRefresh ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="mt-2"
+                                disabled={interactionBusy}
+                                onClick={() => void refreshSummaryAfterUncertainAction()}
+                              >
+                                {t("conversations.refreshAndCheck")}
+                              </Button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!summaryList.result ? (
                       sumLoading ? (
                         <PaneLoading label={t("conversations.loadingSummaries")} />
@@ -951,7 +1406,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                       </div>
                     ) : (
                       <>
-                        <ol className="min-h-0 flex-1 space-y-2.5 overflow-y-auto overscroll-contain p-3 sm:p-4">
+                        <ol className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-2.5 sm:p-3">
                           {summaries.map((summary) => (
                             <li
                               key={summary.id}
@@ -962,7 +1417,23 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                                 onDelete={handleDeleteSummary}
                                 pendingDelete={sumPendingDelete === summary.id}
                                 busy={sumDeleteBusy === summary.id}
-                                disabled={writesDisabled || sumLoading || summaryList.failed}
+                                disabled={
+                                  writesDisabled ||
+                                  summaryEdit !== null ||
+                                  sumLoading ||
+                                  summaryList.failed
+                                }
+                                editing={summaryEdit?.id === summary.id}
+                                editDraft={summaryEdit?.id === summary.id ? summaryEdit.draft : ""}
+                                editBusy={summaryActionBusy}
+                                onStartEdit={startSummaryEdit}
+                                onEditDraftChange={(draft) =>
+                                  setSummaryEdit((current) =>
+                                    current ? { ...current, draft } : null,
+                                  )
+                                }
+                                onSaveEdit={() => void saveSummaryEdit()}
+                                onCancelEdit={() => setSummaryEdit(null)}
                               />
                             </li>
                           ))}
@@ -971,9 +1442,9 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                           <Pagination
                             page={sumPage}
                             totalPages={sumTotalPages}
-                            disabled={interactionBusy}
+                            disabled={navigationDisabled}
                             onPageChange={(next) => {
-                              if (!mutationRef.current) {
+                              if (!mutationRef.current && !summaryEdit) {
                                 setSumPendingDelete(null);
                                 setSumPage(next);
                               }

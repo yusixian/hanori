@@ -31,12 +31,29 @@ import {
   lt,
   lte,
   ne,
+  notInArray,
   or,
   sql,
 } from "drizzle-orm";
 import { escapeLike, rrfMerge } from "../utils/search.js";
 
 class CompactionConflictError extends Error {}
+
+type ConversationTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+export const CONVERSATION_SUMMARY_RECENT_VERSIONS = 3;
+export const CONVERSATION_SUMMARY_CLEANUP_BATCH_MAX = 100;
+
+export function retainedConversationSummaryIds(
+  recentIds: readonly number[],
+  activeSummaryId: number | null,
+): number[] {
+  const ids = recentIds
+    .filter((id) => id !== activeSummaryId)
+    .slice(0, CONVERSATION_SUMMARY_RECENT_VERSIONS);
+  if (activeSummaryId !== null) ids.push(activeSummaryId);
+  return ids;
+}
 
 export const COMPACTION_MAX_BATCH_MESSAGES = 200;
 export const COMPACTION_MAX_BATCH_JSON_CHARS = 120_000;
@@ -339,6 +356,64 @@ export function selectHistoryWithinTokenBudget(
 
 export class ConversationStore {
   constructor(private db: Database) {}
+
+  private summaryScope(botId: string, chatId: number) {
+    return and(eq(conversationSummaries.botId, botId), eq(conversationSummaries.chatId, chatId));
+  }
+
+  private async retainedSummaryIds(
+    db: Pick<Database, "select">,
+    botId: string,
+    chatId: number,
+    activeSummaryId: number | null,
+  ): Promise<number[]> {
+    const recent = await db
+      .select({ id: conversationSummaries.id })
+      .from(conversationSummaries)
+      .where(this.summaryScope(botId, chatId))
+      .orderBy(desc(conversationSummaries.id))
+      .limit(CONVERSATION_SUMMARY_RECENT_VERSIONS + 1);
+    return retainedConversationSummaryIds(
+      recent.map((row) => row.id),
+      activeSummaryId,
+    );
+  }
+
+  private async pruneSummaryVersions(
+    tx: ConversationTransaction,
+    botId: string,
+    chatId: number,
+    activeSummaryId: number | null,
+    batchSize: number,
+  ): Promise<number> {
+    const retainedIds = await this.retainedSummaryIds(tx, botId, chatId, activeSummaryId);
+    const candidates = await tx
+      .select({ id: conversationSummaries.id })
+      .from(conversationSummaries)
+      .where(
+        and(
+          this.summaryScope(botId, chatId),
+          retainedIds.length ? notInArray(conversationSummaries.id, retainedIds) : undefined,
+        ),
+      )
+      .orderBy(asc(conversationSummaries.id))
+      .limit(batchSize);
+    if (candidates.length === 0) return 0;
+    const deleted = await tx
+      .delete(conversationSummaries)
+      .where(
+        and(
+          this.summaryScope(botId, chatId),
+          inArray(
+            conversationSummaries.id,
+            candidates.map((row) => row.id),
+          ),
+          activeSummaryId === null ? undefined : ne(conversationSummaries.id, activeSummaryId),
+        ),
+      )
+      .returning({ id: conversationSummaries.id });
+    return deleted.length;
+  }
 
   async addMessage(params: ConversationMessageInput) {
     await this.addMessages([params]);
@@ -1038,6 +1113,13 @@ export class ConversationStore {
                 .returning({ activeSummaryId: conversationCompactionState.activeSummaryId });
 
         if (activated.length === 0) throw new CompactionConflictError();
+        await this.pruneSummaryVersions(
+          tx,
+          params.botId,
+          params.chatId,
+          summary.id,
+          CONVERSATION_SUMMARY_CLEANUP_BATCH_MAX,
+        );
       });
       return true;
     } catch (error) {
@@ -1297,6 +1379,141 @@ export class ConversationStore {
     };
   }
 
+  async editActiveConversationSummary(params: {
+    botId: string;
+    chatId: number;
+    expectedActiveSummaryId: number;
+    content: string;
+  }): Promise<{ id: number; createdAt: string } | null> {
+    if (!params.content.trim() || params.content.length > 40_000) {
+      throw new RangeError("Summary content must contain 1 to 40000 characters");
+    }
+    try {
+      return await this.db.transaction(async (tx) => {
+        const [active] = await tx
+          .select({
+            id: conversationSummaries.id,
+            previousSummarizedUpToId: conversationSummaries.previousSummarizedUpToId,
+            summarizedUpToId: conversationSummaries.summarizedUpToId,
+            messageCount: conversationSummaries.messageCount,
+          })
+          .from(conversationCompactionState)
+          .innerJoin(
+            conversationSummaries,
+            eq(conversationCompactionState.activeSummaryId, conversationSummaries.id),
+          )
+          .where(
+            and(
+              eq(conversationCompactionState.botId, params.botId),
+              eq(conversationCompactionState.chatId, params.chatId),
+            ),
+          )
+          .limit(1)
+          .for("update");
+        if (active?.id !== params.expectedActiveSummaryId) throw new CompactionConflictError();
+
+        const [version] = await tx
+          .insert(conversationSummaries)
+          .values({
+            botId: params.botId,
+            chatId: params.chatId,
+            content: params.content,
+            previousSummarizedUpToId: active.previousSummarizedUpToId,
+            summarizedUpToId: active.summarizedUpToId,
+            messageCount: active.messageCount,
+          })
+          .returning({ id: conversationSummaries.id, createdAt: conversationSummaries.createdAt });
+        if (!version) throw new Error("Failed to persist conversation summary edit");
+
+        const activated = await tx
+          .update(conversationCompactionState)
+          .set({ activeSummaryId: version.id, updatedAt: new Date() })
+          .where(
+            and(
+              eq(conversationCompactionState.botId, params.botId),
+              eq(conversationCompactionState.chatId, params.chatId),
+              eq(conversationCompactionState.activeSummaryId, params.expectedActiveSummaryId),
+            ),
+          )
+          .returning({ activeSummaryId: conversationCompactionState.activeSummaryId });
+        if (activated.length === 0) throw new CompactionConflictError();
+        await this.pruneSummaryVersions(
+          tx,
+          params.botId,
+          params.chatId,
+          version.id,
+          CONVERSATION_SUMMARY_CLEANUP_BATCH_MAX,
+        );
+        return { id: version.id, createdAt: version.createdAt.toISOString() };
+      });
+    } catch (error) {
+      if (error instanceof CompactionConflictError) return null;
+      throw error;
+    }
+  }
+
+  async previewConversationSummaryCleanup(botId: string, chatId: number) {
+    const [active, [total]] = await Promise.all([
+      this.getActiveCompaction(botId, chatId),
+      this.db
+        .select({ count: count() })
+        .from(conversationSummaries)
+        .where(this.summaryScope(botId, chatId)),
+    ]);
+    const activeSummaryId = active?.summaryId ?? null;
+    const retainedIds = await this.retainedSummaryIds(this.db, botId, chatId, activeSummaryId);
+    const totalCount = Number(total?.count ?? 0);
+    return {
+      activeSummaryId,
+      totalCount,
+      retainedIds,
+      eligibleCount: Math.max(0, totalCount - retainedIds.length),
+      batchMax: CONVERSATION_SUMMARY_CLEANUP_BATCH_MAX,
+    };
+  }
+
+  async cleanupConversationSummaryBatch(params: {
+    botId: string;
+    chatId: number;
+    expectedActiveSummaryId: number | null;
+    limit: number;
+  }): Promise<{ deletedCount: number; remainingCount: number } | null> {
+    if (
+      !Number.isSafeInteger(params.limit) ||
+      params.limit < 1 ||
+      params.limit > CONVERSATION_SUMMARY_CLEANUP_BATCH_MAX
+    ) {
+      throw new RangeError("Invalid summary cleanup batch limit");
+    }
+    return this.db.transaction(async (tx) => {
+      const [state] = await tx
+        .select({ activeSummaryId: conversationCompactionState.activeSummaryId })
+        .from(conversationCompactionState)
+        .where(
+          and(
+            eq(conversationCompactionState.botId, params.botId),
+            eq(conversationCompactionState.chatId, params.chatId),
+          ),
+        )
+        .limit(1)
+        .for("update");
+      const activeSummaryId = state?.activeSummaryId ?? null;
+      if (activeSummaryId !== params.expectedActiveSummaryId) return null;
+      const deletedCount = await this.pruneSummaryVersions(
+        tx,
+        params.botId,
+        params.chatId,
+        activeSummaryId,
+        params.limit,
+      );
+      const [remaining] = await tx
+        .select({ count: count() })
+        .from(conversationSummaries)
+        .where(this.summaryScope(params.botId, params.chatId));
+      return { deletedCount, remainingCount: Number(remaining?.count ?? 0) };
+    });
+  }
+
   async deleteConversationSummary(
     botId: string,
     chatId: number,
@@ -1310,11 +1527,11 @@ export class ConversationStore {
           and(
             eq(conversationCompactionState.botId, botId),
             eq(conversationCompactionState.chatId, chatId),
-            eq(conversationCompactionState.activeSummaryId, id),
           ),
         )
-        .limit(1);
-      if (active) return "active";
+        .limit(1)
+        .for("update");
+      if (active?.activeSummaryId === id) return "active";
 
       const result = await tx
         .delete(conversationSummaries)
