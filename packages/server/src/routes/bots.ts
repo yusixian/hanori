@@ -1491,13 +1491,16 @@ export function botsRoutes(
           content: z.string().min(1),
           category: z.string().optional(),
           telegramId: z.number().optional(),
+          kind: z.enum(["fact", "preference", "event", "commitment", "relationship"]).optional(),
+          scopeChatId: z.number().int().safe().optional(),
+          expiresAt: z.string().datetime({ offset: true }).optional(),
         }),
       ),
       async (c) => {
         const botId = c.req.param("botId");
         const body = c.req.valid("json");
         const store = botPool.getBotMemoryStore();
-        const memory = await store.saveMemory(botId, body);
+        const memory = await store.saveMemory(botId, { ...body, origin: "admin" });
         return c.json({ ok: true as const, data: memory }, 201);
       },
     )
@@ -1507,18 +1510,44 @@ export function botsRoutes(
         "json",
         z.object({
           content: z.string().min(1).optional(),
+          expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
           category: z.string().nullable().optional(),
           telegramId: z.number().nullable().optional(),
+          kind: z
+            .enum(["fact", "preference", "event", "commitment", "relationship"])
+            .nullable()
+            .optional(),
+          scopeChatId: z.number().int().safe().nullable().optional(),
+          expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
         }),
       ),
       async (c) => {
         const botId = c.req.param("botId");
         const memoryId = Number(c.req.param("memoryId"));
         const body = c.req.valid("json");
-        const store = botPool.getBotMemoryStore();
-        const updated = await store.updateMemory(botId, memoryId, body);
-        if (!updated) return c.json({ ok: false as const, error: "Memory not found" }, 404);
+        const updated = await botPool.updateBotMemoryForAdmin(botId, memoryId, body);
+        if (!updated) {
+          const existing = await botPool.getBotMemoryStore().getMemory(botId, memoryId);
+          return existing
+            ? c.json({ ok: false as const, error: "Memory changed; refresh before saving" }, 409)
+            : c.json({ ok: false as const, error: "Memory not found" }, 404);
+        }
         return c.json({ ok: true as const, data: updated });
+      },
+    )
+    .post(
+      "/:botId/memories/:memoryId/retire",
+      zValidator("json", z.object({ supersededById: z.number().int().positive().optional() })),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const memoryId = Number(c.req.param("memoryId"));
+        const { supersededById } = c.req.valid("json");
+        const retired = await botPool
+          .getBotMemoryStore()
+          .retireMemory(botId, memoryId, supersededById);
+        if (!retired)
+          return c.json({ ok: false as const, error: "Memory not found or changed" }, 404);
+        return c.json({ ok: true as const });
       },
     )
     .delete("/:botId/memories/:memoryId", async (c) => {

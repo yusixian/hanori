@@ -104,9 +104,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   if (opts.capabilities.has("bot-memory")) {
     lines.push("");
     lines.push("长期记忆工具:");
-    lines.push("- save_memory: 保存一条长期记忆（通用或关联特定用户）");
-    lines.push("- recall_memories: 搜索已保存的记忆");
-    lines.push("- delete_memory: 删除不再需要的记忆");
+    lines.push("- recall_memories: 搜索当前聊天可见的长期记忆");
+    lines.push("- save_memory（可用时）: 有明确证据和长期价值时保存；无需记住每次个人信息披露");
+    lines.push("- update_memory（可用时）: 纠正已有记忆或设置到期时间");
+    lines.push("- retire_memory（可用时）: 停用过时、重复的记忆");
+    lines.push("- delete_memory（仅在可用时）: 用户明确要求忘记时永久删除");
   }
 
   // Artwork tools

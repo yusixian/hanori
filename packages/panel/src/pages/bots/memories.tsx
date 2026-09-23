@@ -5,9 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import type { BotMemoryKind } from "@cos-tool-bot/shared";
 import { client } from "@/lib/client";
 import {
   AlertTriangle,
+  Archive,
   Check,
   Loader2,
   Pencil,
@@ -21,12 +23,22 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useLocation, useParams, useSearchParams } from "react-router";
 
+type MemoryKind = BotMemoryKind;
+
 interface MemoryItem {
   id: number;
   botId: string;
   telegramId: number | null;
   content: string;
   category: string | null;
+  kind: MemoryKind | null;
+  scopeChatId: number | null;
+  origin: string | null;
+  sourceChatId: number | null;
+  sourceMessageId: number | null;
+  sourceUserId: number | null;
+  expiresAt: string | null;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -35,22 +47,48 @@ interface CreateForm {
   content: string;
   category: string;
   telegramId: string;
+  kind: MemoryKind | "";
+  scopeChatId: string;
+  expiresAt: string;
 }
 
-interface EditForm {
-  content: string;
-  category: string;
-  telegramId: string;
-}
+type EditForm = CreateForm;
 
 const emptyCreateForm: CreateForm = {
   content: "",
   category: "",
   telegramId: "",
+  kind: "",
+  scopeChatId: "",
+  expiresAt: "",
 };
 
 type LoadError = "initial" | "stale" | null;
-type MutationKind = "create" | "save" | "delete";
+type MutationKind = "create" | "save" | "retire" | "delete";
+
+const memoryKinds: MemoryKind[] = ["fact", "preference", "event", "commitment", "relationship"];
+
+function toLocalDateTime(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function validOptionalChatId(value: string): boolean {
+  return !value.trim() || isTelegramId(value.trim());
+}
+
+function validOptionalDate(value: string): boolean {
+  return !value || !Number.isNaN(new Date(value).getTime());
+}
+
+function memoryStatus(memory: MemoryItem): "active" | "expired" | "retired" {
+  if (!memory.isActive) return "retired";
+  if (memory.expiresAt && new Date(memory.expiresAt).getTime() <= Date.now()) return "expired";
+  return "active";
+}
 
 async function requireSuccessfulMutation(response: Response, message: string): Promise<void> {
   let result: { ok?: boolean };
@@ -197,6 +235,12 @@ function BotMemoriesContent({ botId }: { botId: string }) {
     () => new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }),
     [locale],
   );
+  const createFieldsValid =
+    validOptionalChatId(createForm.scopeChatId) && validOptionalDate(createForm.expiresAt);
+  const editFieldsValid =
+    editForm !== null &&
+    validOptionalChatId(editForm.scopeChatId) &&
+    validOptionalDate(editForm.expiresAt);
 
   useEffect(() => {
     // Router transitions may coalesce PUSH then POP back to the same location context.
@@ -403,6 +447,37 @@ function BotMemoriesContent({ botId }: { botId: string }) {
     }
   };
 
+  const handleRetire = async (memoryId: number) => {
+    if (
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current ||
+      mutationControlsLocked ||
+      editingId !== null ||
+      !window.confirm(t("memories.retireConfirm"))
+    )
+      return;
+    mutationInFlightRef.current = true;
+    setPendingMutation({ kind: "retire", memoryId });
+    setMutationError(null);
+    setSuccessMessage(null);
+    try {
+      const response = await client.api.bots[":botId"].memories[":memoryId"].retire.$post({
+        param: { botId, memoryId: String(memoryId) },
+        json: {},
+      });
+      await requireSuccessfulMutation(response, t("memories.retireFailed"));
+      if (mountedRef.current) {
+        setSuccessMessage(t("memories.retiredSuccess"));
+        refreshListAfterMutation();
+      }
+    } catch {
+      if (mountedRef.current) setMutationError(t("memories.retireFailed"));
+    } finally {
+      mutationInFlightRef.current = false;
+      if (mountedRef.current) setPendingMutation(null);
+    }
+  };
+
   const startEdit = (m: MemoryItem) => {
     if (mutationControlsLocked || editingId !== null) return;
     setEditingMemory(m);
@@ -411,6 +486,9 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       content: m.content,
       category: m.category ?? "",
       telegramId: m.telegramId != null ? String(m.telegramId) : "",
+      kind: m.kind ?? "",
+      scopeChatId: m.scopeChatId != null ? String(m.scopeChatId) : "",
+      expiresAt: toLocalDateTime(m.expiresAt),
     });
   };
 
@@ -423,6 +501,8 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   const handleSave = async () => {
     if (
       !editForm ||
+      !editingMemory ||
+      !editFieldsValid ||
       editingId === null ||
       mutationInFlightRef.current ||
       mutationRecoveryRef.current ||
@@ -439,8 +519,17 @@ function BotMemoriesContent({ botId }: { botId: string }) {
         param: { botId, memoryId: String(editingId) },
         json: {
           content: editForm.content,
+          expectedUpdatedAt: editingMemory.updatedAt,
           category: editForm.category.trim() || null,
           telegramId: tid ? Number(tid) : null,
+          kind: editForm.kind || null,
+          scopeChatId: editForm.scopeChatId.trim() ? Number(editForm.scopeChatId.trim()) : null,
+          expiresAt:
+            editForm.expiresAt === toLocalDateTime(editingMemory.expiresAt)
+              ? editingMemory.expiresAt
+              : editForm.expiresAt
+                ? new Date(editForm.expiresAt).toISOString()
+                : null,
         },
       });
       await requireSuccessfulMutation(response, t("common.saveFailed"));
@@ -460,6 +549,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   const handleCreate = async () => {
     if (
       !createForm.content.trim() ||
+      !createFieldsValid ||
       mutationInFlightRef.current ||
       mutationRecoveryRef.current ||
       mutationControlsLocked ||
@@ -478,6 +568,13 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           content: createForm.content,
           category: createForm.category.trim() || undefined,
           telegramId: tid ? Number(tid) : undefined,
+          kind: createForm.kind || undefined,
+          scopeChatId: createForm.scopeChatId.trim()
+            ? Number(createForm.scopeChatId.trim())
+            : undefined,
+          expiresAt: createForm.expiresAt
+            ? new Date(createForm.expiresAt).toISOString()
+            : undefined,
         },
       });
       await requireSuccessfulMutation(response, t("common.createFailed"));
@@ -598,11 +695,74 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div>
+                <label htmlFor="create-mem-kind" className="text-muted-foreground text-xs">
+                  {t("memories.kind")}
+                </label>
+                <Select
+                  id="create-mem-kind"
+                  value={createForm.kind}
+                  onChange={(event) =>
+                    setCreateForm({ ...createForm, kind: event.target.value as MemoryKind | "" })
+                  }
+                  disabled={mutationControlsLocked}
+                >
+                  <option value="">{t("memories.kindUnspecified")}</option>
+                  {memoryKinds.map((kind) => (
+                    <option key={kind} value={kind}>
+                      {t(`memories.kinds.${kind}`)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <label htmlFor="create-mem-chat-id" className="text-muted-foreground text-xs">
+                  {t("memories.chatScopeOptional")}
+                </label>
+                <Input
+                  id="create-mem-chat-id"
+                  inputMode="numeric"
+                  value={createForm.scopeChatId}
+                  onChange={(event) =>
+                    setCreateForm({ ...createForm, scopeChatId: event.target.value })
+                  }
+                  aria-invalid={!validOptionalChatId(createForm.scopeChatId)}
+                  placeholder={t("memories.allChatsPlaceholder")}
+                  disabled={mutationControlsLocked}
+                />
+              </div>
+              <div>
+                <label htmlFor="create-mem-expiry" className="text-muted-foreground text-xs">
+                  {t("memories.expiresAtOptional")}
+                </label>
+                <Input
+                  id="create-mem-expiry"
+                  type="datetime-local"
+                  value={createForm.expiresAt}
+                  onChange={(event) =>
+                    setCreateForm({ ...createForm, expiresAt: event.target.value })
+                  }
+                  aria-invalid={!validOptionalDate(createForm.expiresAt)}
+                  disabled={mutationControlsLocked}
+                />
+              </div>
+            </div>
+            {!createFieldsValid && (
+              <p role="alert" className="text-destructive text-sm">
+                {t("memories.invalidDetails")}
+              </p>
+            )}
             <div className="flex gap-2">
               <Button
                 size="sm"
                 onClick={handleCreate}
-                disabled={mutationControlsLocked || !validQuery || !createForm.content.trim()}
+                disabled={
+                  mutationControlsLocked ||
+                  !validQuery ||
+                  !createForm.content.trim() ||
+                  !createFieldsValid
+                }
               >
                 {pendingMutation?.kind === "create" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -813,13 +973,24 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           {displayMemories.map((m) => (
             <Card key={m.id}>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={memoryStatus(m) === "active" ? "default" : "muted"}>
+                      {t(`memories.${memoryStatus(m)}`)}
+                    </Badge>
+                    <Badge variant="muted">
+                      {m.kind ? t(`memories.kinds.${m.kind}`) : t("memories.kindUnspecified")}
+                    </Badge>
                     {m.category && <Badge variant="default">{m.category}</Badge>}
                     {m.telegramId != null ? (
                       <Badge variant="warning">{t("memories.user", { id: m.telegramId })}</Badge>
                     ) : (
                       <Badge variant="muted">{t("memories.general")}</Badge>
+                    )}
+                    {m.scopeChatId != null && (
+                      <Badge variant="muted">
+                        {t("memories.chatScope", { id: m.scopeChatId })}
+                      </Badge>
                     )}
                   </div>
                   <span className="text-muted-foreground shrink-0 text-xs">
@@ -882,8 +1053,82 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                         />
                       </div>
                     </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <div>
+                        <label
+                          htmlFor={`edit-mem-kind-${m.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          {t("memories.kind")}
+                        </label>
+                        <Select
+                          id={`edit-mem-kind-${m.id}`}
+                          value={editForm.kind}
+                          onChange={(event) =>
+                            setEditForm({
+                              ...editForm,
+                              kind: event.target.value as MemoryKind | "",
+                            })
+                          }
+                          disabled={mutationControlsLocked}
+                        >
+                          <option value="">{t("memories.kindUnspecified")}</option>
+                          {memoryKinds.map((kind) => (
+                            <option key={kind} value={kind}>
+                              {t(`memories.kinds.${kind}`)}
+                            </option>
+                          ))}
+                        </Select>
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`edit-mem-chat-id-${m.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          {t("memories.chatScopeOptional")}
+                        </label>
+                        <Input
+                          id={`edit-mem-chat-id-${m.id}`}
+                          inputMode="numeric"
+                          value={editForm.scopeChatId}
+                          onChange={(event) =>
+                            setEditForm({ ...editForm, scopeChatId: event.target.value })
+                          }
+                          aria-invalid={!validOptionalChatId(editForm.scopeChatId)}
+                          placeholder={t("memories.allChatsPlaceholder")}
+                          disabled={mutationControlsLocked}
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`edit-mem-expiry-${m.id}`}
+                          className="text-muted-foreground text-xs"
+                        >
+                          {t("memories.expiresAtOptional")}
+                        </label>
+                        <Input
+                          id={`edit-mem-expiry-${m.id}`}
+                          type="datetime-local"
+                          value={editForm.expiresAt}
+                          onChange={(event) =>
+                            setEditForm({ ...editForm, expiresAt: event.target.value })
+                          }
+                          aria-invalid={!validOptionalDate(editForm.expiresAt)}
+                          disabled={mutationControlsLocked}
+                        />
+                      </div>
+                    </div>
+                    {!editFieldsValid && (
+                      <p role="alert" className="text-destructive text-sm">
+                        {t("memories.invalidDetails")}
+                      </p>
+                    )}
                     <div className="flex gap-2">
-                      <Button size="sm" onClick={handleSave} disabled={mutationControlsLocked}>
+                      <Button
+                        size="sm"
+                        onClick={handleSave}
+                        disabled={mutationControlsLocked || !editFieldsValid}
+                      >
                         {pendingMutation?.kind === "save" ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
@@ -907,20 +1152,64 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                 ) : (
                   <>
                     <p className="text-sm whitespace-pre-wrap">{m.content}</p>
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      {m.origin && (
+                        <span>
+                          {t("memories.origin", {
+                            origin:
+                              m.origin === "admin" || m.origin === "agent"
+                                ? t(`memories.origins.${m.origin}`)
+                                : m.origin,
+                          })}
+                        </span>
+                      )}
+                      {m.sourceChatId != null && (
+                        <span>{t("memories.sourceChat", { id: m.sourceChatId })}</span>
+                      )}
+                      {m.sourceMessageId != null && (
+                        <span>{t("memories.sourceMessage", { id: m.sourceMessageId })}</span>
+                      )}
+                      {m.sourceUserId != null && (
+                        <span>{t("memories.sourceUser", { id: m.sourceUserId })}</span>
+                      )}
+                      {m.expiresAt && (
+                        <span>
+                          {t("memories.expiresAt", {
+                            date: dateTimeFormatter.format(new Date(m.expiresAt)),
+                          })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                       <span className="text-muted-foreground text-xs">
                         {t("memories.createdAt", {
                           date: dateTimeFormatter.format(new Date(m.createdAt)),
                         })}
                       </span>
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
+                        {m.isActive && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleRetire(m.id)}
+                            disabled={mutationControlsLocked || editingId !== null}
+                          >
+                            {pendingMutation?.kind === "retire" &&
+                            pendingMutation.memoryId === m.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Archive className="h-4 w-4" />
+                            )}
+                            {t("memories.retireAction")}
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => startEdit(m)}
                           title={t("memories.editTitle")}
                           aria-label={t("memories.editTitle")}
-                          disabled={mutationControlsLocked || editingId !== null}
+                          disabled={mutationControlsLocked || editingId !== null || !m.isActive}
                         >
                           <Pencil className="h-4 w-4" />
                         </Button>
