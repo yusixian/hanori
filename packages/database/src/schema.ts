@@ -626,6 +626,36 @@ export const botMemories = pgTable(
   ],
 );
 
+export const memoryConsolidationState = pgTable("memory_consolidation_state", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  cursorMessageId: integer("cursor_message_id").notNull().default(0),
+  leaseOwner: uuid("lease_owner"),
+  leaseUntil: timestamp("lease_until"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const memoryConsolidationEvidence = pgTable(
+  "memory_consolidation_evidence",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    action: text("action").$type<"add" | "update" | "retire" | "ignore">().notNull(),
+    memoryId: integer("memory_id").references(() => botMemories.id, { onDelete: "set null" }),
+    sourceMessageIds: integer("source_message_ids").array().notNull(),
+    participantIds: bigint("participant_ids", { mode: "number" }).array().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("memory_consolidation_evidence_bot_chat_idx").on(t.botId, t.chatId),
+    index("memory_consolidation_evidence_memory_idx").on(t.memoryId),
+  ],
+);
+
 export const chatModelOverrides = pgTable(
   "chat_model_overrides",
   {
