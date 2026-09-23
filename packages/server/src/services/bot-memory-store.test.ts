@@ -255,7 +255,10 @@ describe("BotMemoryStore lifecycle", () => {
     const unchangedContent = new PgDialect().sqlToQuery(updates[0]?.["embedding"] as SQL);
     expect(unchangedContent.sql).toContain('else "bot_memories"."embedding" end');
     expect(unchangedContent.params).toContain("cats");
-    expect(updates[1]).toEqual({ category: "preference" });
+    expect(updates[1]?.["category"]).toBe("preference");
+    const versionUpdate = new PgDialect().sqlToQuery(updates[1]?.["updatedAt"] as SQL);
+    expect(versionUpdate.sql).toContain("date_trunc('milliseconds'");
+    expect(versionUpdate.sql).toContain("interval '1 millisecond'");
   });
 
   it("guards retirement and successor links by Bot and exact scope", async () => {
@@ -321,7 +324,7 @@ describe("BotMemoryStore lifecycle", () => {
     });
 
     const rendered = renderWhere(whereClauses[0]!);
-    expect(rendered.sql).toContain('"bot_memories"."updated_at" =');
+    expect(rendered.sql).toContain("date_trunc('milliseconds', coalesce(");
     expect(rendered.params).toContain(expectedUpdatedAt);
   });
 

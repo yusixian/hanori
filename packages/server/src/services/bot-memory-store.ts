@@ -322,6 +322,12 @@ export class BotMemoryStore {
       .update(botMemories)
       .set({
         ...updates,
+        // Database DEFAULT now() may have microseconds, while the API version is milliseconds.
+        // Advance the stored version by at least one millisecond for a reliable CAS token.
+        updatedAt: sql`greatest(
+          date_trunc('milliseconds', clock_timestamp() at time zone 'UTC'),
+          date_trunc('milliseconds', coalesce(${botMemories.updatedAt}, ${botMemories.createdAt})) + interval '1 millisecond'
+        )`,
         ...(data.content === undefined
           ? {}
           : {
@@ -339,13 +345,7 @@ export class BotMemoryStore {
             : eq(botMemories.content, data.expectedContent),
           data.expectedUpdatedAt === undefined
             ? undefined
-            : or(
-                eq(botMemories.updatedAt, new Date(data.expectedUpdatedAt)),
-                and(
-                  isNull(botMemories.updatedAt),
-                  eq(botMemories.createdAt, new Date(data.expectedUpdatedAt)),
-                ),
-              ),
+            : sql`date_trunc('milliseconds', coalesce(${botMemories.updatedAt}, ${botMemories.createdAt})) = ${new Date(data.expectedUpdatedAt).toISOString()}::timestamp`,
           agentMutationScope(access),
           access &&
             (data.kind === "event" || data.kind === "commitment" || data.kind === "relationship")
@@ -358,7 +358,10 @@ export class BotMemoryStore {
   }
 
   async updateEmbedding(memoryId: number, embedding: number[]): Promise<void> {
-    await this.db.update(botMemories).set({ embedding }).where(eq(botMemories.id, memoryId));
+    await this.db
+      .update(botMemories)
+      .set({ embedding, updatedAt: sql`${botMemories.updatedAt}` })
+      .where(eq(botMemories.id, memoryId));
   }
 
   async updateEmbeddingIfContentMatches(
@@ -369,7 +372,7 @@ export class BotMemoryStore {
   ): Promise<boolean> {
     const updated = await this.db
       .update(botMemories)
-      .set({ embedding })
+      .set({ embedding, updatedAt: sql`${botMemories.updatedAt}` })
       .where(
         and(
           eq(botMemories.botId, botId),

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { createDb } from "@cos-tool-bot/database";
+import { createDb, type Database } from "@cos-tool-bot/database";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { BotMemoryStore } from "./bot-memory-store.js";
 import { MemoryLegacyCleanup } from "./memory-legacy-cleanup.js";
 
 const url = process.env.MEMORY_DUPLICATE_TEST_DATABASE_URL;
@@ -10,6 +11,7 @@ describe.skipIf(!url)("legacy memory cleanup PostgreSQL integration", () => {
   const namespace = `memory_duplicate_test_${randomUUID().replaceAll("-", "")}`;
   const botId = randomUUID();
   let client: ReturnType<typeof createDb>["client"];
+  let db: Database;
   let service: MemoryLegacyCleanup;
 
   beforeAll(async () => {
@@ -23,6 +25,7 @@ describe.skipIf(!url)("legacy memory cleanup PostgreSQL integration", () => {
     parsed.searchParams.set("search_path", namespace);
     const connection = createDb(parsed.toString());
     client = connection.client;
+    db = connection.db;
     service = new MemoryLegacyCleanup(connection.db);
     await client.unsafe(`CREATE SCHEMA "${namespace}"`);
     await client.unsafe(`
@@ -90,5 +93,47 @@ describe.skipIf(!url)("legacy memory cleanup PostgreSQL integration", () => {
       [Number(plain!.id), false, Number(embedded!.id)],
       [Number(plain!.id) + 1, true, null],
     ]);
+  });
+
+  it("edits a microsecond timestamp with a millisecond API version and rejects stale writes", async () => {
+    const memoryBotId = randomUUID();
+    const [created] = await client`
+      INSERT INTO bot_memories (bot_id, telegram_id, content, created_at, updated_at)
+      VALUES (${memoryBotId}, 42, 'Original', '2026-09-20 00:00:00.123456', '2026-09-20 00:00:00.123456')
+      RETURNING id
+    `;
+    const memoryId = Number(created!.id);
+    const store = new BotMemoryStore(db);
+    const before = await store.getMemory(memoryBotId, memoryId);
+    expect(before?.updatedAt).toBe("2026-09-20T00:00:00.123Z");
+
+    const edited = await store.updateMemory(memoryBotId, memoryId, {
+      category: "corrected",
+      expectedUpdatedAt: before!.updatedAt,
+    });
+    expect(edited?.category).toBe("corrected");
+    expect(edited!.updatedAt).not.toBe(before!.updatedAt);
+    expect(Math.abs(Date.parse(edited!.updatedAt) - Date.now())).toBeLessThan(60_000);
+    expect(
+      await store.updateMemory(memoryBotId, memoryId, {
+        category: "stale",
+        expectedUpdatedAt: before!.updatedAt,
+      }),
+    ).toBeNull();
+
+    expect(
+      await store.updateEmbeddingIfContentMatches(memoryBotId, memoryId, "Original", [0.2]),
+    ).toBe(true);
+    expect((await store.getMemory(memoryBotId, memoryId))?.updatedAt).toBe(edited!.updatedAt);
+
+    const racing = await Promise.all(
+      ["first", "second"].map((category) =>
+        store.updateMemory(memoryBotId, memoryId, {
+          category,
+          expectedUpdatedAt: edited!.updatedAt,
+        }),
+      ),
+    );
+    expect(racing.filter((result) => result !== null)).toHaveLength(1);
   });
 });

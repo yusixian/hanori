@@ -56,11 +56,30 @@ summaries must remain readable through the change and have a safe cleanup path.
   content preserves its embedding; changed content clears the stale vector.
   Focused store/selector tests, server typecheck, scoped lint and format pass.
 - Independent foundation review found the unchanged-content embedding issue;
-  it has been fixed. Changed-content embedding regeneration/backfill remains
-  an integration requirement.
-- A separate Lody worktree/session (`fd50339c-8af4-4421-90dc-3898edb53d71`)
-  owns summary compaction, edit, and retention implementation on
-  `feat/memory-summary`; it has not yet handed off code.
+  it was fixed. Changed-content edits refresh the vector with a content guard.
+- Four child PRs have been reviewed and merged into draft integration PR #100:
+  #101 Agent lifecycle and panel controls, #102 bounded summary compaction and
+  manual summary edit/cleanup, #103 autonomous shared memory consolidation,
+  and #104 guarded exact-duplicate cleanup for historical memories. The Lody
+  summary and consolidation sessions completed and their code was integrated.
+- Historical memory rows remain readable. Nullable provenance and scope fields
+  do not silently reassign old rows; isolated mode excludes unknown-source
+  unscoped personal entries. Legacy exact-duplicate cleanup is opt-in and
+  limited to 50 records per confirmed batch. It compares validity metadata,
+  retains vector search when one copy has an embedding, and uses row locks and
+  version checks. A disposable PostgreSQL test caught and verified a fix for
+  inconsistent timestamp parsing between the preview and mutation paths.
+- Old cumulative summaries remain readable. New compaction bounds retained
+  versions; admins can edit the active summary by creating a guarded version
+  and preview/clean old snapshots in batches. Raw message history is kept
+  separate from summary retention.
+- Final cross-module review found a microsecond-versus-millisecond version
+  mismatch on memory edits. The guarded update now compares at API precision,
+  advances the version monotonically, and keeps embedding-only writes from
+  changing it. A second review caught a session-timezone conversion; the
+  update now uses UTC. Both fixes passed a disposable PostgreSQL test under an
+  Asia/Shanghai database timezone, including stale and concurrent writes.
+  Current-head CI is pending before PR #100 merges.
 - Current summaries are cumulative snapshots. Forced group compression can
   bypass the usual message threshold. Existing `/privacy forget` contract
   excludes selective deletion of shared group summaries; do not clear an
