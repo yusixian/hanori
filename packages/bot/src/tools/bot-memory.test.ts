@@ -146,8 +146,14 @@ describe("Bot memory tools", () => {
     recallMemories.mockResolvedValue([
       { ...base, id: 1, telegramId: 99 },
       { ...base, id: 2, scopeChatId: -999 },
-      { ...base, id: 3, scopeChatId: null },
-      { ...base, id: 4 },
+      {
+        ...base,
+        id: 3,
+        scopeChatId: null,
+        sourceChatId: null,
+        content: "I belong to chat -100",
+      },
+      { ...base, id: 4, sourceChatId: null },
     ]);
     const tools = createBotMemoryTools(callbacks, {
       chatId: -100,
@@ -157,7 +163,7 @@ describe("Bot memory tools", () => {
 
     await expect(execute(tools.recall_memories, { query: "tea" })).resolves.toEqual({
       count: 1,
-      memories: [{ ...base, id: 4 }],
+      memories: [{ ...base, id: 4, sourceChatId: null }],
     });
   });
 
