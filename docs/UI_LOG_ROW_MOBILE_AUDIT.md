@@ -19,4 +19,4 @@
 - 最终生产构建配合合成 API，在全局日志 390px 中文/英文、Bot 日志 390px 中文、全局日志 1440px 中文验证相同记录。390px 消息宽度从 225.4 增至 324 CSS px，样本从 5 行降到 4 行；1440px 仍为 903.4 CSS px、2 行。四档页面均无脚本错误或横向溢出，键盘 Enter 可展开详情并看到复制 JSON 操作。截图和几何结果位于 `.acceptance/ui-efficiency/log-row-layout-final/`，基线位于同级 `log-row-layout-baseline/`。完整元数据与复制行为另由共享组件浏览器测试覆盖。
 - Panel 类型、局部 lint/format 和生产构建通过。公开指南与 v0.14.2 版本页已同步，Docs 类型、构建及定向桌面/手机浏览器 4/4 通过；文案没有新增翻译 key。
 
-CI 和 GitHub Release 待完成。本轮未运行需要 Docker 的完整隔离验收器；浏览器证据来自本地生产构建与合成 API，没有读取或删除生产日志，也未在用户 Android 设备上验证。
+CI 35855958987 已核实 completed/success，head 为 `e9ca3a251b91a892e35e803f24d82e0adce2b863`，`check` job 通过，含完整面板与公开文档浏览器门禁。远端 main、v0.14.2 tag 与 公开 Release 均指向该 SHA；Release 非草稿、非预发布，正文与 `docs/releases/v0.14.2.md` 逐字相同。本轮未运行需要 Docker 的完整隔离验收器；浏览器证据来自本地生产构建与合成 API，没有读取或删除生产日志，也未在用户 Android 设备上验证。
