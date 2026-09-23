@@ -603,6 +603,13 @@ export const botMemories = pgTable(
     telegramId: bigint("telegram_id", { mode: "number" }),
     content: text("content").notNull(),
     category: text("category"),
+    kind: text("kind").$type<"fact" | "preference" | "event" | "commitment" | "relationship">(),
+    scopeChatId: bigint("scope_chat_id", { mode: "number" }),
+    origin: text("origin"),
+    sourceChatId: bigint("source_chat_id", { mode: "number" }),
+    sourceMessageId: bigint("source_message_id", { mode: "number" }),
+    sourceUserId: bigint("source_user_id", { mode: "number" }),
+    expiresAt: timestamp("expires_at"),
     embedding: halfvec("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     factValidAt: timestamp("fact_valid_at"),
     supersededById: integer("superseded_by_id"),
@@ -616,6 +623,36 @@ export const botMemories = pgTable(
     index("bot_memories_bot_telegram_idx").on(t.botId, t.telegramId),
     index("bot_memories_bot_category_idx").on(t.botId, t.category),
     index("bot_memories_embedding_idx").using("hnsw", t.embedding.op("halfvec_cosine_ops")),
+  ],
+);
+
+export const memoryConsolidationState = pgTable("memory_consolidation_state", {
+  botId: uuid("bot_id")
+    .primaryKey()
+    .references(() => bots.id, { onDelete: "cascade" }),
+  cursorMessageId: integer("cursor_message_id").notNull().default(0),
+  leaseOwner: uuid("lease_owner"),
+  leaseUntil: timestamp("lease_until"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const memoryConsolidationEvidence = pgTable(
+  "memory_consolidation_evidence",
+  {
+    id: serial("id").primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    action: text("action").$type<"add" | "update" | "retire" | "ignore">().notNull(),
+    memoryId: integer("memory_id").references(() => botMemories.id, { onDelete: "set null" }),
+    sourceMessageIds: integer("source_message_ids").array().notNull(),
+    participantIds: bigint("participant_ids", { mode: "number" }).array().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("memory_consolidation_evidence_bot_chat_idx").on(t.botId, t.chatId),
+    index("memory_consolidation_evidence_memory_idx").on(t.memoryId),
   ],
 );
 

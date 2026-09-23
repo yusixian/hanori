@@ -29,6 +29,10 @@ import {
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
+import {
+  MemoryLegacyCleanup,
+  MEMORY_DUPLICATE_BATCH_MAX,
+} from "../services/memory-legacy-cleanup.js";
 import { AiConfigPatchError, absorbAiConfigPatch } from "../services/ai-config-patch.js";
 import {
   aiConfigRevision,
@@ -1145,7 +1149,67 @@ export function botsRoutes(
         return c.json({ ok: true as const, ...result });
       },
     )
+    .get("/:botId/conversations/:chatId/summaries/cleanup-preview", async (c) => {
+      const chatId = Number(c.req.param("chatId"));
+      if (!Number.isSafeInteger(chatId))
+        return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+      const store = botPool.getConversationStore();
+      const result = await store.previewConversationSummaryCleanup(c.req.param("botId"), chatId);
+      return c.json({ ok: true as const, ...result });
+    })
+    .post(
+      "/:botId/conversations/:chatId/summaries/cleanup-batch",
+      zValidator(
+        "json",
+        z.object({
+          expectedActiveSummaryId: z.number().int().positive().nullable(),
+          limit: z.number().int().positive().max(100).optional().default(100),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const chatId = Number(c.req.param("chatId"));
+        if (!Number.isSafeInteger(chatId))
+          return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+        const store = botPool.getConversationStore();
+        const result = await store.cleanupConversationSummaryBatch({
+          botId: c.req.param("botId"),
+          chatId,
+          ...c.req.valid("json"),
+        });
+        if (!result) return c.json({ ok: false as const, error: "Active summary changed" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
+    .patch(
+      "/:botId/conversations/:chatId/summaries/active",
+      zValidator(
+        "json",
+        z.object({
+          expectedActiveSummaryId: z.number().int().positive(),
+          content: z.string().trim().min(1).max(40_000),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const chatId = Number(c.req.param("chatId"));
+        if (!Number.isSafeInteger(chatId))
+          return c.json({ ok: false as const, error: "Invalid chatId" }, 400);
+        const store = botPool.getConversationStore();
+        const result = await store.editActiveConversationSummary({
+          botId: c.req.param("botId"),
+          chatId,
+          ...c.req.valid("json"),
+        });
+        if (!result) return c.json({ ok: false as const, error: "Active summary changed" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
     .delete("/:botId/conversations/:chatId/summaries/:id", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role))
+        return c.json({ ok: false as const, error: "Forbidden" }, 403);
       const botId = c.req.param("botId");
       const chatId = Number(c.req.param("chatId"));
       const id = Number(c.req.param("id"));
@@ -1453,6 +1517,50 @@ export function botsRoutes(
       const categories = await store.getCategories(botId);
       return c.json({ ok: true as const, data: { categories } });
     })
+    .get("/:botId/memories/duplicate-preview", async (c) => {
+      if (!ownerOrAdmin.has(c.get("authMember").role))
+        return c.json({ ok: false as const, error: "Forbidden" }, 403);
+      const result = await new MemoryLegacyCleanup(db).preview(c.req.param("botId"));
+      return c.json({ ok: true as const, ...result });
+    })
+    .post(
+      "/:botId/memories/retire-duplicates",
+      zValidator(
+        "json",
+        z.object({
+          candidates: z
+            .array(
+              z.object({
+                candidateId: z.number().int().positive().safe(),
+                survivorId: z.number().int().positive().safe(),
+                expectedCandidateUpdatedAt: z.string().datetime({ offset: true }),
+                expectedSurvivorUpdatedAt: z.string().datetime({ offset: true }),
+              }),
+            )
+            .min(1)
+            .max(MEMORY_DUPLICATE_BATCH_MAX)
+            .refine((candidates) => {
+              const candidateIds = candidates.map(({ candidateId }) => candidateId);
+              const unique = new Set(candidateIds);
+              return (
+                unique.size === candidateIds.length &&
+                candidates.every(({ survivorId }) => !unique.has(survivorId))
+              );
+            }, "Duplicate or chained cleanup candidates are not allowed"),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        const result = await new MemoryLegacyCleanup(db).retireBatch(
+          c.req.param("botId"),
+          c.req.valid("json").candidates,
+        );
+        if (!result)
+          return c.json({ ok: false as const, error: "Memories changed; refresh preview" }, 409);
+        return c.json({ ok: true as const, ...result });
+      },
+    )
     .get(
       "/:botId/memories",
       zValidator(
@@ -1491,13 +1599,16 @@ export function botsRoutes(
           content: z.string().min(1),
           category: z.string().optional(),
           telegramId: z.number().optional(),
+          kind: z.enum(["fact", "preference", "event", "commitment", "relationship"]).optional(),
+          scopeChatId: z.number().int().safe().optional(),
+          expiresAt: z.string().datetime({ offset: true }).optional(),
         }),
       ),
       async (c) => {
         const botId = c.req.param("botId");
         const body = c.req.valid("json");
         const store = botPool.getBotMemoryStore();
-        const memory = await store.saveMemory(botId, body);
+        const memory = await store.saveMemory(botId, { ...body, origin: "admin" });
         return c.json({ ok: true as const, data: memory }, 201);
       },
     )
@@ -1507,18 +1618,44 @@ export function botsRoutes(
         "json",
         z.object({
           content: z.string().min(1).optional(),
+          expectedUpdatedAt: z.string().datetime({ offset: true }).optional(),
           category: z.string().nullable().optional(),
           telegramId: z.number().nullable().optional(),
+          kind: z
+            .enum(["fact", "preference", "event", "commitment", "relationship"])
+            .nullable()
+            .optional(),
+          scopeChatId: z.number().int().safe().nullable().optional(),
+          expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
         }),
       ),
       async (c) => {
         const botId = c.req.param("botId");
         const memoryId = Number(c.req.param("memoryId"));
         const body = c.req.valid("json");
-        const store = botPool.getBotMemoryStore();
-        const updated = await store.updateMemory(botId, memoryId, body);
-        if (!updated) return c.json({ ok: false as const, error: "Memory not found" }, 404);
+        const updated = await botPool.updateBotMemoryForAdmin(botId, memoryId, body);
+        if (!updated) {
+          const existing = await botPool.getBotMemoryStore().getMemory(botId, memoryId);
+          return existing
+            ? c.json({ ok: false as const, error: "Memory changed; refresh before saving" }, 409)
+            : c.json({ ok: false as const, error: "Memory not found" }, 404);
+        }
         return c.json({ ok: true as const, data: updated });
+      },
+    )
+    .post(
+      "/:botId/memories/:memoryId/retire",
+      zValidator("json", z.object({ supersededById: z.number().int().positive().optional() })),
+      async (c) => {
+        const botId = c.req.param("botId");
+        const memoryId = Number(c.req.param("memoryId"));
+        const { supersededById } = c.req.valid("json");
+        const retired = await botPool
+          .getBotMemoryStore()
+          .retireMemory(botId, memoryId, supersededById);
+        if (!retired)
+          return c.json({ ok: false as const, error: "Memory not found or changed" }, 404);
+        return c.json({ ok: true as const });
       },
     )
     .delete("/:botId/memories/:memoryId", async (c) => {

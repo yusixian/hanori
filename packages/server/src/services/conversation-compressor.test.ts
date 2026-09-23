@@ -186,6 +186,87 @@ describe("compressConversation", () => {
     });
   });
 
+  it("rebuilds a forced summary from the new active version after a commit conflict", async () => {
+    const store = createStore({
+      getCompactionCandidate: vi
+        .fn()
+        .mockResolvedValueOnce({
+          activeSummaryId: 7,
+          oldCursorId: 10,
+          existingSummary: "Earlier summary",
+          messages: [{ id: 11, role: "user", content: "Keep this fact", userName: "Alice" }],
+          sourceMessageIds: [11],
+          newCursorId: 11,
+        })
+        .mockResolvedValueOnce({
+          activeSummaryId: 8,
+          oldCursorId: 10,
+          existingSummary: "Manually corrected summary",
+          messages: [{ id: 11, role: "user", content: "Keep this fact", userName: "Alice" }],
+          sourceMessageIds: [11],
+          newCursorId: 11,
+        }),
+      commitCompaction: vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true),
+    } as Partial<ConversationStore>);
+
+    await compressConversation({ ...createOptions(store), force: true });
+
+    expect(store.getCompactionCandidate).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(generateText).mock.calls[1]![0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("Manually corrected summary"),
+        }),
+      ]),
+    );
+    expect(store.commitCompaction).toHaveBeenLastCalledWith(
+      expect.objectContaining({ expectedActiveSummaryId: 8 }),
+    );
+  });
+
+  it("surfaces a forced compaction conflict after the bounded retry", async () => {
+    const store = createStore({ commitCompaction: vi.fn().mockResolvedValue(false) });
+    const options = createOptions(store);
+
+    await expect(compressConversation({ ...options, force: true })).rejects.toThrow(
+      "Conversation compaction changed during summarization",
+    );
+
+    expect(store.getCompactionCandidate).toHaveBeenCalledTimes(2);
+    expect(store.commitCompaction).toHaveBeenCalledTimes(2);
+    expect(options.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("raw history retained"),
+    );
+  });
+
+  it("runs a pending forced request after an automatic compaction conflict", async () => {
+    let finishFirstGeneration!: (value: { text: string }) => void;
+    vi.mocked(generateText).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishFirstGeneration = resolve;
+      }) as never,
+    );
+    const store = createStore({
+      commitCompaction: vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+    });
+    const options = createOptions(store);
+
+    const automatic = compressConversation(options);
+    await vi.waitFor(() => expect(generateText).toHaveBeenCalledOnce());
+    const forced = compressConversation({ ...options, force: true, keepRecent: 0 });
+    finishFirstGeneration({ text: "Outdated summary" });
+    await Promise.all([automatic, forced]);
+
+    expect(store.commitCompaction).toHaveBeenCalledTimes(3);
+    expect(store.getCompactionCandidate).toHaveBeenLastCalledWith(botId, chatId, 0);
+  });
+
   it("retains raw history and leaves the cursor unchanged when the LLM fails", async () => {
     const store = createStore();
     const options = createOptions(store);

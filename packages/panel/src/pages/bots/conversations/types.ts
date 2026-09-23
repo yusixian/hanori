@@ -14,3 +14,7 @@ export type ConversationSummary = InferResponseType<
   (typeof client.api.bots)[":botId"]["conversations"][":chatId"]["summaries"]["$get"],
   200
 >["data"][number];
+export type SummaryCleanupPreview = InferResponseType<
+  (typeof client.api.bots)[":botId"]["conversations"][":chatId"]["summaries"]["cleanup-preview"]["$get"],
+  200
+>;

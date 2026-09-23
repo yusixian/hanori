@@ -12,6 +12,13 @@ const memory: BotMemory = {
   telegramId: null,
   content: "Likes cats",
   category: "preference",
+  kind: null,
+  scopeChatId: null,
+  origin: null,
+  sourceChatId: null,
+  sourceMessageId: null,
+  sourceUserId: null,
+  expiresAt: null,
   factValidAt: null,
   isActive: true,
   createdAt: "2026-07-18T00:00:00.000Z",
@@ -30,6 +37,24 @@ afterEach(() => {
 });
 
 describe("selectMemoriesForPrompt", () => {
+  it("keeps the current chat scope in automatic retrieval", async () => {
+    const store = createStore();
+
+    await selectMemoriesForPrompt({
+      botId: "bot-1",
+      query: "our shared plan",
+      telegramId: 42,
+      scopeChatId: -1001,
+      limit: 5,
+      store,
+    });
+
+    expect(store.recallMemories).toHaveBeenCalledWith(
+      "bot-1",
+      expect.objectContaining({ telegramId: 42, scopeChatId: -1001 }),
+    );
+  });
+
   it("uses query embedding and the current user's safe combined scope", async () => {
     const store = createStore();
     const generateEmbedding = vi.fn().mockResolvedValue([0.1, 0.2]);

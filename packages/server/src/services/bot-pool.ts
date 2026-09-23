@@ -194,6 +194,7 @@ export class BotPool {
   private profileStore: PeopleProfileStore;
   private profileAvatarService: PeopleProfileAvatarService;
   private botMemoryStore: BotMemoryStore;
+  private memoryEmbeddingServices = new Map<string, EmbeddingService>();
   private userPrivacyService: UserPrivacyService;
   private generationLibraryService: GenerationLibraryService;
   private chatAiSelectionService?: Pick<
@@ -416,6 +417,37 @@ export class BotPool {
 
   getBotMemoryStore(): BotMemoryStore {
     return this.botMemoryStore;
+  }
+
+  async updateBotMemoryForAdmin(
+    botId: string,
+    memoryId: number,
+    data: Parameters<BotMemoryStore["updateMemory"]>[2],
+  ) {
+    const previous =
+      data.content === undefined ? null : await this.botMemoryStore.getMemory(botId, memoryId);
+    const service = this.memoryEmbeddingServices.get(botId);
+    let embedding: number[] | null = null;
+    if (previous && data.content !== undefined && previous.content !== data.content && service) {
+      try {
+        embedding = await service.generateEmbedding(
+          data.content,
+          AbortSignal.timeout(DEFAULT_TIMEOUT_CONFIG.perStepMs),
+        );
+      } catch (error) {
+        this.logger.warn(error, "Memory embedding refresh failed; saving text without a vector");
+      }
+    }
+    const updated = await this.botMemoryStore.updateMemory(botId, memoryId, data);
+    if (updated && data.content !== undefined && embedding) {
+      await this.botMemoryStore.updateEmbeddingIfContentMatches(
+        botId,
+        memoryId,
+        data.content,
+        embedding,
+      );
+    }
+    return updated;
   }
 
   private runConversationCleanup(
@@ -719,6 +751,7 @@ export class BotPool {
 
     // Build AI reply config if configured
     let aiReply: AiReplyBotConfig | undefined;
+    let embeddingService: EmbeddingService | undefined;
     let aiSelectionCallbacks: AiSelectionCallbacks | undefined;
     let conversation: ConversationCallbacks | undefined;
     let runInitialHistoryGovernance: (() => Promise<void>) | undefined;
@@ -835,7 +868,7 @@ export class BotPool {
           providerFormat: compressionProvider.providerFormat,
           logger: this.logger,
           force: true,
-          keepRecent: 1,
+          keepRecent: 0,
           abortSignal: AbortSignal.timeout(auxiliaryTimeoutMs),
         });
       runInitialHistoryGovernance = async () => {
@@ -849,7 +882,6 @@ export class BotPool {
       };
 
       // Create embedding service early so closures can reference it
-      let embeddingService: EmbeddingService | undefined;
       const embeddingCfg = aiConfig.embeddingConfig;
       const embeddingApiKey = aiRuntime.embeddingApiKey;
       if (embeddingCfg && embeddingApiKey) {
@@ -1019,8 +1051,14 @@ export class BotPool {
                 // Dedup check (scoped by telegramId)
                 const similar = await ms.findSimilar(botId, emb, DEDUP_SIMILAR, {
                   telegramId: params.telegramId,
+                  scopeChatId: params.scopeChatId,
                 });
-                const exact = similar.find((s) => s.distance < DEDUP_EXACT);
+                const exact = similar.find(
+                  (s) =>
+                    s.distance < DEDUP_EXACT &&
+                    s.content.trim().toLocaleLowerCase() ===
+                      params.content.trim().toLocaleLowerCase(),
+                );
                 if (exact) {
                   // Near-duplicate: just touch updatedAt
                   await ms.touchMemory(exact.id);
@@ -1041,10 +1079,27 @@ export class BotPool {
             }
             return ms.recallMemories(botId, { ...params, queryEmbedding });
           },
-          deleteMemory: (memoryId) => ms.deleteMemory(botId, memoryId),
-          getMemoriesForPrompt: (telegramId, limit) =>
+          updateMemory: async (memoryId, data, access) => {
+            const previous =
+              data.content === undefined ? null : await ms.getMemory(botId, memoryId);
+            const embedding =
+              previous && data.content !== undefined && previous.content !== data.content && es
+                ? await es.generateEmbedding(data.content, AbortSignal.timeout(auxiliaryTimeoutMs))
+                : null;
+            const updated = await ms.updateMemory(botId, memoryId, data, access);
+            if (updated && data.content !== undefined && embedding) {
+              await ms.updateEmbeddingIfContentMatches(botId, memoryId, data.content, embedding);
+            }
+            return updated;
+          },
+          retireMemory: (memoryId, supersededById, access, expectedContent) =>
+            ms.retireMemory(botId, memoryId, supersededById, access, expectedContent),
+          deleteMemory: (memoryId, access) => ms.deleteMemory(botId, memoryId, access),
+          getMemoriesForPrompt: (telegramId, limit, scopeChatId, includeUnscopedPersonal) =>
             ms.getMemoriesForPrompt(botId, {
               telegramId,
+              scopeChatId,
+              includeUnscopedPersonal,
               limit: limit ?? botMemoryCfg.maxMemories,
             }),
           getMemoriesForQuery: (params) =>
@@ -1052,6 +1107,8 @@ export class BotPool {
               botId,
               query: params.query,
               telegramId: params.telegramId,
+              scopeChatId: params.scopeChatId,
+              includeUnscopedPersonal: params.includeUnscopedPersonal,
               limit: params.limit ?? botMemoryCfg.maxMemories,
               store: ms,
               embeddingService: es,
@@ -1637,6 +1694,7 @@ export class BotPool {
       await this.stopBotImpl(botId);
       throw new Error("Bot failed to start; check bot logs for details");
     }
+    if (embeddingService) this.memoryEmbeddingServices.set(botId, embeddingService);
     if (this.chatAiSelectionService && aiReply) {
       try {
         const published = await this.chatAiSelectionService.retryPublish(botId);
@@ -1857,6 +1915,7 @@ export class BotPool {
     } finally {
       if (stopped) {
         this.managers.delete(botId);
+        this.memoryEmbeddingServices.delete(botId);
         this.botTimerHandlers.delete(botId);
         this.aiSelectionRuntimeDisposers.get(botId)?.();
         this.aiSelectionRuntimeDisposers.delete(botId);

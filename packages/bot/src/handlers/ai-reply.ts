@@ -108,6 +108,7 @@ import {
 import type { RssToolsOptions } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
 import { createFileTools } from "../tools/file-tools.js";
+import { explicitlyRequestsMemoryForget } from "../tools/bot-memory.js";
 import type { MoodInfo } from "../tools/index.js";
 import { createOnceGuard, createPerStepAbort, createRequestCache } from "../tools/utils.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
@@ -1232,12 +1233,8 @@ export function createAiReplyHandler(
     }
   }
 
-  // Bot memory tools setup
+  // Memory tools are bound to the trusted actor and chat for each turn below.
   const botMemoryCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
-  let botMemoryTools: Record<string, Tool> | undefined;
-  if (botMemoryCfg.enabled && config.botMemory) {
-    botMemoryTools = createBotMemoryTools(config.botMemory);
-  }
 
   // Web tools setup (singleton, not per-request)
   let webTools: Record<string, Tool> | undefined;
@@ -2584,7 +2581,18 @@ export function createAiReplyHandler(
           personalizationEnabled && memoryTools
             ? { ...memoryTools, ...profileAvatars.tools }
             : undefined;
-        const requestBotMemoryTools = personalizationEnabled ? botMemoryTools : undefined;
+        const requestBotMemoryTools =
+          personalizationEnabled && botMemoryCfg.enabled && config.botMemory
+            ? createBotMemoryTools(config.botMemory, {
+                chatId,
+                userId,
+                messageId: msg.message_id,
+                privacyMode,
+                allowSave: !hasForwardOrigin,
+                allowMutations: !hasForwardOrigin,
+                allowHardDelete: !hasForwardOrigin && explicitlyRequestsMemoryForget(messageText),
+              })
+            : undefined;
 
         if (!isPrivate && persistConversation) {
           try {
@@ -2644,6 +2652,7 @@ export function createAiReplyHandler(
           memoryConfig: config.memoryConfig,
           memory: personalizationEnabled ? config.memory : undefined,
           userId,
+          privacyMode,
           includeCrossChatUserHistory: privacyMode === "normal",
           crossChatHistoryBeforeId: admissionHistoryWatermark,
           memoryTools: requestMemoryTools,

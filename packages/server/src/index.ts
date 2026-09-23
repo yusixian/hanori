@@ -18,6 +18,7 @@ import { GenerationCleaner } from "./services/generation-cleaner.js";
 import { LogCleaner } from "./services/log-cleaner.js";
 import { BotRunCleaner } from "./services/bot-run-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
+import { MemoryConsolidator } from "./services/memory-consolidator.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
 import { CodingWorkerClient } from "./services/coding-worker-client.js";
 import { CodingJobStager } from "./services/coding-job-stager.js";
@@ -338,6 +339,7 @@ const summaryRunner = new SummaryRunner(
   },
   usageGovernor,
 );
+const memoryConsolidator = new MemoryConsolidator(db, logger, env.ENCRYPTION_KEY, usageGovernor);
 
 const summaryService = new ChatSummaryService(
   db,
@@ -428,6 +430,7 @@ rssFeedService.start();
 
 // Start summary service (after bots so sendHtml has running managers)
 summaryService.start();
+memoryConsolidator.start();
 
 // Register system timers
 const scheduledServices: [
@@ -436,6 +439,7 @@ const scheduledServices: [
 ][] = [
   ["LogCleaner", logCleaner],
   ["MemoryGC", memoryGC],
+  ["MemoryConsolidator", memoryConsolidator],
   ["GenerationCleaner", generationCleaner],
   ["EngagementSampleCleaner", engagementSampleCleaner],
   ["ModelCapabilityService", modelCapabilityService],
@@ -463,6 +467,7 @@ const shutdown = async (signal: string) => {
   modelCapabilityService.stop();
   logCleaner.stop();
   memoryGC.stop();
+  memoryConsolidator.stop();
   generationCleaner.stop();
   engagementSampleCleaner.stop();
   await botPool.stopAll();
