@@ -383,10 +383,20 @@ export class BotMemoryStore {
   }
 
   async deleteMemory(botId: string, memoryId: number, access?: BotMemoryAccess): Promise<boolean> {
+    if (access && access.userId == null) return false;
     const result = await this.db
       .delete(botMemories)
       .where(
-        and(eq(botMemories.botId, botId), eq(botMemories.id, memoryId), agentMutationScope(access)),
+        and(
+          eq(botMemories.botId, botId),
+          eq(botMemories.id, memoryId),
+          access ? eq(botMemories.telegramId, access.userId!) : undefined,
+          access
+            ? access.includeUnscopedPersonal === false
+              ? eq(botMemories.scopeChatId, access.chatId)
+              : or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, access.chatId))
+            : undefined,
+        ),
       )
       .returning({ id: botMemories.id });
     return result.length > 0;

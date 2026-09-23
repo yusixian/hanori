@@ -64,7 +64,7 @@ const emptyCreateForm: CreateForm = {
 };
 
 type LoadError = "initial" | "stale" | null;
-type MutationKind = "create" | "save" | "retire" | "delete";
+type MutationKind = "create" | "save" | "retire" | "delete" | "duplicate-cleanup";
 
 const memoryKinds: MemoryKind[] = ["fact", "preference", "event", "commitment", "relationship"];
 
@@ -113,6 +113,26 @@ interface MemoryFilterForm {
   scope: "all" | "general" | "user";
   telegramId: string;
 }
+
+interface MemoryDuplicateCandidate {
+  candidateId: number;
+  survivorId: number;
+  expectedCandidateUpdatedAt: string;
+  expectedSurvivorUpdatedAt: string;
+  content: string;
+  telegramId: number | null;
+  scopeChatId: number | null;
+  kind: string | null;
+  category: string | null;
+}
+
+interface MemoryDuplicatePreview {
+  data: MemoryDuplicateCandidate[];
+  hasMore: boolean;
+  batchMax: number;
+}
+
+const maximumDuplicateBatchSize = 50;
 
 function isTelegramId(value: string) {
   return /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value));
@@ -181,11 +201,17 @@ function BotMemoriesContent({ botId }: { botId: string }) {
     kind: MutationKind;
     memoryId?: number;
   } | null>(null);
+  const [duplicatePreviewOpen, setDuplicatePreviewOpen] = useState(false);
+  const [duplicatePreview, setDuplicatePreview] = useState<MemoryDuplicatePreview | null>(null);
+  const [duplicatePreviewLoading, setDuplicatePreviewLoading] = useState(false);
+  const [duplicatePreviewError, setDuplicatePreviewError] = useState(false);
+  const [duplicateCleanupNotice, setDuplicateCleanupNotice] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [confirmationRequired, setConfirmationRequired] = useState(false);
   const [mutationRecoveryPending, setMutationRecoveryPending] = useState(false);
   const listRequestRef = useRef(0);
+  const duplicatePreviewRequestRef = useRef(0);
   const loadedQueryKeyRef = useRef<string | null>(null);
   const mutationInFlightRef = useRef(false);
   const mutationRecoveryRef = useRef(false);
@@ -196,7 +222,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
   const hasConfirmedEmptyData =
     hasCurrentData && memories.length === 0 && !loading && loadError === null;
   const mutationPending = pendingMutation !== null;
-  const operationPending = mutationPending || mutationRecoveryPending;
+  const operationPending = mutationPending || mutationRecoveryPending || duplicatePreviewLoading;
   const queryNavigationPending =
     JSON.stringify(readMemoryQuery(requestedQuery)) !== JSON.stringify(query);
   const navigationHeld =
@@ -417,6 +443,136 @@ function BotMemoriesContent({ botId }: { botId: string }) {
     setCategoriesReloadToken((value) => value + 1);
   };
 
+  const refreshDuplicatePreview = async (): Promise<boolean> => {
+    const requestId = ++duplicatePreviewRequestRef.current;
+    setDuplicatePreviewLoading(true);
+    setDuplicatePreviewError(false);
+    try {
+      const response = await client.api.bots[":botId"].memories["duplicate-preview"].$get({
+        param: { botId },
+      });
+      const result = (await response.json()) as {
+        ok?: boolean;
+        data?: MemoryDuplicateCandidate[];
+        hasMore?: boolean;
+        batchMax?: number;
+      };
+      if (
+        !response.ok ||
+        result.ok !== true ||
+        !Array.isArray(result.data) ||
+        result.data.length > maximumDuplicateBatchSize ||
+        typeof result.hasMore !== "boolean" ||
+        typeof result.batchMax !== "number" ||
+        result.batchMax < 1 ||
+        result.batchMax > maximumDuplicateBatchSize ||
+        result.data.length > result.batchMax
+      )
+        throw new Error("Duplicate preview request failed");
+      if (requestId !== duplicatePreviewRequestRef.current) return false;
+      setDuplicatePreview({
+        data: result.data,
+        hasMore: result.hasMore,
+        batchMax: result.batchMax,
+      });
+      return true;
+    } catch {
+      if (requestId === duplicatePreviewRequestRef.current) {
+        setDuplicatePreview(null);
+        setDuplicatePreviewError(true);
+      }
+      return false;
+    } finally {
+      if (requestId === duplicatePreviewRequestRef.current) setDuplicatePreviewLoading(false);
+    }
+  };
+
+  const toggleDuplicatePreview = () => {
+    if (operationPending || confirmationRequired || mutationError !== null) return;
+    if (duplicatePreviewOpen) {
+      setDuplicatePreviewOpen(false);
+      return;
+    }
+    setDuplicatePreviewOpen(true);
+    setDuplicateCleanupNotice(null);
+    void refreshDuplicatePreview();
+  };
+
+  const handleRetireDuplicateBatch = async () => {
+    const preview = duplicatePreview;
+    const batchMax = Math.min(preview?.batchMax ?? 0, maximumDuplicateBatchSize);
+    const candidates = preview?.data.slice(0, batchMax) ?? [];
+    if (
+      candidates.length === 0 ||
+      mutationInFlightRef.current ||
+      mutationRecoveryRef.current ||
+      operationPending ||
+      confirmationRequired ||
+      mutationError !== null ||
+      !window.confirm(t("memories.duplicateCleanup.confirm", { count: candidates.length }))
+    )
+      return;
+
+    mutationInFlightRef.current = true;
+    setPendingMutation({ kind: "duplicate-cleanup" });
+    setMutationError(null);
+    setDuplicateCleanupNotice(null);
+    try {
+      const response = await client.api.bots[":botId"].memories["retire-duplicates"].$post({
+        param: { botId },
+        json: {
+          candidates: candidates.map(
+            ({
+              candidateId,
+              survivorId,
+              expectedCandidateUpdatedAt,
+              expectedSurvivorUpdatedAt,
+            }) => ({
+              candidateId,
+              survivorId,
+              expectedCandidateUpdatedAt,
+              expectedSurvivorUpdatedAt,
+            }),
+          ),
+        },
+      });
+      if (response.status === 409) {
+        refreshListAfterMutation();
+        const previewRefreshed = await refreshDuplicatePreview();
+        setDuplicateCleanupNotice(
+          t(
+            previewRefreshed
+              ? "memories.duplicateCleanup.stale"
+              : "memories.duplicateCleanup.stalePreviewFailed",
+          ),
+        );
+        return;
+      }
+      const result = (await response.json()) as { ok?: boolean; retiredCount?: number };
+      if (!response.ok || result.ok !== true) throw new Error("Duplicate cleanup failed");
+      setDuplicateCleanupNotice(
+        t("memories.duplicateCleanup.retiredSuccess", {
+          count: result.retiredCount ?? candidates.length,
+        }),
+      );
+      refreshListAfterMutation();
+      await refreshDuplicatePreview();
+    } catch {
+      refreshListAfterMutation();
+      const previewRefreshed = await refreshDuplicatePreview();
+      setDuplicateCleanupNotice(
+        t(
+          previewRefreshed
+            ? "memories.duplicateCleanup.outcomeUnknown"
+            : "memories.duplicateCleanup.outcomeUnknownPreviewFailed",
+        ),
+      );
+    } finally {
+      mutationInFlightRef.current = false;
+      if (mountedRef.current) setPendingMutation(null);
+    }
+  };
+
   const handleDelete = async (memoryId: number) => {
     if (
       mutationInFlightRef.current ||
@@ -627,6 +783,159 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           {t("memories.add")}
         </Button>
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <CardTitle className="text-sm">{t("memories.duplicateCleanup.title")}</CardTitle>
+            <p className="text-muted-foreground text-sm wrap-anywhere">
+              {t("memories.duplicateCleanup.description")}
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full shrink-0 sm:w-auto"
+            onClick={toggleDuplicatePreview}
+            disabled={operationPending || confirmationRequired || mutationError !== null}
+          >
+            {duplicatePreviewLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : duplicatePreviewOpen ? (
+              <X className="h-4 w-4" />
+            ) : (
+              <Search className="h-4 w-4" />
+            )}
+            {duplicatePreviewOpen
+              ? t("memories.duplicateCleanup.hidePreview")
+              : t("memories.duplicateCleanup.reviewAction")}
+          </Button>
+        </CardHeader>
+        {duplicatePreviewOpen && (
+          <CardContent className="space-y-3">
+            {duplicateCleanupNotice && (
+              <p role="status" className="text-sm">
+                {duplicateCleanupNotice}
+              </p>
+            )}
+            {duplicatePreviewLoading && (
+              <p role="status" className="text-muted-foreground text-sm">
+                {t("memories.duplicateCleanup.loading")}
+              </p>
+            )}
+            {duplicatePreviewError && (
+              <div role="alert" className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <p className="text-destructive text-sm">
+                  {t("memories.duplicateCleanup.previewFailed")}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  disabled={operationPending || confirmationRequired}
+                  onClick={() => void refreshDuplicatePreview()}
+                >
+                  <RefreshCw className="size-3.5" />
+                  {t("common.retry")}
+                </Button>
+              </div>
+            )}
+            {duplicatePreview &&
+              !duplicatePreviewLoading &&
+              (duplicatePreview.data.length === 0 ? (
+                <p className="text-muted-foreground text-sm">
+                  {t("memories.duplicateCleanup.empty")}
+                </p>
+              ) : (
+                <>
+                  <p className="text-sm">
+                    {t("memories.duplicateCleanup.batchSummary", {
+                      count: duplicatePreview.data.length,
+                      max: Math.min(duplicatePreview.batchMax, maximumDuplicateBatchSize),
+                    })}
+                  </p>
+                  <ol className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {duplicatePreview.data.map((candidate) => (
+                      <li
+                        key={candidate.candidateId}
+                        className="bg-muted/40 min-w-0 rounded-md border px-3 py-2"
+                      >
+                        <p className="text-sm font-medium wrap-anywhere">
+                          {t("memories.duplicateCleanup.candidateAndSurvivor", {
+                            candidateId: candidate.candidateId,
+                            survivorId: candidate.survivorId,
+                          })}
+                        </p>
+                        <p className="text-muted-foreground mt-1 text-sm wrap-anywhere whitespace-pre-wrap">
+                          {candidate.content}
+                        </p>
+                        <p className="text-muted-foreground mt-1 text-xs wrap-anywhere">
+                          {candidate.telegramId == null
+                            ? t("memories.general")
+                            : t("memories.user", { id: candidate.telegramId })}
+                          {candidate.scopeChatId != null && (
+                            <> · {t("memories.chatScope", { id: candidate.scopeChatId })}</>
+                          )}
+                          {candidate.kind && <> · {t(`memories.kinds.${candidate.kind}`)}</>}
+                          {candidate.category && <> · {candidate.category}</>}
+                        </p>
+                      </li>
+                    ))}
+                  </ol>
+                  {duplicatePreview.hasMore && (
+                    <p className="text-muted-foreground text-sm">
+                      {t("memories.duplicateCleanup.moreBatches", {
+                        max: Math.min(duplicatePreview.batchMax, maximumDuplicateBatchSize),
+                      })}
+                    </p>
+                  )}
+                  {editingId !== null && (
+                    <p role="status" className="text-muted-foreground text-sm">
+                      {t("memories.duplicateCleanup.finishEditing")}
+                    </p>
+                  )}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={handleRetireDuplicateBatch}
+                      disabled={
+                        mutationControlsLocked ||
+                        editingId !== null ||
+                        duplicatePreviewLoading ||
+                        duplicatePreview.data.length === 0
+                      }
+                    >
+                      {pendingMutation?.kind === "duplicate-cleanup" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Archive className="h-4 w-4" />
+                      )}
+                      {t("memories.duplicateCleanup.retireBatch", {
+                        count: duplicatePreview.data.length,
+                      })}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      onClick={() => void refreshDuplicatePreview()}
+                      disabled={operationPending || confirmationRequired}
+                    >
+                      <RefreshCw className="size-3.5" />
+                      {t("memories.duplicateCleanup.refreshPreview")}
+                    </Button>
+                  </div>
+                </>
+              ))}
+          </CardContent>
+        )}
+      </Card>
 
       {mutationError && (
         <div
