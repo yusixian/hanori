@@ -190,6 +190,32 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+test("aligns memory filters and search action on desktop", async () => {
+  await page.viewport(1440, 900);
+  await resolveInitial();
+
+  const search = document.getElementById("memory-filter-search")!;
+  const category = document.getElementById("memory-filter-category")!;
+  const scope = document.getElementById("memory-filter-scope")!;
+  const submit = document.querySelector<HTMLButtonElement>(
+    'form[aria-label="Memory filters"] button[type="submit"]',
+  )!;
+  const controls = [search, category, scope, submit].map((element) =>
+    element.getBoundingClientRect(),
+  );
+
+  for (const control of controls.slice(1)) {
+    expect(Math.abs(control.top - controls[0]!.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(control.bottom - controls[0]!.bottom)).toBeLessThanOrEqual(1);
+  }
+
+  await page.viewport(390, 844);
+  expect(
+    Math.abs(category.getBoundingClientRect().top - scope.getBoundingClientRect().top),
+  ).toBeLessThanOrEqual(1);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+});
+
 for (const failure of ["http", "application", "network"] as const) {
   test(`shows and retries an initial ${failure} list error without an empty state`, async () => {
     start();

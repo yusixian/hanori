@@ -1124,7 +1124,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
           disabled={queryControlsLocked}
           className="grid min-w-0 grid-cols-2 items-end gap-3 border-0 p-0 xl:flex"
         >
-          <div className="col-span-2 min-w-0 space-y-1.5 xl:flex-1">
+          <div className="col-span-2 flex min-w-0 flex-col gap-1.5 xl:flex-1">
             <label htmlFor="memory-filter-search" className="text-muted-foreground text-xs">
               {t("common.search")}
             </label>
@@ -1136,7 +1136,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
               disabled={queryControlsLocked}
             />
           </div>
-          <div className="min-w-0 space-y-1.5 xl:w-40">
+          <div className="flex min-w-0 flex-col gap-1.5 xl:w-40">
             <label htmlFor="memory-filter-category" className="text-muted-foreground text-xs">
               {t("memories.category")}
             </label>
@@ -1155,7 +1155,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
               ))}
             </Select>
           </div>
-          <div className="min-w-0 space-y-1.5 xl:w-40">
+          <div className="flex min-w-0 flex-col gap-1.5 xl:w-40">
             <label htmlFor="memory-filter-scope" className="text-muted-foreground text-xs">
               {t("memories.scope")}
             </label>
@@ -1176,7 +1176,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
             </Select>
           </div>
           {filterForm.scope === "user" && (
-            <div className="col-span-2 min-w-0 space-y-1.5 xl:w-40">
+            <div className="col-span-2 flex min-w-0 flex-col gap-1.5 xl:w-40">
               <label htmlFor="memory-filter-user-id" className="text-muted-foreground text-xs">
                 {t("memories.telegramId")}
               </label>
