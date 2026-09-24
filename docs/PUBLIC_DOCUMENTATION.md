@@ -7,10 +7,10 @@
 ```bash
 pnpm install
 pnpm dev:docs
-# http://localhost:5174/docs/
+# http://localhost:43102/docs/
 ```
 
-`pnpm dev` 同时启动服务端、面板与文档站；开发时面板的 `/docs` 入口跳转到文档端口 5174，文档的「管理面板」入口返回面板端口 5173，让两个 Vite 应用各自处理模块与热更新。生产环境仍共用 `/docs/` 路径。只编辑文档时使用 `pnpm dev:docs`，无需 `.env`、数据库或 Bot Token。
+`pnpm dev` 同时启动服务端、面板与文档站；开发时面板的 `/docs` 入口跳转到文档端口 43102，文档的「管理面板」入口返回面板端口 43101，让两个 Vite 应用各自处理模块与热更新。生产环境仍共用 `/docs/` 路径。只编辑文档时使用 `pnpm dev:docs`，无需 `.env`、数据库或 Bot Token。
 
 ## 内容边界
 
@@ -43,7 +43,7 @@ gh release create vX.Y.Z --target FULL_COMMIT_SHA \
 ```bash
 pnpm --filter @cos-tool-bot/docs typecheck
 pnpm build:docs
-pnpm preview:docs # production static handler, http://127.0.0.1:4174/docs/
+pnpm preview:docs # production static handler, http://127.0.0.1:43104/docs/
 pnpm test:docs    # desktop/mobile against the production static handler
 pnpm exec vitest run packages/server/src/routes/public-docs.test.ts
 ```

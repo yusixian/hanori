@@ -7,7 +7,7 @@ import { publicDocsRoutes } from "../src/routes/public-docs.js";
 const root = fileURLToPath(new URL("../../docs/build/client/", import.meta.url));
 await access(`${root}/docs/index.html`);
 const app = publicDocsRoutes(root);
-const port = Number(process.env.DOCS_PREVIEW_PORT ?? 4174);
+const port = Number(process.env.DOCS_PREVIEW_PORT ?? 43104);
 serve({ fetch: app.fetch, hostname: "127.0.0.1", port }, () => {
   console.log(`Public documentation preview: http://127.0.0.1:${port}/docs/`);
 });

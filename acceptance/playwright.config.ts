@@ -2,11 +2,11 @@ import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 
 // cos-tool-bot acceptance 配置。隔离环境由 acceptance/scripts/run.mjs 启动
-// （专用数据库 + :3100 server + panel 构建产物），Playwright 只负责驱动浏览器。
+// （专用数据库 + :43110 server + panel 构建产物），Playwright 只负责驱动浏览器。
 const runDir =
   process.env.ACCEPTANCE_RUN_DIR ?? path.resolve(import.meta.dirname, "../.acceptance/runs/ad-hoc");
 
-const baseURL = process.env.ACCEPTANCE_BASE_URL ?? "http://localhost:3100/";
+const baseURL = process.env.ACCEPTANCE_BASE_URL ?? "http://localhost:43110/";
 
 export default defineConfig({
   testDir: "./specs",

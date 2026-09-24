@@ -30,9 +30,9 @@ cp .env.example .env
 至少填写：
 
 ```env
-DATABASE_URL=postgresql://bot:password@localhost:5432/cos_tool_bot
+DATABASE_URL=postgresql://bot:password@localhost:43105/cos_tool_bot
 BETTER_AUTH_SECRET=使用密码管理器生成的至少32位随机字符串
-BETTER_AUTH_URL=http://localhost:3000
+BETTER_AUTH_URL=http://localhost:43100
 AUTH_OWNER_EMAIL=owner@example.com
 PANEL_PASSWORD=首次登录使用的初始密码
 ENCRYPTION_KEY=用于加密 Bot Token 的随机密钥
@@ -49,6 +49,9 @@ openssl rand -base64 32
 ```bash
 pnpm dev
 ```
+
+默认在 `http://localhost:43101` 打开面板，`http://localhost:43102/docs/` 打开文档。开发数据库通过 `pnpm dev:db` 映射到宿主机 `43105`，NSFW API 映射到 `43106`。更改 `.env` 中的 `PORT` 时，面板代理会读取同一文件；同时修改 `BETTER_AUTH_URL` 以匹配实际访问地址。
+需要覆盖其余端口时，在启动命令的环境中设置 `COS_TOOL_BOT_DEV_PANEL_PORT`、`COS_TOOL_BOT_DEV_DOCS_PORT`、`POSTGRES_DEV_PORT` 或 `NSFW_API_PORT`；更改数据库端口还要同步 `.env` 的 `DATABASE_URL`。
 
 服务启动时会自动执行数据库迁移，并完成以下初始化：
 
@@ -67,7 +70,7 @@ pnpm dev
 | -------------- | -------------- | ------------------------------------------------------------------- |
 | `DATABASE_URL` | 是（直接运行） | PostgreSQL 连接字符串。Docker Compose 中由 `DB_PASSWORD` 自动拼接。 |
 | `DB_PASSWORD`  | Docker 必填    | PostgreSQL 容器密码。                                               |
-| `PORT`         | 否             | 服务监听端口，默认 `3000`；Docker 中也是宿主机映射端口。            |
+| `PORT`         | 否             | 本地 `pnpm dev` 默认使用 `43100`；Docker 容器内部仍监听 `3000`，Direct Compose 用该变量作为宿主机映射端口。 |
 | `BACKUP_DIR`   | 否             | 本地备份目录，默认 `./backups`；Docker 中使用 `/data/backups`。     |
 
 ### Better Auth
@@ -75,7 +78,7 @@ pnpm dev
 | 变量                      | 必填                 | 说明                                                                                                                                               |
 | ------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BETTER_AUTH_SECRET`      | 是                   | Better Auth 加密和 session 密钥，至少 32 位随机字符串。                                                                                            |
-| `BETTER_AUTH_URL`         | 生产必填             | 面板对外访问的完整 origin，例如 `https://bot.example.com`。开发环境未设置时默认使用 `http://localhost:3000`。                                      |
+| `BETTER_AUTH_URL`         | 生产必填             | 面板对外访问的完整 origin，例如 `https://bot.example.com`。本地开发默认使用 `http://localhost:43100`。 |
 | `AUTH_OWNER_EMAIL`        | 是                   | 第一个 owner 的邮箱；每次启动都需要保留。                                                                                                          |
 | `PANEL_PASSWORD`          | 仅首次启动           | 旧版面板密码，同时作为迁移时第一个 owner 的初始密码。创建密码账户后即可删除。                                                                      |
 | `MINI_APP_SESSION_SECRET` | 启用 Mini App 时必填 | Telegram Mini App 独立会话签名密钥，至少 32 位；不要复用 Bot Token 或 Better Auth 密钥。未配置不会影响现有 Bot/管理面板，Mini App 登录会返回 503。 |
@@ -86,9 +89,9 @@ pnpm dev
 
 Google 登录是可选功能。不需要 Google 登录时，这两个变量都留空即可；只配置其中一个不会启用 Google 登录。
 
-开始前，先确定面板的访问地址：
+开始前，先确定服务端认证地址和面板的访问地址：
 
-- 本地开发通常是 `http://localhost:3000`
+- 本地开发的 `BETTER_AUTH_URL` 通常是 `http://localhost:43100`，面板从 `http://localhost:43101` 访问
 - 生产环境例如 `https://bot.example.com`
 - `BETTER_AUTH_URL` 只填写 origin，不要带末尾 `/`，也不要附加 `/api/auth/...`
 
@@ -109,7 +112,7 @@ Google 登录是可选功能。不需要 Google 登录时，这两个变量都�
 7. 在“已获授权的 JavaScript 来源”中添加面板 origin。这里不能包含路径：
 
    ```text
-   http://localhost:3000
+   http://localhost:43101
    https://bot.example.com
    ```
 
@@ -122,7 +125,7 @@ Google 登录是可选功能。不需要 Google 登录时，这两个变量都�
    本地和生产都需要使用时，可以同时添加：
 
    ```text
-   http://localhost:3000/api/auth/callback/google
+   http://localhost:43100/api/auth/callback/google
    https://bot.example.com/api/auth/callback/google
    ```
 
@@ -135,7 +138,7 @@ Google 登录是可选功能。不需要 Google 登录时，这两个变量都�
 在本地项目的 `.env` 中添加：
 
 ```env
-BETTER_AUTH_URL=http://localhost:3000
+BETTER_AUTH_URL=http://localhost:43100
 GOOGLE_CLIENT_ID=这里粘贴客户端ID
 GOOGLE_CLIENT_SECRET=这里粘贴客户端密钥
 ```

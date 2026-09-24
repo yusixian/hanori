@@ -148,7 +148,7 @@ curl -sS -i <origin>/api/definitely-not-a-route
 mock 只能在 Vite `import.meta.env.DEV` 分支进入，production build 在读取 query/localStorage 前已经返回。开发环境可打开：
 
 ```text
-http://localhost:5173/mini-app/<botId>/help?tgWebAppMock=1&tgWebAppColorScheme=dark
+http://localhost:43101/mini-app/<botId>/help?tgWebAppMock=1&tgWebAppColorScheme=dark
 ```
 
 可选 query：

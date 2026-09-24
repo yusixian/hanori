@@ -43,8 +43,8 @@ The coding worker is reached only through the server's authenticated worker clie
 ## Commands
 
 ```bash
-pnpm dev                     # server :3000 + panel Vite dev server
-pnpm dev:docs                # public docs only, :5174/docs (no database needed)
+pnpm dev                     # server :43100 + panel :43101 + docs :43102
+pnpm dev:docs                # public docs only, :43102/docs (no database needed)
 pnpm build:docs              # prerender public docs for production
 pnpm dev:db                  # development PostgreSQL via Compose
 pnpm db:generate             # Drizzle migration from schema changes
@@ -96,7 +96,7 @@ alongside manually started server/panel/tunnel. Details:
 
 - **Acceptance harness**: `acceptance/` holds the Playwright harness (config, fixtures, specs,
   report scripts). `pnpm acceptance` spins up an isolated environment — dedicated database
-  `cos_tool_bot_acceptance`, server on :3100 with throwaway credentials, no `BOT_TOKEN` — builds
+  `cos_tool_bot_acceptance`, server on :43110 with throwaway credentials, no `BOT_TOKEN` — builds
   the panel, and runs `acceptance/specs/` against desktop (1440×900) and mobile (390×844)
   projects. Run artifacts land in `.acceptance/runs/<run>/` (gitignored); cases declare
   `acceptance.meta({ id, feature, severity, steps, expected })` and capture

@@ -8,7 +8,7 @@ This repository's isolated Playwright acceptance environment covers the admin pa
 
 - independent `cos-bot-acceptance` Compose project with PostgreSQL database
   `cos_tool_bot_acceptance` on port `55434` by default
-- API and built panel on `http://localhost:3100`
+- API and built panel on `http://localhost:43110`
 - throwaway owner credentials and encryption keys
 - one inactive fake Telegram bot, with `BOT_TOKEN` empty
 - a whitelisted child-process environment that excludes local integration credentials

@@ -4,6 +4,8 @@ import mdx from "fumadocs-mdx/vite";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
+const panelPort = Number(process.env.COS_TOOL_BOT_DEV_PANEL_PORT ?? 43101);
+
 export default defineConfig({
   plugins: [
     mdx(),
@@ -15,7 +17,7 @@ export default defineConfig({
         server.middlewares.use((req, res, next) => {
           if (req.url !== "/") return next();
           const destination = new URL("/", `http://${req.headers.host}`);
-          destination.port = "5173";
+          destination.port = String(panelPort);
           res.writeHead(302, { Location: destination.href });
           res.end();
         });

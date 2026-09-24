@@ -18,7 +18,9 @@ export const AUTH_ORGANIZATION_SLUG = "cos-tool-bot";
 
 /** Origins allowed for CORS and Better Auth trusted origins; dev also permits the Vite server. */
 export function resolveAllowedOrigins(baseURL: string): string[] {
-  return baseURL.startsWith("https://") ? [baseURL] : [baseURL, "http://localhost:5173"];
+  return baseURL.startsWith("https://")
+    ? [baseURL]
+    : [baseURL, `http://localhost:${process.env.COS_TOOL_BOT_DEV_PANEL_PORT ?? 43101}`];
 }
 
 const ac = createAccessControl({

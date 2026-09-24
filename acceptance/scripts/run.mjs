@@ -4,7 +4,7 @@
 //
 // Environment isolation (project-specific part):
 //   - dedicated PostgreSQL database `cos_tool_bot_acceptance` in an independent Compose project
-//   - server on http://localhost:3100 with throwaway credentials
+//   - server on http://localhost:43110 with throwaway credentials
 //   - panel production build served by the server from .acceptance/app/public
 //   - no BOT_TOKEN: no Telegram connections are made
 //
@@ -30,7 +30,7 @@ const skipBuild = args.includes("--skip-build");
 const playwrightArgs = args.filter((a) => a !== "--skip-build");
 
 // --- Constants ------------------------------------------------------------------
-const ACCEPTANCE_PORT = 3100;
+const ACCEPTANCE_PORT = 43110;
 const BASE_URL = `http://localhost:${ACCEPTANCE_PORT}`;
 const DB_NAME = "cos_tool_bot_acceptance";
 const DB_PORT = Number(process.env.ACCEPTANCE_DB_PORT || 55434);
@@ -70,8 +70,6 @@ async function waitFor(url, timeoutMs, label) {
   throw new Error(`Timed out waiting for ${label} at ${url}: ${lastError}`);
 }
 
-// The acceptance port is dedicated to this harness; a stale listener is always a
-// leftover server from a previous run.
 function ensurePortFree() {
   const result = spawnSync("lsof", ["-nP", `-iTCP:${ACCEPTANCE_PORT}`, "-sTCP:LISTEN", "-t"], {
     encoding: "utf8",
@@ -80,13 +78,8 @@ function ensurePortFree() {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-  for (const pid of pids) {
-    console.log(`[acceptance] killing leftover listener on :${ACCEPTANCE_PORT} (pid ${pid})`);
-    try {
-      process.kill(Number(pid), "SIGTERM");
-    } catch {
-      // already gone
-    }
+  if (pids.length) {
+    throw new Error(`Acceptance port ${ACCEPTANCE_PORT} is occupied by PID ${pids.join(", ")}`);
   }
 }
 

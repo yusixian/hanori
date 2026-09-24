@@ -6,11 +6,11 @@
 
 ```text
 Telegram 用户
-  ├─ Bot API 长轮询 ───────────────> server :3000 ──> PostgreSQL :5433
+  ├─ Bot API 长轮询 ───────────────> server :43100 ──> PostgreSQL :43105
   └─ Telegram WebView
        └─ https://tg-test.example.invalid
-            ├─ /api/* ────────────> server :3000
-            └─ 其他路径/静态资源 ──> Vite :5174
+            ├─ /api/* ────────────> server :43100
+            └─ 其他路径/静态资源 ──> Vite :43103
 ```
 
 Cloudflare Tunnel 只负责 HTTPS 网页和 API。Telegram Bot 收消息使用 Bot API 长轮询，不经过 Tunnel；因此“网页打不开”和“Bot 完全不回复”要分开排查。
@@ -22,9 +22,9 @@ Cloudflare Tunnel 只负责 HTTPS 网页和 API。Telegram Bot 收消息使用 B
 | HTTPS origin            | `https://tg-test.example.invalid`                         |
 | 测试 Bot                | `@example_channel_bot`（示例测试 Bot）                  |
 | 应用内 Bot ID           | `00000000-0000-4000-8000-000000000017`               |
-| API                     | `http://127.0.0.1:3000`                              |
-| Vite                    | `http://127.0.0.1:5174`                              |
-| PostgreSQL              | `localhost:5433/cos_tool_bot`                        |
+| API                     | `http://127.0.0.1:43100`                              |
+| Vite                    | `http://127.0.0.1:43103`                              |
+| PostgreSQL              | `localhost:43105/cos_tool_bot`                        |
 | Cloudflare named tunnel | `example-tunnel` / `00000000-0000-4000-8000-000000000029` |
 
 不要把 Bot Token、Cloudflare credential JSON、`MINI_APP_SESSION_SECRET` 或后台密码写入本文或提交到 Git。
@@ -67,13 +67,14 @@ ingress:
     service: http://localhost:3000
   - hostname: tg-test.example.invalid
     path: ^/api/.*
-    service: http://localhost:3000
+    service: http://localhost:43100
   - hostname: tg-test.example.invalid
-    service: http://localhost:5174
+    service: http://localhost:43103
   - service: http_status:404
 ```
 
 credential 文件必须只留在 `~/.cloudflared`，不要复制进仓库。
+更改本地端口后，也要同步现有 tunnel 配置中 `tg-test.example.invalid` 的两条 `service`；保留 `example-tunnel.example.invalid` 自己的端口。
 
 ## 推荐：一键启停
 
@@ -83,7 +84,7 @@ credential 文件必须只留在 `~/.cloudflared`，不要复制进仓库。
 pnpm dev:mini-app
 ```
 
-该命令会依次启动 dev Compose、等待 PostgreSQL、运行 migration，再统一启动 Server、Vite `:5174` 与指定 Cloudflare Tunnel。脚本优先读取 `~/.cloudflared/cos-tool-bot-tg-test.yml`，当前者不存在时兼容本次已跑通的 `/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml`；默认使用 `https://tg-test.example.invalid`，并为本次进程自动生成临时 `MINI_APP_SESSION_SECRET`。日志保留在当前终端；按 `Ctrl-C` 会停止全部进程和 dev Compose，但保留数据库 volume。
+该命令会依次启动 dev Compose、等待 PostgreSQL、运行 migration，再统一启动 Server、Vite `:43103` 与指定 Cloudflare Tunnel。脚本优先读取 `~/.cloudflared/cos-tool-bot-tg-test.yml`，当前者不存在时兼容本次已跑通的 `/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml`；默认使用 `https://tg-test.example.invalid`，并为本次进程自动生成临时 `MINI_APP_SESSION_SECRET`。日志保留在当前终端；按 `Ctrl-C` 会停止全部进程和 dev Compose，但保留数据库 volume。
 
 也可以从另一个终端查看或停止：
 
@@ -99,7 +100,8 @@ pnpm dev:mini-app:stop
 ```bash
 COS_TOOL_BOT_TUNNEL_CONFIG=~/.cloudflared/cos-tool-bot-tg-test.yml \
 COS_TOOL_BOT_MINI_APP_ORIGIN=https://tg-test.example.invalid \
-COS_TOOL_BOT_MINI_APP_PANEL_PORT=5174 \
+COS_TOOL_BOT_MINI_APP_SERVER_PORT=43100 \
+COS_TOOL_BOT_MINI_APP_PANEL_PORT=43103 \
 pnpm dev:mini-app
 ```
 
@@ -115,7 +117,7 @@ pnpm db:migrate
 docker ps --filter name=cos-bot-dev-db-1
 ```
 
-预期数据库容器为 `cos-bot-dev-db-1`，状态包含 `healthy`，宿主机端口为 `5433`。
+预期数据库容器为 `cos-bot-dev-db-1`，状态包含 `healthy`，宿主机端口为 `43105`。
 
 ### 终端 B：Server 与测试 Bot
 
@@ -134,7 +136,7 @@ pnpm --filter @cos-tool-bot/server dev
 
 ```text
 Database connected
-Server running on http://localhost:3000
+Server running on http://localhost:43100
 Starting 1 active bot(s)...
 Bot started
 ```
@@ -145,10 +147,10 @@ Bot started
 
 ```bash
 __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=tg-test.example.invalid \
-pnpm --filter @cos-tool-bot/panel exec vite --port 5174 --strictPort --host 127.0.0.1
+pnpm --filter @cos-tool-bot/panel exec vite --port 43103 --strictPort --host 127.0.0.1
 ```
 
-这里显式使用 `5174`，避免与日常 `pnpm dev` 的默认 `5173` 冲突。Vite 自带 `/api` 到 `localhost:3000` 的本地 proxy；Cloudflare ingress 仍直接把公网 `/api/*` 转给 3000。
+这里显式使用 `43103`，避免与日常 `pnpm dev` 的默认 `43101` 冲突。Vite 自带 `/api` 到 `localhost:43100` 的本地 proxy；Cloudflare ingress 仍直接把公网 `/api/*` 转给 43100。
 
 ### 终端 D：Cloudflare Tunnel
 
@@ -269,8 +271,8 @@ docker compose -p cos-bot-dev -f docker-compose.dev.yml stop
 
 | 现象                             | 优先检查                                                                        |
 | -------------------------------- | ------------------------------------------------------------------------------- |
-| `tg-test` HTML 能打开但页面白屏  | Vite 5174 是否仍在运行；Tunnel 日志是否能连接 5174                              |
-| `/api/health` 为 502/503         | server 3000 是否运行，数据库是否 healthy                                        |
+| `tg-test` HTML 能打开但页面白屏  | Vite 43103 是否仍在运行；Tunnel 日志是否能连接 43103                              |
+| `/api/health` 为 502/503         | server 43100 是否运行，数据库是否 healthy                                        |
 | Mini App session API 为 404      | 该 Bot 的 `miniAppEnabled` 是否真的开启                                         |
 | 直接浏览器打开受保护页显示未认证 | 正常；真实身份必须从 Telegram Web App 按钮进入                                  |
 | Bot 所有消息都没反应             | 与 Tunnel 无关；检查 server、唯一 Token 消费者与长轮询 `allowed_updates`        |

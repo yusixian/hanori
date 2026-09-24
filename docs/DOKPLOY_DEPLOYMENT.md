@@ -184,7 +184,7 @@ CODING_WORKER_SECRET=<随机 secret>
 ```
 
 不要设置 `PORT`、`NSFW_API_PORT` 或数据库外部端口。
-也不要把本地开发值 `NSFW_API_URL=http://localhost:9601` 复制到 Dokploy；生产 Compose 应
+也不要把本地开发值 `NSFW_API_URL=http://localhost:43106` 复制到 Dokploy；生产 Compose 应
 留空并使用默认的容器内地址 `http://nsfw-api:3000`。
 
 `POSTGRES_IMAGE` 和 `NSFW_API_IMAGE` 默认使用仓库 `.env.example` 中的值。首次迁移可保持默认；稳定后应把经验证的镜像 digest 写入 Dokploy Environment，从而避免可变 tag 漂移。

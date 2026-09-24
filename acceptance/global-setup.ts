@@ -6,7 +6,7 @@ import { join } from "node:path";
 // stores the session cookie so authenticated specs can reuse it via storageState.
 export default async function globalSetup() {
   const runDir = process.env.ACCEPTANCE_RUN_DIR ?? ".acceptance/runs/local";
-  const baseURL = process.env.ACCEPTANCE_BASE_URL ?? "http://localhost:3100";
+  const baseURL = process.env.ACCEPTANCE_BASE_URL ?? "http://localhost:43110";
   const email = process.env.ACCEPTANCE_OWNER_EMAIL ?? "owner@acceptance.test";
   const password = process.env.ACCEPTANCE_OWNER_PASSWORD ?? "acceptance-password-123";
 
