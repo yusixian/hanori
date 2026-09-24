@@ -57,32 +57,29 @@
 
 ## 4.1 实现状态
 
-| 部分                                                       | 状态                                                                                                                   |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| release-kit v0.1（R1–R6）及跟进（续跑、PR 号补齐、oxlint） | 已实现；构建、类型检查、lint、69 个测试与冒烟测试通过；未提交、未发布                                                  |
-| H1 配置与话题                                              | 已合并（PR #110，19c5ff2）并部署；2026-09-25 在生产端到端验证：`/status`、自动建话题                                   |
-| H2 PR 卡片与合并                                           | 已合并并部署；2026-09-25 在生产端到端验证：沙盒 PR #1 出卡片，查看详情后经卡片合并                                     |
-| H3 Lody 执行与小 bug（3.1–3.6）                            | 已合并，单测通过；待 lody-bridge 上线后端到端验证（alpine 镜像无法运行 Lody）；3.7（koyori 接入）随后进行              |
-| lody-bridge sidecar                                        | 已实现（`harness` profile、白名单、Bearer 密钥）；本地 Docker 无 token 冒烟通过；待配置 token 后在生产验证             |
-| 独立审查（安全与正确性）                                   | 已完成：无 critical/high；3 个 medium 与 4 个 low 已修复并补测试；「按 bot 名称绑定」保留，`/status` 显示绑定的 bot id |
-| 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                      |
+| 部分                                                       | 状态                                                                                                                                                    |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| release-kit v0.1（R1–R6）及跟进（续跑、PR 号补齐、oxlint） | 已实现，69 个测试通过；已推送到公开仓库 `example-owner/release-kit`；npm 尚未发布                                                                            |
+| H1 配置与话题                                              | 已合并（PR #110，19c5ff2）并部署；2026-09-25 在生产端到端验证：`/status`、自动建话题                                                                    |
+| H2 PR 卡片与合并                                           | 已合并并部署；2026-09-25 在生产端到端验证：沙盒 PR #1 出卡片，查看详情后经卡片合并；随后「详情」改为在卡片上就地展开，T2 点「合并」时展开详情并要求确认 |
+| H3 Lody 执行与小 bug（3.1–3.6）                            | 已合并；2026-09-25 在生产端到端验证：沙盒 `/bug` 建 issue #2，Lody 会话在 MBP 上产出 PR #3，卡片显示 T2、CI 与额度页脚；3.7（koyori 接入）待进行        |
+| lody-bridge sidecar                                        | 已上线（PR #111，入口脚本权限修复 PR #112）；daemon 登录成功；随后补了 daemon 巡检重启、`/health` 反映 daemon 状态、优先复用保存的登录                  |
+| 独立审查（安全与正确性）                                   | 已完成：无 critical/high；3 个 medium 与 4 个 low 已修复并补测试；「按 bot 名称绑定」保留，`/status` 显示绑定的 bot id                                  |
+| 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                                                       |
 
 全量验证（2026-09-24）：`pnpm typecheck` 通过；`pnpm lint` 0 errors（3 个既有 warning）；`pnpm fmt:check` 通过；`pnpm test` 211 个文件、1827 个用例通过。
 
-H3 端到端验证前还需要：按 [DEV_HARNESS_LODY.md](../DEV_HARNESS_LODY.md) 启用 `harness` profile，设置 `LODY_CLI_TOKEN`、`HARNESS_LODY_BRIDGE_SECRET` 与 `HARNESS_LODY_BRIDGE_URL`。
+H3 验收还差：koyori 接入（`.cos/harness.yml` 属于 T3，需 owner 在 GitHub 合并），之后连续 3 个真实小 bug。
 
 ## 5. 待验证或待准备
 
-| 事项                                                                                               | 负责                         |
-| -------------------------------------------------------------------------------------------------- | ---------------------------- |
-| lody-bridge sidecar 中 `lody daemon` 的登录与资源占用（alpine 不可用，改用 bookworm-slim sidecar） | 配置 token 后在生产验证      |
-| Dokploy `rollbackId` 从哪个接口获取；私有 registry 回滚问题（issue #3861）                         | H6 实现时验证                |
-| GitHub App 补充 Actions 写权限与 webhook secret                                                    | H2 前由 owner 在 GitHub 设置 |
-| 新建工作 Bot、话题群，并把 Bot 设为管理员（`can_manage_topics`）                                   | owner                        |
-| koyori stable 前置项：Developer ID 公证、品牌素材授权、Electron 许可文件打包                       | H5 前                        |
-| example-gallery 的 GitHub 远端 owner、名称与可见性                                                  | H6 前                        |
-| npm Trusted Publishing 当前配置方式                                                                | release-kit 首次发布前       |
-| `raceLimits` 字段名是否稳定（疑似拼写），升级 Lody 后复核                                          | H3 实现时                    |
+| 事项                                                                         | 负责                           |
+| ---------------------------------------------------------------------------- | ------------------------------ |
+| Dokploy `rollbackId` 从哪个接口获取；私有 registry 回滚问题（issue #3861）   | H6 实现时验证                  |
+| koyori stable 前置项：Developer ID 公证、品牌素材授权、Electron 许可文件打包 | H5 前                          |
+| example-gallery 的 GitHub 远端 owner、名称与可见性                            | H6 前                          |
+| release-kit 首次发布与 npm Trusted Publishing 配置                           | owner 登录，release-kit 发布前 |
+| `raceLimits` 字段名是否稳定（疑似拼写），升级 Lody 后复核                    | H3 实现时                      |
 
 ## 6. 分阶段
 
@@ -100,12 +97,10 @@ release-kit v0.1 可以与 H1–H2 并行开发。
 
 ## 7. 相关文件
 
-| 文件             | 位置                                                                                                                                                         | 状态             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------- |
-| 架构与流程       | 本仓库 `docs/design/dev-harness.md`                                                                                                                          | 草案，未提交     |
-| 配置参考         | 本仓库 `docs/design/dev-harness-config.md`                                                                                                                   | 草案，未提交     |
-| 讨论进度         | 本文                                                                                                                                                         | 未提交           |
-| release-kit 设计 | `~/Documents/Programming/me/release-kit/docs/design.md`                                                                                                      | 本地仓库，未提交 |
-| 前期调研         | `~/Documents/Programming/agent-workbench/tasks/ai-autonomous-delivery-research/`（`report.md`、`release-and-tg-control.md`、`flows.md`、`topic-harness.md`） | 不纳入 git       |
-
-本仓库的这些文档与实现都在 worktree `.claude/worktrees/docs-dev-harness-design`（分支 `feat/dev-harness`，基于 `origin/main` 1713264）中；提交时间由 owner 决定。
+| 文件             | 位置                                                                                                                                                         | 状态       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| 架构与流程       | 本仓库 `docs/design/dev-harness.md`                                                                                                                          | 已合并     |
+| 配置参考         | 本仓库 `docs/design/dev-harness-config.md`                                                                                                                   | 已合并     |
+| 讨论进度         | 本文                                                                                                                                                         | 已合并     |
+| release-kit 设计 | `example-owner/release-kit` 仓库 `docs/design.md`                                                                                                                 | 已推送     |
+| 前期调研         | `~/Documents/Programming/agent-workbench/tasks/ai-autonomous-delivery-research/`（`report.md`、`release-and-tg-control.md`、`flows.md`、`topic-harness.md`） | 不纳入 git |

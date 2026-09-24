@@ -12,7 +12,6 @@ export type PrCardStatus =
   | "ci_failed"
   | "ci_pending"
   | "t3"
-  | "needs_details"
   | "ready";
 
 export interface PrCardInput {
@@ -29,12 +28,18 @@ export interface PrCardInput {
   checks: CheckSummary;
   contract: ContractResult;
   approvalId: string | null;
-  detailsViewed: boolean;
   confirmingMerge?: boolean;
+  /** Expands the card in place with the file list and delivery contract. */
+  details?: PrDetails | null;
   imageUrl: string | null;
   note?: string;
   /** Context and quota line from the linked Lody session (dev-harness.md §5.3). */
   footer?: string | null;
+}
+
+export interface PrDetails {
+  files: ReadonlyArray<{ path: string; tier: RiskTier; rule: string }>;
+  maxFiles?: number;
 }
 
 export interface RenderedCard {
@@ -45,7 +50,7 @@ export interface RenderedCard {
 }
 
 export function determinePrStatus(
-  input: Pick<PrCardInput, "state" | "merged" | "draft" | "tier" | "checks" | "detailsViewed">,
+  input: Pick<PrCardInput, "state" | "merged" | "draft" | "tier" | "checks">,
 ): PrCardStatus {
   if (input.merged) return "merged";
   if (input.state === "closed") return "closed";
@@ -53,7 +58,6 @@ export function determinePrStatus(
   if (input.checks.state === "failure") return "ci_failed";
   if (input.checks.state === "pending") return "ci_pending";
   if (input.tier === "T3") return "t3";
-  if (input.tier === "T2" && !input.detailsViewed) return "needs_details";
   return "ready";
 }
 
@@ -64,7 +68,6 @@ const HEADLINES: Record<PrCardStatus, string> = {
   ci_failed: "🔴 CI 失败",
   ci_pending: "🟡 等待 CI",
   t3: "🔒 需在 GitHub 合并",
-  needs_details: "🟠 查看详情后可合并",
   ready: "🟢 可以合并",
 };
 
@@ -105,6 +108,7 @@ export function renderPrCard(input: PrCardInput): RenderedCard {
     lines.push(`⚠️ ${escapeHtml(clip(input.contract.flags.join("；"), 160))}`);
   }
   if (status === "t3") lines.push("风险等级 T3：只通知，请在 GitHub 网页上合并");
+  if (input.details) lines.push(...detailLines(input, input.details));
   if (input.note) lines.push(escapeHtml(clip(input.note, 200)));
   if (input.footer) lines.push(escapeHtml(input.footer));
   lines.push(
@@ -133,17 +137,14 @@ function renderKeyboard(input: PrCardInput, status: PrCardStatus): HarnessKeyboa
       ],
     ];
   }
-  const details = { text: "🔍 详情", callbackData: encodeCallback(approvalId, "details") };
+  const merge = { text: "✅ 合并", callbackData: encodeCallback(approvalId, "merge") };
   const refresh = { text: "🔄 刷新", callbackData: encodeCallback(approvalId, "refresh") };
-  if (status === "ready") {
-    return [
-      [{ text: "✅ 合并", callbackData: encodeCallback(approvalId, "merge") }, details, prLink],
-      [refresh],
-    ];
+  if (input.details) {
+    const collapse = { text: "🔼 收起", callbackData: encodeCallback(approvalId, "collapse") };
+    return status === "ready" ? [[merge, collapse, prLink]] : [[collapse, refresh, prLink]];
   }
-  if (status === "needs_details") {
-    return [[{ ...details, text: "🔍 详情（查看后可合并）" }, prLink], [refresh]];
-  }
+  const details = { text: "🔍 详情", callbackData: encodeCallback(approvalId, "details") };
+  if (status === "ready") return [[merge, details, prLink], [refresh]];
   return [[details, refresh, prLink]];
 }
 
@@ -151,30 +152,25 @@ export function cardHash(card: RenderedCard): string {
   return contentHash(card);
 }
 
-export function renderPrDetails(input: {
-  number: number;
-  tier: RiskTier;
-  files: ReadonlyArray<{ path: string; tier: RiskTier; rule: string }>;
-  checks: CheckSummary;
-  contract: ContractResult;
-}): string {
-  const lines = [`<b>PR #${input.number} 详情 · ${input.tier}</b>`];
-  lines.push(`<b>文件（${input.files.length}）</b>`);
-  const shown = [...input.files].sort((a, b) => b.tier.localeCompare(a.tier)).slice(0, 25);
+function detailLines(input: PrCardInput, details: PrDetails): string[] {
+  const lines = [`<b>文件（${details.files.length}）</b>`];
+  const shown = [...details.files]
+    .sort((a, b) => b.tier.localeCompare(a.tier))
+    .slice(0, details.maxFiles ?? 25);
   for (const file of shown) {
     const rule = file.rule === "fixed" ? "固定 T3" : file.rule === "default" ? "默认" : "规则";
     lines.push(`${file.tier} <code>${escapeHtml(clip(file.path, 90))}</code>（${rule}）`);
   }
-  if (input.files.length > shown.length)
-    lines.push(`…另有 ${input.files.length - shown.length} 个文件`);
-  lines.push("<b>交付合同</b>");
-  for (const item of input.contract.items) {
-    lines.push(`${item.ok ? "✅" : item.blocking ? "❌" : "⚠️"} ${escapeHtml(item.label)}`);
+  if (details.files.length > shown.length)
+    lines.push(`…另有 ${details.files.length - shown.length} 个文件`);
+  if (input.contract.items.length > 0) {
+    lines.push("<b>交付合同</b>");
+    for (const item of input.contract.items) {
+      lines.push(`${item.ok ? "✅" : item.blocking ? "❌" : "⚠️"} ${escapeHtml(item.label)}`);
+    }
   }
-  for (const flag of input.contract.flags) lines.push(`⚠️ ${escapeHtml(flag)}`);
-  lines.push(checksLine(input.checks));
   if (input.checks.missingRequired.length > 0) {
     lines.push(`未上报的必需检查：${escapeHtml(input.checks.missingRequired.join("、"))}`);
   }
-  return lines.join("\n");
+  return lines;
 }

@@ -13,6 +13,7 @@ const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_TIMEOUT_MS = 180_000;
 const MIN_SECRET_LENGTH = 32;
 const KILL_GRACE_MS = 2_000;
+const DEFAULT_WATCH_MS = 60_000;
 
 function digest(value) {
   return createHash("sha256").update(value).digest();
@@ -100,12 +101,69 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
   });
 }
 
+/** Exit code only; stdio is ignored so a detached daemon cannot hold a pipe open. */
+function runQuiet(command, args, timeoutMs) {
+  return new Promise((resolve) => {
+    const [file, ...prefix] = command;
+    const child = spawn(file, [...prefix, ...args], {
+      stdio: "ignore",
+      env: { ...process.env, LODY_CLI_TOKEN: undefined, HARNESS_LODY_BRIDGE_SECRET: undefined },
+    });
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.on("error", () => resolve(null));
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
+
+/**
+ * Restarts the daemon when `lody daemon status` says it is gone. `daemon start` reuses the login
+ * saved in ~/.lody, so the watchdog never needs the CLI token. Logs only state transitions.
+ */
+export function watchDaemon({ command, machineName, intervalMs = DEFAULT_WATCH_MS, log }) {
+  const state = { daemon: "unknown" };
+  let busy = false;
+  const set = (next, line) => {
+    if (state.daemon !== next) log(line);
+    state.daemon = next;
+  };
+  const tick = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      if ((await runQuiet(command, ["daemon", "status"], 20_000)) === 0) {
+        set("running", "lody-bridge: daemon running");
+        return;
+      }
+      const started = await runQuiet(
+        command,
+        ["daemon", "start", "--machine-name", machineName],
+        120_000,
+      );
+      if (started === 0) {
+        log("lody-bridge: daemon was down and has been restarted");
+        state.daemon = "running";
+      } else {
+        set("down", "lody-bridge: daemon is down and restart failed; retrying");
+      }
+    } finally {
+      busy = false;
+    }
+  };
+  const timer = intervalMs > 0 ? setInterval(tick, intervalMs) : null;
+  timer?.unref();
+  return { state, tick, stop: () => timer && clearInterval(timer) };
+}
+
 export function createBridgeServer(options) {
   const {
     secret,
     command = ["lody"],
     maxTimeoutMs = DEFAULT_MAX_TIMEOUT_MS,
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
+    daemon = null,
     log = (line) => process.stdout.write(`${line}\n`),
   } = options;
   if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH) {
@@ -120,7 +178,9 @@ export function createBridgeServer(options) {
         timeoutMs: 10_000,
         maxOutputBytes: 4096,
       }).then((result) => (result.exitCode === 0 ? result.stdout.trim().slice(0, 40) : null));
-      send(res, 200, { ok: true, lody: version });
+      const state = daemon?.daemon;
+      if (state === "down") send(res, 503, { ok: false, lody: version, daemon: state });
+      else send(res, 200, { ok: true, lody: version, ...(state ? { daemon: state } : {}) });
       return;
     }
     if (req.method !== "POST" || url.pathname !== "/exec") {
@@ -184,11 +244,20 @@ function commandFromEnv(value) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const port = Number(process.env.LODY_BRIDGE_PORT ?? 43190);
+  const command = commandFromEnv(process.env.LODY_BRIDGE_COMMAND);
+  const watch = watchDaemon({
+    command,
+    machineName: process.env.LODY_MACHINE_NAME || "cos-tool-bot-server",
+    intervalMs: Number(process.env.LODY_DAEMON_WATCH_MS ?? DEFAULT_WATCH_MS),
+    log: (line) => process.stdout.write(`${line}\n`),
+  });
   const server = createBridgeServer({
     secret: process.env.HARNESS_LODY_BRIDGE_SECRET,
-    command: commandFromEnv(process.env.LODY_BRIDGE_COMMAND),
+    command,
+    daemon: watch.state,
   });
   delete process.env.HARNESS_LODY_BRIDGE_SECRET;
+  void watch.tick();
   server.listen(port, "0.0.0.0", () => process.stdout.write(`lody-bridge: listening on ${port}\n`));
   const stop = () => server.close(() => process.exit(0));
   process.once("SIGTERM", stop);

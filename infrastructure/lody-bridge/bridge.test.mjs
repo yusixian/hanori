@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkArgs } from "./allowlist.mjs";
-import { authorized, createBridgeServer } from "./server.mjs";
+import { authorized, createBridgeServer, watchDaemon } from "./server.mjs";
 
 const SECRET = "s".repeat(40);
 const FAKE = fileURLToPath(new URL("./test/fake-lody.mjs", import.meta.url));
@@ -10,6 +13,7 @@ const servers = [];
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => new Promise((r) => server.close(r))));
   delete process.env.FAKE_LODY_MODE;
+  delete process.env.FAKE_LODY_DAEMON_FILE;
 });
 
 async function start(options = {}) {
@@ -107,6 +111,46 @@ describe("bridge server", () => {
     const { port } = await start();
     const res = await fetch(`http://127.0.0.1:${port}/health`);
     expect(await res.json()).toEqual({ ok: true, lody: "0.100.0" });
+  });
+
+  it("restarts a stopped daemon with the saved login and reports it in health", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lody-bridge-"));
+    process.env.FAKE_LODY_DAEMON_FILE = join(dir, "daemon");
+    process.env.LODY_CLI_TOKEN = "tok-should-not-leak";
+    try {
+      const logs = [];
+      const watch = watchDaemon({
+        command: [process.execPath, FAKE],
+        machineName: "srv",
+        intervalMs: 0,
+        log: (line) => logs.push(line),
+      });
+      const { port } = await start({ daemon: watch.state });
+      await watch.tick();
+      expect(readFileSync(process.env.FAKE_LODY_DAEMON_FILE, "utf8")).toBe(
+        "daemon start --machine-name srv",
+      );
+      expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toEqual({
+        ok: true,
+        lody: "0.100.0",
+        daemon: "running",
+      });
+
+      rmSync(process.env.FAKE_LODY_DAEMON_FILE);
+      process.env.FAKE_LODY_MODE = "fail";
+      await watch.tick();
+      await watch.tick();
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ ok: false, daemon: "down" });
+      expect(logs).toEqual([
+        "lody-bridge: daemon was down and has been restarted",
+        "lody-bridge: daemon is down and restart failed; retrying",
+      ]);
+    } finally {
+      delete process.env.LODY_CLI_TOKEN;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects bad auth and disallowed commands before spawning", async () => {

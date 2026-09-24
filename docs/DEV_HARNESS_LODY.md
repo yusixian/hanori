@@ -13,17 +13,20 @@ app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim�
 - prompt 只能通过 stdin（`--prompt-file -`）传入，最大 256 KiB。每条命令有超时（最长 180 秒）和 8 MiB 输出上限，超出时强制终止，harness 按「结果未知」处理，不会自动重试 `session create`。
 - 认证使用 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），用固定长度摘要做常量时间比较。bridge 日志只记录子命令、退出状态和耗时，不记录参数值、prompt、token 或 stdout。
 - 子进程的环境变量中去掉了 `LODY_CLI_TOKEN` 和 bridge 密钥；bridge 进程启动前入口脚本也会 `unset LODY_CLI_TOKEN`。
+- Lody CLI 只接受 `--auth <token>` 形式的参数。入口脚本先用 `lodyhome` 卷里保存的登录启动 daemon，失败时才带 token 重试，所以 token 只在首次启动或更换后短暂出现在容器内的进程参数里。
+- bridge 每 `LODY_DAEMON_WATCH_MS` 执行一次 `lody daemon status`，daemon 不在时用保存的登录重新启动。重启失败时 `/health` 返回 503，容器显示 unhealthy。
 - 容器以非 root 的 `node` 用户运行，`cap_drop: ALL`、`no-new-privileges`，不发布主机端口；`~/.lody` 保存在命名卷 `lodyhome` 中。
 
 ## 配置
 
-| 变量                         | 设置在      | 说明                                                           |
-| ---------------------------- | ----------- | -------------------------------------------------------------- |
-| `LODY_CLI_TOKEN`             | lody-bridge | Lody CLI Token，入口脚本用它执行 `lody daemon start --auth`    |
-| `HARNESS_LODY_BRIDGE_SECRET` | 两个服务    | 共享 Bearer 密钥，至少 32 个字符，两边必须相同                 |
-| `HARNESS_LODY_BRIDGE_URL`    | app         | `http://lody-bridge:43190`；留空时 harness 使用本地 `lody` CLI |
-| `LODY_MACHINE_NAME`          | lody-bridge | 可选，注册到 Lody 的机器名，默认 `cos-tool-bot-server`         |
-| `LODY_VERSION`               | 构建参数    | 可选，默认 `0.100.0`；升级前需复核白名单与 `--help`            |
+| 变量                         | 设置在      | 说明                                                                        |
+| ---------------------------- | ----------- | --------------------------------------------------------------------------- |
+| `LODY_CLI_TOKEN`             | lody-bridge | Lody CLI Token；没有保存的登录时入口脚本用它执行 `lody daemon start --auth` |
+| `HARNESS_LODY_BRIDGE_SECRET` | 两个服务    | 共享 Bearer 密钥，至少 32 个字符，两边必须相同                              |
+| `HARNESS_LODY_BRIDGE_URL`    | app         | `http://lody-bridge:43190`；留空时 harness 使用本地 `lody` CLI              |
+| `LODY_MACHINE_NAME`          | lody-bridge | 可选，注册到 Lody 的机器名，默认 `cos-tool-bot-server`                      |
+| `LODY_DAEMON_WATCH_MS`       | lody-bridge | 可选，daemon 巡检间隔，默认 `60000`；`0` 关闭自动重启                       |
+| `LODY_VERSION`               | 构建参数    | 可选，默认 `0.100.0`；升级前需复核白名单与 `--help`                         |
 
 harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的环境变量名；这两个字段只能通过 YAML 修改，Telegram 覆盖层不能改。
 
@@ -40,7 +43,7 @@ harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的
    ```
 4. 重新部署。`lody-bridge` 会随 `harness` profile 一起构建和启动。
 5. 验证：
-   - `lody-bridge` 容器健康检查为 healthy，日志中有 `lody-bridge: daemon started`；
+   - `lody-bridge` 容器健康检查为 healthy，日志中有 `lody-bridge: daemon started`（重启后为 `daemon started with the saved login`）；
    - 在 Lody 桌面端的机器列表中能看到 `cos-tool-bot-server`（不要把它加入 harness.yaml 的 `machines`，harness 不会往它派任务）；
    - 在 harness 群 General 话题中发 `/status`，执行层一行显示在线机器，并注明「经lody-bridge」。
 6. 在项目话题中发一条 `/bug` 做端到端验证。
@@ -49,7 +52,7 @@ harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的
 
 - `/status` 显示「无法连接 lody-bridge」：检查 `HARNESS_LODY_BRIDGE_URL` 与 `harness` profile 是否启用。
 - 显示「lody-bridge 拒绝了认证」：两个服务的 `HARNESS_LODY_BRIDGE_SECRET` 不一致。
-- 显示 `Not logged in`：daemon 没有启动或 token 失效。可在容器中执行 `lody daemon status` 和 `lody daemon logs`；更换 token 后重新部署。
+- 显示 `Not logged in`，或日志出现 `daemon is down and restart failed`：保存的登录或 token 已失效。可在容器中执行 `lody daemon status` 和 `lody daemon logs`；更换 token 后重新部署。
 - 升级 `LODY_VERSION` 后，重新核对 `lody session create --help` 等输出与白名单是否一致。
 
 ## 本地验证记录（2026-09-25）
