@@ -6,7 +6,12 @@ import type {
 } from "@cos-tool-bot/bot";
 import { validateHarnessConfig } from "./config/loader.js";
 import type { CheckRunInput, CommitStatusInput } from "./contract.js";
-import type { HarnessGitHub, PullRequestInfo } from "./github.js";
+import type {
+  AccessibleRepository,
+  DirectoryEntry,
+  HarnessGitHub,
+  PullRequestInfo,
+} from "./github.js";
 import { readFileSync } from "node:fs";
 import {
   type CreateSessionInput,
@@ -83,7 +88,14 @@ export class FakeTelegram implements HarnessTelegram {
 }
 
 export class FakeGitHub implements HarnessGitHub {
-  readonly available = true;
+  available = true;
+  installUrl: string | null = "https://github.com/apps/cos-harness/installations/new";
+  repos: AccessibleRepository[] = [
+    { fullName: TEST_REPO, private: true, defaultBranch: "main", installationId: 1 },
+  ];
+  /** Other default-branch files by path; `.cos/harness.yml` comes from `policyText`. */
+  repoFiles: Record<string, string> = {};
+  readonly fileReads: string[] = [];
   pr: PullRequestInfo = {
     number: 7,
     title: "fix(settings): show saving state",
@@ -110,12 +122,29 @@ export class FakeGitHub implements HarnessGitHub {
 
   rememberInstallation() {}
 
+  async listAccessibleRepositories() {
+    return this.repos.map((repo) => ({ ...repo }));
+  }
+
   async getDefaultBranch() {
     return { branch: "main", sha: "b".repeat(40) };
   }
 
-  async getFile() {
-    return this.policyText;
+  async getFile(_repo: string, path: string) {
+    this.fileReads.push(path);
+    return path === ".cos/harness.yml" ? this.policyText : (this.repoFiles[path] ?? null);
+  }
+
+  async listDirectory(_repo: string, path: string): Promise<DirectoryEntry[] | null> {
+    const prefix = path ? `${path}/` : "";
+    const names = new Map<string, DirectoryEntry["type"]>();
+    for (const file of Object.keys(this.repoFiles)) {
+      if (!file.startsWith(prefix)) continue;
+      const [head, ...rest] = file.slice(prefix.length).split("/");
+      names.set(head!, rest.length > 0 ? "dir" : "file");
+    }
+    if (names.size === 0 && path) return null;
+    return [...names].map(([name, type]) => ({ name, type }));
   }
 
   async getPullRequest() {
@@ -175,6 +204,7 @@ export async function createTestService(
     /** Use the real LodyCli construction (local CLI or bridge) instead of a fake. */
     realLody?: boolean;
     summarizer?: PrSummarizer;
+    panelUrl?: string;
   } = {},
 ) {
   const store = options.store ?? new MemoryHarnessStore();
@@ -192,17 +222,9 @@ export async function createTestService(
     summarizer: options.summarizer ?? (async ({ title }) => `摘要：${title}`),
     env: options.env ?? { HARNESS_GITHUB_WEBHOOK_SECRET: "s3cret" },
     now,
+    panelUrl: options.panelUrl,
     loadConfig: async (sourcePath) => validateHarnessConfig({ raw, sourcePath, now: now() }),
-    createLody: options.realLody
-      ? undefined
-      : () =>
-          (options.lody ?? {
-            listMachines: async () => ({
-              ok: false,
-              reason: "unavailable",
-              message: "未找到 lody CLI（lody）",
-            }),
-          }) as unknown as LodyCli,
+    createLody: options.realLody ? undefined : () => withAgentList(options.lody),
   });
   await service.init();
   const port = service.claimBot({ id: "bot-1", name: "example-dev" })!;
@@ -220,6 +242,26 @@ export async function createTestService(
     },
   };
 }
+
+const LODY_UNAVAILABLE = {
+  ok: false as const,
+  reason: "unavailable" as const,
+  message: "未找到 lody CLI（lody）",
+};
+
+/** Partial fakes predate `listAgentConfigs`; they get an unavailable one. */
+function withAgentList(lody: Partial<LodyCli> | undefined): LodyCli {
+  const cli = (lody ?? { listMachines: async () => LODY_UNAVAILABLE }) as LodyCli;
+  if (!("listAgentConfigs" in cli)) {
+    Object.assign(cli, { listAgentConfigs: async () => LODY_UNAVAILABLE });
+  }
+  return cli;
+}
+
+export const TEST_AGENT_CONFIGS = [
+  { id: "cfg-codex", name: "Codex", agentType: "codex", machineId: null },
+  { id: "cfg-claude", name: "Claude Code", agentType: "claude", machineId: null },
+];
 
 const MACHINE_FIXTURE = readFileSync(
   new URL("./__fixtures__/lody-machine-list.txt", import.meta.url),
@@ -243,6 +285,12 @@ export class FakeLody {
 
   async listMachines() {
     return { ok: true as const, value: parseMachineList(extractJson(MACHINE_FIXTURE), this.now()) };
+  }
+
+  agentConfigs = TEST_AGENT_CONFIGS;
+
+  async listAgentConfigs() {
+    return { ok: true as const, value: this.agentConfigs };
   }
 
   async createSession(input: CreateSessionInput) {

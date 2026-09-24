@@ -19,7 +19,14 @@ export const miniApp = {
     media: "媒体",
     integrations: "集成",
   },
-  nav: { groups: "群组", settings: "设置", access: "权限", logs: "日志", help: "帮助" },
+  nav: {
+    groups: "群组",
+    settings: "设置",
+    access: "权限",
+    logs: "日志",
+    harness: "Harness",
+    help: "帮助",
+  },
   session: {
     loading: "正在验证 Telegram 会话…",
     expiredTitle: "会话已过期",

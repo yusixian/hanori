@@ -120,6 +120,26 @@ describe("harness middleware", () => {
     expect(reply.body).toMatchObject({ text: "harness reply", message_thread_id: 77 });
   });
 
+  it("sends the port's keyboard and passes the Bot username", async () => {
+    const port = createPort({
+      handleCommand: vi.fn(async () => ({
+        html: "status",
+        keyboard: [[{ text: "⚙️ 管理项目", url: "https://t.me/harness_bot?startapp=harness" }]],
+      })),
+    });
+    const bot = createHarnessBot(port);
+    await bot.handleUpdate(message(HARNESS_CHAT, "/status", OWNER));
+    expect(port.handleCommand).toHaveBeenCalledWith(
+      expect.objectContaining({ botUsername: "harness_bot" }),
+    );
+    const reply = telegramApi.requests.find((r) => r.method === "sendMessage")!;
+    expect(reply.body?.reply_markup).toEqual({
+      inline_keyboard: [
+        [{ text: "⚙️ 管理项目", url: "https://t.me/harness_bot?startapp=harness" }],
+      ],
+    });
+  });
+
   it("keeps the regular /status outside the harness chat", async () => {
     const port = createPort();
     const bot = createHarnessBot(port);

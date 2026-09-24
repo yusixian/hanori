@@ -7,6 +7,7 @@ import {
   splitPath,
 } from "./layers.js";
 import {
+  DEFAULT_ROLES,
   type HarnessFileConfig,
   PROJECT_KINDS,
   PROJECT_OVERRIDABLE_KEYS,
@@ -89,13 +90,25 @@ function withoutKeys(value: Record<string, unknown>, keys: readonly string[]) {
   return Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
 }
 
+const defaultLayer = (): ConfigLayer => ({ name: "default", data: { roles: DEFAULT_ROLES } });
+
+function panelGlobalLayer(data: Record<string, unknown> | null | undefined): ConfigLayer[] {
+  return data
+    ? [{ name: "panel:global", data, locate: (path) => `面板设置（全局）${path.join(".")}` }]
+    : [];
+}
+
+/** `panelGlobal` is panel-managed data (the lead's execution) above harness.yaml. */
 export function globalLayers(
   raw: Record<string, unknown>,
   overrides: readonly HarnessOverride[],
   now: Date,
+  panelGlobal?: Record<string, unknown> | null,
 ): ConfigLayer[] {
   return [
+    defaultLayer(),
     { name: "yaml", data: raw },
+    ...panelGlobalLayer(panelGlobal),
     overrideLayer("override:global", activeOverrides(overrides, GLOBAL_SCOPE, now)),
   ];
 }
@@ -104,8 +117,9 @@ export function resolveGlobalConfig(
   raw: Record<string, unknown>,
   overrides: readonly HarnessOverride[],
   now: Date,
+  panelGlobal?: Record<string, unknown> | null,
 ): LayeredResult<HarnessFileConfig> & { layers: ConfigLayer[] } {
-  const layers = globalLayers(raw, overrides, now);
+  const layers = globalLayers(raw, overrides, now, panelGlobal);
   return { ...parseLayered(harnessFileSchema, layers), layers };
 }
 
@@ -116,13 +130,26 @@ function resolveKind(candidates: readonly unknown[]): ProjectKind {
   return "web";
 }
 
-export function projectLayers(input: {
+export interface ProjectLayerInput {
   raw: Record<string, unknown>;
   projectKey: string;
+  /** Parsed `.cos/harness.yml`; null when the repo has none. */
   policy: Record<string, unknown> | null;
+  /** Used in place of the repo layer only when `policy` is null. */
+  inferred?: Record<string, unknown> | null;
+  /** Panel-managed projects keep their binding out of harness.yaml. */
+  panel?: {
+    binding: boolean;
+    policyPatch: Record<string, unknown> | null;
+    /** Layer data for this project's lead execution; allowed for YAML projects too. */
+    execution?: Record<string, unknown> | null;
+  } | null;
+  panelGlobal?: Record<string, unknown> | null;
   overrides: readonly HarnessOverride[];
   now: Date;
-}): ConfigLayer[] {
+}
+
+export function projectLayers(input: ProjectLayerInput): ConfigLayer[] {
   const { raw, projectKey, now } = input;
   const projects = isPlainObject(raw.projects) ? raw.projects : {};
   const entry = isPlainObject(projects[projectKey]) ? projects[projectKey] : {};
@@ -140,31 +167,58 @@ export function projectLayers(input: {
     "override:project",
     activeOverrides(input.overrides, projectKey, now),
   );
-  const policy = input.policy ?? {};
+  const panelBinding = input.panel?.binding ?? false;
+  const patch = input.panel?.policyPatch ?? {};
+  const execution = input.panel?.execution ?? {};
+  const inferred = input.policy === null ? (input.inferred ?? null) : null;
+  const basePolicy = inferred ?? input.policy ?? {};
+  const base: ConfigLayer = inferred
+    ? {
+        name: "inferred",
+        data: { policy: inferred },
+        locate: (path) => `按仓库推断 ${path.slice(1).join(".") || "(根)"}`,
+      }
+    : {
+        name: "repo",
+        data: { policy: basePolicy },
+        locate: (path) => `.cos/harness.yml: ${path.slice(1).join(".") || "(根)"}`,
+      };
   const overriddenKind = (projectOverride.data.policy as Record<string, unknown> | undefined)?.kind;
-  const kind = resolveKind([overriddenKind, policy.kind]);
+  const kind = resolveKind([overriddenKind, patch.kind, basePolicy.kind]);
 
-  return [
+  const layers: ConfigLayer[] = [
+    defaultLayer(),
     { name: "kind", data: kindDefaultsLayer(kind) },
     { name: "yaml", data: withoutKeys(raw, ["version", "projects"]) },
     {
       name: "yaml:project",
-      data: { ...projectOverrides, project: { ...binding, key: projectKey } },
+      data: panelBinding
+        ? { project: { key: projectKey } }
+        : { ...projectOverrides, project: { ...binding, key: projectKey } },
       locate: (path) =>
         `projects.${projectKey}.${(path[0] === "project" ? path.slice(1) : path).join(".")}`,
     },
-    {
-      name: "repo",
-      data: { policy },
-      locate: (path) => `.cos/harness.yml: ${path.slice(1).join(".") || "(根)"}`,
-    },
-    globalOverride,
-    projectOverride,
+    base,
+    ...panelGlobalLayer(input.panelGlobal),
   ];
+  if (panelBinding || Object.keys(patch).length > 0 || Object.keys(execution).length > 0) {
+    layers.push({
+      name: "panel",
+      data: {
+        ...execution,
+        ...(panelBinding ? { project: binding } : {}),
+        ...(Object.keys(patch).length > 0 ? { policy: patch } : {}),
+      },
+      locate: (path) =>
+        `面板设置 ${(path[0] === "project" || path[0] === "policy" ? path.slice(1) : path).join(".")}`,
+    });
+  }
+  layers.push(globalOverride, projectOverride);
+  return layers;
 }
 
 export function resolveProjectConfig(
-  input: Parameters<typeof projectLayers>[0],
+  input: ProjectLayerInput,
 ): LayeredResult<ProjectEffectiveConfig> & { layers: ConfigLayer[] } {
   const layers = projectLayers(input);
   return { ...parseLayered(projectEffectiveSchema, layers), layers };

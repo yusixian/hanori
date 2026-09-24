@@ -220,12 +220,58 @@ export function createBridgeServer(options) {
     );
     const started = Date.now();
     const result = await runLody(command, body.args, { stdin, timeoutMs, maxOutputBytes });
+    if (checked.command === "agent-config list" && typeof result.stdout === "string") {
+      result.stdout = redactAgentConfigs(result.stdout);
+    }
     log(
       `lody-bridge: ${checked.command} -> ${
         result.spawnError ?? (result.timedOut ? "timeout" : (result.signal ?? result.exitCode))
       } in ${Date.now() - started}ms`,
     );
     send(res, 200, result);
+  });
+}
+
+const AGENT_CONFIG_FIELDS = ["id", "name", "agentType", "machineId"];
+
+/** The CLI prints transport log lines before the JSON document. */
+function parseJsonOutput(stdout) {
+  const lines = stdout.trim().split(/\r?\n/);
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index].trimStart().startsWith("{")) continue;
+    try {
+      return JSON.parse(lines.slice(index).join("\n"));
+    } catch {
+      // keep scanning
+    }
+  }
+  return null;
+}
+
+/**
+ * `agent-config list` includes each config's `env`, which may hold API keys. Only the fields the
+ * harness reads leave the sidecar; anything unparseable is replaced rather than passed through.
+ */
+export function redactAgentConfigs(stdout) {
+  const json = parseJsonOutput(stdout);
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
+    return JSON.stringify({ ok: false, error: "unreadable agent-config output" });
+  }
+  if (!Array.isArray(json.agentConfigs)) {
+    return JSON.stringify({
+      ok: json.ok === true,
+      error: typeof json.error === "string" ? json.error : undefined,
+    });
+  }
+  return JSON.stringify({
+    ok: json.ok !== false,
+    agentConfigs: json.agentConfigs
+      .filter((config) => config && typeof config === "object")
+      .map((config) =>
+        Object.fromEntries(
+          AGENT_CONFIG_FIELDS.filter((key) => key in config).map((key) => [key, config[key]]),
+        ),
+      ),
   });
 }
 

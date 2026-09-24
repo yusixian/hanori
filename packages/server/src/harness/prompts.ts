@@ -1,3 +1,4 @@
+import { type WorkerExecution, delegateRoles, resolveWorkerExecution } from "./config/execution.js";
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import { FIXED_T3_PATTERNS } from "./risk.js";
 
@@ -16,6 +17,8 @@ export interface PromptInput {
   round?: number;
   /** Repo override for the task layer, read from the default branch. */
   taskTemplate?: string | null;
+  /** The lead session as scheduled; resolved from config when absent. */
+  lead?: WorkerExecution;
 }
 
 const MAX_QUOTED_CHARS = 8_000;
@@ -180,18 +183,24 @@ function roleText(role: { agent?: string; model?: string; effort?: string } | un
   return role.effort ? `${name} (effort ${role.effort})` : name;
 }
 
-function delegationLayer(config: ProjectEffectiveConfig): string {
-  const { roles, guardrails, policy } = config;
+function delegationLayer(config: ProjectEffectiveConfig, input: PromptInput): string {
+  const { guardrails, policy } = config;
   const skills = policy.prompts.preferSkills;
+  const lead = input.lead ?? resolveWorkerExecution(config);
+  const { subworker, reviewer } = delegateRoles(config, lead);
   return [
     "## 4. Delegation guide",
-    `- You are the lead (${roleText(roles.worker)}). Keep the plan and the final decisions yourself.`,
+    `- You are the lead (${roleText({
+      agent: lead.agent,
+      model: lead.model ?? undefined,
+      effort: lead.effort ?? undefined,
+    })}). Keep the plan and the final decisions yourself.`,
     `- Delegate independent, well-bounded subtasks to cheaper sub-sessions through Lody MCP using ${roleText(
-      roles.subworker,
+      subworker,
     )}. At most ${guardrails.concurrency.perMachine} sessions run per machine and ${guardrails.concurrency.perProject} per project.`,
     `- Before marking the pull request ready, get an independent review from ${roleText(
-      roles.reviewer,
-    )}; fix or answer each finding and summarize it in \`## Review\`.`,
+      reviewer,
+    )} (a different vendor from yours); fix or answer each finding and summarize it in \`## Review\`.`,
     `- CI failures on your pull request are sent back to you for up to ${guardrails.autoFixRounds} rounds; after that the owner takes over.`,
     ...(skills.length > 0
       ? [`- Prefer these skills when available: ${list(skills)}.`]
@@ -218,7 +227,7 @@ export function buildPrompt(config: ProjectEffectiveConfig, input: PromptInput):
       contractLayer(config, input),
       projectLayer(config, input),
       taskLayer(config, input),
-      delegationLayer(config),
+      delegationLayer(config, input),
     ].join("\n\n");
   }
   const followUp = followUpLayers(config);

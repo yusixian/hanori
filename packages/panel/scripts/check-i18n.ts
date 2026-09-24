@@ -4,6 +4,7 @@ import { auth as authEn } from "../src/i18n/locales/en/auth";
 import { botData as botDataEn } from "../src/i18n/locales/en/bot-data";
 import { bots as botsEn } from "../src/i18n/locales/en/bots";
 import { common as commonEn } from "../src/i18n/locales/en/common";
+import { harness as harnessEn } from "../src/i18n/locales/en/harness";
 import { miniApp as miniAppEn } from "../src/i18n/locales/en/mini-app";
 import { admin as adminZhCN } from "../src/i18n/locales/zh-CN/admin";
 import { aiSettings as aiSettingsZhCN } from "../src/i18n/locales/zh-CN/ai-settings";
@@ -11,6 +12,7 @@ import { auth as authZhCN } from "../src/i18n/locales/zh-CN/auth";
 import { botData as botDataZhCN } from "../src/i18n/locales/zh-CN/bot-data";
 import { bots as botsZhCN } from "../src/i18n/locales/zh-CN/bots";
 import { common as commonZhCN } from "../src/i18n/locales/zh-CN/common";
+import { harness as harnessZhCN } from "../src/i18n/locales/zh-CN/harness";
 import { miniApp as miniAppZhCN } from "../src/i18n/locales/zh-CN/mini-app";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
@@ -63,6 +65,7 @@ const namespaces: Record<string, { en: ResourceTree; zhCN: ResourceTree }> = {
   botData: { en: botDataEn, zhCN: botDataZhCN },
   aiSettings: { en: aiSettingsEn, zhCN: aiSettingsZhCN },
   miniApp: { en: miniAppEn, zhCN: miniAppZhCN },
+  harness: { en: harnessEn, zhCN: harnessZhCN },
 };
 
 const failures: string[] = [];

@@ -11,6 +11,7 @@ import {
   testConfigRaw,
 } from "./test-fakes.js";
 import { RELAY_MARKER } from "./work.js";
+import { dispatchWebhookEvent } from "./webhook-dispatch.js";
 
 const github = { github: { trustedAuthors: ["cos-mac"] } } as never;
 
@@ -79,7 +80,8 @@ async function runningRequest(extra: Record<string, unknown> = {}) {
   await ctx.service.work.scheduler.tick();
   const request = [...ctx.store.requests.values()][0]!;
   const comment = (body: string, author: Record<string, unknown> = {}) =>
-    ctx.service.work.service["dispatchWebhook"](
+    dispatchWebhookEvent(
+      ctx.service,
       "issue_comment",
       {
         action: "created",
@@ -173,7 +175,8 @@ describe("issue comment protocol", () => {
 describe("issue intake", () => {
   function labeler(ctx: Awaited<ReturnType<typeof runningRequest>>) {
     return (issue: Record<string, unknown>, sender = "example-owner") =>
-      ctx.service["dispatchWebhook"](
+      dispatchWebhookEvent(
+        ctx.service,
         "issues",
         {
           action: "labeled",

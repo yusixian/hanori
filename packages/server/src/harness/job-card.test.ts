@@ -4,6 +4,7 @@ import { formatElapsed, renderJobCard } from "./job-card.js";
 import { resolveProjectConfig } from "./config/resolve.js";
 import { extractJson, parseMachineList } from "./lody.js";
 import { providerForAgent, quotaBlocks, renderFooter, startOfDay } from "./quota.js";
+import { vendorOf } from "./config/execution.js";
 import { readFileSync } from "node:fs";
 import type { HarnessJobRecord } from "./work-store.js";
 
@@ -131,6 +132,20 @@ describe("quota", () => {
   it("maps agent configs to Lody providers", () => {
     expect(providerForAgent("Codex CLI")).toBe("codex");
     expect(providerForAgent("Claude Code")).toBe("claude");
+    const agents = [
+      {
+        id: "3f0c9a4e-0000-4000-8000-000000000001",
+        name: "Work",
+        agentType: "codex",
+        machineId: null,
+      },
+    ];
+    expect(vendorOf("3f0c9a4e-0000-4000-8000-000000000001", null, agents)).toBe("codex");
+    expect(vendorOf("Work", "opus[1m]", agents)).toBe("codex");
+    expect(vendorOf("3f0c9a4e-0000-4000-8000-000000000002", "gpt-6-sol")).toBe("codex");
+    expect(vendorOf("3f0c9a4e-0000-4000-8000-000000000002", "o4-mini")).toBe("codex");
+    expect(vendorOf("some-id", "opus[1m]")).toBe("claude");
+    expect(vendorOf("Kimi K3", null)).toBe("kimi");
   });
 
   it("applies model-specific windows only to that model", () => {
@@ -160,9 +175,37 @@ describe("quota", () => {
     });
     if (!resolved.ok) throw new Error("config");
     const choice = chooseMachine(resolved.value, machines, new Map());
-    expect(choice).toMatchObject({ machineKey: "mbp", provider: "claude", model: "sonnet" });
+    expect(choice).toMatchObject({
+      machineKey: "mbp",
+      provider: "codex",
+      agent: "Codex",
+      model: "gpt-6-sol",
+      effort: "high",
+    });
     expect(chooseMachine(resolved.value, machines, new Map([["mbp", 4]]))).toEqual({
       reason: "Desktop-7700X 不在线",
+    });
+  });
+
+  it("drops an effort the quota fallback model does not offer", () => {
+    const resolved = resolveProjectConfig({
+      raw: {
+        version: 1,
+        telegram: { bot: "b", chatId: -1001, owners: [1] },
+        machines: { mbp: { lody: "MBP-64G" } },
+        roles: { worker: { agent: "Codex", model: "gpt-6-sol", effort: "ultra" } },
+        guardrails: { quota: { pauseAt: { week: "30%" }, fallback: { worker: "gpt-5.5" } } },
+        projects: { koyori: { repo: "a/koyori", machines: ["mbp"] } },
+      },
+      projectKey: "koyori",
+      policy: null,
+      overrides: [],
+      now: NOW,
+    });
+    if (!resolved.ok) throw new Error("config");
+    expect(chooseMachine(resolved.value, machines, new Map())).toMatchObject({
+      model: "gpt-5.5",
+      effort: null,
     });
   });
 });

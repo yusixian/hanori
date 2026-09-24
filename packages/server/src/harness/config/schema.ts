@@ -1,9 +1,10 @@
 import { z } from "zod";
+import { EFFORTS, modelOptionSchema } from "./execution.js";
 import { durationSchema, percentSchema } from "./units.js";
 
 export const RISK_TIERS = ["T0", "T1", "T2", "T3"] as const;
 export type RiskTier = (typeof RISK_TIERS)[number];
-export const PROJECT_KINDS = ["web", "electron", "service", "library"] as const;
+export const PROJECT_KINDS = ["web", "electron", "native", "service", "library"] as const;
 export type ProjectKind = (typeof PROJECT_KINDS)[number];
 
 const tierSchema = z.enum(RISK_TIERS);
@@ -78,7 +79,9 @@ const executorsSchema = z
         cli: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).default("lody"),
         timeout: durationSchema.default("20s"),
         workspace: z.string().min(1).default("auto"),
-        agentConfig: z.string().min(1).default("Claude Code"),
+        agentConfig: z.string().min(1).default("Codex"),
+        /** Replaces the built-in model list of an agent type (e.g. `codex`) in the GUI. */
+        models: z.record(z.string().min(1), z.array(modelOptionSchema).min(1)).default({}),
         worktree: z.boolean().default(true),
         shareLinks: z.boolean().default(true),
         // Values stay in the environment; YAML only names the variables.
@@ -120,15 +123,17 @@ const roleSchema = z.strictObject({
   executor: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
-  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
+  effort: z.enum(EFFORTS).optional(),
 });
 
-const DEFAULT_ROLES = {
+/**
+ * Applied as the lowest layer, so a partial `roles` in YAML or the panel keeps the rest. The
+ * worker's model defaults per vendor, and subworker/reviewer follow the lead (execution.ts).
+ */
+export const DEFAULT_ROLES = {
   triage: { model: "sonnet", effort: "low" },
   planner: { model: "opus", effort: "high" },
-  worker: { model: "sonnet", effort: "medium" },
-  subworker: { model: "haiku", effort: "low" },
-  reviewer: { agent: "codex", effort: "high" },
+  worker: { effort: "high" },
 } as const;
 
 const rolesSchema = z.record(z.string().min(1), roleSchema).default(() => ({ ...DEFAULT_ROLES }));
@@ -242,8 +247,18 @@ export const projectTopicSchema = z
   .union([z.literal("auto"), threadId, existingThread])
   .default("auto");
 
+export const DEFAULT_PREFER_SKILLS = [
+  "oneshot",
+  "frontend-acceptance",
+  "gh-stack",
+  "pr-visual",
+  "review-code-change",
+];
+
+export const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
+
 const projectBindingShape = {
-  repo: z.string().regex(/^[\w.-]+\/[\w.-]+$/, "应为 owner/name"),
+  repo: z.string().regex(REPO_PATTERN, "应为 owner/name"),
   topic: projectTopicSchema,
   machines: z.array(z.string().min(1)).default([]),
   localProject: z.string().min(1).optional(),
@@ -267,7 +282,7 @@ export const harnessFileSchema = z.strictObject({
         .refine((key) => key !== "global", "global 是保留名"),
       projectEntrySchema,
     )
-    .refine((projects) => Object.keys(projects).length > 0, "至少需要一个项目"),
+    .default({}),
 });
 
 export const repoPolicySchema = z.strictObject({
@@ -365,9 +380,7 @@ export const repoPolicySchema = z.strictObject({
             .refine((path) => !path.includes(".."), "模板路径不能包含 .."),
         )
         .default({}),
-      preferSkills: z
-        .array(z.string().min(1))
-        .default(["oneshot", "frontend-acceptance", "gh-stack", "pr-visual", "review-code-change"]),
+      preferSkills: z.array(z.string().min(1)).default(() => [...DEFAULT_PREFER_SKILLS]),
     })
     .prefault({}),
 });
@@ -393,6 +406,7 @@ const KIND_DEFAULTS: Record<
 > = {
   web: { target: "dokploy", onMerge: "production", trigger: "none", idleRemindAfter: "45m" },
   electron: { target: "github-release", onMerge: "none", trigger: "merge", idleRemindAfter: "90m" },
+  native: { target: "github-release", onMerge: "none", trigger: "manual", idleRemindAfter: "90m" },
   service: { target: "dokploy", onMerge: "production", trigger: "none", idleRemindAfter: "45m" },
   library: { target: "none", onMerge: "none", trigger: "manual", idleRemindAfter: "45m" },
 };

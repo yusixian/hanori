@@ -42,6 +42,16 @@ describe("buildPrompt", () => {
     expect(buildPrompt(config(), base)).toMatchSnapshot();
   });
 
+  it("asks a Claude lead for a Codex review and Claude sub-sessions", () => {
+    const prompt = buildPrompt(config(), {
+      ...base,
+      lead: { agent: "Claude Code", model: "opus[1m]", effort: "max", vendor: "claude" },
+    });
+    expect(prompt).toContain("You are the lead (Claude Code / opus[1m] (effort max))");
+    expect(prompt).toContain("using haiku (effort low)");
+    expect(prompt).toContain("review from Codex / gpt-6-sol (effort high)");
+  });
+
   it("assembles a revise follow-up", () => {
     expect(
       buildPrompt(config(), {

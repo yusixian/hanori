@@ -39,6 +39,31 @@ describe("/status", () => {
     expect(reply.html).toContain('<a href="https://t.me/c/1234567890/501">sandbox</a>');
   });
 
+  it("links to the project manager when a panel URL is configured", async () => {
+    const ctx = await createTestService({ panelUrl: "https://bot.example.test/" });
+    for (const reply of [await run(ctx, "status"), await run(ctx, "harness")]) {
+      expect(reply.keyboard).toEqual([
+        [{ text: "⚙️ 管理项目", url: "https://bot.example.test/harness" }],
+      ]);
+    }
+    expect((await run(ctx, "harness", "config")).keyboard).toBeUndefined();
+    expect((await run(await createTestService(), "status")).keyboard).toBeUndefined();
+  });
+
+  it("opens the Bot's main Mini App when it has one", async () => {
+    const ctx = await createTestService({ panelUrl: "https://bot.example.test/" });
+    ctx.service.claimBot({ id: "bot-1", name: "example-dev", miniApp: true });
+    const reply = await ctx.port.handleCommand({
+      command: "status",
+      args: "",
+      chatId: TEST_CHAT_ID,
+      userId: TEST_OWNER,
+      messageId: 1,
+      botUsername: "example_dev_bot",
+    });
+    expect(reply.keyboard?.[0]?.[0]?.url).toBe("https://t.me/example_dev_bot?startapp=harness");
+  });
+
   it("describes the project bound to the topic", async () => {
     const github = new FakeGitHub();
     github.policyText = "version: 1\nkind: electron\n";

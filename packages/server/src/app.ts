@@ -35,6 +35,13 @@ import { botDebugRoutes } from "./routes/bot-debug.js";
 import { engagementSampleRoutes } from "./routes/engagement-samples.js";
 import { botGitHubAppRoutes, githubAppCallbackRoutes } from "./routes/github-app.js";
 import { harnessRoutes, type HarnessWebhookHandler } from "./routes/harness.js";
+import {
+  harnessAdminRoutes,
+  harnessMiniAppRoutes,
+  type HarnessAdminPort,
+} from "./routes/harness-admin.js";
+import { createMiniAppSessionVerifier } from "./routes/mini-app-auth.js";
+import { HarnessAdmin } from "./harness/admin.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ChatSummaryService } from "./services/chat-summary-service.js";
@@ -89,6 +96,8 @@ interface AppOptions {
   engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
   harness?: HarnessWebhookHandler;
+  /** Absent when HARNESS_CONFIG_PATH is unset; the admin API then reports `enabled: false`. */
+  harnessAdmin?: HarnessAdminPort;
 }
 
 export function createApp(options: AppOptions) {
@@ -120,9 +129,12 @@ export function createApp(options: AppOptions) {
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
     harness,
+    harnessAdmin = new HarnessAdmin(null),
   } = options;
   const engagementSampleService =
     providedEngagementSampleService ?? new EngagementSampleService(db);
+  const allowedOrigins = resolveAllowedOrigins(baseURL);
+  const miniAppBotTokenResolver = createMiniAppBotTokenResolver(db, encryptionKey);
 
   const app = new Hono()
     .use("*", honoLogger())
@@ -149,10 +161,21 @@ export function createApp(options: AppOptions) {
     .on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw))
     .route(
       "/api/mini-app",
+      harnessMiniAppRoutes(
+        harnessAdmin,
+        createMiniAppSessionVerifier({
+          sessionSecret: miniAppSessionSecret,
+          allowedOrigins,
+          botTokenResolver: miniAppBotTokenResolver,
+        }),
+      ),
+    )
+    .route(
+      "/api/mini-app",
       miniAppRoutes({
         sessionSecret: miniAppSessionSecret,
-        allowedOrigins: resolveAllowedOrigins(baseURL),
-        botTokenResolver: createMiniAppBotTokenResolver(db, encryptionKey),
+        allowedOrigins,
+        botTokenResolver: miniAppBotTokenResolver,
         directory: telegramDirectoryService,
         membershipVerifier: telegramMembershipVerifier,
         accessService: miniAppAccessService,
@@ -164,6 +187,9 @@ export function createApp(options: AppOptions) {
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
+    .use("/api/harness/admin/*", requireAppAccess(auth, db))
+    .use("/api/harness/admin/*", requireRoles(ownerOnly))
+    .route("/api/harness/admin", harnessAdminRoutes(harnessAdmin))
     .route("/api/harness", harnessRoutes(harness))
     .use("/api/image-mcp/status", requireAppAccess(auth, db))
     .use("/api/image-mcp/status", requireRoles(ownerOrAdmin))

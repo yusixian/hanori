@@ -1,7 +1,12 @@
 import { i18n, getResolvedLocale } from "@/i18n";
-import { TELEGRAM_COMMAND_CATALOG, type MiniAppRole } from "@cos-tool-bot/shared";
+import {
+  TELEGRAM_COMMAND_CATALOG,
+  type HarnessAdminOverview,
+  type MiniAppRole,
+} from "@cos-tool-bot/shared";
 import {
   BookOpenText,
+  FolderGit2,
   Languages,
   ListTree,
   LockKeyhole,
@@ -21,9 +26,11 @@ import {
 } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router";
 import { useTranslation } from "react-i18next";
+import { createMiniAppHarnessAdminApi } from "@/lib/harness-admin-client";
 import { AccessPage } from "./access-page";
 import { BotSettingsPage } from "./bot-settings-panel";
 import { GroupsPage } from "./groups-page";
+import { HarnessPage } from "./harness-page";
 import { LogsPage } from "./logs-page";
 import { bootstrapMiniAppSession, type MiniAppSessionState } from "./session";
 import {
@@ -34,7 +41,20 @@ import {
 import "./i18n";
 import "./mini-app.css";
 
-type MiniAppPage = "groups" | "settings" | "access" | "logs" | "help";
+type MiniAppPage = "groups" | "settings" | "access" | "logs" | "harness" | "help";
+
+const MINI_APP_PAGES: readonly MiniAppPage[] = [
+  "groups",
+  "settings",
+  "access",
+  "logs",
+  "harness",
+  "help",
+];
+
+function isMiniAppPage(value: string | null | undefined): value is MiniAppPage {
+  return MINI_APP_PAGES.includes(value as MiniAppPage);
+}
 
 const NAVIGATION: Record<Exclude<MiniAppRole, "none">, readonly MiniAppPage[]> = {
   admin: ["groups", "settings", "access", "logs", "help"],
@@ -42,8 +62,22 @@ const NAVIGATION: Record<Exclude<MiniAppRole, "none">, readonly MiniAppPage[]> =
   viewer: ["groups", "help"],
 };
 
-export function navigationForRole(role: MiniAppRole | null): readonly MiniAppPage[] {
-  return role && role !== "none" ? NAVIGATION[role] : ["help"];
+/** Harness appears only after its overview succeeds; the server limits it to harness owners. */
+export function navigationForRole(
+  role: MiniAppRole | null,
+  harness = false,
+): readonly MiniAppPage[] {
+  if (!role || role === "none") return ["help"];
+  const pages = NAVIGATION[role];
+  return harness ? [...pages.filter((page) => page !== "help"), "harness", "help"] : pages;
+}
+
+/** Telegram deep links (`startapp=<page>`) land on the configured entry URL, usually Help. */
+export function readStartPage(initData: string, search: string): MiniAppPage | null {
+  const param =
+    new URLSearchParams(initData).get("start_param") ??
+    new URLSearchParams(search).get("tgWebAppStartParam");
+  return isMiniAppPage(param) ? param : null;
 }
 
 const NAV_ICONS = {
@@ -51,6 +85,7 @@ const NAV_ICONS = {
   settings: Settings2,
   access: ShieldCheck,
   logs: ListTree,
+  harness: FolderGit2,
   help: BookOpenText,
 } satisfies Record<MiniAppPage, typeof BookOpenText>;
 
@@ -75,7 +110,7 @@ class MiniAppErrorBoundary extends Component<{ children: ReactNode }, { failed: 
         <h1>{i18n.t("miniApp:session.unavailableTitle")}</h1>
         <a
           href={window.location.pathname.replace(
-            /\/(?:groups(?:\/-?\d+)?|settings|access|logs)\/?$/,
+            /\/(?:groups(?:\/-?\d+)?|settings|access|logs|harness(?:\/[^/]+)?)\/?$/,
             "/help",
           )}
         >
@@ -114,12 +149,20 @@ function LanguageButton() {
   );
 }
 
-function MiniAppNavigation({ botId, role }: { botId: string; role: MiniAppRole | null }) {
+function MiniAppNavigation({
+  botId,
+  role,
+  harness,
+}: {
+  botId: string;
+  role: MiniAppRole | null;
+  harness: boolean;
+}) {
   const { t } = useTranslation("miniApp");
   const { pathname } = useLocation();
   return (
     <nav className="mini-app-nav" aria-label="Mini App">
-      {navigationForRole(role).map((page) => {
+      {navigationForRole(role, harness).map((page) => {
         const Icon = NAV_ICONS[page];
         const href = `/mini-app/${botId}/${page}`;
         return (
@@ -213,7 +256,7 @@ function SessionFailure({ state, botId }: { state: MiniAppSessionState; botId: s
   );
 }
 
-function PlaceholderPage({ page }: { page: Exclude<MiniAppPage, "help" | "logs"> }) {
+function PlaceholderPage({ page }: { page: Exclude<MiniAppPage, "help" | "logs" | "harness"> }) {
   const { t } = useTranslation("miniApp");
   const Icon = NAV_ICONS[page];
   return (
@@ -230,10 +273,12 @@ function ProtectedPage({
   page,
   state,
   botId,
+  harnessOverview,
 }: {
   page: Exclude<MiniAppPage, "help">;
   state: MiniAppSessionState | null;
   botId: string;
+  harnessOverview?: HarnessAdminOverview;
 }) {
   if (!state) return <MiniAppLoading />;
   if (state.status !== "ready") return <SessionFailure state={state} botId={botId} />;
@@ -247,6 +292,9 @@ function ProtectedPage({
   if (page === "groups") return <GroupsPage botId={botId} session={state.session} />;
   if (page === "access") return <AccessPage botId={botId} session={state.session} />;
   if (page === "logs") return <LogsPage botId={botId} />;
+  if (page === "harness") {
+    return <HarnessPage botId={botId} session={state.session} initialOverview={harnessOverview} />;
+  }
   if (page === "settings") {
     return <BotSettingsPage botId={botId} session={state.session} />;
   }
@@ -263,17 +311,12 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
     adapter.getSnapshot,
   );
   const [sessionState, setSessionState] = useState<MiniAppSessionState | null>(null);
+  const [harnessOverview, setHarnessOverview] = useState<HarnessAdminOverview | null>(null);
+  const startPageHandled = useRef(false);
   const segments = location.pathname.split("/").filter(Boolean);
   const candidatePage = segments[2];
-  const page: MiniAppPage =
-    candidatePage === "groups" ||
-    candidatePage === "settings" ||
-    candidatePage === "access" ||
-    candidatePage === "logs" ||
-    candidatePage === "help"
-      ? candidatePage
-      : "help";
-  const groupDetail = page === "groups" && segments.length > 3;
+  const page: MiniAppPage = isMiniAppPage(candidatePage) ? candidatePage : "help";
+  const detailView = (page === "groups" || page === "harness") && segments.length > 3;
 
   useEffect(() => {
     adapter.ready();
@@ -291,11 +334,38 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
   }, [botId, telegram.initData]);
 
   useEffect(() => {
+    if (startPageHandled.current) return;
+    const startPage = readStartPage(telegram.initData, window.location.search);
+    if (!startPage) return;
+    startPageHandled.current = true;
+    if (page === "help" && startPage !== "help") {
+      navigate(`/mini-app/${botId}/${startPage}`, { replace: true });
+    }
+  }, [botId, navigate, page, telegram.initData]);
+
+  useEffect(() => {
+    setHarnessOverview(null);
+    if (sessionState?.status !== "ready" || sessionState.session.role === "none") return;
+    let active = true;
+    void createMiniAppHarnessAdminApi(botId, sessionState.session.csrfToken)
+      .overview()
+      .then(
+        (overview) => {
+          if (active) setHarnessOverview(overview);
+        },
+        () => undefined,
+      );
+    return () => {
+      active = false;
+    };
+  }, [botId, sessionState]);
+
+  useEffect(() => {
     if (page === "help") return;
     return adapter.setBackButton(() =>
-      navigate(`/mini-app/${botId}/${groupDetail ? "groups" : "help"}`),
+      navigate(`/mini-app/${botId}/${detailView ? page : "help"}`),
     );
-  }, [adapter, botId, groupDetail, navigate, page]);
+  }, [adapter, botId, detailView, navigate, page]);
 
   useEffect(() => {
     if (sessionState?.status === "forbidden" && page !== "help") {
@@ -328,9 +398,20 @@ function ConnectedMiniApp({ adapter }: { adapter: TelegramMiniAppAdapter }) {
           path="logs"
           element={<ProtectedPage page="logs" state={sessionState} botId={botId} />}
         />
+        <Route
+          path="harness/*"
+          element={
+            <ProtectedPage
+              page="harness"
+              state={sessionState}
+              botId={botId}
+              harnessOverview={harnessOverview ?? undefined}
+            />
+          }
+        />
         <Route path="*" element={<Navigate to="help" replace />} />
       </Routes>
-      <MiniAppNavigation botId={botId} role={role} />
+      <MiniAppNavigation botId={botId} role={role} harness={harnessOverview !== null} />
     </div>
   );
 }

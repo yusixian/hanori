@@ -1,7 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
 import type { MiniAppCapability } from "@cos-tool-bot/shared";
-import { timingSafeEqual } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -36,6 +35,12 @@ import {
   serializeMiniAppSessionCookie,
   verifyMiniAppSession,
 } from "../services/mini-app-session.js";
+import {
+  createMiniAppSessionVerifier,
+  type MiniAppBotTokenResolver,
+  readCookie,
+  UUID_PATTERN,
+} from "./mini-app-auth.js";
 import type {
   TelegramAccessSnapshot,
   TelegramDirectoryService,
@@ -45,7 +50,7 @@ import {
   verifyTelegramInitData,
 } from "../services/telegram-mini-app-auth.js";
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export type { MiniAppBotTokenResolver } from "./mini-app-auth.js";
 
 export interface MiniAppSessionRateLimiter {
   consume(key: string, limit?: number): boolean;
@@ -92,11 +97,6 @@ export class InMemoryMiniAppSessionRateLimiter implements MiniAppSessionRateLimi
     current.count -= 1;
     if (current.count <= 0) this.#entries.delete(key);
   }
-}
-
-export interface MiniAppBotTokenResolver {
-  resolve(botId: string): Promise<string | null>;
-  isEnabled(botId: string): Promise<boolean>;
 }
 
 export function createMiniAppBotTokenResolver(
@@ -261,12 +261,6 @@ const miniAppLogQuerySchema = z.object({
   level: z.enum(["debug", "info", "warn", "error"]).optional(),
 });
 
-function secureEqual(left: string, right: string): boolean {
-  const leftBytes = Buffer.from(left);
-  const rightBytes = Buffer.from(right);
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
-}
-
 function isTelegramUserId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
@@ -345,16 +339,6 @@ async function selectionError(
   return { status: 409, body: { ok: false, error: publicError, code: error.code } };
 }
 
-function readCookie(header: string | undefined, name: string): string | null {
-  if (!header) return null;
-  for (const part of header.split(";")) {
-    const separator = part.indexOf("=");
-    if (separator < 0) continue;
-    if (part.slice(0, separator).trim() === name) return part.slice(separator + 1).trim();
-  }
-  return null;
-}
-
 function publicAccess(decision: Awaited<ReturnType<MiniAppAccessPolicy["resolve"]>>) {
   return {
     role: decision.role,
@@ -394,50 +378,26 @@ export function miniAppRoutes(options: MiniAppRoutesOptions) {
     });
   }
 
+  const sessions = createMiniAppSessionVerifier(options);
+
   async function authorize(
     botId: string,
     request: Request,
     capability: MiniAppCapability,
     requireCsrf: boolean,
   ) {
-    const { headers } = request;
-    if (!UUID_PATTERN.test(botId)) return { ok: false as const, status: 404 as const };
-    if (!(await options.botTokenResolver.isEnabled(botId))) {
-      return { ok: false as const, status: 404 as const };
+    const verified = await sessions.verify(botId, request);
+    if (!verified.ok) return verified;
+    const { session } = verified;
+    const access = await resolveAccess(botId, session.userId);
+    if (!access) return { ok: false as const, status: 401 as const };
+    if (!access.capabilities.includes(capability)) {
+      return { ok: false as const, status: 403 as const };
     }
-    const token = readCookie(headers.get("cookie") ?? undefined, MINI_APP_SESSION_COOKIE_NAME);
-    if (!token || options.sessionSecret.length < 32) {
-      return { ok: false as const, status: 401 as const };
+    if (requireCsrf && !sessions.checkCsrf(request, session)) {
+      return { ok: false as const, status: 403 as const };
     }
-    try {
-      const session = verifyMiniAppSession({
-        token,
-        expectedBotId: botId,
-        signingSecret: options.sessionSecret,
-        now: now(),
-      });
-      const access = await resolveAccess(botId, session.userId);
-      if (!access) return { ok: false as const, status: 401 as const };
-      if (!access.capabilities.includes(capability)) {
-        return { ok: false as const, status: 403 as const };
-      }
-      if (requireCsrf) {
-        const origin = headers.get("origin");
-        const allowedOrigins = options.allowedOrigins ?? [new URL(request.url).origin];
-        if (!origin || !allowedOrigins.includes(origin)) {
-          return { ok: false as const, status: 403 as const };
-        }
-        if (!secureEqual(headers.get("x-mini-app-csrf") ?? "", session.csrfToken)) {
-          return { ok: false as const, status: 403 as const };
-        }
-      }
-      return { ok: true as const, userId: session.userId, access };
-    } catch (error) {
-      if (error instanceof MiniAppSessionError) {
-        return { ok: false as const, status: 401 as const };
-      }
-      throw error;
-    }
+    return { ok: true as const, userId: session.userId, access };
   }
 
   async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {

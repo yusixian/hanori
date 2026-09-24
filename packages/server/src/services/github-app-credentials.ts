@@ -198,6 +198,10 @@ export class GitHubAppCredentialService {
     this.now = options.now ?? Date.now;
   }
 
+  get slug(): string | null {
+    return this.config?.slug ?? null;
+  }
+
   createAuthorizationUrl(botId: string, userId: string): string {
     const config = this.requireConfig();
     const state = this.createState(botId, userId);

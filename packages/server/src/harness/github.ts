@@ -6,6 +6,9 @@ const API_ROOT = "https://api.github.com";
 const API_VERSION = "2022-11-28";
 const MAX_FILE_PAGES = 30;
 const MAX_CHECK_PAGES = 5;
+const MAX_INSTALLATIONS = 20;
+const MAX_INSTALLATION_PAGES = 3;
+const MAX_REPOSITORY_PAGES = 10;
 
 export class GitHubApiError extends Error {
   constructor(
@@ -35,12 +38,30 @@ export interface PullRequestInfo {
   createdAt: Date;
 }
 
+export interface AccessibleRepository {
+  fullName: string;
+  private: boolean;
+  defaultBranch: string | null;
+  installationId: number;
+}
+
+export interface DirectoryEntry {
+  name: string;
+  type: "file" | "dir" | "other";
+}
+
 /** The subset of GitHub the harness needs; tests substitute a fake. */
 export interface HarnessGitHub {
   readonly available: boolean;
+  /** Where the owner grants the App access to more accounts or repositories. */
+  readonly installUrl: string | null;
   rememberInstallation(repo: string, installationId: number): void;
+  /** Every repository the App can reach, across all of its installations (bounded). */
+  listAccessibleRepositories(): Promise<AccessibleRepository[]>;
   getDefaultBranch(repo: string): Promise<{ branch: string; sha: string }>;
   getFile(repo: string, path: string, ref: string): Promise<string | null>;
+  /** Null when the path does not exist or is not a directory. */
+  listDirectory(repo: string, path: string, ref: string): Promise<DirectoryEntry[] | null>;
   getPullRequest(repo: string, number: number): Promise<PullRequestInfo>;
   listPullRequestFiles(repo: string, number: number): Promise<ChangedFile[]>;
   listChecks(
@@ -66,7 +87,7 @@ export interface HarnessGitHub {
 type Credentials = Pick<
   GitHubAppCredentialService,
   "available" | "createAppJwt" | "getInstallationToken"
->;
+> & { readonly slug?: string | null };
 
 interface RawPullRequest {
   number: number;
@@ -97,8 +118,45 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
     return this.credentials.available;
   }
 
+  get installUrl() {
+    const slug = this.credentials.slug;
+    return slug ? `https://github.com/apps/${encodeURIComponent(slug)}/installations/new` : null;
+  }
+
   rememberInstallation(repo: string, installationId: number) {
     this.installations.set(repo.toLowerCase(), installationId);
+  }
+
+  async listAccessibleRepositories(): Promise<AccessibleRepository[]> {
+    const installations: number[] = [];
+    for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
+      const batch = await this.send<Array<{ id: number }>>(
+        `/app/installations?per_page=100&page=${page}`,
+        this.credentials.createAppJwt(),
+      );
+      installations.push(...batch.map((installation) => installation.id));
+      if (batch.length < 100) break;
+    }
+    const repos: AccessibleRepository[] = [];
+    for (const installationId of installations.slice(0, MAX_INSTALLATIONS)) {
+      const token = await this.credentials.getInstallationToken(installationId);
+      for (let page = 1; page <= MAX_REPOSITORY_PAGES; page++) {
+        const batch = await this.send<{
+          repositories: Array<{ full_name: string; private: boolean; default_branch?: string }>;
+        }>(`/installation/repositories?per_page=100&page=${page}`, token);
+        for (const repo of batch.repositories) {
+          this.rememberInstallation(repo.full_name, installationId);
+          repos.push({
+            fullName: repo.full_name,
+            private: repo.private,
+            defaultBranch: repo.default_branch ?? null,
+            installationId,
+          });
+        }
+        if (batch.repositories.length < 100) break;
+      }
+    }
+    return repos;
   }
 
   private async installationFor(repo: string): Promise<number> {
@@ -158,6 +216,24 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
       );
       if (file.type !== "file" || file.encoding !== "base64" || !file.content) return null;
       return Buffer.from(file.content, "base64").toString("utf8");
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) return null;
+      throw error;
+    }
+  }
+
+  async listDirectory(repo: string, path: string, ref: string): Promise<DirectoryEntry[] | null> {
+    const suffix = path ? `/${path.split("/").map(encodeURIComponent).join("/")}` : "";
+    try {
+      const entries = await this.repoRequest<unknown>(
+        repo,
+        `/contents${suffix}?ref=${encodeURIComponent(ref)}`,
+      );
+      if (!Array.isArray(entries)) return null;
+      return entries.map((entry: { name: string; type: string }) => ({
+        name: entry.name,
+        type: entry.type === "file" || entry.type === "dir" ? entry.type : "other",
+      }));
     } catch (error) {
       if (error instanceof GitHubApiError && error.status === 404) return null;
       throw error;

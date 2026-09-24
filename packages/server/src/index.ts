@@ -24,6 +24,7 @@ import { CodingWorkerClient } from "./services/coding-worker-client.js";
 import { CodingJobStager } from "./services/coding-job-stager.js";
 import { GitWorkspaceService } from "./services/git-workspace-service.js";
 import { GitHubAppCredentialService } from "./services/github-app-credentials.js";
+import { HarnessAdmin } from "./harness/admin.js";
 import { GitHubAppHarnessClient } from "./harness/github.js";
 import { HarnessService } from "./harness/service.js";
 import { DrizzleHarnessStore } from "./harness/store.js";
@@ -293,12 +294,14 @@ if (githubAppService.configurationError) {
   logger.warn(githubAppService.configurationError);
 }
 let harnessService: HarnessService | undefined;
+let harnessAdmin: HarnessAdmin | undefined;
 if (env.HARNESS_CONFIG_PATH) {
   const service: HarnessService = new HarnessService({
     configPath: env.HARNESS_CONFIG_PATH,
     store: new DrizzleHarnessStore(db),
     github: new GitHubAppHarnessClient(githubAppService),
     logger: dbLogger,
+    panelUrl: env.BETTER_AUTH_URL,
     summarizer: createPrSummarizer(async () => {
       const botId = service.botId;
       if (!botId) return null;
@@ -309,6 +312,8 @@ if (env.HARNESS_CONFIG_PATH) {
       return toAiConfigRuntime(row?.aiConfig, env.ENCRYPTION_KEY)?.activeProvider ?? null;
     }),
   });
+  // Also built when init fails, so the panel can show the config error.
+  harnessAdmin = new HarnessAdmin(service);
   if (await service.init()) {
     harnessService = service;
     botPool.setHarnessService(service);
@@ -421,6 +426,7 @@ const app = createApp({
   engagementSampleService,
   runtimeHealth,
   harness: harnessService,
+  harnessAdmin,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)

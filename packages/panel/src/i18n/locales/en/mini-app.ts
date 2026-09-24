@@ -21,7 +21,14 @@ export const miniApp = {
     media: "Media",
     integrations: "Integrations",
   },
-  nav: { groups: "Groups", settings: "Settings", access: "Access", logs: "Logs", help: "Help" },
+  nav: {
+    groups: "Groups",
+    settings: "Settings",
+    access: "Access",
+    logs: "Logs",
+    harness: "Harness",
+    help: "Help",
+  },
   session: {
     loading: "Verifying your Telegram session…",
     expiredTitle: "Session expired",

@@ -21,7 +21,7 @@ const CHAT_COMMANDS = [
   { command: "help", description: getTelegramCommandMetadata("help").description["zh-CN"] },
 ];
 
-function toMarkup(keyboard: HarnessKeyboard | undefined): InlineKeyboardMarkup {
+export function toMarkup(keyboard: HarnessKeyboard | undefined): InlineKeyboardMarkup {
   return {
     inline_keyboard: (keyboard ?? []).map((row) =>
       row.map((button) =>

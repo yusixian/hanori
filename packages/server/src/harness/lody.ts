@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { AgentConfigInfo } from "./config/execution.js";
 import { isPlainObject } from "./config/layers.js";
 
 export const FIVE_HOUR_SECONDS = 18_000;
@@ -118,6 +119,26 @@ function parseLimits(value: unknown, now: Date): LodyLimit[] {
     });
   }
   return limits.sort((a, b) => a.key.localeCompare(b.key));
+}
+
+/** Only these fields are read; `env` may hold secrets and is never kept. */
+export function parseAgentConfigs(json: unknown): AgentConfigInfo[] {
+  if (!isPlainObject(json) || !Array.isArray(json.agentConfigs)) {
+    throw new Error("lody agent-config list 输出缺少 agentConfigs");
+  }
+  return json.agentConfigs.filter(isPlainObject).flatMap((config) => {
+    const id = asString(config.id);
+    const name = asString(config.name);
+    if (!id || !name) return [];
+    return [
+      {
+        id,
+        name,
+        agentType: asString(config.agentType) ?? "",
+        machineId: asString(config.machineId),
+      },
+    ];
+  });
 }
 
 export function parseMachineList(json: unknown, now: Date): LodyMachine[] {
@@ -257,6 +278,8 @@ export interface CreateSessionInput {
   worktree: boolean;
   agent: string;
   model: string | null;
+  /** `key=value` pairs such as `reasoning_effort=high`. */
+  configOptions?: string[];
   title: string;
   prompt: string;
   workspace: string | null;
@@ -270,6 +293,7 @@ const MACHINE_CACHE_MS = 30_000;
 /** Wrapper around the `lody` CLI. Every call is bounded by a timeout and returns a result. */
 export class LodyCli {
   private machineCache: { at: number; value: LodyResult<LodyMachine[]> } | null = null;
+  private agentCache: { at: number; value: LodyResult<AgentConfigInfo[]> } | null = null;
 
   constructor(
     private readonly command: readonly string[],
@@ -339,6 +363,23 @@ export class LodyCli {
     return value;
   }
 
+  async listAgentConfigs(): Promise<LodyResult<AgentConfigInfo[]>> {
+    const at = this.now().getTime();
+    if (this.agentCache && at - this.agentCache.at < MACHINE_CACHE_MS) return this.agentCache.value;
+    const result = await this.run(["agent-config", "list", "--json"]);
+    let value: LodyResult<AgentConfigInfo[]>;
+    if (!result.ok) value = result;
+    else {
+      try {
+        value = { ok: true, value: parseAgentConfigs(result.value) };
+      } catch (error) {
+        value = { ok: false, reason: "failed", message: (error as Error).message };
+      }
+    }
+    this.agentCache = { at, value };
+    return value;
+  }
+
   async showSession(sessionId: string): Promise<LodyResult<LodySession>> {
     return this.parsed(sessionId, ["session", "show", sessionId, "--json"], parseSession);
   }
@@ -360,6 +401,7 @@ export class LodyCli {
       "--agent",
       input.agent,
       ...(input.model ? ["--model", input.model] : []),
+      ...(input.configOptions ?? []).flatMap((option) => ["--config-option", option]),
       "--title",
       input.title,
       "--prompt-file",

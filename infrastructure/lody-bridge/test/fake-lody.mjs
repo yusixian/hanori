@@ -24,6 +24,24 @@ process.stdin.on("end", () => {
     process.stdout.write('{"ok":false,"error":"machine offline"}\n');
     process.exit(3);
   }
+  if (args[0] === "agent-config") {
+    process.stdout.write(
+      `[ws] attached\n${JSON.stringify({
+        ok: true,
+        workspaceId: "ws-1",
+        agentConfigs: [
+          {
+            id: "cfg-1",
+            name: "Codex",
+            agentType: "codex",
+            machineId: "m-1",
+            env: { OPENAI_API_KEY: "sk-should-not-leak" },
+          },
+        ],
+      })}\n`,
+    );
+    return;
+  }
   if (mode === "flood") {
     process.stdout.write("x".repeat(64 * 1024));
     return;

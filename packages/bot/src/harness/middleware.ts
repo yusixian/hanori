@@ -1,6 +1,7 @@
 import { InputFile, type MiddlewareFn } from "grammy";
 import type { Message } from "grammy/types";
 import type { BotContext } from "../context.js";
+import { toMarkup } from "./telegram.js";
 import {
   HARNESS_CALLBACK_PREFIX,
   HARNESS_COMMANDS,
@@ -42,7 +43,11 @@ async function send(ctx: BotContext, reply: HarnessReply) {
     return;
   }
   if (!reply.html) return;
-  await ctx.reply(reply.html, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
+  await ctx.reply(reply.html, {
+    parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+    ...(reply.keyboard ? { reply_markup: toMarkup(reply.keyboard) } : {}),
+  });
 }
 
 function isConversationalMessage(message: Message): boolean {
@@ -103,6 +108,7 @@ export function createHarnessMiddleware(port: HarnessBotPort): MiddlewareFn<BotC
         userId,
         messageId: message.message_id,
         attachments: attachmentsOf(message, message.reply_to_message),
+        botUsername: ctx.me.username,
       });
       await send(ctx, reply);
       return;
