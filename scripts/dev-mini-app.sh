@@ -4,7 +4,8 @@ set -Eeuo pipefail
 
 PROJECT_NAME="cos-bot-dev"
 PUBLIC_ORIGIN="${COS_TOOL_BOT_MINI_APP_ORIGIN:-https://tg-test.example.invalid}"
-PANEL_PORT="${COS_TOOL_BOT_MINI_APP_PANEL_PORT:-5174}"
+SERVER_PORT="${COS_TOOL_BOT_MINI_APP_SERVER_PORT:-43100}"
+PANEL_PORT="${COS_TOOL_BOT_MINI_APP_PANEL_PORT:-43103}"
 PERSISTENT_TUNNEL_CONFIG="$HOME/.cloudflared/cos-tool-bot-tg-test.yml"
 TEMPORARY_TUNNEL_CONFIG="/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml"
 if [[ -n "${COS_TOOL_BOT_TUNNEL_CONFIG:-}" ]]; then
@@ -35,7 +36,8 @@ usage() {
 可选环境变量：
   COS_TOOL_BOT_TUNNEL_CONFIG          cloudflared 配置文件路径
   COS_TOOL_BOT_MINI_APP_ORIGIN        Mini App HTTPS origin
-  COS_TOOL_BOT_MINI_APP_PANEL_PORT    Vite 端口，默认 5174
+  COS_TOOL_BOT_MINI_APP_SERVER_PORT   Server 端口，默认 43100
+  COS_TOOL_BOT_MINI_APP_PANEL_PORT    Vite 端口，默认 43103
   MINI_APP_SESSION_SECRET             固定本次开发 session secret；未设置时自动生成
 EOF
 }
@@ -169,6 +171,8 @@ start_environment() {
   [[ -f "$TUNNEL_CONFIG" ]] || fail "找不到 tunnel 配置：$TUNNEL_CONFIG"
   [[ "$PUBLIC_ORIGIN" =~ ^https://[^/]+$ ]] ||
     fail "Mini App origin 必须是无路径、无末尾斜杠的 HTTPS origin。"
+  [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || fail "Server 端口必须是数字。"
+  ((10#$SERVER_PORT >= 1 && 10#$SERVER_PORT <= 65535)) || fail "Server 端口超出有效范围。"
   [[ "$PANEL_PORT" =~ ^[0-9]+$ ]] || fail "Panel 端口必须是数字。"
   ((10#$PANEL_PORT >= 1 && 10#$PANEL_PORT <= 65535)) || fail "Panel 端口超出有效范围。"
 
@@ -187,7 +191,7 @@ start_environment() {
     fail "请先确认并停止旧 connector，避免同一 named tunnel 使用冲突的 ingress。"
   fi
 
-  ensure_port_available 3000 "Server"
+  ensure_port_available "$SERVER_PORT" "Server"
   ensure_port_available "$PANEL_PORT" "Panel"
 
   printf '%s\n' "$$" >"$SUPERVISOR_PID_FILE"
@@ -211,11 +215,13 @@ start_environment() {
   fi
 
   export BETTER_AUTH_URL="$PUBLIC_ORIGIN"
+  export PORT="$SERVER_PORT"
   export MINI_APP_SESSION_SECRET="$session_secret"
   export __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS="${PUBLIC_ORIGIN#https://}"
   printf -v tunnel_command 'cloudflared --config %q tunnel run' "$TUNNEL_CONFIG"
 
   printf '\n本地 Mini App 开发环境正在启动：\n'
+  printf '  Server: http://127.0.0.1:%s\n' "$SERVER_PORT"
   printf '  Panel:  http://127.0.0.1:%s\n' "$PANEL_PORT"
   printf '  Public: %s\n' "$PUBLIC_ORIGIN"
   printf '  Stop:   pnpm dev:mini-app:stop，或在当前终端按 Ctrl-C\n\n'
@@ -280,10 +286,10 @@ show_status() {
   fi
 
   printf '\nHTTP：\n'
-  if curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
-    printf 'Server :3000：健康\n'
+  if curl -fsS --max-time 2 "http://127.0.0.1:$SERVER_PORT/api/health" >/dev/null 2>&1; then
+    printf 'Server :%s：健康\n' "$SERVER_PORT"
   else
-    printf 'Server :3000：不可用\n'
+    printf 'Server :%s：不可用\n' "$SERVER_PORT"
   fi
   if curl -fsS --max-time 2 "http://127.0.0.1:$PANEL_PORT" >/dev/null 2>&1; then
     printf 'Panel  :%s：可用\n' "$PANEL_PORT"

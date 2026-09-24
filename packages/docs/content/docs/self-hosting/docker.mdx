@@ -45,11 +45,11 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 ```bash
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml ps
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs --tail=200 app
-curl -fsS http://127.0.0.1:9600/api/health
-curl -fsS http://127.0.0.1:9600/api/health/ready
+curl -fsS http://127.0.0.1:43100/api/health
+curl -fsS http://127.0.0.1:43100/api/health/ready
 ```
 
-上面的 `9600` 是 `docker-compose.direct.yml` 未设置 `PORT` 时的宿主机默认端口；如果设置了 `PORT=某个端口`，把命令中的端口替换成该值。容器内部仍使用 `3000`。`/api/health` 表示进程可响应；`/api/health/ready` 还要求数据库迁移、认证、Bot 和必需集成达到 ready 状态。只有 ready 通过后，才继续面板和 Telegram 验收。
+上面的 `43100` 来自 `.env.example` 的 `PORT`；如果没有设置 `PORT`，`docker-compose.direct.yml` 的宿主机默认端口仍是 `9600`。实际端口以 `.env` 为准，容器内部仍使用 `3000`。`/api/health` 表示进程可响应；`/api/health/ready` 还要求数据库迁移、认证、Bot 和必需集成达到 ready 状态。只有 ready 通过后，才继续面板和 Telegram 验收。
 
 ## 5. 首次登录和启用选项
 

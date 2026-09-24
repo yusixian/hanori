@@ -7,16 +7,16 @@ description: 按类别说明环境变量、密钥轮换和可选服务的启用�
 
 ## 数据库和服务
 
-| 变量                 | 用途                                                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`       | PostgreSQL 连接字符串。                                                                                               |
-| `DB_PASSWORD`        | Docker Compose 数据库密码。                                                                                           |
-| `PORT`               | 服务在容器内默认监听 `3000`；使用 `docker-compose.direct.yml` 时也作为宿主机映射端口，未设置时宿主机默认使用 `9600`。 |
-| `BACKUP_DIR`         | 本地备份目录；未设置时使用应用默认目录。                                                                              |
-| `BETTER_AUTH_URL`    | 生产环境实际公开 origin，必须使用 HTTPS。                                                                             |
-| `BETTER_AUTH_SECRET` | Better Auth 会话和加密用途的稳定密钥，至少 32 位随机值。                                                              |
-| `AUTH_OWNER_EMAIL`   | 首次启动时创建 owner 的邮箱。                                                                                         |
-| `PANEL_PASSWORD`     | 仅用于首次 bootstrap 的密码；首次成功登录并修改密码后删除。                                                           |
+| 变量                 | 用途                                                                                                                                         |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`       | PostgreSQL 连接字符串。                                                                                                                      |
+| `DB_PASSWORD`        | Docker Compose 数据库密码。                                                                                                                  |
+| `PORT`               | 容器内部默认监听 `3000`；使用 `docker-compose.direct.yml` 时作为宿主机映射端口。`.env.example` 填写 `43100`，未设置时宿主机默认使用 `9600`。 |
+| `BACKUP_DIR`         | 本地备份目录；未设置时使用应用默认目录。                                                                                                     |
+| `BETTER_AUTH_URL`    | 生产环境实际公开 origin，必须使用 HTTPS。                                                                                                    |
+| `BETTER_AUTH_SECRET` | Better Auth 会话和加密用途的稳定密钥，至少 32 位随机值。                                                                                     |
+| `AUTH_OWNER_EMAIL`   | 首次启动时创建 owner 的邮箱。                                                                                                                |
+| `PANEL_PASSWORD`     | 仅用于首次 bootstrap 的密码；首次成功登录并修改密码后删除。                                                                                  |
 
 `BETTER_AUTH_URL` 只填写 origin，不要带末尾 `/` 或 API 路径。更换 `BETTER_AUTH_SECRET` 会使已有认证会话失效。
 

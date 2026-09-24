@@ -2,12 +2,12 @@ services:
   nsfw-api:
     image: ghcr.io/arnidan/nsfw-api:latest
     ports:
-      - "${NSFW_API_PORT:-9601}:3000"
+      - "${NSFW_API_PORT:-43106}:3000"
 
   db:
     image: pgvector/pgvector:pg17
     ports:
-      - "${POSTGRES_DEV_PORT:-5433}:5432"
+      - "${POSTGRES_DEV_PORT:-43105}:5432"
     environment:
       - POSTGRES_USER=bot
       - POSTGRES_PASSWORD=password

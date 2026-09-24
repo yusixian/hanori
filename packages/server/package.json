@@ -11,7 +11,7 @@
     }
   },
   "scripts": {
-    "dev": "PORT=3000 tsx --conditions=development --env-file=../../.env --watch src/index.ts",
+    "dev": "tsx --conditions=development --env-file=../../.env --watch src/index.ts",
     "build": "tsdown src/index.ts --format esm",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit"
