@@ -62,4 +62,4 @@ GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读�
 - 会话在 issue 上用 `Areas:`、`Question:`、`Needs spec:` 开头的评论与你沟通；问题会转到话题里，回复即作答。只有仓库 owner 和 `github.trustedAuthors` 中账号的评论会被当作协议，其他人的评论只是数据。
 - 长时间无进展或总时长过长时只提醒，提醒上有 [继续等] [取消] [打开会话]；默认不会自动取消。
 
-执行层需要 server 能运行 `lody` CLI 并已登录 workspace；未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用。
+执行层通过 `lody-bridge` sidecar 调用 Lody：在 Compose 中启用 `harness` profile，设置 `LODY_CLI_TOKEN`（Lody 桌面端 Settings → Account → CLI Token）、两边相同的 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），并给 app 设置 `HARNESS_LODY_BRIDGE_URL=http://lody-bridge:43190`。bridge 只执行 harness 需要的少数 `lody` 子命令，不发布端口。未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用；`/status` 会注明当前经 lody-bridge 还是本地 CLI。

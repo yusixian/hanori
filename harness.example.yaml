@@ -19,7 +19,10 @@ approvals:
 
 executors:
   lody:
-    cli: lody # or [node, /Applications/Lody.app/Contents/Resources/app.asar.unpacked/resources/cli/index.js]
+    cli: lody # local CLI, used only when the bridge URL env var is empty
+    bridge: # lody-bridge sidecar; values come from these env vars (see docs/DEV_HARNESS_LODY.md)
+      urlEnv: HARNESS_LODY_BRIDGE_URL
+      secretEnv: HARNESS_LODY_BRIDGE_SECRET
     timeout: 20s
     agentConfig: Claude Code # Lody agent config the lead session runs with
     poll: { active: 20s, idle: 2m }

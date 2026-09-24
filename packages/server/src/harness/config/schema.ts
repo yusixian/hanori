@@ -10,6 +10,7 @@ const tierSchema = z.enum(RISK_TIERS);
 const globList = z.array(z.string().min(1));
 const existingThread = z.string().regex(/^existing:\d+$/, "应为 existing:<thread id>");
 const threadId = z.number().int().positive();
+const envName = z.string().regex(/^[A-Z][A-Z0-9_]*$/, "应为环境变量名");
 
 const telegramSchema = z.strictObject({
   bot: z.union([z.string().min(1), z.number().int().positive()]).transform(String),
@@ -80,6 +81,13 @@ const executorsSchema = z
         agentConfig: z.string().min(1).default("Claude Code"),
         worktree: z.boolean().default(true),
         shareLinks: z.boolean().default(true),
+        // Values stay in the environment; YAML only names the variables.
+        bridge: z
+          .strictObject({
+            urlEnv: envName.default("HARNESS_LODY_BRIDGE_URL"),
+            secretEnv: envName.default("HARNESS_LODY_BRIDGE_SECRET"),
+          })
+          .prefault({}),
         sessionUrl: z
           .string()
           .regex(/^https:\/\/[^\s]*\{sessionId\}[^\s]*$/, "应为包含 {sessionId} 的 https 链接")

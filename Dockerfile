@@ -81,6 +81,20 @@ COPY --from=builder /app/packages/docs/build/client/docs.data ./public/docs.data
 EXPOSE 3000
 CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]
 
+# Lody's native modules (node-pty) have no musl prebuilds, so the harness bridge runs on glibc.
+FROM node:22-bookworm-slim AS lody-bridge
+ARG LODY_VERSION=0.100.0
+ENV NODE_ENV=production
+RUN npm install -g "lody@${LODY_VERSION}" \
+  && npm cache clean --force \
+  && mkdir -p /home/node/.lody \
+  && chown node:node /home/node/.lody
+COPY --chmod=644 infrastructure/lody-bridge/server.mjs infrastructure/lody-bridge/allowlist.mjs /opt/lody-bridge/
+COPY --chmod=755 infrastructure/lody-bridge/entrypoint.sh /opt/lody-bridge/entrypoint.sh
+USER node
+ENV HOME=/home/node
+ENTRYPOINT ["/opt/lody-bridge/entrypoint.sh"]
+
 # Pi runs out-of-process so its memory and shell tools are isolated from the bot server.
 FROM base AS coding-worker
 ENV NODE_ENV=production

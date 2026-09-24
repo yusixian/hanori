@@ -33,6 +33,8 @@ services:
       - PIXAI_MCP_URL=${PIXAI_MCP_URL:-}
       - HARNESS_CONFIG_PATH=${HARNESS_CONFIG_PATH:-}
       - HARNESS_GITHUB_WEBHOOK_SECRET=${HARNESS_GITHUB_WEBHOOK_SECRET:-}
+      - HARNESS_LODY_BRIDGE_URL=${HARNESS_LODY_BRIDGE_URL:-}
+      - HARNESS_LODY_BRIDGE_SECRET=${HARNESS_LODY_BRIDGE_SECRET:-}
       - CODING_WORKER_URL=
       - CODING_WORKER_SOCKET=/coding-control/worker.sock
       - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}
@@ -48,6 +50,9 @@ services:
       - codegit:/git-metadata
       - codingjob:/coding-job
       - codingcontrol:/coding-control
+    networks:
+      - default
+      - harness-bridge
     depends_on:
       db:
         condition: service_healthy
@@ -277,12 +282,61 @@ services:
         max-file: "3"
     shm_size: "192mb"
 
+  # Runs allowlisted `lody` commands for the Dev Harness next to a local Lody daemon.
+  lody-bridge:
+    profiles: ["harness"]
+    build:
+      context: .
+      target: lody-bridge
+      args:
+        - LODY_VERSION=${LODY_VERSION:-0.100.0}
+    init: true
+    environment:
+      - LODY_CLI_TOKEN=${LODY_CLI_TOKEN:-}
+      - HARNESS_LODY_BRIDGE_SECRET=${HARNESS_LODY_BRIDGE_SECRET:-}
+      - LODY_MACHINE_NAME=${LODY_MACHINE_NAME:-cos-tool-bot-server}
+      - LODY_BRIDGE_PORT=43190
+    expose:
+      - "43190"
+    volumes:
+      - lodyhome:/home/node/.lody
+    networks:
+      - harness-bridge
+      - harness-egress
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 768m
+    cpus: 1
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:43190/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 15s
+
 volumes:
   pgdata:
   backups:
   botdata:
   codeworkspaces:
   codegit:
+  lodyhome:
   codingjob:
     driver: local
     driver_opts:
@@ -301,5 +355,12 @@ networks:
     driver: bridge
     internal: true
   coding-egress:
+    driver: bridge
+    internal: false
+  # The app reaches the bridge only here; the bridge reaches Lody's cloud via harness-egress.
+  harness-bridge:
+    driver: bridge
+    internal: true
+  harness-egress:
     driver: bridge
     internal: false

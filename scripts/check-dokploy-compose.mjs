@@ -9,6 +9,8 @@ const requiredEnvironment = {
   DB_PASSWORD: "validation-db-password",
   ENCRYPTION_KEY: "validation-encryption-key",
   GITHUB_APP_CLIENT_ID: "",
+  HARNESS_LODY_BRIDGE_SECRET: "",
+  LODY_CLI_TOKEN: "",
   GITHUB_APP_CLIENT_SECRET: "",
   GITHUB_APP_ID: "",
   GITHUB_APP_PRIVATE_KEY: "",
@@ -67,6 +69,25 @@ for (const volume of ["pgdata", "backups", "botdata", "codeworkspaces", "codegit
 const coding = renderConfig(["docker-compose.yml"], "coding");
 assert(coding.services["coding-worker"], "coding profile is missing coding-worker");
 assert(coding.services["coding-egress-proxy"], "coding profile is missing coding-egress-proxy");
+
+assert(!services["lody-bridge"], "lody-bridge must stay behind the harness profile");
+const harness = renderConfig(["docker-compose.yml"], "harness");
+const bridge = harness.services["lody-bridge"];
+assert(bridge, "harness profile is missing lody-bridge");
+assert(!bridge.ports, "lody-bridge must not publish a host port");
+assert(bridge.build?.target === "lody-bridge", "lody-bridge must build the glibc bridge stage");
+assert(harness.networks?.["harness-bridge"]?.internal === true, "harness-bridge must be internal");
+assert(
+  Object.keys(bridge.networks ?? {})
+    .sort()
+    .join() === "harness-bridge,harness-egress",
+  "lody-bridge must only join the harness networks",
+);
+assert(
+  Object.keys(harness.services.app.networks ?? {}).includes("harness-bridge"),
+  "app must reach lody-bridge on the harness-bridge network",
+);
+assert(harness.volumes?.lodyhome, "lody-bridge needs the persistent lodyhome volume");
 
 const direct = renderConfig(["docker-compose.yml", "docker-compose.direct.yml"]);
 assert(direct.services.app.ports?.length === 1, "legacy direct app port mapping is missing");

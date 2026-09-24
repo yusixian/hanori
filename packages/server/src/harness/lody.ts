@@ -301,6 +301,10 @@ export class LodyCli {
       if (code === "ENOENT" || code === "EACCES") {
         return { ok: false, reason: "unavailable", message: `未找到 lody CLI（${file}）` };
       }
+      // The bridge was not reached or not configured, so the command never ran.
+      if (code === "EBRIDGE_UNREACHABLE" || code === "EBRIDGE_CONFIG") {
+        return { ok: false, reason: "unavailable", message: (error as Error).message };
+      }
       const { killed, signal, stdout } = error as {
         killed?: boolean;
         signal?: string | null;

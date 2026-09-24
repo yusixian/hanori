@@ -240,6 +240,8 @@ describe("locked fields", () => {
     "risk.T0",
     "policy.risk",
     "executors.lody.cli",
+    "executors.lody.bridge.urlEnv",
+    "executors.lody.bridge.secretEnv",
     "executors",
     "guardrails.autonomy.autoMergeTiers",
     "guardrails.autonomy",
