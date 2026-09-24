@@ -33,7 +33,7 @@ harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的
 2. 生成共享密钥，例如 `openssl rand -hex 32`。
 3. 在 Dokploy 的 Compose 应用 → Environment 中设置：
    ```text
-   COMPOSE_PROFILES=dokploy,harness        # 已启用 coding 时写 dokploy,coding,harness
+   COMPOSE_PROFILES=harness        # 已启用 coding worker 时写 coding,harness（在原值后追加，不要覆盖）
    LODY_CLI_TOKEN=<CLI Token>
    HARNESS_LODY_BRIDGE_SECRET=<共享密钥>
    HARNESS_LODY_BRIDGE_URL=http://lody-bridge:43190
