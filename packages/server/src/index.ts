@@ -24,6 +24,11 @@ import { CodingWorkerClient } from "./services/coding-worker-client.js";
 import { CodingJobStager } from "./services/coding-job-stager.js";
 import { GitWorkspaceService } from "./services/git-workspace-service.js";
 import { GitHubAppCredentialService } from "./services/github-app-credentials.js";
+import { GitHubAppHarnessClient } from "./harness/github.js";
+import { HarnessService } from "./harness/service.js";
+import { DrizzleHarnessStore } from "./harness/store.js";
+import { createPrSummarizer } from "./harness/summary.js";
+import { toAiConfigRuntime } from "./services/ai-config-runtime.js";
 import { RssFeedService } from "./services/rss-feed-service.js";
 import { SummaryConfigService } from "./services/summary-config-service.js";
 import { SummaryRunner } from "./services/summary-runner.js";
@@ -287,6 +292,29 @@ botPool.setGitHubAppCredentialService(githubAppService);
 if (githubAppService.configurationError) {
   logger.warn(githubAppService.configurationError);
 }
+let harnessService: HarnessService | undefined;
+if (env.HARNESS_CONFIG_PATH) {
+  const service: HarnessService = new HarnessService({
+    configPath: env.HARNESS_CONFIG_PATH,
+    store: new DrizzleHarnessStore(db),
+    github: new GitHubAppHarnessClient(githubAppService),
+    logger: dbLogger,
+    summarizer: createPrSummarizer(async () => {
+      const botId = service.botId;
+      if (!botId) return null;
+      const [row] = await db
+        .select({ aiConfig: bots.aiConfig })
+        .from(bots)
+        .where(eq(bots.id, botId));
+      return toAiConfigRuntime(row?.aiConfig, env.ENCRYPTION_KEY)?.activeProvider ?? null;
+    }),
+  });
+  if (await service.init()) {
+    harnessService = service;
+    botPool.setHarnessService(service);
+    logger.info({ bot: service.file.telegram.bot }, "Dev Harness enabled");
+  }
+}
 const codingWorkerClient = new CodingWorkerClient({
   url: env.CODING_WORKER_URL,
   socketPath: env.CODING_WORKER_SOCKET,
@@ -392,6 +420,7 @@ const app = createApp({
   memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
   runtimeHealth,
+  harness: harnessService,
 });
 
 // Start HTTP server (before bots so the panel is immediately reachable)
@@ -465,6 +494,7 @@ const shutdown = async (signal: string) => {
   rssFeedService.stop();
   summaryService.stop();
   timerRegistry.destroy();
+  harnessService?.stop();
   modelCapabilityService.stop();
   logCleaner.stop();
   memoryGC.stop();

@@ -1383,3 +1383,185 @@ export const authInvitations = pgTable(
     index("invitation_email_idx").on(t.email),
   ],
 );
+
+// Dev Harness: GitHub remains the durable task record; these tables hold bindings, approvals,
+// and the audit trail. See docs/design/dev-harness.md §11.
+export const harnessProjects = pgTable("harness_projects", {
+  key: text("key").primaryKey(),
+  repo: text("repo").notNull(),
+  chatId: bigint("chat_id", { mode: "number" }),
+  threadId: integer("thread_id"),
+  topicError: text("topic_error"),
+  installationId: bigint("installation_id", { mode: "number" }),
+  defaultBranch: text("default_branch"),
+  kind: text("kind"),
+  policy: json("policy").$type<Record<string, unknown>>(),
+  policySha: text("policy_sha"),
+  policyError: text("policy_error"),
+  policyFetchedAt: timestamp("policy_fetched_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const harnessConfigOverrides = pgTable(
+  "harness_config_overrides",
+  {
+    id: serial("id").primaryKey(),
+    scope: text("scope").notNull(),
+    path: text("path").notNull(),
+    value: json("value").$type<unknown>(),
+    actorId: bigint("actor_id", { mode: "number" }),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("harness_overrides_scope_path_unique").on(t.scope, t.path)],
+);
+
+export const harnessEvents = pgTable(
+  "harness_events",
+  {
+    id: serial("id").primaryKey(),
+    type: text("type").notNull(),
+    projectKey: text("project_key"),
+    requestId: uuid("request_id"),
+    approvalId: text("approval_id"),
+    actorId: bigint("actor_id", { mode: "number" }),
+    deliveryId: text("delivery_id"),
+    payload: json("payload").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("harness_events_delivery_unique").on(t.deliveryId),
+    index("harness_events_created_idx").on(t.createdAt),
+    index("harness_events_project_created_idx").on(t.projectKey, t.createdAt),
+    index("harness_events_request_idx").on(t.requestId),
+  ],
+);
+
+export const harnessRequests = pgTable(
+  "harness_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectKey: text("project_key").notNull(),
+    type: text("type").notNull(),
+    state: text("state").notNull(),
+    repo: text("repo").notNull(),
+    issueNumber: integer("issue_number"),
+    prNumber: integer("pr_number"),
+    headSha: text("head_sha"),
+    title: text("title"),
+    riskTier: text("risk_tier"),
+    summary: text("summary"),
+    summaryKey: text("summary_key"),
+    chatId: bigint("chat_id", { mode: "number" }),
+    threadId: integer("thread_id"),
+    cardMessageId: integer("card_message_id"),
+    cardKind: text("card_kind"),
+    cardImageUrl: text("card_image_url"),
+    cardHash: text("card_hash"),
+    detailsViewedSha: text("details_viewed_sha"),
+    bodyEditedAt: timestamp("body_edited_at"),
+    lastPushAt: timestamp("last_push_at"),
+    createdBy: bigint("created_by", { mode: "number" }),
+    ownerText: text("owner_text"),
+    areas: json("areas").$type<string[]>(),
+    fixRounds: integer("fix_rounds").notNull().default(0),
+    lastFixSha: text("last_fix_sha"),
+    stateReason: text("state_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("harness_requests_repo_pr_unique").on(t.repo, t.prNumber),
+    index("harness_requests_repo_issue_idx").on(t.repo, t.issueNumber),
+    index("harness_requests_card_idx").on(t.chatId, t.cardMessageId),
+    index("harness_requests_project_state_idx").on(t.projectKey, t.state),
+    index("harness_requests_repo_head_idx").on(t.repo, t.headSha),
+  ],
+);
+
+export const harnessApprovals = pgTable(
+  "harness_approvals",
+  {
+    id: text("id").primaryKey(),
+    requestId: uuid("request_id")
+      .references(() => harnessRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    action: text("action").notNull(),
+    repo: text("repo").notNull(),
+    prNumber: integer("pr_number"),
+    headSha: text("head_sha").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    consumedAt: timestamp("consumed_at"),
+    consumedBy: bigint("consumed_by", { mode: "number" }),
+    invalidatedAt: timestamp("invalidated_at"),
+    invalidReason: text("invalid_reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("harness_approvals_request_idx").on(t.requestId, t.createdAt)],
+);
+
+export interface HarnessQuotaSnapshot {
+  provider: string;
+  windows: Array<{ span: string; label: string | null; usedPercent: number; expired: boolean }>;
+}
+
+// One execution attempt of a request on a machine. `starting` rows carry a lease so a crash
+// between "create session" and "persist session id" is detected instead of silently retried.
+export const harnessJobs = pgTable(
+  "harness_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requestId: uuid("request_id")
+      .references(() => harnessRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    attempt: integer("attempt").notNull(),
+    executor: text("executor").notNull(),
+    state: text("state").notNull(),
+    machineKey: text("machine_key").notNull(),
+    lodyMachine: text("lody_machine").notNull(),
+    provider: text("provider").notNull(),
+    role: text("role").notNull(),
+    agent: text("agent").notNull(),
+    model: text("model"),
+    sessionId: text("session_id"),
+    leaseUntil: timestamp("lease_until"),
+    sessionStatus: text("session_status"),
+    modelName: text("model_name"),
+    contextUsed: integer("context_used"),
+    contextSize: integer("context_size"),
+    quota: json("quota").$type<HarnessQuotaSnapshot>(),
+    startedAt: timestamp("started_at"),
+    lastActivityAt: timestamp("last_activity_at"),
+    nextPollAt: timestamp("next_poll_at"),
+    idleRemindedAt: timestamp("idle_reminded_at"),
+    runRemindedAt: timestamp("run_reminded_at"),
+    endedAt: timestamp("ended_at"),
+    error: text("error"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("harness_jobs_request_attempt_unique").on(t.requestId, t.attempt),
+    index("harness_jobs_state_idx").on(t.state),
+    index("harness_jobs_created_idx").on(t.createdAt),
+  ],
+);
+
+// Telegram messages the owner may reply to or press buttons on, besides the request card.
+export const harnessMessages = pgTable(
+  "harness_messages",
+  {
+    id: serial("id").primaryKey(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    messageId: integer("message_id").notNull(),
+    requestId: uuid("request_id")
+      .references(() => harnessRequests.id, { onDelete: "cascade" })
+      .notNull(),
+    kind: text("kind").notNull(),
+    ref: json("ref").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("harness_messages_chat_message_unique").on(t.chatId, t.messageId)],
+);

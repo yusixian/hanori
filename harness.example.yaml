@@ -1,0 +1,60 @@
+# Dev Harness control-plane config. Copy outside the repository, point HARNESS_CONFIG_PATH at it,
+# and restart the server. Only telegram.bot/chatId/owners and projects.*.repo are required;
+# every other field below shows its default. Field reference: docs/design/dev-harness-config.md.
+version: 1
+
+telegram:
+  bot: example-dev # Bot id or name in the Bots table; only this Bot enables the harness
+  chatId: -1001234567890 # forum supergroup; the Bot needs admin with can_manage_topics
+  owners: [123456789] # only these Telegram user ids may run commands or press buttons
+  chat:
+    casualReplies: false # no casual AI replies or JEV engagement in the harness group
+  cards:
+    screenshot: first # none | first — first image in the PR body becomes the card photo
+    summary: ai # ai | title — ai uses the harness Bot's active AI provider
+
+approvals:
+  ttl: 7d # card buttons stay valid this long, across restarts
+  mergeConfirm: once # once | twice
+
+executors:
+  lody:
+    cli: lody # or [node, /Applications/Lody.app/Contents/Resources/app.asar.unpacked/resources/cli/index.js]
+    timeout: 20s
+    agentConfig: Claude Code # Lody agent config the lead session runs with
+    poll: { active: 20s, idle: 2m }
+    sessionUrl: null # e.g. https://<lody web>/sessions/{sessionId}; null shows the id instead
+
+roles:
+  worker: { model: sonnet, effort: medium } # the /bug lead session
+
+guardrails:
+  concurrency: { perMachine: 4, perProject: 3, sameAreaWriters: 1 }
+  time: { idleRemindAfter: 45m, runRemindAfter: 6h, hardCancelAfter: null }
+  autoFixRounds: 2
+  quota:
+    pauseAt: { fiveHour: 95%, week: 90% }
+    warnAt: { week: 75% }
+    fallback: {} # e.g. { worker: haiku } to switch models instead of pausing
+    dailySessionCap: null
+  autonomy:
+    bugStartsImmediately: true
+
+machines:
+  mbp: { lody: MBP-64G }
+  desktop-5090: { lody: Desktop-5090, enabled: false }
+
+github:
+  mergeMethod: squash
+  deleteBranchOnMerge: true
+  requireChecks: all # all | required (branch protection's required checks)
+  webhookSecretEnv: HARNESS_GITHUB_WEBHOOK_SECRET
+  acceptPullRequests: harness-only # harness-only | all
+  trustedAuthors: [] # GitHub logins whose same-repo PRs get cards and whose comments may use the protocol
+  labelPrefix: "harness:" # harness:bug starts a request; harness:revise marks feedback rounds
+
+projects:
+  sandbox:
+    repo: example-owner/harness-sandbox
+    topic: auto # auto creates the topic once; or a thread id / existing:<thread id>
+    machines: [mbp]

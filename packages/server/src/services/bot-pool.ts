@@ -95,6 +95,7 @@ import type { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryConfigService } from "./summary-config-service.js";
 import type { GitWorkspaceService } from "./git-workspace-service.js";
 import type { GitHubAppCredentialService } from "./github-app-credentials.js";
+import type { HarnessService } from "../harness/service.js";
 import {
   clampGitHubRepositories,
   GitHubCredentialGenerationGate,
@@ -218,6 +219,7 @@ export class BotPool {
   private summaryConfigService?: SummaryConfigService;
   private gitWorkspaceService?: GitWorkspaceService;
   private githubAppCredentialService?: GitHubAppCredentialService;
+  private harnessService?: HarnessService;
   private engagementSampleService?: Pick<EngagementSampleService, "persist">;
   private telegramObservation?: TelegramObservationCallbacks;
   private telegramProfileObserver?: (
@@ -292,6 +294,10 @@ export class BotPool {
 
   setGitHubAppCredentialService(service: GitHubAppCredentialService) {
     this.githubAppCredentialService = service;
+  }
+
+  setHarnessService(service: HarnessService) {
+    this.harnessService = service;
   }
 
   setEngagementSampleService(service: Pick<EngagementSampleService, "persist">) {
@@ -1617,6 +1623,7 @@ export class BotPool {
       mcpCallbacks,
       summary: summaryCallbacks,
       imageGenerationReceiptConfig: aiConfig?.imageGenerationReceiptConfig,
+      harness: this.harnessService?.claimBot({ id: botId, name: bot.name }),
       quota: this.usageGovernance
         ? {
             getUsage: async ({ chatId, userId, chatType }) => {

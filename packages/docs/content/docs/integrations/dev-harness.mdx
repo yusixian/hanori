@@ -1,0 +1,65 @@
+---
+title: Dev Harness（预览）
+description: 用一个专用 Bot 和 Telegram 话题群提 bug、跟进执行会话、调整交付配置，并在群里合并 GitHub PR。
+---
+
+Dev Harness 让一个专用 Bot 在 Telegram 话题群里接收 bug、交给你的执行机上的 Lody 会话修复，再汇报 PR 并提供一键合并。当前是预览阶段：已支持配置、项目话题、`/bug` 闭环、提醒与额度护栏、PR 卡片合并；大需求、发版与回滚尚未开放。
+
+## 启用
+
+1. 新建一个只用于 harness 的 Bot，在面板中添加；再建一个开启「话题」的私有超级群，把 Bot 设为管理员，并授予管理话题权限。
+2. 参考仓库根目录的 `harness.example.yaml` 写一份配置，放在仓库之外，并用 `HARNESS_CONFIG_PATH` 指向它。未设置这个变量时 harness 完全关闭，其他 Bot 不受影响。
+3. 必填项只有 `telegram.bot`（Bot 的 ID 或名称）、`telegram.chatId`、`telegram.owners` 和每个项目的 `repo`。时长写作 `30s`、`45m`、`6h`、`7d`，百分比写作 `10%`。
+4. 重启服务。配置有误时 harness 不启用，并在服务日志中列出出错的字段路径。
+
+`topic: auto` 的项目会在首次启动时自动建一个话题并记住它，重启不会重复创建。
+
+## 在群里使用
+
+只有 `owners` 中的用户、且只在配置的群里，命令和按钮才会生效。这个群里 Bot 不闲聊；普通消息只会收到用法提示。
+
+| 命令                                                   | 作用                                                                   |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `/bug <描述>`                                          | 在项目话题中提交 bug：建 issue、排队，并在空闲执行机上开 Lody 会话     |
+| `/status`                                              | General 中显示整体状态；项目话题中显示仓库、默认分支、执行机与排队     |
+| `/quota`                                               | 按机器与 provider 显示 Lody 额度窗口；已过重置时间的窗口标为「已过期」 |
+| `/harness config [路径]`                               | 显示生效值及其来源层                                                   |
+| `/harness set <路径> <值> [--ttl 1d]`                  | 临时覆盖一个字段，可设到期时间                                         |
+| `/harness unset <路径>` / `diff` / `export` / `reload` | 删除覆盖、查看差异、导出生效配置、重新读取 YAML                        |
+
+在项目话题中执行时，配置命令只影响该项目。owner 列表、审批、风险规则、自动合并等级与凭据相关字段只能通过 YAML 修改。`reload` 失败时继续使用上一次的配置。
+
+## PR 卡片与合并
+
+在 GitHub App 设置中启用 webhook：
+
+```text
+Payload URL: ${BETTER_AUTH_URL}/api/harness/github/webhook
+Content type: application/json
+Secret: 与 HARNESS_GITHUB_WEBHOOK_SECRET 相同
+Events: Pull requests、Check runs、Check suites、Statuses、Pushes、Issues、Issue comments
+```
+
+GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读写权限，以及 Checks 与 Commit statuses 读权限。未设置 secret 时，webhook 会拒绝所有请求。
+
+配置中的仓库开 PR 后，对应项目话题会出现一张卡片：状态、风险等级、一句话摘要、CI 与缺失项。PR 更新时原地编辑同一张卡片。
+
+- 默认只为 harness 分支（`harness/` 前缀）、`trustedAuthors` 中作者的同仓库 PR，以及带 `harness:track` 标签的 PR 生成卡片；来自 fork 的陌生 PR 不会出卡片。
+- 风险等级按改动路径计算。`.cos/**`、`.github/workflows/**` 与 release-kit 配置的改动固定为 T3，只能在 GitHub 网页上合并。T2 需要先点「详情」。
+- 合并前服务端会复核 head SHA 与 CI，再用 GitHub App 合并。新的 push 会让旧按钮失效。
+- 按钮在重启后仍然有效，过期（默认 7 天）或已使用时会给出明确提示。每次按钮操作都会记入审计事件。
+
+仓库可以在默认分支放一份 `.cos/harness.yml` 声明项目类型、风险路径和交付要求；只读取默认分支上的版本，PR 中的修改不会生效。
+
+## bug 闭环
+
+`/bug` 创建带 `harness:bug` 标签的 issue，并在项目话题里发一张卡片；之后状态变化都原地编辑这张卡片。collaborator 给已有 issue 打上 `harness:bug` 标签，效果相同。
+
+- 排队遵守 `guardrails.concurrency`：每台机器、每个项目的并发上限，以及同一代码分区同时只有一个写入者。会话没有声明分区前，按整个仓库计算。
+- 额度达到 `guardrails.quota.pauseAt` 时暂停该 provider 的排队；配置了 `fallback` 时改用备用模型。本周额度达到 `warnAt` 时在 General 提醒一次。
+- 会话开出 `harness/<请求 ID>` 分支的 PR 后，PR 卡片接替进行中卡片。CI 失败会把失败项发回会话，超过 `autoFixRounds` 轮后卡片标为「需要你看一下」。
+- 回复卡片即反馈：内容写成 PR 评论、打上 `harness:revise`，再发给会话，卡片显示「修订中」。
+- 会话在 issue 上用 `Areas:`、`Question:`、`Needs spec:` 开头的评论与你沟通；问题会转到话题里，回复即作答。只有仓库 owner 和 `github.trustedAuthors` 中账号的评论会被当作协议，其他人的评论只是数据。
+- 长时间无进展或总时长过长时只提醒，提醒上有 [继续等] [取消] [打开会话]；默认不会自动取消。
+
+执行层需要 server 能运行 `lody` CLI 并已登录 workspace；未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用。

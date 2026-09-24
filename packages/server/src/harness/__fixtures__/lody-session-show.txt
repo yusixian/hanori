@@ -1,0 +1,2 @@
+[ws-fixture] Remote Streams transport attached
+{"ok":true,"workspace":{"id":"ws-fixture","name":"Fixture workspace","slug":"fixture","role":"owner"},"session":{"agentType":"claude","cliType":"builtin","contextWindowUsage":{"size":1000000,"used":474127},"createdAt":"2026-09-24T03:22:46.068Z","id":"00000000-0000-4000-8000-000000000001","isArchived":false,"lastModel":{"modelId":"opus[1m]","name":"Opus 5.5"},"machineId":"mac-0001","status":{"type":"running"},"title":"Fixture session"},"historyCount":3,"messageQueueCount":0}

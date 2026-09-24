@@ -57,4 +57,6 @@ export const env = {
   CODING_GIT_DIR: optional("CODING_GIT_DIR", "./data/code-git"),
   CODING_WORKSPACE_UID: optionalInt("CODING_WORKSPACE_UID", process.getuid?.() ?? 1000),
   CODING_WORKSPACE_GID: optionalInt("CODING_WORKSPACE_GID", process.getgid?.() ?? 1000),
+  // Dev Harness stays fully disabled unless this points at a harness.yaml.
+  HARNESS_CONFIG_PATH: optional("HARNESS_CONFIG_PATH"),
 } as const;

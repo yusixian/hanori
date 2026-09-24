@@ -34,6 +34,7 @@ import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
 import { engagementSampleRoutes } from "./routes/engagement-samples.js";
 import { botGitHubAppRoutes, githubAppCallbackRoutes } from "./routes/github-app.js";
+import { harnessRoutes, type HarnessWebhookHandler } from "./routes/harness.js";
 import type { BackupService } from "./services/backup.js";
 import type { BotPool } from "./services/bot-pool.js";
 import type { ChatSummaryService } from "./services/chat-summary-service.js";
@@ -87,6 +88,7 @@ interface AppOptions {
   memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
+  harness?: HarnessWebhookHandler;
 }
 
 export function createApp(options: AppOptions) {
@@ -117,6 +119,7 @@ export function createApp(options: AppOptions) {
     memoryConsolidationPreview,
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
+    harness,
   } = options;
   const engagementSampleService =
     providedEngagementSampleService ?? new EngagementSampleService(db);
@@ -161,6 +164,7 @@ export function createApp(options: AppOptions) {
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
+    .route("/api/harness", harnessRoutes(harness))
     .use("/api/image-mcp/status", requireAppAccess(auth, db))
     .use("/api/image-mcp/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp/oauth/start", requireAppAccess(auth, db))

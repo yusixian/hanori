@@ -275,6 +275,31 @@ export const TELEGRAM_COMMAND_CATALOG = [
     capability: "group.summary.run",
     publicHelpVisibility: "public",
   },
+  {
+    command: "harness",
+    description: {
+      "zh-CN": "查看或临时调整 Dev Harness 配置",
+      en: "View or temporarily adjust Dev Harness configuration",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "config",
+    capability: "harness.config.manage",
+    publicHelpVisibility: "hidden",
+  },
+  {
+    command: "bug",
+    description: {
+      "zh-CN": "在项目话题中提交 bug，交给执行机修复",
+      en: "Report a bug in a project topic for an executor to fix",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "harness.request.create",
+    publicHelpVisibility: "hidden",
+    redactArgs: true,
+  },
 ] as const satisfies readonly TelegramCommandMetadata[];
 
 export type TelegramCommandName = (typeof TELEGRAM_COMMAND_CATALOG)[number]["command"];

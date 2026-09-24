@@ -55,6 +55,9 @@ import {
   createCallbackQueryHandler,
   createAdminActionCallbackQueryHandler,
 } from "./handlers/event-handlers.js";
+import { createHarnessMiddleware } from "./harness/middleware.js";
+import { createHarnessTelegram } from "./harness/telegram.js";
+import type { HarnessBotPort } from "./harness/types.js";
 import { createLogMiddleware } from "./middleware/log.js";
 import {
   createTelegramObservationMiddleware,
@@ -125,6 +128,7 @@ export interface BotConfig {
   telegramObservation?: TelegramObservationCallbacks;
   miniAppUrl?: string;
   cosInside?: CosInsideCommandConfig;
+  harness?: HarnessBotPort;
 }
 
 export async function sendLocalImageFiles(
@@ -223,7 +227,7 @@ export function createBot(config: BotConfig) {
       if (!ctx.message) return next();
       const chatId = ctx.chat?.id;
       const userId = ctx.from?.id;
-      if (chatId === undefined) return next();
+      if (chatId === undefined || config.harness?.isHarnessChat(chatId)) return next();
       if (hasLeadingBotCommand(ctx)) {
         stopAiTurnCoalescing?.(chatId, ctx.message?.message_thread_id);
         return next();
@@ -243,6 +247,7 @@ export function createBot(config: BotConfig) {
     createTelegramObservationMiddleware(config.botId, config.telegramObservation, config.onLog),
   );
   bot.use(createLogMiddleware(config.onLog));
+  if (config.harness) bot.use(createHarnessMiddleware(config.harness));
 
   // Build AI handler + runtime state (created before commands so state is available)
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
@@ -605,6 +610,20 @@ export function createBot(config: BotConfig) {
 
   if (config.quota) commandRegistry.register("quota", createQuotaCommand(config.quota));
 
+  const harness = config.harness;
+  if (harness) {
+    // Inside the harness chat the harness middleware answers first; elsewhere only point the way.
+    const pointToHarnessChat =
+      (command: string): Parameters<typeof commandRegistry.register>[1] =>
+      async (ctx) => {
+        if (ctx.from && harness.isOwner(ctx.from.id)) {
+          await ctx.reply(`请在 Dev Harness 话题群中使用 /${command}。`);
+        }
+      };
+    commandRegistry.register("harness", pointToHarnessChat("harness"));
+    commandRegistry.register("bug", pointToHarnessChat("bug"));
+  }
+
   if (config.summary) {
     commandRegistry.register("summary", createSummaryCommand(config.summary));
   }
@@ -683,6 +702,7 @@ export function createBot(config: BotConfig) {
     await ctx.resolveWait(errorMsg).catch(() => {});
   });
 
+  harness?.onBotReady(createHarnessTelegram(bot.api));
   botDisposers.set(bot, () => disposeAiRuntime?.());
   return bot;
 }
@@ -711,6 +731,24 @@ export {
   type PromptTrust,
 } from "./services/context-assembler.js";
 export type { McpCommandConfig } from "./commands/mcp.js";
+export {
+  HARNESS_CALLBACK_PREFIX,
+  type HarnessAttachment,
+  type HarnessBotPort,
+  type HarnessCallbackAnswer,
+  type HarnessCallbackRequest,
+  type HarnessCommandName,
+  type HarnessCommandRequest,
+  type HarnessEditMessage,
+  type HarnessEditResult,
+  type HarnessInlineButton,
+  type HarnessKeyboard,
+  type HarnessMessageKind,
+  type HarnessOutgoingMessage,
+  type HarnessReply,
+  type HarnessReplyRequest,
+  type HarnessTelegram,
+} from "./harness/types.js";
 export type {
   CosInsideAuditEntry,
   CosInsideCommandConfig,
