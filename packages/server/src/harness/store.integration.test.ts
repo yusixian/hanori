@@ -5,9 +5,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DrizzleHarnessStore } from "./store.js";
 
 const url = process.env.HARNESS_STORE_TEST_DATABASE_URL;
-const MIGRATIONS = ["0054_harness_foundation.sql", "0055_harness_jobs.sql"].map(
-  (name) => new URL(`../../../database/drizzle/${name}`, import.meta.url),
-);
+const MIGRATIONS = [
+  "0054_harness_foundation.sql",
+  "0055_harness_jobs.sql",
+  "0056_harness_panel_projects.sql",
+].map((name) => new URL(`../../../database/drizzle/${name}`, import.meta.url));
 // Explicit opt-in; never use the application's DATABASE_URL.
 describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
   let client: ReturnType<typeof createDb>["client"];
@@ -137,6 +139,33 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
     await store.upsertProject("sandbox", "example-owner/harness-sandbox", { policyError: null });
     const [project] = await store.listProjects();
     expect(project).toMatchObject({ key: "sandbox", chatId: -100, threadId: 9 });
+  });
+
+  it("stores and clears a panel binding with its policy patch", async () => {
+    const binding = { repo: "example-owner/koyori", machines: ["mbp"] };
+    await store.upsertProject("koyori", binding.repo, {
+      binding,
+      policyPatch: { verify: { quick: "pnpm lint" } },
+      inferredPolicy: { kind: "electron" },
+    });
+    let row = (await store.listProjects()).find((p) => p.key === "koyori");
+    expect(row).toMatchObject({ binding, policyPatch: { verify: { quick: "pnpm lint" } } });
+    await store.upsertProject("koyori", binding.repo, { binding: null, policyPatch: null });
+    row = (await store.listProjects()).find((p) => p.key === "koyori");
+    expect(row).toMatchObject({
+      binding: null,
+      policyPatch: null,
+      inferredPolicy: { kind: "electron" },
+    });
+  });
+
+  it("upserts and removes panel settings", async () => {
+    expect(await store.getSetting("execution")).toBeNull();
+    await store.putSetting("execution", { model: "gpt-6-sol" }, 42);
+    await store.putSetting("execution", { model: "gpt-6-astra" }, 42);
+    expect(await store.getSetting("execution")).toEqual({ model: "gpt-6-astra" });
+    await store.putSetting("execution", null, 42);
+    expect(await store.getSetting("execution")).toBeNull();
   });
 
   it("lets exactly one scheduler claim a queued request", async () => {

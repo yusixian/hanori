@@ -1,0 +1,220 @@
+.harness-form {
+  display: grid;
+  gap: 1rem;
+}
+
+.harness-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.harness-field > label,
+.harness-field > legend,
+.harness-field-label {
+  padding: 0;
+  font-weight: 600;
+}
+
+fieldset.harness-field {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.harness-hint {
+  color: var(--harness-muted);
+  font-size: 0.78rem;
+}
+
+.harness-error {
+  color: var(--harness-danger);
+  font-size: 0.78rem;
+}
+
+.harness-input,
+.harness-select {
+  width: 100%;
+  min-height: var(--harness-control-height);
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--harness-input-border);
+  border-radius: var(--harness-control-radius);
+  background: var(--harness-input-bg);
+  color: var(--harness-text);
+  font: inherit;
+  /* 16px keeps iOS WebViews from zooming into focused inputs. */
+  font-size: max(1rem, 16px);
+}
+
+.harness-admin[data-surface="panel"] :is(.harness-input, .harness-select) {
+  font-size: 0.875rem;
+}
+
+.harness-input[aria-invalid="true"] {
+  border-color: var(--harness-danger);
+}
+
+.harness-input:disabled,
+.harness-select:disabled {
+  opacity: 0.55;
+}
+
+.harness-check-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.harness-check {
+  display: flex;
+  min-height: var(--harness-control-height);
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--harness-border);
+  border-radius: var(--harness-control-radius);
+  cursor: pointer;
+}
+
+.harness-check:has(input:checked) {
+  border-color: color-mix(in srgb, var(--harness-accent) 55%, transparent);
+  background: var(--harness-accent-soft);
+}
+
+.harness-check:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.harness-check input {
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--harness-accent);
+}
+
+.harness-check > span:last-child {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.5rem;
+  min-width: 0;
+}
+
+.harness-check strong {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.harness-check small {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--harness-muted);
+  font-size: 0.75rem;
+}
+
+.harness-repo-scroll {
+  display: grid;
+  gap: 0.8rem;
+  max-height: min(26rem, 55dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.harness-repo-group {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.harness-repo-group > legend {
+  margin-bottom: 0.35rem;
+  padding: 0;
+  color: var(--harness-muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.harness-advanced {
+  border: 1px solid var(--harness-border);
+  border-radius: var(--harness-control-radius);
+}
+
+.harness-advanced > summary {
+  display: flex;
+  min-height: var(--harness-control-height);
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.harness-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.harness-advanced > summary svg {
+  width: 1rem;
+  margin-left: auto;
+  transition: transform 150ms ease;
+}
+
+.harness-advanced[open] > summary svg {
+  transform: rotate(180deg);
+}
+
+.harness-advanced > div {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.25rem 0.8rem 0.9rem;
+}
+
+.harness-grid-2 {
+  display: grid;
+  gap: 0.85rem;
+}
+
+@media (min-width: 36rem) {
+  .harness-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.harness-summary-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.6rem;
+  overflow-wrap: anywhere;
+}
+
+.harness-muted-icon {
+  flex: 0 0 auto;
+  color: var(--harness-muted);
+}
+
+.harness-confirm {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--harness-danger) 40%, transparent);
+  border-radius: var(--harness-control-radius);
+}
+
+.harness-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.harness-admin[data-surface="mini-app"] .harness-footer .harness-button {
+  flex: 1 1 9rem;
+}

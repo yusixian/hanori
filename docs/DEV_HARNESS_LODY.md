@@ -9,7 +9,8 @@ app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim�
 
 ## 边界
 
-- bridge 只执行白名单内的命令：`--version`、`machine list`、`session create|chat|show|status|cancel|archive` 及其已知参数（见 `infrastructure/lody-bridge/allowlist.mjs`）。`login`、`daemon`、`delete`、`--env`、`--debug`、`--wait`、位置参数形式的 prompt 和 `--flag=value` 写法一律拒绝。
+- bridge 只执行白名单内的命令：`--version`、`machine list`、`agent-config list`、`session create|chat|show|status|cancel|archive` 及其已知参数（见 `infrastructure/lody-bridge/allowlist.mjs`）。`login`、`daemon`、`delete`、`--env`、`--debug`、`--wait`、位置参数形式的 prompt 和 `--flag=value` 写法一律拒绝；`--config-option` 只接受 `reasoning_effort=<强度>` 和 `effort=<强度>`。
+- `agent-config list` 的输出在 bridge 内先裁剪，只保留每个执行配置的 `id`、`name`、`agentType`、`machineId`；`env`（可能含 API key）不会离开 sidecar。
 - prompt 只能通过 stdin（`--prompt-file -`）传入，最大 256 KiB。每条命令有超时（最长 180 秒）和 8 MiB 输出上限，超出时强制终止，harness 按「结果未知」处理，不会自动重试 `session create`。
 - 认证使用 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），用固定长度摘要做常量时间比较。bridge 日志只记录子命令、退出状态和耗时，不记录参数值、prompt、token 或 stdout。
 - 子进程的环境变量中去掉了 `LODY_CLI_TOKEN` 和 bridge 密钥；bridge 进程启动前入口脚本也会 `unset LODY_CLI_TOKEN`。

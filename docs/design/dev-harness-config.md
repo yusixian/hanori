@@ -6,8 +6,14 @@
 
 ## 1. 原则
 
-- **能配置的都可以配置，每项都有合理默认值**：零配置时只需填写必填项（Bot、群、owner、项目仓库），其余全部使用默认值。
-- **逐层覆盖**：内置默认 → `harness.yaml` 全局 → `harness.yaml` 项目 → 仓库 `.cos/harness.yml` → 数据库覆盖层（Telegram / 面板中的临时调整）。
+- **能配置的都可以配置，每项都有合理默认值**：零配置时只需填写必填项（Bot、群、owner），项目可以写在 YAML 里，也可以在面板或 Mini App 中添加（见 §7）。
+- **逐层覆盖**（`/harness config <路径>` 显示的来源层名称）：
+  1. 内置默认、按 `kind` 推断
+  2. `harness.yaml`（全局）→ `harness.yaml 项目`
+  3. `.cos/harness.yml`；仓库没有这个文件时换成「按仓库推断」（§8）
+  4. 「面板设置（全局）」：面板中设置的 lead 执行配置（§9）
+  5. 「面板设置」：面板项目的绑定、策略修改和该项目的执行配置
+  6. 覆盖层（全局）→ 覆盖层（项目）：Telegram `/harness set` 的临时调整
 - **可查可校验**：
   - 所有字段有 JSON Schema，启动与 `/harness reload` 时校验，错误定位到字段路径。
   - `/harness config <路径>` 显示生效值及其来源层；`/harness diff` 显示覆盖层与 YAML 的差异；`/harness export` 导出生效配置。
@@ -70,7 +76,8 @@ executors:
   default: lody # lody | node
   lody:
     workspace: auto # 自动取唯一 workspace
-    agentConfig: "Claude Code"
+    agentConfig: Codex # roles.worker.agent 未设置时 lead 使用的 Lody 执行配置（名称或 id）
+    models: {} # 替换面板中某类 agent 的模型列表，见 §9
     worktree: true
     shareLinks: true
     poll: { active: 20s, idle: 2m }
@@ -82,12 +89,12 @@ machines:
   mbp: { lody: MBP-64G, tags: [macos, electron], enabled: true }
   desktop-5090: { lody: Desktop-5090, tags: [windows, gpu], enabled: false }
 
-roles:
+roles: # 只写要改的角色，其余保留内置值
   triage: { model: sonnet, effort: low }
   planner: { model: opus, effort: high }
-  worker: { model: sonnet, effort: medium }
-  subworker: { model: haiku, effort: low }
-  reviewer: { agent: codex, effort: high } # 跨厂商审查；不可用时回退到 Claude + fable
+  worker: { effort: high } # lead 会话；model 默认取该 agent 类型模型列表的第一项（Codex 为 gpt-6-sol）
+  # subworker / reviewer 未设置时跟随 lead：Codex lead 用 gpt-6-luna 子会话、Claude Code + opus[1m] 审查；
+  # Claude lead 用 haiku 子会话、Codex + gpt-6-sol 审查。effort 可选 default | low | medium | high | xhigh | max | ultra
 
 guardrails:
   concurrency:
@@ -133,7 +140,7 @@ release:
 audit:
   retain: 365d
 
-projects:
+projects: # 可省略；YAML 项目在面板中只读，与面板项目同名或同仓库时以 YAML 为准
   koyori:
     repo: example-owner/koyori # 必填
     topic: auto # auto | <thread id>
@@ -148,7 +155,7 @@ projects:
 
 ```yaml
 version: 1
-kind: web # web | electron | service | library；决定下列默认值
+kind: web # web | electron | native | service | library；决定下列默认值
 
 verify:
   quick: null # 默认按 kind 推断，例如 pnpm lint && pnpm typecheck && pnpm test
@@ -211,14 +218,16 @@ prompts:
 
 ## 5. 按 `kind` 推断的默认值
 
-| 字段                              | web        | electron       | service    | library |
-| --------------------------------- | ---------- | -------------- | ---------- | ------- |
-| `verify.acceptance`               | 浏览器验收 | 打包后桌面验收 | 无         | 无      |
-| `deploy.target`                   | dokploy    | github-release | dokploy    | none    |
-| `deploy.onMerge`                  | production | none           | production | none    |
-| `release.preview.trigger`         | none       | merge          | none       | manual  |
-| `release.stable.approval`         | owner      | owner          | owner      | owner   |
-| `guardrails.time.idleRemindAfter` | 45m        | 90m            | 45m        | 45m     |
+| 字段                              | web        | electron       | native         | service    | library |
+| --------------------------------- | ---------- | -------------- | -------------- | ---------- | ------- |
+| `verify.acceptance`               | 浏览器验收 | 打包后桌面验收 | 无             | 无         | 无      |
+| `deploy.target`                   | dokploy    | github-release | github-release | dokploy    | none    |
+| `deploy.onMerge`                  | production | none           | none           | production | none    |
+| `release.preview.trigger`         | none       | merge          | manual         | none       | manual  |
+| `release.stable.approval`         | owner      | owner          | owner          | owner      | owner   |
+| `guardrails.time.idleRemindAfter` | 45m        | 90m            | 90m            | 45m        | 45m     |
+
+`native` 指不基于 Electron 的桌面或移动端应用，例如 Swift / Xcode 项目。
 
 ## 6. Telegram 中的配置命令
 
@@ -233,3 +242,51 @@ prompts:
 | `/quota`                              | 按机器与 provider 显示各时间窗口的用量与重置时间 |
 
 在项目话题中执行时，路径默认限定在该项目。
+
+## 7. 面板项目
+
+owner 可以在网页面板的「Dev Harness」页（`/harness`）或 Mini App 中添加项目：从 GitHub App 能访问的仓库里选一个，选执行机，保存后立即生效，不需要 `/harness reload`。
+
+- 面板项目存在数据库 `harness_projects.binding` 中，与 YAML 项目合并成同一个项目集合；同名或同仓库时以 YAML 为准，被挡住的面板项目在面板中显示提示，不会被静默删除。
+- 保存后会自动创建项目话题并读取仓库策略；删除时如果还有排队或进行中的任务会被拒绝。
+- 面板只能修改策略中的这些字段，存在 `policy_patch` 中，位于仓库文件之上：`kind`、`verify.quick|full|acceptance`、`sizeGate.maxFiles`、`contract.releaseFragment`、`prompts.preferSkills`。风险分级、固定 T3 路径和 §2 的安全字段不能在面板中修改。
+- YAML 项目在面板中只读，只能单独设置该项目的执行配置（§9）。
+- 仓库列表来自 GitHub App 的全部安装（个人账号和组织）；要添加新账号或仓库，在面板中点「授权更多仓库」进入 GitHub App 安装页。
+
+## 8. 按仓库推断
+
+仓库默认分支没有 `.cos/harness.yml` 时，server 读取少量文件推断策略，结果缓存在 `harness_projects.inferred_policy`，默认分支有新提交时随策略一起刷新。只写有把握的字段，其余仍用默认值：
+
+| 仓库特征                                          | `kind`            | `verify`                                                                                                                                             |
+| ------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json` 依赖 `electron`                    | electron          | `quick`：已有的 `lint`、`typecheck`、`test` 脚本；`full`：`verify` 或 `check`；`acceptance`：`test:e2e`、`test:desktop` 或 `e2e`                     |
+| `package.json` 有 `bin` / `exports`，没有应用框架 | library           | 同上                                                                                                                                                 |
+| `package.json` 只有 express / hono 等服务端框架   | service           | 同上                                                                                                                                                 |
+| 其他 `package.json`                               | web               | 同上                                                                                                                                                 |
+| `Tuist.swift` 或 `Project.swift`                  | native            | `quick`：`tuist install && tuist generate --no-open && xcodebuild -workspace <Name>.xcworkspace -scheme <Name> ... build`；`full`：`xcodebuild test` |
+| 只有 `*.xcodeproj`                                | native            | 不推断                                                                                                                                               |
+| `Package.swift`                                   | library           | `swift build && swift test`                                                                                                                          |
+| `Cargo.toml` / `go.mod`                           | library / service | `cargo test` / `go test ./...`                                                                                                                       |
+
+- 包管理器优先看 `packageManager` 字段，其次看锁文件（`pnpm-lock.yaml`、`yarn.lock`、`bun.lock(b)`），否则用 npm；命令写成 `pnpm lint`、`yarn lint`、`npm run lint`、`bun run lint`。
+- `<Name>` 取 `Project.swift` 中的 `name:`，读不到时用仓库名。
+- 仓库在 `.agents/skills/<name>/SKILL.md` 或 `.claude/skills/<name>/SKILL.md` 定义了与默认 `preferSkills` 同名的 skill 时，从列表中去掉，避免把仓库自己的同名流程（例如 koyori 的 `oneshot` 发版流程）用在修 bug 上。
+
+## 9. 在面板中设置 lead 执行配置
+
+lead 会话的执行配置（Lody agent 配置、模型、推理强度）可以在面板中设置全局默认，也可以按项目覆盖（YAML 项目也可以）。它们对应 `roles.worker.agent`、`roles.worker.model`、`roles.worker.effort`，位于 `harness.yaml` 之上、Telegram 覆盖层之下；留空的字段继续使用 YAML 或内置值。
+
+- 内置默认：Lody 中名为 `Codex` 的执行配置、`gpt-6-sol`、推理强度 `high`。
+- 执行配置列表来自 `lody agent-config list`，lody-bridge 只返回 `id`、`name`、`agentType`、`machineId`，不返回 `env`。Lody 可访问时，执行配置必须在列表中。
+- 模型列表按 agent 类型内置（Codex：gpt-6-sol、gpt-6-astra、gpt-6-luna、gpt-5.6-sol、gpt-5.6-terra、gpt-5.6-luna、gpt-5.5；Claude：default、opus[1m]、claude-fable-5-1[1m]、sonnet、haiku）。可以填列表外的模型 ID；列表内的模型会校验推理强度是否支持。用 `executors.lody.models` 替换某类 agent 的列表：
+
+```yaml
+executors:
+  lody:
+    models:
+      codex:
+        - { id: gpt-6-sol, name: GPT-6 Sol, efforts: [low, medium, high, xhigh, max, ultra] }
+```
+
+- 推理强度通过 `lody session create --config-option` 传给 Lody：Codex 用 `reasoning_effort=<值>`，Claude 用 `effort=<值>`；`default` 或留空时不传。
+- 额度按执行配置的 `agentType` 归属 provider；拿不到列表时按模型 ID 前缀（`gpt-`、`o3` 等为 Codex，`claude`、`opus`、`sonnet`、`haiku`、`fable` 为 Claude）判断，最后才看名称。

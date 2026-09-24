@@ -6,6 +6,9 @@ export type LayerName =
   | "yaml"
   | "yaml:project"
   | "repo"
+  | "inferred"
+  | "panel:global"
+  | "panel"
   | "override:global"
   | "override:project";
 
@@ -15,6 +18,9 @@ export const LAYER_LABELS: Record<LayerName, string> = {
   yaml: "harness.yaml",
   "yaml:project": "harness.yaml 项目",
   repo: ".cos/harness.yml",
+  inferred: "按仓库推断",
+  "panel:global": "面板设置（全局）",
+  panel: "面板设置",
   "override:global": "覆盖层（全局）",
   "override:project": "覆盖层（项目）",
 };

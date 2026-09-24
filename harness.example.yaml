@@ -1,6 +1,7 @@
 # Dev Harness control-plane config. Copy outside the repository, point HARNESS_CONFIG_PATH at it,
-# and restart the server. Only telegram.bot/chatId/owners and projects.*.repo are required;
-# every other field below shows its default. Field reference: docs/design/dev-harness-config.md.
+# and restart the server. Only telegram.bot/chatId/owners are required; projects can also be
+# added from the panel's Dev Harness page. Every other field below shows its default.
+# Field reference: docs/design/dev-harness-config.md.
 version: 1
 
 telegram:
@@ -24,12 +25,13 @@ executors:
       urlEnv: HARNESS_LODY_BRIDGE_URL
       secretEnv: HARNESS_LODY_BRIDGE_SECRET
     timeout: 20s
-    agentConfig: Claude Code # Lody agent config the lead session runs with
+    agentConfig: Codex # Lody agent config (name or id) the lead runs with unless roles.worker.agent is set
+    models: {} # replaces the panel's model list per agent type, e.g. { codex: [{ id: gpt-6-sol, name: GPT-6 Sol, efforts: [high] }] }
     poll: { active: 20s, idle: 2m }
     sessionUrl: null # e.g. https://<lody web>/sessions/{sessionId}; null shows the id instead
 
-roles:
-  worker: { model: sonnet, effort: medium } # the /bug lead session
+roles: # the panel's execution settings sit above these; subworker/reviewer follow the lead's vendor
+  worker: { effort: high } # the /bug lead; model defaults to gpt-6-sol for Codex, the agent default otherwise
 
 guardrails:
   concurrency: { perMachine: 4, perProject: 3, sameAreaWriters: 1 }
@@ -56,7 +58,7 @@ github:
   trustedAuthors: [] # GitHub logins whose same-repo PRs get cards and whose comments may use the protocol
   labelPrefix: "harness:" # harness:bug starts a request; harness:revise marks feedback rounds
 
-projects:
+projects: # optional; YAML projects are read-only in the panel and win on a key or repo clash
   sandbox:
     repo: example-owner/harness-sandbox
     topic: auto # auto creates the topic once; or a thread id / existing:<thread id>

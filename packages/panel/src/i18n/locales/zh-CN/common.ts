@@ -70,6 +70,7 @@ export const common = {
     timers: "定时任务",
     mcp: "MCP",
     apiTest: "API 测试",
+    harness: "Dev Harness",
     logs: "日志",
     overview: "概览",
     edit: "编辑",

@@ -1,6 +1,5 @@
 import type { HarnessBotPort, HarnessTelegram } from "@cos-tool-bot/bot";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
-import { handleIssueEvent } from "./bug.js";
 import { handleHarnessCallback } from "./callbacks.js";
 import { handleHarnessCommand } from "./commands.js";
 import { type ConfigIssue, type ConfigLayer, formatIssues } from "./config/layers.js";
@@ -8,10 +7,12 @@ import {
   type ConfigValidation,
   type LoadedHarnessConfig,
   loadHarnessConfigFile,
-  parseRepoPolicy,
 } from "./config/loader.js";
+import { type ExecutionSetting, executionLayerData } from "./config/execution.js";
+import { composePanelProjects, parseExecutionSetting } from "./config/panel.js";
 import {
   type HarnessOverride,
+  type ProjectLayerInput,
   resolveGlobalConfig,
   resolveProjectConfig,
 } from "./config/resolve.js";
@@ -26,18 +27,22 @@ import { type ExecFileLike, LodyCli } from "./lody.js";
 import { createBridgeExec } from "./lody-bridge.js";
 import { HarnessPrActions } from "./pr-actions.js";
 import { HarnessPrFlow } from "./pr-flow.js";
-import { handleIssueComment, handleOwnerReply } from "./protocol.js";
+import { fetchRepoPolicy } from "./policy-refresh.js";
+import { handleOwnerReply } from "./protocol.js";
 import { renderUsageHint } from "./render.js";
-import type { HarnessEventInput, HarnessProjectRecord, HarnessStore } from "./store.js";
-import type { PrSummarizer } from "./summary.js";
 import {
-  type GitHubWebhookRequest,
-  type GitHubWebhookResponse,
-  handleGitHubWebhook,
-} from "./webhook.js";
+  emptyProjectRecord,
+  type HarnessEventInput,
+  type HarnessProjectPatch,
+  type HarnessProjectRecord,
+  type HarnessStore,
+} from "./store.js";
+import type { PrSummarizer } from "./summary.js";
+import type { GitHubWebhookRequest, GitHubWebhookResponse } from "./webhook.js";
+import { dispatchGitHubWebhook } from "./webhook-dispatch.js";
 import { HarnessWork } from "./work.js";
 
-export const REPO_POLICY_PATH = ".cos/harness.yml";
+export { REPO_POLICY_PATH } from "./policy-refresh.js";
 
 /** Satisfied by DbLogger, so harness diagnostics also land in the panel's system log. */
 export interface HarnessLogger {
@@ -54,6 +59,8 @@ export interface HarnessServiceOptions {
   summarizer?: PrSummarizer;
   env?: Record<string, string | undefined>;
   now?: () => Date;
+  /** Web panel origin; the Telegram "管理项目" button links to `<panelUrl>/harness`. */
+  panelUrl?: string;
   loadConfig?: (path: string) => Promise<ConfigValidation>;
   createLody?: (command: string[], timeoutMs: number, exec?: ExecFileLike) => LodyCli;
 }
@@ -73,6 +80,8 @@ export class HarnessService {
   readonly prFlow: HarnessPrFlow;
   readonly prActions: HarnessPrActions;
   readonly work: HarnessWork;
+  /** Where owners manage projects; the Telegram "管理项目" button links here. */
+  readonly adminUrl: string | null;
   private readonly configPath: string;
   private readonly env: Record<string, string | undefined>;
   private readonly clock: () => Date;
@@ -83,12 +92,18 @@ export class HarnessService {
     exec?: ExecFileLike,
   ) => LodyCli;
   private readonly applyLock = new KeyedAsyncLock();
+  private yaml: LoadedHarnessConfig | null = null;
+  /** harness.yaml composed with the panel projects that took effect. */
   private loaded: LoadedHarnessConfig | null = null;
+  private panelKeys = new Set<string>();
+  private panelExecution: ExecutionSetting | null = null;
+  /** Stored panel projects that did not take effect, with the reason. */
+  shadowedPanelProjects: ReadonlyMap<string, string> = new Map();
   private reloadError: { at: Date; issues: ConfigIssue[] } | null = null;
   private overrides: HarnessOverride[] = [];
   private projectRecords = new Map<string, HarnessProjectRecord>();
   private telegramClient: HarnessTelegram | null = null;
-  private boundBot: { id: string; name: string } | null = null;
+  private boundBot: { id: string; name: string; miniApp: boolean } | null = null;
   private lodyClient: { key: string; cli: LodyCli } | null = null;
 
   constructor(options: HarnessServiceOptions) {
@@ -99,6 +114,9 @@ export class HarnessService {
     this.summarizer = options.summarizer;
     this.env = options.env ?? process.env;
     this.clock = options.now ?? (() => new Date());
+    this.adminUrl = URL.canParse("/harness", options.panelUrl)
+      ? new URL("/harness", options.panelUrl).toString()
+      : null;
     this.loadConfig = options.loadConfig ?? ((path) => loadHarnessConfigFile(path, this.clock()));
     this.createLody =
       options.createLody ?? ((command, timeoutMs, exec) => new LodyCli(command, timeoutMs, exec));
@@ -135,8 +153,20 @@ export class HarnessService {
     return this.boundBot?.name ?? null;
   }
 
+  get botHasMiniApp(): boolean {
+    return this.boundBot?.miniApp ?? false;
+  }
+
   get configFilePath(): string {
     return this.configPath;
+  }
+
+  isPanelProject(key: string): boolean {
+    return this.panelKeys.has(key);
+  }
+
+  allProjectRecords(): HarnessProjectRecord[] {
+    return [...this.projectRecords.values()];
   }
 
   readEnv(name: string): string | undefined {
@@ -145,6 +175,7 @@ export class HarnessService {
 
   async init(): Promise<boolean> {
     this.overrides = await this.store.listOverrides();
+    this.panelExecution = parseExecutionSetting(await this.store.getSetting("execution"));
     this.projectRecords = new Map((await this.store.listProjects()).map((row) => [row.key, row]));
     const result = await this.loadConfig(this.configPath);
     if (!result.ok) {
@@ -152,19 +183,31 @@ export class HarnessService {
       this.logger.error(`Dev Harness disabled: invalid config\n${formatIssues(result.issues)}`);
       return false;
     }
-    this.loaded = result.config;
+    this.yaml = result.config;
+    this.recompose();
     return true;
   }
 
+  private recompose() {
+    if (!this.yaml) return;
+    const panel = [...this.projectRecords.values()].flatMap((record) =>
+      record.binding ? [{ key: record.key, binding: record.binding }] : [],
+    );
+    const composed = composePanelProjects(this.yaml, panel, this.now());
+    this.loaded = composed.config;
+    this.panelKeys = composed.panelKeys;
+    this.shadowedPanelProjects = composed.shadowed;
+  }
+
   /** Binds the harness to the Bot named by `telegram.bot` (id or name); one Bot at most. */
-  claimBot(bot: { id: string; name: string }): HarnessBotPort | undefined {
+  claimBot(bot: { id: string; name: string; miniApp?: boolean }): HarnessBotPort | undefined {
     const ref = this.loaded?.file.telegram.bot;
     if (!ref || (bot.id !== ref && bot.name !== ref)) return undefined;
     if (this.boundBot && this.boundBot.id !== bot.id) {
       this.logger.warn(`Dev Harness already bound to Bot ${this.boundBot.id}; ignoring ${bot.id}`);
       return undefined;
     }
-    this.boundBot = { id: bot.id, name: bot.name };
+    this.boundBot = { id: bot.id, name: bot.name, miniApp: bot.miniApp ?? false };
     return this.port;
   }
 
@@ -204,11 +247,21 @@ export class HarnessService {
     return this.overrides;
   }
 
+  get panelExecutionSetting(): ExecutionSetting | null {
+    return this.panelExecution;
+  }
+
+  async setPanelExecution(value: ExecutionSetting | null, actorId: number | null) {
+    await this.store.putSetting("execution", value ? { ...value } : null, actorId);
+    this.panelExecution = value;
+  }
+
   globalView(): ScopedView<HarnessFileConfig> {
     const { raw, file } = this.requireConfig();
-    const resolved = resolveGlobalConfig(raw, this.overrides, this.now());
+    const panel = executionLayerData(this.panelExecution);
+    const resolved = resolveGlobalConfig(raw, this.overrides, this.now(), panel);
     if (resolved.ok) return { config: resolved.value, layers: resolved.layers };
-    const fallback = resolveGlobalConfig(raw, [], this.now());
+    const fallback = resolveGlobalConfig(raw, [], this.now(), panel);
     return {
       config: file,
       layers: fallback.layers,
@@ -224,24 +277,41 @@ export class HarnessService {
     return this.projectRecords.get(key);
   }
 
+  projectInput(
+    key: string,
+    overrides: readonly HarnessOverride[] = this.overrides,
+  ): ProjectLayerInput {
+    const record = this.projectRecords.get(key);
+    return {
+      raw: this.requireConfig().raw,
+      projectKey: key,
+      policy: record?.policy ?? null,
+      inferred: record?.inferredPolicy ?? null,
+      panel: {
+        binding: this.panelKeys.has(key),
+        // A YAML project may share its row with a shadowed panel entry; only panel projects take its patch.
+        policyPatch: this.panelKeys.has(key) ? (record?.policyPatch ?? null) : null,
+        execution: executionLayerData(parseExecutionSetting(record?.execution)),
+      },
+      panelGlobal: executionLayerData(this.panelExecution),
+      overrides,
+      now: this.now(),
+    };
+  }
+
   projectView(
     key: string,
     overrides: readonly HarnessOverride[] = this.overrides,
   ): ScopedView<ProjectEffectiveConfig> | null {
-    const loaded = this.requireConfig();
-    if (!loaded.file.projects[key]) return null;
-    const input = {
-      raw: loaded.raw,
-      projectKey: key,
-      policy: this.projectRecords.get(key)?.policy ?? null,
-      overrides,
-      now: this.now(),
-    };
+    if (!this.requireConfig().file.projects[key]) return null;
+    const input = this.projectInput(key, overrides);
     const resolved = resolveProjectConfig(input);
     if (resolved.ok) return { config: resolved.value, layers: resolved.layers };
+    const bindingOnly = { binding: input.panel?.binding ?? false, policyPatch: null };
     for (const fallback of [
       { ...input, overrides: [] },
-      { ...input, overrides: [], policy: null },
+      { ...input, overrides: [], policy: null, inferred: null },
+      { ...input, overrides: [], policy: null, inferred: null, panel: bindingOnly },
     ]) {
       const retry = resolveProjectConfig(fallback);
       if (retry.ok) {
@@ -305,26 +375,8 @@ export class HarnessService {
     this.overrides = next;
   }
 
-  async handleGitHubWebhook(request: GitHubWebhookRequest): Promise<GitHubWebhookResponse> {
-    if (!this.loaded) return { status: 503, body: { ok: false, error: "harness not loaded" } };
-    return handleGitHubWebhook(
-      {
-        secret: this.readEnv(this.globalView().config.github.webhookSecretEnv),
-        store: this.store,
-        projectForRepo: (repo) => this.projectKeyForRepo(repo),
-        rememberInstallation: (repo, id) => this.github?.rememberInstallation(repo, id),
-        dispatch: (event, payload, key) => this.dispatchWebhook(event, payload, key),
-        onDispatchError: (error, event, key) =>
-          this.logger.error(`Dev Harness ${event} for ${key} failed: ${(error as Error).message}`),
-      },
-      request,
-    );
-  }
-
-  private dispatchWebhook(event: string, payload: Record<string, unknown>, projectKey: string) {
-    if (event === "issues") return handleIssueEvent(this.work, payload, projectKey);
-    if (event === "issue_comment") return handleIssueComment(this.work, payload, projectKey);
-    return this.prFlow.handleWebhookEvent(event, payload, projectKey);
+  handleGitHubWebhook(request: GitHubWebhookRequest): Promise<GitHubWebhookResponse> {
+    return dispatchGitHubWebhook(this, request);
   }
 
   async reload(actorId?: number): Promise<{ ok: true } | { ok: false; issues: ConfigIssue[] }> {
@@ -339,9 +391,11 @@ export class HarnessService {
       return { ok: false, issues: result.issues };
     }
     const previousBot = this.loaded?.file.telegram.bot;
-    this.loaded = result.config;
+    this.yaml = result.config;
+    this.recompose();
     this.reloadError = null;
     this.overrides = await this.store.listOverrides();
+    this.panelExecution = parseExecutionSetting(await this.store.getSetting("execution"));
     await this.recordEvent({
       type: "config.reloaded",
       actorId,
@@ -370,28 +424,34 @@ export class HarnessService {
     });
   }
 
-  private async saveProject(key: string, patch: Partial<HarnessProjectRecord>) {
-    const repo = this.file.projects[key]!.repo;
+  private async saveProject(key: string, patch: HarnessProjectPatch) {
+    await this.writeProject(key, this.file.projects[key]!.repo, patch);
+  }
+
+  private async writeProject(key: string, repo: string, patch: HarnessProjectPatch) {
     await this.store.upsertProject(key, repo, patch);
     const now = this.now();
     const current = this.projectRecords.get(key);
     this.projectRecords.set(key, {
-      key,
-      repo,
-      chatId: null,
-      threadId: null,
-      topicError: null,
-      installationId: null,
-      defaultBranch: null,
-      kind: null,
-      policy: null,
-      policySha: null,
-      policyError: null,
-      policyFetchedAt: null,
-      createdAt: now,
+      ...emptyProjectRecord(key, repo, now),
       ...current,
       ...patch,
+      repo,
       updatedAt: now,
+    });
+  }
+
+  /**
+   * Stores a panel project's fields and applies them live: the project set is recomposed, and a
+   * project that took effect gets its topic and policy right away.
+   */
+  updatePanelProject(key: string, repo: string, patch: HarnessProjectPatch): Promise<void> {
+    return this.applyLock.run("apply", async () => {
+      await this.writeProject(key, repo, patch);
+      this.recompose();
+      if (!this.panelKeys.has(key)) return;
+      await this.ensureTopic(key, this.file.telegram.chatId);
+      await this.refreshPolicy(key);
     });
   }
 
@@ -418,50 +478,23 @@ export class HarnessService {
     }
   }
 
-  /** Repo policy is read from the default branch only; a failed read keeps the last good one. */
   async refreshPolicy(key: string): Promise<void> {
-    if (!this.github?.available) return;
-    const repo = this.file.projects[key]!.repo;
-    try {
-      const head = await this.github.getDefaultBranch(repo);
-      const text = await this.github.getFile(repo, REPO_POLICY_PATH, head.sha);
-      const base = { defaultBranch: head.branch, policyFetchedAt: this.now() };
-      if (text === null) {
-        await this.saveProject(key, {
-          ...base,
-          policy: null,
-          policySha: head.sha,
-          kind: null,
-          policyError: null,
+    if (!this.github?.available || !this.file.projects[key]) return;
+    const patch = await fetchRepoPolicy({
+      github: this.github,
+      repo: this.file.projects[key]!.repo,
+      now: this.now(),
+      validate: (policy, inferred) => {
+        const input = this.projectInput(key, []);
+        const result = resolveProjectConfig({
+          ...input,
+          policy,
+          inferred,
+          panel: { binding: input.panel?.binding ?? false, policyPatch: null },
         });
-        return;
-      }
-      const parsed = parseRepoPolicy(text);
-      const merged = parsed.ok
-        ? resolveProjectConfig({
-            raw: this.requireConfig().raw,
-            projectKey: key,
-            policy: parsed.raw,
-            overrides: [],
-            now: this.now(),
-          })
-        : parsed;
-      if (!parsed.ok || !merged.ok) {
-        const issues = merged.ok ? [] : merged.issues;
-        await this.saveProject(key, { ...base, policyError: formatIssues(issues, 5) });
-        return;
-      }
-      await this.saveProject(key, {
-        ...base,
-        policy: parsed.raw,
-        policySha: head.sha,
-        kind: parsed.policy.kind,
-        policyError: null,
-      });
-    } catch (error) {
-      await this.saveProject(key, {
-        policyError: `读取失败：${(error as Error).message.slice(0, 200)}`,
-      });
-    }
+        return result.ok ? [] : result.issues;
+      },
+    });
+    await this.saveProject(key, patch);
   }
 }

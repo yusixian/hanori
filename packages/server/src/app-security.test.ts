@@ -147,6 +147,12 @@ describe("production HTTP policy", () => {
       `/api/bots/${TEST_BOT_ID}/engagement-samples`,
     );
     expect(editorSamples.status).toBe(403);
+
+    const ownerHarness = await createRoleApp("owner").request("/api/harness/admin/overview");
+    expect(ownerHarness.status).toBe(200);
+    await expect(ownerHarness.json()).resolves.toMatchObject({ ok: true, enabled: false });
+    const adminHarness = await createRoleApp("admin").request("/api/harness/admin/overview");
+    expect(adminHarness.status).toBe(403);
   });
 
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {

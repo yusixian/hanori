@@ -70,6 +70,7 @@ export const common = {
     timers: "Timers",
     mcp: "MCP",
     apiTest: "API Test",
+    harness: "Dev Harness",
     logs: "Logs",
     overview: "Overview",
     edit: "Edit",

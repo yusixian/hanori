@@ -154,6 +154,7 @@ describe("LodyCli", () => {
       worktree: true,
       agent: "Claude Code",
       model: "sonnet",
+      configOptions: ["effort=high"],
       title: "koyori #12 fix",
       prompt: "secret owner words",
       workspace: null,
@@ -177,6 +178,8 @@ describe("LodyCli", () => {
       "Claude Code",
       "--model",
       "sonnet",
+      "--config-option",
+      "effort=high",
       "--title",
       "koyori #12 fix",
       "--prompt-file",
@@ -186,6 +189,32 @@ describe("LodyCli", () => {
     expect(args.join(" ")).not.toContain("secret");
     expect(options.input).toBe("secret owner words");
     expect(options.timeout).toBeGreaterThanOrEqual(120_000);
+  });
+
+  it("lists agent configs without keeping their env", async () => {
+    const exec = vi.fn(async () => ({
+      stdout: `[ws] attached\n${JSON.stringify({
+        ok: true,
+        agentConfigs: [
+          { id: "c1", name: "Codex", agentType: "codex", machineId: null, env: { KEY: "sk-x" } },
+          { id: "", name: "broken" },
+        ],
+      })}`,
+    }));
+    const cli = new LodyCli(["lody"], 1000, exec, () => NOW);
+    const result = await cli.listAgentConfigs();
+    expect(result).toEqual({
+      ok: true,
+      value: [{ id: "c1", name: "Codex", agentType: "codex", machineId: null }],
+    });
+    expect(JSON.stringify(result)).not.toContain("sk-x");
+    await cli.listAgentConfigs();
+    expect(exec).toHaveBeenCalledOnce();
+    expect((exec.mock.calls[0] as unknown as [string, string[]])[1]).toEqual([
+      "agent-config",
+      "list",
+      "--json",
+    ]);
   });
 
   it("chats, cancels, and archives by session id only", async () => {

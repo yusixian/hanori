@@ -1623,7 +1623,11 @@ export class BotPool {
       mcpCallbacks,
       summary: summaryCallbacks,
       imageGenerationReceiptConfig: aiConfig?.imageGenerationReceiptConfig,
-      harness: this.harnessService?.claimBot({ id: botId, name: bot.name }),
+      harness: this.harnessService?.claimBot({
+        id: botId,
+        name: bot.name,
+        miniApp: miniAppUrl !== undefined,
+      }),
       quota: this.usageGovernance
         ? {
             getUsage: async ({ chatId, userId, chatType }) => {

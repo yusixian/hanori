@@ -393,6 +393,13 @@
       "when": 1790258150767,
       "tag": "0055_harness_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1790279169929,
+      "tag": "0056_harness_panel_projects",
+      "breakpoints": true
     }
   ]
 }

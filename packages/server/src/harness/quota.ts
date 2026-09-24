@@ -1,14 +1,11 @@
 import type { HarnessQuotaSnapshot } from "@cos-tool-bot/database";
 import type { LodyLimit, LodyMachine, LodyWindow } from "./lody.js";
+import { vendorOf } from "./config/execution.js";
 import { percentValue } from "./config/units.js";
 
-/** Lody reports limits per provider; the agent config name is the only link we have to it. */
+/** Name-only fallback; prefer `vendorOf` with the agent-config list when it is available. */
 export function providerForAgent(agent: string): string {
-  const name = agent.toLowerCase();
-  if (name.includes("codex")) return "codex";
-  if (name.includes("kimi")) return "kimi";
-  if (name.includes("gemini")) return "gemini";
-  return "claude";
+  return vendorOf(agent, null);
 }
 
 function normalize(text: string): string {

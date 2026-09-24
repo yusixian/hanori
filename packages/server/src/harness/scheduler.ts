@@ -1,8 +1,14 @@
+import {
+  type AgentConfigInfo,
+  effortConfigOption,
+  modelCatalog,
+  resolveWorkerExecution,
+} from "./config/execution.js";
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import { durationMs } from "./config/units.js";
 import { type LodyMachine, findMachine } from "./lody.js";
 import { errorText } from "./pr-actions.js";
-import { providerForAgent, quotaBlocks, quotaSnapshot, startOfDay } from "./quota.js";
+import { quotaBlocks, quotaSnapshot, startOfDay } from "./quota.js";
 import { pollJobs, warnQuota } from "./job-monitor.js";
 import {
   ACTIVE_STATES,
@@ -38,6 +44,7 @@ export interface MachineChoice {
   provider: string;
   agent: string;
   model: string | null;
+  effort: string | null;
   note: string | null;
 }
 
@@ -57,10 +64,10 @@ export function chooseMachine(
   config: ProjectEffectiveConfig,
   machines: readonly LodyMachine[],
   perMachine: ReadonlyMap<string, number>,
+  agents: readonly AgentConfigInfo[] | null = null,
 ): MachineChoice | { reason: string } {
-  const role = config.roles.worker ?? {};
-  const agent = role.agent ?? config.executors.lody.agentConfig;
-  const provider = providerForAgent(agent);
+  const lead = resolveWorkerExecution(config, agents);
+  const { agent, vendor: provider } = lead;
   const keys =
     config.project.machines.length > 0 ? config.project.machines : Object.keys(config.machines);
   const reasons: string[] = [];
@@ -76,7 +83,8 @@ export function chooseMachine(
       reasons.push(`${entry.lody} 并发已满`);
       continue;
     }
-    let model = role.model ?? null;
+    let model = lead.model;
+    let effort = lead.effort;
     let note: string | null = null;
     const blocks = quotaBlocks(machine, provider, model, config.guardrails.quota.pauseAt);
     if (blocks.length > 0) {
@@ -89,8 +97,13 @@ export function chooseMachine(
       }
       note = `额度 ${detail}，改用 ${fallback}`;
       model = fallback;
+      const option = modelCatalog(config.executors.lody.models)[provider]?.find(
+        (candidate) => candidate.id === fallback,
+      );
+      if (effort && option && !(option.efforts as readonly string[]).includes(effort))
+        effort = null;
     }
-    return { machineKey: key, machine, provider, agent, model, note };
+    return { machineKey: key, machine, provider, agent, model, effort, note };
   }
   return { reason: reasons[0] ?? "没有可用的执行机" };
 }
@@ -232,6 +245,7 @@ export class HarnessScheduler {
     const queued = await service.store.listRequestsByState([S.queued]);
     if (queued.length === 0) return;
     const listed = await service.lody().listMachines();
+    const agents = listed.ok ? await service.lody().listAgentConfigs() : null;
     const load = await this.load();
     for (const request of queued) {
       const config = this.work.config(request.projectKey);
@@ -241,7 +255,12 @@ export class HarnessScheduler {
       if (!reason) {
         if (!listed.ok) reason = `执行层不可用：${listed.message}`;
         else {
-          const picked = chooseMachine(config, listed.value, load.perMachine);
+          const picked = chooseMachine(
+            config,
+            listed.value,
+            load.perMachine,
+            agents?.ok ? agents.value : null,
+          );
           if ("reason" in picked) reason = picked.reason;
           else choice = picked;
         }
@@ -315,7 +334,15 @@ export class HarnessScheduler {
       let job: HarnessJobRecord;
       try {
         const fresh = (await service.store.getRequest(request.id))!;
-        prompt = await this.work.prompt(fresh, "bug", { ownerText: fresh.ownerText });
+        prompt = await this.work.prompt(fresh, "bug", {
+          ownerText: fresh.ownerText,
+          lead: {
+            agent: choice.agent,
+            model: choice.model,
+            effort: choice.effort,
+            vendor: choice.provider,
+          },
+        });
         job = await service.store.insertJob({
           requestId: request.id,
           attempt,
@@ -346,6 +373,9 @@ export class HarnessScheduler {
           worktree: config.executors.lody.worktree,
           agent: choice.agent,
           model: choice.model,
+          configOptions: [effortConfigOption(choice.provider, choice.effort)].filter(
+            (option): option is string => option !== null,
+          ),
           title: sessionTitle(config.project.key, request),
           prompt,
           workspace:

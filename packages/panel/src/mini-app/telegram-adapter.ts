@@ -53,6 +53,8 @@ export interface TelegramWebApp {
   BackButton: TelegramBackButton;
   ready(): void;
   expand(): void;
+  openLink?(url: string): void;
+  openTelegramLink?(url: string): void;
   onEvent(event: TelegramWebAppEvent, handler: () => void): void;
   offEvent(event: TelegramWebAppEvent, handler: () => void): void;
 }

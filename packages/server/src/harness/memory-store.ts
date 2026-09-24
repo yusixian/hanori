@@ -1,14 +1,15 @@
 import { randomUUID } from "node:crypto";
 import type { HarnessOverride } from "./config/resolve.js";
-import type {
-  HarnessApprovalRecord,
-  HarnessEventInput,
-  HarnessProjectPatch,
-  HarnessProjectRecord,
-  HarnessRequestInsert,
-  HarnessRequestPatch,
-  HarnessRequestRecord,
-  HarnessStore,
+import {
+  emptyProjectRecord,
+  type HarnessApprovalRecord,
+  type HarnessEventInput,
+  type HarnessProjectPatch,
+  type HarnessProjectRecord,
+  type HarnessRequestInsert,
+  type HarnessRequestPatch,
+  type HarnessRequestRecord,
+  type HarnessStore,
 } from "./store.js";
 import { MemoryWorkStore } from "./memory-work-store.js";
 
@@ -16,6 +17,7 @@ import { MemoryWorkStore } from "./memory-work-store.js";
 export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore {
   readonly projects = new Map<string, HarnessProjectRecord>();
   readonly overrides: HarnessOverride[] = [];
+  readonly settings = new Map<string, Record<string, unknown>>();
   readonly events: Array<HarnessEventInput & { deliveryId?: string }> = [];
   readonly approvals = new Map<string, HarnessApprovalRecord>();
 
@@ -27,23 +29,21 @@ export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore 
     const now = new Date();
     const current = this.projects.get(key);
     this.projects.set(key, {
-      key,
-      chatId: null,
-      threadId: null,
-      topicError: null,
-      installationId: null,
-      defaultBranch: null,
-      kind: null,
-      policy: null,
-      policySha: null,
-      policyError: null,
-      policyFetchedAt: null,
-      createdAt: now,
+      ...emptyProjectRecord(key, repo, now),
       ...current,
       ...patch,
       repo,
       updatedAt: now,
     });
+  }
+
+  async getSetting(key: string) {
+    return this.settings.get(key) ?? null;
+  }
+
+  async putSetting(key: string, value: Record<string, unknown> | null) {
+    if (value === null) this.settings.delete(key);
+    else this.settings.set(key, value);
   }
 
   async listOverrides() {

@@ -133,7 +133,7 @@ export class HarnessWork {
   async prompt(
     request: HarnessRequestRecord,
     kind: PromptKind,
-    extra: Partial<Pick<PromptInput, "ownerText" | "failures" | "round">> = {},
+    extra: Partial<Pick<PromptInput, "ownerText" | "failures" | "round" | "lead">> = {},
   ): Promise<string> {
     const config = this.requireConfig(request.projectKey);
     const head = await this.defaultBranch(config);
@@ -156,6 +156,7 @@ export class HarnessWork {
       ownerText: extra.ownerText ?? null,
       failures: extra.failures,
       round: extra.round,
+      lead: extra.lead,
       taskTemplate: await this.taskTemplate(config, kind, head),
     });
   }

@@ -5,6 +5,7 @@ import {
   harnessEvents,
   harnessProjects,
   harnessRequests,
+  harnessSettings,
 } from "@cos-tool-bot/database";
 import { and, eq, gt, inArray, isNull, lte, ne } from "drizzle-orm";
 import type { HarnessOverride } from "./config/resolve.js";
@@ -22,6 +23,29 @@ export type HarnessRequestPatch = Partial<
   Omit<HarnessRequestRecord, "id" | "createdAt" | "projectKey" | "repo">
 >;
 
+export function emptyProjectRecord(key: string, repo: string, now: Date): HarnessProjectRecord {
+  return {
+    key,
+    repo,
+    chatId: null,
+    threadId: null,
+    topicError: null,
+    installationId: null,
+    defaultBranch: null,
+    kind: null,
+    policy: null,
+    policySha: null,
+    policyError: null,
+    policyFetchedAt: null,
+    binding: null,
+    policyPatch: null,
+    inferredPolicy: null,
+    execution: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export interface HarnessEventInput {
   type: string;
   projectKey?: string | null;
@@ -34,6 +58,13 @@ export interface HarnessEventInput {
 export interface HarnessStore extends HarnessWorkStore {
   listProjects(): Promise<HarnessProjectRecord[]>;
   upsertProject(key: string, repo: string, patch: HarnessProjectPatch): Promise<void>;
+  getSetting(key: string): Promise<Record<string, unknown> | null>;
+  /** `null` removes the setting. */
+  putSetting(
+    key: string,
+    value: Record<string, unknown> | null,
+    actorId: number | null,
+  ): Promise<void>;
   listOverrides(): Promise<HarnessOverride[]>;
   putOverride(override: HarnessOverride): Promise<void>;
   deleteOverride(scope: string, path: string): Promise<boolean>;
@@ -84,6 +115,26 @@ export class DrizzleHarnessStore extends DrizzleWorkStore implements HarnessStor
       .insert(harnessProjects)
       .values({ key, ...patch, repo, updatedAt: now })
       .onConflictDoUpdate({ target: harnessProjects.key, set: { ...patch, repo, updatedAt: now } });
+  }
+
+  async getSetting(key: string) {
+    const [row] = await this.db
+      .select({ value: harnessSettings.value })
+      .from(harnessSettings)
+      .where(eq(harnessSettings.key, key));
+    return row?.value ?? null;
+  }
+
+  async putSetting(key: string, value: Record<string, unknown> | null, actorId: number | null) {
+    if (value === null) {
+      await this.db.delete(harnessSettings).where(eq(harnessSettings.key, key));
+      return;
+    }
+    const set = { value, actorId, updatedAt: new Date() };
+    await this.db
+      .insert(harnessSettings)
+      .values({ key, ...set })
+      .onConflictDoUpdate({ target: harnessSettings.key, set });
   }
 
   async listOverrides(): Promise<HarnessOverride[]> {

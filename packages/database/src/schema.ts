@@ -1399,7 +1399,21 @@ export const harnessProjects = pgTable("harness_projects", {
   policySha: text("policy_sha"),
   policyError: text("policy_error"),
   policyFetchedAt: timestamp("policy_fetched_at"),
+  // Non-null marks a project added from the panel; harness.yaml projects leave it null.
+  binding: json("binding").$type<Record<string, unknown>>(),
+  policyPatch: json("policy_patch").$type<Record<string, unknown>>(),
+  inferredPolicy: json("inferred_policy").$type<Record<string, unknown>>(),
+  // Panel override for the lead session; allowed for harness.yaml projects too.
+  execution: json("execution").$type<Record<string, unknown>>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+/** Panel-managed harness settings that sit above harness.yaml, e.g. `execution`. */
+export const harnessSettings = pgTable("harness_settings", {
+  key: text("key").primaryKey(),
+  value: json("value").$type<Record<string, unknown>>().notNull(),
+  actorId: bigint("actor_id", { mode: "number" }),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 

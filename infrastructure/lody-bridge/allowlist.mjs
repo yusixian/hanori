@@ -5,7 +5,8 @@
 const SESSION_ID = /^[\w-]{1,128}$/;
 const SELECTOR = /^[\w .:@/+-]{1,200}$/;
 const MODEL = /^[\w.:[\]/+-]{1,120}$/;
-const CONFIG_OPTION = /^[\w.-]{1,64}=[^\n\r]{0,200}$/;
+// Only reasoning effort; other config options could change the agent's permissions.
+const CONFIG_OPTION = /^(reasoning_effort|effort)=(default|low|medium|high|xhigh|max|ultra)$/;
 const TEXT = /^[^\n\r]{1,200}$/;
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 const BRANCH = /^[\w./-]{1,200}$/;
@@ -40,6 +41,12 @@ const COMMANDS = [
     session: false,
     values: ["--workspace"],
     flags: ["--json", "--online-only"],
+  },
+  {
+    path: ["agent-config", "list"],
+    session: false,
+    values: ["--workspace", "--machine"],
+    flags: ["--json"],
   },
   {
     path: ["session", "create"],

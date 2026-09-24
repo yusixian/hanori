@@ -70,7 +70,58 @@ describe("harness.yaml schema", () => {
     expect(result.value.telegram.chat.casualReplies).toBe(false);
     expect(result.value.github.mergeMethod).toBe("squash");
     expect(result.value.projects.koyori!.topic).toBe("auto");
-    expect(result.value.roles.reviewer).toEqual({ agent: "codex", effort: "high" });
+    expect(result.value.executors.lody.agentConfig).toBe("Codex");
+    expect(result.value.roles.worker).toEqual({ effort: "high" });
+    // Subworker and reviewer follow the lead's vendor at prompt time (execution.ts).
+    expect(result.value.roles.reviewer).toBeUndefined();
+  });
+
+  it("merges partial roles over the built-in ones and accepts every effort", () => {
+    const result = resolveGlobalConfig(
+      minimalRaw({ roles: { worker: { model: "sonnet", effort: "ultra" } } }),
+      [],
+      NOW,
+    );
+    expect(result.ok && result.value.roles).toMatchObject({
+      triage: { model: "sonnet", effort: "low" },
+      worker: { model: "sonnet", effort: "ultra" },
+    });
+  });
+
+  it("puts the panel execution above harness.yaml and below Telegram overrides", () => {
+    const raw = minimalRaw({ roles: { worker: { model: "sonnet", effort: "medium" } } });
+    const panel = { roles: { worker: { agent: "Codex", model: "gpt-6-astra" } } };
+    const global = resolveGlobalConfig(raw, [override("roles.worker.effort", "max")], NOW, panel);
+    expect(global.ok && global.value.roles.worker).toEqual({
+      agent: "Codex",
+      model: "gpt-6-astra",
+      effort: "max",
+    });
+    expect(sourceOf(global.layers, ["roles", "worker", "model"])).toBe("panel:global");
+    const project = resolveProjectConfig({
+      raw,
+      projectKey: "koyori",
+      policy: null,
+      panel: {
+        binding: false,
+        policyPatch: null,
+        execution: { roles: { worker: { model: "gpt-6-luna" } } },
+      },
+      panelGlobal: panel,
+      overrides: [override("roles.worker.model", "gpt-5.5", "koyori")],
+      now: NOW,
+    });
+    expect(project.ok && project.value.roles.worker?.model).toBe("gpt-5.5");
+    const layers = project.layers.map((layer) => layer.name);
+    expect(layers.indexOf("panel:global")).toBeGreaterThan(layers.indexOf("yaml:project"));
+    expect(layers.indexOf("panel")).toBeGreaterThan(layers.indexOf("panel:global"));
+    expect(layers.indexOf("override:global")).toBeGreaterThan(layers.indexOf("panel"));
+  });
+
+  it("allows a harness.yaml without projects", () => {
+    const { projects: _, ...raw } = minimalRaw();
+    const result = validateHarnessConfig({ raw, sourcePath: "harness.yaml", now: NOW });
+    expect(result.ok && result.config.file.projects).toEqual({});
   });
 
   it("reports invalid values with their field path", () => {

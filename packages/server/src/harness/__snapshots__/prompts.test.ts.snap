@@ -55,9 +55,9 @@ Owner report:
 Reproduce the bug, fix it with the smallest change, cover it with a test when practical, run verification, and open the pull request.
 
 ## 4. Delegation guide
-- You are the lead (sonnet (effort medium)). Keep the plan and the final decisions yourself.
-- Delegate independent, well-bounded subtasks to cheaper sub-sessions through Lody MCP using haiku (effort low). At most 4 sessions run per machine and 3 per project.
-- Before marking the pull request ready, get an independent review from codex (effort high); fix or answer each finding and summarize it in \`## Review\`.
+- You are the lead (Codex / gpt-6-sol (effort high)). Keep the plan and the final decisions yourself.
+- Delegate independent, well-bounded subtasks to cheaper sub-sessions through Lody MCP using gpt-6-luna (effort low). At most 4 sessions run per machine and 3 per project.
+- Before marking the pull request ready, get an independent review from Claude Code / opus[1m] (effort high) (a different vendor from yours); fix or answer each finding and summarize it in \`## Review\`.
 - CI failures on your pull request are sent back to you for up to 2 rounds; after that the owner takes over.
 - Prefer these skills when available: \`oneshot\`, \`frontend-acceptance\`, \`gh-stack\`, \`pr-visual\`, \`review-code-change\`.
 - If a preferred skill is unavailable, follow this checklist instead:

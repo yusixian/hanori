@@ -12,9 +12,11 @@ import {
 
 export const START = new Date("2026-09-24T12:00:00Z");
 
+/** Pins a Claude lead so the quota fixtures (Claude windows) keep applying. */
 export function harnessRaw(extra: Record<string, unknown> = {}) {
   return testConfigRaw({
     machines: { mbp: { lody: "MBP-64G" } },
+    roles: { worker: { agent: "Claude Code", model: "sonnet", effort: "medium" } },
     projects: { sandbox: { repo: TEST_REPO, machines: ["mbp"] } },
     ...extra,
   });

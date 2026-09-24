@@ -36,8 +36,10 @@ describe("/bug", () => {
       worktree: true,
       agent: "Claude Code",
       model: "sonnet",
+      configOptions: ["effort=medium"],
     });
     expect(created.prompt).toContain(`branch \`harness/${request.id}\``);
+    expect(created.prompt).toContain("independent review from Codex / gpt-6-sol (effort high)");
     expect(created.prompt).toContain("> 保存按钮没有反应");
 
     expect(ctx.telegram.sent).toHaveLength(1);
@@ -45,6 +47,22 @@ describe("/bug", () => {
     expect(card.html).toContain("🔵 进行中");
     expect(card.html).toContain("机器 MBP-64G · 模型 sonnet · 已用 0 分钟");
     expect(ctx.telegram.sent[0]!.message.replyToMessageId).toBe(9);
+  });
+
+  it("runs the built-in Codex lead with its reasoning effort", async () => {
+    const ctx = await setup({ raw: harnessRaw({ roles: undefined }) });
+    await bug(ctx);
+    await ctx.service.work.scheduler.tick();
+    const created = ctx.lody.created[0]!;
+    expect(created).toMatchObject({
+      agent: "Codex",
+      model: "gpt-6-sol",
+      configOptions: ["reasoning_effort=high"],
+    });
+    expect(onlyRequest(ctx).state).toBe(S.running);
+    expect(created.prompt).toContain("You are the lead (Codex / gpt-6-sol (effort high))");
+    expect(created.prompt).toContain("using gpt-6-luna (effort low)");
+    expect(created.prompt).toContain("review from Claude Code / opus[1m] (effort high)");
   });
 
   it("refuses outside a project topic", async () => {

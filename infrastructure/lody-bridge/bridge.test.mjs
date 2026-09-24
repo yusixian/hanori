@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkArgs } from "./allowlist.mjs";
-import { authorized, createBridgeServer, watchDaemon } from "./server.mjs";
+import { authorized, createBridgeServer, redactAgentConfigs, watchDaemon } from "./server.mjs";
 
 const SECRET = "s".repeat(40);
 const FAKE = fileURLToPath(new URL("./test/fake-lody.mjs", import.meta.url));
@@ -67,7 +67,19 @@ describe("checkArgs", () => {
     [["session", "status", "s-1", "--json"]],
     [["session", "cancel", "s-1", "--turn-id", "assistant:abc", "--json"]],
     [["session", "archive", "s-1", "--json"]],
-    [["session", "create", "--config-option", "a=1", "--config-option", "b=2", "--json"]],
+    [
+      [
+        "session",
+        "create",
+        "--config-option",
+        "reasoning_effort=ultra",
+        "--config-option",
+        "effort=default",
+        "--json",
+      ],
+    ],
+    [["agent-config", "list", "--json"]],
+    [["agent-config", "list", "--machine", "MBP-64G", "--json"]],
   ])("allows %j", (args) => {
     expect(checkArgs(args).ok).toBe(true);
   });
@@ -90,6 +102,11 @@ describe("checkArgs", () => {
     [["session", "show"], "missing session id"],
     [["session", "show", "s-1", "--json", "--json"], "duplicate"],
     [["session", "create", "--machine", "a", "--machine", "b"], "duplicate value"],
+    [["session", "create", "--config-option", "a=1"], "arbitrary config option"],
+    [["session", "create", "--config-option", "effort=turbo"], "unknown effort"],
+    [["session", "create", "--config-option", "sandbox=danger-full-access"], "permissions"],
+    [["agent-config", "create", "--json"], "agent-config writes"],
+    [["agent-config", "list", "--env", "A=1"], "--env"],
   ])("rejects %j (%s)", (args) => {
     expect(checkArgs(args).ok).toBe(false);
   });
@@ -181,6 +198,20 @@ describe("bridge server", () => {
       token: null,
     });
     expect(logs).toEqual([expect.stringMatching(/^lody-bridge: session chat -> 0 in \d+ms$/)]);
+  });
+
+  it("strips agent-config env before the output leaves the sidecar", async () => {
+    const { exec, logs } = await start();
+    const result = await (await exec({ args: ["agent-config", "list", "--json"] })).json();
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      agentConfigs: [{ id: "cfg-1", name: "Codex", agentType: "codex", machineId: "m-1" }],
+    });
+    expect(JSON.stringify(result)).not.toContain("sk-should-not-leak");
+    expect(logs.join("\n")).not.toContain("sk-should-not-leak");
+    expect(redactAgentConfigs("not json")).toBe(
+      JSON.stringify({ ok: false, error: "unreadable agent-config output" }),
+    );
   });
 
   it("reports definite failures with the CLI's own output", async () => {

@@ -67,6 +67,8 @@ export interface HarnessCommandRequest {
   messageId: number;
   /** From the command message and the message it replies to. */
   attachments?: HarnessAttachment[];
+  /** Lets the port build `t.me/<bot>?startapp=` links. */
+  botUsername?: string;
 }
 
 /** An owner message replying to one of this Bot's messages in the harness chat. */
@@ -83,6 +85,7 @@ export interface HarnessReply {
   /** Empty means the port already answered (for example by posting a card). */
   html: string;
   document?: { filename: string; content: string };
+  keyboard?: HarnessKeyboard;
 }
 
 export interface HarnessCallbackRequest {

@@ -11,6 +11,7 @@ import {
   resolveGlobalConfig,
   resolveProjectConfig,
 } from "./config/resolve.js";
+import { executionLayerData } from "./config/execution.js";
 import { parseDuration } from "./config/units.js";
 import { findMachine, type LodyMachine } from "./lody.js";
 import {
@@ -39,6 +40,22 @@ const HARNESS_USAGE = [
 
 const html = (text: string): HarnessReply => ({ html: text });
 
+/**
+ * Telegram rejects `web_app` buttons in groups, so this is a `url` button: the Bot's main Mini
+ * App via `startapp` when it has one, else the web panel page.
+ */
+function withManageButton(
+  service: HarnessService,
+  request: HarnessCommandRequest,
+  text: string,
+): HarnessReply {
+  const url =
+    service.botHasMiniApp && request.botUsername
+      ? `https://t.me/${request.botUsername}?startapp=harness`
+      : service.adminUrl;
+  return url ? { html: text, keyboard: [[{ text: "⚙️ 管理项目", url }]] } : html(text);
+}
+
 export async function handleHarnessCommand(
   service: HarnessService,
   request: HarnessCommandRequest,
@@ -50,7 +67,9 @@ export async function handleHarnessCommand(
   const projectKey = service.projectKeyForThread(request.threadId);
   switch (request.command) {
     case "status":
-      return html(
+      return withManageButton(
+        service,
+        request,
         projectKey ? await projectStatus(service, projectKey) : await globalStatus(service),
       );
     case "quota":
@@ -149,7 +168,8 @@ async function globalStatus(service: HarnessService): Promise<string> {
       : record?.topicError
         ? ` · 话题创建失败：${escapeHtml(record.topicError)}`
         : " · 话题未创建";
-    lines.push(`• ${name} · ${escapeHtml(project.repo)} · 待合并 ${open}${topicNote}`);
+    const source = service.isPanelProject(key) ? " · 面板添加" : "";
+    lines.push(`• ${name} · ${escapeHtml(project.repo)}${source} · 待合并 ${open}${topicNote}`);
   }
   return lines.join("\n");
 }
@@ -169,6 +189,7 @@ async function projectStatus(service: HarnessService, key: string): Promise<stri
     lines.push(`⚠️ 策略读取失败，沿用上一版：${escapeHtml(record.policyError)}`);
   else if (record?.policy)
     lines.push(`策略：.cos/harness.yml @${escapeHtml((record.policySha ?? "").slice(0, 7))}`);
+  else if (record?.inferredPolicy) lines.push("策略：默认分支没有 .cos/harness.yml，按仓库推断");
   else lines.push("策略：默认分支没有 .cos/harness.yml，使用默认值");
   if (view.overrideIssues) lines.push("⚠️ 覆盖层与当前配置冲突，已暂时忽略");
   const { result, machines, missing } = await lodyMachines(service, key);
@@ -209,16 +230,11 @@ function validateOverrides(
 ): ConfigIssue[] {
   const loaded = service.loadedConfig!;
   const now = service.now();
-  const global = resolveGlobalConfig(loaded.raw, next, now);
+  const panel = executionLayerData(service.panelExecutionSetting);
+  const global = resolveGlobalConfig(loaded.raw, next, now, panel);
   if (!global.ok) return global.issues;
   for (const key of service.projectKeys()) {
-    const project = resolveProjectConfig({
-      raw: loaded.raw,
-      projectKey: key,
-      policy: service.projectRecord(key)?.policy ?? null,
-      overrides: next,
-      now,
-    });
+    const project = resolveProjectConfig(service.projectInput(key, next));
     if (!project.ok) return project.issues;
   }
   return [];
@@ -396,6 +412,6 @@ async function harnessSubcommand(
       );
     }
     default:
-      return html(HARNESS_USAGE);
+      return withManageButton(service, request, HARNESS_USAGE);
   }
 }

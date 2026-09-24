@@ -1,5 +1,6 @@
 import { sidebarCollapsedAtom, sidebarOpenAtom } from "@/atoms/sidebar";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { usePanelRole } from "@/hooks/use-can-manage-bot";
 import { authClient } from "@/lib/auth-client";
 import { BeforeLogoutProvider, useBeforeLogout } from "./before-logout";
 import { cn } from "@/lib/utils";
@@ -18,6 +19,7 @@ import {
   Download,
   FileText,
   FlaskConical,
+  FolderGit2,
   FolderOpen,
   HardDrive,
   ImageIcon,
@@ -60,6 +62,7 @@ interface GlobalNavItem {
   icon: LucideIcon;
   aliases?: readonly string[];
   external?: boolean;
+  ownerOnly?: boolean;
 }
 
 interface BotNavItem {
@@ -92,7 +95,16 @@ const globalNavGroups: readonly {
   },
   {
     labelKey: "navigation.globalGroups.operations",
-    items: [{ labelKey: "navigation.logs", path: "/logs", icon: ScrollText }],
+    items: [
+      { labelKey: "navigation.logs", path: "/logs", icon: ScrollText },
+      {
+        labelKey: "navigation.harness",
+        path: "/harness",
+        icon: FolderGit2,
+        aliases: ["harness", "project", "github"],
+        ownerOnly: true,
+      },
+    ],
   },
 ];
 
@@ -303,6 +315,7 @@ function AppLayoutContent() {
   const [accountUser, setAccountUser] = useState<{ name?: string | null; email?: string | null }>();
   const [focusSearchAfterExpand, setFocusSearchAfterExpand] = useState(false);
   const isMobile = useMobileViewport();
+  const isOwner = usePanelRole() === "owner";
   const mobileMenuButtonRef = useRef<HTMLButtonElement>(null);
   const mobileCloseButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
@@ -419,14 +432,22 @@ function AppLayoutContent() {
     () => botNavGroups.flatMap((group) => group.items) as BotNavItem[],
     [botNavGroups],
   );
+  const visibleGlobalGroups = useMemo(
+    () =>
+      globalNavGroups.map((group) => ({
+        ...group,
+        items: group.items.filter((item) => isOwner || !item.ownerOnly),
+      })),
+    [isOwner],
+  );
   const allGlobalItems = useMemo(
     () =>
       [
-        ...globalNavGroups.flatMap((group) => group.items),
+        ...visibleGlobalGroups.flatMap((group) => group.items),
         settingsNavItem,
         ...externalNavItems,
       ] as GlobalNavItem[],
-    [],
+    [visibleGlobalGroups],
   );
   const filteredBotItems = allBotItems.filter((item) =>
     matchesNavigation(query, item.label, item.path, item.aliases),
@@ -561,7 +582,7 @@ function AppLayoutContent() {
   }, [accountOpen, isMobile]);
 
   const renderGlobalGroups = () =>
-    globalNavGroups.map((group) => (
+    visibleGlobalGroups.map((group) => (
       <div key={group.labelKey}>
         <GroupLabel hidden={showCollapsed}>{t(group.labelKey)}</GroupLabel>
         <div className="space-y-0.5">
