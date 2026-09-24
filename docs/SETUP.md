@@ -66,19 +66,19 @@ pnpm dev
 
 ### 数据库和服务
 
-| 变量           | 必填           | 说明                                                                |
-| -------------- | -------------- | ------------------------------------------------------------------- |
-| `DATABASE_URL` | 是（直接运行） | PostgreSQL 连接字符串。Docker Compose 中由 `DB_PASSWORD` 自动拼接。 |
-| `DB_PASSWORD`  | Docker 必填    | PostgreSQL 容器密码。                                               |
+| 变量           | 必填           | 说明                                                                                                        |
+| -------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL` | 是（直接运行） | PostgreSQL 连接字符串。Docker Compose 中由 `DB_PASSWORD` 自动拼接。                                         |
+| `DB_PASSWORD`  | Docker 必填    | PostgreSQL 容器密码。                                                                                       |
 | `PORT`         | 否             | 本地 `pnpm dev` 默认使用 `43100`；Docker 容器内部仍监听 `3000`，Direct Compose 用该变量作为宿主机映射端口。 |
-| `BACKUP_DIR`   | 否             | 本地备份目录，默认 `./backups`；Docker 中使用 `/data/backups`。     |
+| `BACKUP_DIR`   | 否             | 本地备份目录，默认 `./backups`；Docker 中使用 `/data/backups`。                                             |
 
 ### Better Auth
 
 | 变量                      | 必填                 | 说明                                                                                                                                               |
 | ------------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `BETTER_AUTH_SECRET`      | 是                   | Better Auth 加密和 session 密钥，至少 32 位随机字符串。                                                                                            |
-| `BETTER_AUTH_URL`         | 生产必填             | 面板对外访问的完整 origin，例如 `https://bot.example.com`。本地开发默认使用 `http://localhost:43100`。 |
+| `BETTER_AUTH_URL`         | 生产必填             | 面板对外访问的完整 origin，例如 `https://bot.example.com`。本地开发默认使用 `http://localhost:43100`。                                             |
 | `AUTH_OWNER_EMAIL`        | 是                   | 第一个 owner 的邮箱；每次启动都需要保留。                                                                                                          |
 | `PANEL_PASSWORD`          | 仅首次启动           | 旧版面板密码，同时作为迁移时第一个 owner 的初始密码。创建密码账户后即可删除。                                                                      |
 | `MINI_APP_SESSION_SECRET` | 启用 Mini App 时必填 | Telegram Mini App 独立会话签名密钥，至少 32 位；不要复用 Bot Token 或 Better Auth 密钥。未配置不会影响现有 Bot/管理面板，Mini App 登录会返回 503。 |

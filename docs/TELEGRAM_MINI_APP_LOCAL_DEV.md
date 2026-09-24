@@ -22,9 +22,9 @@ Cloudflare Tunnel 只负责 HTTPS 网页和 API。Telegram Bot 收消息使用 B
 | HTTPS origin            | `https://tg-test.example.invalid`                         |
 | 测试 Bot                | `@example_channel_bot`（示例测试 Bot）                  |
 | 应用内 Bot ID           | `00000000-0000-4000-8000-000000000017`               |
-| API                     | `http://127.0.0.1:43100`                              |
-| Vite                    | `http://127.0.0.1:43103`                              |
-| PostgreSQL              | `localhost:43105/cos_tool_bot`                        |
+| API                     | `http://127.0.0.1:43100`                             |
+| Vite                    | `http://127.0.0.1:43103`                             |
+| PostgreSQL              | `localhost:43105/cos_tool_bot`                       |
 | Cloudflare named tunnel | `example-tunnel` / `00000000-0000-4000-8000-000000000029` |
 
 不要把 Bot Token、Cloudflare credential JSON、`MINI_APP_SESSION_SECRET` 或后台密码写入本文或提交到 Git。
@@ -271,8 +271,8 @@ docker compose -p cos-bot-dev -f docker-compose.dev.yml stop
 
 | 现象                             | 优先检查                                                                        |
 | -------------------------------- | ------------------------------------------------------------------------------- |
-| `tg-test` HTML 能打开但页面白屏  | Vite 43103 是否仍在运行；Tunnel 日志是否能连接 43103                              |
-| `/api/health` 为 502/503         | server 43100 是否运行，数据库是否 healthy                                        |
+| `tg-test` HTML 能打开但页面白屏  | Vite 43103 是否仍在运行；Tunnel 日志是否能连接 43103                            |
+| `/api/health` 为 502/503         | server 43100 是否运行，数据库是否 healthy                                       |
 | Mini App session API 为 404      | 该 Bot 的 `miniAppEnabled` 是否真的开启                                         |
 | 直接浏览器打开受保护页显示未认证 | 正常；真实身份必须从 Telegram Web App 按钮进入                                  |
 | Bot 所有消息都没反应             | 与 Tunnel 无关；检查 server、唯一 Token 消费者与长轮询 `allowed_updates`        |
