@@ -273,7 +273,7 @@ Lody 的 daemon 已经在各台机器上与 Lody 云端保持连接（当前在�
 
 - 会话会出现在 Lody 桌面端和手机端，owner 可以随时接手；会话内的 agent 还能用 Lody MCP 再派子会话，即由便宜模型处理子任务。
 - 同一套调用可以指定 Desktop-5090 等其他机器，无需额外开发。
-- `session create` 需要调用方本机运行 Lody runtime，因此 server 容器里要运行 `lody daemon`。owner 已实测跨机器创建会话可行；server 容器（Linux）中运行 daemon 仍需在 H3 验证。
+- `session create` 需要调用方本机运行 Lody runtime。生产镜像（alpine）无法加载 Lody 的原生模块，因此 daemon 运行在 bookworm-slim 的 `lody-bridge` sidecar 中，server 经带密钥的内网 HTTP 调用白名单内的命令（见 `docs/DEV_HARNESS_LODY.md`）。owner 已实测跨机器创建会话可行。
 - 没有事件推送：server 轮询 `session status`，间隔按状态调整。结构化证据仍由 agent 写进 PR（截图、验收报告），bot 从 PR 读取。
 
 额度与上下文：

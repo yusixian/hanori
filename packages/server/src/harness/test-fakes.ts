@@ -18,6 +18,7 @@ import {
 import { MemoryHarnessStore } from "./memory-store.js";
 import type { ChangedFile } from "./risk.js";
 import { HarnessService } from "./service.js";
+import type { PrSummarizer } from "./summary.js";
 
 export const TEST_CHAT_ID = -1001234567890;
 export const TEST_OWNER = 42;
@@ -171,6 +172,9 @@ export async function createTestService(
     now?: () => Date;
     lody?: Partial<LodyCli>;
     env?: Record<string, string | undefined>;
+    /** Use the real LodyCli construction (local CLI or bridge) instead of a fake. */
+    realLody?: boolean;
+    summarizer?: PrSummarizer;
   } = {},
 ) {
   const store = options.store ?? new MemoryHarnessStore();
@@ -185,18 +189,20 @@ export async function createTestService(
     store,
     github,
     logger: { info: log, warn: log, error: log } as never,
-    summarizer: async ({ title }) => `摘要：${title}`,
+    summarizer: options.summarizer ?? (async ({ title }) => `摘要：${title}`),
     env: options.env ?? { HARNESS_GITHUB_WEBHOOK_SECRET: "s3cret" },
     now,
     loadConfig: async (sourcePath) => validateHarnessConfig({ raw, sourcePath, now: now() }),
-    createLody: () =>
-      (options.lody ?? {
-        listMachines: async () => ({
-          ok: false,
-          reason: "unavailable",
-          message: "未找到 lody CLI（lody）",
-        }),
-      }) as unknown as LodyCli,
+    createLody: options.realLody
+      ? undefined
+      : () =>
+          (options.lody ?? {
+            listMachines: async () => ({
+              ok: false,
+              reason: "unavailable",
+              message: "未找到 lody CLI（lody）",
+            }),
+          }) as unknown as LodyCli,
   });
   await service.init();
   const port = service.claimBot({ id: "bot-1", name: "example-dev" })!;

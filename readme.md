@@ -92,6 +92,9 @@ BOT_TOKEN=             # (可选) Telegram Bot Token，仅首次迁移用
 ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
 HARNESS_CONFIG_PATH=   # (可选) Dev Harness 配置文件路径；留空则完全关闭
 HARNESS_GITHUB_WEBHOOK_SECRET= # (可选) Dev Harness GitHub webhook 密钥
+HARNESS_LODY_BRIDGE_URL=       # (可选) lody-bridge 地址，例如 http://lody-bridge:43190；需启用 harness profile
+HARNESS_LODY_BRIDGE_SECRET=    # (可选) app 与 lody-bridge 共享的 Bearer 密钥，至少 32 个字符
+LODY_CLI_TOKEN=                # (可选) 仅 lody-bridge 使用的 Lody CLI Token
 ```
 
 生产环境必须设置 `BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` 和 `AUTH_OWNER_EMAIL`；`PANEL_PASSWORD` 只用于首次创建 owner，首次启动成功后即可删除。

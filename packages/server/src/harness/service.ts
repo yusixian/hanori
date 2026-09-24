@@ -22,7 +22,8 @@ import {
 } from "./config/schema.js";
 import { durationMs } from "./config/units.js";
 import type { HarnessGitHub } from "./github.js";
-import { LodyCli } from "./lody.js";
+import { type ExecFileLike, LodyCli } from "./lody.js";
+import { createBridgeExec } from "./lody-bridge.js";
 import { HarnessPrActions } from "./pr-actions.js";
 import { HarnessPrFlow } from "./pr-flow.js";
 import { handleIssueComment, handleOwnerReply } from "./protocol.js";
@@ -54,7 +55,7 @@ export interface HarnessServiceOptions {
   env?: Record<string, string | undefined>;
   now?: () => Date;
   loadConfig?: (path: string) => Promise<ConfigValidation>;
-  createLody?: (command: string[], timeoutMs: number) => LodyCli;
+  createLody?: (command: string[], timeoutMs: number, exec?: ExecFileLike) => LodyCli;
 }
 
 export interface ScopedView<T> {
@@ -76,7 +77,11 @@ export class HarnessService {
   private readonly env: Record<string, string | undefined>;
   private readonly clock: () => Date;
   private readonly loadConfig: (path: string) => Promise<ConfigValidation>;
-  private readonly createLody: (command: string[], timeoutMs: number) => LodyCli;
+  private readonly createLody: (
+    command: string[],
+    timeoutMs: number,
+    exec?: ExecFileLike,
+  ) => LodyCli;
   private readonly applyLock = new KeyedAsyncLock();
   private loaded: LoadedHarnessConfig | null = null;
   private reloadError: { at: Date; issues: ConfigIssue[] } | null = null;
@@ -96,7 +101,7 @@ export class HarnessService {
     this.clock = options.now ?? (() => new Date());
     this.loadConfig = options.loadConfig ?? ((path) => loadHarnessConfigFile(path, this.clock()));
     this.createLody =
-      options.createLody ?? ((command, timeoutMs) => new LodyCli(command, timeoutMs));
+      options.createLody ?? ((command, timeoutMs, exec) => new LodyCli(command, timeoutMs, exec));
     this.prFlow = new HarnessPrFlow(this);
     this.prActions = new HarnessPrActions(this, this.prFlow);
     this.work = new HarnessWork(this);
@@ -270,14 +275,22 @@ export class HarnessService {
       : undefined;
   }
 
+  /** Uses the lody-bridge sidecar when its URL is set in the environment, else the local CLI. */
   lody(): LodyCli {
     const lody = this.globalView().config.executors.lody;
     const command = typeof lody.cli === "string" ? [lody.cli] : lody.cli;
-    const key = JSON.stringify([command, lody.timeout]);
+    const bridgeUrl = this.readEnv(lody.bridge.urlEnv);
+    const bridgeSecret = this.readEnv(lody.bridge.secretEnv);
+    const key = JSON.stringify([command, lody.timeout, bridgeUrl ?? null, Boolean(bridgeSecret)]);
     if (this.lodyClient?.key !== key) {
-      this.lodyClient = { key, cli: this.createLody(command, durationMs(lody.timeout)) };
+      const exec = bridgeUrl ? createBridgeExec(bridgeUrl, bridgeSecret) : undefined;
+      this.lodyClient = { key, cli: this.createLody(command, durationMs(lody.timeout), exec) };
     }
     return this.lodyClient.cli;
+  }
+
+  lodyTransport(): "bridge" | "local" {
+    return this.readEnv(this.globalView().config.executors.lody.bridge.urlEnv) ? "bridge" : "local";
   }
 
   async recordEvent(event: HarnessEventInput): Promise<void> {

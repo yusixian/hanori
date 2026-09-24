@@ -133,7 +133,8 @@ async function globalStatus(service: HarnessService): Promise<string> {
     }`,
   );
   const { result, machines } = await lodyMachines(service, undefined);
-  lines.push(renderExecutionLine(result, machines));
+  const transport = service.lodyTransport() === "bridge" ? "lody-bridge" : "本地 lody CLI";
+  lines.push(`${renderExecutionLine(result, machines)} · 经${transport}`);
   lines.push("", "<b>项目</b>");
   for (const key of service.projectKeys()) {
     const project = config.projects[key]!;

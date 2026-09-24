@@ -60,28 +60,29 @@
 | 部分                                                       | 状态                                                                                                                   |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | release-kit v0.1（R1–R6）及跟进（续跑、PR 号补齐、oxlint） | 已实现；构建、类型检查、lint、69 个测试与冒烟测试通过；未提交、未发布                                                  |
-| H1 配置与话题                                              | 已实现，单测通过；未在真实 Telegram 群验证                                                                             |
-| H2 PR 卡片与合并                                           | 已实现，单测与 PG 集成测试通过；含 PR 来源过滤；未做端到端验证                                                         |
-| H3 Lody 执行与小 bug（3.1–3.6）                            | 已实现，单测通过；未创建过真实 Lody 会话；3.7（koyori 接入）待端到端验证后进行                                         |
+| H1 配置与话题                                              | 已合并（PR #110，19c5ff2）并部署；2026-09-25 在生产端到端验证：`/status`、自动建话题                                   |
+| H2 PR 卡片与合并                                           | 已合并并部署；2026-09-25 在生产端到端验证：沙盒 PR #1 出卡片，查看详情后经卡片合并                                     |
+| H3 Lody 执行与小 bug（3.1–3.6）                            | 已合并，单测通过；待 lody-bridge 上线后端到端验证（alpine 镜像无法运行 Lody）；3.7（koyori 接入）随后进行              |
+| lody-bridge sidecar                                        | 已实现（`harness` profile、白名单、Bearer 密钥）；本地 Docker 无 token 冒烟通过；待配置 token 后在生产验证             |
 | 独立审查（安全与正确性）                                   | 已完成：无 critical/high；3 个 medium 与 4 个 low 已修复并补测试；「按 bot 名称绑定」保留，`/status` 显示绑定的 bot id |
-| 沙盒仓库                                                   | `example-owner/harness-sandbox` 已创建（私有），仍为空，初始提交待 owner 推送                                               |
+| 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                      |
 
 全量验证（2026-09-24）：`pnpm typecheck` 通过；`pnpm lint` 0 errors（3 个既有 warning）；`pnpm fmt:check` 通过；`pnpm test` 211 个文件、1827 个用例通过。
 
-端到端验证前需要 owner 准备的事项见实现报告：新工作 Bot 与话题群、GitHub App webhook（含 Issues、Issue comments 事件）与权限（含 Issues 读写）、部署环境变量、0054/0055 迁移、server 容器中的 Lody daemon（未验证）。
+H3 端到端验证前还需要：按 [DEV_HARNESS_LODY.md](../DEV_HARNESS_LODY.md) 启用 `harness` profile，设置 `LODY_CLI_TOKEN`、`HARNESS_LODY_BRIDGE_SECRET` 与 `HARNESS_LODY_BRIDGE_URL`。
 
 ## 5. 待验证或待准备
 
-| 事项                                                                         | 负责                         |
-| ---------------------------------------------------------------------------- | ---------------------------- |
-| server 容器（Linux）中运行 `lody daemon` 的方式与资源占用                    | H3 实现时验证                |
-| Dokploy `rollbackId` 从哪个接口获取；私有 registry 回滚问题（issue #3861）   | H6 实现时验证                |
-| GitHub App 补充 Actions 写权限与 webhook secret                              | H2 前由 owner 在 GitHub 设置 |
-| 新建工作 Bot、话题群，并把 Bot 设为管理员（`can_manage_topics`）             | owner                        |
-| koyori stable 前置项：Developer ID 公证、品牌素材授权、Electron 许可文件打包 | H5 前                        |
-| example-gallery 的 GitHub 远端 owner、名称与可见性                            | H6 前                        |
-| npm Trusted Publishing 当前配置方式                                          | release-kit 首次发布前       |
-| `raceLimits` 字段名是否稳定（疑似拼写），升级 Lody 后复核                    | H3 实现时                    |
+| 事项                                                                                               | 负责                         |
+| -------------------------------------------------------------------------------------------------- | ---------------------------- |
+| lody-bridge sidecar 中 `lody daemon` 的登录与资源占用（alpine 不可用，改用 bookworm-slim sidecar） | 配置 token 后在生产验证      |
+| Dokploy `rollbackId` 从哪个接口获取；私有 registry 回滚问题（issue #3861）                         | H6 实现时验证                |
+| GitHub App 补充 Actions 写权限与 webhook secret                                                    | H2 前由 owner 在 GitHub 设置 |
+| 新建工作 Bot、话题群，并把 Bot 设为管理员（`can_manage_topics`）                                   | owner                        |
+| koyori stable 前置项：Developer ID 公证、品牌素材授权、Electron 许可文件打包                       | H5 前                        |
+| example-gallery 的 GitHub 远端 owner、名称与可见性                                                  | H6 前                        |
+| npm Trusted Publishing 当前配置方式                                                                | release-kit 首次发布前       |
+| `raceLimits` 字段名是否稳定（疑似拼写），升级 Lody 后复核                                          | H3 实现时                    |
 
 ## 6. 分阶段
 

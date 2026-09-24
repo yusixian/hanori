@@ -42,6 +42,7 @@ const LOCKED_PATHS = [
   "policy.risk",
   "policy.version",
   "executors.lody.cli",
+  "executors.lody.bridge",
   "github.webhookSecretEnv",
   "github.acceptIssues",
   "github.acceptPullRequests",
