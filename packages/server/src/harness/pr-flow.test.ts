@@ -66,6 +66,18 @@ describe("PR card", () => {
     expect(second.service.projectThread("sandbox")).toBe(501);
   });
 
+  it("drops the summary line when the AI summary is unavailable", async () => {
+    const ctx = await createTestService({
+      summarizer: async () => {
+        throw new Error("provider down");
+      },
+    });
+    await prEvent(ctx, "opened");
+    const html = ctx.telegram.sent[0]!.message.html;
+    expect(html).not.toContain("改了什么");
+    expect(html.split("\n")[1]).toBe("fix(settings): show saving state");
+  });
+
   it("uses the first PR body image as the card photo", async () => {
     const github = new FakeGitHub();
     github.pr.body = "## 验证\n![shot](https://example.com/s.png)\n## 审查";

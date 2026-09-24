@@ -87,6 +87,14 @@ describe("renderPrCard", () => {
     expect(buttonTexts(card)).toEqual(buttons);
   });
 
+  it("omits the summary line when it would repeat the title", () => {
+    for (const summary of [null, "fix(settings): <save> progress"]) {
+      const card = renderPrCard(input({ summary }));
+      expect(card.html).not.toContain("改了什么");
+      expect(card.html.split("\n")[1]).toBe("fix(settings): &lt;save&gt; progress");
+    }
+  });
+
   it("escapes check names from GitHub", () => {
     const failing = summarizeChecks(
       [{ id: 1, name: "build <linux> & test", status: "completed", conclusion: "failure" }],

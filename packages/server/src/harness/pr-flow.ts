@@ -154,7 +154,7 @@ export class HarnessPrFlow {
         this.service.logger.warn(`Dev Harness PR summary failed: ${errorText(error)}`);
       }
     }
-    return { summary: summary ?? pr.title, summaryKey: key };
+    return { summary, summaryKey: key };
   }
 
   /** Caller must hold the PR lock. */

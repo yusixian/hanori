@@ -92,7 +92,11 @@ export function renderPrCard(input: PrCardInput): RenderedCard {
     `<b>${HEADLINES[status]} · PR #${input.number} · ${input.tier}</b>`,
     escapeHtml(clip(input.title, 120)),
   ];
-  if (input.summary) lines.push(`改了什么：${escapeHtml(clip(input.summary, 160))}`);
+  // Without an AI summary the title line already says it; do not repeat it.
+  const summary = input.summary?.trim();
+  if (summary && clip(summary, 120) !== clip(input.title, 120)) {
+    lines.push(`改了什么：${escapeHtml(clip(summary, 160))}`);
+  }
   lines.push(checksLine(input.checks));
   if (input.contract.missing.length > 0) {
     lines.push(`缺少：${escapeHtml(clip(input.contract.missing.join("；"), 160))}`);
