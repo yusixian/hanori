@@ -1,0 +1,70 @@
+# Dev Harness policy for cos-tool-bot itself. The harness runs inside this repository and merges
+# to main deploy production, so every path that could loosen its own guardrails, auth, secrets,
+# deployment, or data is T3 and must be merged on GitHub by the owner.
+# Field reference: docs/design/dev-harness-config.md §4.
+version: 1
+kind: service
+
+verify:
+  quick: pnpm lint && pnpm typecheck && pnpm test
+  full: pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm i18n:check && pnpm test && pnpm build
+  acceptance: pnpm test:browser
+  timeout: 45m
+
+sizeGate:
+  maxFiles: 8
+  forbidTiers: [T3]
+
+areas:
+  server: ["packages/server/**"]
+  bot: ["packages/bot/**"]
+  panel: ["packages/panel/**"]
+  docs: ["packages/docs/**", "docs/**"]
+  database: ["packages/database/**"]
+  shared: ["packages/shared/**"]
+  coding-worker: ["packages/coding-worker/**"]
+
+risk:
+  default: T2
+  T0: ["docs/**", "readme.md"]
+  T1: ["packages/docs/**", "packages/panel/src/**/*.css", "**/locales/**", "**/i18n/**"]
+  T3:
+    # The harness itself and what it reads as instructions.
+    - "packages/server/src/harness/**"
+    - "packages/bot/src/harness/**"
+    - "packages/server/src/routes/harness*.ts"
+    - "harness.example.yaml"
+    - "AGENTS.md"
+    - "CLAUDE.md"
+    - ".claude/**"
+    - ".agents/**"
+    # Auth, access control, credentials, and secrets.
+    - "packages/server/src/auth.ts"
+    - "packages/server/src/app.ts"
+    - "packages/server/src/http-policy.ts"
+    - "packages/server/src/env.ts"
+    - "packages/server/src/middleware/**"
+    - "packages/server/src/routes/authz.ts"
+    - "packages/server/src/routes/mini-app*.ts"
+    - "packages/server/src/services/*access*.ts"
+    - "packages/server/src/services/*credential*.ts"
+    - "packages/server/src/services/*oauth*.ts"
+    - "packages/server/src/services/telegram-mini-app-auth.ts"
+    - "packages/server/src/services/mini-app-session.ts"
+    - "packages/server/src/utils/crypto.ts"
+    - ".env.example"
+    # Schema migrations and production deployment.
+    - "packages/database/drizzle/**"
+    - "Dockerfile"
+    - "docker-compose*.yml"
+    - "infrastructure/**"
+    - "scripts/**"
+    - "package.json"
+    - "pnpm-lock.yaml"
+    - "pnpm-workspace.yaml"
+
+contract:
+  releaseFragment: optional
+  sections: [verify, review]
+  screenshots: when-ui
+  uiPaths: ["packages/panel/src/**/*.tsx"]
