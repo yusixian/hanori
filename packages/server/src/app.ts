@@ -14,7 +14,7 @@ import {
 import { resolveAllowedOrigins, type AppAuth } from "./auth.js";
 import { authzRoutes } from "./routes/authz.js";
 import { backupRoutes } from "./routes/backup.js";
-import { botsRoutes } from "./routes/bots.js";
+import { botsRoutes, type MemoryConsolidationPreviewPort } from "./routes/bots.js";
 import { cosInsideRoutes } from "./routes/cos-inside.js";
 import { logRoutes } from "./routes/logs.js";
 import { dataTransferRoutes } from "./routes/data-transfer.js";
@@ -84,6 +84,7 @@ interface AppOptions {
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
   usageGovernor: UsageGovernor;
+  memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
 }
@@ -113,6 +114,7 @@ export function createApp(options: AppOptions) {
     botSettingsService,
     imageGenerationService,
     imageMcpConnectionService,
+    memoryConsolidationPreview,
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
   } = options;
@@ -186,10 +188,18 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/engagement-samples", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/engagement-samples/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/files-raw/generations/*", requireRoles(ownerOrAdmin))
+    .use("/api/bots/:botId/memories/consolidation-preview", requireRoles(ownerOrAdmin))
     .route("/api/bots", governanceRoutes(db, imageGenerationService, imageMcpConnectionService))
     .route(
       "/api/bots",
-      botsRoutes(db, botPool, modelCapabilityService, botLifecycleService, chatAiSelectionService),
+      botsRoutes(
+        db,
+        botPool,
+        modelCapabilityService,
+        botLifecycleService,
+        chatAiSelectionService,
+        memoryConsolidationPreview,
+      ),
     )
     .route("/api/bots", cosInsideRoutes(db))
     .route("/api/bots", botGitHubAppRoutes(db, githubAppService, botPool))

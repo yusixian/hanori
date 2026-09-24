@@ -17,6 +17,12 @@ import {
 } from "drizzle-orm";
 import { escapeLike, rrfMerge } from "../utils/search.js";
 
+/** The queries used here are available on both the pool and a Drizzle transaction. */
+export type BotMemoryExecutor = Pick<
+  Database,
+  "select" | "selectDistinct" | "insert" | "update" | "delete"
+>;
+
 function toDto(row: typeof botMemories.$inferSelect): BotMemory {
   return {
     id: row.id,
@@ -54,7 +60,7 @@ function agentMutationScope(access?: BotMemoryAccess) {
 }
 
 export class BotMemoryStore {
-  constructor(private db: Database) {}
+  constructor(private db: BotMemoryExecutor) {}
 
   async getMemory(botId: string, memoryId: number): Promise<BotMemory | null> {
     const [row] = await this.db

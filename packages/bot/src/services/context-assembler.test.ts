@@ -213,9 +213,22 @@ describe("prompt bundle", () => {
   it("hides legacy unscoped personal memories in isolated mode", async () => {
     const botMemory = createBotMemory();
     vi.mocked(botMemory.getMemoriesForQuery!).mockResolvedValue([
-      memory,
+      {
+        ...memory,
+        content: "I belong to chat 42",
+        origin: null,
+        sourceChatId: null,
+        sourceMessageId: null,
+        sourceUserId: null,
+      },
       { ...memory, id: 18, telegramId: null, content: "general rule" },
-      { ...memory, id: 19, scopeChatId: 42, content: "same chat memory" },
+      {
+        ...memory,
+        id: 19,
+        scopeChatId: 42,
+        sourceChatId: null,
+        content: "same chat memory",
+      },
     ]);
 
     const result = await assembleContext(
@@ -227,6 +240,8 @@ describe("prompt bundle", () => {
     expect(result.trace.sections.find((item) => item.id === "runtime.bot-memory")?.refs).toEqual([
       18, 19,
     ]);
+    const section = result.trace.sections.find((item) => item.id === "runtime.bot-memory");
+    expect(result.messages[section!.messageIndex]!.content).not.toContain("I belong to chat 42");
   });
 
   it("uses the same isolated retrieval boundary for continuations", async () => {

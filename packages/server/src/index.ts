@@ -389,6 +389,7 @@ const app = createApp({
   imageGenerationService,
   imageMcpConnectionService,
   usageGovernor,
+  memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
   runtimeHealth,
 });

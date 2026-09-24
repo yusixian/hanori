@@ -145,7 +145,7 @@ describe("BotMemoryStore scopes", () => {
     expect(rendered.sql).toContain('"bot_memories"."expires_at" >');
   });
 
-  it("excludes unscoped personal memories in isolated mode", async () => {
+  it("requires a known chat scope for isolated personal reads, regardless of provenance", async () => {
     const { db, whereClauses } = createDb();
     const store = new BotMemoryStore(db);
     await store.recallMemories(memoryRow().botId, {
@@ -153,13 +153,27 @@ describe("BotMemoryStore scopes", () => {
       scopeChatId: -100,
       includeUnscopedPersonal: false,
     });
+    await store.recallMemories(memoryRow().botId, {
+      telegramId: 42,
+      scopeChatId: -100,
+      includeUnscopedPersonal: false,
+      scope: "user_only",
+    });
+    await store.getMemoriesForPrompt(memoryRow().botId, {
+      telegramId: 42,
+      scopeChatId: -100,
+      includeUnscopedPersonal: false,
+    });
 
-    const rendered = renderWhere(whereClauses[0]!);
-    expect(rendered.sql).toContain('"bot_memories"."telegram_id" is null');
-    expect(rendered.sql).toContain('"bot_memories"."telegram_id" =');
-    expect(rendered.sql).toContain('"bot_memories"."scope_chat_id" =');
-    expect(rendered.params).toContain(42);
-    expect(rendered.params).toContain(-100);
+    for (const where of whereClauses) {
+      const rendered = renderWhere(where);
+      expect(rendered.sql).toContain('"bot_memories"."telegram_id" =');
+      // One chat predicate is the shared visibility filter; the second must guard personal rows.
+      expect(rendered.sql.match(/"bot_memories"\."scope_chat_id" =/g)).toHaveLength(2);
+      expect(rendered.sql).not.toContain('"bot_memories"."source_chat_id"');
+      expect(rendered.params).toContain(42);
+      expect(rendered.params).toContain(-100);
+    }
   });
 });
 

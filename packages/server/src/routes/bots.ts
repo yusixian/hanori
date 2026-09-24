@@ -29,6 +29,7 @@ import {
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
 import { LarkBotManager } from "../services/lark-bot-manager.js";
+import type { HistoricalBatchPage } from "../services/memory-consolidator.js";
 import {
   MemoryLegacyCleanup,
   MEMORY_DUPLICATE_BATCH_MAX,
@@ -106,6 +107,13 @@ const memoryTelegramIdFilterSchema = z
     return /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value));
   }, "telegramId must be general or a decimal safe integer")
   .optional();
+
+export interface MemoryConsolidationPreviewPort {
+  previewHistoricalBatches(
+    botId: string,
+    options: { afterMessageId?: number; limit?: number },
+  ): Promise<HistoricalBatchPage>;
+}
 
 const createBotSchema = z
   .object({
@@ -415,6 +423,7 @@ export function botsRoutes(
   modelCapabilityService: ModelCapabilityService,
   botLifecycleService?: BotLifecycleService,
   chatAiSelectionService?: ChatAiSelectionService,
+  memoryConsolidationPreview?: MemoryConsolidationPreviewPort,
 ) {
   return new Hono<{ Variables: AuthVariables }>()
     .get(
@@ -1523,6 +1532,28 @@ export function botsRoutes(
       const result = await new MemoryLegacyCleanup(db).preview(c.req.param("botId"));
       return c.json({ ok: true as const, ...result });
     })
+    .get(
+      "/:botId/memories/consolidation-preview",
+      zValidator(
+        "query",
+        z.object({
+          afterMessageId: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+          limit: z.coerce.number().int().min(1).max(5).optional(),
+        }),
+      ),
+      async (c) => {
+        if (!ownerOrAdmin.has(c.get("authMember").role))
+          return c.json({ ok: false as const, error: "Forbidden" }, 403);
+        if (!memoryConsolidationPreview)
+          return c.json({ ok: false as const, error: "Memory preview unavailable" }, 503);
+
+        const result = await memoryConsolidationPreview.previewHistoricalBatches(
+          c.req.param("botId"),
+          c.req.valid("query"),
+        );
+        return c.json({ ok: true as const, ...result });
+      },
+    )
     .post(
       "/:botId/memories/retire-duplicates",
       zValidator(

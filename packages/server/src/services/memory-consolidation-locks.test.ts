@@ -1,4 +1,4 @@
-import { createDb, type Database } from "@cos-tool-bot/database";
+import { createDb } from "@cos-tool-bot/database";
 import { sql } from "drizzle-orm";
 import { expect, it } from "vitest";
 import { lockConsolidationInputs } from "./memory-consolidator.js";
@@ -72,7 +72,7 @@ it.skipIf(!databaseUrl)(
         await tx.execute(sql.raw("SET LOCAL statement_timeout = '3000ms'"));
         const [backend] = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
         signalConsolidatorPid(Number(backend?.pid));
-        return lockConsolidationInputs(tx as unknown as Database, botId, [41], [101]);
+        return lockConsolidationInputs(tx, botId, [41], [101]);
       });
       void consolidate.catch((error: unknown) => {
         consolidationError = error;
