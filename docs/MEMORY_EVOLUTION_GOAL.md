@@ -57,7 +57,7 @@ summaries must remain readable through the change and have a safe cleanup path.
   Focused store/selector tests, server typecheck, scoped lint and format pass.
 - Independent foundation review found the unchanged-content embedding issue;
   it was fixed. Changed-content edits refresh the vector with a content guard.
-- Four child PRs have been reviewed and merged into draft integration PR #100:
+- Four child PRs were reviewed and merged into integration PR #100:
   #101 Agent lifecycle and panel controls, #102 bounded summary compaction and
   manual summary edit/cleanup, #103 autonomous shared memory consolidation,
   and #104 guarded exact-duplicate cleanup for historical memories. The Lody
@@ -79,7 +79,15 @@ summaries must remain readable through the change and have a safe cleanup path.
   changing it. A second review caught a session-timezone conversion; the
   update now uses UTC. Both fixes passed a disposable PostgreSQL test under an
   Asia/Shanghai database timezone, including stale and concurrent writes.
-  Current-head CI is pending before PR #100 merges.
+  PR #100 merged as `168547e625c7bacc18448359dab22b7d8997e7fc`; main CI passed.
+- Follow-up draft PR #105 provides the transaction-compatible memory store and
+  owner/admin-only historical batch preview. Final review found a preview
+  discrepancy around raw batch boundaries and opt-out participants; the fix
+  passed focused tests and final code review. CI for the prior PR head failed
+  during browser checks after the self-hosted runner lost contact.
+- A `v0.15.0` release-note candidate covers the merged memory changes and the
+  follow-up API. No tag, GitHub Release, migration against production, or
+  deployment has been performed as part of this goal.
 - Current summaries are cumulative snapshots. Forced group compression can
   bypass the usual message threshold. Existing `/privacy forget` contract
   excludes selective deletion of shared group summaries; do not clear an

@@ -406,42 +406,56 @@ export class MemoryConsolidator {
     const now = new Date();
     const eligibleRows = scanned.filter((row) => eligible(row, now));
     const privacyModes = await this.loadPrivacyModes(botId, eligibleRows);
-    const rows = privacyModes
-      ? eligibleRows.filter((row) => {
-          const mode = privacyModes.get(row.userId!);
-          return mode !== "off" && (mode !== "isolated" || row.chatId === row.userId);
-        })
-      : [];
-    const previews: HistoricalBatchPreview[] = [];
-    for (const row of rows) {
-      const last = previews.at(-1);
-      if (!last || last.chatId !== row.chatId || last.messageIds.length >= MAX_MESSAGES) {
-        previews.push({
-          botId,
-          cursorMessageId: cursor,
-          processed: false,
-          chatId: row.chatId,
-          messageIds: [],
-          participantIds: [],
-          excerpts: [],
-        });
+    const rawBatches: Source[][] = [];
+    for (const row of scanned) {
+      const last = rawBatches.at(-1);
+      if (!last || last[0]!.chatId !== row.chatId || last.length >= MAX_MESSAGES) {
+        rawBatches.push([row]);
+      } else {
+        last.push(row);
       }
-      const preview = previews.at(-1)!;
-      preview.messageIds.push(row.id);
-      if (row.userId && !preview.participantIds.includes(row.userId))
-        preview.participantIds.push(row.userId);
-      preview.excerpts.push((row.userAuthoredContent ?? "").slice(0, 160));
     }
-    const visible = previews.slice(0, limit).map((preview) => ({
-      ...preview,
-      processed: preview.messageIds.every((id) => id <= cursor),
+    const previews: { batch: HistoricalBatchPreview; lastRawId: number }[] = [];
+    for (const rawBatch of rawBatches) {
+      const candidates = rawBatch.filter((row) => eligible(row, now));
+      if (
+        !privacyModes ||
+        candidates.length === 0 ||
+        candidates.some((row) => {
+          const mode = privacyModes.get(row.userId!);
+          return mode === "off" || (mode === "isolated" && row.chatId !== row.userId);
+        })
+      )
+        continue;
+      const preview: HistoricalBatchPreview = {
+        botId,
+        cursorMessageId: cursor,
+        processed: false,
+        chatId: rawBatch[0]!.chatId,
+        messageIds: [],
+        participantIds: [],
+        excerpts: [],
+      };
+      for (const row of candidates) {
+        preview.messageIds.push(row.id);
+        if (row.userId && !preview.participantIds.includes(row.userId))
+          preview.participantIds.push(row.userId);
+        preview.excerpts.push((row.userAuthoredContent ?? "").slice(0, 160));
+      }
+      previews.push({ batch: preview, lastRawId: rawBatch.at(-1)!.id });
+    }
+    const visible = previews.slice(0, limit).map(({ batch }) => ({
+      ...batch,
+      processed: batch.messageIds.every((id) => id <= cursor),
     }));
-    const overflow = previews.length > limit;
+    const lastVisibleRawId = previews[Math.min(previews.length, limit) - 1]?.lastRawId;
     return {
       data: visible,
       nextAfterMessageId:
-        overflow || lookahead.length > scanLimit
-          ? ((overflow ? visible.at(-1)?.messageIds.at(-1) : scanned.at(-1)?.id) ?? null)
+        previews.length > limit ||
+        lookahead.length > scanLimit ||
+        (lastVisibleRawId !== undefined && scanned.at(-1)!.id > lastVisibleRawId)
+          ? (lastVisibleRawId ?? scanned.at(-1)?.id ?? null)
           : null,
     };
   }

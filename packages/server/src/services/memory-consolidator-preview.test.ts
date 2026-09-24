@@ -93,20 +93,41 @@ describe("historical consolidation preview", () => {
     expect(transaction).not.toHaveBeenCalled();
   });
 
-  it("hides opted-out messages without hiding another participant's eligible preview", async () => {
+  it("skips a raw group batch when one eligible participant has opted out", async () => {
     const { service } = previewWithWindows(
-      [[source(1, 41), source(2, 42)]],
-      [{ userId: 41, mode: "off" }],
+      [[source(1, 41), source(2, 42), source(3, 41), source(4, 43, { chatId: -200 })]],
+      [{ userId: 42, mode: "off" }],
     );
 
     expect(await service.previewHistoricalBatches(botId, { limit: 1 })).toEqual({
       data: [
         expect.objectContaining({
-          messageIds: [2],
-          participantIds: [42],
-          excerpts: ["Message 2"],
+          chatId: -200,
+          messageIds: [4],
+          participantIds: [43],
+          excerpts: ["Message 4"],
         }),
       ],
+      nextAfterMessageId: null,
+    });
+  });
+
+  it("does not join one chat across an ineligible row from another chat", async () => {
+    const middle = source(2, 42, { chatId: -200, role: "assistant" });
+    const { service } = previewWithWindows(
+      [
+        [source(1, 41), middle, source(3, 41)],
+        [middle, source(3, 41)],
+      ],
+      [],
+    );
+
+    expect(await service.previewHistoricalBatches(botId, { limit: 1 })).toEqual({
+      data: [expect.objectContaining({ chatId: -100, messageIds: [1] })],
+      nextAfterMessageId: 1,
+    });
+    expect(await service.previewHistoricalBatches(botId, { afterMessageId: 1, limit: 1 })).toEqual({
+      data: [expect.objectContaining({ chatId: -100, messageIds: [3] })],
       nextAfterMessageId: null,
     });
   });
