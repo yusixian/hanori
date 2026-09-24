@@ -8,6 +8,7 @@ export const CARD_VERBS = {
   confirm: "c",
   cancel: "x",
   details: "d",
+  collapse: "u",
   refresh: "r",
   start: "s",
   wait: "w",

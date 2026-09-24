@@ -45,7 +45,7 @@ GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读�
 配置中的仓库开 PR 后，对应项目话题会出现一张卡片：状态、风险等级、一句话摘要、CI 与缺失项。PR 更新时原地编辑同一张卡片。
 
 - 默认只为 harness 分支（`harness/` 前缀）、`trustedAuthors` 中作者的同仓库 PR，以及带 `harness:track` 标签的 PR 生成卡片；来自 fork 的陌生 PR 不会出卡片。
-- 风险等级按改动路径计算。`.cos/**`、`.github/workflows/**` 与 release-kit 配置的改动固定为 T3，只能在 GitHub 网页上合并。T2 需要先点「详情」。
+- 风险等级按改动路径计算。`.cos/**`、`.github/workflows/**` 与 release-kit 配置的改动固定为 T3，只能在 GitHub 网页上合并。T2 点「合并」时卡片会就地展开改动文件和交付合同，再点「确认合并」；先点过「详情」的话一次就能合并。
 - 合并前服务端会复核 head SHA 与 CI，再用 GitHub App 合并。新的 push 会让旧按钮失效。
 - 按钮在重启后仍然有效，过期（默认 7 天）或已使用时会给出明确提示。每次按钮操作都会记入审计事件。
 

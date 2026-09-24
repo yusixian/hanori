@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { decodeCallback } from "./approvals.js";
 import { summarizeChecks } from "./contract.js";
-import {
-  cardHash,
-  determinePrStatus,
-  renderPrCard,
-  renderPrDetails,
-  type PrCardInput,
-} from "./pr-card.js";
+import { cardHash, determinePrStatus, renderPrCard, type PrCardInput } from "./pr-card.js";
 
 const APPROVAL = "AbCdEfGhIjKlMnOpQrStUv";
 
@@ -29,7 +23,6 @@ function input(overrides: Partial<PrCardInput> = {}): PrCardInput {
     ),
     contract: { items: [], missing: [], flags: [], touchesUi: false, hasImage: false },
     approvalId: APPROVAL,
-    detailsViewed: false,
     imageUrl: null,
     ...overrides,
   };
@@ -75,12 +68,9 @@ describe("renderPrCard", () => {
     [{ state: "closed" as const }, "closed", ["🔗 PR"]],
     [{ draft: true }, "draft", ["🔍 详情", "🔄 刷新", "🔗 PR"]],
     [{ tier: "T3" as const }, "t3", ["🔍 详情", "🔄 刷新", "🔗 在 GitHub 合并"]],
-    [{ tier: "T2" as const }, "needs_details", ["🔍 详情（查看后可合并）", "🔗 PR", "🔄 刷新"]],
-    [
-      { tier: "T2" as const, detailsViewed: true },
-      "ready",
-      ["✅ 合并", "🔍 详情", "🔗 PR", "🔄 刷新"],
-    ],
+    [{ tier: "T2" as const }, "ready", ["✅ 合并", "🔍 详情", "🔗 PR", "🔄 刷新"]],
+    [{ details: { files: [] } }, "ready", ["✅ 合并", "🔼 收起", "🔗 PR"]],
+    [{ draft: true, details: { files: [] } }, "draft", ["🔼 收起", "🔄 刷新", "🔗 PR"]],
   ])("maps %o to %s", (overrides, status, buttons) => {
     const card = renderPrCard(input(overrides));
     expect(card.status).toBe(status);
@@ -103,15 +93,41 @@ describe("renderPrCard", () => {
     expect(renderPrCard(input({ checks: failing })).html).toContain(
       "CI：❌ build &lt;linux&gt; &amp; test 失败",
     );
-    const details = renderPrDetails({
-      number: 1,
-      tier: "T1",
-      files: [],
-      checks: failing,
-      contract: { items: [], missing: [], flags: [], touchesUi: false, hasImage: false },
-    });
-    expect(details).toContain("build &lt;linux&gt; &amp; test");
-    expect(details).not.toContain("<linux>");
+    const expanded = renderPrCard(
+      input({
+        checks: failing,
+        details: { files: [{ path: "a<b>.ts", tier: "T1", rule: "default" }] },
+      }),
+    );
+    expect(expanded.html).toContain("<code>a&lt;b&gt;.ts</code>");
+    expect(expanded.html).not.toContain("<linux>");
+  });
+
+  it("expands details inline, highest tier first, capped by maxFiles", () => {
+    const files = [
+      { path: "docs/a.md", tier: "T0" as const, rule: "rule" },
+      { path: "src/logic.ts", tier: "T2" as const, rule: "default" },
+      { path: ".cos/harness.yml", tier: "T3" as const, rule: "fixed" },
+    ];
+    const card = renderPrCard(
+      input({
+        details: { files, maxFiles: 2 },
+        contract: {
+          items: [{ key: "sections", ok: true, blocking: true, label: "PR 描述有「验证」" }],
+          missing: [],
+          flags: [],
+          touchesUi: false,
+          hasImage: false,
+        },
+      }),
+    );
+    const lines = card.html.split("\n");
+    expect(lines).toContain("<b>文件（3）</b>");
+    expect(lines).toContain("T3 <code>.cos/harness.yml</code>（固定 T3）");
+    expect(lines).toContain("T2 <code>src/logic.ts</code>（默认）");
+    expect(lines).toContain("…另有 1 个文件");
+    expect(lines).toContain("✅ PR 描述有「验证」");
+    expect(lines.at(-1)).toContain("example-owner/koyori#124");
   });
 
   it("blocks merge on failing or pending CI", () => {
@@ -126,7 +142,7 @@ describe("renderPrCard", () => {
   });
 
   it("renders the confirmation step and a stable hash", () => {
-    const confirming = renderPrCard(input({ confirmingMerge: true }));
+    const confirming = renderPrCard(input({ confirmingMerge: true, details: { files: [] } }));
     expect(buttonTexts(confirming)).toEqual(["✅ 确认合并", "取消"]);
     expect(cardHash(renderPrCard(input()))).toBe(cardHash(renderPrCard(input())));
     expect(cardHash(confirming)).not.toBe(cardHash(renderPrCard(input())));

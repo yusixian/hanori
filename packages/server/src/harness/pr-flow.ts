@@ -33,6 +33,8 @@ export interface SyncOptions {
   bodyEditedAt?: Date;
   note?: string;
   confirmingMerge?: boolean;
+  /** Renders the card expanded; any later sync without it collapses the card again. */
+  expanded?: boolean;
 }
 
 type Payload = Record<string, unknown>;
@@ -259,8 +261,9 @@ export class HarnessPrFlow {
       checks: evaluation.checks,
       contract: evaluation.contract,
       approvalId: approval?.id ?? null,
-      detailsViewed: current.detailsViewedSha === pr.headSha,
       confirmingMerge: options.confirmingMerge,
+      details:
+        options.expanded || options.confirmingMerge ? { files: evaluation.risk.files } : null,
       imageUrl: config.telegram.cards.screenshot === "first" ? extractFirstImage(pr.body) : null,
       note: options.note ?? stageNote(current),
       footer: await service.work.footerFor(current, config),
@@ -275,13 +278,20 @@ export class HarnessPrFlow {
       request.cardMessageId !== null ? request.cardKind === "photo" : input.imageUrl !== null;
     let card = renderPrCard(input);
     if (wantsPhoto && card.html.length > CAPTION_LIMIT) {
-      card = renderPrCard({
+      const compact: PrCardInput = {
         ...input,
         summary: null,
         note: undefined,
         footer: null,
         contract: { ...input.contract, missing: [], flags: [] },
-      });
+      };
+      for (const maxFiles of [5, 0]) {
+        card = renderPrCard({
+          ...compact,
+          details: input.details ? { ...input.details, maxFiles } : null,
+        });
+        if (card.html.length <= CAPTION_LIMIT || !input.details) break;
+      }
     }
     return publishCard(this.service, projectKey, request, card);
   }

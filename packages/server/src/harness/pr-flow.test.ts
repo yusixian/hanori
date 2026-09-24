@@ -152,19 +152,32 @@ describe("merge", () => {
     expect(ctx.github.merges).toHaveLength(0);
   });
 
-  it("requires opening details before merging T2", async () => {
+  it("confirms T2 merges on the card itself with the details expanded", async () => {
     const github = new FakeGitHub();
     github.files = [{ filename: "src/logic.ts", status: "modified" }];
     const ctx = await createTestService({ github });
     await prEvent(ctx, "opened");
-    expect(ctx.telegram.lastCard()!.html).toContain("🟠 查看详情后可合并");
-    const forged = encodeCallback(approvalIdOf(ctx), "merge");
+    expect(ctx.telegram.lastCard()!.html).toContain("🟢 可以合并 · PR #7 · T2");
+    const forged = encodeCallback(approvalIdOf(ctx), "confirm");
     expect(await press(ctx, forged)).toEqual({ text: "T2 改动需要先查看详情", alert: true });
 
-    expect(await press(ctx, ctx.telegram.callbackData("🔍"))).toEqual({ text: "已发送详情" });
-    const details = ctx.telegram.sent.at(-1)!.message;
-    expect(details.html).toContain("PR #7 详情 · T2");
-    expect(details.replyToMessageId).toBe(ctx.telegram.sent[0]!.messageId);
+    expect(await press(ctx, ctx.telegram.callbackData("✅ 合并"))).toEqual({ text: "请确认合并" });
+    expect(ctx.github.merges).toHaveLength(0);
+    expect(ctx.telegram.sent).toHaveLength(1);
+    expect(ctx.telegram.lastCard()!.html).toContain("T2 <code>src/logic.ts</code>");
+    expect(await press(ctx, ctx.telegram.callbackData("✅ 确认合并"))).toEqual({ text: "已合并" });
+  });
+
+  it("expands and collapses details in place and then merges T2 in one tap", async () => {
+    const github = new FakeGitHub();
+    github.files = [{ filename: "src/logic.ts", status: "modified" }];
+    const ctx = await createTestService({ github });
+    await prEvent(ctx, "opened");
+    expect(await press(ctx, ctx.telegram.callbackData("🔍"))).toEqual({ text: "已展开详情" });
+    expect(ctx.telegram.sent).toHaveLength(1);
+    expect(ctx.telegram.lastCard()!.html).toContain("<b>文件（1）</b>");
+    expect(await press(ctx, ctx.telegram.callbackData("🔼 收起"))).toEqual({ text: "已收起" });
+    expect(ctx.telegram.lastCard()!.html).not.toContain("<b>文件");
     expect(await press(ctx, ctx.telegram.callbackData("✅ 合并"))).toEqual({ text: "已合并" });
   });
 
@@ -223,7 +236,7 @@ describe("merge", () => {
     });
     await prEvent(ctx, "opened");
     expect(await press(ctx, ctx.telegram.callbackData("✅ 合并"))).toEqual({
-      text: "请再次确认合并",
+      text: "请确认合并",
     });
     expect(ctx.github.merges).toHaveLength(0);
     expect(await press(ctx, ctx.telegram.callbackData("✅ 确认合并"))).toEqual({ text: "已合并" });

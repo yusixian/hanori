@@ -1,6 +1,5 @@
 import type { HarnessCallbackAnswer } from "@cos-tool-bot/bot";
 import { APPROVAL_PROBLEM_TEXT, type CardVerb, checkApproval } from "./approvals.js";
-import { renderPrDetails } from "./pr-card.js";
 import type { HarnessPrFlow } from "./pr-flow.js";
 import type { HarnessService } from "./service.js";
 import type { HarnessApprovalRecord, HarnessRequestRecord } from "./store.js";
@@ -38,7 +37,15 @@ export class HarnessPrActions {
     }
     switch (verb) {
       case "details":
-        return this.showDetails(approval, request);
+        await this.markViewed(approval, request);
+        await this.flow.syncUnlocked(request.projectKey, number, {
+          reason: "details",
+          expanded: true,
+        });
+        return { text: "已展开详情" };
+      case "collapse":
+        await this.flow.syncUnlocked(request.projectKey, number, { reason: "collapse" });
+        return { text: "已收起" };
       case "refresh":
         await this.flow.syncUnlocked(request.projectKey, number, { reason: "refresh" });
         return { text: "已刷新" };
@@ -47,42 +54,36 @@ export class HarnessPrActions {
         return { text: "已取消" };
       case "merge":
         if (this.flow.project(request.projectKey).approvals.mergeConfirm === "twice") {
-          await this.flow.syncUnlocked(request.projectKey, number, {
-            reason: "confirm",
-            confirmingMerge: true,
-          });
-          return { text: "请再次确认合并" };
+          return this.askConfirm(approval, request);
         }
-        return this.merge(approval, request, actorId);
+        return this.merge(approval, request, actorId, { confirmed: false });
       case "confirm":
-        return this.merge(approval, request, actorId);
+        return this.merge(approval, request, actorId, { confirmed: true });
       default:
         return { text: APPROVAL_PROBLEM_TEXT.missing };
     }
   }
 
-  private async showDetails(
-    approval: HarnessApprovalRecord,
-    request: HarnessRequestRecord,
-  ): Promise<HarnessCallbackAnswer> {
+  /** Records that the owner saw the details of the approved head, which T2 merges require. */
+  private async markViewed(approval: HarnessApprovalRecord, request: HarnessRequestRecord) {
     const config = this.flow.project(request.projectKey);
     const pr = await this.github.getPullRequest(config.project.repo, request.prNumber!);
-    const evaluation = await this.flow.evaluate(config, pr, request);
-    await this.service.telegram?.send(this.service.file.telegram.chatId, {
-      html: renderPrDetails({
-        number: pr.number,
-        tier: evaluation.risk.tier,
-        ...evaluation,
-        files: evaluation.risk.files,
-      }),
-      threadId: this.service.projectThread(request.projectKey),
-      replyToMessageId: request.cardMessageId ?? undefined,
-    });
     if (approval.headSha === pr.headSha) {
       await this.service.store.updateRequest(request.id, { detailsViewedSha: pr.headSha });
     }
-    await this.flow.syncUnlocked(request.projectKey, pr.number, { reason: "details" });
-    return { text: "已发送详情" };
+  }
+
+  /** The confirmation step shows the details inline, so confirming a T2 merge implies reading them. */
+  private async askConfirm(
+    approval: HarnessApprovalRecord,
+    request: HarnessRequestRecord,
+  ): Promise<HarnessCallbackAnswer> {
+    await this.markViewed(approval, request);
+    await this.flow.syncUnlocked(request.projectKey, request.prNumber!, {
+      reason: "confirm",
+      confirmingMerge: true,
+    });
+    return { text: "请确认合并" };
   }
 
   /** Re-checks the live PR against the approval before consuming it; GitHub also pins the SHA. */
@@ -90,6 +91,7 @@ export class HarnessPrActions {
     approval: HarnessApprovalRecord,
     request: HarnessRequestRecord,
     actorId: number,
+    options: { confirmed: boolean },
   ): Promise<HarnessCallbackAnswer> {
     const { service } = this;
     const config = this.flow.project(request.projectKey);
@@ -118,13 +120,14 @@ export class HarnessPrActions {
       return reject("head_changed", "PR 有新提交，请看刷新后的卡片");
     const evaluation = await this.flow.evaluate(config, pr, request);
     if (evaluation.risk.tier === "T3") return reject("t3", "T3 改动只能在 GitHub 网页上合并");
-    if (evaluation.risk.tier === "T2" && request.detailsViewedSha !== pr.headSha) {
-      return reject("details_required", "T2 改动需要先查看详情");
-    }
     if (evaluation.checks.state === "failure" || evaluation.checks.state === "pending") {
       return reject("checks", "CI 尚未全绿");
     }
     if (pr.mergeable === false) return reject("conflict", "存在冲突，无法合并");
+    if (evaluation.risk.tier === "T2" && request.detailsViewedSha !== pr.headSha) {
+      if (!options.confirmed) return this.askConfirm(approval, request);
+      return reject("details_required", "T2 改动需要先查看详情");
+    }
     if (!(await service.store.consumeApproval(approval.id, actorId, service.now()))) {
       return { text: APPROVAL_PROBLEM_TEXT.consumed };
     }
