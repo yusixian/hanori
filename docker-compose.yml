@@ -31,6 +31,8 @@ services:
       - BACKUP_DIR=/data/backups
       - NSFW_API_URL=${NSFW_API_URL:-http://nsfw-api:3000}
       - PIXAI_MCP_URL=${PIXAI_MCP_URL:-}
+      - HARNESS_CONFIG_PATH=${HARNESS_CONFIG_PATH:-}
+      - HARNESS_GITHUB_WEBHOOK_SECRET=${HARNESS_GITHUB_WEBHOOK_SECRET:-}
       - CODING_WORKER_URL=
       - CODING_WORKER_SOCKET=/coding-control/worker.sock
       - CODING_WORKER_SECRET=${CODING_WORKER_SECRET:-}

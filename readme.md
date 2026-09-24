@@ -90,11 +90,15 @@ GITHUB_APP_SLUG=       # (可选) github.com/apps/ 后面的 slug
 ENCRYPTION_KEY=        # Bot Token 加密密钥
 BOT_TOKEN=             # (可选) Telegram Bot Token，仅首次迁移用
 ADMIN_CHAT_IDS=[]      # (可选) 管理员 Chat ID 数组，仅首次迁移用
+HARNESS_CONFIG_PATH=   # (可选) Dev Harness 配置文件路径；留空则完全关闭
+HARNESS_GITHUB_WEBHOOK_SECRET= # (可选) Dev Harness GitHub webhook 密钥
 ```
 
 生产环境必须设置 `BETTER_AUTH_URL`、`BETTER_AUTH_SECRET` 和 `AUTH_OWNER_EMAIL`；`PANEL_PASSWORD` 只用于首次创建 owner，首次启动成功后即可删除。
 
 GitHub App 的创建、Callback URL、仓库权限和私钥安全写入方式见 [GitHub App 配置指南](docs/GITHUB_APP.md)。旧服务器的隔离 Pi worker 通过 `.env` 中的 `COMPOSE_PROFILES=coding` 启用；Dokploy 使用 `COMPOSE_PROFILES=dokploy,coding`。两种部署都要求同时配置 `CODING_WORKER_SECRET`。
+
+Dev Harness（预览）用专用 Bot 在 Telegram 话题群里汇报并合并 GitHub PR，配置示例见 [harness.example.yaml](harness.example.yaml)，使用说明见公开文档「集成 → Dev Harness」。
 
 ## 部署
 
