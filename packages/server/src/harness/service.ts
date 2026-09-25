@@ -2,8 +2,6 @@ import type { HarnessBotPort, HarnessTelegram } from "@cos-tool-bot/bot";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
 import { HarnessTopicAssistant } from "./assistant.js";
 import { type HarnessAttachments, createAttachments } from "./attachments.js";
-import { handleHarnessCallback } from "./callbacks.js";
-import { handleHarnessCommand } from "./commands.js";
 import { type ConfigIssue, type ConfigLayer, formatIssues } from "./config/layers.js";
 import {
   type ConfigValidation,
@@ -30,8 +28,7 @@ import { createBridgeExec } from "./lody-bridge.js";
 import { HarnessPrActions } from "./pr-actions.js";
 import { HarnessPrFlow } from "./pr-flow.js";
 import { fetchRepoPolicy } from "./policy-refresh.js";
-import { handleOwnerReply } from "./protocol.js";
-import { renderUsageHint } from "./render.js";
+import { createHarnessPort } from "./service-port.js";
 import {
   emptyProjectRecord,
   type HarnessEventInput,
@@ -220,25 +217,11 @@ export class HarnessService {
     return this.port;
   }
 
-  readonly port: HarnessBotPort = {
-    isHarnessChat: (chatId) => this.loaded?.file.telegram.chatId === chatId,
-    isOwner: (userId) => this.loaded?.file.telegram.owners.includes(userId) ?? false,
-    allowsCasualReplies: () =>
-      this.loaded ? this.globalView().config.telegram.chat.casualReplies : false,
-    usageHint: (threadId) => renderUsageHint(this.projectKeyForThread(threadId)),
-    onBotReady: (telegram) => {
-      this.telegramClient = telegram;
-      void this.apply()
-        .then(() => this.work.scheduler.start())
-        .catch((error) =>
-          this.logger.error(`Dev Harness apply failed: ${(error as Error).message}`),
-        );
-    },
-    handleCommand: (request) => handleHarnessCommand(this, request),
-    handleCallback: (request) => handleHarnessCallback(this, request),
-    handleReply: (request) => handleOwnerReply(this.work, request),
-    handleTopicMessage: (request, runtime) => this.assistant.handleMessage(request, runtime),
-  };
+  readonly port: HarnessBotPort = createHarnessPort(this);
+
+  attachTelegram(telegram: HarnessTelegram): void {
+    this.telegramClient = telegram;
+  }
 
   stop(): void {
     this.work.scheduler.stop();
