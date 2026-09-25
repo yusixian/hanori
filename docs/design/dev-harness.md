@@ -189,7 +189,7 @@ fix(settings): 保存时显示进度
 ### 6.2 小 bug
 
 1. `/bug …`（可附截图或语音）→ 建 issue，打 `harness:bug` label → 入队。
-2. 节点领取任务 → 规模闸门：≤5 个文件、无产品决策、不碰 T3 路径。不满足时转为 feature，并在卡片上说明原因。
+2. 节点领取任务后直接做，不限改动文件数，也可以改 T3 路径（T3 只是要求 owner 在 GitHub 合并）。只有需要 issue 没说清的产品决策时才转为 feature，并在卡片上说明原因。
 3. 实现 → 验证（`verify.quick` + 按需 `acceptance`）→ 独立 reviewer 审查 → 修复 → 推送分支、开 PR，在 PR 中写入证据。
 4. PR 卡片：摘要、风险等级、截图组、preview 链接、CI 状态；按钮 [合并] [打回] [详情]。
 5. 合并：server 复核 head SHA 与 checks 后用 GitHub App squash merge，之后按项目策略上线或发 preview。
@@ -307,7 +307,7 @@ Lody 的 daemon 已经在各台机器上与 Lody 云端保持连接（当前在�
 - 优先复用执行机上已有的 skills（如 `oneshot`、`frontend-acceptance`、`gh-stack`、`pr-visual`、`review-code-change`）；模板只写 harness 特有的要求，并附简版步骤，供没有这些 skills 的机器使用。
 - 双向沟通 v1 走 GitHub 评论：lead 在 issue 或 PR 上发 `Question: …`，经 webhook 转到 Telegram；owner 的回复写回评论，并通过 `lody session chat` 发给会话。以后可升级为注册在 Lody workspace 的 harness MCP（`ask_owner`、`report_progress` 等），需先确认每个会话单独鉴权的方式。
 - lead 开工前在 issue 上发 `Areas: <分区名>` 声明代码分区，服务器据此排队；未声明时按整个仓库计算。
-- 规模超出时，lead 发 `Needs spec: <原因>`，请求转为大需求流程。
+- 需要产品决策时，lead 发 `Needs spec: <原因>`，请求转为大需求流程。
 - 防提示注入：harness 只处理自己创建的、或 owner 打了 harness label 的 issue；issue 正文、评论与 owner 原话都作为数据引用。
 - 卡片上的中文一句话摘要由服务器用 triage 模型根据 PR 描述生成。
 

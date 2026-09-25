@@ -83,8 +83,6 @@ export const harness = {
     verifyFull: "完整验证命令",
     verifyAcceptance: "验收命令",
     verifyPlaceholder: "留空表示不配置",
-    maxFiles: "单次改动文件上限",
-    maxFilesInvalid: "请输入正整数。",
     releaseFragment: "Release 片段",
     releaseRequired: "必须",
     releaseOptional: "可选",

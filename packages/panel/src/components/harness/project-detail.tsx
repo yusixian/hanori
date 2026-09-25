@@ -12,7 +12,6 @@ import { ProjectExecutionSection, projectExecutionPatch } from "./execution-sett
 import { buildPolicyPatch, policyDraftFrom, sameMachines, type PolicyDraft } from "./policy-draft";
 import {
   ApiErrorNotice,
-  isPolicyDraftValid,
   issuesAt,
   MachinePicker,
   Notice,
@@ -107,7 +106,7 @@ function ProjectEditor({
   );
   if (executionPatch !== undefined) patch.execution = executionPatch;
   const dirty = Object.keys(patch).length > 0;
-  const canSave = dirty && isPolicyDraftValid(draft) && busy === null;
+  const canSave = dirty && busy === null;
   const issues = error?.issues ?? [];
   const edit =
     <T,>(setter: (value: T) => void) =>

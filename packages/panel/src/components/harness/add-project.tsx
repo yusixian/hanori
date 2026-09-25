@@ -15,7 +15,6 @@ import {
 import { buildPolicyPatch, policyDraftFrom, type PolicyDraft } from "./policy-draft";
 import {
   ApiErrorNotice,
-  isPolicyDraftValid,
   issuesAt,
   MachinePicker,
   PolicyAdvancedFields,
@@ -97,7 +96,7 @@ export function AddProject({
     ...(key && !keyValid ? [t("fields.keyInvalid")] : []),
     ...issuesAt(issues, "key"),
   ];
-  const canSave = Boolean(state && draft && keyValid && isPolicyDraftValid(draft) && !saving);
+  const canSave = Boolean(state && draft && keyValid && !saving);
 
   const save = async () => {
     if (!state || !draft || !canSave) return;

@@ -298,8 +298,9 @@ export const repoPolicySchema = z.strictObject({
     .prefault({}),
   sizeGate: z
     .strictObject({
-      maxFiles: z.number().int().positive().default(5),
-      forbidTiers: z.array(tierSchema).default(["T3"]),
+      // Off by default: T3 paths already need the owner to merge on GitHub.
+      maxFiles: z.number().int().positive().nullable().default(null),
+      forbidTiers: z.array(tierSchema).default([]),
       forbidCrossPackages: z.boolean().default(false),
     })
     .prefault({}),

@@ -31,7 +31,6 @@ export interface HarnessAdminPolicySummary {
   source: HarnessPolicySource;
   kind: HarnessProjectKind;
   verify: { quick: string | null; full: string | null; acceptance: string | null };
-  sizeGateMaxFiles: number;
   releaseFragment: "required" | "optional";
   preferSkills: string[];
   riskDefault: HarnessRiskTier;
@@ -45,7 +44,6 @@ export interface HarnessAdminPolicySummary {
 export interface HarnessAdminPolicyPatch {
   kind?: HarnessProjectKind;
   verify?: { quick?: string | null; full?: string | null; acceptance?: string | null };
-  sizeGate?: { maxFiles?: number };
   contract?: { releaseFragment?: "required" | "optional" };
   prompts?: { preferSkills?: string[] };
 }

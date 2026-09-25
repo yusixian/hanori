@@ -42,6 +42,12 @@ describe("buildPrompt", () => {
     expect(buildPrompt(config(), base)).toMatchSnapshot();
   });
 
+  it("mentions size limits only when the repository sets them", () => {
+    const limited = buildPrompt(config({ sizeGate: { maxFiles: 20, forbidTiers: ["T3"] } }), base);
+    expect(limited).toContain("or would touch more than 20 files or `T3` paths; then stop.");
+    expect(buildPrompt(config(), base)).not.toContain("files; then stop");
+  });
+
   it("asks a Claude lead for a Codex review and Claude sub-sessions", () => {
     const prompt = buildPrompt(config(), {
       ...base,

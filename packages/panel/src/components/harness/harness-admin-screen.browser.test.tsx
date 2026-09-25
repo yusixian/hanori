@@ -18,7 +18,6 @@ const POLICY: HarnessAdminPolicySummary = {
   source: "repo",
   kind: "web",
   verify: { quick: "pnpm test", full: "pnpm build", acceptance: null },
-  sizeGateMaxFiles: 30,
   releaseFragment: "optional",
   preferSkills: [],
   riskDefault: "T1",

@@ -34,7 +34,7 @@ Never:
 Report through comments on #12, one protocol line at the start of a comment:
 - \`Areas: <name>, <name>\` before you start editing. Known areas: \`desktop\`, \`site\`.
 - \`Question: <text>\` when you need the owner; then wait for an \`Owner answer\` comment or a new message from the harness.
-- \`Needs spec: <reason>\` if the change needs more than 5 files, a product decision, or \`T3\` paths; then stop.
+- \`Needs spec: <reason>\` only when the change needs a product decision the issue does not settle; then stop. Otherwise take the change as far as it needs to go.
 
 ## 2. Project context
 - Project \`koyori\` (electron), repository \`example-owner/koyori\`, default branch \`main\`.

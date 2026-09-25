@@ -86,8 +86,6 @@ export const harness = {
     verifyFull: "Full verify command",
     verifyAcceptance: "Acceptance command",
     verifyPlaceholder: "Leave empty for none",
-    maxFiles: "Max files per change",
-    maxFilesInvalid: "Enter a positive whole number.",
     releaseFragment: "Release fragment",
     releaseRequired: "Required",
     releaseOptional: "Optional",

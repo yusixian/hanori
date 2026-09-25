@@ -16,7 +16,6 @@ const command = z.string().trim().min(1).max(500).nullable().optional();
 export const policyPatchSchema = z.strictObject({
   kind: z.enum(PROJECT_KINDS).optional(),
   verify: z.strictObject({ quick: command, full: command, acceptance: command }).optional(),
-  sizeGate: z.strictObject({ maxFiles: z.number().int().min(1).max(100).optional() }).optional(),
   contract: z
     .strictObject({ releaseFragment: z.enum(["required", "optional"]).optional() })
     .optional(),

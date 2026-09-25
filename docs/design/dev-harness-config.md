@@ -163,9 +163,9 @@ verify:
   acceptance: null # 有 UI 改动时运行
   timeout: 30m
 
-sizeGate: # 小 bug 的规模闸门
-  maxFiles: 5
-  forbidTiers: [T3]
+sizeGate: # 默认不限；只有想给 agent 加限制时才写
+  maxFiles: null # 例如 20：超过时 lead 发 Needs spec 停下
+  forbidTiers: [] # 例如 [T3]：需要改这些档位时停下；T3 本身已要求 owner 在 GitHub 合并
   forbidCrossPackages: false
 
 areas: # 并发写入的分区；未声明时整个仓库算一个区
@@ -249,7 +249,7 @@ owner 可以在网页面板的「Dev Harness」页（`/harness`）或 Mini App �
 
 - 面板项目存在数据库 `harness_projects.binding` 中，与 YAML 项目合并成同一个项目集合；同名或同仓库时以 YAML 为准，被挡住的面板项目在面板中显示提示，不会被静默删除。
 - 保存后会自动创建项目话题并读取仓库策略；删除时如果还有排队或进行中的任务会被拒绝。
-- 面板只能修改策略中的这些字段，存在 `policy_patch` 中，位于仓库文件之上：`kind`、`verify.quick|full|acceptance`、`sizeGate.maxFiles`、`contract.releaseFragment`、`prompts.preferSkills`。风险分级、固定 T3 路径和 §2 的安全字段不能在面板中修改。
+- 面板只能修改策略中的这些字段，存在 `policy_patch` 中，位于仓库文件之上：`kind`、`verify.quick|full|acceptance`、`contract.releaseFragment`、`prompts.preferSkills`。风险分级、固定 T3 路径和 §2 的安全字段不能在面板中修改。
 - YAML 项目在面板中只读，只能单独设置该项目的执行配置（§9）。
 - 仓库列表来自 GitHub App 的全部安装（个人账号和组织）；要添加新账号或仓库，在面板中点「授权更多仓库」进入 GitHub App 安装页。
 
