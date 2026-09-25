@@ -1,4 +1,4 @@
-import type { HarnessKeyboard } from "@cos-tool-bot/bot";
+import type { HarnessInlineButton, HarnessKeyboard } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import { encodeCallback } from "./approvals.js";
 import { contentHash } from "./card-publisher.js";
@@ -35,6 +35,19 @@ export interface PrCardInput {
   note?: string;
   /** Context and quota line from the linked Lody session (dev-harness.md §5.3). */
   footer?: string | null;
+  /** Session row for harness bug requests; tracked PRs without a session have none. */
+  controls?: PrSessionControls | null;
+}
+
+export interface PrSessionControls {
+  /** A job approval, bound to the current session like the job card's buttons. */
+  approvalId: string;
+  /** The session is running, so feedback can reach it. */
+  canReject: boolean;
+  /** Needs attention with no running session: a new attempt can be queued. */
+  canRequeue: boolean;
+  sessionUrl: string | null;
+  confirmingCancel?: boolean;
 }
 
 export interface PrDetails {
@@ -137,15 +150,41 @@ function renderKeyboard(input: PrCardInput, status: PrCardStatus): HarnessKeyboa
       ],
     ];
   }
+  const controls = input.controls;
+  if (controls?.confirmingCancel) {
+    return [
+      [
+        { text: "✅ 确认取消", callbackData: encodeCallback(controls.approvalId, "abort") },
+        { text: "返回", callbackData: encodeCallback(controls.approvalId, "back") },
+      ],
+    ];
+  }
+  const session = controls ? [sessionRow(controls)] : [];
   const merge = { text: "✅ 合并", callbackData: encodeCallback(approvalId, "merge") };
   const refresh = { text: "🔄 刷新", callbackData: encodeCallback(approvalId, "refresh") };
   if (input.details) {
     const collapse = { text: "🔼 收起", callbackData: encodeCallback(approvalId, "collapse") };
-    return status === "ready" ? [[merge, collapse, prLink]] : [[collapse, refresh, prLink]];
+    return status === "ready"
+      ? [[merge, collapse, prLink], ...session]
+      : [[collapse, refresh, prLink], ...session];
   }
   const details = { text: "🔍 详情", callbackData: encodeCallback(approvalId, "details") };
-  if (status === "ready") return [[merge, details, prLink], [refresh]];
-  return [[details, refresh, prLink]];
+  if (status === "ready") return [[merge, details, prLink], [refresh], ...session];
+  return [[details, refresh, prLink], ...session];
+}
+
+function sessionRow(controls: PrSessionControls): HarnessInlineButton[] {
+  const id = controls.approvalId;
+  return [
+    ...(controls.canReject
+      ? [{ text: "↩️ 打回", callbackData: encodeCallback(id, "reject") }]
+      : []),
+    ...(controls.canRequeue
+      ? [{ text: "🔁 重新排队", callbackData: encodeCallback(id, "start") }]
+      : []),
+    { text: "✖️ 取消", callbackData: encodeCallback(id, "abortAsk") },
+    ...(controls.sessionUrl ? [{ text: "💬 会话", url: controls.sessionUrl }] : []),
+  ];
 }
 
 export function cardHash(card: RenderedCard): string {

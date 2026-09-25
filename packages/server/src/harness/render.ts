@@ -9,8 +9,8 @@ export function renderUsageHint(projectKey: string | undefined): string {
   const scope = projectKey ? `当前话题绑定项目 <b>${escapeHtml(projectKey)}</b>。` : "";
   return [
     `${scope}这个群只处理 Dev Harness 命令，不闲聊。`,
-    "可用：/bug 描述 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
-    "回复卡片即是反馈。/feature 与普通消息分诊将在后续阶段开放。",
+    "可用：/bug 描述 · /list 进行中 · /cancel 取消 · /retry 重新排队 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
+    "回复卡片即是反馈，PR 卡片上的「打回」也会请你写原因。/feature 与普通消息分诊将在后续阶段开放。",
   ].join("\n");
 }
 

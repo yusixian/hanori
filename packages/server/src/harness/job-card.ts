@@ -6,7 +6,9 @@ import { REQUEST_STATES as S } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
 import type { HarnessJobRecord } from "./work-store.js";
 
-const HEADLINES: Record<string, string> = {
+export const REQUEST_HEADLINES: Record<string, string> = {
+  [S.open]: "🟢 PR 待处理",
+  [S.prReady]: "🟢 PR 待合并",
   [S.received]: "⚪ 待开始",
   [S.queued]: "⏳ 排队中",
   [S.starting]: "🔵 启动中",
@@ -86,7 +88,7 @@ export function renderJobCard(input: JobCardInput): { html: string; keyboard: Ha
   const issue = request.issueNumber
     ? `<a href="${escapeHtml(issueUrl(request.repo, request.issueNumber))}">#${request.issueNumber}</a> `
     : "";
-  const lines = [`<b>${HEADLINES[request.state] ?? request.state}</b> · ${issue}${title}`];
+  const lines = [`<b>${REQUEST_HEADLINES[request.state] ?? request.state}</b> · ${issue}${title}`];
   if (job && job.state !== "lost") {
     const parts = [
       `机器 ${escapeHtml(input.machineLabel ?? job.lodyMachine)}`,

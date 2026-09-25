@@ -5,7 +5,7 @@ import {
   type CardVerb,
   decodeCallback,
 } from "./approvals.js";
-import { dispatchJobAction } from "./job-actions.js";
+import { PICKER_KIND, dispatchJobAction } from "./job-actions.js";
 import { REMINDER_KIND } from "./job-monitor.js";
 import { errorText } from "./pr-actions.js";
 import { prLockKey } from "./pr-flow.js";
@@ -58,6 +58,11 @@ async function belongsToMessage(
   if (approval.action === APPROVAL_ACTIONS.reminder) {
     const message = await service.store.findMessage(request.chatId, request.messageId);
     return message?.kind === REMINDER_KIND && message.requestId === target.id;
+  }
+  if (approval.action === APPROVAL_ACTIONS.picker) {
+    const message = await service.store.findMessage(request.chatId, request.messageId);
+    const listed = (message?.ref as { approvals?: unknown } | null)?.approvals;
+    return message?.kind === PICKER_KIND && Array.isArray(listed) && listed.includes(approval.id);
   }
   if (target.cardMessageId !== request.messageId) return false;
   return approval.action !== APPROVAL_ACTIONS.merge || target.prNumber !== null;

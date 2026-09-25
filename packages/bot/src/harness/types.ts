@@ -1,7 +1,15 @@
 /** Callback data is `hx:<approval id>:<verb>`; the record, not the payload, carries authority. */
 export const HARNESS_CALLBACK_PREFIX = "hx:";
 
-export const HARNESS_COMMANDS = ["status", "quota", "harness", "bug"] as const;
+export const HARNESS_COMMANDS = [
+  "status",
+  "quota",
+  "harness",
+  "bug",
+  "list",
+  "cancel",
+  "retry",
+] as const;
 export type HarnessCommandName = (typeof HARNESS_COMMANDS)[number];
 
 export interface HarnessInlineButton {
@@ -19,6 +27,8 @@ export interface HarnessOutgoingMessage {
   /** Sent as a photo with the HTML as caption; falls back to text when Telegram rejects it. */
   photoUrl?: string;
   replyToMessageId?: number;
+  /** Opens a reply box on the owner's client; replaces any inline keyboard. */
+  forceReply?: { placeholder?: string };
 }
 
 export type HarnessMessageKind = "text" | "photo";
@@ -50,11 +60,16 @@ export interface HarnessTelegram {
   ): Promise<void>;
   createForumTopic(chatId: number, name: string): Promise<number>;
   setChatCommands(chatId: number): Promise<void>;
+  /** Null when the file is missing or larger than `maxBytes`; the Bot token never leaves the port. */
+  downloadFile(fileId: string, maxBytes: number): Promise<Buffer | null>;
 }
 
 export interface HarnessAttachment {
   kind: "photo" | "document";
   fileId: string;
+  width?: number;
+  height?: number;
+  mimeType?: string;
 }
 
 export interface HarnessCommandRequest {

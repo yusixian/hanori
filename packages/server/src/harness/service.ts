@@ -1,5 +1,6 @@
 import type { HarnessBotPort, HarnessTelegram } from "@cos-tool-bot/bot";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
+import { type HarnessAttachments, createAttachments } from "./attachments.js";
 import { handleHarnessCallback } from "./callbacks.js";
 import { handleHarnessCommand } from "./commands.js";
 import { type ConfigIssue, type ConfigLayer, formatIssues } from "./config/layers.js";
@@ -61,6 +62,8 @@ export interface HarnessServiceOptions {
   now?: () => Date;
   /** Web panel origin; the Telegram "管理项目" button links to `<panelUrl>/harness`. */
   panelUrl?: string;
+  /** Signs `/bug` screenshot links served under `panelUrl`; unset keeps file ids only. */
+  attachmentSecret?: string;
   loadConfig?: (path: string) => Promise<ConfigValidation>;
   createLody?: (command: string[], timeoutMs: number, exec?: ExecFileLike) => LodyCli;
 }
@@ -82,6 +85,7 @@ export class HarnessService {
   readonly work: HarnessWork;
   /** Where owners manage projects; the Telegram "管理项目" button links here. */
   readonly adminUrl: string | null;
+  readonly attachments: HarnessAttachments;
   private readonly configPath: string;
   private readonly env: Record<string, string | undefined>;
   private readonly clock: () => Date;
@@ -117,6 +121,8 @@ export class HarnessService {
     this.adminUrl = URL.canParse("/harness", options.panelUrl)
       ? new URL("/harness", options.panelUrl).toString()
       : null;
+    const { attachmentSecret, panelUrl } = options;
+    this.attachments = createAttachments(attachmentSecret, panelUrl, () => this.telegramClient);
     this.loadConfig = options.loadConfig ?? ((path) => loadHarnessConfigFile(path, this.clock()));
     this.createLody =
       options.createLody ?? ((command, timeoutMs, exec) => new LodyCli(command, timeoutMs, exec));

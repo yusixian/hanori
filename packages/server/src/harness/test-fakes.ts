@@ -76,6 +76,15 @@ export class FakeTelegram implements HarnessTelegram {
 
   async setChatCommands() {}
 
+  readonly files = new Map<string, Buffer>();
+  readonly downloads: string[] = [];
+
+  async downloadFile(fileId: string, maxBytes: number) {
+    this.downloads.push(fileId);
+    const bytes = this.files.get(fileId);
+    return bytes && bytes.length <= maxBytes ? bytes : null;
+  }
+
   lastCard() {
     return this.edits.at(-1)?.message ?? this.sent.at(-1)?.message;
   }
@@ -205,6 +214,7 @@ export async function createTestService(
     realLody?: boolean;
     summarizer?: PrSummarizer;
     panelUrl?: string;
+    attachmentSecret?: string;
   } = {},
 ) {
   const store = options.store ?? new MemoryHarnessStore();
@@ -223,6 +233,7 @@ export async function createTestService(
     env: options.env ?? { HARNESS_GITHUB_WEBHOOK_SECRET: "s3cret" },
     now,
     panelUrl: options.panelUrl,
+    attachmentSecret: options.attachmentSecret,
     loadConfig: async (sourcePath) => validateHarnessConfig({ raw, sourcePath, now: now() }),
     createLody: options.realLody ? undefined : () => withAgentList(options.lody),
   });
