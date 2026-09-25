@@ -226,6 +226,7 @@ test("adds a project from a repository with only changed policy fields", async (
   await expect.element(page.getByRole("textbox", { name: "项目标识" })).toHaveValue("notes");
   await expect.element(page.getByRole("checkbox", { name: /mbp/ })).toBeChecked();
   await expect.element(page.getByRole("checkbox", { name: /mini/ })).not.toBeChecked();
+  await expect.element(page.getByRole("checkbox", { name: /studio/ })).toBeChecked();
   await expect.element(page.getByText("离线")).toBeVisible();
   await expect.element(page.getByText("状态未知")).toBeVisible();
 
@@ -246,7 +247,7 @@ test("adds a project from a repository with only changed policy fields", async (
   expect(api.createProject).toHaveBeenLastCalledWith({
     key: "notes",
     repo: "example-owner/notes",
-    machines: ["mbp"],
+    machines: ["mbp", "studio"],
     policyPatch: { kind: "native" },
   });
 });

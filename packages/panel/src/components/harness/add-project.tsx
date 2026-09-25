@@ -55,7 +55,7 @@ export function AddProject({
   const [key, setKey] = useState("");
   const [localProject, setLocalProject] = useState("");
   const [selectedMachines, setSelectedMachines] = useState(() =>
-    machines.filter((machine) => machine.online === true).map((machine) => machine.key),
+    machines.filter((machine) => machine.online !== false).map((machine) => machine.key),
   );
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
