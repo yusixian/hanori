@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { HarnessCommandRequest, HarnessReply } from "@cos-tool-bot/bot";
+import type { HarnessAttachment, HarnessCommandRequest, HarnessReply } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
+import { isImageAttachment } from "./attachments.js";
 import { errorText } from "./pr-actions.js";
 import { REQUEST_STATES as S, isTerminal } from "./states.js";
 import type { HarnessWork } from "./work.js";
@@ -14,13 +15,15 @@ export function issueTitle(text: string): string {
 }
 
 /**
- * Telegram file ids are listed as references only: download URLs embed the Bot token and must
- * never be written to GitHub.
+ * Images become signed links served by the harness, so GitHub renders them and the agent can
+ * download them; Telegram download URLs embed the Bot token and must never be written to GitHub.
+ * Without a link (no public URL or secret), and for non-image files, only the kind is listed.
  */
 export function bugIssueBody(input: {
   text: string;
   requestId: string;
-  attachments: ReadonlyArray<{ kind: string; fileId: string }>;
+  attachments: ReadonlyArray<HarnessAttachment>;
+  linkFor?: (fileId: string) => string | null;
 }): string {
   const lines = [
     input.text.slice(0, MAX_BODY),
@@ -28,11 +31,26 @@ export function bugIssueBody(input: {
     "---",
     "Reported from Telegram via Dev Harness.",
   ];
-  if (input.attachments.length > 0) {
+  const linked: string[] = [];
+  const unlinked: string[] = [];
+  input.attachments.forEach((file, index) => {
+    const url = isImageAttachment(file) ? input.linkFor?.(file.fileId) : null;
+    const size = file.width && file.height ? ` (${file.width}×${file.height})` : "";
+    if (url) linked.push(`![screenshot ${index + 1}${size}](${url})`);
+    else unlinked.push(`- ${file.kind}${size}: \`${file.fileId}\``);
+  });
+  if (linked.length > 0) {
     lines.push(
       "",
-      "Attachments (Telegram file ids; the files are in the project topic):",
-      ...input.attachments.map((file) => `- ${file.kind}: \`${file.fileId}\``),
+      "Screenshots (signed links served by Dev Harness; `curl -fLo shot.jpg <url>` downloads one):",
+      ...linked,
+    );
+  }
+  if (unlinked.length > 0) {
+    lines.push(
+      "",
+      "Attachments not uploaded (Telegram file ids; the files are in the project topic):",
+      ...unlinked,
     );
   }
   lines.push("", `<!-- dev-harness:request:${input.requestId} -->`);
@@ -60,7 +78,12 @@ export async function handleBugCommand(
   try {
     issue = await work.github.createIssue(config.project.repo, {
       title: issueTitle(text),
-      body: bugIssueBody({ text, requestId: id, attachments: request.attachments ?? [] }),
+      body: bugIssueBody({
+        text,
+        requestId: id,
+        attachments: request.attachments ?? [],
+        linkFor: (fileId) => service.attachments.urlFor(fileId),
+      }),
       labels: [`${config.github.labelPrefix}bug`],
     });
   } catch (error) {

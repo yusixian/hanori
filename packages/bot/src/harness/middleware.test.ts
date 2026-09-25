@@ -120,6 +120,23 @@ describe("harness middleware", () => {
     expect(reply.body).toMatchObject({ text: "harness reply", message_thread_id: 77 });
   });
 
+  it("routes /list, /cancel, and /retry in the harness chat and points elsewhere", async () => {
+    const port = createPort();
+    const bot = createHarnessBot(port);
+    for (const text of ["/list", "/cancel #12", "/retry ab12cd34"]) {
+      await bot.handleUpdate(message(HARNESS_CHAT, text, OWNER));
+    }
+    expect(vi.mocked(port.handleCommand).mock.calls.map(([r]) => [r.command, r.args])).toEqual([
+      ["list", ""],
+      ["cancel", "#12"],
+      ["retry", "ab12cd34"],
+    ]);
+    telegramApi.requests.length = 0;
+    await bot.handleUpdate(message(OTHER_CHAT, "/cancel", OWNER));
+    expect(port.handleCommand).toHaveBeenCalledTimes(3);
+    expect(sentTexts()).toEqual(["请在 Dev Harness 话题群中使用 /cancel。"]);
+  });
+
   it("sends the port's keyboard and passes the Bot username", async () => {
     const port = createPort({
       handleCommand: vi.fn(async () => ({
@@ -252,7 +269,7 @@ describe("harness middleware", () => {
       expect.objectContaining({
         command: "bug",
         args: "头像裂了",
-        attachments: [{ kind: "photo", fileId: "large" }],
+        attachments: [{ kind: "photo", fileId: "large", width: 900, height: 900 }],
       }),
     );
   });

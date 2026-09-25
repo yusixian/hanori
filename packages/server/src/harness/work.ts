@@ -4,9 +4,10 @@ import { publishCard } from "./card-publisher.js";
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import type { CheckSummary } from "./contract.js";
 import type { PullRequestInfo } from "./github.js";
-import { issueUrl, renderJobCard } from "./job-card.js";
+import { issueUrl, renderJobCard, sessionLink } from "./job-card.js";
 import type { LodyResult } from "./lody.js";
 import { errorText } from "./pr-actions.js";
+import type { PrSessionControls } from "./pr-card.js";
 import { type PromptInput, type PromptKind, buildPrompt, harnessBranch } from "./prompts.js";
 import { renderFooter } from "./quota.js";
 import { HarnessScheduler } from "./scheduler.js";
@@ -63,6 +64,31 @@ export class HarnessWork {
     if (request.type !== "bug") return null;
     const job = await this.service.store.latestJob(request.id);
     return job?.sessionId ? renderFooter(job, config.telegram.cards) : null;
+  }
+
+  /** The PR card's session row shares the job card's approval, so both cards act on one attempt. */
+  async prControls(
+    request: HarnessRequestRecord,
+    config: ProjectEffectiveConfig,
+    confirmingCancel = false,
+  ): Promise<PrSessionControls | null> {
+    if (request.type !== "bug" || isTerminal(request.state)) return null;
+    const { service } = this;
+    const job = await service.store.latestJob(request.id);
+    const approval = await ensureApproval(service.store, request, {
+      action: APPROVAL_ACTIONS.job,
+      binding: jobBinding(request, job?.sessionId),
+      ttl: config.approvals.ttl,
+      now: service.now(),
+    });
+    const running = job?.state === JOB_STATES.running;
+    return {
+      approvalId: approval.id,
+      canReject: running,
+      canRequeue: !running && request.state === S.needsAttention,
+      sessionUrl: sessionLink(config.executors.lody.sessionUrl, job?.sessionId ?? null),
+      confirmingCancel,
+    };
   }
 
   /** Renders the in-progress card; once a PR is linked, the PR card owns the message. */

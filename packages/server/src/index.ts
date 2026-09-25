@@ -302,6 +302,7 @@ if (env.HARNESS_CONFIG_PATH) {
     github: new GitHubAppHarnessClient(githubAppService),
     logger: dbLogger,
     panelUrl: env.BETTER_AUTH_URL,
+    attachmentSecret: env.BETTER_AUTH_SECRET,
     summarizer: createPrSummarizer(async () => {
       const botId = service.botId;
       if (!botId) return null;

@@ -35,6 +35,7 @@ export interface SyncOptions {
   bodyEditedAt?: Date;
   note?: string;
   confirmingMerge?: boolean;
+  confirmingCancel?: boolean;
   /** Renders the card expanded; any later sync without it collapses the card again. */
   expanded?: boolean;
 }
@@ -315,6 +316,9 @@ export class HarnessPrFlow {
       imageUrl: config.telegram.cards.screenshot === "first" ? extractFirstImage(pr.body) : null,
       note: options.note ?? stageNote(current),
       footer: await service.work.footerFor(current, config),
+      controls: approval
+        ? await service.work.prControls(current, config, options.confirmingCancel)
+        : null,
     };
     patch.riskTier = evaluation.risk.tier;
     Object.assign(patch, await this.publish(projectKey, current, cardInput));

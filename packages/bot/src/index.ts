@@ -622,6 +622,9 @@ export function createBot(config: BotConfig) {
       };
     commandRegistry.register("harness", pointToHarnessChat("harness"));
     commandRegistry.register("bug", pointToHarnessChat("bug"));
+    commandRegistry.register("list", pointToHarnessChat("list"));
+    commandRegistry.register("cancel", pointToHarnessChat("cancel"));
+    commandRegistry.register("retry", pointToHarnessChat("retry"));
   }
 
   if (config.summary) {

@@ -23,7 +23,12 @@ export function harnessRaw(extra: Record<string, unknown> = {}) {
 }
 
 export async function setup(
-  options: { raw?: Record<string, unknown>; store?: MemoryHarnessStore } = {},
+  options: {
+    raw?: Record<string, unknown>;
+    store?: MemoryHarnessStore;
+    panelUrl?: string;
+    attachmentSecret?: string;
+  } = {},
 ) {
   const clock = { now: START };
   const lody = new FakeLody(() => clock.now);
@@ -34,6 +39,8 @@ export async function setup(
     github,
     lody,
     now: () => clock.now,
+    panelUrl: options.panelUrl,
+    attachmentSecret: options.attachmentSecret,
   });
   const advance = (ms: number) => {
     clock.now = new Date(clock.now.getTime() + ms);

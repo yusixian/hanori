@@ -14,6 +14,9 @@ export const CARD_VERBS = {
   wait: "w",
   abort: "k",
   open: "o",
+  reject: "j",
+  abortAsk: "q",
+  back: "b",
 } as const;
 export type CardVerb = keyof typeof CARD_VERBS;
 
@@ -54,7 +57,13 @@ export function checkApproval(
   return { ok: true, approval };
 }
 
-export const APPROVAL_ACTIONS = { merge: "merge", job: "job", reminder: "reminder" } as const;
+/** `picker` backs the choice buttons of `/cancel` and `/retry`: one message, several requests. */
+export const APPROVAL_ACTIONS = {
+  merge: "merge",
+  job: "job",
+  reminder: "reminder",
+  picker: "picker",
+} as const;
 
 /** One record per card version: bound to the PR's head SHA, reused until consumed or replaced. */
 export function ensureCardApproval(

@@ -4,6 +4,7 @@ import type { ProjectEffectiveConfig } from "./config/schema.js";
 import { errorText } from "./pr-actions.js";
 import { quoteAsData } from "./prompts.js";
 import { APPROVAL_ACTIONS, encodeCallback, ensureApproval, jobBinding } from "./approvals.js";
+import { PICKER_KIND } from "./job-actions.js";
 import { REMINDER_KIND } from "./job-monitor.js";
 import { JOB_STATES, REQUEST_STATES as S, WHOLE_REPO, isTerminal } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
@@ -246,6 +247,7 @@ export async function handleOwnerReply(
   const { service } = work;
   if (!service.port.isHarnessChat(reply.chatId) || !service.port.isOwner(reply.userId)) return null;
   const question = await service.store.findMessage(reply.chatId, reply.replyToMessageId);
+  if (question?.kind === PICKER_KIND) return { html: "这条消息只用于选择请求，回复不会发送。" };
   const target = question
     ? await service.store.getRequest(question.requestId)
     : await service.store.findRequestByCard(reply.chatId, reply.replyToMessageId);

@@ -28,8 +28,22 @@ function attachmentsOf(...messages: Array<Message | undefined>): HarnessAttachme
   const attachments: HarnessAttachment[] = [];
   for (const message of messages) {
     const photo = message?.photo?.at(-1);
-    if (photo) attachments.push({ kind: "photo", fileId: photo.file_id });
-    if (message?.document) attachments.push({ kind: "document", fileId: message.document.file_id });
+    if (photo) {
+      attachments.push({
+        kind: "photo",
+        fileId: photo.file_id,
+        width: photo.width,
+        height: photo.height,
+      });
+    }
+    const document = message?.document;
+    if (document) {
+      attachments.push({
+        kind: "document",
+        fileId: document.file_id,
+        mimeType: document.mime_type,
+      });
+    }
   }
   return attachments;
 }

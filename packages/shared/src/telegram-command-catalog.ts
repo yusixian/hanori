@@ -300,6 +300,42 @@ export const TELEGRAM_COMMAND_CATALOG = [
     publicHelpVisibility: "hidden",
     redactArgs: true,
   },
+  {
+    command: "list",
+    description: {
+      "zh-CN": "列出 Dev Harness 进行中的请求",
+      en: "List in-flight Dev Harness requests",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "control",
+    capability: "harness.request.read",
+    publicHelpVisibility: "hidden",
+  },
+  {
+    command: "cancel",
+    description: {
+      "zh-CN": "取消 Dev Harness 请求并停止其会话",
+      en: "Cancel a Dev Harness request and stop its session",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "harness.request.cancel",
+    publicHelpVisibility: "hidden",
+  },
+  {
+    command: "retry",
+    description: {
+      "zh-CN": "重新排队失败或需要处理的 Dev Harness 请求",
+      en: "Requeue a failed or stuck Dev Harness request",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "harness.request.retry",
+    publicHelpVisibility: "hidden",
+  },
 ] as const satisfies readonly TelegramCommandMetadata[];
 
 export type TelegramCommandName = (typeof TELEGRAM_COMMAND_CATALOG)[number]["command"];

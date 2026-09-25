@@ -1,19 +1,24 @@
 import { getTelegramCommandMetadata } from "@cos-tool-bot/shared";
 import { type Api, GrammyError, InputFile } from "grammy";
-import type { InlineKeyboardMarkup } from "grammy/types";
+import type { ForceReply, InlineKeyboardMarkup } from "grammy/types";
 import type {
   HarnessEditResult,
   HarnessKeyboard,
   HarnessMessageKind,
+  HarnessOutgoingMessage,
   HarnessTelegram,
 } from "./types.js";
 
 const CAPTION_LIMIT = 1024;
+const DOWNLOAD_TIMEOUT_MS = 30_000;
 /** The harness chat reuses /status and /quota with harness meanings, so it gets its own menu. */
 const CHAT_COMMANDS = [
   { command: "status", description: "查看项目、执行机与排队状态" },
   { command: "quota", description: "查看各执行机的模型额度" },
   { command: "bug", description: getTelegramCommandMetadata("bug").description["zh-CN"] },
+  { command: "list", description: getTelegramCommandMetadata("list").description["zh-CN"] },
+  { command: "cancel", description: getTelegramCommandMetadata("cancel").description["zh-CN"] },
+  { command: "retry", description: getTelegramCommandMetadata("retry").description["zh-CN"] },
   {
     command: "harness",
     description: getTelegramCommandMetadata("harness").description["zh-CN"],
@@ -31,6 +36,12 @@ export function toMarkup(keyboard: HarnessKeyboard | undefined): InlineKeyboardM
       ),
     ),
   };
+}
+
+function replyMarkup(message: HarnessOutgoingMessage): InlineKeyboardMarkup | ForceReply {
+  if (!message.forceReply) return toMarkup(message.keyboard);
+  const { placeholder } = message.forceReply;
+  return { force_reply: true, ...(placeholder ? { input_field_placeholder: placeholder } : {}) };
 }
 
 function describe(error: unknown): string {
@@ -71,7 +82,7 @@ export function createHarnessTelegram(api: Api): HarnessTelegram {
     async send(chatId, message) {
       const common = {
         parse_mode: "HTML" as const,
-        reply_markup: toMarkup(message.keyboard),
+        reply_markup: replyMarkup(message),
         ...(message.threadId ? { message_thread_id: message.threadId } : {}),
         ...(message.replyToMessageId
           ? {
@@ -149,6 +160,23 @@ export function createHarnessTelegram(api: Api): HarnessTelegram {
 
     async setChatCommands(chatId) {
       await api.setMyCommands(CHAT_COMMANDS, { scope: { type: "chat", chat_id: chatId } });
+    },
+
+    async downloadFile(fileId, maxBytes) {
+      const file = await api.getFile(fileId);
+      if (!file.file_path || (file.file_size ?? 0) > maxBytes) return null;
+      let response: Response;
+      try {
+        response = await fetch(`https://api.telegram.org/file/bot${api.token}/${file.file_path}`, {
+          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        });
+      } catch {
+        // The request URL carries the Bot token; never let it surface in an error message.
+        throw new Error("Telegram file download failed");
+      }
+      if (!response.ok) return null;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      return bytes.length > maxBytes ? null : bytes;
     },
   };
 }

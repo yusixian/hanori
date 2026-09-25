@@ -25,6 +25,7 @@ import {
   topicLink,
 } from "./render.js";
 import { handleBugCommand } from "./bug.js";
+import { listRequests, runControl } from "./controls.js";
 import { ACTIVE_STATES, OPEN_PR_STATES, WAITING_STATES } from "./states.js";
 import type { HarnessService } from "./service.js";
 
@@ -36,6 +37,8 @@ const HARNESS_USAGE = [
   "diff — 覆盖层与 YAML 的差异",
   "export — 以文件导出生效配置",
   "reload — 重新读取 harness.yaml，失败时保留旧配置",
+  "",
+  "日常操作：/list 进行中的请求 · /cancel [ID|#编号] 取消 · /retry [ID|#编号] 重新排队",
 ].join("\n");
 
 const html = (text: string): HarnessReply => ({ html: text });
@@ -78,6 +81,11 @@ export async function handleHarnessCommand(
       return harnessSubcommand(service, request, projectKey);
     case "bug":
       return handleBugCommand(service.work, request, projectKey);
+    case "list":
+      return listRequests(service, projectKey);
+    case "cancel":
+    case "retry":
+      return runControl(service, request.command, request, projectKey);
   }
 }
 

@@ -141,6 +141,54 @@ describe("renderPrCard", () => {
     expect(buttonTexts(card)).not.toContain("✅ 合并");
   });
 
+  it("adds the session row for harness requests and a cancel confirmation", () => {
+    const JOB = "JoBaPpRoVaLiD000000000";
+    const controls = { approvalId: JOB, canReject: true, canRequeue: false, sessionUrl: null };
+    const card = renderPrCard(input({ controls }));
+    expect(card.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["✅ 合并", "🔍 详情", "🔗 PR"],
+      ["🔄 刷新"],
+      ["↩️ 打回", "✖️ 取消"],
+    ]);
+    const verbs = card.keyboard[2]!.map((b) => decodeCallback(b.callbackData!));
+    expect(verbs).toEqual([
+      { approvalId: JOB, verb: "reject" },
+      { approvalId: JOB, verb: "abortAsk" },
+    ]);
+
+    const stuck = renderPrCard(
+      input({
+        checks: summarizeChecks(
+          [{ id: 1, name: "ci", status: "completed", conclusion: "failure" }],
+          [],
+        ),
+        controls: {
+          ...controls,
+          canReject: false,
+          canRequeue: true,
+          sessionUrl: "https://lody.example/s/1",
+        },
+      }),
+    );
+    expect(buttonTexts(stuck)).toEqual([
+      "🔍 详情",
+      "🔄 刷新",
+      "🔗 PR",
+      "🔁 重新排队",
+      "✖️ 取消",
+      "💬 会话",
+    ]);
+
+    const confirming = renderPrCard(input({ controls: { ...controls, confirmingCancel: true } }));
+    expect(confirming.keyboard.flat().map((b) => decodeCallback(b.callbackData!)?.verb)).toEqual([
+      "abort",
+      "back",
+    ]);
+    expect(buttonTexts(renderPrCard(input({ controls, merged: true, state: "closed" })))).toEqual([
+      "🔗 PR",
+    ]);
+  });
+
   it("renders the confirmation step and a stable hash", () => {
     const confirming = renderPrCard(input({ confirmingMerge: true, details: { files: [] } }));
     expect(buttonTexts(confirming)).toEqual(["✅ 确认合并", "取消"]);
