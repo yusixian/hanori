@@ -194,7 +194,7 @@ describe("harness middleware", () => {
     const port = createPort();
     const bot = createHarnessBot(port);
     await bot.handleUpdate(message(HARNESS_CHAT, "please fix the login page"));
-    expect(port.usageHint).toHaveBeenCalledWith(undefined);
+    expect(port.usageHint).toHaveBeenCalledWith(undefined, false);
     expect(sentTexts()).toEqual(["hint"]);
   });
 

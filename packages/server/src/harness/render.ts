@@ -5,11 +5,13 @@ import type { LodyLimit, LodyMachine, LodyResult, LodyWindow } from "./lody.js";
 
 export const MESSAGE_LIMIT = 3800;
 
-export function renderUsageHint(projectKey: string | undefined): string {
+export function renderUsageHint(projectKey: string | undefined, assistantReady = true): string {
   const scope = projectKey ? `当前话题绑定项目 <b>${escapeHtml(projectKey)}</b>。` : "";
   return [
     `${scope}这个群用于 Dev Harness。`,
-    "直接发文字即可和本话题的助手讨论：查询 issue / PR 与任务状态、总结需求、给出可一键执行的命令建议（需要 Bot 配置并启用 AI）。/new 清空本话题的对话。",
+    assistantReady
+      ? "直接发文字即可和本话题的助手讨论：查询 issue / PR 与任务状态、总结需求、给出可一键执行的命令建议。/new 清空本话题的对话。"
+      : "⚠️ 话题助手未启用：在面板为这个 Bot 添加 AI 服务商并开启「AI 回复」后，直接发文字就能和助手讨论需求、查询进度。",
     "命令：/bug 描述 · /list 进行中 · /cancel 取消 · /retry 重新排队 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
     "回复卡片即是反馈，PR 卡片上的「打回」也会请你写原因。",
   ].join("\n");

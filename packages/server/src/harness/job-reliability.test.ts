@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { CONTINUE_CALLBACK, CONTINUE_TEXT } from "./delivery-watch.js";
 import { REQUEST_STATES as S } from "./states.js";
-import { TEST_REPO } from "./test-fakes.js";
+import { TEST_CHAT_ID, TEST_OWNER, TEST_REPO } from "./test-fakes.js";
 import { type Ctx, bug, cardOf, harnessRaw, onlyRequest, setup } from "./work-test-helpers.js";
 
 const tick = (ctx: Ctx) => ctx.service.work.scheduler.tick();
@@ -56,6 +57,38 @@ describe("session finished without delivering", () => {
     ctx.advance(2 * 60_000);
     await tick(ctx);
     expect(onlyRequest(ctx)).toMatchObject({ state: S.running, stateReason: null });
+  });
+
+  it("continues the session from the notice button, once", async () => {
+    const ctx = await setup();
+    await runningBug(ctx);
+    await idlePolls(ctx, 3);
+    const notice = notices(ctx)[0]!;
+    expect(notice.message.keyboard?.flat().map((b) => b.callbackData)).toContain(CONTINUE_CALLBACK);
+    const tap = (userId: number) =>
+      ctx.port.handleCallback({
+        data: CONTINUE_CALLBACK,
+        chatId: TEST_CHAT_ID,
+        threadId: 501,
+        messageId: notice.messageId,
+        userId,
+      });
+
+    expect(await tap(7)).toEqual({ text: "无权限" });
+    expect(await tap(TEST_OWNER)).toEqual({ text: "已让会话继续" });
+    expect(ctx.lody.chats.at(-1)?.prompt).toContain(CONTINUE_TEXT);
+    expect(ctx.telegram.keyboardEdits.at(-1)).toMatchObject({
+      messageId: notice.messageId,
+      keyboard: [],
+    });
+    expect(ctx.store.events.some((e) => e.type === "button.continue")).toBe(true);
+
+    ctx.lody.session = { status: "running" };
+    ctx.advance(2 * 60_000);
+    await tick(ctx);
+    const chats = ctx.lody.chats.length;
+    expect(await tap(TEST_OWNER)).toEqual({ text: "会话已经不在停下状态" });
+    expect(ctx.lody.chats).toHaveLength(chats);
   });
 
   it("does not flag idle polls while the session keeps producing messages", async () => {

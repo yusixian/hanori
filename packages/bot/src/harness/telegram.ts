@@ -112,6 +112,11 @@ export function createHarnessTelegram(api: Api): HarnessTelegram {
       return { messageId: sent.message_id, kind: "text" };
     },
 
+    editKeyboard(chatId, messageId, keyboard) {
+      return editResult(() =>
+        api.editMessageReplyMarkup(chatId, messageId, { reply_markup: toMarkup(keyboard) }),
+      );
+    },
     async edit(chatId, messageId, kind: HarnessMessageKind, message) {
       const reply_markup = toMarkup(message.keyboard);
       if (kind === "text") {

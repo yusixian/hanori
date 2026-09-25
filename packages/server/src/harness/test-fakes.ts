@@ -1,5 +1,6 @@
 import type {
   HarnessEditMessage,
+  HarnessKeyboard,
   HarnessMessageKind,
   HarnessOutgoingMessage,
   HarnessTelegram,
@@ -66,6 +67,13 @@ export class FakeTelegram implements HarnessTelegram {
     message: HarnessEditMessage,
   ) {
     this.edits.push({ messageId, kind, message });
+    return "edited" as const;
+  }
+
+  readonly keyboardEdits: Array<{ messageId: number; keyboard: HarnessKeyboard }> = [];
+
+  async editKeyboard(_chatId: number, messageId: number, keyboard: HarnessKeyboard) {
+    this.keyboardEdits.push({ messageId, keyboard });
     return "edited" as const;
   }
 

@@ -57,6 +57,12 @@ export interface HarnessTelegram {
     kind: HarnessMessageKind,
     message: HarnessEditMessage,
   ): Promise<HarnessEditResult>;
+  /** Replaces only the buttons, leaving the text as sent. */
+  editKeyboard(
+    chatId: number,
+    messageId: number,
+    keyboard: HarnessKeyboard,
+  ): Promise<HarnessEditResult>;
   sendDocument(
     chatId: number,
     document: { filename: string; content: string; caption?: string; threadId?: number },
@@ -147,7 +153,8 @@ export interface HarnessBotPort {
   isHarnessChat(chatId: number): boolean;
   isOwner(userId: number): boolean;
   allowsCasualReplies(): boolean;
-  usageHint(threadId: number | undefined): string;
+  /** `assistantReady` is false when the Bot has no usable AI for the topic assistant. */
+  usageHint(threadId: number | undefined, assistantReady: boolean): string;
   onBotReady(telegram: HarnessTelegram): void;
   handleCommand(request: HarnessCommandRequest): Promise<HarnessReply>;
   handleCallback(request: HarnessCallbackRequest): Promise<HarnessCallbackAnswer>;

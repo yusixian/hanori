@@ -155,8 +155,8 @@ export function createHarnessMiddleware(
     }
     if (port.allowsCasualReplies()) return next();
     const text = (message.text ?? message.caption ?? "").trim();
-    const assistant = text ? options.resolveAssistant?.(chatId, userId) : undefined;
-    if (assistant) {
+    const assistant = options.resolveAssistant?.(chatId, userId);
+    if (assistant && text) {
       // Detached: an LLM turn must not hold the per-chat update queue that buttons also use.
       void port
         .handleTopicMessage(
@@ -167,6 +167,8 @@ export function createHarnessMiddleware(
       return;
     }
     if (!isConversationalMessage(message)) return;
-    await ctx.reply(port.usageHint(topicThreadId(message)), { parse_mode: "HTML" });
+    await ctx.reply(port.usageHint(topicThreadId(message), assistant !== undefined), {
+      parse_mode: "HTML",
+    });
   };
 }

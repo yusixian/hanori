@@ -1,10 +1,17 @@
+import type {
+  HarnessCallbackAnswer,
+  HarnessCallbackRequest,
+  HarnessKeyboard,
+} from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import { durationMs } from "./config/units.js";
 import { sessionLink } from "./job-card.js";
 import type { LodySession } from "./lody.js";
 import { errorText } from "./pr-actions.js";
-import { REQUEST_STATES as S } from "./states.js";
+import { handleOwnerReply } from "./protocol.js";
+import type { HarnessService } from "./service.js";
+import { JOB_STATES, REQUEST_STATES as S } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
 import type { HarnessWork } from "./work.js";
 import type { HarnessJobRecord } from "./work-store.js";
@@ -14,6 +21,10 @@ const IDLE = "idle";
 const RUNNING = "running";
 const EXCERPT_LIMIT = 280;
 export const UNDELIVERED_KIND = "undelivered";
+export const CONTINUE_CALLBACK = "hx:u:c";
+/** Sent to the session as the owner's answer when "继续" is tapped. */
+export const CONTINUE_TEXT =
+  "继续完成这个任务：按 issue 的要求完成修复并验证，然后提交 PR。如果被阻塞，请用 Question: 说明需要我决定什么。";
 
 const GAPS = {
   noPr: "Lody 会话已停下，但还没有提交 PR",
@@ -122,12 +133,12 @@ async function notify(
   const subject = `${request.issueNumber ? `#${request.issueNumber} ` : ""}${(request.title ?? "").slice(0, 80)}`;
   const lines = [`⏸ ${escapeHtml(subject)}\n${gap}`];
   if (excerpt) lines.push(`最后一条回复：「${escapeHtml(excerpt)}」`);
-  lines.push("回复这条消息可以让会话继续，或在卡片上取消。");
+  lines.push("点「继续」让会话接着做，或回复这条消息说明要求；也可以在卡片上取消。");
   const url = sessionLink(config.executors.lody.sessionUrl, job.sessionId);
   const chatId = service.file.telegram.chatId;
   const sent = await telegram.send(chatId, {
     html: lines.join("\n"),
-    keyboard: url ? [[{ text: "💬 打开会话", url }]] : [],
+    keyboard: noticeKeyboard(url, true),
     threadId: service.projectThread(request.projectKey),
     replyToMessageId: request.cardMessageId ?? undefined,
   });
@@ -136,6 +147,66 @@ async function notify(
     messageId: sent.messageId,
     requestId: request.id,
     kind: UNDELIVERED_KIND,
-    ref: { jobId: job.id },
+    ref: { jobId: job.id, sessionUrl: url },
   });
+}
+
+function noticeKeyboard(url: string | null, canContinue: boolean): HarnessKeyboard {
+  const row = [];
+  if (canContinue) row.push({ text: "▶️ 继续", callbackData: CONTINUE_CALLBACK });
+  if (url) row.push({ text: "💬 打开会话", url });
+  return row.length > 0 ? [row] : [];
+}
+
+/**
+ * The "继续" button on an undelivered notice: answers the session exactly as a reply to the
+ * notice would, then drops the button so a second tap does not send the nudge twice.
+ */
+export async function continueUndelivered(
+  service: HarnessService,
+  request: HarnessCallbackRequest,
+): Promise<HarnessCallbackAnswer> {
+  if (!service.port.isHarnessChat(request.chatId) || !service.port.isOwner(request.userId)) {
+    return { text: "无权限" };
+  }
+  const notice = await service.store.findMessage(request.chatId, request.messageId);
+  if (notice?.kind !== UNDELIVERED_KIND) return { text: "按钮已失效" };
+  const target = await service.store.getRequest(notice.requestId);
+  if (target?.state !== S.needsAttention || !GAP_REASONS.includes(target.stateReason ?? "")) {
+    await dropContinue(service, request, notice.ref);
+    return { text: "会话已经不在停下状态" };
+  }
+  const running = (await service.store.latestJob(target.id))?.state === JOB_STATES.running;
+  const reply = await handleOwnerReply(service.work, {
+    chatId: request.chatId,
+    threadId: request.threadId,
+    userId: request.userId,
+    messageId: request.messageId,
+    replyToMessageId: request.messageId,
+    text: CONTINUE_TEXT,
+  });
+  if (reply?.html) return { text: reply.html.replace(/<[^>]+>/g, ""), alert: true };
+  await dropContinue(service, request, notice.ref);
+  await service.recordEvent({
+    type: "button.continue",
+    projectKey: target.projectKey,
+    requestId: target.id,
+    actorId: request.userId,
+  });
+  return { text: running ? "已让会话继续" : "会话已结束，已在卡片下提供重新排队" };
+}
+
+async function dropContinue(
+  service: HarnessService,
+  request: HarnessCallbackRequest,
+  ref: unknown,
+): Promise<void> {
+  const url = (ref as { sessionUrl?: unknown } | null)?.sessionUrl;
+  await service.telegram
+    ?.editKeyboard(
+      request.chatId,
+      request.messageId,
+      noticeKeyboard(typeof url === "string" ? url : null, false),
+    )
+    .catch(() => {});
 }

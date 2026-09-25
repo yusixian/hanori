@@ -11,7 +11,8 @@ export function createHarnessPort(service: HarnessService): HarnessBotPort {
     isOwner: (userId) => service.loadedConfig?.file.telegram.owners.includes(userId) ?? false,
     allowsCasualReplies: () =>
       service.loadedConfig ? service.globalView().config.telegram.chat.casualReplies : false,
-    usageHint: (threadId) => renderUsageHint(service.projectKeyForThread(threadId)),
+    usageHint: (threadId, assistantReady) =>
+      renderUsageHint(service.projectKeyForThread(threadId), assistantReady),
     onBotReady: (telegram) => {
       service.attachTelegram(telegram);
       void service

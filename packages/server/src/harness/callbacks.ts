@@ -6,6 +6,7 @@ import {
   decodeCallback,
 } from "./approvals.js";
 import { isAssistantCallback } from "./assistant-render.js";
+import { CONTINUE_CALLBACK, continueUndelivered } from "./delivery-watch.js";
 import { PICKER_KIND, dispatchJobAction } from "./job-actions.js";
 import { REMINDER_KIND } from "./job-monitor.js";
 import { errorText } from "./pr-actions.js";
@@ -19,6 +20,7 @@ export async function handleHarnessCallback(
   request: HarnessCallbackRequest,
 ): Promise<HarnessCallbackAnswer> {
   if (isAssistantCallback(request.data)) return service.assistant.handleCallback(request);
+  if (request.data === CONTINUE_CALLBACK) return continueUndelivered(service, request);
   const decoded = decodeCallback(request.data);
   if (!decoded) return { text: APPROVAL_PROBLEM_TEXT.missing };
   if (!service.port.isHarnessChat(request.chatId) || !service.port.isOwner(request.userId)) {
