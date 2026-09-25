@@ -9,7 +9,6 @@ export interface PolicyDraft {
   verifyQuick: string;
   verifyFull: string;
   verifyAcceptance: string;
-  maxFiles: string;
   releaseFragment: "required" | "optional";
   preferSkills: string;
 }
@@ -20,7 +19,6 @@ export function policyDraftFrom(policy: HarnessAdminPolicySummary): PolicyDraft 
     verifyQuick: policy.verify.quick ?? "",
     verifyFull: policy.verify.full ?? "",
     verifyAcceptance: policy.verify.acceptance ?? "",
-    maxFiles: String(policy.sizeGateMaxFiles),
     releaseFragment: policy.releaseFragment,
     preferSkills: policy.preferSkills.join(", "),
   };
@@ -35,13 +33,6 @@ export function parseSkills(value: string): string[] {
         .filter(Boolean),
     ),
   ];
-}
-
-export function parseMaxFiles(value: string): number | null {
-  const trimmed = value.trim();
-  if (!/^\d+$/.test(trimmed)) return null;
-  const parsed = Number(trimmed);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function command(value: string): string | null {
@@ -74,11 +65,6 @@ export function buildPolicyPatch(
       patch.verify = { ...patch.verify, [field]: command(draft[key]) };
       changed = true;
     }
-  }
-  const maxFiles = parseMaxFiles(draft.maxFiles);
-  if (maxFiles !== null && maxFiles !== parseMaxFiles(initial.maxFiles)) {
-    patch.sizeGate = { ...patch.sizeGate, maxFiles };
-    changed = true;
   }
   if (draft.releaseFragment !== initial.releaseFragment) {
     patch.contract = { ...patch.contract, releaseFragment: draft.releaseFragment };

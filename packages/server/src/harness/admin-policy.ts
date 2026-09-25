@@ -19,7 +19,6 @@ function policySummary(
       full: policy.verify.full,
       acceptance: policy.verify.acceptance,
     },
-    sizeGateMaxFiles: policy.sizeGate.maxFiles,
     releaseFragment: policy.contract.releaseFragment,
     preferSkills: [...policy.prompts.preferSkills],
     riskDefault: policy.risk.default,

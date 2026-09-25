@@ -86,10 +86,17 @@ function contractLayer(config: ProjectEffectiveConfig, input: PromptInput): stri
         : "No areas are declared, so the whole repository is one area."
     }`,
     "- `Question: <text>` when you need the owner; then wait for an `Owner answer` comment or a new message from the harness.",
-    `- \`Needs spec: <reason>\` if the change needs more than ${policy.sizeGate.maxFiles} files, a product decision, or ${list(
-      policy.sizeGate.forbidTiers,
-    )} paths; then stop.`,
+    `- \`Needs spec: <reason>\` only when the change needs a product decision the issue does not settle${sizeLimits(policy)}; then stop. Otherwise take the change as far as it needs to go.`,
   ].join("\n");
+}
+
+function sizeLimits(policy: ProjectEffectiveConfig["policy"]): string {
+  const { maxFiles, forbidTiers } = policy.sizeGate;
+  const limits = [
+    ...(maxFiles ? [`more than ${maxFiles} files`] : []),
+    ...(forbidTiers.length > 0 ? [`${list(forbidTiers)} paths`] : []),
+  ];
+  return limits.length > 0 ? `, or would touch ${limits.join(" or ")}` : "";
 }
 
 function reminderLayer(): string {

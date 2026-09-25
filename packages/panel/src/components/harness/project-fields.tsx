@@ -8,7 +8,7 @@ import { AlertTriangle, CheckCircle2, ChevronDown } from "lucide-react";
 import { useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { HarnessAdminApiError, HarnessAdminIssue } from "@/lib/harness-admin-client";
-import { parseMaxFiles, parseSkills, type PolicyDraft } from "./policy-draft";
+import { parseSkills, type PolicyDraft } from "./policy-draft";
 import "./i18n";
 
 export function issuesAt(issues: readonly HarnessAdminIssue[], path: string): string[] {
@@ -220,10 +220,6 @@ export function PolicySummaryList({ policy }: { policy: HarnessAdminPolicySummar
           </div>
         ))}
         <div>
-          <dt>{t("fields.maxFiles")}</dt>
-          <dd>{policy.sizeGateMaxFiles}</dd>
-        </div>
-        <div>
           <dt>{t("fields.releaseFragment")}</dt>
           <dd>
             {t(
@@ -278,12 +274,6 @@ export function PolicyAdvancedFields({
   const kindId = useId();
   const releaseId = useId();
   const set = (patch: Partial<PolicyDraft>) => onChange({ ...draft, ...patch });
-  const maxFilesErrors = [
-    ...(draft.maxFiles.trim() && parseMaxFiles(draft.maxFiles) === null
-      ? [t("fields.maxFilesInvalid")]
-      : []),
-    ...issuesAt(errors, "policyPatch.sizeGate"),
-  ];
   const skills = parseSkills(draft.preferSkills);
   return (
     <details
@@ -355,14 +345,6 @@ export function PolicyAdvancedFields({
           errors={issuesAt(errors, "policyPatch.verify.acceptance")}
           onChange={(verifyAcceptance) => set({ verifyAcceptance })}
         />
-        <TextField
-          label={t("fields.maxFiles")}
-          value={draft.maxFiles}
-          inputMode="numeric"
-          disabled={disabled}
-          errors={maxFilesErrors}
-          onChange={(maxFiles) => set({ maxFiles })}
-        />
         <div className="harness-field">
           <TextField
             label={t("fields.preferSkills")}
@@ -386,8 +368,4 @@ export function PolicyAdvancedFields({
       </div>
     </details>
   );
-}
-
-export function isPolicyDraftValid(draft: PolicyDraft): boolean {
-  return !draft.maxFiles.trim() || parseMaxFiles(draft.maxFiles) !== null;
 }

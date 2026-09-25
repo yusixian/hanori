@@ -11,10 +11,6 @@ verify:
   acceptance: pnpm test:browser
   timeout: 45m
 
-sizeGate:
-  maxFiles: 8
-  forbidTiers: [T3]
-
 areas:
   server: ["packages/server/**"]
   bot: ["packages/bot/**"]

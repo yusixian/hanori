@@ -193,10 +193,10 @@ describe("harness.yaml wins over the panel", () => {
     const store = new MemoryHarnessStore();
     await store.upsertProject("sandbox", "example-owner/other", {
       binding: { repo: "example-owner/other", machines: [] },
-      policyPatch: { sizeGate: { maxFiles: 99 } },
+      policyPatch: { kind: "library" },
     });
     const ctx = await setup({ store });
-    expect(ctx.service.projectView("sandbox")!.config.policy.sizeGate.maxFiles).toBe(5);
+    expect(ctx.service.projectView("sandbox")!.config.policy.kind).toBe("web");
     const error = await rejection(
       ctx.admin.updateProject("constructor", { execution: null }, actor),
     );

@@ -11,7 +11,6 @@ const POLICY = {
   source: "inferred" as const,
   kind: "web" as const,
   verify: { quick: "pnpm test", full: null, acceptance: null },
-  sizeGateMaxFiles: 20,
   releaseFragment: "optional" as const,
   preferSkills: ["vitest"],
   riskDefault: "T1" as const,
@@ -168,12 +167,10 @@ describe("policy patch", () => {
         kind: "native",
         verifyQuick: "",
         verifyFull: "pnpm build",
-        maxFiles: "40",
       }),
     ).toEqual({
       kind: "native",
       verify: { quick: null, full: "pnpm build" },
-      sizeGate: { maxFiles: 40 },
     });
   });
 
@@ -194,10 +191,6 @@ describe("policy patch", () => {
       prompts: { preferSkills: ["vitest", "better-ui"] },
     });
     expect(existing.prompts.preferSkills).toEqual(["a"]);
-  });
-
-  it("ignores an invalid max file count", () => {
-    expect(buildPolicyPatch(initial, { ...initial, maxFiles: "0" })).toBeUndefined();
   });
 
   it("splits skills on commas, Chinese separators, and whitespace", () => {
