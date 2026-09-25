@@ -29,8 +29,11 @@ vi.mock("grammy", async (importOriginal) => {
   };
 });
 
+import { Bot } from "grammy";
+import type { BotContext } from "../context.js";
 import { createBot, getActiveBotCommands } from "../index.js";
-import type { HarnessBotPort } from "./types.js";
+import { createHarnessMiddleware } from "./middleware.js";
+import type { HarnessAssistantRuntime, HarnessBotPort } from "./types.js";
 
 const HARNESS_CHAT = -1001;
 const OTHER_CHAT = -2002;
@@ -50,9 +53,22 @@ function createPort(overrides: Partial<HarnessBotPort> = {}): HarnessBotPort {
     handleCommand: vi.fn(async () => ({ html: "harness reply" })),
     handleCallback: vi.fn(async () => ({ text: "done" })),
     handleReply: vi.fn(async () => null),
+    handleTopicMessage: vi.fn(async () => {}),
     ...overrides,
   };
 }
+
+const BOT_INFO = {
+  id: 999,
+  is_bot: true,
+  first_name: "Harness",
+  username: "harness_bot",
+  can_join_groups: true,
+  can_read_all_group_messages: true,
+  supports_inline_queries: false,
+  can_connect_to_business: false,
+  has_main_web_app: false,
+} as never;
 
 function createHarnessBot(port: HarnessBotPort) {
   const bot = createBot({
@@ -62,18 +78,17 @@ function createHarnessBot(port: HarnessBotPort) {
     logger: { warn: vi.fn(), error: vi.fn() } as never,
     harness: port,
   });
-  bot.botInfo = {
-    id: 999,
-    is_bot: true,
-    first_name: "Harness",
-    username: "harness_bot",
-    can_join_groups: true,
-    can_read_all_group_messages: true,
-    supports_inline_queries: false,
-    can_connect_to_business: false,
-    has_main_web_app: false,
-  } as never;
+  bot.botInfo = BOT_INFO;
   return bot;
+}
+
+/** Only the harness middleware, with a Bot AI that may be absent. */
+function createAssistantBot(port: HarnessBotPort, runtime: HarnessAssistantRuntime | undefined) {
+  const bot = new Bot<BotContext>("test-token");
+  bot.botInfo = BOT_INFO;
+  const resolveAssistant = vi.fn(() => runtime);
+  bot.use(createHarnessMiddleware(port, { resolveAssistant }));
+  return { bot, resolveAssistant };
 }
 
 let updateId = 1;
@@ -279,5 +294,73 @@ describe("harness middleware", () => {
     const bot = createHarnessBot(port);
     await bot.handleUpdate(message(HARNESS_CHAT, "/bug 保存失败"));
     expect(sentTexts()).toEqual([]);
+  });
+
+  describe("topic assistant", () => {
+    const runtime = { model: "fake-model" } as unknown as HarnessAssistantRuntime;
+
+    it("hands owner free text to the assistant with the topic and the Bot's model", async () => {
+      const port = createPort();
+      const { bot, resolveAssistant } = createAssistantBot(port, runtime);
+      await bot.handleUpdate(
+        message(HARNESS_CHAT, "  这个项目下一步做什么？ ", OWNER, {
+          is_topic_message: true,
+          message_thread_id: 77,
+        }),
+      );
+      expect(resolveAssistant).toHaveBeenCalledWith(HARNESS_CHAT, OWNER);
+      expect(port.handleTopicMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: HARNESS_CHAT,
+          threadId: 77,
+          userId: OWNER,
+          text: "这个项目下一步做什么？",
+        }),
+        runtime,
+      );
+      expect(port.usageHint).not.toHaveBeenCalled();
+      expect(sentTexts()).toEqual([]);
+    });
+
+    it("keeps commands, card replies, non-owners, and non-text away from the assistant", async () => {
+      const port = createPort({
+        handleReply: vi.fn(async () => ({ html: "" })),
+      });
+      const { bot } = createAssistantBot(port, runtime);
+      await bot.handleUpdate(message(HARNESS_CHAT, "/status"));
+      await bot.handleUpdate(message(HARNESS_CHAT, "/new"));
+      await bot.handleUpdate(
+        message(HARNESS_CHAT, "改成蓝色", OWNER, {
+          reply_to_message: {
+            message_id: 55,
+            date: 1_700_000_000,
+            chat: { id: HARNESS_CHAT, type: "supergroup" },
+            from: { id: 999, is_bot: true, first_name: "Harness" },
+            text: "card",
+          },
+        }),
+      );
+      await bot.handleUpdate(message(HARNESS_CHAT, "路过", 7));
+      const sticker = message(HARNESS_CHAT, "x") as { message: Record<string, unknown> };
+      delete sticker.message.text;
+      sticker.message.sticker = { file_id: "s", file_unique_id: "s", type: "regular" };
+      await bot.handleUpdate(sticker as never);
+
+      expect(port.handleCommand).toHaveBeenCalledTimes(2);
+      expect(port.handleCommand).toHaveBeenLastCalledWith(
+        expect.objectContaining({ command: "new" }),
+      );
+      expect(port.handleReply).toHaveBeenCalledOnce();
+      expect(port.handleTopicMessage).not.toHaveBeenCalled();
+      expect(sentTexts()).toEqual(["harness reply", "harness reply", "hint"]);
+    });
+
+    it("falls back to the usage hint when the Bot has no AI", async () => {
+      const port = createPort();
+      const { bot } = createAssistantBot(port, undefined);
+      await bot.handleUpdate(message(HARNESS_CHAT, "帮我看看 issue"));
+      expect(port.handleTopicMessage).not.toHaveBeenCalled();
+      expect(sentTexts()).toEqual(["hint"]);
+    });
   });
 });

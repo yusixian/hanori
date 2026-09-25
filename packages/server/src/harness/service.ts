@@ -1,5 +1,6 @@
 import type { HarnessBotPort, HarnessTelegram } from "@cos-tool-bot/bot";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
+import { HarnessTopicAssistant } from "./assistant.js";
 import { type HarnessAttachments, createAttachments } from "./attachments.js";
 import { handleHarnessCallback } from "./callbacks.js";
 import { handleHarnessCommand } from "./commands.js";
@@ -83,6 +84,7 @@ export class HarnessService {
   readonly prFlow: HarnessPrFlow;
   readonly prActions: HarnessPrActions;
   readonly work: HarnessWork;
+  readonly assistant: HarnessTopicAssistant;
   /** Where owners manage projects; the Telegram "管理项目" button links here. */
   readonly adminUrl: string | null;
   readonly attachments: HarnessAttachments;
@@ -129,6 +131,7 @@ export class HarnessService {
     this.prFlow = new HarnessPrFlow(this);
     this.prActions = new HarnessPrActions(this, this.prFlow);
     this.work = new HarnessWork(this);
+    this.assistant = new HarnessTopicAssistant(this);
   }
 
   now(): Date {
@@ -234,6 +237,7 @@ export class HarnessService {
     handleCommand: (request) => handleHarnessCommand(this, request),
     handleCallback: (request) => handleHarnessCallback(this, request),
     handleReply: (request) => handleOwnerReply(this.work, request),
+    handleTopicMessage: (request, runtime) => this.assistant.handleMessage(request, runtime),
   };
 
   stop(): void {

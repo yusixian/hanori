@@ -5,6 +5,7 @@ import { toMarkup } from "./telegram.js";
 import {
   HARNESS_CALLBACK_PREFIX,
   HARNESS_COMMANDS,
+  type HarnessAssistantRuntime,
   type HarnessAttachment,
   type HarnessBotPort,
   type HarnessCommandName,
@@ -75,12 +76,21 @@ function isConversationalMessage(message: Message): boolean {
   );
 }
 
+export interface HarnessMiddlewareOptions {
+  /** The Bot's AI for this chat; undefined when AI is not configured or stopped. */
+  resolveAssistant?: (chatId: number, userId: number) => HarnessAssistantRuntime | undefined;
+}
+
 /**
  * Owns every update from the harness chat: non-owners are ignored, harness commands and buttons
- * go to the port, and other owner commands fall through. Ordinary messages never reach casual
- * AI replies or JEV engagement unless the config explicitly allows casual replies.
+ * go to the port, and other owner commands fall through. Owner free text goes to the topic
+ * assistant when the Bot has AI; it never reaches casual AI replies or JEV engagement unless the
+ * config explicitly allows casual replies.
  */
-export function createHarnessMiddleware(port: HarnessBotPort): MiddlewareFn<BotContext> {
+export function createHarnessMiddleware(
+  port: HarnessBotPort,
+  options: HarnessMiddlewareOptions = {},
+): MiddlewareFn<BotContext> {
   return async (ctx, next) => {
     const chatId = ctx.chat?.id;
     if (chatId === undefined || !port.isHarnessChat(chatId)) return next();
@@ -144,6 +154,18 @@ export function createHarnessMiddleware(port: HarnessBotPort): MiddlewareFn<BotC
       }
     }
     if (port.allowsCasualReplies()) return next();
+    const text = (message.text ?? message.caption ?? "").trim();
+    const assistant = text ? options.resolveAssistant?.(chatId, userId) : undefined;
+    if (assistant) {
+      // Detached: an LLM turn must not hold the per-chat update queue that buttons also use.
+      void port
+        .handleTopicMessage(
+          { chatId, threadId: topicThreadId(message), userId, messageId: message.message_id, text },
+          assistant,
+        )
+        .catch(() => {});
+      return;
+    }
     if (!isConversationalMessage(message)) return;
     await ctx.reply(port.usageHint(topicThreadId(message)), { parse_mode: "HTML" });
   };

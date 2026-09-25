@@ -9,6 +9,7 @@ const MIGRATIONS = [
   "0054_harness_foundation.sql",
   "0055_harness_jobs.sql",
   "0056_harness_panel_projects.sql",
+  "0057_harness_topic_messages.sql",
 ].map((name) => new URL(`../../../database/drizzle/${name}`, import.meta.url));
 // Explicit opt-in; never use the application's DATABASE_URL.
 describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
@@ -210,5 +211,52 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
     await store.recordMessage({ ...message, ref: { number: 12 } });
     await store.recordMessage({ ...message, ref: null });
     expect((await store.findMessage(-100, 56))?.ref).toEqual({ number: 12 });
+  });
+
+  it("keeps topic conversations apart, uses each suggestion once, and prunes", async () => {
+    const topic = { chatId: -100, threadId: 9 };
+    for (const text of ["a", "b", "c"]) {
+      await store.appendTopicMessage({ ...topic, role: "user", text });
+    }
+    await store.appendTopicMessage({
+      ...topic,
+      role: "assistant",
+      text: "d",
+      messageId: 77,
+      suggestions: [{ command: "bug", args: "x", project: null }],
+    });
+    await store.appendTopicMessage({ chatId: -100, threadId: 0, role: "user", text: "general" });
+    expect((await store.listTopicMessages(-100, 9, 2)).map((m) => m.text)).toEqual(["c", "d"]);
+
+    const row = (await store.findTopicMessage(-100, 77))!;
+    const uses = await Promise.all(
+      Array.from({ length: 4 }, () => store.useTopicSuggestion(row.id, 0)),
+    );
+    expect(uses.filter(Boolean)).toHaveLength(1);
+    expect(await store.useTopicSuggestion(row.id, 1)).toBe(true);
+    expect((await store.findTopicMessage(-100, 77))?.suggestionsUsed).toBe(3);
+
+    await store.pruneTopicMessages({ ...topic, keep: 2, before: new Date(0) });
+    expect((await store.listTopicMessages(-100, 9, 10)).map((m) => m.text)).toEqual(["c", "d"]);
+    await store.pruneTopicMessages({ ...topic, keep: 10, before: new Date(Date.now() + 60_000) });
+    expect(await store.listTopicMessages(-100, 0, 10)).toEqual([]);
+
+    await store.appendTopicMessage({ ...topic, role: "user", text: "e" });
+    expect(await store.clearTopic(-100, 9)).toBe(1);
+  });
+
+  it("lists a project's requests and a request's events newest first", async () => {
+    const a = await request(20);
+    const b = await request(21);
+    // updatedAt has millisecond precision; created_at defaults are finer.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await store.updateRequest(a.id, { state: "queued" });
+    expect((await store.listProjectRequests("sandbox", 2)).map((r) => r.id)).toEqual([a.id, b.id]);
+    await store.recordEvent({ type: "first", requestId: a.id });
+    await store.recordEvent({ type: "second", requestId: a.id });
+    expect((await store.listRequestEvents(a.id, 5)).map((e) => e.type)).toEqual([
+      "second",
+      "first",
+    ]);
   });
 });

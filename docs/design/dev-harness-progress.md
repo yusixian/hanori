@@ -65,8 +65,9 @@
 | H3 Lody 执行与小 bug（3.1–3.6）                            | 已合并；2026-09-25 在生产端到端验证：沙盒 `/bug` 建 issue #2，Lody 会话在 MBP 上产出 PR #3，卡片显示 T2、CI 与额度页脚；3.7（koyori 接入）待进行                    |
 | lody-bridge sidecar                                        | 已上线（PR #111，入口脚本权限修复 PR #112）；daemon 登录成功；随后补了 daemon 巡检重启、`/health` 反映 daemon 状态、优先复用保存的登录                              |
 | 独立审查（安全与正确性）                                   | 已完成：无 critical/high；3 个 medium 与 4 个 low 已修复并补测试；「按 bot 名称绑定」保留，`/status` 显示绑定的 bot id                                              |
-| 日常操作                                                   | 已实现（待合并）：`/list`、`/cancel`、`/retry`；PR 卡片增加「打回」「取消」（二次确认，不关 PR）「会话」「重新排队」；`/bug` 截图改为服务端签名链接写进 issue       |
-| 可靠性兜底                                                 | 分支 `harness/reliability` 已实现并有单测：CI 登记窗口、webhook 补偿、会话停下未交付、排队升级（配置见 dev-harness-config.md §10）；尚未在真实 GitHub / Lody 上验证 |
+| 日常操作                                                   | 已实现：`/list`、`/cancel`、`/retry`；PR 卡片增加「打回」「取消」（二次确认，不关 PR）「会话」「重新排队」；`/bug` 截图改为服务端签名链接写进 issue                 |
+| 可靠性兜底                                                 | 已实现并有单测：CI 登记窗口、webhook 补偿、会话停下未交付、排队升级（配置见 dev-harness-config.md §10）；尚未在真实 GitHub / Lody 上验证                            |
+| 话题助手                                                   | 已实现：每个话题独立上下文（表 `harness_topic_messages`，迁移 0057），只读 GitHub 与 harness 工具，建议按钮复用命令处理，`/new` 清空；真实 LLM 与 Telegram 尚未验证 |
 | 沙盒仓库                                                   | `example-owner/harness-sandbox`（私有）已推送，CI 全绿                                                                                                                   |
 
 全量验证（2026-09-24）：`pnpm typecheck` 通过；`pnpm lint` 0 errors（3 个既有 warning）；`pnpm fmt:check` 通过；`pnpm test` 211 个文件、1827 个用例通过。

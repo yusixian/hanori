@@ -1,3 +1,5 @@
+import type { LanguageModel } from "ai";
+
 /** Callback data is `hx:<approval id>:<verb>`; the record, not the payload, carries authority. */
 export const HARNESS_CALLBACK_PREFIX = "hx:";
 
@@ -9,6 +11,7 @@ export const HARNESS_COMMANDS = [
   "list",
   "cancel",
   "retry",
+  "new",
 ] as const;
 export type HarnessCommandName = (typeof HARNESS_COMMANDS)[number];
 
@@ -79,11 +82,35 @@ export interface HarnessCommandRequest {
   /** Undefined in the General topic. */
   threadId?: number;
   userId: number;
-  messageId: number;
+  /** The message to answer; absent when an assistant suggestion runs in another topic. */
+  messageId?: number;
   /** From the command message and the message it replies to. */
   attachments?: HarnessAttachment[];
   /** Lets the port build `t.me/<bot>?startapp=` links. */
   botUsername?: string;
+}
+
+/** Owner free text in a harness topic that is neither a command nor a reply to a card. */
+export interface HarnessTopicMessageRequest {
+  chatId: number;
+  /** Undefined in the General topic. */
+  threadId?: number;
+  userId: number;
+  messageId: number;
+  text: string;
+}
+
+export interface HarnessAssistantUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  durationMs: number;
+}
+
+/** The harness Bot's own AI selection for the harness chat. */
+export interface HarnessAssistantRuntime {
+  model: LanguageModel;
+  recordUsage?(usage: HarnessAssistantUsage): void;
 }
 
 /** An owner message replying to one of this Bot's messages in the harness chat. */
@@ -126,4 +153,9 @@ export interface HarnessBotPort {
   handleCallback(request: HarnessCallbackRequest): Promise<HarnessCallbackAnswer>;
   /** Returns null when the replied-to message is not a harness card or question. */
   handleReply(request: HarnessReplyRequest): Promise<HarnessReply | null>;
+  /** Answers in the topic itself; the middleware does not wait for it. */
+  handleTopicMessage(
+    request: HarnessTopicMessageRequest,
+    runtime: HarnessAssistantRuntime,
+  ): Promise<void>;
 }

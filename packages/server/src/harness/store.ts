@@ -7,13 +7,15 @@ import {
   harnessRequests,
   harnessSettings,
 } from "@cos-tool-bot/database";
-import { and, eq, gt, inArray, isNull, lte, ne } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, ne } from "drizzle-orm";
 import type { HarnessOverride } from "./config/resolve.js";
-import { DrizzleWorkStore, type HarnessWorkStore } from "./work-store.js";
+import { DrizzleTopicStore, type HarnessTopicStore } from "./topic-store.js";
+import type { HarnessWorkStore } from "./work-store.js";
 
 export type HarnessProjectRecord = typeof harnessProjects.$inferSelect;
 export type HarnessRequestRecord = typeof harnessRequests.$inferSelect;
 export type HarnessApprovalRecord = typeof harnessApprovals.$inferSelect;
+export type HarnessEventRecord = typeof harnessEvents.$inferSelect;
 export type HarnessProjectPatch = Partial<Omit<HarnessProjectRecord, "key" | "createdAt">>;
 export type HarnessRequestInsert = Omit<
   typeof harnessRequests.$inferInsert,
@@ -55,7 +57,7 @@ export interface HarnessEventInput {
   payload?: Record<string, unknown>;
 }
 
-export interface HarnessStore extends HarnessWorkStore {
+export interface HarnessStore extends HarnessWorkStore, HarnessTopicStore {
   listProjects(): Promise<HarnessProjectRecord[]>;
   upsertProject(key: string, repo: string, patch: HarnessProjectPatch): Promise<void>;
   getSetting(key: string): Promise<Record<string, unknown> | null>;
@@ -81,6 +83,10 @@ export interface HarnessStore extends HarnessWorkStore {
   insertRequest(input: HarnessRequestInsert): Promise<HarnessRequestRecord>;
   updateRequest(id: string, patch: HarnessRequestPatch): Promise<void>;
   countRequests(projectKey: string, states: readonly string[]): Promise<number>;
+  /** Most recently updated first. */
+  listProjectRequests(projectKey: string, limit: number): Promise<HarnessRequestRecord[]>;
+  /** Newest first. */
+  listRequestEvents(requestId: string, limit: number): Promise<HarnessEventRecord[]>;
   createApproval(approval: Omit<HarnessApprovalRecord, "createdAt">): Promise<void>;
   getApproval(id: string): Promise<HarnessApprovalRecord | null>;
   /** `headSha` is the bound revision: a PR head SHA, or `session:<id>` / `queue:<id>` for jobs. */
@@ -101,7 +107,7 @@ export interface HarnessStore extends HarnessWorkStore {
   ): Promise<number>;
 }
 
-export class DrizzleHarnessStore extends DrizzleWorkStore implements HarnessStore {
+export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessStore {
   constructor(db: Database) {
     super(db);
   }
@@ -263,6 +269,24 @@ export class DrizzleHarnessStore extends DrizzleWorkStore implements HarnessStor
         ),
       );
     return rows.length;
+  }
+
+  listProjectRequests(projectKey: string, limit: number) {
+    return this.db
+      .select()
+      .from(harnessRequests)
+      .where(eq(harnessRequests.projectKey, projectKey))
+      .orderBy(desc(harnessRequests.updatedAt))
+      .limit(limit);
+  }
+
+  listRequestEvents(requestId: string, limit: number) {
+    return this.db
+      .select()
+      .from(harnessEvents)
+      .where(eq(harnessEvents.requestId, requestId))
+      .orderBy(desc(harnessEvents.id))
+      .limit(limit);
   }
 
   async createApproval(approval: Omit<HarnessApprovalRecord, "createdAt">) {

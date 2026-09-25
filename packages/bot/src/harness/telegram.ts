@@ -19,6 +19,7 @@ const CHAT_COMMANDS = [
   { command: "list", description: getTelegramCommandMetadata("list").description["zh-CN"] },
   { command: "cancel", description: getTelegramCommandMetadata("cancel").description["zh-CN"] },
   { command: "retry", description: getTelegramCommandMetadata("retry").description["zh-CN"] },
+  { command: "new", description: "清空本话题的助手对话" },
   {
     command: "harness",
     description: getTelegramCommandMetadata("harness").description["zh-CN"],

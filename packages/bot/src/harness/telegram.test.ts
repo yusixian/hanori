@@ -31,7 +31,7 @@ describe("createHarnessTelegram", () => {
     );
   });
 
-  it("puts /list, /cancel, and /retry in the harness chat menu", async () => {
+  it("puts the request controls and /new in the harness chat menu", async () => {
     const api = fakeApi();
     await createHarnessTelegram(api as never).setChatCommands(-1001);
     const [commands] = api.setMyCommands.mock.calls[0] as unknown as [Array<{ command: string }>];
@@ -42,6 +42,7 @@ describe("createHarnessTelegram", () => {
       "list",
       "cancel",
       "retry",
+      "new",
       "harness",
       "help",
     ]);

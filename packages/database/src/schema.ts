@@ -1579,3 +1579,35 @@ export const harnessMessages = pgTable(
   },
   (t) => [uniqueIndex("harness_messages_chat_message_unique").on(t.chatId, t.messageId)],
 );
+
+export interface HarnessTopicSuggestion {
+  command: string;
+  args: string;
+  /** Set when the suggestion targets another project than the topic's, e.g. from General. */
+  project: string | null;
+}
+
+// The topic assistant's conversation: owner free text and the assistant's replies only. Commands,
+// cards, and command replies never land here. Text is stored because the feature needs it; rows
+// are pruned by age and per-topic count.
+export const harnessTopicMessages = pgTable(
+  "harness_topic_messages",
+  {
+    id: serial("id").primaryKey(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    // 0 is the General topic.
+    threadId: integer("thread_id").notNull(),
+    role: text("role").notNull(),
+    text: text("text").notNull(),
+    messageId: integer("message_id"),
+    suggestions: json("suggestions").$type<HarnessTopicSuggestion[]>(),
+    // Bit i is set once suggestion i was executed.
+    suggestionsUsed: integer("suggestions_used").notNull().default(0),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("harness_topic_messages_topic_idx").on(t.chatId, t.threadId, t.id),
+    index("harness_topic_messages_message_idx").on(t.chatId, t.messageId),
+    index("harness_topic_messages_created_idx").on(t.createdAt),
+  ],
+);

@@ -1,5 +1,19 @@
 import type { GitHubAppCredentialService } from "../services/github-app-credentials.js";
 import type { CheckRunInput, CommitStatusInput } from "./contract.js";
+import {
+  type CommitSummary,
+  type IssueDetail,
+  type IssueSummary,
+  type PullRequestSummary,
+  type RawCommit,
+  type RawIssue,
+  type RawIssueComment,
+  type RawPullRequestListItem,
+  toCommitSummary,
+  toIssueDetail,
+  toIssueSummary,
+  toPullRequestSummary,
+} from "./github-issues.js";
 import type { ChangedFile } from "./risk.js";
 
 const API_ROOT = "https://api.github.com";
@@ -9,6 +23,14 @@ const MAX_CHECK_PAGES = 5;
 const MAX_INSTALLATIONS = 20;
 const MAX_INSTALLATION_PAGES = 3;
 const MAX_REPOSITORY_PAGES = 10;
+
+export type {
+  CommitSummary,
+  IssueComment,
+  IssueDetail,
+  IssueSummary,
+  PullRequestSummary,
+} from "./github-issues.js";
 
 export class GitHubApiError extends Error {
   constructor(
@@ -84,6 +106,21 @@ export interface HarnessGitHub {
   /** Works for issues and pull requests alike. */
   createComment(repo: string, number: number, body: string): Promise<{ id: number }>;
   addLabels(repo: string, number: number, labels: string[]): Promise<void>;
+  /** Issues only (pull requests excluded), most recently updated first. */
+  listIssues(
+    repo: string,
+    input: { state: "open" | "closed" | "all"; labels?: string; limit: number },
+  ): Promise<IssueSummary[]>;
+  /** Most recently updated first. */
+  listPullRequests(
+    repo: string,
+    input: { state: "open" | "closed" | "all"; limit: number },
+  ): Promise<PullRequestSummary[]>;
+  /** GitHub issue search scoped to the repository; `query` uses GitHub search syntax. */
+  searchIssues(repo: string, query: string, limit: number): Promise<IssueSummary[]>;
+  getIssue(repo: string, number: number, commentLimit: number): Promise<IssueDetail>;
+  /** Default branch history, newest first. */
+  listCommits(repo: string, limit: number): Promise<CommitSummary[]>;
 }
 
 type Credentials = Pick<
@@ -195,10 +232,12 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
     return json as T;
   }
 
+  private async repoToken(repo: string): Promise<string> {
+    return this.credentials.getInstallationToken(await this.installationFor(repo));
+  }
+
   private async repoRequest<T>(repo: string, path: string, init?: RequestInit): Promise<T> {
-    const installationId = await this.installationFor(repo);
-    const token = await this.credentials.getInstallationToken(installationId);
-    return this.send<T>(`/repos/${repo}${path}`, token, init);
+    return this.send<T>(`/repos/${repo}${path}`, await this.repoToken(repo), init);
   }
 
   async getDefaultBranch(repo: string) {
@@ -385,5 +424,63 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
       method: "POST",
       body: JSON.stringify({ labels }),
     });
+  }
+
+  async listIssues(
+    repo: string,
+    input: { state: "open" | "closed" | "all"; labels?: string; limit: number },
+  ) {
+    const params = new URLSearchParams({
+      state: input.state,
+      sort: "updated",
+      per_page: String(Math.min(100, input.limit * 3)),
+    });
+    if (input.labels) params.set("labels", input.labels);
+    const issues = await this.repoRequest<RawIssue[]>(repo, `/issues?${params}`);
+    return issues
+      .filter((issue) => !issue.pull_request)
+      .slice(0, input.limit)
+      .map(toIssueSummary);
+  }
+
+  async listPullRequests(repo: string, input: { state: "open" | "closed" | "all"; limit: number }) {
+    const params = new URLSearchParams({
+      state: input.state,
+      sort: "updated",
+      direction: "desc",
+      per_page: String(Math.min(100, input.limit)),
+    });
+    const pulls = await this.repoRequest<RawPullRequestListItem[]>(repo, `/pulls?${params}`);
+    return pulls.map(toPullRequestSummary);
+  }
+
+  async searchIssues(repo: string, query: string, limit: number) {
+    const params = new URLSearchParams({
+      q: `repo:${repo} ${query}`,
+      sort: "updated",
+      per_page: String(Math.min(100, limit)),
+    });
+    const result = await this.send<{ items: RawIssue[] }>(
+      `/search/issues?${params}`,
+      await this.repoToken(repo),
+    );
+    return result.items.map(toIssueSummary);
+  }
+
+  async getIssue(repo: string, number: number, commentLimit: number) {
+    const issue = await this.repoRequest<RawIssue>(repo, `/issues/${number}`);
+    const comments =
+      commentLimit > 0 && (issue.comments ?? 0) > 0
+        ? await this.repoRequest<RawIssueComment[]>(repo, `/issues/${number}/comments?per_page=100`)
+        : [];
+    return toIssueDetail(issue, comments.slice(-commentLimit));
+  }
+
+  async listCommits(repo: string, limit: number) {
+    const commits = await this.repoRequest<RawCommit[]>(
+      repo,
+      `/commits?per_page=${Math.min(100, limit)}`,
+    );
+    return commits.map(toCommitSummary);
   }
 }

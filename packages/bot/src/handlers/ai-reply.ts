@@ -52,7 +52,7 @@ import {
   isStreamReplyMode,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
-import type { JSONValue, Tool, UserModelMessage } from "ai";
+import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
@@ -951,6 +951,12 @@ export function createAiReplyHandler(
     models: ModelEntry[];
   };
   getProvidersList: () => Array<{ id: string; label: string; defaultModel: string }>;
+  /** The chat's selected model, for callers outside this reply pipeline. */
+  resolveModelForChat: (chatId: number) => {
+    model: LanguageModel;
+    providerId: string;
+    modelId: string;
+  };
   getReplyMode: () => ReplyMode;
   setReplyMode: (mode: ReplyMode) => void;
   getRichMessageEnabled: () => boolean;
@@ -3722,6 +3728,14 @@ export function createAiReplyHandler(
       };
     },
     getProvidersList,
+    resolveModelForChat: (chatId) => {
+      const selection = selectionRuntime.resolve(chatId);
+      return {
+        model: selection.providerFactory(selection.modelId),
+        providerId: selection.providerId,
+        modelId: selection.modelId,
+      };
+    },
     getReplyMode: (): ReplyMode =>
       replyModeOverride ?? config.messageConfig?.replyMode ?? DEFAULT_MESSAGE_CONFIG.replyMode!,
     setReplyMode: (mode: ReplyMode) => {

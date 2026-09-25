@@ -39,6 +39,7 @@ const HARNESS_USAGE = [
   "reload — 重新读取 harness.yaml，失败时保留旧配置",
   "",
   "日常操作：/list 进行中的请求 · /cancel [ID|#编号] 取消 · /retry [ID|#编号] 重新排队",
+  "<b>话题助手</b>：在话题里直接发文字即可讨论需求、查询 issue / PR 与任务状态，建议的命令可一键执行；/new 清空本话题的对话",
 ].join("\n");
 
 const html = (text: string): HarnessReply => ({ html: text });
@@ -86,6 +87,8 @@ export async function handleHarnessCommand(
     case "cancel":
     case "retry":
       return runControl(service, request.command, request, projectKey);
+    case "new":
+      return service.assistant.reset(request.chatId, request.threadId);
   }
 }
 
