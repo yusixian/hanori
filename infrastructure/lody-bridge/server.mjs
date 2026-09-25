@@ -223,6 +223,9 @@ export function createBridgeServer(options) {
     if (checked.command === "agent-config list" && typeof result.stdout === "string") {
       result.stdout = redactAgentConfigs(result.stdout);
     }
+    if (checked.command === "session history" && typeof result.stdout === "string") {
+      result.stdout = trimHistory(result.stdout);
+    }
     log(
       `lody-bridge: ${checked.command} -> ${
         result.spawnError ?? (result.timedOut ? "timeout" : (result.signal ?? result.exitCode))
@@ -272,6 +275,31 @@ export function redactAgentConfigs(stdout) {
           AGENT_CONFIG_FIELDS.filter((key) => key in config).map((key) => [key, config[key]]),
         ),
       ),
+  });
+}
+
+const HISTORY_FIELDS = ["index", "role", "timestamp"];
+const HISTORY_TEXT_LIMIT = 2000;
+
+/** Only what the harness reads leaves the sidecar: role, time, and the start of each turn. */
+export function trimHistory(stdout) {
+  const json = parseJsonOutput(stdout);
+  if (!json || typeof json !== "object" || !Array.isArray(json.entries)) {
+    return JSON.stringify({
+      ok: false,
+      error: typeof json?.error === "string" ? json.error : "unreadable session history output",
+    });
+  }
+  return JSON.stringify({
+    ok: json.ok !== false,
+    entries: json.entries
+      .filter((entry) => entry && typeof entry === "object")
+      .map((entry) => ({
+        ...Object.fromEntries(
+          HISTORY_FIELDS.filter((key) => key in entry).map((key) => [key, entry[key]]),
+        ),
+        text: typeof entry.text === "string" ? entry.text.slice(0, HISTORY_TEXT_LIMIT) : null,
+      })),
   });
 }
 

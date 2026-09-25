@@ -4,7 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkArgs } from "./allowlist.mjs";
-import { authorized, createBridgeServer, redactAgentConfigs, watchDaemon } from "./server.mjs";
+import {
+  authorized,
+  createBridgeServer,
+  redactAgentConfigs,
+  trimHistory,
+  watchDaemon,
+} from "./server.mjs";
 
 const SECRET = "s".repeat(40);
 const FAKE = fileURLToPath(new URL("./test/fake-lody.mjs", import.meta.url));
@@ -67,6 +73,7 @@ describe("checkArgs", () => {
     [["session", "status", "s-1", "--json"]],
     [["session", "cancel", "s-1", "--turn-id", "assistant:abc", "--json"]],
     [["session", "archive", "s-1", "--json"]],
+    [["session", "history", "s-1", "--limit", "4", "--reverse", "--json"]],
     [
       [
         "session",
@@ -107,6 +114,11 @@ describe("checkArgs", () => {
     [["session", "create", "--config-option", "sandbox=danger-full-access"], "permissions"],
     [["agent-config", "create", "--json"], "agent-config writes"],
     [["agent-config", "list", "--env", "A=1"], "--env"],
+    [["session", "history", "s-1", "--all", "--json"], "full history"],
+    [["session", "history", "s-1", "--limit", "500", "--json"], "large limit"],
+    [["session", "history", "s-1", "--jsonl"], "jsonl"],
+    [["session", "history", "--json"], "missing session id"],
+    [["session", "show", "--json"], "flag as session id"],
   ])("rejects %j (%s)", (args) => {
     expect(checkArgs(args).ok).toBe(false);
   });
@@ -211,6 +223,29 @@ describe("bridge server", () => {
     expect(logs.join("\n")).not.toContain("sk-should-not-leak");
     expect(redactAgentConfigs("not json")).toBe(
       JSON.stringify({ ok: false, error: "unreadable agent-config output" }),
+    );
+  });
+
+  it("trims session history to role, time, and bounded text", async () => {
+    const { exec } = await start();
+    const result = await (
+      await exec({ args: ["session", "history", "s-1", "--limit", "2", "--reverse", "--json"] })
+    ).json();
+    expect(JSON.parse(result.stdout)).toEqual({
+      ok: true,
+      entries: [
+        {
+          index: 1,
+          role: "assistant",
+          timestamp: "2026-09-24T12:41:44.073Z",
+          text: "x".repeat(2000),
+        },
+        { index: 0, role: "user", timestamp: "2026-09-24T12:41:43.190Z", text: "continue" },
+      ],
+    });
+    expect(result.stdout).not.toContain("attachment-secret");
+    expect(trimHistory("not json")).toBe(
+      JSON.stringify({ ok: false, error: "unreadable session history output" }),
     );
   });
 

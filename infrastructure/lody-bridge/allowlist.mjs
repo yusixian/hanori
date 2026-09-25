@@ -2,7 +2,8 @@
 // Anything not listed here is rejected: no positional prompts, no `--env`, no `--debug`,
 // no `--wait`/`--timeout` (the bridge owns time), no `--flag=value` spellings.
 
-const SESSION_ID = /^[\w-]{1,128}$/;
+// A leading dash would be read as a flag, and the CLI then falls back to LODY_SESSION_ID.
+const SESSION_ID = /^(?!-)[\w-]{1,128}$/;
 const SELECTOR = /^[\w .:@/+-]{1,200}$/;
 const MODEL = /^[\w.:[\]/+-]{1,120}$/;
 // Only reasoning effort; other config options could change the agent's permissions.
@@ -26,6 +27,7 @@ const VALUE_RULES = {
   "--config-option": CONFIG_OPTION,
   "--prompt-file": /^-$/,
   "--turn-id": /^[\w:-]{1,160}$/,
+  "--limit": /^([1-9]|1\d|20)$/,
 };
 
 const REPEATABLE = new Set(["--config-option"]);
@@ -84,6 +86,13 @@ const COMMANDS = [
     session: true,
     values: ["--workspace"],
     flags: ["--json", "--offline"],
+  },
+  // Read-only; the bridge trims the transcript to role, time, and text (server.mjs).
+  {
+    path: ["session", "history"],
+    session: true,
+    values: ["--workspace", "--limit"],
+    flags: ["--json", "--reverse", "--offline"],
   },
   {
     path: ["session", "cancel"],

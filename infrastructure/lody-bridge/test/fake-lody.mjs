@@ -42,6 +42,26 @@ process.stdin.on("end", () => {
     );
     return;
   }
+  if (args[0] === "session" && args[1] === "history") {
+    process.stdout.write(
+      `[ws] attached\n${JSON.stringify({
+        ok: true,
+        sessionId: args[2],
+        entries: [
+          {
+            index: 1,
+            id: "assistant:1",
+            role: "assistant",
+            timestamp: "2026-09-24T12:41:44.073Z",
+            text: "x".repeat(5000),
+            attachments: [{ url: "attachment-secret" }],
+          },
+          { index: 0, role: "user", timestamp: "2026-09-24T12:41:43.190Z", text: "continue" },
+        ],
+      })}\n`,
+    );
+    return;
+  }
   if (mode === "flood") {
     process.stdout.write("x".repeat(64 * 1024));
     return;
