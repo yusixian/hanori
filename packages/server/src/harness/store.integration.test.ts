@@ -105,6 +105,9 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
   it("records each webhook delivery once", async () => {
     expect(await store.recordDelivery("delivery-it-1", { type: "github.ping" })).toBe(true);
     expect(await store.recordDelivery("delivery-it-1", { type: "github.ping" })).toBe(false);
+    await store.recordDelivery("queue-it-1", { type: "queue.waiting", payload: { since: "x" } });
+    expect(await store.findDelivery("queue-it-1")).toEqual({ payload: { since: "x" } });
+    expect(await store.findDelivery("missing")).toBeNull();
   });
 
   it("upserts overrides and prunes expired ones", async () => {

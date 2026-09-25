@@ -10,6 +10,8 @@ import { type LodyMachine, findMachine } from "./lody.js";
 import { errorText } from "./pr-actions.js";
 import { quotaBlocks, quotaSnapshot, startOfDay } from "./quota.js";
 import { pollJobs, warnQuota } from "./job-monitor.js";
+import { QueueWatch } from "./queue-watch.js";
+import { HarnessReconciler } from "./reconcile.js";
 import {
   ACTIVE_STATES,
   AREA_HOLDING_STATES,
@@ -59,18 +61,25 @@ function increment(map: Map<string, number>, key: string) {
   map.set(key, (map.get(key) ?? 0) + 1);
 }
 
+export interface WaitReason {
+  reason: string;
+  /** No execution machine is reachable at all, as opposed to a deliberate limit. */
+  offline: boolean;
+}
+
 /** Picks a machine for the worker role, or explains why the request must keep waiting. */
 export function chooseMachine(
   config: ProjectEffectiveConfig,
   machines: readonly LodyMachine[],
   perMachine: ReadonlyMap<string, number>,
   agents: readonly AgentConfigInfo[] | null = null,
-): MachineChoice | { reason: string } {
+): MachineChoice | WaitReason {
   const lead = resolveWorkerExecution(config, agents);
   const { agent, vendor: provider } = lead;
   const keys =
     config.project.machines.length > 0 ? config.project.machines : Object.keys(config.machines);
   const reasons: string[] = [];
+  let anyOnline = false;
   for (const key of keys) {
     const entry = config.machines[key];
     if (!entry?.enabled) continue;
@@ -79,6 +88,7 @@ export function chooseMachine(
       reasons.push(`${entry.lody} 不在线`);
       continue;
     }
+    anyOnline = true;
     if ((perMachine.get(key) ?? 0) >= config.guardrails.concurrency.perMachine) {
       reasons.push(`${entry.lody} 并发已满`);
       continue;
@@ -105,14 +115,19 @@ export function chooseMachine(
     }
     return { machineKey: key, machine, provider, agent, model, effort, note };
   }
-  return { reason: reasons[0] ?? "没有可用的执行机" };
+  return { reason: reasons[0] ?? "没有可用的执行机", offline: !anyOnline };
 }
 
 export class HarnessScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running: Promise<void> | null = null;
+  readonly queue: QueueWatch;
+  private readonly reconciler: HarnessReconciler;
 
-  constructor(private readonly work: HarnessWork) {}
+  constructor(private readonly work: HarnessWork) {
+    this.queue = new QueueWatch(work);
+    this.reconciler = new HarnessReconciler(work);
+  }
 
   start() {
     if (this.timer) return;
@@ -141,6 +156,8 @@ export class HarnessScheduler {
       () => this.startQueued(),
       () => pollJobs(this.work),
       () => warnQuota(this.work),
+      () => service.prFlow.resyncDue(),
+      () => this.reconciler.run(),
     ]) {
       try {
         await step();
@@ -243,6 +260,7 @@ export class HarnessScheduler {
   private async startQueued() {
     const { service } = this.work;
     const queued = await service.store.listRequestsByState([S.queued]);
+    this.queue.forget(queued);
     if (queued.length === 0) return;
     const listed = await service.lody().listMachines();
     const agents = listed.ok ? await service.lody().listAgentConfigs() : null;
@@ -250,10 +268,11 @@ export class HarnessScheduler {
     for (const request of queued) {
       const config = this.work.config(request.projectKey);
       if (!config) continue;
-      let reason = this.waitReason(config, request, load);
+      const limit = this.waitReason(config, request, load);
+      let wait: WaitReason | null = limit ? { reason: limit, offline: false } : null;
       let choice: MachineChoice | null = null;
-      if (!reason) {
-        if (!listed.ok) reason = `执行层不可用：${listed.message}`;
+      if (!wait) {
+        if (!listed.ok) wait = { reason: `执行层不可用：${listed.message}`, offline: true };
         else {
           const picked = chooseMachine(
             config,
@@ -261,12 +280,12 @@ export class HarnessScheduler {
             load.perMachine,
             agents?.ok ? agents.value : null,
           );
-          if ("reason" in picked) reason = picked.reason;
+          if ("reason" in picked) wait = picked;
           else choice = picked;
         }
       }
       if (!choice) {
-        await this.setWaitReason(request, reason ?? "等待中");
+        await this.hold(request, config, wait ?? { reason: "等待中", offline: false });
         continue;
       }
       if (await this.startRequest(request, config, choice)) {
@@ -278,20 +297,27 @@ export class HarnessScheduler {
     }
   }
 
-  private async setWaitReason(request: HarnessRequestRecord, reason: string) {
-    if (request.stateReason === reason) return;
-    await this.work.withRequest(request.id, async () => {
-      const moved = await this.work.service.store.transitionRequest(
-        request.id,
-        [S.queued],
-        S.queued,
-        {
-          stateReason: reason,
-        },
-      );
-      const fresh = moved ? await this.work.service.store.getRequest(request.id) : null;
-      if (fresh) await this.work.refreshCard(fresh);
-    });
+  /** Keeps the wait reason and queued-for time on the card current, then escalates if due. */
+  private async hold(
+    request: HarnessRequestRecord,
+    config: ProjectEffectiveConfig,
+    wait: WaitReason,
+  ) {
+    const since = await this.queue.since(request);
+    const ageChanged = this.queue.ageChanged(request, since);
+    if (request.stateReason !== wait.reason || ageChanged) {
+      await this.work.withRequest(request.id, async () => {
+        const moved = await this.work.service.store.transitionRequest(
+          request.id,
+          [S.queued],
+          S.queued,
+          { stateReason: wait.reason },
+        );
+        const fresh = moved ? await this.work.service.store.getRequest(request.id) : null;
+        if (fresh) await this.work.refreshCard(fresh);
+      });
+    }
+    if (wait.offline) await this.queue.escalate(request, config, since, wait.reason);
   }
 
   private startRequest(

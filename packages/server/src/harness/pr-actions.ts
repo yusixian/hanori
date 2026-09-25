@@ -120,6 +120,9 @@ export class HarnessPrActions {
       return reject("head_changed", "PR 有新提交，请看刷新后的卡片");
     const evaluation = await this.flow.evaluate(config, pr, request);
     if (evaluation.risk.tier === "T3") return reject("t3", "T3 改动只能在 GitHub 网页上合并");
+    if (evaluation.checks.awaitingRegistration) {
+      return reject("checks_unregistered", "CI 尚未登记，请稍候");
+    }
     if (evaluation.checks.state === "failure" || evaluation.checks.state === "pending") {
       return reject("checks", "CI 尚未全绿");
     }

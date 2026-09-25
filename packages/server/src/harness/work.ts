@@ -95,6 +95,7 @@ export class HarnessWork {
       cards: config.telegram.cards,
       approvalId: approval?.id ?? null,
       sessionUrl: config.executors.lody.sessionUrl,
+      queuedSince: request.state === S.queued ? await this.scheduler.queue.since(request) : null,
     });
     const patch = await publishCard(
       service,

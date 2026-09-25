@@ -1,7 +1,9 @@
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
 import { APPROVAL_ACTIONS, ensureCardApproval } from "./approvals.js";
 import { publishCard } from "./card-publisher.js";
+import { CiDetector, awaitRegistration } from "./ci-expectation.js";
 import type { ProjectEffectiveConfig } from "./config/schema.js";
+import { durationMs } from "./config/units.js";
 import { evaluateContract, extractFirstImage, summarizeChecks } from "./contract.js";
 import type { PullRequestInfo } from "./github.js";
 import { acceptsPullRequest } from "./intake.js";
@@ -49,8 +51,18 @@ function prNumbers(value: unknown): number[] {
     : [];
 }
 
+interface RegistrationWait {
+  projectKey: string;
+  number: number;
+  at: Date;
+}
+
 export class HarnessPrFlow {
   readonly lock = new KeyedAsyncLock();
+  private readonly ci = new CiDetector();
+  /** PRs whose card shows 等待 CI 登记; the scheduler re-syncs them when the wait ends. */
+  private readonly registrationWaits = new Map<string, RegistrationWait>();
+  private readonly drafts = new Map<string, boolean>();
 
   constructor(private readonly service: HarnessService) {}
 
@@ -83,7 +95,9 @@ export class HarnessPrFlow {
       return;
     }
     if (event === "check_run" || event === "check_suite" || event === "status") {
-      if (event !== "status" && payload.action !== "completed") return;
+      // A created run only matters to a card still waiting for its first check.
+      const registering = event === "check_run" && payload.action === "created";
+      if (event !== "status" && payload.action !== "completed" && !registering) return;
       const source = record(payload[event]);
       const sha = String((event === "status" ? payload.sha : source.head_sha) ?? "");
       const numbers = new Set(prNumbers(source.pull_requests));
@@ -93,6 +107,7 @@ export class HarnessPrFlow {
         }
       }
       for (const number of numbers) {
+        if (registering && !this.registrationWaits.has(prLockKey(repo, number))) continue;
         const tracked = await this.service.store.findRequestByPr(repo, number);
         if (tracked && isOpenPrState(tracked.state)) {
           await this.sync(projectKey, number, { reason: event });
@@ -128,7 +143,18 @@ export class HarnessPrFlow {
         ? this.github.getRequiredChecks(repo, pr.baseRef)
         : Promise.resolve(null),
     ]);
-    const checks = summarizeChecks(checkData.runs, checkData.statuses, required);
+    const summary = summarizeChecks(checkData.runs, checkData.statuses, required);
+    const ci = config.github.ci;
+    const now = this.service.now();
+    const { checks, recheckAt } = awaitRegistration(summary, {
+      expected:
+        summary.state === "none" &&
+        (await this.ci.expected(this.github, repo, pr.baseRef, durationMs(ci.detectTtl), now)),
+      lastPushAt: request.lastPushAt,
+      now,
+      graceMs: durationMs(ci.grace),
+      timeoutMs: durationMs(ci.registrationTimeout),
+    });
     const risk = assessRisk(files, config.policy.risk);
     const contract = evaluateContract({
       policy: config.policy,
@@ -138,7 +164,21 @@ export class HarnessPrFlow {
       bodyEditedAt: request.bodyEditedAt,
       lastPushAt: request.lastPushAt,
     });
-    return { files, checks, risk, contract };
+    return { files, checks, risk, contract, recheckAt };
+  }
+
+  /** Last draft flag seen by a sync, so the job monitor can skip a GitHub read. */
+  knownDraft(repo: string, number: number): boolean | undefined {
+    return this.drafts.get(prLockKey(repo, number));
+  }
+
+  async resyncDue(): Promise<void> {
+    const now = this.service.now();
+    for (const [key, wait] of this.registrationWaits) {
+      if (wait.at > now) continue;
+      this.registrationWaits.delete(key);
+      await this.sync(wait.projectKey, wait.number, { reason: "ci_registration" });
+    }
   }
 
   private async summarize(
@@ -241,6 +281,14 @@ export class HarnessPrFlow {
     let current: HarnessRequestRecord = { ...request, ...patch };
 
     const evaluation = await this.evaluate(config, pr, current);
+    const key = prLockKey(repo, number);
+    if (pr.state === "open") this.drafts.set(key, pr.draft);
+    else this.drafts.delete(key);
+    if (evaluation.recheckAt && pr.state === "open") {
+      this.registrationWaits.set(key, { projectKey, number, at: evaluation.recheckAt });
+    } else {
+      this.registrationWaits.delete(key);
+    }
     Object.assign(patch, await this.summarize(config, pr, current));
     Object.assign(patch, await service.work.onPrSync(current, pr, evaluation.checks));
     current = { ...current, ...patch };

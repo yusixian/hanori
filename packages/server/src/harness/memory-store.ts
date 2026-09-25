@@ -91,6 +91,11 @@ export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore 
     };
   }
 
+  async findDelivery(deliveryId: string) {
+    const event = this.events.find((e) => e.deliveryId === deliveryId);
+    return event ? { payload: event.payload ?? null } : null;
+  }
+
   async findRequestByPr(repo: string, prNumber: number) {
     return (
       [...this.requests.values()].find((r) => r.repo === repo && r.prNumber === prNumber) ?? null

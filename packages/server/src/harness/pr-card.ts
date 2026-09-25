@@ -83,6 +83,7 @@ function checksLine(checks: CheckSummary): string {
     case "success":
       return `CI：✅ ${checks.passed}/${checks.total} 通过`;
     case "pending":
+      if (checks.awaitingRegistration) return "CI：⏳ 等待 CI 登记";
       return `CI：⏳ ${checks.pending} 项进行中 · ✅ ${checks.passed}/${checks.total}`;
     case "failure":
       return `CI：❌ ${escapeHtml(clip(checks.failedNames.slice(0, 3).join("、"), 80))} 失败`;

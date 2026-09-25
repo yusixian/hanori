@@ -63,6 +63,8 @@ export interface HarnessGitHub {
   /** Null when the path does not exist or is not a directory. */
   listDirectory(repo: string, path: string, ref: string): Promise<DirectoryEntry[] | null>;
   getPullRequest(repo: string, number: number): Promise<PullRequestInfo>;
+  /** The open PR whose head is `branch` on the repository itself, if any. */
+  findOpenPullRequest(repo: string, branch: string): Promise<number | null>;
   listPullRequestFiles(repo: string, number: number): Promise<ChangedFile[]>;
   listChecks(
     repo: string,
@@ -259,6 +261,16 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
       mergeable: pr.mergeable ?? null,
       createdAt: new Date(pr.created_at),
     };
+  }
+
+  async findOpenPullRequest(repo: string, branch: string): Promise<number | null> {
+    const owner = repo.split("/")[0]!;
+    const head = encodeURIComponent(`${owner}:${branch}`);
+    const pulls = await this.repoRequest<Array<{ number: number }>>(
+      repo,
+      `/pulls?state=open&head=${head}&per_page=1`,
+    );
+    return pulls[0]?.number ?? null;
   }
 
   async listPullRequestFiles(repo: string, number: number): Promise<ChangedFile[]> {

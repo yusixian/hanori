@@ -21,6 +21,8 @@ export interface CheckSummary {
   failed: number;
   failedNames: string[];
   missingRequired: string[];
+  /** No checks yet, but they are still expected to register (ci-expectation.ts). */
+  awaitingRegistration?: boolean;
 }
 
 const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);

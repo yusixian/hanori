@@ -151,6 +151,16 @@ export class FakeGitHub implements HarnessGitHub {
     return { ...this.pr };
   }
 
+  readonly branchLookups: string[] = [];
+
+  async findOpenPullRequest(_repo: string, branch: string) {
+    this.branchLookups.push(branch);
+    const { pr } = this;
+    return pr.state === "open" && pr.headRef === branch && pr.headRepo === TEST_REPO
+      ? pr.number
+      : null;
+  }
+
   async listPullRequestFiles() {
     return this.files;
   }
@@ -324,6 +334,14 @@ export class FakeLody {
         ...this.session,
       } satisfies LodySession,
     };
+  }
+
+  lastAssistant: string | null = null;
+  readonly historyReads: string[] = [];
+
+  async lastAssistantMessage(sessionId: string) {
+    this.historyReads.push(sessionId);
+    return { ok: true as const, value: this.lastAssistant };
   }
 
   async cancelSession(sessionId: string) {

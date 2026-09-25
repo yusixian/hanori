@@ -26,6 +26,7 @@ export interface JobCardInput {
   cards: { showDuration: boolean; showQuota: boolean; showContext: boolean };
   approvalId: string | null;
   sessionUrl: string | null;
+  queuedSince?: Date | null;
 }
 
 export function formatElapsed(ms: number): string {
@@ -33,6 +34,13 @@ export function formatElapsed(ms: number): string {
   if (minutes < 60) return `${minutes} 分钟`;
   const hours = Math.floor(minutes / 60);
   return minutes % 60 === 0 ? `${hours} 小时` : `${hours} 小时 ${minutes % 60} 分钟`;
+}
+
+/** Coarse steps, so a long wait edits the card every few minutes rather than every tick. */
+export function queueAge(ms: number): string | null {
+  if (ms < 60_000) return null;
+  const step = ms < 5 * 60_000 ? 60_000 : ms < 3_600_000 ? 5 * 60_000 : 30 * 60_000;
+  return `已排队 ${formatElapsed(Math.floor(ms / step) * step)}`;
 }
 
 export function issueUrl(repo: string, number: number): string {
@@ -101,6 +109,11 @@ export function renderJobCard(input: JobCardInput): { html: string; keyboard: Ha
     if (footer) lines.push(escapeHtml(footer));
   }
   if (request.stateReason) lines.push(escapeHtml(request.stateReason.slice(0, 300)));
+  const queued =
+    request.state === S.queued && input.queuedSince
+      ? queueAge(now.getTime() - input.queuedSince.getTime())
+      : null;
+  if (queued) lines.push(queued);
   return { html: lines.join("\n"), keyboard: keyboard(input) };
 }
 

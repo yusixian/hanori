@@ -152,6 +152,10 @@ const guardrailsSchema = z
         idleRemindAfter: durationSchema.default("45m"),
         runRemindAfter: durationSchema.default("6h"),
         hardCancelAfter: durationSchema.nullable().default(null),
+        /** A session idle this long without a PR (or with only a draft) needs the owner. */
+        undeliveredAfter: durationSchema.default("3m"),
+        /** Queued this long with no machine or bridge reachable: one notice in General. */
+        queueEscalateAfter: durationSchema.nullable().default("15m"),
       })
       .prefault({}),
     autoFixRounds: z.number().int().min(0).max(10).default(2),
@@ -192,6 +196,21 @@ const githubSchema = z
       .string()
       .regex(/^[A-Z][A-Z0-9_]*$/, "应为环境变量名")
       .default("HARNESS_GITHUB_WEBHOOK_SECRET"),
+    ci: z
+      .strictObject({
+        /** Every PR without checks waits this long after a push before it may merge. */
+        grace: durationSchema.default("60s"),
+        /** A repo expected to run CI waits this long for checks to register (path filters). */
+        registrationTimeout: durationSchema.default("10m"),
+        detectTtl: durationSchema.default("30m"),
+      })
+      .prefault({}),
+    reconcile: z
+      .strictObject({
+        interval: durationSchema.nullable().default("3m"),
+        batch: z.number().int().positive().max(50).default(10),
+      })
+      .prefault({}),
   })
   .prefault({});
 

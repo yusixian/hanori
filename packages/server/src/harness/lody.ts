@@ -201,6 +201,24 @@ export function parseSessionStatus(json: unknown): LodySessionStatus {
   };
 }
 
+/**
+ * Newest assistant turn from `session history --reverse --json` (`entries[]` of
+ * `{ index, role, text }`); order is re-derived from `index` rather than trusted.
+ */
+export function parseLastAssistantText(json: unknown): string | null {
+  if (!isPlainObject(json) || !Array.isArray(json.entries)) {
+    throw new Error("lody session history 输出缺少 entries");
+  }
+  let best: { index: number; text: string } | null = null;
+  for (const [position, entry] of json.entries.filter(isPlainObject).entries()) {
+    const text = asString(entry.text);
+    if (entry.role !== "assistant" || !text?.trim()) continue;
+    const index = asNumber(entry.index) ?? -position;
+    if (!best || index > best.index) best = { index, text };
+  }
+  return best?.text ?? null;
+}
+
 /** CLI 0.100.0's create output is undocumented; accept the id wherever it appears. */
 export function parseCreatedSessionId(json: unknown): string | null {
   if (!isPlainObject(json)) return null;
@@ -289,6 +307,7 @@ const SESSION_ID = /^[\w-]{1,128}$/;
 const CREATE_TIMEOUT_MS = 120_000;
 
 const MACHINE_CACHE_MS = 30_000;
+const HISTORY_LIMIT = 4;
 
 /** Wrapper around the `lody` CLI. Every call is bounded by a timeout and returns a result. */
 export class LodyCli {
@@ -386,6 +405,14 @@ export class LodyCli {
 
   async sessionStatus(sessionId: string): Promise<LodyResult<LodySessionStatus>> {
     return this.parsed(sessionId, ["session", "status", sessionId, "--json"], parseSessionStatus);
+  }
+
+  async lastAssistantMessage(sessionId: string): Promise<LodyResult<string | null>> {
+    return this.parsed(
+      sessionId,
+      ["session", "history", sessionId, "--limit", String(HISTORY_LIMIT), "--reverse", "--json"],
+      parseLastAssistantText,
+    );
   }
 
   async createSession(input: CreateSessionInput): Promise<LodyResult<{ sessionId: string }>> {

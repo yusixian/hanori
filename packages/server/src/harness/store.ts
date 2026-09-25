@@ -74,6 +74,7 @@ export interface HarnessStore extends HarnessWorkStore {
   recordDelivery(deliveryId: string, event: HarnessEventInput): Promise<boolean>;
   /** Keeps the audit row but frees the delivery id so GitHub's redelivery is processed. */
   releaseDelivery(deliveryId: string, error: string): Promise<void>;
+  findDelivery(deliveryId: string): Promise<{ payload: Record<string, unknown> | null } | null>;
   findRequestByPr(repo: string, prNumber: number): Promise<HarnessRequestRecord | null>;
   findRequestsByHead(repo: string, headSha: string): Promise<HarnessRequestRecord[]>;
   getRequest(id: string): Promise<HarnessRequestRecord | null>;
@@ -208,6 +209,14 @@ export class DrizzleHarnessStore extends DrizzleWorkStore implements HarnessStor
         payload: { ...row.payload, deliveryId, error },
       })
       .where(eq(harnessEvents.deliveryId, deliveryId));
+  }
+
+  async findDelivery(deliveryId: string) {
+    const [row] = await this.db
+      .select({ payload: harnessEvents.payload })
+      .from(harnessEvents)
+      .where(eq(harnessEvents.deliveryId, deliveryId));
+    return row ?? null;
   }
 
   async findRequestByPr(repo: string, prNumber: number) {

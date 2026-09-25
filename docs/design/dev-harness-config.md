@@ -105,6 +105,8 @@ guardrails:
     idleRemindAfter: 45m
     runRemindAfter: 6h
     hardCancelAfter: null
+    undeliveredAfter: 3m # 会话连续两次轮询都是 idle、且安静这么久，仍没有 PR 或只有草稿 PR：转为「需要你看一下」，见 §10
+    queueEscalateAfter: 15m # 因没有可用执行机（Mac 离线、lody-bridge 不通）排队这么久，在 General 提醒一次；null 关闭
   autoFixRounds: 2
   quota: # 数据来自 lody machine list 的 raceLimits
     pauseAt: { fiveHour: 95%, week: 90% } # 任一窗口达到阈值时暂停该 provider 的排队任务
@@ -125,6 +127,13 @@ github:
   requireChecks: all # all | required
   branchPrefix: harness/
   labelPrefix: "harness:"
+  ci: # 推送后 CI 尚未登记的窗口，见 §10
+    grace: 60s # 每次推送后没有任何检查时，至少等这么久才允许合并
+    registrationTimeout: 10m # 仓库预期有 CI 时最多等这么久（路径过滤可能让 CI 不触发）
+    detectTtl: 30m # 「是否预期有 CI」按仓库与目标分支缓存的时长
+  reconcile: # 补偿丢失的 webhook，只读全局值，见 §10
+    interval: 3m # null 关闭
+    batch: 10 # 每轮最多同步的请求数
 
 deploy:
   dokploy:
@@ -290,3 +299,10 @@ executors:
 
 - 推理强度通过 `lody session create --config-option` 传给 Lody：Codex 用 `reasoning_effort=<值>`，Claude 用 `effort=<值>`；`default` 或留空时不传。
 - 额度按执行配置的 `agentType` 归属 provider；拿不到列表时按模型 ID 前缀（`gpt-`、`o3` 等为 Codex，`claude`、`opus`、`sonnet`、`haiku`、`fable` 为 Claude）判断，最后才看名称。
+
+## 10. 可靠性兜底
+
+- **CI 登记窗口**：GitHub 在推送几秒后才登记检查，这段时间 PR 没有任何检查。推送后 `github.ci.grace` 内，没有检查的 PR 显示「等待 CI 登记」，不能合并。目标分支的 `.github/workflows/*.yml` 里有 `pull_request` / `pull_request_target` 触发的 workflow 时视为「预期有 CI」，最多等到 `registrationTimeout`；没有 workflow 的仓库（例如 MoePeek、mcp-platform）过了 grace 即可合并。只看 check run 与 commit status，不看 check suite：订阅 `check_suite` 会留下没有 run 的 queued suite。检查登记（`check_run.created`）或等待到期时卡片自动刷新。
+- **补偿丢失的 webhook**：webhook 先返回 202 再异步处理，重启会丢事件。调度器每 `reconcile.interval` 取最多 `batch` 个未结束的请求，轮流处理：有 PR 的按 webhook 相同的同步流程读取 PR 状态、head 与检查并刷新卡片；运行中或「需要你看一下」但还没关联 PR 的，按 `branchPrefix` + 请求 ID 查找同仓库的开放 PR 并关联。issue 评论（`Question:` 等协议行）不补偿。
+- **会话停下但没有交付**：Lody 会话状态只有 `running` 和 `idle`。连续两次轮询都是 `idle`，且距离最后一条消息、最近一次推送或反馈都超过 `undeliveredAfter`，仍没有 PR 或只有草稿 PR 时，请求转为「需要你看一下」，并回复卡片一条消息，附会话最后一条回复的摘录（经 lody-bridge 的只读命令 `session history --limit 4 --reverse`，bridge 只返回角色、时间和前 2000 字）。会话重新运行，或 PR 已关联且不是草稿时，自动恢复。
+- **排队升级**：排队卡片显示已排队时长（分钟级，超过 5 分钟按 5 分钟、超过 1 小时按 30 分钟取整）。原因是执行层不可用或没有在线的执行机时，排队超过 `queueEscalateAfter` 在 General 话题提醒一次；并发、额度、同区域等有意的等待不提醒。排队起点按请求和启动次数记在 `harness_events`，重启后不会重置。

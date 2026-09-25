@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { chooseMachine } from "./scheduler.js";
-import { formatElapsed, renderJobCard } from "./job-card.js";
+import { formatElapsed, queueAge, renderJobCard } from "./job-card.js";
 import { resolveProjectConfig } from "./config/resolve.js";
 import { extractJson, parseMachineList } from "./lody.js";
 import { providerForAgent, quotaBlocks, renderFooter, startOfDay } from "./quota.js";
@@ -126,6 +126,28 @@ describe("renderJobCard", () => {
     expect(formatElapsed(59_000)).toBe("0 分钟");
     expect(formatElapsed(2 * 3_600_000)).toBe("2 小时");
   });
+
+  it("shows a coarse queued-for time on queued cards only", () => {
+    expect(queueAge(30_000)).toBeNull();
+    expect(queueAge(3 * 60_000 + 5_000)).toBe("已排队 3 分钟");
+    expect(queueAge(17 * 60_000)).toBe("已排队 15 分钟");
+    expect(queueAge(100 * 60_000)).toBe("已排队 1 小时 30 分钟");
+    const input = {
+      job: null,
+      machineLabel: null,
+      now: NOW,
+      cards,
+      approvalId: APPROVAL,
+      sessionUrl: null,
+      queuedSince: new Date(NOW.getTime() - 20 * 60_000),
+    };
+    const queued = renderJobCard({
+      ...input,
+      request: { ...request, state: "queued", stateReason: "MBP-64G 不在线" },
+    });
+    expect(queued.html).toContain("MBP-64G 不在线\n已排队 20 分钟");
+    expect(renderJobCard({ ...input, request }).html).not.toContain("已排队");
+  });
 });
 
 describe("quota", () => {
@@ -184,6 +206,15 @@ describe("quota", () => {
     });
     expect(chooseMachine(resolved.value, machines, new Map([["mbp", 4]]))).toEqual({
       reason: "Desktop-7700X 不在线",
+      offline: false,
+    });
+    const offlineOnly = {
+      ...resolved.value,
+      project: { ...resolved.value.project, machines: ["pc"] },
+    };
+    expect(chooseMachine(offlineOnly, machines, new Map())).toEqual({
+      reason: "Desktop-7700X 不在线",
+      offline: true,
     });
   });
 

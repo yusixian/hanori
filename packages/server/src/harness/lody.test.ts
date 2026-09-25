@@ -4,6 +4,7 @@ import {
   LodyCli,
   extractJson,
   parseCreatedSessionId,
+  parseLastAssistantText,
   parseSessionStatus,
   findMachine,
   parseMachineList,
@@ -275,6 +276,32 @@ describe("Lody outcome classification", () => {
       reason: "failed",
       message: "machine offline",
     });
+  });
+});
+
+describe("Lody session history", () => {
+  it("reads the newest assistant turn, whatever order the entries come in", async () => {
+    const stdout = fixture("lody-session-history.txt");
+    const expected = "I could not reproduce the bug.\n\nThe save button already shows a spinner.";
+    expect(parseLastAssistantText(extractJson(stdout))).toBe(expected);
+    const reordered = extractJson(stdout) as { entries: unknown[] };
+    reordered.entries.reverse();
+    expect(parseLastAssistantText(reordered)).toBe(expected);
+    expect(parseLastAssistantText({ ok: true, entries: [{ role: "user", text: "x" }] })).toBeNull();
+    expect(() => parseLastAssistantText({ ok: true })).toThrow("entries");
+
+    const exec = vi.fn(async () => ({ stdout }));
+    const cli = new LodyCli(["lody"], 1000, exec, () => NOW);
+    expect(await cli.lastAssistantMessage("s-1")).toEqual({ ok: true, value: expected });
+    expect((exec.mock.calls[0] as unknown as [string, string[]])[1]).toEqual([
+      "session",
+      "history",
+      "s-1",
+      "--limit",
+      "4",
+      "--reverse",
+      "--json",
+    ]);
   });
 });
 

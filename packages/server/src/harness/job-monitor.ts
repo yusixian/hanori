@@ -3,6 +3,7 @@ import { APPROVAL_ACTIONS, encodeCallback, ensureApproval } from "./approvals.js
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import { durationMs } from "./config/units.js";
 import { renderReminder, sessionLink } from "./job-card.js";
+import { checkDelivery } from "./delivery-watch.js";
 import { type LodyMachine, findMachine } from "./lody.js";
 import { quotaSnapshot, renderFooter, weeklyWarnings } from "./quota.js";
 import { formatDateTime } from "./render.js";
@@ -74,6 +75,10 @@ async function pollJob(work: HarnessWork, stale: HarnessJobRecord, machines: Lod
       S.needsAttention,
       { stateReason: "Lody 会话已在别处归档，可以重新排队开新会话" },
     );
+  } else if (shown.ok && (await checkDelivery(work, config, request, job, shown.value))) {
+    const moved = await service.store.getRequest(request.id);
+    if (moved) await work.refreshCard(moved);
+    return;
   } else if ((ACTIVE_STATES as readonly string[]).includes(request.state)) {
     if (await checkGuardrails(work, config, request, updated)) return;
   }
@@ -168,7 +173,7 @@ async function sendReminder(
   });
 }
 
-function generalThread(overview: "general" | number): number | undefined {
+export function generalThread(overview: "general" | number): number | undefined {
   return overview === "general" ? undefined : overview;
 }
 
