@@ -5,6 +5,7 @@ import {
   type CardVerb,
   decodeCallback,
 } from "./approvals.js";
+import { isAssistantCallback } from "./assistant-render.js";
 import { dispatchJobAction } from "./job-actions.js";
 import { REMINDER_KIND } from "./job-monitor.js";
 import { errorText } from "./pr-actions.js";
@@ -17,6 +18,7 @@ export async function handleHarnessCallback(
   service: HarnessService,
   request: HarnessCallbackRequest,
 ): Promise<HarnessCallbackAnswer> {
+  if (isAssistantCallback(request.data)) return service.assistant.handleCallback(request);
   const decoded = decodeCallback(request.data);
   if (!decoded) return { text: APPROVAL_PROBLEM_TEXT.missing };
   if (!service.port.isHarnessChat(request.chatId) || !service.port.isOwner(request.userId)) {

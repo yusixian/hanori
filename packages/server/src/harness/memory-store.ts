@@ -4,6 +4,7 @@ import {
   emptyProjectRecord,
   type HarnessApprovalRecord,
   type HarnessEventInput,
+  type HarnessEventRecord,
   type HarnessProjectPatch,
   type HarnessProjectRecord,
   type HarnessRequestInsert,
@@ -11,14 +12,14 @@ import {
   type HarnessRequestRecord,
   type HarnessStore,
 } from "./store.js";
-import { MemoryWorkStore } from "./memory-work-store.js";
+import { MemoryTopicStore } from "./memory-topic-store.js";
 
 /** In-process store with the same single-consumption semantics; used by tests. */
-export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore {
+export class MemoryHarnessStore extends MemoryTopicStore implements HarnessStore {
   readonly projects = new Map<string, HarnessProjectRecord>();
   readonly overrides: HarnessOverride[] = [];
   readonly settings = new Map<string, Record<string, unknown>>();
-  readonly events: Array<HarnessEventInput & { deliveryId?: string }> = [];
+  readonly events: Array<HarnessEventInput & { deliveryId?: string; createdAt?: Date }> = [];
   readonly approvals = new Map<string, HarnessApprovalRecord>();
 
   async listProjects() {
@@ -70,7 +71,7 @@ export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore 
   }
 
   async recordEvent(event: HarnessEventInput) {
-    this.events.push(event);
+    this.events.push({ ...event, createdAt: new Date() });
   }
 
   async recordDelivery(deliveryId: string, event: HarnessEventInput) {
@@ -148,6 +149,32 @@ export class MemoryHarnessStore extends MemoryWorkStore implements HarnessStore 
     return [...this.requests.values()].filter(
       (r) => r.projectKey === projectKey && states.includes(r.state),
     ).length;
+  }
+
+  async listProjectRequests(projectKey: string, limit: number) {
+    return [...this.requests.values()]
+      .filter((r) => r.projectKey === projectKey)
+      .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+      .slice(0, limit);
+  }
+
+  async listRequestEvents(requestId: string, limit: number): Promise<HarnessEventRecord[]> {
+    return this.events
+      .map((event, index) => ({ event, index }))
+      .filter(({ event }) => event.requestId === requestId)
+      .reverse()
+      .slice(0, limit)
+      .map(({ event, index }) => ({
+        id: index + 1,
+        type: event.type,
+        projectKey: event.projectKey ?? null,
+        requestId: event.requestId ?? null,
+        approvalId: event.approvalId ?? null,
+        actorId: event.actorId ?? null,
+        deliveryId: event.deliveryId ?? null,
+        payload: event.payload ?? null,
+        createdAt: event.createdAt ?? new Date(0),
+      }));
   }
 
   async createApproval(approval: Omit<HarnessApprovalRecord, "createdAt">) {

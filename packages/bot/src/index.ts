@@ -55,7 +55,7 @@ import {
   createCallbackQueryHandler,
   createAdminActionCallbackQueryHandler,
 } from "./handlers/event-handlers.js";
-import { createHarnessMiddleware } from "./harness/middleware.js";
+import { createHarnessMiddleware, type HarnessMiddlewareOptions } from "./harness/middleware.js";
 import { createHarnessTelegram } from "./harness/telegram.js";
 import type { HarnessBotPort } from "./harness/types.js";
 import { createLogMiddleware } from "./middleware/log.js";
@@ -247,7 +247,14 @@ export function createBot(config: BotConfig) {
     createTelegramObservationMiddleware(config.botId, config.telegramObservation, config.onLog),
   );
   bot.use(createLogMiddleware(config.onLog));
-  if (config.harness) bot.use(createHarnessMiddleware(config.harness));
+  let resolveHarnessAssistant: HarnessMiddlewareOptions["resolveAssistant"];
+  if (config.harness) {
+    bot.use(
+      createHarnessMiddleware(config.harness, {
+        resolveAssistant: (chatId, userId) => resolveHarnessAssistant?.(chatId, userId),
+      }),
+    );
+  }
 
   // Build AI handler + runtime state (created before commands so state is available)
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
@@ -348,6 +355,28 @@ export function createBot(config: BotConfig) {
     config.aiSelectionCallbacks?.onBotReady?.({
       applyAiSelectionSnapshot: result.applyAiSelectionSnapshot,
     });
+
+    resolveHarnessAssistant = (chatId, userId) => {
+      if (!result.isAiEnabled()) return undefined;
+      const { model, providerId, modelId } = result.resolveModelForChat(chatId);
+      return {
+        model,
+        recordUsage: (usage) =>
+          void Promise.resolve(
+            config.onTokenUsage?.({
+              chatId,
+              userId,
+              model: modelId,
+              providerId,
+              promptTokens: usage.inputTokens ?? 0,
+              completionTokens: usage.outputTokens ?? 0,
+              totalTokens: usage.totalTokens ?? 0,
+              durationMs: usage.durationMs,
+              trigger: "harness_assistant",
+            }),
+          ).catch(() => {}),
+      };
+    };
 
     // Register bot handlers with server for timer recovery and external cancel
     if (config.timerCallbacks?.onBotReady) {
@@ -733,6 +762,8 @@ export {
 export type { McpCommandConfig } from "./commands/mcp.js";
 export {
   HARNESS_CALLBACK_PREFIX,
+  type HarnessAssistantRuntime,
+  type HarnessAssistantUsage,
   type HarnessAttachment,
   type HarnessBotPort,
   type HarnessCallbackAnswer,
@@ -748,6 +779,7 @@ export {
   type HarnessReply,
   type HarnessReplyRequest,
   type HarnessTelegram,
+  type HarnessTopicMessageRequest,
 } from "./harness/types.js";
 export type {
   CosInsideAuditEntry,

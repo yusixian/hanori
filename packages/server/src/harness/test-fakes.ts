@@ -8,9 +8,13 @@ import { validateHarnessConfig } from "./config/loader.js";
 import type { CheckRunInput, CommitStatusInput } from "./contract.js";
 import type {
   AccessibleRepository,
+  CommitSummary,
   DirectoryEntry,
   HarnessGitHub,
+  IssueDetail,
+  IssueSummary,
   PullRequestInfo,
+  PullRequestSummary,
 } from "./github.js";
 import { readFileSync } from "node:fs";
 import {
@@ -190,6 +194,40 @@ export class FakeGitHub implements HarnessGitHub {
 
   async addLabels(_repo: string, number: number, labels: string[]) {
     this.labelsAdded.push({ number, labels });
+  }
+
+  /** Read queries the topic assistant made, as `<method> <repo> <args>`. */
+  readonly reads: string[] = [];
+  openIssues: IssueSummary[] = [];
+  pulls: PullRequestSummary[] = [];
+  commits: CommitSummary[] = [];
+  issueDetails: Record<number, IssueDetail> = {};
+
+  async listIssues(repo: string, input: { state: string; labels?: string; limit: number }) {
+    this.reads.push(`listIssues ${repo} ${input.state}`);
+    return this.openIssues.slice(0, input.limit);
+  }
+
+  async listPullRequests(repo: string, input: { state: string; limit: number }) {
+    this.reads.push(`listPullRequests ${repo} ${input.state}`);
+    return this.pulls.slice(0, input.limit);
+  }
+
+  async searchIssues(repo: string, query: string, limit: number) {
+    this.reads.push(`searchIssues ${repo} ${query}`);
+    return this.openIssues.filter((issue) => issue.title.includes(query)).slice(0, limit);
+  }
+
+  async getIssue(repo: string, number: number) {
+    this.reads.push(`getIssue ${repo} ${number}`);
+    const issue = this.issueDetails[number];
+    if (!issue) throw new Error("Not Found");
+    return issue;
+  }
+
+  async listCommits(repo: string, limit: number) {
+    this.reads.push(`listCommits ${repo}`);
+    return this.commits.slice(0, limit);
   }
 }
 

@@ -14,6 +14,7 @@ const CHAT_COMMANDS = [
   { command: "status", description: "查看项目、执行机与排队状态" },
   { command: "quota", description: "查看各执行机的模型额度" },
   { command: "bug", description: getTelegramCommandMetadata("bug").description["zh-CN"] },
+  { command: "new", description: "清空本话题的助手对话" },
   {
     command: "harness",
     description: getTelegramCommandMetadata("harness").description["zh-CN"],

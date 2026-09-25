@@ -8,9 +8,10 @@ export const MESSAGE_LIMIT = 3800;
 export function renderUsageHint(projectKey: string | undefined): string {
   const scope = projectKey ? `当前话题绑定项目 <b>${escapeHtml(projectKey)}</b>。` : "";
   return [
-    `${scope}这个群只处理 Dev Harness 命令，不闲聊。`,
-    "可用：/bug 描述 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
-    "回复卡片即是反馈。/feature 与普通消息分诊将在后续阶段开放。",
+    `${scope}这个群用于 Dev Harness。`,
+    "直接发文字即可和本话题的助手讨论：查询 issue / PR 与任务状态、总结需求、给出可一键执行的命令建议（需要 Bot 配置并启用 AI）。/new 清空本话题的对话。",
+    "命令：/bug 描述 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
+    "回复卡片即是反馈。",
   ].join("\n");
 }
 

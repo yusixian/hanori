@@ -36,6 +36,8 @@ const HARNESS_USAGE = [
   "diff — 覆盖层与 YAML 的差异",
   "export — 以文件导出生效配置",
   "reload — 重新读取 harness.yaml，失败时保留旧配置",
+  "",
+  "<b>话题助手</b>：在话题里直接发文字即可讨论需求、查询 issue / PR 与任务状态，建议的命令可一键执行；/new 清空本话题的对话",
 ].join("\n");
 
 const html = (text: string): HarnessReply => ({ html: text });
@@ -78,6 +80,8 @@ export async function handleHarnessCommand(
       return harnessSubcommand(service, request, projectKey);
     case "bug":
       return handleBugCommand(service.work, request, projectKey);
+    case "new":
+      return service.assistant.reset(request.chatId, request.threadId);
   }
 }
 
