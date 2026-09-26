@@ -1,4 +1,6 @@
 import type { Tool } from "ai";
+import { generateText } from "ai";
+import { MockLanguageModelV3 } from "ai/test";
 import type { Api } from "grammy";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PendingActionRegistry } from "../services/pending-actions.js";
@@ -11,6 +13,29 @@ type ExecutableTool = {
 type TimerSchema = {
   jsonSchema: { properties: { seconds: { maximum: number; description: string } } };
 };
+
+function timerToolCall(seconds: number) {
+  return {
+    type: "tool-call" as const,
+    toolCallId: "timer-call",
+    toolName: "set_timer",
+    input: JSON.stringify({ seconds, reason: "AI SDK validation" }),
+  };
+}
+
+function mockTimerModel(seconds: number) {
+  return new MockLanguageModelV3({
+    doGenerate: {
+      content: [timerToolCall(seconds)],
+      finishReason: { unified: "tool-calls", raw: "tool_calls" },
+      usage: {
+        inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+        outputTokens: { total: 1, text: 1, reasoning: 0 },
+      },
+      warnings: [],
+    },
+  });
+}
 
 function timerSecondsSchema(
   timerMaxSeconds?: number,
@@ -53,6 +78,112 @@ describe("telegram timer scheduling", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it("accepts the minimum duration and sends it to the durable scheduler", async () => {
+    const pendingActions = new PendingActionRegistry();
+    const onTimerCreate = vi.fn(async () => {});
+    const tools = createTelegramTools({
+      api: {} as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      pendingActions,
+      onTimerCreate,
+      onTimerFired: vi.fn(async () => {}),
+    });
+    const result = await generateText({
+      model: mockTimerModel(5),
+      prompt: "Set a short timer.",
+      tools,
+    });
+
+    expect(result.toolResults).toHaveLength(1);
+    expect(onTimerCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ seconds: 5, reason: "AI SDK validation" }),
+    );
+    pendingActions.destroy();
+  });
+
+  it("schedules the configured 7-day upper bound through the tool", async () => {
+    const pendingActions = new PendingActionRegistry();
+    const onTimerCreate = vi.fn(async () => {});
+    const tools = createTelegramTools({
+      api: {} as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      pendingActions,
+      onTimerCreate,
+      onTimerFired: vi.fn(async () => {}),
+      timerMaxSeconds: 604_800,
+    });
+    const result = await generateText({
+      model: mockTimerModel(604_800),
+      prompt: "Set a timer for the configured maximum.",
+      tools,
+    });
+
+    expect(result.toolResults).toHaveLength(1);
+    expect(onTimerCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ seconds: 604_800, reason: "AI SDK validation" }),
+    );
+    pendingActions.destroy();
+  });
+
+  it("returns an explicit error above the configured ceiling without scheduling", async () => {
+    const pendingActions = new PendingActionRegistry();
+    const onTimerCreate = vi.fn(async () => {});
+    const tools = createTelegramTools({
+      api: {} as Api,
+      chatId: 42,
+      recentBotMessageIds: [],
+      pendingActions,
+      onTimerCreate,
+      onTimerFired: vi.fn(async () => {}),
+      timerMaxSeconds: 604_800,
+    });
+    const result = await generateText({
+      model: mockTimerModel(604_801),
+      prompt: "Set a timer above the configured maximum.",
+      tools,
+    });
+
+    expect(result.toolResults).toHaveLength(1);
+    expect(result.toolResults[0]?.output).toMatchObject({
+      error: expect.stringContaining("604800"),
+    });
+    expect(onTimerCreate).not.toHaveBeenCalled();
+    pendingActions.destroy();
+  });
+
+  it.each([
+    { seconds: 4, timerMaxSeconds: undefined, bound: "5", label: "below minimum" },
+    { seconds: 86_401, timerMaxSeconds: undefined, bound: "86400", label: "above default ceiling" },
+  ])(
+    "returns an explicit error for $label without scheduling",
+    async ({ seconds, timerMaxSeconds, bound }) => {
+      const pendingActions = new PendingActionRegistry();
+      const onTimerCreate = vi.fn(async () => {});
+      const tools = createTelegramTools({
+        api: {} as Api,
+        chatId: 42,
+        recentBotMessageIds: [],
+        pendingActions,
+        onTimerCreate,
+        onTimerFired: vi.fn(async () => {}),
+        timerMaxSeconds,
+      });
+      const result = await generateText({
+        model: mockTimerModel(seconds),
+        prompt: `Set a timer for ${seconds} seconds.`,
+        tools,
+      });
+
+      expect(result.toolResults[0]?.output).toMatchObject({
+        error: expect.stringContaining(bound),
+      });
+      expect(onTimerCreate).not.toHaveBeenCalled();
+      pendingActions.destroy();
+    },
+  );
 
   it("delegates a persisted timer to its durable scheduler instead of firing a local handle", async () => {
     const pendingActions = new PendingActionRegistry();

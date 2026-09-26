@@ -365,6 +365,13 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
       ),
       execute: async ({ seconds, reason }) => {
         try {
+          if (
+            !Number.isFinite(seconds) ||
+            seconds < MIN_TIMER_SECONDS ||
+            seconds > timerMaxSeconds
+          ) {
+            return { error: `定时秒数必须在 ${MIN_TIMER_SECONDS} 到 ${timerMaxSeconds} 之间` };
+          }
           if (!options.pendingActions || !options.onTimerFired) {
             return { error: "Timer features not available" };
           }
