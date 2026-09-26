@@ -81,6 +81,7 @@ executors:
     worktree: true
     shareLinks: true
     poll: { active: 20s, idle: 2m }
+    turnWait: 2h # 会话创建与每次发消息都带 `--wait --timeout`，回合结束立即上报；null 只靠轮询，见 §10
   node:
     enabled: false
     listen: tailnet # tailnet | public
@@ -221,7 +222,7 @@ deploy:
 
 prompts:
   extra: [] # 追加给 lead 会话的仓库说明文件，例如 [AGENTS.md, docs/CONVENTIONS.md]
-  templates: {} # 按请求类型替换内置模板，例如 { bug: .cos/prompts/bug.md }
+  templates: {} # 按请求类型替换内置模板：bug、task、revise、answer、followup、ci_failed，例如 { bug: .cos/prompts/bug.md }
   preferSkills: [oneshot, frontend-acceptance, gh-stack, pr-visual, review-code-change]
 ```
 
@@ -304,5 +305,7 @@ executors:
 
 - **CI 登记窗口**：GitHub 在推送几秒后才登记检查，这段时间 PR 没有任何检查。推送后 `github.ci.grace` 内，没有检查的 PR 显示「等待 CI 登记」，不能合并。目标分支的 `.github/workflows/*.yml` 里有 `pull_request` / `pull_request_target` 触发的 workflow 时视为「预期有 CI」，最多等到 `registrationTimeout`；没有 workflow 的仓库（例如 MoePeek、mcp-platform）过了 grace 即可合并。只看 check run 与 commit status，不看 check suite：订阅 `check_suite` 会留下没有 run 的 queued suite。检查登记（`check_run.created`）或等待到期时卡片自动刷新。
 - **补偿丢失的 webhook**：webhook 先返回 202 再异步处理，重启会丢事件。调度器每 `reconcile.interval` 取最多 `batch` 个未结束的请求，轮流处理：有 PR 的按 webhook 相同的同步流程读取 PR 状态、head 与检查并刷新卡片；运行中或「需要你看一下」但还没关联 PR 的，按 `branchPrefix` + 请求 ID 查找同仓库的开放 PR 并关联。issue 评论（`Question:` 等协议行）不补偿。
-- **会话停下但没有交付**：Lody 会话状态只有 `running` 和 `idle`。连续两次轮询都是 `idle`，且距离最后一条消息、最近一次推送或反馈都超过 `undeliveredAfter`，仍没有 PR 或只有草稿 PR 时，请求转为「需要你看一下」，并回复卡片一条消息，附会话最后一条回复的摘录（经 lody-bridge 的只读命令 `session history --limit 4 --reverse`，bridge 只返回角色、时间和前 2000 字）。会话重新运行，或 PR 已关联且不是草稿时，自动恢复。
+- **会话停下但没有交付**：Lody 会话状态只有 `running` 和 `idle`。连续两次轮询都是 `idle`，且距离最后一条消息、最近一次推送或反馈都超过 `undeliveredAfter`，仍没有 PR 或只有草稿 PR 时，请求转为「需要你看一下」，并回复卡片一条消息，附会话最后一条回复的摘录（经 lody-bridge 的只读命令 `session history --limit 4 --reverse`，bridge 只返回角色、时间和前 4000 字）。会话重新运行，或 PR 已关联且不是草稿时，自动恢复。`/task` 没有 PR 时不发这条提醒，而是把最后一条回复作为结果发到话题，见下一条。
+- **回合结束回调**：`executors.lody.turnWait` 不为 null 时，harness 发起的每个回合（建会话、回答、修订、继续、CI 修复、`/task`）都带 `--wait --timeout <秒>`。经 lody-bridge 时，bridge 在 Lody 接受回合后立即应答，等待进程留在后台，结束后向 app 的 `POST /api/harness/lody/turn` 发一条用 `HARNESS_LODY_BRIDGE_SECRET` 签名的回调（HMAC-SHA256，覆盖时间戳和原始 body，时间戳超出 ±5 分钟即拒绝）；本地 CLI 模式在进程内直接处理。收到回调后立即检查该会话：只要 Lody 状态是 `idle` 就视为回合已结束，不再等两次轮询和 `undeliveredAfter`。状态还显示 `running` 时标记保留到下一次轮询；harness 再次向会话发消息，或会话在标记 60 秒后仍在运行时，标记清除。`--wait` 超时（`status: timeout`）、回调丢失或服务重启后，仍按上一条的轮询规则处理。标记只在内存中。
+- **`/task` 的结束**：回合结束且 `harness/<请求 ID>` 分支上没有开放 PR 时，读会话最后一条回复：以 `Question:` 开头的转到话题（状态「需要你看一下」，回复即作答），以 `Needs spec:` 开头的转为「需要写 spec」，其余作为结果发到话题（最多 3500 字，可展开引用；配置了 `sessionUrl` 时附「打开会话」），请求转为 `completed`。有 PR 时交给 PR 卡片。`completed` 算已结束（不进 `/list`、`/cancel`，不占并发），但会话还会被轮询 30 分钟：会话自己又开始运行（例如子会话回报）时回到「进行中」。回复结果消息或卡片会把同一个会话重新打开并发送回复，下一次回合结束再发新结果。
 - **排队升级**：排队卡片显示已排队时长（分钟级，超过 5 分钟按 5 分钟、超过 1 小时按 30 分钟取整）。原因是执行层不可用或没有在线的执行机时，排队超过 `queueEscalateAfter` 在 General 话题提醒一次；并发、额度、同区域等有意的等待不提醒。排队起点按请求和启动次数记在 `harness_events`，重启后不会重置。

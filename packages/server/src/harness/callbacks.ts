@@ -95,6 +95,9 @@ function run(
   return service.work.withRequest(target.id, async () => {
     const records = await reread();
     if (!records) return { text: APPROVAL_PROBLEM_TEXT.missing };
+    if (approval.action === APPROVAL_ACTIONS.release) {
+      return service.releases.dispatch(verb, records.fresh, records.freshTarget, request);
+    }
     return dispatchJobAction(service.work, verb, {
       approval: records.fresh,
       request: records.freshTarget,

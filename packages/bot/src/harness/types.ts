@@ -8,10 +8,12 @@ export const HARNESS_COMMANDS = [
   "quota",
   "harness",
   "bug",
+  "task",
   "list",
   "cancel",
   "retry",
   "new",
+  "release",
 ] as const;
 export type HarnessCommandName = (typeof HARNESS_COMMANDS)[number];
 

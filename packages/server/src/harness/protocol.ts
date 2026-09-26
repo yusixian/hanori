@@ -6,7 +6,13 @@ import { quoteAsData } from "./prompts.js";
 import { APPROVAL_ACTIONS, encodeCallback, ensureApproval, jobBinding } from "./approvals.js";
 import { PICKER_KIND } from "./job-actions.js";
 import { REMINDER_KIND } from "./job-monitor.js";
-import { JOB_STATES, REQUEST_STATES as S, WHOLE_REPO, isTerminal } from "./states.js";
+import {
+  JOB_STATES,
+  REQUEST_STATES as S,
+  WHOLE_REPO,
+  isTerminal,
+  isWorkRequest,
+} from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
 import type { HarnessJobRecord } from "./work-store.js";
 import { RELAY_MARKER, type HarnessWork } from "./work.js";
@@ -94,7 +100,7 @@ export async function handleIssueComment(
   const target = issue.pull_request
     ? await service.store.findRequestByPr(repo, issue.number)
     : await service.store.findRequestByIssue(repo, issue.number);
-  if (!target || target.type !== "bug" || isTerminal(target.state)) return;
+  if (!target || !isWorkRequest(target) || isTerminal(target.state)) return;
   const message = parseProtocol(comment.body);
   if (!message.areas && message.question === undefined && message.needsSpec === undefined) return;
   if (!isTrustedCommenter(comment, config)) {
@@ -141,7 +147,7 @@ async function declareAreas(
   void work.scheduler.tick();
 }
 
-async function needsSpec(work: HarnessWork, request: HarnessRequestRecord, reason: string) {
+export async function needsSpec(work: HarnessWork, request: HarnessRequestRecord, reason: string) {
   const { service } = work;
   const text = reason || "未说明原因";
   const moved = await service.store.transitionRequest(
@@ -157,19 +163,34 @@ async function needsSpec(work: HarnessWork, request: HarnessRequestRecord, reaso
     requestId: request.id,
     payload: { reason: text.slice(0, 500) },
   });
-  await service.telegram?.send(service.file.telegram.chatId, {
+  const chatId = service.file.telegram.chatId;
+  const sent = await service.telegram?.send(chatId, {
     html: `📝 ${request.issueNumber ? `#${request.issueNumber} ` : ""}需要先写 spec：${escapeHtml(
       text.slice(0, 500),
-    )}\n大需求流程将在后续阶段开放，目前请在 GitHub 上处理。`,
+    )}\n${
+      request.type === "task"
+        ? "回复这张卡片补充说明，任务会在同一个会话里继续。"
+        : "大需求流程将在后续阶段开放，目前请在 GitHub 上处理。"
+    }`,
     threadId: service.projectThread(request.projectKey),
     replyToMessageId: request.cardMessageId ?? undefined,
   });
+  if (sent && request.type === "task") {
+    await service.store.recordMessage({
+      chatId,
+      messageId: sent.messageId,
+      requestId: request.id,
+      kind: "needs_spec",
+      ref: null,
+    });
+  }
 }
 
-async function forwardQuestion(
+/** `number` is null for a task, whose question comes from its final message, not a comment. */
+export async function forwardQuestion(
   work: HarnessWork,
   request: HarnessRequestRecord,
-  number: number,
+  number: number | null,
   commentId: number | null,
   question: string,
 ) {
@@ -177,8 +198,11 @@ async function forwardQuestion(
   const telegram = service.telegram;
   if (!telegram) return;
   const chatId = service.file.telegram.chatId;
+  const subject = number
+    ? `#${number} 的问题`
+    : `任务「${(request.title ?? "").slice(0, 40)}」的问题`;
   const sent = await telegram.send(chatId, {
-    html: `❓ #${number} 的问题：\n<blockquote>${escapeHtml(question)}</blockquote>\n回复这条消息作答。`,
+    html: `❓ ${escapeHtml(subject)}：\n<blockquote>${escapeHtml(question)}</blockquote>\n回复这条消息作答。`,
     threadId: service.projectThread(request.projectKey),
     replyToMessageId: request.cardMessageId ?? undefined,
   });
@@ -252,9 +276,10 @@ export async function handleOwnerReply(
     ? await service.store.getRequest(question.requestId)
     : await service.store.findRequestByCard(reply.chatId, reply.replyToMessageId);
   if (!target) return null;
-  if (target.type !== "bug") return { html: "这张卡片没有关联的执行会话。" };
-  if (isTerminal(target.state)) return { html: "这个请求已经结束。" };
+  if (!isWorkRequest(target)) return { html: "这张卡片没有关联的执行会话。" };
   const text = reply.text.trim();
+  if (target.state === S.completed && text) return reopenTask(work, target, reply, text);
+  if (isTerminal(target.state)) return { html: "这个请求已经结束。" };
   if (!text) return { html: "目前只支持文字回复。" };
   return work
     .withRequest(target.id, async () => {
@@ -282,9 +307,21 @@ export async function handleOwnerReply(
       } catch (error) {
         return { html: `写入 GitHub 失败：${escapeHtml(errorText(error))}` };
       }
-      const kind = isQuestion || !request.prNumber ? "answer" : "revise";
+      const isTask = request.type === "task";
+      const kind = request.prNumber && !isQuestion ? "revise" : isTask ? "followup" : "answer";
       const sent = await work.sendToSession(request, kind, { ownerText: text });
-      if (!sent.ok) return { html: `已写入 GitHub，但发送到会话失败：${escapeHtml(sent.message)}` };
+      if (!sent.ok) {
+        const prefix = number ? "已写入 GitHub，但" : "";
+        return { html: `${prefix}发送到会话失败：${escapeHtml(sent.message)}` };
+      }
+      if (isTask && !request.prNumber) {
+        await service.store.transitionRequest(
+          request.id,
+          [S.needsAttention, S.needsSpec],
+          S.running,
+          { stateReason: null },
+        );
+      }
       if (kind === "revise") {
         await service.store.transitionRequest(
           request.id,
@@ -309,4 +346,57 @@ export async function handleOwnerReply(
       if (fresh?.prNumber) await work.refreshCard(fresh);
       return result;
     });
+}
+
+/**
+ * A reply to a completed task (its card or result) sends the text to the same session: the task
+ * and its job go back to running, so the next turn end posts a new result.
+ */
+async function reopenTask(
+  work: HarnessWork,
+  target: HarnessRequestRecord,
+  reply: HarnessReplyRequest,
+  text: string,
+): Promise<HarnessReply> {
+  const { service } = work;
+  return work.withRequest(target.id, async () => {
+    const job = await service.store.latestJob(target.id);
+    if (!job?.sessionId) return { html: "这个任务没有可以继续的会话。" };
+    const reopened = await service.store.transitionRequest(target.id, [S.completed], S.running, {
+      stateReason: null,
+    });
+    if (!reopened) return { html: "任务状态已变化，请再回复一次。" };
+    const now = service.now();
+    const restore = {
+      state: job.state,
+      endedAt: job.endedAt,
+      startedAt: job.startedAt,
+      runRemindedAt: job.runRemindedAt,
+      idleRemindedAt: job.idleRemindedAt,
+    };
+    await service.store.updateJob(job.id, {
+      state: JOB_STATES.running,
+      endedAt: null,
+      nextPollAt: now,
+      startedAt: now,
+      runRemindedAt: null,
+      idleRemindedAt: null,
+    });
+    const request = (await service.store.getRequest(target.id))!;
+    const sent = await work.sendToSession(request, "followup", { ownerText: text });
+    if (!sent.ok) {
+      await service.store.updateJob(job.id, restore);
+      await service.store.transitionRequest(target.id, [S.running], S.completed);
+      return { html: `发送到会话失败：${escapeHtml(sent.message)}` };
+    }
+    await service.recordEvent({
+      type: "owner.followup",
+      projectKey: request.projectKey,
+      requestId: request.id,
+      actorId: reply.userId,
+      payload: { reopened: true, length: text.length },
+    });
+    await work.refreshCard((await service.store.getRequest(target.id)) ?? request);
+    return { html: "" };
+  });
 }

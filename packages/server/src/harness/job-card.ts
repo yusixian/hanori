@@ -18,10 +18,16 @@ export const REQUEST_HEADLINES: Record<string, string> = {
   [S.needsAttention]: "👀 需要你看一下",
   [S.cancelled]: "⚫ 已取消",
   [S.failed]: "🔴 失败",
+  [S.completed]: "✅ 已完成",
 };
 
 export interface JobCardInput {
-  request: Pick<HarnessRequestRecord, "state" | "title" | "issueNumber" | "repo" | "stateReason">;
+  request: Pick<
+    HarnessRequestRecord,
+    "state" | "title" | "issueNumber" | "repo" | "stateReason"
+  > & {
+    type?: string;
+  };
   job: HarnessJobRecord | null;
   machineLabel: string | null;
   now: Date;
@@ -66,6 +72,10 @@ function openButton(input: JobCardInput): HarnessInlineButton | null {
 
 function keyboard(input: JobCardInput): HarnessKeyboard {
   const { state } = input.request;
+  if (state === S.completed) {
+    const url = sessionLink(input.sessionUrl, input.job?.sessionId ?? null);
+    return url ? [[{ text: "💬 打开会话", url }]] : [];
+  }
   const id = input.approvalId;
   if (!id) return [];
   const abort = { text: "✖️ 取消", callbackData: encodeCallback(id, "abort") };
@@ -95,7 +105,9 @@ export function renderJobCard(input: JobCardInput): { html: string; keyboard: Ha
   const title = escapeHtml((request.title ?? "未命名请求").slice(0, 120));
   const issue = request.issueNumber
     ? `<a href="${escapeHtml(issueUrl(request.repo, request.issueNumber))}">#${request.issueNumber}</a> `
-    : "";
+    : request.type === "task"
+      ? "🛠 任务 · "
+      : "";
   const lines = [`<b>${REQUEST_HEADLINES[request.state] ?? request.state}</b> · ${issue}${title}`];
   if (job && job.state !== "lost") {
     const parts = [
@@ -111,6 +123,8 @@ export function renderJobCard(input: JobCardInput): { html: string; keyboard: Ha
     if (footer) lines.push(escapeHtml(footer));
   }
   if (request.stateReason) lines.push(escapeHtml(request.stateReason.slice(0, 300)));
+  if (request.state === S.completed)
+    lines.push("结果已发在下方；回复卡片或结果消息可以继续这个会话。");
   const queued =
     request.state === S.queued && input.queuedSince
       ? queueAge(now.getTime() - input.queuedSince.getTime())

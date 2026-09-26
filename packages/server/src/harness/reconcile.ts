@@ -1,17 +1,17 @@
 import { durationMs } from "./config/units.js";
 import { errorText } from "./pr-actions.js";
 import { harnessBranch } from "./prompts.js";
-import { REQUEST_STATES as S, isTerminal } from "./states.js";
+import { REQUEST_STATES as S, isTerminal, isWorkRequest } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
 import type { HarnessWork } from "./work.js";
 
 const OPEN_STATES = Object.values(S).filter((state) => !isTerminal(state));
-/** Bug requests whose session may have opened a PR the webhook never told us about. */
+/** Work requests whose session may have opened a PR the webhook never told us about. */
 const MAY_HAVE_PR: readonly string[] = [S.running, S.needsAttention];
 
 function needsReconcile(request: HarnessRequestRecord): boolean {
   if (request.prNumber !== null) return true;
-  return request.type === "bug" && MAY_HAVE_PR.includes(request.state);
+  return isWorkRequest(request) && MAY_HAVE_PR.includes(request.state);
 }
 
 /**

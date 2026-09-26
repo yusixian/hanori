@@ -301,6 +301,19 @@ export const TELEGRAM_COMMAND_CATALOG = [
     redactArgs: true,
   },
   {
+    command: "task",
+    description: {
+      "zh-CN": "在项目话题中把任务直接交给 Lody（不建 issue）",
+      en: "Hand a task to Lody in a project topic without an issue",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "harness.request.create",
+    publicHelpVisibility: "hidden",
+    redactArgs: true,
+  },
+  {
     command: "list",
     description: {
       "zh-CN": "列出 Dev Harness 进行中的请求",
@@ -334,6 +347,18 @@ export const TELEGRAM_COMMAND_CATALOG = [
     access: "admin",
     executionLane: "operation",
     capability: "harness.request.retry",
+    publicHelpVisibility: "hidden",
+  },
+  {
+    command: "release",
+    description: {
+      "zh-CN": "在项目话题中生成发版计划，确认后打 tag",
+      en: "Plan a release in a project topic and tag it once confirmed",
+    },
+    category: "operations",
+    access: "admin",
+    executionLane: "operation",
+    capability: "harness.release.manage",
     publicHelpVisibility: "hidden",
   },
 ] as const satisfies readonly TelegramCommandMetadata[];

@@ -91,9 +91,9 @@ RUN npm install -g "lody@${LODY_VERSION}" \
   && chown node:node /home/node/.lody
 # Older BuildKit applies COPY --chmod to directories it creates, which left /opt/lody-bridge
 # untraversable for the node user; create it first and set modes explicitly.
-COPY infrastructure/lody-bridge/server.mjs infrastructure/lody-bridge/allowlist.mjs infrastructure/lody-bridge/entrypoint.sh /opt/lody-bridge/
+COPY infrastructure/lody-bridge/server.mjs infrastructure/lody-bridge/allowlist.mjs infrastructure/lody-bridge/waiter.mjs infrastructure/lody-bridge/entrypoint.sh /opt/lody-bridge/
 RUN chmod 755 /opt/lody-bridge /opt/lody-bridge/entrypoint.sh \
-  && chmod 644 /opt/lody-bridge/server.mjs /opt/lody-bridge/allowlist.mjs
+  && chmod 644 /opt/lody-bridge/server.mjs /opt/lody-bridge/allowlist.mjs /opt/lody-bridge/waiter.mjs
 USER node
 ENV HOME=/home/node
 ENTRYPOINT ["/opt/lody-bridge/entrypoint.sh"]

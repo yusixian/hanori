@@ -6,10 +6,22 @@ import type { HarnessGitHub } from "./github.js";
 import { errorText } from "./pr-actions.js";
 import type { HarnessService } from "./service.js";
 import type { HarnessRequestRecord } from "./store.js";
+import { RELEASE_USAGE, parseReleaseArgs } from "./release-plan.js";
 
 export const FILE_CHAR_LIMIT = 40_000;
 const MAX_SUGGESTIONS = 3;
-const SUGGESTABLE = ["bug", "status", "quota"] as const;
+/** Commands the assistant may turn into buttons; a new command also needs its line in the prompt. */
+export const SUGGESTABLE_COMMANDS = [
+  "bug",
+  "task",
+  "release",
+  "list",
+  "retry",
+  "status",
+  "quota",
+] as const;
+/** Commands that act on one project and need a description. */
+const PROJECT_COMMANDS: ReadonlySet<string> = new Set(["bug", "task"]);
 
 export interface AssistantToolContext {
   service: HarnessService;
@@ -284,24 +296,31 @@ export function createAssistantTools(ctx: AssistantToolContext): Record<string, 
     propose_command: readTool(
       "给 owner 提一个可一键执行的命令建议（生成按钮，owner 点击才执行，你自己不会执行任何东西）。每次回复最多 3 个。",
       z.object({
-        command: z.enum(SUGGESTABLE),
+        command: z.enum(SUGGESTABLE_COMMANDS),
         args: z
           .string()
           .max(SUGGESTION_ARGS_LIMIT)
           .default("")
-          .describe("命令参数；/bug 的描述第一行是标题"),
-        project: projectField.describe("目标项目 key；项目话题中省略，General 中 /bug 必须传"),
+          .describe(
+            "命令参数；/bug 和 /task 的第一行是标题；/retry 可以带请求 ID；/release 可以带 patch、minor、major 或版本号，也可以留空",
+          ),
+        project: projectField.describe(
+          "目标项目 key；项目话题中省略，General 中 /bug、/task 和 /release 必须传",
+        ),
       }),
       async (input) => {
         if (ctx.suggestions.length >= MAX_SUGGESTIONS) {
           throw new ToolRefusal(`每次回复最多 ${MAX_SUGGESTIONS} 个建议`);
         }
         const args = input.args.trim();
-        if (input.command === "bug" && !args) throw new ToolRefusal("/bug 需要问题描述");
+        const needsText = PROJECT_COMMANDS.has(input.command);
+        if (needsText && !args) throw new ToolRefusal(`/${input.command} 需要说明`);
+        if (input.command === "release" && args && !parseReleaseArgs(args)) {
+          throw new ToolRefusal(RELEASE_USAGE);
+        }
+        const perProject = needsText || input.command === "release";
         const target =
-          input.project || (input.command === "bug" && !ctx.fixedProject)
-            ? project(input.project).key
-            : null;
+          input.project || (perProject && !ctx.fixedProject) ? project(input.project).key : null;
         ctx.suggestions.push({
           command: input.command,
           args,

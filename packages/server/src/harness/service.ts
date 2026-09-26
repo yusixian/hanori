@@ -21,12 +21,12 @@ import {
   type ProjectEffectiveConfig,
   resolveThreadSetting,
 } from "./config/schema.js";
-import { durationMs } from "./config/units.js";
 import type { HarnessGitHub } from "./github.js";
-import { type ExecFileLike, LodyCli } from "./lody.js";
-import { createBridgeExec } from "./lody-bridge.js";
+import type { LodyCli } from "./lody.js";
+import { type CreateLody, LodyClients, defaultCreateLody } from "./lody-client.js";
 import { HarnessPrActions } from "./pr-actions.js";
 import { HarnessPrFlow } from "./pr-flow.js";
+import { HarnessReleases } from "./release-flow.js";
 import { fetchRepoPolicy } from "./policy-refresh.js";
 import { createHarnessPort } from "./service-port.js";
 import {
@@ -39,6 +39,7 @@ import {
 import type { PrSummarizer } from "./summary.js";
 import type { GitHubWebhookRequest, GitHubWebhookResponse } from "./webhook.js";
 import { dispatchGitHubWebhook } from "./webhook-dispatch.js";
+import { type LodyTurnRequest, type LodyTurnResponse, receiveTurnEnd } from "./turn-callback.js";
 import { HarnessWork } from "./work.js";
 
 export { REPO_POLICY_PATH } from "./policy-refresh.js";
@@ -63,7 +64,7 @@ export interface HarnessServiceOptions {
   /** Signs `/bug` screenshot links served under `panelUrl`; unset keeps file ids only. */
   attachmentSecret?: string;
   loadConfig?: (path: string) => Promise<ConfigValidation>;
-  createLody?: (command: string[], timeoutMs: number, exec?: ExecFileLike) => LodyCli;
+  createLody?: CreateLody;
 }
 
 export interface ScopedView<T> {
@@ -81,6 +82,7 @@ export class HarnessService {
   readonly prFlow: HarnessPrFlow;
   readonly prActions: HarnessPrActions;
   readonly work: HarnessWork;
+  readonly releases: HarnessReleases;
   readonly assistant: HarnessTopicAssistant;
   /** Where owners manage projects; the Telegram "管理项目" button links here. */
   readonly adminUrl: string | null;
@@ -89,11 +91,7 @@ export class HarnessService {
   private readonly env: Record<string, string | undefined>;
   private readonly clock: () => Date;
   private readonly loadConfig: (path: string) => Promise<ConfigValidation>;
-  private readonly createLody: (
-    command: string[],
-    timeoutMs: number,
-    exec?: ExecFileLike,
-  ) => LodyCli;
+  private readonly lodyClients: LodyClients;
   private readonly applyLock = new KeyedAsyncLock();
   private yaml: LoadedHarnessConfig | null = null;
   /** harness.yaml composed with the panel projects that took effect. */
@@ -107,7 +105,6 @@ export class HarnessService {
   private projectRecords = new Map<string, HarnessProjectRecord>();
   private telegramClient: HarnessTelegram | null = null;
   private boundBot: { id: string; name: string; miniApp: boolean } | null = null;
-  private lodyClient: { key: string; cli: LodyCli } | null = null;
 
   constructor(options: HarnessServiceOptions) {
     this.configPath = options.configPath;
@@ -123,11 +120,19 @@ export class HarnessService {
     const { attachmentSecret, panelUrl } = options;
     this.attachments = createAttachments(attachmentSecret, panelUrl, () => this.telegramClient);
     this.loadConfig = options.loadConfig ?? ((path) => loadHarnessConfigFile(path, this.clock()));
-    this.createLody =
-      options.createLody ?? ((command, timeoutMs, exec) => new LodyCli(command, timeoutMs, exec));
+    this.lodyClients = new LodyClients(
+      options.createLody ?? defaultCreateLody,
+      (name) => this.readEnv(name),
+      (end) => {
+        this.work.onTurnEnd(end).catch((error: Error) => {
+          this.logger.warn(`Dev Harness turn-end check failed: ${error.message}`);
+        });
+      },
+    );
     this.prFlow = new HarnessPrFlow(this);
     this.prActions = new HarnessPrActions(this, this.prFlow);
     this.work = new HarnessWork(this);
+    this.releases = new HarnessReleases(this);
     this.assistant = new HarnessTopicAssistant(this);
   }
 
@@ -338,22 +343,13 @@ export class HarnessService {
       : undefined;
   }
 
-  /** Uses the lody-bridge sidecar when its URL is set in the environment, else the local CLI. */
+  /** The bridge or local-CLI client for the current config; see LodyClients. */
   lody(): LodyCli {
-    const lody = this.globalView().config.executors.lody;
-    const command = typeof lody.cli === "string" ? [lody.cli] : lody.cli;
-    const bridgeUrl = this.readEnv(lody.bridge.urlEnv);
-    const bridgeSecret = this.readEnv(lody.bridge.secretEnv);
-    const key = JSON.stringify([command, lody.timeout, bridgeUrl ?? null, Boolean(bridgeSecret)]);
-    if (this.lodyClient?.key !== key) {
-      const exec = bridgeUrl ? createBridgeExec(bridgeUrl, bridgeSecret) : undefined;
-      this.lodyClient = { key, cli: this.createLody(command, durationMs(lody.timeout), exec) };
-    }
-    return this.lodyClient.cli;
+    return this.lodyClients.get(this.globalView().config.executors.lody);
   }
 
   lodyTransport(): "bridge" | "local" {
-    return this.readEnv(this.globalView().config.executors.lody.bridge.urlEnv) ? "bridge" : "local";
+    return this.lodyClients.transport(this.globalView().config.executors.lody);
   }
 
   async recordEvent(event: HarnessEventInput): Promise<void> {
@@ -370,6 +366,10 @@ export class HarnessService {
 
   handleGitHubWebhook(request: GitHubWebhookRequest): Promise<GitHubWebhookResponse> {
     return dispatchGitHubWebhook(this, request);
+  }
+
+  handleLodyTurn(request: LodyTurnRequest): LodyTurnResponse {
+    return receiveTurnEnd(this, request);
   }
 
   async reload(actorId?: number): Promise<{ ok: true } | { ok: false; issues: ConfigIssue[] }> {

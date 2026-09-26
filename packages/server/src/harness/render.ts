@@ -12,7 +12,7 @@ export function renderUsageHint(projectKey: string | undefined, assistantReady =
     assistantReady
       ? "直接发文字即可和本话题的助手讨论：查询 issue / PR 与任务状态、总结需求、给出可一键执行的命令建议。/new 清空本话题的对话。"
       : "⚠️ 话题助手未启用：在面板为这个 Bot 添加 AI 服务商并开启「AI 回复」后，直接发文字就能和助手讨论需求、查询进度。",
-    "命令：/bug 描述 · /list 进行中 · /cancel 取消 · /retry 重新排队 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
+    "命令：/bug 描述 · /task 说明（不建 issue）· /list 进行中 · /cancel 取消 · /retry 重新排队 · /release 发版 · /status 状态 · /quota 额度 · /harness config|set|unset|diff|export|reload",
     "回复卡片即是反馈，PR 卡片上的「打回」也会请你写原因。",
   ].join("\n");
 }

@@ -34,6 +34,7 @@ services:
       - HARNESS_CONFIG_PATH=${HARNESS_CONFIG_PATH:-}
       - HARNESS_GITHUB_WEBHOOK_SECRET=${HARNESS_GITHUB_WEBHOOK_SECRET:-}
       - HARNESS_LODY_BRIDGE_URL=${HARNESS_LODY_BRIDGE_URL:-}
+      # Also verifies the bridge's signed turn-end callbacks (POST /api/harness/lody/turn).
       - HARNESS_LODY_BRIDGE_SECRET=${HARNESS_LODY_BRIDGE_SECRET:-}
       - CODING_WORKER_URL=
       - CODING_WORKER_SOCKET=/coding-control/worker.sock
@@ -297,6 +298,9 @@ services:
       - LODY_MACHINE_NAME=${LODY_MACHINE_NAME:-cos-tool-bot-server}
       - LODY_DAEMON_WATCH_MS=${LODY_DAEMON_WATCH_MS:-60000}
       - LODY_BRIDGE_PORT=43190
+      # Turn ends of `--wait` sessions are POSTed here, signed with HARNESS_LODY_BRIDGE_SECRET.
+      - HARNESS_LODY_CALLBACK_URL=${HARNESS_LODY_CALLBACK_URL:-http://app:3000/api/harness/lody/turn}
+      - LODY_BRIDGE_MAX_WAITERS=${LODY_BRIDGE_MAX_WAITERS:-8}
     expose:
       - "43190"
     volumes:

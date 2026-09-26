@@ -6,6 +6,8 @@ import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // Dynamic dev-tool imports must not trigger a page reload while browser tests are running.
+  optimizeDeps: { include: ["react-grab", "react-dom/client"] },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
     include: ["src/**/*.browser.test.tsx"],

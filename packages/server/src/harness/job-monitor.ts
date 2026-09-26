@@ -5,6 +5,7 @@ import { durationMs } from "./config/units.js";
 import { renderReminder, sessionLink } from "./job-card.js";
 import { checkDelivery } from "./delivery-watch.js";
 import { type LodyMachine, findMachine } from "./lody.js";
+import type { TurnEnd } from "./lody-wait.js";
 import { quotaSnapshot, renderFooter, weeklyWarnings } from "./quota.js";
 import { formatDateTime } from "./render.js";
 import { ACTIVE_STATES, JOB_STATES, REQUEST_STATES as S, isTerminal } from "./states.js";
@@ -13,6 +14,10 @@ import type { HarnessWork } from "./work.js";
 import type { HarnessJobPatch, HarnessJobRecord } from "./work-store.js";
 
 export const REMINDER_KIND = "reminder";
+/** A completed task's session is still watched this long, so a turn it starts on its own shows. */
+export const TASK_WATCH_MS = 30 * 60_000;
+/** Lody's status may still say `running` right after a reported end. */
+const STATUS_LAG_MS = 60_000;
 
 function latest(...dates: Array<Date | null | undefined>): Date {
   return new Date(Math.max(...dates.map((date) => date?.getTime() ?? 0)));
@@ -31,13 +36,48 @@ export async function pollJobs(work: HarnessWork): Promise<void> {
   }
 }
 
+/**
+ * A harness-started turn ended (bridge callback or local waiter): check its job now instead of at
+ * the next poll. The outcome is kept until a new turn starts, so a failed task cannot become a
+ * completed task through the polling fallback. Unknown sessions only leave the mark.
+ */
+export async function handleTurnEnd(work: HarnessWork, end: TurnEnd): Promise<void> {
+  const { service } = work;
+  const jobs = await service.store.listJobs([JOB_STATES.running]);
+  const job = jobs.find((candidate) => candidate.sessionId === end.sessionId);
+  const request = job ? await service.store.getRequest(job.requestId) : null;
+  await service.recordEvent({
+    type: "session.turn_ended",
+    projectKey: request?.projectKey ?? null,
+    requestId: request?.id ?? null,
+    payload: { status: end.status, command: end.command, matched: Boolean(job) },
+  });
+  if (!job) {
+    work.markTurnEnded(end.sessionId, end.status, end.turnId);
+    return;
+  }
+  const listed = await service.lody().listMachines();
+  await work.withRequest(job.requestId, async () => {
+    if (!work.markTurnEnded(end.sessionId, end.status, end.turnId)) return;
+    await pollJob(work, job, listed.ok ? listed.value : []);
+  });
+}
+
+function watchingTask(request: HarnessRequestRecord, job: HarnessJobRecord, now: Date): boolean {
+  return (
+    request.state === S.completed &&
+    job.endedAt !== null &&
+    now.getTime() - job.endedAt.getTime() < TASK_WATCH_MS
+  );
+}
+
 async function pollJob(work: HarnessWork, stale: HarnessJobRecord, machines: LodyMachine[]) {
   const { service } = work;
   const request = await service.store.getRequest(stale.requestId);
   const job = await service.store.latestJob(stale.requestId);
   if (!request || !job || job.id !== stale.id || job.state !== JOB_STATES.running) return;
   const now = service.now();
-  if (isTerminal(request.state)) {
+  if (isTerminal(request.state) && !watchingTask(request, job, now)) {
     await service.store.updateJob(job.id, { state: JOB_STATES.done, endedAt: now });
     return;
   }
@@ -48,6 +88,7 @@ async function pollJob(work: HarnessWork, stale: HarnessJobRecord, machines: Lod
   const shown = await service.lody().showSession(job.sessionId);
   if (shown.ok) {
     const session = shown.value;
+    if (session.status === "running") work.clearTurnEnd(job.sessionId, STATUS_LAG_MS);
     patch.sessionStatus = session.status;
     if (session.model?.name) patch.modelName = session.model.name;
     if (session.context) {

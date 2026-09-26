@@ -15,7 +15,7 @@ afterEach(async () => {
 
 interface Seen {
   auth?: string;
-  body: { args: string[]; stdin?: string; timeoutMs: number };
+  body: { args: string[]; stdin?: string; timeoutMs: number; turnId?: string };
 }
 
 async function fakeBridge(
@@ -132,6 +132,56 @@ describe("lody-bridge transport", () => {
       reason: "unavailable",
       message: "lody-bridge 地址无效",
     });
+  });
+});
+
+describe("lody-bridge turn waits", () => {
+  const ok = (stdout: unknown) => ({
+    body: { exitCode: 0, signal: null, timedOut: false, stdout: JSON.stringify(stdout) },
+  });
+  const waiting = (url: string) =>
+    new LodyCli(["lody"], 1_000, createBridgeExec(url, SECRET), () => NOW, 7_200);
+
+  it("sends create and chat with --wait and reads the id the bridge relays", async () => {
+    const bridge = await fakeBridge(() => ok({ ok: true, sessionId: "s-9" }));
+    expect(await waiting(bridge.url).createSession(CREATE)).toEqual({
+      ok: true,
+      value: { sessionId: "s-9" },
+    });
+    expect(await waiting(bridge.url).chat("s-9", "more", "harness-turn-1")).toEqual({
+      ok: true,
+      value: undefined,
+    });
+    expect(bridge.seen[1]!.body.turnId).toBe("harness-turn-1");
+    const [create, chat] = bridge.seen.map((seen) => seen.body.args);
+    expect(create!.slice(-5)).toEqual(["--prompt-file", "-", "--wait", "--timeout", "7200"]);
+    expect(create).not.toContain("--json");
+    expect(chat).toEqual([
+      "session",
+      "chat",
+      "s-9",
+      "--prompt-file",
+      "-",
+      "--jsonl",
+      "--wait",
+      "--timeout",
+      "7200",
+    ]);
+  });
+
+  it.each([
+    [{ status: 429, body: { ok: false, error: "too many waiting turns" } }],
+    [{ status: 400, body: { ok: false, error: "option not allowed: --wait" } }],
+  ])("runs the plain command when the bridge refuses to wait (%j)", async (refusal) => {
+    const bridge = await fakeBridge(({ body }) =>
+      body.args.includes("--wait") ? refusal : ok({ ok: true, sessionId: "s-3" }),
+    );
+    expect(await waiting(bridge.url).createSession(CREATE)).toEqual({
+      ok: true,
+      value: { sessionId: "s-3" },
+    });
+    expect(bridge.seen.map((seen) => seen.body.args.at(-1))).toEqual(["7200", "--json"]);
+    expect(bridge.seen[1]!.body.stdin).toBe("owner words");
   });
 });
 

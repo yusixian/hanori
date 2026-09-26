@@ -32,9 +32,10 @@ const MAX_START_ATTEMPTS = 3;
 /** Session titles become a CLI argument: single line, bounded. */
 export function sessionTitle(
   projectKey: string,
-  request: Pick<HarnessRequestRecord, "issueNumber" | "title">,
+  request: Pick<HarnessRequestRecord, "issueNumber" | "title"> & { type?: string },
 ): string {
-  const raw = `${projectKey} #${request.issueNumber ?? "?"} ${request.title ?? ""}`;
+  const ref = request.type === "task" ? "task" : `#${request.issueNumber ?? "?"}`;
+  const raw = `${projectKey} ${ref} ${request.title ?? ""}`;
   // eslint-disable-next-line no-control-regex
   const flat = raw.replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, " ").replace(/\s+/g, " ");
   return flat.trim().slice(0, 100);
@@ -157,6 +158,7 @@ export class HarnessScheduler {
       () => pollJobs(this.work),
       () => warnQuota(this.work),
       () => service.prFlow.resyncDue(),
+      () => service.releases.poll(),
       () => this.reconciler.run(),
     ]) {
       try {
@@ -360,7 +362,7 @@ export class HarnessScheduler {
       let job: HarnessJobRecord;
       try {
         const fresh = (await service.store.getRequest(request.id))!;
-        prompt = await this.work.prompt(fresh, "bug", {
+        prompt = await this.work.prompt(fresh, fresh.type === "task" ? "task" : "bug", {
           ownerText: fresh.ownerText,
           lead: {
             agent: choice.agent,

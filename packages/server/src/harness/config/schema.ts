@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { EFFORTS, modelOptionSchema } from "./execution.js";
-import { durationSchema, percentSchema } from "./units.js";
+import { durationSchema, parseDuration, percentSchema } from "./units.js";
 
 export const RISK_TIERS = ["T0", "T1", "T2", "T3"] as const;
 export type RiskTier = (typeof RISK_TIERS)[number];
@@ -102,6 +102,17 @@ const executorsSchema = z
             idle: durationSchema.default("2m"),
           })
           .prefault({}),
+        /**
+         * Harness-started turns run with `--wait` this long so their end is reported at once;
+         * `null` leaves completion to polling. Bounded to 10s–24h by the bridge.
+         */
+        turnWait: durationSchema
+          .refine((value) => {
+            const ms = parseDuration(value) ?? 0;
+            return ms >= 10_000 && ms <= 86_400_000;
+          }, "应在 10s 到 24h 之间")
+          .nullable()
+          .default("2h"),
       })
       .prefault({}),
     node: z
@@ -393,7 +404,7 @@ export const repoPolicySchema = z.strictObject({
       // Overrides must live under .cos/, whose changes are fixed at T3.
       templates: z
         .partialRecord(
-          z.enum(["bug", "revise", "answer", "ci_failed"]),
+          z.enum(["bug", "task", "revise", "answer", "followup", "ci_failed"]),
           z
             .string()
             .regex(/^\.cos\/[\w./-]+\.md$/, "模板必须是 .cos/ 下的 .md 文件")
@@ -412,6 +423,7 @@ export const projectEffectiveSchema = z.strictObject({
 });
 
 export type HarnessFileConfig = z.infer<typeof harnessFileSchema>;
+export type LodyExecutorConfig = HarnessFileConfig["executors"]["lody"];
 export type RepoPolicy = z.infer<typeof repoPolicySchema>;
 export type ProjectEffectiveConfig = z.infer<typeof projectEffectiveSchema>;
 

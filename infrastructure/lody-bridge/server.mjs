@@ -6,6 +6,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { checkArgs } from "./allowlist.mjs";
+import { DEFAULT_CALLBACK_URL, deliverTurnEnd, startTurn } from "./waiter.mjs";
 
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_STDIN_BYTES = 256 * 1024;
@@ -14,6 +15,13 @@ const DEFAULT_MAX_TIMEOUT_MS = 180_000;
 const MIN_SECRET_LENGTH = 32;
 const KILL_GRACE_MS = 2_000;
 const DEFAULT_WATCH_MS = 60_000;
+const DEFAULT_MAX_WAITERS = 8;
+/** A chat prints nothing until the agent streams; still running after this means Lody took it. */
+const DEFAULT_ACCEPT_MS = 20_000;
+
+function childEnv() {
+  return { ...process.env, LODY_CLI_TOKEN: undefined, HARNESS_LODY_BRIDGE_SECRET: undefined };
+}
 
 function digest(value) {
   return createHash("sha256").update(value).digest();
@@ -67,7 +75,7 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
     let settled = false;
     const child = spawn(file, [...prefix, ...args], {
       stdio: ["pipe", "pipe", "ignore"],
-      env: { ...process.env, LODY_CLI_TOKEN: undefined, HARNESS_LODY_BRIDGE_SECRET: undefined },
+      env: childEnv(),
     });
     const kill = () => {
       child.kill("SIGTERM");
@@ -105,10 +113,7 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
 function runQuiet(command, args, timeoutMs) {
   return new Promise((resolve) => {
     const [file, ...prefix] = command;
-    const child = spawn(file, [...prefix, ...args], {
-      stdio: "ignore",
-      env: { ...process.env, LODY_CLI_TOKEN: undefined, HARNESS_LODY_BRIDGE_SECRET: undefined },
-    });
+    const child = spawn(file, [...prefix, ...args], { stdio: "ignore", env: childEnv() });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("error", () => resolve(null));
     child.on("exit", (code) => {
@@ -165,11 +170,47 @@ export function createBridgeServer(options) {
     maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
     daemon = null,
     log = (line) => process.stdout.write(`${line}\n`),
+    callbackUrl = DEFAULT_CALLBACK_URL,
+    maxWaiters = DEFAULT_MAX_WAITERS,
+    acceptMs = DEFAULT_ACCEPT_MS,
+    deliver = deliverTurnEnd,
   } = options;
   if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH) {
     throw new Error(`HARNESS_LODY_BRIDGE_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
   }
+  if (!/^https?:\/\//.test(callbackUrl)) {
+    throw new Error("HARNESS_LODY_CALLBACK_URL must be an http(s) URL");
+  }
   let version = null;
+  let waiters = 0;
+
+  /** Answers at acceptance; the child keeps running and its end is POSTed to the app. */
+  const runWaiting = (args, stdin, timeoutMs, checked, turnId) => {
+    waiters++;
+    const started = Date.now();
+    const turn = startTurn(command, args, {
+      stdin,
+      turnId,
+      env: childEnv(),
+      acceptMs,
+      earlyTimeoutMs: timeoutMs,
+    });
+    void turn.ended
+      .then(async (end) => {
+        if (!end) return;
+        const outcome = await deliver(end, { url: callbackUrl, secret });
+        log(
+          `lody-bridge: ${checked.command} turn ${end.status} in ${Date.now() - started}ms; callback ${
+            outcome.delivered ? "delivered" : `failed (${outcome.status || "network"})`
+          } after ${outcome.attempts} attempt(s)`,
+        );
+      })
+      .catch(() => log(`lody-bridge: ${checked.command} turn callback crashed`))
+      .finally(() => {
+        waiters--;
+      });
+    return turn.early;
+  };
 
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://bridge");
@@ -206,6 +247,11 @@ export function createBridgeServer(options) {
       return;
     }
     const stdin = typeof body.stdin === "string" ? body.stdin : undefined;
+    const turnId = body.turnId;
+    if (turnId !== undefined && (typeof turnId !== "string" || !/^[\w-]{1,128}$/.test(turnId))) {
+      send(res, 400, { ok: false, error: "invalid turnId" });
+      return;
+    }
     if (
       stdin !== undefined &&
       (!checked.readsStdin || Buffer.byteLength(stdin) > MAX_STDIN_BYTES)
@@ -218,8 +264,15 @@ export function createBridgeServer(options) {
       maxTimeoutMs,
       Math.max(1_000, Number.isFinite(requested) ? requested : maxTimeoutMs),
     );
+    if (checked.waits && waiters >= maxWaiters) {
+      log(`lody-bridge: rejected ${checked.command} --wait (${waiters} turns already waiting)`);
+      send(res, 429, { ok: false, error: "too many waiting turns" });
+      return;
+    }
     const started = Date.now();
-    const result = await runLody(command, body.args, { stdin, timeoutMs, maxOutputBytes });
+    const result = checked.waits
+      ? await runWaiting(body.args, stdin, timeoutMs, checked, turnId)
+      : await runLody(command, body.args, { stdin, timeoutMs, maxOutputBytes });
     if (checked.command === "agent-config list" && typeof result.stdout === "string") {
       result.stdout = redactAgentConfigs(result.stdout);
     }
@@ -228,7 +281,12 @@ export function createBridgeServer(options) {
     }
     log(
       `lody-bridge: ${checked.command} -> ${
-        result.spawnError ?? (result.timedOut ? "timeout" : (result.signal ?? result.exitCode))
+        result.spawnError ??
+        (result.waiting
+          ? "accepted, waiting"
+          : result.timedOut
+            ? "timeout"
+            : (result.signal ?? result.exitCode))
       } in ${Date.now() - started}ms`,
     );
     send(res, 200, result);
@@ -279,7 +337,7 @@ export function redactAgentConfigs(stdout) {
 }
 
 const HISTORY_FIELDS = ["index", "role", "timestamp"];
-const HISTORY_TEXT_LIMIT = 2000;
+const HISTORY_TEXT_LIMIT = 4000;
 
 /** Only what the harness reads leaves the sidecar: role, time, and the start of each turn. */
 export function trimHistory(stdout) {
@@ -329,6 +387,8 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     secret: process.env.HARNESS_LODY_BRIDGE_SECRET,
     command,
     daemon: watch.state,
+    callbackUrl: process.env.HARNESS_LODY_CALLBACK_URL || DEFAULT_CALLBACK_URL,
+    maxWaiters: Number(process.env.LODY_BRIDGE_MAX_WAITERS || DEFAULT_MAX_WAITERS),
   });
   delete process.env.HARNESS_LODY_BRIDGE_SECRET;
   void watch.tick();

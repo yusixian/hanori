@@ -25,6 +25,7 @@ import {
   topicLink,
 } from "./render.js";
 import { handleBugCommand } from "./bug.js";
+import { handleTaskCommand } from "./task.js";
 import { listRequests, runControl } from "./controls.js";
 import { ACTIVE_STATES, OPEN_PR_STATES, WAITING_STATES } from "./states.js";
 import type { HarnessService } from "./service.js";
@@ -38,7 +39,8 @@ const HARNESS_USAGE = [
   "export — 以文件导出生效配置",
   "reload — 重新读取 harness.yaml，失败时保留旧配置",
   "",
-  "日常操作：/list 进行中的请求 · /cancel [ID|#编号] 取消 · /retry [ID|#编号] 重新排队",
+  "日常操作：/bug 描述 建 issue 并修复 · /task 说明 不建 issue 直接交给 Lody（改代码会开 PR，否则把结果发回话题）· /list 进行中的请求 · /cancel [ID|#编号] 取消 · /retry [ID|#编号] 重新排队",
+  "发版：/release [patch|minor|major|x.y.z] — 在项目话题中生成发版计划，确认后由服务端打 tag",
   "<b>话题助手</b>：在话题里直接发文字即可讨论需求、查询 issue / PR 与任务状态，建议的命令可一键执行；/new 清空本话题的对话",
 ].join("\n");
 
@@ -82,6 +84,8 @@ export async function handleHarnessCommand(
       return harnessSubcommand(service, request, projectKey);
     case "bug":
       return handleBugCommand(service.work, request, projectKey);
+    case "task":
+      return handleTaskCommand(service.work, request, projectKey);
     case "list":
       return listRequests(service, projectKey);
     case "cancel":
@@ -89,6 +93,8 @@ export async function handleHarnessCommand(
       return runControl(service, request.command, request, projectKey);
     case "new":
       return service.assistant.reset(request.chatId, request.threadId);
+    case "release":
+      return service.releases.handleCommand(request, projectKey);
   }
 }
 

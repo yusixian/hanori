@@ -1,4 +1,7 @@
-/** Request states. `pr` requests only use open/merged/closed; `bug` requests walk the rest. */
+/**
+ * Request states. `pr` requests only use open/merged/closed; `bug` and `task` requests walk the
+ * rest. `completed` is a task whose turn ended without a PR: finished, but a reply reopens it.
+ */
 export const REQUEST_STATES = {
   open: "open",
   received: "received",
@@ -13,9 +16,17 @@ export const REQUEST_STATES = {
   closed: "closed",
   cancelled: "cancelled",
   failed: "failed",
+  completed: "completed",
 } as const;
 
 const S = REQUEST_STATES;
+
+/** Requests the harness executes in a Lody session; `pr` requests only track a PR. */
+export const WORK_TYPES = ["bug", "task"] as const;
+
+export function isWorkRequest(request: { type: string }): boolean {
+  return (WORK_TYPES as readonly string[]).includes(request.type);
+}
 
 export const WAITING_STATES = [S.received, S.queued];
 /** Sessions that are actively writing; these count against machine and project concurrency. */
@@ -23,7 +34,7 @@ export const ACTIVE_STATES = [S.starting, S.running, S.revising];
 /** Unmerged work that still holds its areas for `sameAreaWriters`. */
 export const AREA_HOLDING_STATES = [...ACTIVE_STATES, S.prReady, S.needsAttention];
 export const OPEN_PR_STATES = [S.open, S.prReady, S.revising, S.needsAttention];
-export const TERMINAL_STATES = [S.merged, S.closed, S.cancelled, S.failed];
+export const TERMINAL_STATES = [S.merged, S.closed, S.cancelled, S.failed, S.completed];
 
 export const JOB_STATES = {
   starting: "starting",

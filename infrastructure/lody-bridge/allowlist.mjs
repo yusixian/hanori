@@ -1,6 +1,8 @@
 // Strict argv allowlist for the Lody CLI subcommands the harness uses (lody 0.100.0 `--help`).
-// Anything not listed here is rejected: no positional prompts, no `--env`, no `--debug`,
-// no `--wait`/`--timeout` (the bridge owns time), no `--flag=value` spellings.
+// Anything not listed here is rejected: no positional prompts, no `--env`, no `--debug`, no
+// `--flag=value` spellings. `--wait --timeout <seconds>` is allowed on `session create` (human
+// output, which prints the session id first) and on `session chat` with `--jsonl`, so the bridge
+// can answer at acceptance and report the turn end through the app callback (waiter.mjs).
 
 // A leading dash would be read as a flag, and the CLI then falls back to LODY_SESSION_ID.
 const SESSION_ID = /^(?!-)[\w-]{1,128}$/;
@@ -28,7 +30,10 @@ const VALUE_RULES = {
   "--prompt-file": /^-$/,
   "--turn-id": /^[\w:-]{1,160}$/,
   "--limit": /^([1-9]|1\d|20)$/,
+  "--timeout": /^[1-9]\d{1,4}$/,
 };
+
+const MAX_WAIT_SECONDS = 86_400;
 
 const REPEATABLE = new Set(["--config-option"]);
 
@@ -66,14 +71,15 @@ const COMMANDS = [
       "--model",
       "--config-option",
       "--prompt-file",
+      "--timeout",
     ],
-    flags: ["--worktree", "--json"],
+    flags: ["--worktree", "--json", "--wait"],
   },
   {
     path: ["session", "chat"],
     session: true,
-    values: ["--workspace", "--mode", "--model", "--config-option", "--prompt-file"],
-    flags: ["--json"],
+    values: ["--workspace", "--mode", "--model", "--config-option", "--prompt-file", "--timeout"],
+    flags: ["--json", "--jsonl", "--wait"],
   },
   {
     path: ["session", "show"],
@@ -105,7 +111,7 @@ const COMMANDS = [
 
 /**
  * @param {unknown} args
- * @returns {{ ok: true; command: string; readsStdin: boolean } | { ok: false; error: string }}
+ * @returns {{ ok: true; command: string; readsStdin: boolean; waits: boolean } | { ok: false; error: string }}
  */
 export function checkArgs(args) {
   if (!Array.isArray(args) || args.length === 0 || args.length > 64) {
@@ -143,5 +149,20 @@ export function checkArgs(args) {
     }
     if (arg === "--prompt-file") readsStdin = true;
   }
-  return { ok: true, command: spec.path.join(" "), readsStdin };
+  const command = spec.path.join(" ");
+  const waitProblem = checkWait(command, seen, rest);
+  if (waitProblem) return { ok: false, error: waitProblem };
+  return { ok: true, command, readsStdin, waits: seen.has("--wait") };
+}
+
+/** The waiter reads a create's human output and a chat's JSON Lines; other shapes are refused. */
+function checkWait(command, seen, rest) {
+  const waits = seen.has("--wait");
+  if (waits !== seen.has("--timeout")) return "--wait and --timeout go together";
+  if (seen.has("--json") && seen.has("--jsonl")) return "--json and --jsonl are exclusive";
+  if (!waits) return seen.has("--jsonl") ? "--jsonl only with --wait" : null;
+  if (Number(rest[rest.indexOf("--timeout") + 1]) > MAX_WAIT_SECONDS) return "--timeout too long";
+  if (command === "session create" && seen.has("--json")) return "--wait create uses human output";
+  if (command === "session chat" && !seen.has("--jsonl")) return "--wait chat needs --jsonl";
+  return null;
 }

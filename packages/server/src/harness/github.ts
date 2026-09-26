@@ -14,6 +14,7 @@ import {
   toIssueSummary,
   toPullRequestSummary,
 } from "./github-issues.js";
+import { type ReleaseGitHub, createReleaseGitHub } from "./github-release.js";
 import type { ChangedFile } from "./risk.js";
 
 const API_ROOT = "https://api.github.com";
@@ -121,6 +122,7 @@ export interface HarnessGitHub {
   getIssue(repo: string, number: number, commentLimit: number): Promise<IssueDetail>;
   /** Default branch history, newest first. */
   listCommits(repo: string, limit: number): Promise<CommitSummary[]>;
+  readonly releases: ReleaseGitHub;
 }
 
 type Credentials = Pick<
@@ -147,6 +149,7 @@ interface RawPullRequest {
 
 export class GitHubAppHarnessClient implements HarnessGitHub {
   private readonly installations = new Map<string, number>();
+  readonly releases = createReleaseGitHub((repo, path, init) => this.repoRequest(repo, path, init));
 
   constructor(
     private readonly credentials: Credentials,

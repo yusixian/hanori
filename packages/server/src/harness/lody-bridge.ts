@@ -55,7 +55,12 @@ export function createBridgeExec(
       response = await fetchImpl(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-        body: JSON.stringify({ args, stdin: options.input, timeoutMs: options.timeout }),
+        body: JSON.stringify({
+          args,
+          stdin: options.input,
+          timeoutMs: options.timeout,
+          turnId: options.turnId,
+        }),
         signal: AbortSignal.timeout(options.timeout + RESPONSE_GRACE_MS),
       });
     } catch (error) {
@@ -66,8 +71,13 @@ export function createBridgeExec(
       throw execError({ killed: true, code });
     }
     if (response.status === 401) throw rejected("lody-bridge 拒绝了认证，请检查共享密钥");
+    // Pool full, or a bridge that predates `--wait`: the command never ran, so it may run plain.
+    if (response.status === 429) throw execError({ code: "EWAIT_REFUSED" });
     if (response.status === 400) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      if (args.includes("--wait") && /--(wait|timeout|jsonl)\b/.test(body?.error ?? "")) {
+        throw execError({ code: "EWAIT_REFUSED" });
+      }
       throw rejected(`lody-bridge 拒绝了参数：${body?.error ?? "未知"}`);
     }
     let result: BridgeResult;

@@ -63,6 +63,7 @@ export const APPROVAL_ACTIONS = {
   job: "job",
   reminder: "reminder",
   picker: "picker",
+  release: "release",
 } as const;
 
 /** One record per card version: bound to the PR's head SHA, reused until consumed or replaced. */

@@ -28,6 +28,7 @@ executors:
     agentConfig: Codex # Lody agent config (name or id) the lead runs with unless roles.worker.agent is set
     models: {} # replaces the panel's model list per agent type, e.g. { codex: [{ id: gpt-6-sol, name: GPT-6 Sol, efforts: [high] }] }
     poll: { active: 20s, idle: 2m }
+    turnWait: 2h # harness-started turns run with --wait so their end is reported at once; null polls only
     sessionUrl: null # e.g. https://<lody web>/sessions/{sessionId}; null shows the id instead
 
 roles: # the panel's execution settings sit above these; subworker/reviewer follow the lead's vendor

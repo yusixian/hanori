@@ -11,7 +11,7 @@ import { PICKER_KIND, requeue, requeueProblem, subject } from "./job-actions.js"
 import { REQUEST_HEADLINES, formatElapsed, issueUrl } from "./job-card.js";
 import { MESSAGE_LIMIT, topicLink } from "./render.js";
 import type { HarnessService } from "./service.js";
-import { JOB_STATES, REQUEST_STATES as S, TERMINAL_STATES } from "./states.js";
+import { JOB_STATES, REQUEST_STATES as S, TERMINAL_STATES, isWorkRequest } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
 
 const IN_FLIGHT_STATES = Object.values(S).filter(
@@ -49,14 +49,16 @@ async function requestLine(service: HarnessService, request: HarnessRequestRecor
   const refs = [
     request.issueNumber
       ? `<a href="${escapeHtml(issueUrl(request.repo, request.issueNumber))}">#${request.issueNumber}</a>`
-      : null,
+      : request.type === "task"
+        ? "🛠"
+        : null,
     escapeHtml((request.title ?? "未命名请求").slice(0, 60)),
     request.prNumber
       ? `<a href="${escapeHtml(prUrl(request.repo, request.prNumber))}">PR #${request.prNumber}</a>`
       : null,
   ].filter(Boolean);
   const meta = [`${formatElapsed(service.now().getTime() - request.createdAt.getTime())}前`];
-  const job = request.type === "bug" ? await service.store.latestJob(request.id) : null;
+  const job = isWorkRequest(request) ? await service.store.latestJob(request.id) : null;
   const config = service.work.config(request.projectKey);
   if (job && job.state !== JOB_STATES.lost && config) {
     meta.push(escapeHtml(service.work.machineLabel(config, job)));
@@ -116,7 +118,7 @@ async function candidates(
   projectKey: string | undefined,
   target: string,
 ) {
-  const requests = (await inFlight(service, projectKey)).filter((r) => r.type === "bug");
+  const requests = (await inFlight(service, projectKey)).filter(isWorkRequest);
   if (target) return requests.filter((request) => matches(request, target));
   if (control === "cancel") return requests;
   const retryable: HarnessRequestRecord[] = [];

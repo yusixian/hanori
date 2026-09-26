@@ -26,6 +26,7 @@ import {
   parseMachineList,
 } from "./lody.js";
 import { MemoryHarnessStore } from "./memory-store.js";
+import { FakeReleaseGitHub } from "./release-test-fakes.js";
 import type { ChangedFile } from "./risk.js";
 import { HarnessService } from "./service.js";
 import type { PrSummarizer } from "./summary.js";
@@ -138,6 +139,8 @@ export class FakeGitHub implements HarnessGitHub {
   runs: CheckRunInput[] = [{ id: 1, name: "ci", status: "completed", conclusion: "success" }];
   statuses: CommitStatusInput[] = [];
   policyText: string | null = null;
+  defaultSha = "b".repeat(40);
+  readonly releases = new FakeReleaseGitHub();
   readonly merges: Array<{ number: number; sha: string; method: string }> = [];
   readonly deletedBranches: string[] = [];
 
@@ -148,7 +151,7 @@ export class FakeGitHub implements HarnessGitHub {
   }
 
   async getDefaultBranch() {
-    return { branch: "main", sha: "b".repeat(40) };
+    return { branch: "main", sha: this.defaultSha };
   }
 
   async getFile(_repo: string, path: string) {
@@ -338,7 +341,7 @@ const MACHINE_FIXTURE = readFileSync(
 /** Records every write; never touches a real Lody workspace. */
 export class FakeLody {
   readonly created: CreateSessionInput[] = [];
-  readonly chats: Array<{ sessionId: string; prompt: string }> = [];
+  readonly chats: Array<{ sessionId: string; prompt: string; turnId?: string }> = [];
   readonly cancelled: string[] = [];
   readonly archived: string[] = [];
   createResult:
@@ -371,8 +374,8 @@ export class FakeLody {
     );
   }
 
-  async chat(sessionId: string, prompt: string) {
-    this.chats.push({ sessionId, prompt });
+  async chat(sessionId: string, prompt: string, turnId?: string) {
+    this.chats.push({ sessionId, prompt, turnId });
     return { ok: true as const, value: undefined };
   }
 

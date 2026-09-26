@@ -249,9 +249,18 @@ describe("createBot command registry", () => {
     expect(activeNames).toEqual(
       TELEGRAM_COMMAND_CATALOG.filter(
         ({ command }) =>
-          !["image", "quota", "draw", "harness", "bug", "list", "cancel", "retry"].includes(
-            command,
-          ),
+          ![
+            "image",
+            "quota",
+            "draw",
+            "harness",
+            "bug",
+            "task",
+            "list",
+            "cancel",
+            "retry",
+            "release",
+          ].includes(command),
       ).map(({ command }) => command),
     );
 

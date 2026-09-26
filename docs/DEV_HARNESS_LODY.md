@@ -9,11 +9,13 @@ app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim�
 
 ## 边界
 
-- bridge 只执行白名单内的命令：`--version`、`machine list`、`agent-config list`、`session create|chat|show|status|cancel|archive` 及其已知参数（见 `infrastructure/lody-bridge/allowlist.mjs`）。`login`、`daemon`、`delete`、`--env`、`--debug`、`--wait`、位置参数形式的 prompt 和 `--flag=value` 写法一律拒绝；`--config-option` 只接受 `reasoning_effort=<强度>` 和 `effort=<强度>`。
+- bridge 只执行白名单内的命令：`--version`、`machine list`、`agent-config list`、`session create|chat|show|status|history|cancel|archive` 及其已知参数（见 `infrastructure/lody-bridge/allowlist.mjs`）。`login`、`daemon`、`delete`、`--env`、`--debug`、位置参数形式的 prompt 和 `--flag=value` 写法一律拒绝；`--config-option` 只接受 `reasoning_effort=<强度>` 和 `effort=<强度>`。`--wait --timeout <10–86400 秒>` 只允许用在 `session create`（人类可读输出，不带 `--json`）和带 `--jsonl` 的 `session chat` 上，两者必须同时出现。
 - `agent-config list` 的输出在 bridge 内先裁剪，只保留每个执行配置的 `id`、`name`、`agentType`、`machineId`；`env`（可能含 API key）不会离开 sidecar。
 - prompt 只能通过 stdin（`--prompt-file -`）传入，最大 256 KiB。每条命令有超时（最长 180 秒）和 8 MiB 输出上限，超出时强制终止，harness 按「结果未知」处理，不会自动重试 `session create`。
 - 认证使用 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），用固定长度摘要做常量时间比较。bridge 日志只记录子命令、退出状态和耗时，不记录参数值、prompt、token 或 stdout。
 - 子进程的环境变量中去掉了 `LODY_CLI_TOKEN` 和 bridge 密钥；bridge 进程启动前入口脚本也会 `unset LODY_CLI_TOKEN`。
+- 带 `--wait` 的命令由 `waiter.mjs` 执行：`session create` 打印出会话 ID、`session chat` 打印出第一条 JSON Lines 事件（或运行超过 20 秒）时即视为 Lody 已接受，bridge 立即应答 app，stdout 换成与普通命令相同的 JSON（只含 `ok` 和 `sessionId`）。接受前退出或出错时按普通命令的结果返回；接受阶段仍受 180 秒上限约束。子进程继续等到回合结束，bridge 再向 `HARNESS_LODY_CALLBACK_URL` 发一条签名回调：body 只有 `sessionId`、`command`、`status`（`completed`/`failed`/`canceled`/`timeout`）、`exitCode` 和起止时间，没有对话内容；请求头 `x-harness-timestamp` 为 Unix 秒，`x-harness-signature` 为 `sha256=<hex>`，即以 `HARNESS_LODY_BRIDGE_SECRET` 为密钥对 `<timestamp>.<body>` 做 HMAC-SHA256。等待进程读到的回复正文只用来判断事件类型，随即丢弃。
+- 同时等待的回合最多 `LODY_BRIDGE_MAX_WAITERS` 个（默认 8），超出时返回 429，harness 改用不带 `--wait` 的普通命令。app 不可达、超时、408/429/5xx 时回调在 2、10、30 秒后重试，仍失败就放弃并记一行日志（不含会话 ID）；其他状态码不重试。回调丢失时 harness 仍靠轮询发现会话停下。
 - Lody CLI 只接受 `--auth <token>` 形式的参数。入口脚本先用 `lodyhome` 卷里保存的登录启动 daemon，失败时才带 token 重试，所以 token 只在首次启动或更换后短暂出现在容器内的进程参数里。
 - bridge 每 `LODY_DAEMON_WATCH_MS` 执行一次 `lody daemon status`，daemon 不在时用保存的登录重新启动。重启失败时 `/health` 返回 503，容器显示 unhealthy。
 - 容器以非 root 的 `node` 用户运行，`cap_drop: ALL`、`no-new-privileges`，不发布主机端口；`~/.lody` 保存在命名卷 `lodyhome` 中。
@@ -28,8 +30,10 @@ app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim�
 | `LODY_MACHINE_NAME`          | lody-bridge | 可选，注册到 Lody 的机器名，默认 `cos-tool-bot-server`                      |
 | `LODY_DAEMON_WATCH_MS`       | lody-bridge | 可选，daemon 巡检间隔，默认 `60000`；`0` 关闭自动重启                       |
 | `LODY_VERSION`               | 构建参数    | 可选，默认 `0.100.0`；升级前需复核白名单与 `--help`                         |
+| `HARNESS_LODY_CALLBACK_URL`  | lody-bridge | 可选，回合结束回调地址，默认 `http://app:3000/api/harness/lody/turn`        |
+| `LODY_BRIDGE_MAX_WAITERS`    | lody-bridge | 可选，同时等待结束的回合数上限，默认 `8`                                    |
 
-harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的环境变量名；这两个字段只能通过 YAML 修改，Telegram 覆盖层不能改。
+harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的环境变量名；这两个字段只能通过 YAML 修改，Telegram 覆盖层不能改。app 用同一个 `HARNESS_LODY_BRIDGE_SECRET` 校验回调；未设置时 `/api/harness/lody/turn` 返回 404。`executors.lody.turnWait`（默认 `2h`）是传给 `--timeout` 的等待时长，设为 `null` 时不带 `--wait`，只靠轮询。本地 CLI 模式（未设置 bridge URL）同样带 `--wait`，由 app 进程内的等待池（上限 8）直接处理回合结束。
 
 ## Dokploy 部署步骤
 
@@ -54,7 +58,8 @@ harness.yaml 中 `executors.lody.bridge.urlEnv` / `secretEnv` 可以改成别的
 - `/status` 显示「无法连接 lody-bridge」：检查 `HARNESS_LODY_BRIDGE_URL` 与 `harness` profile 是否启用。
 - 显示「lody-bridge 拒绝了认证」：两个服务的 `HARNESS_LODY_BRIDGE_SECRET` 不一致。
 - 显示 `Not logged in`，或日志出现 `daemon is down and restart failed`：保存的登录或 token 已失效。可在容器中执行 `lody daemon status` 和 `lody daemon logs`；更换 token 后重新部署。
-- 升级 `LODY_VERSION` 后，重新核对 `lody session create --help` 等输出与白名单是否一致。
+- 升级 `LODY_VERSION` 后，重新核对 `lody session create --help` 等输出与白名单是否一致，并确认 `--wait` 的输出没有变：`session create` 在人类可读模式下先单独打印一行会话 ID，`session chat --jsonl` 输出 `update`/`done`/`error` 事件（0.100.0 的实现如此，未在文档中承诺）。
+- 回合结束后卡片迟迟不变：看 bridge 日志中的 `turn <status> …; callback …`。`callback failed (401)` 表示两边密钥不一致；`failed (network)` 表示 bridge 访问不到 `HARNESS_LODY_CALLBACK_URL`。
 
 ## 本地验证记录（2026-09-25）
 

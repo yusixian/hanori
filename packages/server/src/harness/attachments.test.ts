@@ -113,7 +113,11 @@ describe("GET /api/harness/attachments/:token", () => {
       if (token === "boom") throw new Error("telegram down");
       return token === "ok" ? { bytes: JPEG, mimeType: "image/jpeg" } : null;
     });
-    const app = harnessRoutes({ handleGitHubWebhook: vi.fn(), attachments: { read } });
+    const app = harnessRoutes({
+      handleGitHubWebhook: vi.fn(),
+      handleLodyTurn: vi.fn(),
+      attachments: { read },
+    });
     const ok = await app.request("/attachments/ok");
     expect(ok.status).toBe(200);
     expect(ok.headers.get("content-type")).toBe("image/jpeg");

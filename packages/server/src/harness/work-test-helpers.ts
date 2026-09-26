@@ -28,6 +28,7 @@ export async function setup(
     store?: MemoryHarnessStore;
     panelUrl?: string;
     attachmentSecret?: string;
+    env?: Record<string, string | undefined>;
   } = {},
 ) {
   const clock = { now: START };
@@ -41,6 +42,7 @@ export async function setup(
     now: () => clock.now,
     panelUrl: options.panelUrl,
     attachmentSecret: options.attachmentSecret,
+    env: options.env,
   });
   const advance = (ms: number) => {
     clock.now = new Date(clock.now.getTime() + ms);

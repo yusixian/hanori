@@ -11,7 +11,7 @@ import { generateText, stepCountIs } from "ai";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
 import { historyMessages, systemPrompt } from "./assistant-prompt.js";
 import { parseAssistantCallback, renderAssistantReply } from "./assistant-render.js";
-import { createAssistantTools } from "./assistant-tools.js";
+import { SUGGESTABLE_COMMANDS, createAssistantTools } from "./assistant-tools.js";
 import { errorText } from "./pr-actions.js";
 import { formatDateTime } from "./render.js";
 import type { HarnessService } from "./service.js";
@@ -27,7 +27,7 @@ export const ASSISTANT_LIMITS = {
   retentionMs: 30 * 24 * 60 * 60 * 1000,
 };
 
-const SUGGESTABLE = new Set<HarnessCommandName>(["bug", "status", "quota"]);
+const SUGGESTABLE = new Set<string>(SUGGESTABLE_COMMANDS);
 const PLACEHOLDER = "🔎 正在查…";
 const TEXT = {
   failed: "助手这次没有答出来（超时或模型出错），请稍后再试，或直接使用命令。",
@@ -251,7 +251,7 @@ export class HarnessTopicAssistant {
     const { service } = this;
     const row = await service.store.findTopicMessage(request.chatId, request.messageId);
     const suggestion = row?.role === "assistant" ? row.suggestions?.[index] : undefined;
-    if (!row || !suggestion || !SUGGESTABLE.has(suggestion.command as HarnessCommandName)) {
+    if (!row || !suggestion || !SUGGESTABLE.has(suggestion.command)) {
       return { text: TEXT.missing };
     }
     let threadId = request.threadId;

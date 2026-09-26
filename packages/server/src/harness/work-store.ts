@@ -33,6 +33,12 @@ export interface HarnessWorkStore {
   countJobsSince(since: Date): Promise<number>;
   recordMessage(message: HarnessMessageInsert): Promise<void>;
   findMessage(chatId: number, messageId: number): Promise<HarnessMessageRecord | null>;
+  /** False when no such message was recorded. */
+  updateMessageRef(
+    chatId: number,
+    messageId: number,
+    ref: Record<string, unknown>,
+  ): Promise<boolean>;
 }
 
 export class DrizzleWorkStore implements HarnessWorkStore {
@@ -129,5 +135,14 @@ export class DrizzleWorkStore implements HarnessWorkStore {
       .where(and(eq(harnessMessages.chatId, chatId), eq(harnessMessages.messageId, messageId)))
       .limit(1);
     return row ?? null;
+  }
+
+  async updateMessageRef(chatId: number, messageId: number, ref: Record<string, unknown>) {
+    const rows = await this.db
+      .update(harnessMessages)
+      .set({ ref })
+      .where(and(eq(harnessMessages.chatId, chatId), eq(harnessMessages.messageId, messageId)))
+      .returning({ id: harnessMessages.id });
+    return rows.length > 0;
   }
 }

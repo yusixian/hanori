@@ -1,7 +1,7 @@
 import type { ProjectEffectiveConfig } from "./config/schema.js";
 import type { PullRequestInfo } from "./github.js";
 import { acceptsPullRequest } from "./intake.js";
-import { REQUEST_STATES as S, isTerminal } from "./states.js";
+import { REQUEST_STATES as S, isTerminal, isWorkRequest } from "./states.js";
 import type { HarnessRequestRecord, HarnessStore } from "./store.js";
 
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
@@ -23,7 +23,8 @@ export function closingIssues(body: string | null): number[] {
 
 /**
  * Links a PR opened by a harness session to its request: first by the `harness/<requestId>`
- * branch on the same repository, then by `Fixes #<issue>` from an accepted (trusted) PR.
+ * branch on the same repository (the only link a `/task` has), then by `Fixes #<issue>` from an
+ * accepted (trusted) PR. A completed task still links: its session may open the PR later.
  */
 export async function findLinkedRequest(
   store: HarnessStore,
@@ -33,10 +34,10 @@ export async function findLinkedRequest(
   const repo = config.project.repo;
   const linkable = (request: HarnessRequestRecord | null) =>
     request &&
-    request.type === "bug" &&
+    isWorkRequest(request) &&
     request.repo.toLowerCase() === repo.toLowerCase() &&
     request.prNumber === null &&
-    !isTerminal(request.state)
+    (!isTerminal(request.state) || request.state === S.completed)
       ? request
       : null;
   if (pr.headRepo?.toLowerCase() === repo.toLowerCase()) {
@@ -65,7 +66,8 @@ const KEPT_WHILE_OPEN: readonly string[] = [
  * from the working session (or first linking, which counts as one) moves it to `pr_ready`.
  */
 export function openStateFor(request: HarnessRequestRecord, headChanged: boolean): string {
-  if (request.type !== "bug") return S.open;
+  if (!isWorkRequest(request)) return S.open;
+  if (request.state === S.completed) return S.prReady;
   if (isTerminal(request.state) && request.state !== S.closed) return request.state;
   if (KEPT_WHILE_OPEN.includes(request.state)) return request.state;
   if (request.state === S.revising || request.state === S.running) {

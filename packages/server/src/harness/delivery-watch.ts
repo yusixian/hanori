@@ -13,6 +13,7 @@ import { handleOwnerReply } from "./protocol.js";
 import type { HarnessService } from "./service.js";
 import { JOB_STATES, REQUEST_STATES as S } from "./states.js";
 import type { HarnessRequestRecord } from "./store.js";
+import { finishTask, resumeTask } from "./task.js";
 import type { HarnessWork } from "./work.js";
 import type { HarnessJobRecord } from "./work-store.js";
 
@@ -25,10 +26,15 @@ export const CONTINUE_CALLBACK = "hx:u:c";
 /** Sent to the session as the owner's answer when "继续" is tapped. */
 export const CONTINUE_TEXT =
   "继续完成这个任务：按 issue 的要求完成修复并验证，然后提交 PR。如果被阻塞，请用 Question: 说明需要我决定什么。";
+const TASK_CONTINUE_TEXT =
+  "继续完成原任务并验证：改代码时提交 PR，调查或报告任务请返回结论。如果被阻塞，请用 Question: 说明需要我决定什么。";
 
 const GAPS = {
   noPr: "Lody 会话已停下，但还没有提交 PR",
   draft: "Lody 会话已停下，但 PR 仍是草稿",
+  failed: "Lody 任务回合失败，请查看会话后继续或重试",
+  canceled: "Lody 任务回合已取消，尚未确认完成",
+  timeout: "等待 Lody 任务回合结束超时，尚未确认完成",
 } as const;
 const GAP_REASONS: readonly string[] = Object.values(GAPS);
 
@@ -52,8 +58,10 @@ async function deliveryGap(
 
 /**
  * Flags a session that went idle without delivering: `idle` on two polls in a row and quiet for
- * `undeliveredAfter`, so the pause between two turns is not mistaken for the end. The flag lifts
- * itself once the session runs again or the delivery shows up. Returns true on a state change.
+ * `undeliveredAfter`, so the pause between two turns is not mistaken for the end. A reported turn
+ * end (`work.turnEnded`) is final, so one idle status is enough. The flag lifts itself once the
+ * session runs again or the delivery shows up. A task without a PR is finished instead of
+ * flagged. Returns true on a state change.
  */
 export async function checkDelivery(
   work: HarnessWork,
@@ -63,10 +71,16 @@ export async function checkDelivery(
   session: LodySession,
 ): Promise<boolean> {
   const { service } = work;
+  if (request.state === S.completed) return resumeTask(work, request, job, session);
   const watched = request.prNumber === null ? S.running : S.prReady;
   if (request.state === S.needsAttention && GAP_REASONS.includes(request.stateReason ?? "")) {
     const resumed = session.status === RUNNING;
-    if (!resumed && (await deliveryGap(work, config, request))) return false;
+    const recoveredTask =
+      request.type === "task" &&
+      request.prNumber === null &&
+      job.sessionId &&
+      work.turnEnded(job.sessionId);
+    if (!resumed && !recoveredTask && (await deliveryGap(work, config, request))) return false;
     const moved = await service.store.transitionRequest(request.id, [S.needsAttention], watched, {
       stateReason: null,
     });
@@ -80,22 +94,19 @@ export async function checkDelivery(
     }
     return moved;
   }
-  if (request.state !== watched || !job.sessionId) return false;
-  if (session.status !== IDLE || job.sessionStatus !== IDLE) return false;
-  const now = service.now();
-  const lastProgress = Math.max(
-    ...[
-      job.lastActivityAt,
-      session.lastMessageAt,
-      job.startedAt ?? job.createdAt,
-      request.lastPushAt,
-    ].map((date) => date?.getTime() ?? 0),
-  );
-  if (now.getTime() - lastProgress < durationMs(config.guardrails.time.undeliveredAfter)) {
+  if (request.state !== watched || !job.sessionId || session.status !== IDLE) return false;
+  const outcome = work.turnStatus(job.sessionId);
+  const interrupted = request.type === "task" && outcome && outcome !== "completed";
+  if (
+    !interrupted &&
+    !work.turnEnded(job.sessionId) &&
+    !settledIdle(config, request, job, session, service.now())
+  ) {
     return false;
   }
-  const gap = await deliveryGap(work, config, request);
+  const gap = interrupted ? GAPS[outcome] : await deliveryGap(work, config, request);
   if (!gap) return false;
+  if (request.type === "task" && gap === GAPS.noPr) return finishTask(work, config, request, job);
   const moved = await service.store.transitionRequest(request.id, [watched], S.needsAttention, {
     stateReason: gap,
   });
@@ -110,13 +121,32 @@ export async function checkDelivery(
     projectKey: request.projectKey,
     requestId: request.id,
     payload: {
-      gap: gap === GAPS.noPr ? "no_pr" : "draft",
+      gap: interrupted ? outcome : gap === GAPS.noPr ? "no_pr" : "draft",
       excerptLength: excerpt?.length ?? 0,
       ...(last.ok ? {} : { historyError: last.message }),
     },
   });
   await notify(work, config, request, job, gap, excerpt);
   return true;
+}
+
+function settledIdle(
+  config: ProjectEffectiveConfig,
+  request: HarnessRequestRecord,
+  job: HarnessJobRecord,
+  session: LodySession,
+  now: Date,
+): boolean {
+  if (job.sessionStatus !== IDLE) return false;
+  const lastProgress = Math.max(
+    ...[
+      job.lastActivityAt,
+      session.lastMessageAt,
+      job.startedAt ?? job.createdAt,
+      request.lastPushAt,
+    ].map((date) => date?.getTime() ?? 0),
+  );
+  return now.getTime() - lastProgress >= durationMs(config.guardrails.time.undeliveredAfter);
 }
 
 async function notify(
@@ -183,7 +213,7 @@ export async function continueUndelivered(
     userId: request.userId,
     messageId: request.messageId,
     replyToMessageId: request.messageId,
-    text: CONTINUE_TEXT,
+    text: target.type === "task" ? TASK_CONTINUE_TEXT : CONTINUE_TEXT,
   });
   if (reply?.html) return { text: reply.html.replace(/<[^>]+>/g, ""), alert: true };
   await dropContinue(service, request, notice.ref);

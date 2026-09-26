@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { KeyedAsyncLock } from "../services/keyed-async-lock.js";
 import { APPROVAL_ACTIONS, ensureApproval, jobBinding } from "./approvals.js";
 import { publishCard } from "./card-publisher.js";
@@ -6,10 +7,12 @@ import type { CheckSummary } from "./contract.js";
 import type { PullRequestInfo } from "./github.js";
 import { issueUrl, renderJobCard, sessionLink } from "./job-card.js";
 import type { LodyResult } from "./lody.js";
+import type { TurnEnd, TurnStatus } from "./lody-wait.js";
 import { errorText } from "./pr-actions.js";
 import type { PrSessionControls } from "./pr-card.js";
 import { type PromptInput, type PromptKind, buildPrompt, harnessBranch } from "./prompts.js";
 import { renderFooter } from "./quota.js";
+import { handleTurnEnd } from "./job-monitor.js";
 import { HarnessScheduler } from "./scheduler.js";
 import type { HarnessService } from "./service.js";
 import {
@@ -18,6 +21,7 @@ import {
   REQUEST_STATES as S,
   TERMINAL_STATES,
   isTerminal,
+  isWorkRequest,
 } from "./states.js";
 import type { HarnessRequestPatch, HarnessRequestRecord } from "./store.js";
 import type { HarnessJobRecord } from "./work-store.js";
@@ -25,12 +29,22 @@ import type { HarnessJobRecord } from "./work-store.js";
 /** Marks comments the harness posts itself, so they are never parsed as protocol lines. */
 export const RELAY_MARKER = "<!-- dev-harness:relay -->";
 
+const MAX_TURN_ENDS = 500;
+
 /** Execution side of the harness: sessions, job cards, prompts, and PR follow-ups. */
 export class HarnessWork {
   /** Per-request lock (`req:<id>`) for job actions, scheduling, and polling. */
   readonly lock = new KeyedAsyncLock();
   readonly scheduler: HarnessScheduler;
   private readonly templateCache = new Map<string, string | null>();
+  /**
+   * Sessions whose last harness-started turn reported its end (bridge callback or local waiter).
+   * In memory only: after a restart the delivery watch falls back to its polling debounce.
+   */
+  private readonly turnEnds = new Map<
+    string,
+    { at: number; status: TurnStatus | null; turnId?: string }
+  >();
 
   constructor(readonly service: HarnessService) {
     this.scheduler = new HarnessScheduler(this);
@@ -56,12 +70,51 @@ export class HarnessWork {
     return this.lock.run(`req:${requestId}`, operation);
   }
 
+  /** A reported turn end makes an idle session authoritative: no two-poll debounce. */
+  turnEnded(sessionId: string): boolean {
+    return this.turnStatus(sessionId) === "completed";
+  }
+
+  turnStatus(sessionId: string): TurnStatus | null {
+    return this.turnEnds.get(sessionId)?.status ?? null;
+  }
+
+  markTurnEnded(sessionId: string, status: TurnStatus, turnId?: string): boolean {
+    const expected = this.turnEnds.get(sessionId)?.turnId;
+    // Match the dispatched turn, independent of the bridge's clock. Older bridges use polling.
+    if (expected && turnId !== expected) return false;
+    this.rememberTurn(sessionId, { at: this.service.now().getTime(), status, turnId });
+    return true;
+  }
+
+  private rememberTurn(
+    sessionId: string,
+    turn: { at: number; status: TurnStatus | null; turnId?: string },
+  ) {
+    this.turnEnds.delete(sessionId);
+    this.turnEnds.set(sessionId, turn);
+    if (this.turnEnds.size > MAX_TURN_ENDS)
+      this.turnEnds.delete(this.turnEnds.keys().next().value!);
+  }
+
+  /** A new turn began; `olderThanMs` spares an end that Lody's status has not caught up with. */
+  clearTurnEnd(sessionId: string, olderThanMs = 0): void {
+    const turn = this.turnEnds.get(sessionId);
+    if (turn && this.service.now().getTime() - turn.at >= olderThanMs) {
+      turn.status = null;
+    }
+  }
+
+  onTurnEnd(end: TurnEnd): Promise<void> {
+    return handleTurnEnd(this, end);
+  }
+
   machineLabel(config: ProjectEffectiveConfig, job: HarnessJobRecord): string {
     return config.machines[job.machineKey]?.lody ?? job.lodyMachine;
   }
 
   async footerFor(request: HarnessRequestRecord, config: ProjectEffectiveConfig) {
-    if (request.type !== "bug") return null;
+    if (!isWorkRequest(request)) return null;
     const job = await this.service.store.latestJob(request.id);
     return job?.sessionId ? renderFooter(job, config.telegram.cards) : null;
   }
@@ -72,7 +125,7 @@ export class HarnessWork {
     config: ProjectEffectiveConfig,
     confirmingCancel = false,
   ): Promise<PrSessionControls | null> {
-    if (request.type !== "bug" || isTerminal(request.state)) return null;
+    if (!isWorkRequest(request) || isTerminal(request.state)) return null;
     const { service } = this;
     const job = await service.store.latestJob(request.id);
     const approval = await ensureApproval(service.store, request, {
@@ -181,6 +234,7 @@ export class HarnessWork {
         ? { number: request.prNumber, url: `https://github.com/${repo}/pull/${request.prNumber}` }
         : null,
       ownerText: extra.ownerText ?? null,
+      requestType: request.type === "task" ? "task" : "bug",
       failures: extra.failures,
       round: extra.round,
       lead: extra.lead,
@@ -198,9 +252,11 @@ export class HarnessWork {
     if (!job?.sessionId || job.state !== JOB_STATES.running) {
       return { ok: false, reason: "failed", message: "没有运行中的会话" };
     }
-    const result = await this.service
-      .lody()
-      .chat(job.sessionId, await this.prompt(request, kind, extra));
+    const prompt = await this.prompt(request, kind, extra);
+    const now = this.service.now().getTime();
+    const turnId = randomUUID();
+    this.rememberTurn(job.sessionId, { at: now, status: null, turnId });
+    const result = await this.service.lody().chat(job.sessionId, prompt, turnId);
     await this.service.recordEvent({
       type: result.ok ? "session.chat" : "session.chat_failed",
       projectKey: request.projectKey,
@@ -260,7 +316,7 @@ export class HarnessWork {
     pr: PullRequestInfo,
     checks: CheckSummary,
   ): Promise<HarnessRequestPatch> {
-    if (request.type !== "bug") return {};
+    if (!isWorkRequest(request)) return {};
     const { service } = this;
     const job = await service.store.latestJob(request.id);
     if ((TERMINAL_STATES as readonly string[]).includes(request.state)) {

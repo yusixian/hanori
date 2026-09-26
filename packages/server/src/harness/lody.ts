@@ -277,16 +277,21 @@ export function quotaBreaches(
 export type ExecFileLike = (
   file: string,
   args: readonly string[],
-  options: { timeout: number; maxBuffer: number; input?: string },
+  options: { timeout: number; maxBuffer: number; input?: string; turnId?: string },
 ) => Promise<{ stdout: string }>;
 
 /** Prompts travel on stdin (`--prompt-file -`) so owner text never becomes an argv entry. */
-const defaultExec: ExecFileLike = (file, args, { input, ...options }) =>
+export const defaultExec: ExecFileLike = (file, args, { input, timeout, maxBuffer }) =>
   new Promise((resolve, reject) => {
-    const child = execFile(file, [...args], { ...options, windowsHide: true }, (error, stdout) => {
-      if (error) reject(Object.assign(error, { stdout: String(stdout) }));
-      else resolve({ stdout: String(stdout) });
-    });
+    const child = execFile(
+      file,
+      [...args],
+      { timeout, maxBuffer, windowsHide: true },
+      (error, stdout) => {
+        if (error) reject(Object.assign(error, { stdout: String(stdout) }));
+        else resolve({ stdout: String(stdout) });
+      },
+    );
     child.stdin?.end(input ?? "");
   });
 
@@ -308,6 +313,8 @@ const CREATE_TIMEOUT_MS = 120_000;
 
 const MACHINE_CACHE_MS = 30_000;
 const HISTORY_LIMIT = 4;
+/** The executor refused `--wait` (waiter pool full, or a bridge that predates it); nothing ran. */
+const WAIT_REFUSED = "EWAIT_REFUSED";
 
 /** Wrapper around the `lody` CLI. Every call is bounded by a timeout and returns a result. */
 export class LodyCli {
@@ -319,11 +326,13 @@ export class LodyCli {
     private readonly timeoutMs: number,
     private readonly exec: ExecFileLike = defaultExec,
     private readonly now: () => Date = () => new Date(),
+    /** `session create|chat` wait this long for the turn so its end is reported; null never waits. */
+    private readonly turnWaitSeconds: number | null = null,
   ) {}
 
   private async run(
     args: string[],
-    options: { input?: string; timeoutMs?: number } = {},
+    options: { input?: string; timeoutMs?: number; turnId?: string } = {},
   ): Promise<LodyResult<Record<string, unknown>>> {
     const [file, ...prefix] = this.command;
     if (!file) return { ok: false, reason: "unavailable", message: "未配置 lody CLI" };
@@ -332,6 +341,7 @@ export class LodyCli {
         timeout: options.timeoutMs ?? this.timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
         input: options.input,
+        turnId: options.turnId,
       });
       const json = extractJson(stdout);
       if (!isPlainObject(json)) return { ok: false, reason: "unknown", message: "输出不是 JSON" };
@@ -341,6 +351,7 @@ export class LodyCli {
       return { ok: true, value: json };
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
+      if (code === WAIT_REFUSED) return { ok: false, reason: "unavailable", message: WAIT_REFUSED };
       if (code === "ENOENT" || code === "EACCES") {
         return { ok: false, reason: "unavailable", message: `未找到 lody CLI（${file}）` };
       }
@@ -433,9 +444,9 @@ export class LodyCli {
       input.title,
       "--prompt-file",
       "-",
-      "--json",
     ];
-    const result = await this.run(args, {
+    // A waiting create prints the session id in human output first (the bridge relays it as JSON).
+    const result = await this.runTurn([...args, "--json"], args, {
       input: input.prompt,
       timeoutMs: Math.max(this.timeoutMs, CREATE_TIMEOUT_MS),
     });
@@ -447,15 +458,32 @@ export class LodyCli {
     return { ok: true, value: { sessionId } };
   }
 
-  async chat(sessionId: string, prompt: string): Promise<LodyResult<void>> {
-    return this.sessionCommand(
-      sessionId,
-      ["session", "chat", sessionId, "--prompt-file", "-", "--json"],
-      {
-        input: prompt,
-        timeoutMs: Math.max(this.timeoutMs, CREATE_TIMEOUT_MS),
-      },
-    );
+  async chat(sessionId: string, prompt: string, turnId?: string): Promise<LodyResult<void>> {
+    if (!SESSION_ID.test(sessionId)) return invalidSession();
+    const args = ["session", "chat", sessionId, "--prompt-file", "-"];
+    const result = await this.runTurn([...args, "--json"], [...args, "--jsonl"], {
+      input: prompt,
+      turnId,
+      timeoutMs: Math.max(this.timeoutMs, CREATE_TIMEOUT_MS),
+    });
+    return result.ok ? { ok: true, value: undefined } : result;
+  }
+
+  /**
+   * Runs a turn with `--wait` when enabled, so its end reaches `onTurnEnd` or the bridge
+   * callback; a refused wait never ran, so it falls back to the plain command.
+   */
+  private async runTurn(
+    plain: string[],
+    waiting: string[],
+    options: { input: string; timeoutMs: number; turnId?: string },
+  ): Promise<LodyResult<Record<string, unknown>>> {
+    if (this.turnWaitSeconds) {
+      const wait = ["--wait", "--timeout", String(this.turnWaitSeconds)];
+      const result = await this.run([...waiting, ...wait], options);
+      if (result.ok || result.message !== WAIT_REFUSED) return result;
+    }
+    return this.run(plain, options);
   }
 
   async cancelSession(sessionId: string): Promise<LodyResult<void>> {

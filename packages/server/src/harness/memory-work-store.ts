@@ -123,4 +123,10 @@ export class MemoryWorkStore implements HarnessWorkStore {
   async findMessage(chatId: number, messageId: number) {
     return this.messages.find((m) => m.chatId === chatId && m.messageId === messageId) ?? null;
   }
+
+  async updateMessageRef(chatId: number, messageId: number, ref: Record<string, unknown>) {
+    const message = await this.findMessage(chatId, messageId);
+    if (message) message.ref = structuredClone(ref);
+    return message !== null;
+  }
 }

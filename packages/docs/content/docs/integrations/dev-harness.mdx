@@ -3,7 +3,7 @@ title: Dev Harness（预览）
 description: 用一个专用 Bot 和 Telegram 话题群提 bug、跟进执行会话、调整交付配置，并在群里合并 GitHub PR。
 ---
 
-Dev Harness 让一个专用 Bot 在 Telegram 话题群里接收 bug、交给你的执行机上的 Lody 会话修复，再汇报 PR 并提供一键合并。当前是预览阶段：已支持配置、项目话题、`/bug` 闭环、提醒与额度护栏、PR 卡片合并；大需求、发版与回滚尚未开放。
+Dev Harness 让一个专用 Bot 在 Telegram 话题群里接收 bug、交给你的执行机上的 Lody 会话修复，再汇报 PR 并提供一键合并。当前是预览阶段：已支持配置、项目话题、`/bug` 闭环、不建 issue 的 `/task`、提醒与额度护栏、PR 卡片合并与 `/release` 发版；大需求与回滚尚未开放。
 
 ## 启用
 
@@ -41,9 +41,11 @@ Bot 在 BotFather 中配置了主 Mini App 时，「⚙️ 管理项目」打开
 | 命令                                                   | 作用                                                                   |
 | ------------------------------------------------------ | ---------------------------------------------------------------------- |
 | `/bug <描述>`                                          | 在项目话题中提交 bug：建 issue、排队，并在空闲执行机上开 Lody 会话     |
+| `/task <说明>`                                         | 在项目话题中把任务交给 Lody 会话，不建 issue；见下文「任务」           |
 | `/list`                                                | 项目话题中列出该项目进行中的请求；General 中按项目分组列出全部         |
 | `/cancel [ID\|#编号]`                                  | 取消请求并停止 Lody 会话；话题中只有一个时可省略参数，多个时给出按钮   |
 | `/retry [ID\|#编号]`                                   | 把「需要你看一下」且会话已结束的请求重新排队                           |
+| `/release [patch\|minor\|major\|x.y.z]`                | 在项目话题中生成发版计划卡片，确认后由服务端打 tag（见「发版」）       |
 | `/status`                                              | General 中显示整体状态；项目话题中显示仓库、默认分支、执行机与排队     |
 | `/quota`                                               | 按机器与 provider 显示 Lody 额度窗口；已过重置时间的窗口标为「已过期」 |
 | `/new`                                                 | 清空当前话题的助手对话，从新对话开始                                   |
@@ -59,7 +61,7 @@ Bot 在 BotFather 中配置了主 Mini App 时，「⚙️ 管理项目」打开
 
 - 只读查询：GitHub 上的 issue、PR、评论、最近提交，默认分支上的文件与目录（单个文件最多返回 4 万字符，不读 `.env*` 与二进制文件），以及 Dev Harness 自己的请求、任务与事件。
 - 总结话题里讨论过的需求；问「下一步做什么」时，先查 open issue、最近合并与 HANDOFF / 路线图文档，再给出按优先级排序的清单。
-- 建议命令：回复下方附带「▶️ 执行建议」按钮，点击后按手动输入同一条命令执行（例如把讨论整理成 `/bug`），每条建议只能执行一次。助手自己不会建 issue、评论或合并。
+- 建议命令：回复下方附带「▶️ 执行建议」按钮，点击后按手动输入同一条命令执行，每条建议只能执行一次。可建议的命令有 `/bug`、`/task`、`/list`、`/retry`、`/status`、`/quota`。没有专门命令的事（例如「开个 Lody 会话做 X」「查一下 Y」）会整理成一条 `/task` 按钮，而不是回答做不到。助手自己不会建 issue、评论、合并或开会话。
 - 对话里只保存你的文字和助手的回复；命令、卡片和命令的回复不会进入上下文。每个话题保留最近 200 条，30 天后删除；`/new` 立即清空当前话题。
 
 回答期间会先显示「正在查…」，完成后原地替换为回答。开启 `telegram.chat.casualReplies` 时，普通消息仍交给通用 AI 回复，不经过话题助手。
@@ -102,4 +104,42 @@ GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读�
 - 会话停下却还没有提交 PR（或 PR 仍是草稿）时，话题里会出现「⏸」提醒并附上会话最后一条回复。点「▶️ 继续」会替你发一句继续完成任务的指令（与回复这条提醒同一流程，写进 GitHub 评论后发给会话），发送后按钮消失；想提具体要求就直接回复这条提醒。
 - 长时间无进展或总时长过长时只提醒，提醒上有 [继续等] [取消] [打开会话]；默认不会自动取消。
 
-执行层通过 `lody-bridge` sidecar 调用 Lody：在 Compose 中启用 `harness` profile，设置 `LODY_CLI_TOKEN`（Lody 桌面端 Settings → Account → CLI Token）、两边相同的 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），并给 app 设置 `HARNESS_LODY_BRIDGE_URL=http://lody-bridge:43190`。bridge 只执行 harness 需要的少数 `lody` 子命令，不发布端口。未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用；`/status` 会注明当前经 lody-bridge 还是本地 CLI。
+## 任务（/task）
+
+`/task <说明>` 只能在项目话题中使用（在 General 中会提示你换到项目话题）。它不建 GitHub issue，其余与 `/bug` 相同：同样排队、遵守并发与额度护栏、选择执行机，卡片标为「🛠 任务」，支持 `/list`、`/cancel`、`/retry` 和卡片上的取消、重新排队。
+
+- 任务要改代码时，会话在 `harness/<请求 ID>` 分支上开 PR，之后由 PR 卡片接管（按分支名关联，不需要 issue）。
+- 调查、报告之类不改代码的任务，会话最后一条回复会作为结果发到话题（可展开，最多约 3500 字；配置了 `executors.lody.sessionUrl` 时附「打开会话」），卡片变为「✅ 已完成」。
+- 回复结果消息或卡片，会把回复发给同一个会话继续做，下一轮结束后再发新结果。
+- 会话需要你决定时，最后一条回复以 `Question:` 开头，问题会发到话题，回复即作答；以 `Needs spec:` 开头时卡片转为「需要写 spec」，回复这条提示或原卡片都能继续。
+- 已报告失败、取消或等待超时的回合停下后会提示「需要你看一下」，不会把中间回复当作完成结果。回复提示或点「继续」可让会话重试；GitHub 暂时无法查询 PR 或 Telegram 拒绝发送结果时会等待下次轮询重试，结果发送成功后才标记完成。
+- 任务同样不能合并、推 tag、发版或部署，也不能改 `.cos/**` 与 `.github/workflows/**`。
+
+## 执行层
+
+harness 发起的每个回合都会等待 Lody 报告结束（`executors.lody.turnWait`，默认 2 小时）：回合一结束，卡片、结果或「⏸」提醒立即更新，不用等几分钟的轮询。等待超时或回调丢失时仍按轮询发现。
+
+向已有会话发送消息时，harness 用回合 ID 匹配结束回调，避免两台机器的时钟偏差或旧回调重试影响新任务。升级 app 时请同步更新 bridge；旧版 bridge 未回传回合 ID 的后续消息会退回轮询判断。
+
+执行层通过 `lody-bridge` sidecar 调用 Lody：在 Compose 中启用 `harness` profile，设置 `LODY_CLI_TOKEN`（Lody 桌面端 Settings → Account → CLI Token）、两边相同的 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），并给 app 设置 `HARNESS_LODY_BRIDGE_URL=http://lody-bridge:43190`。bridge 只执行 harness 需要的少数 `lody` 子命令，不发布端口；回合结束时它用同一个密钥签名，回调 app 的 `/api/harness/lody/turn`（地址可用 `HARNESS_LODY_CALLBACK_URL` 修改，默认 `http://app:3000/api/harness/lody/turn`）。未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用；`/status` 会注明当前经 lody-bridge 还是本地 CLI。
+
+## 发版
+
+在项目话题中发 `/release`，服务端用 GitHub App 读取默认分支，发一张发版卡片：
+
+- 当前版本取最高的 `vX.Y.Z` / `X.Y.Z` tag，并注明它有没有 GitHub Release；没有 tag 时从 0.0.0 起算。
+- 列出该 tag 之后合并的 PR（最多 15 条，其余折叠）和提交数，按 PR 标题的 conventional 前缀取最高改动类型：fix / perf → patch，feat → minor，`!` 或 `BREAKING CHANGE` → major；0.x 阶段 breaking 只升 minor。仓库有 `release-kit.yaml` 时按其 `versioning.pre1.breaking` 与 `versioning.tag` 计算，并显示待发布片段数。
+- 已有 tag 的提交比较会分页读取，同一 PR 内各提交的最高改动类型也会保留。比较超过 1000 个提交或无法完整读取时，停止生成计划，避免用不完整记录建议版本。
+- `/release patch|minor|major` 指定升级级别，`/release 1.4.0` 指定版本（必须高于当前版本）。
+- 标出 tag 将指向的默认分支提交，以及 `.github/workflows/` 中由这个 tag 的 push 触发的 workflow（`on.push.tags`）；没有这样的 workflow 时提示打 tag 后不会自动构建。
+
+卡片按钮：
+
+- 「📝 准备发版」派发一个 `/task`：让执行机按仓库惯例改版本文件、写发布说明，开 `chore(release): vX.Y.Z` PR，不打 tag、不建 Release、不合并。同一版本只派发一次。
+- 「🏷 确认发布」先显示完整的 tag 名与 40 位 SHA，再点「✅ 确认打 tag」才会创建 annotated tag。创建前服务端会重读默认分支：已经前进（比如刚合并了发版 PR）时只刷新计划，请核对后再确认；派发过准备任务但默认分支上还没有对应的 `chore(release)` PR 时拒绝；tag 已存在时拒绝。按钮只能成功使用一次，tag 创建后不会被删除或移动。
+- 创建 tag 的响应超时后，服务端会核对远端 tag 实际指向的提交；只有与确认过的 SHA 一致才进入构建跟踪。
+- 「🔄 刷新」重新计算计划；「✖️ 取消」作废这张卡片。同一项目再发 `/release` 会作废旧卡片。
+
+tag 由 GitHub App 创建，会像手动 push 一样触发 tag workflow。之后卡片每 30 秒跟踪一次，最长 2 小时：🟡 构建中 → ✅ 已发布（附 Release 链接）或 ❌ 构建失败（附运行链接，重跑后可点「刷新」）。读取 workflow 运行需要 GitHub App 有 Actions 读权限；没有时卡片只给出 Actions 页面链接，并等待 GitHub Release 出现。
+
+公开 GitHub Release 出现后会显示已发布。尚未出现时，跟踪覆盖计划中识别出的所有 tag workflow，并取各自最新的运行：任一失败或跳过都会显示构建失败；仍有排队、运行中或尚未出现的 workflow 时继续等待；只有全部明确成功后才可确认完成。没有 Release 记录时还会等待 2 分钟，给发布步骤留出时间。
