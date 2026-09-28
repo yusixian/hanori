@@ -48,6 +48,11 @@ assert(services.db, "Dokploy config is missing db");
 assert(services["db-backup"], "Dokploy config is missing the database backup gate");
 assert(services["nsfw-api"], "Dokploy config is missing nsfw-api");
 assert(!services.app.ports, "Dokploy app must not publish a host port");
+assert(
+  services.app.labels?.["traefik.docker.network"] ===
+    (process.env.TRAEFIK_DOCKER_NETWORK || "example-compose"),
+  "Dokploy app must pin Traefik to its shared network",
+);
 assert(!services.db.ports, "Dokploy database must not publish a host port");
 assert(!services["nsfw-api"].ports, "Dokploy nsfw-api must not publish a host port");
 assert(
