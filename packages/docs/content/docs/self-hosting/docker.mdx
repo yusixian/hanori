@@ -38,7 +38,7 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 
 不要使用 `docker compose down -v`，它会删除数据库存储卷。更新前先阅读[备份与升级](/docs/self-hosting/backup-upgrade)。
 
-如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。`TRAEFIK_DOCKER_NETWORK` 可覆盖 Compose 中的默认代理网络名；当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。容器自身的健康检查通过不代表公网路由可用。
+如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。`TRAEFIK_DOCKER_NETWORK` 可覆盖 Compose 中的默认代理网络名；当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。使用 Dokploy 的 Domains 页面管理域名时，保留 Compose 中 `labels` 的列表形式，让平台追加域名路由标签。容器自身的健康检查通过不代表公网路由可用。
 
 ## 4. 验证启动
 

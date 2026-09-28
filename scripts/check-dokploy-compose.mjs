@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 
 const requiredEnvironment = {
   ADMIN_CHAT_IDS: "[]",
@@ -42,6 +43,12 @@ function assert(condition, message) {
 }
 
 const dokploy = renderConfig(["docker-compose.yml"]);
+// Dokploy v0.29.14 injects domain router labels only when the source uses a label list.
+const composeSource = readFileSync("docker-compose.yml", "utf8");
+assert(
+  /^    labels:\n      - traefik\.docker\.network=/m.test(composeSource),
+  "Dokploy app labels must use list syntax so domain routers are injected",
+);
 const services = dokploy.services;
 assert(services.app, "Dokploy config is missing app");
 assert(services.db, "Dokploy config is missing db");
