@@ -162,6 +162,7 @@ export function ModelRow({
               />
             </div>
           </div>
+          <p className="text-muted-foreground text-xs">{t("modelRow.reasoningParamsHint")}</p>
           <div className="space-y-1">
             <label className="text-xs">{t("modelRow.capabilities")}</label>
             <div className="flex flex-wrap gap-1">

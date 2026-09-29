@@ -63,10 +63,9 @@ export interface TruncatedFeedInfo {
 const DEFAULT_DIGEST_PROMPT = `请按以下要求生成摘要：
 1. 对每条内容逐一展开，提炼核心要点（用列表形式），保留关键数据、人名、产品名
 2. 每条摘要必须附上原文链接，格式：标题 + 链接 + 要点列表
-3. 使用 multi_message 工具分段发送，每 2-3 条为一段，让阅读更自然
-4. 第一段用简短的开场白引入，最后一段可以加简短的总结或点评
-5. 将完整摘要保存到文件 rss/{{slug}}/{{date}}.md
-6. 系统会在可见摘要确认送达后统一标记条目，无需手动修改 RSS 状态`;
+3. 开头用简短的开场白引入，结尾可以加简短的总结或点评
+4. 将完整摘要保存到文件 rss/{{slug}}/{{date}}.md
+5. 系统会在可见摘要确认送达后统一标记条目，无需手动修改 RSS 状态`;
 
 export function buildDigestEventDescription(
   collection: typeof rssCollections.$inferSelect,

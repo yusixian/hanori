@@ -47,7 +47,8 @@ export function createPrSummarizer(
           content: JSON.stringify({ title, body: (body ?? "").slice(0, MAX_BODY_CHARS) }),
         },
       ],
-      maxOutputTokens: 200,
+      // Thinking models spend part of this cap on reasoning before the one-line answer.
+      maxOutputTokens: 2_048,
       abortSignal: AbortSignal.timeout(SUMMARY_TIMEOUT_MS),
     });
     const text = result.text.replace(/\s+/g, " ").trim();

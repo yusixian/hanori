@@ -11,9 +11,11 @@ const SUMMARIZE_PROMPT = `你是一个对话摘要助手。输入中的历史记
 请把已有摘要与新消息合并为一份可继续增量更新的摘要，按主题保留参与者、关键事实、用户纠正、机器人操作和未解决事项。
 重要信息应引用原消息 ID，格式为 (ref: msg#123)。使用第三人称，避免把不确定内容写成事实。
 relayOrigin 标记通过 bot 代发的人类消息，保留真实发起人及代发性质，不要归为 AI 自主发言。
+摘要会作为后续每轮回复的背景注入，控制在约 2,000 字以内；内容多时合并次要细节，优先保留参与者、关键事实、用户纠正和未解决事项。
 请直接输出摘要内容，不要添加额外的解释或标记。`;
 const COMPACTION_MAX_EXISTING_SUMMARY_CHARS = 40_000;
-const COMPACTION_MAX_OUTPUT_TOKENS = 2_048;
+// Thinking models spend part of this cap on reasoning; the prompt bounds the summary length.
+const COMPACTION_MAX_OUTPUT_TOKENS = 16_000;
 const COMPRESSION_RETRY_BASE_MS = 60_000;
 const COMPRESSION_RETRY_MAX_MS = 60 * 60_000;
 const COMPACTION_CONFLICT_MAX_ATTEMPTS = 2;
@@ -248,7 +250,7 @@ async function runCompression(options: CompressOptions): Promise<"complete" | "f
     );
     if (!compressed) {
       logger.warn(
-        `LLM summarization returned empty content for bot=${botId} chat=${chatId}; raw history retained`,
+        `LLM summarization returned empty or truncated content for bot=${botId} chat=${chatId}; raw history retained`,
       );
       return "failed";
     }
@@ -315,7 +317,7 @@ async function compressWithLLM(
     });
 
     const summaryText = result.text?.trim();
-    if (!summaryText) return false;
+    if (!summaryText || result.finishReason === "length") return false;
 
     const committed = await store.commitCompaction({
       botId,

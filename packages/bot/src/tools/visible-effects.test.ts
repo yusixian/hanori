@@ -18,7 +18,7 @@ describe("trackSuccessfulToolEffects", () => {
         get_chat_info: executable({ id: -100, title: "read only" }),
         web_search: executable({ result: "read only" }),
         list_rss_feeds: executable({ feeds: [] }),
-        delegate_task: executable({ agent: "translator", result: "translated", steps: 1 }),
+        delegate_task: executable({ agent: "general", result: "translated", steps: 1 }),
         create_image: executable({ accepted: true, generation: { id: "generation-1" } }),
         failed_create_image: executable({ accepted: false, reason: "rate_limited" }),
         failed_cancel_image: executable({ ok: false, reason: "provider_rejected" }),

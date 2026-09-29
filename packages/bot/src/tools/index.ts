@@ -105,7 +105,7 @@ export function createMemoryTools(memory: MemoryCallbacks): Record<string, Tool>
     }),
     update_profile: tool({
       description:
-        "更新或创建用户档案。notes 会追加到已有备注后面，traits 和 interests 会与已有的合并去重。当你在对话中了解到用户的新信息时主动使用。",
+        "更新或创建用户档案。notes 会追加到已有备注后面，traits 和 interests 会与已有的合并去重。用户希望你长期记住某件事，或信息稳定且以后确实有用时使用；普通闲聊和一时情绪不必记录。",
       inputSchema: zodToAiSchema(
         z.object({
           telegram_id: z.number().describe("用户的 Telegram ID"),

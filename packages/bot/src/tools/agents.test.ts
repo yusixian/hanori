@@ -27,16 +27,16 @@ describe("createAgentTools logging", () => {
     const context = "private background context";
 
     await (tools.delegate_task as Tool as unknown as ExecutableTool).execute({
-      agent: "translator",
+      agent: "general",
       task: delegatedTask,
       context,
     });
 
     expect(onLog).toHaveBeenCalledWith({
       level: "debug",
-      message: "[delegate] agent=translator started",
+      message: "[delegate] agent=general started",
       meta: {
-        agent: "translator",
+        agent: "general",
         subAgentModel: "test-model",
         maxSteps: 64,
         taskLength: delegatedTask.length,

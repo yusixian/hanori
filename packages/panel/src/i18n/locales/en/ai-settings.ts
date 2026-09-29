@@ -374,6 +374,8 @@ export const aiSettings = {
     thinking: "Thinking",
     thinkingMode: "Thinking mode",
     thinkingBudget: "Thinking Budget",
+    reasoningParamsHint:
+      "Some newer reasoning models reject temperature, a thinking budget, or thinking turned off with HTTP 400. If requests fail that way, set these fields back to default.",
     capabilities: "Capabilities",
     removeConfirm: "Remove model “{{model}}”?",
     removeAria: "Remove {{model}}",
@@ -545,7 +547,7 @@ export const aiSettings = {
     autoRecommended: "Auto (Recommended)",
     required: "Required",
     toolChoiceDescription:
-      "Auto: the LLM decides when to use tools. Required: it must call at least one tool.",
+      "Auto: the LLM decides when to use tools. Required: it must call at least one tool; some newer models reject this setting with HTTP 400, so keep Auto for them.",
     autoReadProfile: "Auto-read user profile before reply",
     autoUpdateLastSeen: "Auto-update last seen on message",
   },

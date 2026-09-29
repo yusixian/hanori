@@ -35,8 +35,9 @@ export type RunError =
   | "rate_limited";
 
 export const SUMMARY_INPUT_TOKEN_BUDGET = 24_000;
-const SUMMARY_CHUNK_OUTPUT_TOKENS = 2_048;
-const SUMMARY_MERGE_OUTPUT_TOKENS = 4_096;
+// Thinking models spend part of these caps on reasoning before the visible summary.
+const SUMMARY_CHUNK_OUTPUT_TOKENS = 8_192;
+const SUMMARY_MERGE_OUTPUT_TOKENS = 16_000;
 
 type SummarySourceMessage = {
   userName: string | null;
@@ -367,7 +368,6 @@ export class SummaryRunner {
       ) => {
         const result = await generateText({
           model: modelFactory(modelId),
-          temperature: 0.4,
           maxOutputTokens,
           messages: [
             { role: "system", content: callSystemPrompt },

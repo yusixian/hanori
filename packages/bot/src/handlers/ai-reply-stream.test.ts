@@ -489,7 +489,7 @@ describe("AI reply streaming", () => {
     streamTextMock.mockImplementation((options: any) => {
       async function* toolOnlyStream() {
         delegatedOutput = await options.tools.delegate_task.execute(
-          { agent: "translator", task: "translate this" },
+          { agent: "general", task: "translate this" },
           {},
         );
         yield* [] as string[];
@@ -511,7 +511,7 @@ describe("AI reply streaming", () => {
     await result.handler(ctx, vi.fn());
 
     expect(replies.at(-1)).toBe("(AI 未生成回复内容)");
-    expect(delegatedOutput).toEqual({ agent: "translator", result: "delegated answer", steps: 0 });
+    expect(delegatedOutput).toEqual({ agent: "general", result: "delegated answer", steps: 0 });
     expect(generateTextMock).toHaveBeenCalled();
     await result.destroy();
   });

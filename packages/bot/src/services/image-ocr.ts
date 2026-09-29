@@ -211,7 +211,6 @@ export async function describeImages(opts: DescribeImagesOptions): Promise<OcrRe
     try {
       const ret = await generateText({
         model: modelFactory(modelId),
-        temperature: 0.2,
         abortSignal: AbortSignal.timeout(timeoutMs),
         messages: [
           {

@@ -35,7 +35,8 @@ const STALE_PENDING_AGE_MS = 24 * 60 * 60_000;
 const MAX_MESSAGES = 12;
 const MAX_CHARS_PER_MESSAGE = 1_000;
 const MAX_INPUT_TOKENS = 4_000;
-const MAX_OUTPUT_TOKENS = 700;
+// Thinking models spend part of this cap on reasoning before the JSON answer.
+const MAX_OUTPUT_TOKENS = 8_192;
 const MAX_PROPOSALS = 3;
 const MAX_BOTS_PER_TICK = 2;
 
@@ -903,7 +904,6 @@ export class MemoryConsolidator {
           });
     const result = await generateText({
       model: factory(modelId),
-      temperature: 0.2,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       abortSignal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
       messages: [{ role: "user", content: prompt }],

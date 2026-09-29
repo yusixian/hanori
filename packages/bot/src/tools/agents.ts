@@ -52,19 +52,9 @@ function buildAgentDefinitions(
       tools: { ...webTools },
       maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },
-    creative_writer: {
-      systemPrompt: "你是一个创意写作助手。擅长诗歌、故事、文案、对联等创意内容。直接输出成品。",
-      tools: {},
-      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
-    },
-    code_helper: {
-      systemPrompt: "你是一个代码助手。擅长代码分析、解释、生成和调试。",
-      tools: {},
-      maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
-    },
-    translator: {
+    general: {
       systemPrompt:
-        "你是一个专业翻译。提供准确、自然的翻译，保留原文的语气和风格。如果原文是中文则翻译为英文，反之亦然，除非另有指示。",
+        "你是 Bot 委派的子助手，没有可用工具。按任务说明完成写作、翻译、代码分析等独立任务，直接输出成品；结果会交回主 Bot 转述给用户。",
       tools: {},
       maxSteps: DEFAULT_SUB_AGENT_MAX_STEPS,
     },

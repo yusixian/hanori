@@ -15,7 +15,7 @@ export function createFileTools(opts: {
   return {
     read_file: tool({
       description:
-        "读取你的 data 目录中的文件内容。可以用来查看你自己的身份定义、笔记等文件。仅 .md 文件会被自动注入到你的 system prompt 中。",
+        "读取你的 data 目录中的文件内容。可以用来查看你自己的身份定义、笔记等文件。只有管理员在面板中标记为可注入的 .md 文件会注入 system prompt，其他文件需要用这个工具读取。",
       inputSchema: zodToAiSchema(
         z.object({
           path: z.string().describe("文件路径（相对于 data 目录），如 NOTES.md"),

@@ -3,12 +3,12 @@
 Repository guide for coding agents. When documentation drifts, the current source tree and
 `package.json` win.
 
-## Active Iteration Goal
+## Paused Iteration Goal
 
-For the ongoing UI efficiency and reliability work, read [docs/UI_EFFICIENCY_GOAL.md](docs/UI_EFFICIENCY_GOAL.md)
-before continuing, including after context compaction. It preserves the user's goal-specific
-commit/push/release authorization, priorities, verification evidence, and next steps. Keep it current;
-do not treat one version's publication as completion of the whole goal.
+[docs/UI_EFFICIENCY_GOAL.md](docs/UI_EFFICIENCY_GOAL.md) records the paused UI efficiency and
+reliability goal. Read it only when the owner explicitly resumes that goal. The commit, push, and
+release authorizations inside it apply only to that resumed goal; every other task follows the
+Working Agreement below.
 
 ## Working Agreement
 

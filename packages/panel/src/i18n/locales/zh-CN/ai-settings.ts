@@ -364,6 +364,8 @@ export const aiSettings = {
     thinking: "思考模式",
     thinkingMode: "思考模式",
     thinkingBudget: "思考预算",
+    reasoningParamsHint:
+      "部分新一代推理模型不接受温度、思考预算或关闭思考，会返回 400。遇到这类报错时，把这些字段恢复为默认。",
     capabilities: "模型能力",
     removeConfirm: "确定移除模型“{{model}}”吗？",
     removeAria: "移除 {{model}}",
@@ -504,7 +506,8 @@ export const aiSettings = {
     toolChoice: "工具选择",
     autoRecommended: "自动（推荐）",
     required: "必须调用",
-    toolChoiceDescription: "自动：由 LLM 决定何时使用工具。必须调用：至少调用一个工具。",
+    toolChoiceDescription:
+      "自动：由 LLM 决定何时使用工具。必须调用：至少调用一个工具；部分新模型会拒绝这个设置并返回 400，这类模型请保持自动。",
     autoReadProfile: "回复前自动读取用户档案",
     autoUpdateLastSeen: "收到消息时自动更新最后出现时间",
   },

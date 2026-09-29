@@ -152,7 +152,7 @@ describe("compressConversation", () => {
     await compressConversation({ ...createOptions(store), abortSignal: controller.signal });
 
     const request = vi.mocked(generateText).mock.calls[0]![0];
-    expect(request.maxOutputTokens).toBe(2_048);
+    expect(request.maxOutputTokens).toBe(16_000);
     expect(request.abortSignal).toBe(controller.signal);
     expect(request.messages).toEqual(
       expect.arrayContaining([
@@ -356,6 +356,18 @@ describe("compressConversation", () => {
   it("does not move the cursor for an empty summary", async () => {
     const store = createStore();
     vi.mocked(generateText).mockResolvedValueOnce({ text: "  " } as never);
+
+    await compressConversation(createOptions(store));
+
+    expect(store.commitCompaction).not.toHaveBeenCalled();
+  });
+
+  it("does not commit a summary cut off by the output cap", async () => {
+    const store = createStore();
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "Partial summary",
+      finishReason: "length",
+    } as never);
 
     await compressConversation(createOptions(store));
 

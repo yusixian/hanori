@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # Development
-pnpm dev              # Start server (tsx --watch) + panel (Vite) concurrently
+pnpm dev              # Start server (tsx --watch) + panel (Vite) + docs concurrently
 pnpm dev:db           # Start PostgreSQL via docker-compose.dev.yml
 
 # Build
@@ -34,14 +34,16 @@ pnpm --filter @cos-tool-bot/<package> typecheck
 
 ## Architecture
 
-pnpm monorepo with 5 packages. A grammy Telegram Bot + Hono API server + React management panel.
+pnpm monorepo with 7 packages: grammY Telegram bots, a Hono API server, a React admin panel and Telegram Mini App, public docs, and an isolated coding worker. `AGENTS.md` → Repository Map has the full map.
 
 ```
-shared    ← Pure types (BotStatus, LogLevel, LogEntry, BotRecord, BotWithStatus) + utilities (parseParams)
-database  ← Drizzle ORM schema (bots, botLogs, settings tables) + PostgreSQL client
-bot       ← grammy Bot, createBot(config) factory function
-server    ← Hono API, BotPool multi-bot lifecycle, DbLogger, exports AppType
-panel     ← React 19 + Refine v4 SPA (Login, Bots, Logs)
+shared        ← Pure cross-package contracts, validation, command metadata, utilities
+database      ← Drizzle ORM schema, PostgreSQL client, ordered migrations
+bot           ← grammY runtime, commands, middleware, AI handlers, Telegram tools
+server        ← Hono API, BotPool multi-bot lifecycle, DbLogger, integrations, exports AppType
+panel         ← React 19 + Refine v4 admin SPA and Telegram Mini App
+docs          ← Public Fumadocs site, served under /docs
+coding-worker ← Isolated Pi coding worker; no direct database or GitHub credentials
 ```
 
 Dependency flow: `panel → server → bot → shared`, `server → database → shared`.
@@ -71,7 +73,7 @@ Webhook 频率限制：100 次/分钟，5 次/秒，请求体 ≤ 20KB。安全�
 
 `DbLogger` writes to both pino stdout and the `botLogs` database table. The panel receives real-time logs via SSE at `GET /api/logs/stream` using fetch + ReadableStream (not EventSource).
 
-Generic persistent Bot logs must never contain group message text, captions, media filenames, sticker-pack names, AI prompts/responses, tool arguments/results, or raw Telegram updates. Keep structured identifiers, event/media kinds, lengths, timings, and outcomes instead. Content may only enter a purpose-specific store whose feature and retention semantics explicitly require it.
+Log privacy rules live in `AGENTS.md` → "Privacy and Security Invariants": owner-facing Bot logs may include bounded AI and tool diagnostics when they help debugging, with credentials, tokens, and secrets redacted and no wholesale raw Telegram updates.
 
 ## Pre-commit Checklist
 

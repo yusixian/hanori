@@ -32,7 +32,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
   const tools: Record<string, Tool> = {
     fetch_artwork_info: tool({
       description:
-        "从 URL 获取作品信息（支持 Pixiv、Twitter/X）。自动识别平台并返回标题、作者、图片列表、标签等。",
+        "从 URL 获取作品信息（支持 Pixiv、Twitter/X）。自动识别平台并返回标题、作者、图片列表、标签等。这类作品链接用它而不是 fetch_webpage 或 web_search：它返回结构化信息和可直接交给 send_artwork 的图片。imageCount 为 0 表示该推文没有可发送的图片，改用文字描述。",
       inputSchema: zodToAiSchema(
         z.object({
           url: z.string().describe("作品 URL（如 pixiv.net/artworks/xxx 或 x.com/.../status/xxx）"),
