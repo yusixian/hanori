@@ -35,6 +35,7 @@ import {
   type RecoverySnapshot,
 } from "./coding-job-stager.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
+import { runWorkspaceProtocol, type WorkspaceRunPorts } from "./workspace-run-protocol.js";
 
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BOT_ID_RE = /^[A-Za-z0-9-]{1,64}$/;
@@ -46,7 +47,6 @@ const PARTIAL_CLONE_CONFIG_KEYS = [
   "remote.origin.promisor",
   "extensions.partialClone",
 ] as const;
-const DEFAULT_JOB_TIMEOUT_MS = 4 * 60 * 1000;
 const MAX_RECOVERY_INDEX_BYTES = 64 * 1024 * 1024;
 const RECOVERY_CLEAN_BATCH_SIZE = 100;
 
@@ -217,128 +217,49 @@ export class GitWorkspaceService {
         await this.ensureWorkspace(options.botId, options.repository, options.token, signal);
         signal?.throwIfAborted();
         const checkpoint = await this.createCodeTaskCheckpoint(workspace, options.branch, signal);
-        let canonicalTouched = false;
-        let stagingCleaned = false;
-        let staged: Awaited<ReturnType<CodingJobStager["stage"]>> | undefined;
-        try {
-          await this.prepareBranch(workspace, options, signal, () => {
-            canonicalTouched = true;
-          });
-          signal?.throwIfAborted();
-          const startSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
-          await this.worker.waitForFreshBoot(signal);
-          staged = await this.stager.stage(workspace, signal);
-          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-          canonicalTouched = true;
-          const workerResult = await this.worker.run(
-            {
-              workspacePath: this.stager.workspaceName,
-              task: options.task,
-              timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
-              model: options.model,
-            },
-            signal,
-          );
-
-          signal?.throwIfAborted();
-          await this.stager.validateResult(staged, signal);
-          signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-          const currentBranch = await this.gitWithWorkTree(
-            workspace,
-            staged.path,
-            ["branch", "--show-current"],
-            undefined,
-            signal,
-          );
-          if (currentBranch !== options.branch) {
-            throw new Error(
-              `Pi changed the checked-out branch to ${currentBranch || "detached HEAD"}`,
-            );
-          }
-
-          await this.assertNoProtectedStagedChanges(workspace, staged.path, signal);
-          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-          const status = await this.gitWithWorkTree(
-            workspace,
-            staged.path,
-            ["status", "--porcelain"],
-            undefined,
-            signal,
-          );
-          if (status) {
-            signal?.throwIfAborted();
-            await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-            signal?.throwIfAborted();
-            await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
-            const commitMessage =
-              options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
-              "chore: apply Ai-chan coding task";
-            await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-            signal?.throwIfAborted();
-            await this.gitWithWorkTree(
-              workspace,
-              staged.path,
-              ["commit", "-m", commitMessage],
-              undefined,
-              signal,
-            );
-          }
-
-          await this.stager.cleanup();
-          stagingCleaned = true;
-          signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
-          await this.assertWorkspaceIdentity(checkpoint.identity, signal);
-          await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
-          const changed =
-            commitSha === startSha
-              ? []
-              : (
-                  await this.git(
-                    workspace,
-                    ["diff", "--name-only", `${startSha}..${commitSha}`],
-                    undefined,
-                    signal,
-                  )
-                )
-                  .split("\n")
-                  .filter(Boolean)
-                  .slice(0, 200);
-          return {
+        return runWorkspaceProtocol(
+          this.runPorts(workspace, checkpoint.identity),
+          {
             repository: options.repository,
             branch: options.branch,
-            commitSha,
-            changedFiles: changed,
-            summary: workerResult.summary,
-            status: commitSha === startSha ? "no_changes" : "committed",
-          };
-        } catch (error) {
-          const failures = [error];
-          if (canonicalTouched) {
-            try {
-              await this.restoreCodeTaskCheckpoint(workspace, checkpoint);
-            } catch (rollbackError) {
-              failures.push(rollbackError);
-            }
-          }
-          if (staged && !stagingCleaned) {
-            try {
-              await this.stager.cleanup();
-              stagingCleaned = true;
-            } catch (cleanupError) {
-              failures.push(cleanupError);
-            }
-          }
-          if (failures.length > 1) {
-            throw new AggregateError(
-              failures,
+            task: options.task,
+            model: options.model,
+            commitMessage: options.commitMessage,
+            defaultCommitMessage: "chore: apply Ai-chan coding task",
+            failureMessage:
               "Coding task failed; rollback and/or staging cleanup could not be completed",
-            );
-          }
-          throw error;
-        }
+            branchChangedMessage: (current) =>
+              `Pi changed the checked-out branch to ${current || "detached HEAD"}`,
+            prepare: async (control) => {
+              await this.prepareBranch(workspace, options, signal, control.markCanonicalTouched);
+              signal?.throwIfAborted();
+              return this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
+            },
+            stage: () => this.stager.stage(workspace, signal),
+            beforeRun: async (_staged, control) => control.markCanonicalTouched(),
+            afterRun: async () => {
+              signal?.throwIfAborted();
+              await this.assertWorkspaceIdentity(checkpoint.identity, signal);
+            },
+            indexResult: async (staged) => {
+              const status = await this.gitWithWorkTree(
+                workspace,
+                staged.path,
+                ["status", "--porcelain"],
+                undefined,
+                signal,
+              );
+              if (!status) return false;
+              signal?.throwIfAborted();
+              await this.assertWorkspaceIdentity(checkpoint.identity, signal);
+              signal?.throwIfAborted();
+              await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
+              return true;
+            },
+            rollback: () => this.restoreCodeTaskCheckpoint(workspace, checkpoint),
+          },
+          signal,
+        );
       }),
     );
   }
@@ -373,188 +294,102 @@ export class GitWorkspaceService {
         if (!inspected.inspection.branch) {
           throw new Error("Detached workspace cannot be resumed");
         }
-        await this.assertWorkspaceIdentity(inspected.identity, signal);
-        await this.git(
-          workspace,
-          ["config", "--local", "user.name", options.authorName],
-          undefined,
-          signal,
-        );
-        await this.assertWorkspaceIdentity(inspected.identity, signal);
-        await this.git(
-          workspace,
-          ["config", "--local", "user.email", options.authorEmail],
-          undefined,
-          signal,
-        );
-        await this.worker.waitForFreshBoot(signal);
-        const staged = await this.stager.stageRecoverySnapshot(
-          workspace,
-          inspected.snapshot,
-          signal,
-        );
-        let canonicalTouched = false;
-        let worktreeTouched = false;
-        let stagingCleaned = false;
+        const assertUnchanged = async () => {
+          const current = await this.inspectWorkspaceLocked(workspace, options.repository, signal);
+          this.assertExpectedInspection(current.inspection, expected);
+        };
         let checkpoint: RecoveryCheckpoint | undefined;
-        try {
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          const afterStage = await this.inspectWorkspaceLocked(
-            workspace,
-            options.repository,
-            signal,
-          );
-          this.assertExpectedInspection(afterStage.inspection, expected);
-          checkpoint = await this.createRecoveryCheckpoint(
-            workspace,
-            staged.path,
-            inspected,
-            signal,
-          );
-          const afterCheckpoint = await this.inspectWorkspaceLocked(
-            workspace,
-            options.repository,
-            signal,
-          );
-          this.assertExpectedInspection(afterCheckpoint.inspection, expected);
-          const workerResult = await this.worker.run(
-            {
-              workspacePath: this.stager.workspaceName,
-              task: options.task,
-              timeoutMs: DEFAULT_JOB_TIMEOUT_MS,
-              model: options.model,
-            },
-            signal,
-          );
-
-          signal?.throwIfAborted();
-          await this.stager.validateResult(staged, signal);
-          const beforeCommit = await this.inspectWorkspaceLocked(
-            workspace,
-            options.repository,
-            signal,
-          );
-          this.assertExpectedInspection(beforeCommit.inspection, expected);
-          const currentBranch = await this.gitWithWorkTree(
-            workspace,
-            staged.path,
-            ["branch", "--show-current"],
-            undefined,
-            signal,
-          );
-          if (currentBranch !== expected.branch) {
-            throw new Error("Workspace branch changed while resuming; request a new inspection");
-          }
-          await this.assertNoProtectedStagedChanges(workspace, staged.path, signal);
-          signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          canonicalTouched = true;
-          await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
-          await this.addBoundUntrackedPaths(
-            workspace,
-            staged.path,
-            inspected.identity,
-            inspected.snapshot.untrackedPaths,
-            signal,
-          );
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          const stagedChanges = await this.gitWithWorkTree(
-            workspace,
-            staged.path,
-            ["diff", "--cached", "--name-only"],
-            undefined,
-            signal,
-          );
-          if (stagedChanges) {
-            const commitMessage =
-              options.commitMessage?.trim().split("\n")[0]?.slice(0, 200) ||
-              "chore: recover Ai-chan coding workspace";
-            await this.assertWorkspaceIdentity(inspected.identity, signal);
-            signal?.throwIfAborted();
-            await this.gitWithWorkTree(
-              workspace,
-              staged.path,
-              ["commit", "-m", commitMessage],
-              undefined,
-              signal,
-            );
-          }
-
-          await this.stager.cleanup();
-          stagingCleaned = true;
-          signal?.throwIfAborted();
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          canonicalTouched = true;
-          const commitSha = await this.git(workspace, ["rev-parse", "HEAD"], undefined, signal);
-          await this.assertWorkspaceIdentity(inspected.identity, signal);
-          worktreeTouched = true;
-          await this.git(workspace, ["reset", "--hard", commitSha], undefined, signal);
-          await this.cleanRecoveryPaths(
-            workspace,
-            inspected.identity,
-            inspected.snapshot.untrackedPaths,
-            signal,
-          );
-          const finalInspection = await this.inspectWorkspaceLocked(
-            workspace,
-            options.repository,
-            signal,
-          );
-          if (!finalInspection.inspection.clean) {
-            throw new Error("Recovered workspace did not become clean");
-          }
-          const changed =
-            commitSha === expected.headSha
-              ? []
-              : (
-                  await this.git(
-                    workspace,
-                    ["diff", "--name-only", `${expected.headSha}..${commitSha}`],
-                    undefined,
-                    signal,
-                  )
-                )
-                  .split("\n")
-                  .filter(Boolean)
-                  .slice(0, 200);
-          return {
+        return runWorkspaceProtocol(
+          this.runPorts(workspace, inspected.identity),
+          {
             repository: options.repository,
             branch: expected.branch,
-            commitSha,
-            changedFiles: changed,
-            summary: workerResult.summary,
-            status: commitSha === expected.headSha ? "no_changes" : "committed",
-          };
-        } catch (error) {
-          const failures = [error];
-          if (canonicalTouched && checkpoint) {
-            try {
-              await this.restoreRecoveryCheckpoint(
-                workspace,
-                inspected,
-                checkpoint,
-                worktreeTouched,
-              );
-            } catch (rollbackError) {
-              failures.push(rollbackError);
-            }
-          }
-          if (!stagingCleaned) {
-            try {
-              await this.stager.cleanup();
-              stagingCleaned = true;
-            } catch (cleanupError) {
-              failures.push(cleanupError);
-            }
-          }
-          if (failures.length > 1) {
-            throw new AggregateError(
-              failures,
+            task: options.task,
+            model: options.model,
+            commitMessage: options.commitMessage,
+            defaultCommitMessage: "chore: recover Ai-chan coding workspace",
+            failureMessage:
               "Workspace recovery failed; rollback and/or staging cleanup could not be completed",
-            );
-          }
-          throw error;
-        }
+            branchChangedMessage: () =>
+              "Workspace branch changed while resuming; request a new inspection",
+            prepare: async () => {
+              await this.assertWorkspaceIdentity(inspected.identity, signal);
+              await this.git(
+                workspace,
+                ["config", "--local", "user.name", options.authorName],
+                undefined,
+                signal,
+              );
+              await this.assertWorkspaceIdentity(inspected.identity, signal);
+              await this.git(
+                workspace,
+                ["config", "--local", "user.email", options.authorEmail],
+                undefined,
+                signal,
+              );
+              return expected.headSha;
+            },
+            stage: () => this.stager.stageRecoverySnapshot(workspace, inspected.snapshot, signal),
+            beforeRun: async (staged) => {
+              await assertUnchanged();
+              checkpoint = await this.createRecoveryCheckpoint(
+                workspace,
+                staged.path,
+                inspected,
+                signal,
+              );
+              await assertUnchanged();
+            },
+            afterRun: assertUnchanged,
+            indexResult: async (staged, control) => {
+              control.markCanonicalTouched();
+              await this.gitWithWorkTree(workspace, staged.path, ["add", "-A"], undefined, signal);
+              await this.addBoundUntrackedPaths(
+                workspace,
+                staged.path,
+                inspected.identity,
+                inspected.snapshot.untrackedPaths,
+                signal,
+              );
+              await this.assertWorkspaceIdentity(inspected.identity, signal);
+              const stagedChanges = await this.gitWithWorkTree(
+                workspace,
+                staged.path,
+                ["diff", "--cached", "--name-only"],
+                undefined,
+                signal,
+              );
+              return Boolean(stagedChanges);
+            },
+            afterReset: async () => {
+              await this.cleanRecoveryPaths(
+                workspace,
+                inspected.identity,
+                inspected.snapshot.untrackedPaths,
+                signal,
+              );
+              const finalInspection = await this.inspectWorkspaceLocked(
+                workspace,
+                options.repository,
+                signal,
+              );
+              if (!finalInspection.inspection.clean) {
+                throw new Error("Recovered workspace did not become clean");
+              }
+            },
+            rollback: async (worktreeTouched) => {
+              if (checkpoint) {
+                await this.restoreRecoveryCheckpoint(
+                  workspace,
+                  inspected,
+                  checkpoint,
+                  worktreeTouched,
+                );
+              }
+            },
+          },
+          signal,
+        );
       }),
     );
   }
@@ -696,6 +531,19 @@ export class GitWorkspaceService {
         url: gitHubBranchUrl(options.repository, options.branch),
       };
     });
+  }
+
+  private runPorts(workspace: string, identity: WorkspaceIdentity): WorkspaceRunPorts {
+    return {
+      worker: this.worker,
+      stager: this.stager,
+      git: (args, signal) => this.git(workspace, args, undefined, signal),
+      stagedGit: (staged, args, signal) =>
+        this.gitWithWorkTree(workspace, staged.path, args, undefined, signal),
+      assertIdentity: (signal) => this.assertWorkspaceIdentity(identity, signal),
+      assertNoProtectedChanges: (staged, signal) =>
+        this.assertNoProtectedStagedChanges(workspace, staged.path, signal),
+    };
   }
 
   private async createRecoveryCheckpoint(
