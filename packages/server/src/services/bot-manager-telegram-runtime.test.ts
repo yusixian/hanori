@@ -21,18 +21,17 @@ import { BotManager } from "./bot-manager.js";
 import type { DbLogger } from "./db-logger.js";
 
 function createManager(): BotManager {
-  return new BotManager({
-    botId: "bot-a",
-    token: "secret-bot-token",
-    adminChatIds: [1],
-    logger: {} as Logger,
-    dbLogger: {
-      info: vi.fn(async () => {}),
-      warn: vi.fn(async () => {}),
-      error: vi.fn(async () => {}),
-      log: vi.fn(async () => {}),
-    } as unknown as DbLogger,
-  });
+  return new BotManager(
+    { botId: "bot-a", token: "secret-bot-token", adminChatIds: [1], logger: {} as Logger },
+    {
+      dbLogger: {
+        info: vi.fn(async () => {}),
+        warn: vi.fn(async () => {}),
+        error: vi.fn(async () => {}),
+        log: vi.fn(async () => {}),
+      } as unknown as DbLogger,
+    },
+  );
 }
 
 beforeEach(() => {

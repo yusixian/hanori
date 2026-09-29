@@ -1,44 +1,18 @@
 import type { RssCollectionRecord, RssFeedRecord } from "@cos-tool-bot/shared";
+import type { Logger } from "pino";
 import { describe, expect, it, vi } from "vitest";
-import { BotPool } from "./bot-pool.js";
-import type { RssFeedService } from "./rss-feed-service.js";
+import type { DbLogger } from "../db-logger.js";
+import type { RssFeedService } from "../rss-feed-service.js";
+import { assembleBotRuntime } from "./index.js";
+import {
+  BOT_ID as BOT_A,
+  aiConfig,
+  runtimeHost,
+  runtimeInput,
+  runtimeServices,
+} from "./test-fakes.js";
 
-vi.mock("../env.js", () => ({
-  env: { ENCRYPTION_KEY: "test-key" },
-}));
-
-const BOT_A = "00000000-0000-4000-8000-000000000001";
 const BOT_B = "00000000-0000-4000-8000-000000000002";
-
-interface RssCallbacks {
-  onGetNewItems: (
-    collectionId: number,
-    limit?: number,
-  ) => Promise<{ collection: RssCollectionRecord; items: unknown[]; totalCount: number }>;
-  onListFeeds: (collectionId: number) => Promise<RssFeedRecord[]>;
-  onMarkDigested: (collectionId: number, signal?: AbortSignal) => Promise<void>;
-  onAddFeed: (
-    collectionId: number,
-    feedUrl: string,
-    signal?: AbortSignal,
-  ) => Promise<RssFeedRecord>;
-  onRemoveFeed: (feedId: number, signal?: AbortSignal) => Promise<void>;
-  onCreateCollection: (
-    params: {
-      name: string;
-      chatId: number;
-      description?: string;
-      digestHour?: number;
-      digestMinute?: number;
-    },
-    signal?: AbortSignal,
-  ) => Promise<RssCollectionRecord>;
-}
-
-interface RssPoolInternals {
-  rssFeedService: RssFeedService;
-  buildRssCallbacks: (botId: string) => RssCallbacks;
-}
 
 function collection(botId: string): RssCollectionRecord {
   return {
@@ -58,7 +32,7 @@ function collection(botId: string): RssCollectionRecord {
   };
 }
 
-function createCallbacks(ownerBotId: string | null, feedExists = true) {
+async function createCallbacks(ownerBotId: string | null, feedExists = true) {
   const feeds = [
     {
       id: 21,
@@ -80,8 +54,7 @@ function createCallbacks(ownerBotId: string | null, feedExists = true) {
   const createCollection = vi
     .fn()
     .mockImplementation((params: { botId: string }) => Promise.resolve(collection(params.botId)));
-  const pool = Object.create(BotPool.prototype) as RssPoolInternals;
-  pool.rssFeedService = {
+  const rssFeedService = {
     getCollection,
     listFeeds,
     getFeed,
@@ -91,8 +64,17 @@ function createCallbacks(ownerBotId: string | null, feedExists = true) {
     removeFeed,
     createCollection,
   } as unknown as RssFeedService;
+  const runtime = await assembleBotRuntime(
+    runtimeInput({ warn: vi.fn(async () => {}) } as unknown as DbLogger, { aiConfig: aiConfig() }),
+    runtimeServices({}, { warn: vi.fn(), error: vi.fn() } as unknown as Logger, {
+      rssFeedService,
+    }),
+    runtimeHost(),
+  );
+  const callbacks = runtime.config.aiReply?.rssCallbacks;
+  if (!callbacks) throw new Error("RSS callbacks were not wired");
   return {
-    callbacks: pool.buildRssCallbacks(BOT_A),
+    callbacks,
     feeds,
     getCollection,
     listFeeds,
@@ -105,9 +87,9 @@ function createCallbacks(ownerBotId: string | null, feedExists = true) {
   };
 }
 
-describe("BotPool RSS callback tenant scope", () => {
+describe("Bot runtime RSS callback tenant scope", () => {
   it("lists feeds when the collection belongs to the requesting Bot", async () => {
-    const { callbacks, feeds, getCollection, listFeeds } = createCallbacks(BOT_A);
+    const { callbacks, feeds, getCollection, listFeeds } = await createCallbacks(BOT_A);
 
     await expect(callbacks.onListFeeds(7)).resolves.toEqual(feeds);
     expect(getCollection).toHaveBeenCalledWith(7);
@@ -118,14 +100,14 @@ describe("BotPool RSS callback tenant scope", () => {
     { name: "missing", ownerBotId: null },
     { name: "owned by another Bot", ownerBotId: BOT_B },
   ])("rejects a $name collection without listing its feeds", async ({ ownerBotId }) => {
-    const { callbacks, listFeeds } = createCallbacks(ownerBotId);
+    const { callbacks, listFeeds } = await createCallbacks(ownerBotId);
 
     await expect(callbacks.onListFeeds(7)).rejects.toThrow("Collection not found");
     expect(listFeeds).not.toHaveBeenCalled();
   });
 
   it("checks collection ownership before loading unread items", async () => {
-    const owned = createCallbacks(BOT_A);
+    const owned = await createCallbacks(BOT_A);
     await expect(owned.callbacks.onGetNewItems(7, 30)).resolves.toMatchObject({
       collection: { id: 7, botId: BOT_A },
       items: [],
@@ -133,13 +115,13 @@ describe("BotPool RSS callback tenant scope", () => {
     });
     expect(owned.getUndigestedItems).toHaveBeenCalledWith(7, 30);
 
-    const foreign = createCallbacks(BOT_B);
+    const foreign = await createCallbacks(BOT_B);
     await expect(foreign.callbacks.onGetNewItems(7, 30)).rejects.toThrow("Collection not found");
     expect(foreign.getUndigestedItems).not.toHaveBeenCalled();
   });
 
   it("revalidates Bot ownership for mark, add and remove at execution time", async () => {
-    const { callbacks, markDigested, addFeed, removeFeed, getFeed } = createCallbacks(BOT_A);
+    const { callbacks, markDigested, addFeed, removeFeed, getFeed } = await createCallbacks(BOT_A);
     const signal = new AbortController().signal;
 
     await expect(callbacks.onMarkDigested(7, signal)).resolves.toBeUndefined();
@@ -160,7 +142,7 @@ describe("BotPool RSS callback tenant scope", () => {
   });
 
   it("does not mutate mark, add or remove for another Bot's collection", async () => {
-    const { callbacks, markDigested, addFeed, removeFeed } = createCallbacks(BOT_B);
+    const { callbacks, markDigested, addFeed, removeFeed } = await createCallbacks(BOT_B);
 
     await expect(callbacks.onMarkDigested(7)).rejects.toThrow("Collection not found");
     await expect(callbacks.onAddFeed(7, "https://example.com/feed.xml")).rejects.toThrow(
@@ -173,14 +155,14 @@ describe("BotPool RSS callback tenant scope", () => {
   });
 
   it("does not remove a missing feed", async () => {
-    const { callbacks, removeFeed } = createCallbacks(BOT_A, false);
+    const { callbacks, removeFeed } = await createCallbacks(BOT_A, false);
 
     await expect(callbacks.onRemoveFeed(404)).rejects.toThrow("Feed 404 not found");
     expect(removeFeed).not.toHaveBeenCalled();
   });
 
   it("binds collection creation to the current Bot and chat", async () => {
-    const { callbacks, createCollection } = createCallbacks(BOT_A);
+    const { callbacks, createCollection } = await createCallbacks(BOT_A);
     const signal = new AbortController().signal;
 
     await callbacks.onCreateCollection(
@@ -207,7 +189,7 @@ describe("BotPool RSS callback tenant scope", () => {
   });
 
   it("stops after ownership validation when an RSS mutation is aborted", async () => {
-    const { callbacks, getCollection, addFeed } = createCallbacks(BOT_A);
+    const { callbacks, getCollection, addFeed } = await createCallbacks(BOT_A);
     const controller = new AbortController();
     getCollection.mockImplementationOnce(async () => {
       controller.abort(new Error("RSS mutation cancelled"));

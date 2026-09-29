@@ -1,12 +1,9 @@
 import type { Logger } from "pino";
 import type { PixAIGenerationRecord } from "@cos-tool-bot/shared";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { PendingGenerationInsertFallbackTracker } from "./generation-recovery.js";
-import { BotPool } from "./bot-pool.js";
-
-vi.mock("../env.js", () => ({
-  env: { ENCRYPTION_KEY: "test-key" },
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DbLogger } from "../db-logger.js";
+import { assembleBotRuntime } from "./index.js";
+import { runtimeHost, runtimeInput, runtimeServices } from "./test-fakes.js";
 
 type DownloadImages = (
   botId: string,
@@ -17,17 +14,15 @@ type DownloadImages = (
 
 type CleanupImages = (botId: string, localFiles: string[], logger: Logger) => Promise<void>;
 
-interface PersistenceTestPool {
-  db: unknown;
-  logger: Logger;
-  generationInsertFallbacks: PendingGenerationInsertFallbackTracker;
-  persistTerminalGeneration(
-    botId: string,
-    record: PixAIGenerationRecord,
-    downloadImages: DownloadImages,
-    cleanupImages: CleanupImages,
-  ): Promise<void>;
-}
+const files = vi.hoisted(() => ({
+  downloadImages: vi.fn<DownloadImages>(),
+  cleanupImages: vi.fn<CleanupImages>(),
+}));
+
+vi.mock("./generation-files.js", () => ({
+  downloadGenerationImages: files.downloadImages,
+  cleanupGenerationImages: files.cleanupImages,
+}));
 
 function completedRecord(): PixAIGenerationRecord {
   return {
@@ -43,7 +38,7 @@ function completedRecord(): PixAIGenerationRecord {
   };
 }
 
-function createPool() {
+async function createTracker() {
   const claimReturning = vi.fn().mockResolvedValue([{ id: 1 }]);
   const localFilesReturning = vi.fn().mockResolvedValue([{ id: 1 }]);
   const terminalSets: Array<Record<string, unknown>> = [];
@@ -70,12 +65,17 @@ function createPool() {
     warn: vi.fn(),
     error: vi.fn(),
   } as unknown as Logger;
-  const pool = Object.create(BotPool.prototype) as PersistenceTestPool;
-  pool.db = { update, select, insert };
-  pool.logger = logger;
-  pool.generationInsertFallbacks = new PendingGenerationInsertFallbackTracker();
+  const services = runtimeServices({ update, select, insert }, logger);
+  const runtime = await assembleBotRuntime(
+    runtimeInput({} as DbLogger, { bot: { id: "bot-a" } }),
+    services,
+    runtimeHost(),
+  );
+  const track = runtime.managerOptions.onGenerationTrack;
+  if (!track) throw new Error("Generation tracking was not wired");
   return {
-    pool,
+    track,
+    fallbacks: services.generationInsertFallbacks,
     logger,
     terminalSets,
     claimReturning,
@@ -84,36 +84,36 @@ function createPool() {
   };
 }
 
+beforeEach(() => {
+  files.downloadImages.mockReset();
+  files.cleanupImages.mockReset();
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("BotPool terminal generation persistence", () => {
+describe("Bot runtime terminal generation persistence", () => {
   it("does not download images after losing the terminal claim", async () => {
-    const { pool, claimReturning } = createPool();
+    const { track, claimReturning } = await createTracker();
     claimReturning.mockResolvedValue([]);
-    const downloadImages = vi.fn<DownloadImages>().mockResolvedValue(["task-1_0.png"]);
+    files.downloadImages.mockResolvedValue(["task-1_0.png"]);
 
-    await expect(
-      pool.persistTerminalGeneration(
-        "bot-a",
-        completedRecord(),
-        downloadImages,
-        vi.fn<CleanupImages>(),
-      ),
-    ).rejects.toThrow("already claimed or is no longer pending");
+    await expect(track(completedRecord())).rejects.toThrow(
+      "already claimed or is no longer pending",
+    );
 
-    expect(downloadImages).not.toHaveBeenCalled();
+    expect(files.downloadImages).not.toHaveBeenCalled();
   });
 
   it("downloads only after claiming completed state, then stores local files separately", async () => {
-    const { pool, claimReturning, localFilesReturning, terminalSets } = createPool();
+    const { track, claimReturning, localFilesReturning, terminalSets } = await createTracker();
     const order: string[] = [];
     claimReturning.mockImplementation(async () => {
       order.push("claim");
       return [{ id: 1 }];
     });
-    const downloadImages = vi.fn<DownloadImages>().mockImplementation(async () => {
+    files.downloadImages.mockImplementation(async () => {
       order.push("download");
       return ["task-1_0.png"];
     });
@@ -122,12 +122,7 @@ describe("BotPool terminal generation persistence", () => {
       return [{ id: 1 }];
     });
 
-    await pool.persistTerminalGeneration(
-      "bot-a",
-      completedRecord(),
-      downloadImages,
-      vi.fn<CleanupImages>(),
-    );
+    await track(completedRecord());
 
     expect(order).toEqual(["claim", "download", "local-files"]);
     expect(terminalSets[0]).toMatchObject({ status: "completed" });
@@ -136,36 +131,30 @@ describe("BotPool terminal generation persistence", () => {
   });
 
   it("cleans up downloaded files when the claimed row was deleted", async () => {
-    const { pool, localFilesReturning, logger } = createPool();
+    const { track, localFilesReturning, logger } = await createTracker();
     localFilesReturning.mockResolvedValue([]);
-    const cleanupImages = vi.fn<CleanupImages>().mockResolvedValue();
+    files.downloadImages.mockResolvedValue(["task-1_0.png"]);
+    files.cleanupImages.mockResolvedValue();
 
-    await pool.persistTerminalGeneration(
-      "bot-a",
-      completedRecord(),
-      vi.fn<DownloadImages>().mockResolvedValue(["task-1_0.png"]),
-      cleanupImages,
-    );
+    await track(completedRecord());
 
-    expect(cleanupImages).toHaveBeenCalledWith("bot-a", ["task-1_0.png"], logger);
+    expect(files.cleanupImages).toHaveBeenCalledWith("bot-a", ["task-1_0.png"], logger);
   });
 
   it("keeps the completed claim and downloaded files when localFiles persistence is ambiguous", async () => {
-    const { pool, claimReturning, localFilesReturning, logger, terminalSets } = createPool();
+    const { track, claimReturning, localFilesReturning, logger, terminalSets } =
+      await createTracker();
     claimReturning.mockResolvedValueOnce([{ id: 1 }]).mockResolvedValueOnce([]);
     localFilesReturning.mockRejectedValue(new Error("database unavailable"));
-    const downloadImages = vi.fn<DownloadImages>().mockResolvedValue(["task-1_0.png"]);
-    const cleanupImages = vi.fn<CleanupImages>();
+    files.downloadImages.mockResolvedValue(["task-1_0.png"]);
 
-    await expect(
-      pool.persistTerminalGeneration("bot-a", completedRecord(), downloadImages, cleanupImages),
-    ).resolves.toBeUndefined();
-    await expect(
-      pool.persistTerminalGeneration("bot-a", completedRecord(), downloadImages, cleanupImages),
-    ).rejects.toThrow("already claimed or is no longer pending");
+    await expect(track(completedRecord())).resolves.toBeUndefined();
+    await expect(track(completedRecord())).rejects.toThrow(
+      "already claimed or is no longer pending",
+    );
 
-    expect(downloadImages).toHaveBeenCalledOnce();
-    expect(cleanupImages).not.toHaveBeenCalled();
+    expect(files.downloadImages).toHaveBeenCalledOnce();
+    expect(files.cleanupImages).not.toHaveBeenCalled();
     expect(terminalSets).not.toContainEqual(expect.objectContaining({ status: "pending" }));
     expect(logger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ taskId: "task-1" }),
@@ -174,25 +163,20 @@ describe("BotPool terminal generation persistence", () => {
   });
 
   it("downloads after a pending-insert fallback wins the terminal claim", async () => {
-    const { pool, claimReturning, insertReturning } = createPool();
+    const { track, fallbacks, claimReturning, insertReturning } = await createTracker();
     const order: string[] = [];
-    pool.generationInsertFallbacks.markPendingInsertFailure("bot-a", "task-1");
+    fallbacks.markPendingInsertFailure("bot-a", "task-1");
     claimReturning.mockResolvedValue([]);
     insertReturning.mockImplementation(async () => {
       order.push("fallback-claim");
       return [{ id: 2 }];
     });
-    const downloadImages = vi.fn<DownloadImages>().mockImplementation(async () => {
+    files.downloadImages.mockImplementation(async () => {
       order.push("download");
       return ["task-1_0.png"];
     });
 
-    await pool.persistTerminalGeneration(
-      "bot-a",
-      completedRecord(),
-      downloadImages,
-      vi.fn<CleanupImages>(),
-    );
+    await track(completedRecord());
 
     expect(order).toEqual(["fallback-claim", "download"]);
   });

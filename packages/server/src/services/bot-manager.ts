@@ -1,12 +1,4 @@
-import type {
-  AiReplyBotConfig,
-  AiSelectionCallbacks,
-  BotConfig,
-  McpCommandConfig,
-  SummaryCallbacks,
-  TelegramObservationCallbacks,
-  TimerCallbacks,
-} from "@cos-tool-bot/bot";
+import type { BotConfig } from "@cos-tool-bot/bot";
 import {
   createBot,
   disposeBot,
@@ -17,7 +9,6 @@ import { run, type FetchOptions, type RunnerHandle } from "@grammyjs/runner";
 import type {
   AiGroupOverride,
   BotStatus,
-  ConversationCallbacks,
   IBotManager,
   ImageGenerationReceiptConfig,
   PixAIGenerationRecord,
@@ -25,10 +16,7 @@ import type {
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
-  TokenUsageRecord,
-  UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
-import type { Logger } from "pino";
 import type { DbLogger } from "./db-logger.js";
 import {
   isTelegramGroupChatId,
@@ -50,29 +38,13 @@ export const TELEGRAM_LONG_POLL_UPDATE_TYPES = [
   "message_reaction_count",
 ] as const satisfies NonNullable<FetchOptions["allowed_updates"]>;
 
-interface BotManagerOptions {
-  botId: string;
-  token: string;
-  adminChatIds: number[];
-  logger: Logger;
+/** The Bot's configuration; BotManager routes onLog to its DbLogger and defaults onRestart. */
+export type BotManagerConfig = Omit<BotConfig, "onLog">;
+
+export interface BotManagerOptions {
   dbLogger: DbLogger;
-  aiReply?: AiReplyBotConfig;
-  aiSelectionCallbacks?: AiSelectionCallbacks;
-  conversation?: ConversationCallbacks;
-  privacy?: UserPrivacyCallbacks;
-  onRestart?: () => void | Promise<void>;
-  onBackup?: () => Promise<{ ok: boolean; filename?: string; error?: string }>;
-  onTokenUsage?: (entry: TokenUsageRecord) => void | Promise<void>;
   onGenerationTrack?: (record: PixAIGenerationRecord) => void | Promise<void>;
-  timerCallbacks?: TimerCallbacks;
-  mcpCallbacks?: McpCommandConfig;
-  summary?: SummaryCallbacks;
-  quota?: BotConfig["quota"];
-  telegramObservation?: TelegramObservationCallbacks;
-  miniAppUrl?: string;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
-  cosInside?: BotConfig["cosInside"];
-  harness?: BotConfig["harness"];
 }
 
 export class BotManager implements IBotManager, TelegramRichMessageSender {
@@ -90,32 +62,15 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     promise: Promise<void>;
   } | null = null;
 
-  constructor(options: BotManagerOptions) {
-    this.botId = options.botId;
+  constructor(config: BotManagerConfig, options: BotManagerOptions) {
+    this.botId = config.botId;
     this.dbLogger = options.dbLogger;
     this.onGenerationTrack = options.onGenerationTrack;
     this.imageGenerationReceiptConfig = options.imageGenerationReceiptConfig;
     this.botConfig = {
-      token: options.token,
-      botId: options.botId,
-      adminChatIds: options.adminChatIds,
-      logger: options.logger,
-      onRestart: options.onRestart ?? (() => this.restart()),
-      onBackup: options.onBackup,
+      ...config,
+      onRestart: config.onRestart ?? (() => this.restart()),
       onLog: (entry) => this.dbLogger.log(entry.level, entry.message, entry.meta),
-      onTokenUsage: options.onTokenUsage,
-      timerCallbacks: options.timerCallbacks,
-      aiSelectionCallbacks: options.aiSelectionCallbacks,
-      mcpCallbacks: options.mcpCallbacks,
-      aiReply: options.aiReply,
-      conversation: options.conversation,
-      privacy: options.privacy,
-      summary: options.summary,
-      quota: options.quota,
-      telegramObservation: options.telegramObservation,
-      miniAppUrl: options.miniAppUrl,
-      cosInside: options.cosInside,
-      harness: options.harness,
     };
   }
 

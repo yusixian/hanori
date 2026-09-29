@@ -30,13 +30,10 @@ function createManager(): BotManager {
     error: vi.fn(async () => {}),
     log: vi.fn(async () => {}),
   } as unknown as DbLogger;
-  return new BotManager({
-    botId: "bot-1",
-    token: "123:test",
-    adminChatIds: [1],
-    logger: {} as Logger,
-    dbLogger,
-  });
+  return new BotManager(
+    { botId: "bot-1", token: "123:test", adminChatIds: [1], logger: {} as Logger },
+    { dbLogger },
+  );
 }
 
 beforeEach(() => {
@@ -64,19 +61,23 @@ describe("BotManager runtime disposal", () => {
 
   it("forwards Telegram observation callbacks into the bot runtime", async () => {
     const telegramObservation = { onChatObserved: vi.fn() };
-    const manager = new BotManager({
-      botId: "bot-1",
-      token: "123:test",
-      adminChatIds: [1],
-      logger: {} as Logger,
-      dbLogger: {
-        info: vi.fn(async () => {}),
-        warn: vi.fn(async () => {}),
-        error: vi.fn(async () => {}),
-        log: vi.fn(async () => {}),
-      } as unknown as DbLogger,
-      telegramObservation,
-    });
+    const manager = new BotManager(
+      {
+        botId: "bot-1",
+        token: "123:test",
+        adminChatIds: [1],
+        logger: {} as Logger,
+        telegramObservation,
+      },
+      {
+        dbLogger: {
+          info: vi.fn(async () => {}),
+          warn: vi.fn(async () => {}),
+          error: vi.fn(async () => {}),
+          log: vi.fn(async () => {}),
+        } as unknown as DbLogger,
+      },
+    );
 
     await manager.start();
 

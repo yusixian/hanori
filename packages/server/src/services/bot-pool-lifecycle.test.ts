@@ -1,9 +1,10 @@
 import type { Database } from "@cos-tool-bot/database";
-import type { CosInsideCommandConfig } from "@cos-tool-bot/bot";
+import type { BotConfig, CosInsideCommandConfig } from "@cos-tool-bot/bot";
 import {
   DEFAULT_CONVERSATION_CONFIG,
   type BotStatus,
   type IBotManager,
+  type UsageGovernancePort,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +22,7 @@ interface FakeManagerOptions {
     triggerCompression: (chatId: number) => void | Promise<void>;
   };
   cosInside?: CosInsideCommandConfig;
+  quota?: BotConfig["quota"];
   timerCallbacks?: {
     onBotReady?: (handlers: {
       fireTimer: () => Promise<boolean>;
@@ -406,5 +408,31 @@ describe("BotPool failed runtime cleanup", () => {
 
     await expect(pool.startBot(BOT_ID)).rejects.toBe(drainError);
     expect(managerMocks.created).toHaveLength(1);
+  });
+});
+
+describe("BotPool service binding", () => {
+  it("lets a service set after start reach the running Bot's call-time lookups", async () => {
+    let quota: FakeManagerOptions["quota"];
+    managerMocks.factories.push((options) => {
+      quota = options.quota;
+      return fakeManager(options, (manager) => {
+        manager.start.mockImplementation(async () => {
+          manager.status = "running";
+        });
+      });
+    });
+    const snapshot = { timezone: "UTC", resources: [] };
+    const assembled = { getSnapshot: vi.fn(async () => snapshot) };
+    const replacement = { getSnapshot: vi.fn(async () => snapshot) };
+    const { pool } = createPool();
+    pool.setUsageGovernance(assembled as unknown as UsageGovernancePort);
+
+    await pool.startBot(BOT_ID);
+    pool.setUsageGovernance(replacement as unknown as UsageGovernancePort);
+    await quota?.getUsage({ chatId: -1001, userId: 42, chatType: "group" });
+
+    expect(replacement.getSnapshot).toHaveBeenCalledOnce();
+    expect(assembled.getSnapshot).not.toHaveBeenCalled();
   });
 });
