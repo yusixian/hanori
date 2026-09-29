@@ -1,4 +1,5 @@
 import type { BotMemory, BotMemoryCallbacks, BotMemoryKind } from "@cos-tool-bot/shared";
+import { includesUnscopedPersonalMemories } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
@@ -24,7 +25,9 @@ function visibleToCurrentTurn(memory: BotMemory, context: BotMemoryTurnContext):
   return (
     (memory.telegramId == null || memory.telegramId === context.userId) &&
     (memory.scopeChatId == null || memory.scopeChatId === context.chatId) &&
-    (context.privacyMode !== "isolated" || memory.telegramId == null || memory.scopeChatId != null)
+    (includesUnscopedPersonalMemories(context.privacyMode) ||
+      memory.telegramId == null ||
+      memory.scopeChatId != null)
   );
 }
 
@@ -53,7 +56,7 @@ export function createBotMemoryTools(
   const access = {
     chatId: context.chatId,
     userId: context.userId,
-    includeUnscopedPersonal: context.privacyMode !== "isolated",
+    includeUnscopedPersonal: includesUnscopedPersonalMemories(context.privacyMode),
   };
 
   return {
@@ -87,7 +90,7 @@ export function createBotMemoryTools(
                   telegramId: scope === "current_user" ? context.userId : undefined,
                   scopeChatId:
                     scope === "chat" ||
-                    context.privacyMode === "isolated" ||
+                    !includesUnscopedPersonalMemories(context.privacyMode) ||
                     requiresChatScope(kind)
                       ? context.chatId
                       : undefined,
@@ -129,7 +132,7 @@ export function createBotMemoryTools(
             category,
             telegramId: context.userId,
             scopeChatId: context.chatId,
-            includeUnscopedPersonal: context.privacyMode !== "isolated",
+            includeUnscopedPersonal: includesUnscopedPersonalMemories(context.privacyMode),
             scope:
               scope === "current_user" ? "user_only" : scope === "chat" ? "general_only" : "all",
             limit,

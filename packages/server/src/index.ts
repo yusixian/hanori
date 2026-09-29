@@ -373,7 +373,13 @@ const summaryRunner = new SummaryRunner(
   },
   usageGovernor,
 );
-const memoryConsolidator = new MemoryConsolidator(db, logger, env.ENCRYPTION_KEY, usageGovernor);
+const memoryConsolidator = new MemoryConsolidator(
+  db,
+  logger,
+  env.ENCRYPTION_KEY,
+  usageGovernor,
+  botPool.getBotMemoryWriter(),
+);
 
 const summaryService = new ChatSummaryService(
   db,

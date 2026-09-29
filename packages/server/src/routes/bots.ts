@@ -1638,8 +1638,7 @@ export function botsRoutes(
       async (c) => {
         const botId = c.req.param("botId");
         const body = c.req.valid("json");
-        const store = botPool.getBotMemoryStore();
-        const memory = await store.saveMemory(botId, { ...body, origin: "admin" });
+        const memory = await botPool.createBotMemoryForAdmin(botId, { ...body, origin: "admin" });
         return c.json({ ok: true as const, data: memory }, 201);
       },
     )

@@ -363,13 +363,6 @@ export class BotMemoryStore {
     return updated ? toDto(updated) : null;
   }
 
-  async updateEmbedding(memoryId: number, embedding: number[]): Promise<void> {
-    await this.db
-      .update(botMemories)
-      .set({ embedding, updatedAt: sql`${botMemories.updatedAt}` })
-      .where(eq(botMemories.id, memoryId));
-  }
-
   async updateEmbeddingIfContentMatches(
     botId: string,
     memoryId: number,

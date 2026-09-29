@@ -15,7 +15,6 @@ import { removeProfileAvatarFile, resolveBotSkills } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
 import {
-  EMBEDDING_DIMENSIONS,
   bots,
   mcpServers,
   miniAppAuditEvents,
@@ -67,11 +66,12 @@ import {
 import type { BackupService } from "./backup.js";
 import { BotManager } from "./bot-manager.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
+import { BotMemoryWriter, type BotMemoryChanges, type NewBotMemory } from "./bot-memory-writer.js";
 import { compressConversation } from "./conversation-compressor.js";
 import { ConversationHistoryGovernor } from "./conversation-history-governor.js";
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
-import { EmbeddingService } from "./embedding-service.js";
+import { createBotEmbeddingService, type EmbeddingService } from "./embedding-service.js";
 import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import {
   AsyncTaskLimiter,
@@ -195,6 +195,7 @@ export class BotPool {
   private profileStore: PeopleProfileStore;
   private profileAvatarService: PeopleProfileAvatarService;
   private botMemoryStore: BotMemoryStore;
+  private botMemoryWriter: BotMemoryWriter;
   private memoryEmbeddingServices = new Map<string, EmbeddingService>();
   private userPrivacyService: UserPrivacyService;
   private generationLibraryService: GenerationLibraryService;
@@ -242,6 +243,11 @@ export class BotPool {
       this.userPrivacyService,
     );
     this.botMemoryStore = new BotMemoryStore(db);
+    this.botMemoryWriter = new BotMemoryWriter(
+      this.botMemoryStore,
+      (botId) => this.memoryEmbeddingServices.get(botId),
+      logger,
+    );
     this.generationLibraryService = new GenerationLibraryService(db, this.userPrivacyService);
   }
 
@@ -425,35 +431,21 @@ export class BotPool {
     return this.botMemoryStore;
   }
 
-  async updateBotMemoryForAdmin(
-    botId: string,
-    memoryId: number,
-    data: Parameters<BotMemoryStore["updateMemory"]>[2],
-  ) {
-    const previous =
-      data.content === undefined ? null : await this.botMemoryStore.getMemory(botId, memoryId);
-    const service = this.memoryEmbeddingServices.get(botId);
-    let embedding: number[] | null = null;
-    if (previous && data.content !== undefined && previous.content !== data.content && service) {
-      try {
-        embedding = await service.generateEmbedding(
-          data.content,
-          AbortSignal.timeout(DEFAULT_TIMEOUT_CONFIG.perStepMs),
-        );
-      } catch (error) {
-        this.logger.warn(error, "Memory embedding refresh failed; saving text without a vector");
-      }
-    }
-    const updated = await this.botMemoryStore.updateMemory(botId, memoryId, data);
-    if (updated && data.content !== undefined && embedding) {
-      await this.botMemoryStore.updateEmbeddingIfContentMatches(
-        botId,
-        memoryId,
-        data.content,
-        embedding,
-      );
-    }
-    return updated;
+  /** Memory writes that embed with the running Bot's embedder; stopped Bots store text only. */
+  getBotMemoryWriter(): BotMemoryWriter {
+    return this.botMemoryWriter;
+  }
+
+  createBotMemoryForAdmin(botId: string, memory: NewBotMemory) {
+    return this.botMemoryWriter.create(botId, memory, {
+      embeddingTimeoutMs: DEFAULT_TIMEOUT_CONFIG.perStepMs,
+    });
+  }
+
+  updateBotMemoryForAdmin(botId: string, memoryId: number, changes: BotMemoryChanges) {
+    return this.botMemoryWriter.update(botId, memoryId, changes, {
+      embeddingTimeoutMs: DEFAULT_TIMEOUT_CONFIG.perStepMs,
+    });
   }
 
   private runConversationCleanup(
@@ -888,19 +880,8 @@ export class BotPool {
       };
 
       // Create embedding service early so closures can reference it
-      const embeddingCfg = aiConfig.embeddingConfig;
-      const embeddingApiKey = aiRuntime.embeddingApiKey;
-      if (embeddingCfg && embeddingApiKey) {
-        embeddingService = new EmbeddingService(
-          {
-            apiKey: embeddingApiKey,
-            baseURL: embeddingCfg.baseURL,
-            model: embeddingCfg.model,
-            dimensions: EMBEDDING_DIMENSIONS,
-          },
-          this.logger,
-        );
-      } else if (aiRuntime.embeddingApiKeyDecryptFailed) {
+      embeddingService = createBotEmbeddingService(aiRuntime, this.logger);
+      if (aiRuntime.embeddingApiKeyDecryptFailed) {
         dbLogger.warn(
           "Encryption key mismatch: cannot decrypt embedding API key. Embedding features disabled.",
         );
@@ -1038,42 +1019,15 @@ export class BotPool {
       if (botMemoryCfg?.enabled) {
         const ms = this.botMemoryStore;
         const es = embeddingService;
-
-        // Dedup threshold constants
-        const DEDUP_EXACT = 0.05; // cosine distance < 0.05 → duplicate (similarity > 0.95)
-        const DEDUP_SIMILAR = 0.15; // cosine distance < 0.15 → similar (similarity > 0.85)
+        // Turns can run before start() returns and registers `es` for the Pool-level writer.
+        const memoryWriter = new BotMemoryWriter(ms, () => es, this.logger);
 
         botMemory = {
-          saveMemory: async (params) => {
-            // Sync embedding generation for bot memories (for dedup)
-            let embedding: number[] | undefined;
-            if (es) {
-              const emb = await es.generateEmbedding(
-                params.content,
-                AbortSignal.timeout(auxiliaryTimeoutMs),
-              );
-              if (emb) {
-                embedding = emb;
-                // Dedup check (scoped by telegramId)
-                const similar = await ms.findSimilar(botId, emb, DEDUP_SIMILAR, {
-                  telegramId: params.telegramId,
-                  scopeChatId: params.scopeChatId,
-                });
-                const exact = similar.find(
-                  (s) =>
-                    s.distance < DEDUP_EXACT &&
-                    s.content.trim().toLocaleLowerCase() ===
-                      params.content.trim().toLocaleLowerCase(),
-                );
-                if (exact) {
-                  // Near-duplicate: just touch updatedAt
-                  await ms.touchMemory(exact.id);
-                  return exact;
-                }
-              }
-            }
-            return ms.saveMemory(botId, { ...params, embedding });
-          },
+          saveMemory: (params) =>
+            memoryWriter.create(botId, params, {
+              dedup: true,
+              embeddingTimeoutMs: auxiliaryTimeoutMs,
+            }),
           recallMemories: async (params) => {
             let queryEmbedding: number[] | undefined;
             if (es && params.query) {
@@ -1085,19 +1039,11 @@ export class BotPool {
             }
             return ms.recallMemories(botId, { ...params, queryEmbedding });
           },
-          updateMemory: async (memoryId, data, access) => {
-            const previous =
-              data.content === undefined ? null : await ms.getMemory(botId, memoryId);
-            const embedding =
-              previous && data.content !== undefined && previous.content !== data.content && es
-                ? await es.generateEmbedding(data.content, AbortSignal.timeout(auxiliaryTimeoutMs))
-                : null;
-            const updated = await ms.updateMemory(botId, memoryId, data, access);
-            if (updated && data.content !== undefined && embedding) {
-              await ms.updateEmbeddingIfContentMatches(botId, memoryId, data.content, embedding);
-            }
-            return updated;
-          },
+          updateMemory: (memoryId, data, access) =>
+            memoryWriter.update(botId, memoryId, data, {
+              access,
+              embeddingTimeoutMs: auxiliaryTimeoutMs,
+            }),
           retireMemory: (memoryId, supersededById, access, expectedContent) =>
             ms.retireMemory(botId, memoryId, supersededById, access, expectedContent),
           deleteMemory: (memoryId, access) => ms.deleteMemory(botId, memoryId, access),

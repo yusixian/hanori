@@ -1,6 +1,8 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
+import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
 import { embed, embedMany } from "ai";
 import type { Logger } from "pino";
+import type { AiConfigRuntime } from "./ai-config-runtime.js";
 
 const MAX_TEXT_LENGTH = 8000;
 
@@ -78,4 +80,18 @@ export class EmbeddingService {
       return texts.map(() => null);
     }
   }
+}
+
+/** The Bot's embedder, or undefined when embeddings are off or the stored key is unusable. */
+export function createBotEmbeddingService(
+  runtime: Pick<AiConfigRuntime, "config" | "embeddingApiKey"> | null,
+  logger?: Logger,
+): EmbeddingService | undefined {
+  const config = runtime?.config.embeddingConfig;
+  const apiKey = runtime?.embeddingApiKey;
+  if (!config || !apiKey) return undefined;
+  return new EmbeddingService(
+    { apiKey, baseURL: config.baseURL, model: config.model, dimensions: EMBEDDING_DIMENSIONS },
+    logger,
+  );
 }

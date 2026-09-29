@@ -11,13 +11,21 @@ import {
   tokenUsage,
   userPrivacySettings,
 } from "@cos-tool-bot/database";
-import type { AiConfigStored, UsageGovernancePort, UserPrivacyMode } from "@cos-tool-bot/shared";
+import type {
+  AiConfigStored,
+  BotMemory,
+  UsageGovernancePort,
+  UserPrivacyMode,
+} from "@cos-tool-bot/shared";
+import { includesUnscopedPersonalMemories } from "@cos-tool-bot/shared";
 import { generateText } from "ai";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { countTokens } from "gpt-tokenizer";
 import type { Logger } from "pino";
 import { toAiConfigRuntime } from "./ai-config-runtime.js";
 import { BotMemoryStore } from "./bot-memory-store.js";
+import type { BotMemoryWriter } from "./bot-memory-writer.js";
+import { createBotEmbeddingService } from "./embedding-service.js";
 
 const INTERVAL_MS = 15 * 60_000;
 const LEASE_MS = 90_000;
@@ -320,11 +328,20 @@ export function consolidationSourceScope(
   return {
     isPrivate,
     telegramId: isPrivate ? participantIds[0]! : null,
-    scopeChatId: isPrivate && privacyMode !== "isolated" ? null : first.chatId,
+    scopeChatId: isPrivate && includesUnscopedPersonalMemories(privacyMode) ? null : first.chatId,
     sourceChatId: first.chatId,
     sourceMessageId: Number(first.sourceKey!.split(":")[1]),
     sourceUserId: first.userId!,
   };
+}
+
+/** Opted-out authors, and isolated authors outside their private chat, never feed consolidation. */
+function privacyExcludesSource(
+  modes: ReadonlyMap<number, UserPrivacyMode>,
+  source: Source,
+): boolean {
+  const mode = modes.get(source.userId!);
+  return mode === "off" || (mode === "isolated" && source.chatId !== source.userId);
 }
 
 export class MemoryConsolidator {
@@ -336,6 +353,7 @@ export class MemoryConsolidator {
     private readonly logger: Logger,
     private readonly encryptionKey: string,
     private readonly usage: UsageGovernancePort,
+    private readonly memoryWriter: Pick<BotMemoryWriter, "refreshEmbeddings">,
     private readonly callModel: (
       config: AiConfigStored,
       prompt: string,
@@ -421,10 +439,7 @@ export class MemoryConsolidator {
       if (
         !privacyModes ||
         candidates.length === 0 ||
-        candidates.some((row) => {
-          const mode = privacyModes.get(row.userId!);
-          return mode === "off" || (mode === "isolated" && row.chatId !== row.userId);
-        })
+        candidates.some((row) => privacyExcludesSource(privacyModes, row))
       )
         continue;
       const preview: HistoricalBatchPreview = {
@@ -487,14 +502,7 @@ export class MemoryConsolidator {
     sources: readonly Source[],
   ): Promise<Map<number, UserPrivacyMode> | null> {
     const byUser = await this.loadPrivacyModes(botId, sources);
-    if (
-      !byUser ||
-      sources.some((source) => {
-        const mode = byUser.get(source.userId!);
-        return mode === "off" || (mode === "isolated" && source.chatId !== source.userId);
-      })
-    )
-      return null;
+    if (!byUser || sources.some((source) => privacyExcludesSource(byUser, source))) return null;
     return byUser;
   }
 
@@ -568,9 +576,9 @@ export class MemoryConsolidator {
             privateChat
               ? and(
                   eq(botMemories.telegramId, chatId),
-                  privateMode === "isolated"
-                    ? eq(botMemories.scopeChatId, chatId)
-                    : or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, chatId)),
+                  includesUnscopedPersonalMemories(privateMode)
+                    ? or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, chatId))
+                    : eq(botMemories.scopeChatId, chatId),
                 )
               : and(isNull(botMemories.telegramId), eq(botMemories.scopeChatId, chatId)),
           ),
@@ -713,8 +721,9 @@ export class MemoryConsolidator {
     snapshots: readonly MemorySnapshot[],
     expectedPrivacyModes: ReadonlyMap<number, UserPrivacyMode>,
   ): Promise<void> {
-    await this.db.transaction(async (tx) => {
+    const committed = await this.db.transaction(async (tx) => {
       const memoryStore = new BotMemoryStore(tx);
+      const contentWrites: BotMemory[] = [];
       const [lease] = await tx
         .select()
         .from(memoryConsolidationState)
@@ -802,6 +811,7 @@ export class MemoryConsolidator {
             ...(expiresAt === null ? {} : { expiresAt: expiresAt.toISOString() }),
           });
           memoryId = created.id;
+          contentWrites.push(created);
         } else if (proposal.action === "update" || proposal.action === "retire") {
           const shown = snapshots.find((snapshot) => snapshot.id === proposal.targetId);
           if (!shown) throw new Error("Memory consolidation target was not shown to model");
@@ -844,6 +854,7 @@ export class MemoryConsolidator {
               ...(proposal.expiresAt ? { expiresAt: proposal.expiresAt } : {}),
             });
             if (!updated) throw new Error("Memory consolidation target changed");
+            if (updated.content !== currentTarget.content) contentWrites.push(updated);
           }
           memoryId = currentTarget.id;
         }
@@ -865,6 +876,15 @@ export class MemoryConsolidator {
             eq(memoryConsolidationState.leaseOwner, owner),
           ),
         );
+      return { memories: contentWrites, aiConfig: bot.aiConfig };
+    });
+    await this.memoryWriter.refreshEmbeddings(botId, committed.memories, {
+      embeddingTimeoutMs: MODEL_TIMEOUT_MS,
+      fallbackEmbedder: () =>
+        createBotEmbeddingService(
+          toAiConfigRuntime(committed.aiConfig, this.encryptionKey),
+          this.logger,
+        ),
     });
   }
 

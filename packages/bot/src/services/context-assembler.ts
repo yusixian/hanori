@@ -24,6 +24,7 @@ import {
   DEFAULT_MEMORY_CONFIG,
   formatConversationForwardOrigin,
   formatConversationRelayOrigin,
+  includesUnscopedPersonalMemories,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { ModelMessage, UserModelMessage } from "ai";
@@ -918,7 +919,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
         retrievalQuery: input.retrievalQuery,
         chatId: input.chatId,
         userId: input.userId,
-        includeUnscopedPersonal: input.privacyMode !== "isolated",
+        includeUnscopedPersonal: includesUnscopedPersonalMemories(input.privacyMode),
         limit: botMemoryConfig.maxMemories,
       });
       if (memories.length > 0) {
@@ -1163,7 +1164,7 @@ export async function buildContinueChatPromptBundle(
         retrievalQuery: input.retrievalQuery,
         chatId: input.chatId,
         userId: input.userId,
-        includeUnscopedPersonal: input.privacyMode !== "isolated",
+        includeUnscopedPersonal: includesUnscopedPersonalMemories(input.privacyMode),
         limit: botMemoryConfig.maxMemories,
       });
       if (memories.length > 0) {

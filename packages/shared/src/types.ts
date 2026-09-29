@@ -270,6 +270,14 @@ export type ConversationRole =
 
 export type UserPrivacyMode = "normal" | "isolated" | "off";
 
+/**
+ * Whether unscoped (cross-chat) personal memories apply to the user. Isolated users keep personal
+ * memories per chat, for recall and for new writes alike.
+ */
+export function includesUnscopedPersonalMemories(mode: UserPrivacyMode | undefined): boolean {
+  return mode !== "isolated";
+}
+
 export type ConversationForwardOrigin =
   | { type: "user"; name: string; username?: string }
   | { type: "hidden_user"; name: string }

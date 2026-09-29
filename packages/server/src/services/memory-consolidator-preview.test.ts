@@ -35,6 +35,7 @@ function previewWithWindows(
   const insert = vi.fn();
   const update = vi.fn();
   const transaction = vi.fn();
+  const refreshEmbeddings = vi.fn();
   const db = {
     select: () => ({
       from: (table: unknown) => {
@@ -55,10 +56,13 @@ function previewWithWindows(
     transaction,
   } as unknown as Database;
   return {
-    service: new MemoryConsolidator(db, {} as Logger, "unused", {} as UsageGovernancePort),
+    service: new MemoryConsolidator(db, {} as Logger, "unused", {} as UsageGovernancePort, {
+      refreshEmbeddings,
+    }),
     insert,
     update,
     transaction,
+    refreshEmbeddings,
   };
 }
 
@@ -67,7 +71,7 @@ describe("historical consolidation preview", () => {
     const skipped = Array.from({ length: 12 }, (_, index) =>
       source(index + 1, 41, { role: "assistant" }),
     );
-    const { service, insert, update, transaction } = previewWithWindows(
+    const { service, insert, update, transaction, refreshEmbeddings } = previewWithWindows(
       [[...skipped, source(13, 42)], [source(13, 42)]],
       [],
     );
@@ -91,6 +95,7 @@ describe("historical consolidation preview", () => {
     expect(insert).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
     expect(transaction).not.toHaveBeenCalled();
+    expect(refreshEmbeddings).not.toHaveBeenCalled();
   });
 
   it("skips a raw group batch when one eligible participant has opted out", async () => {
