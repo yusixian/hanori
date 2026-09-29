@@ -21,9 +21,10 @@ export type HarnessRequestInsert = Omit<
   typeof harnessRequests.$inferInsert,
   "createdAt" | "updatedAt"
 >;
+/** Every field but `state`, which only `transitionRequest` writes (see request-lifecycle.ts). */
 export type HarnessRequestPatch = Partial<
-  Omit<HarnessRequestRecord, "id" | "createdAt" | "projectKey" | "repo">
->;
+  Omit<HarnessRequestRecord, "id" | "createdAt" | "projectKey" | "repo" | "state">
+> & { state?: never };
 
 export function emptyProjectRecord(key: string, repo: string, now: Date): HarnessProjectRecord {
   return {
@@ -117,10 +118,10 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
   }
 
   async upsertProject(key: string, repo: string, patch: HarnessProjectPatch) {
-    const now = new Date();
+    const now = this.stamp();
     await this.db
       .insert(harnessProjects)
-      .values({ key, ...patch, repo, updatedAt: now })
+      .values({ key, ...patch, repo, createdAt: now, updatedAt: now })
       .onConflictDoUpdate({ target: harnessProjects.key, set: { ...patch, repo, updatedAt: now } });
   }
 
@@ -137,7 +138,7 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
       await this.db.delete(harnessSettings).where(eq(harnessSettings.key, key));
       return;
     }
-    const set = { value, actorId, updatedAt: new Date() };
+    const set = { value, actorId, updatedAt: this.stamp() };
     await this.db
       .insert(harnessSettings)
       .values({ key, ...set })
@@ -165,7 +166,7 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
     };
     await this.db
       .insert(harnessConfigOverrides)
-      .values({ scope: override.scope, path: override.path, ...values })
+      .values({ scope: override.scope, path: override.path, ...values, createdAt: this.stamp() })
       .onConflictDoUpdate({
         target: [harnessConfigOverrides.scope, harnessConfigOverrides.path],
         set: values,
@@ -189,13 +190,13 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
   }
 
   async recordEvent(event: HarnessEventInput) {
-    await this.db.insert(harnessEvents).values(event);
+    await this.db.insert(harnessEvents).values({ ...event, createdAt: this.stamp() });
   }
 
   async recordDelivery(deliveryId: string, event: HarnessEventInput) {
     const rows = await this.db
       .insert(harnessEvents)
-      .values({ ...event, deliveryId })
+      .values({ ...event, deliveryId, createdAt: this.stamp() })
       .onConflictDoNothing({ target: harnessEvents.deliveryId })
       .returning({ id: harnessEvents.id });
     return rows.length > 0;
@@ -246,14 +247,18 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
   }
 
   async insertRequest(input: HarnessRequestInsert) {
-    const [row] = await this.db.insert(harnessRequests).values(input).returning();
+    const now = this.stamp();
+    const [row] = await this.db
+      .insert(harnessRequests)
+      .values({ ...input, createdAt: now, updatedAt: now })
+      .returning();
     return row!;
   }
 
   async updateRequest(id: string, patch: HarnessRequestPatch) {
     await this.db
       .update(harnessRequests)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...patch, updatedAt: this.stamp() })
       .where(eq(harnessRequests.id, id));
   }
 
@@ -290,7 +295,7 @@ export class DrizzleHarnessStore extends DrizzleTopicStore implements HarnessSto
   }
 
   async createApproval(approval: Omit<HarnessApprovalRecord, "createdAt">) {
-    await this.db.insert(harnessApprovals).values(approval);
+    await this.db.insert(harnessApprovals).values({ ...approval, createdAt: this.stamp() });
   }
 
   async getApproval(id: string) {

@@ -27,6 +27,8 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
       throw new Error("Harness store integration requires a local *_test database");
     }
     parsed.searchParams.set("search_path", namespace);
+    // Far from UTC, so a timestamp left to the session's `now()` shows up as hours off.
+    parsed.searchParams.set("TimeZone", "Pacific/Kiritimati");
     const connection = createDb(parsed.toString());
     client = connection.client;
     store = new DrizzleHarnessStore(connection.db as Database);
@@ -44,9 +46,9 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
     await client?.end();
   });
 
-  async function request(prNumber: number) {
+  async function request(prNumber: number, projectKey = "sandbox") {
     return store.insertRequest({
-      projectKey: "sandbox",
+      projectKey,
       type: "pr",
       state: "open",
       repo: "example-owner/harness-sandbox",
@@ -174,7 +176,7 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
 
   it("lets exactly one scheduler claim a queued request", async () => {
     const target = await request(3);
-    await store.updateRequest(target.id, { state: "queued" });
+    await store.transitionRequest(target.id, ["open"], "queued");
     const claims = await Promise.all(
       Array.from({ length: 4 }, () => store.transitionRequest(target.id, ["queued"], "starting")),
     );
@@ -196,13 +198,29 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
     expect(await store.countJobsSince(new Date(0))).toBe(1);
   });
 
+  it("writes a transition's fields only while its guard holds", async () => {
+    const target = await request(5);
+    const lost = await store.transitionRequest(target.id, ["queued"], "starting", {
+      stateReason: "lost",
+    });
+    expect(lost).toBe(false);
+    expect(await store.getRequest(target.id)).toMatchObject({ state: "open", stateReason: null });
+    const won = await store.transitionRequest(target.id, ["queued", "open"], "starting", {
+      stateReason: "won",
+    });
+    expect(won).toBe(true);
+    expect(await store.getRequest(target.id)).toMatchObject({
+      state: "starting",
+      stateReason: "won",
+    });
+  });
+
   it("finds requests by issue, card, and state in creation order", async () => {
     const a = await request(4);
-    await store.updateRequest(a.id, {
+    await store.transitionRequest(a.id, ["open"], "queued", {
       issueNumber: 12,
       chatId: -100,
       cardMessageId: 55,
-      state: "queued",
     });
     expect((await store.findRequestByIssue("example-owner/harness-sandbox", 12))?.id).toBe(a.id);
     expect((await store.findRequestByCard(-100, 55))?.id).toBe(a.id);
@@ -245,13 +263,63 @@ describe.skipIf(!url)("DrizzleHarnessStore PostgreSQL integration", () => {
     expect(await store.clearTopic(-100, 9)).toBe(1);
   });
 
+  it("stamps inserts with the process clock, whatever the session TimeZone", async () => {
+    const near = (date: Date | undefined) =>
+      expect(Math.abs(date!.getTime() - Date.now())).toBeLessThan(60_000);
+    const target = await request(30);
+    near(target.createdAt);
+    near(target.updatedAt);
+    await store.insertJob({
+      requestId: target.id,
+      attempt: 1,
+      executor: "lody",
+      state: "starting",
+      machineKey: "mbp",
+      lodyMachine: "MBP",
+      provider: "claude",
+      role: "worker",
+      agent: "Claude Code",
+    });
+    const job = await store.latestJob(target.id);
+    near(job?.createdAt);
+    near(job?.updatedAt);
+    expect(await store.countJobsSince(new Date(Date.now() + 60_000))).toBe(0);
+    await store.recordEvent({ type: "stamped", requestId: target.id });
+    near((await store.listRequestEvents(target.id, 1))[0]?.createdAt);
+    await store.appendTopicMessage({ chatId: -300, threadId: 1, role: "user", text: "t" });
+    near((await store.listTopicMessages(-300, 1, 1))[0]?.createdAt);
+    const expiresAt = new Date(Date.now() + 60_000);
+    await store.createApproval(
+      approval("approval-stamp-00001", target.id, "a".repeat(40), expiresAt),
+    );
+    near((await store.getApproval("approval-stamp-00001"))?.createdAt);
+    await store.recordMessage({
+      chatId: -300,
+      messageId: 1,
+      requestId: target.id,
+      kind: "question",
+    });
+    near((await store.findMessage(-300, 1))?.createdAt);
+    await store.upsertProject("stamped", "example-owner/stamped", {});
+    near((await store.listProjects()).find((p) => p.key === "stamped")?.createdAt);
+  });
+
+  it("keeps insertion order for requests stamped within one millisecond", async () => {
+    const rows = await Promise.all([40, 41, 42, 43, 44].map((pr) => request(pr, "fifo")));
+    const queue = (await store.listRequestsByState(["open"])).filter(
+      (r) => r.projectKey === "fifo",
+    );
+    expect(queue.map((r) => r.id)).toEqual(rows.map((r) => r.id));
+    expect(new Set(queue.map((r) => r.createdAt.getTime())).size).toBe(rows.length);
+  });
+
   it("lists a project's requests and a request's events newest first", async () => {
-    const a = await request(20);
-    const b = await request(21);
-    // updatedAt has millisecond precision; created_at defaults are finer.
+    const a = await request(20, "listing");
+    const b = await request(21, "listing");
+    // Timestamps have millisecond precision.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    await store.updateRequest(a.id, { state: "queued" });
-    expect((await store.listProjectRequests("sandbox", 2)).map((r) => r.id)).toEqual([a.id, b.id]);
+    await store.updateRequest(a.id, { title: "renamed" });
+    expect((await store.listProjectRequests("listing", 2)).map((r) => r.id)).toEqual([a.id, b.id]);
     await store.recordEvent({ type: "first", requestId: a.id });
     await store.recordEvent({ type: "second", requestId: a.id });
     expect((await store.listRequestEvents(a.id, 5)).map((e) => e.type)).toEqual([

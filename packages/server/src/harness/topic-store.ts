@@ -45,7 +45,7 @@ export class DrizzleTopicStore extends DrizzleWorkStore implements HarnessTopicS
   }
 
   async appendTopicMessage(message: HarnessTopicMessageInsert) {
-    await this.db.insert(t).values(message);
+    await this.db.insert(t).values({ ...message, createdAt: this.stamp() });
   }
 
   async listTopicMessages(chatId: number, threadId: number, limit: number) {

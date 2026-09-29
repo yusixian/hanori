@@ -76,7 +76,7 @@ export class MemoryHarnessStore extends MemoryTopicStore implements HarnessStore
 
   async recordDelivery(deliveryId: string, event: HarnessEventInput) {
     if (this.events.some((e) => e.deliveryId === deliveryId)) return false;
-    this.events.push({ ...event, deliveryId });
+    this.events.push({ ...event, deliveryId, createdAt: new Date() });
     return true;
   }
 

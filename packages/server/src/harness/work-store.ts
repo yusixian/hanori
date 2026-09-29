@@ -1,9 +1,11 @@
 import type { Database } from "@cos-tool-bot/database";
 import { harnessJobs, harnessMessages, harnessRequests } from "@cos-tool-bot/database";
 import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
+import type {
+  HarnessRequestPatch as RequestPatch,
+  HarnessRequestRecord as RequestRecord,
+} from "./store.js";
 
-type RequestRecord = typeof harnessRequests.$inferSelect;
-type RequestPatch = Partial<Omit<RequestRecord, "id" | "createdAt" | "projectKey" | "repo">>;
 export type HarnessJobRecord = typeof harnessJobs.$inferSelect;
 export type HarnessJobInsert = Omit<
   typeof harnessJobs.$inferInsert,
@@ -19,7 +21,10 @@ export interface HarnessWorkStore {
   findRequestByCard(chatId: number, messageId: number): Promise<RequestRecord | null>;
   /** Oldest first, so the queue is FIFO. */
   listRequestsByState(states: readonly string[]): Promise<RequestRecord[]>;
-  /** Conditional state change; false when another caller moved the request first. */
+  /**
+   * The only write of `state`: lands, with `patch`, only while the request is in one of `from`.
+   * False, and nothing written, when another writer moved it first.
+   */
   transitionRequest(
     id: string,
     from: readonly string[],
@@ -42,7 +47,19 @@ export interface HarnessWorkStore {
 }
 
 export class DrizzleWorkStore implements HarnessWorkStore {
+  private lastStamp = 0;
+
   constructor(protected readonly db: Database) {}
+
+  /**
+   * Every timestamp this adapter writes: the process clock, like the memory adapter, because
+   * `defaultNow()` follows the session TimeZone. Strictly increasing, so rows stamped within one
+   * millisecond keep their order.
+   */
+  protected stamp(): Date {
+    this.lastStamp = Math.max(Date.now(), this.lastStamp + 1);
+    return new Date(this.lastStamp);
+  }
 
   async findRequestByIssue(repo: string, issueNumber: number) {
     const [row] = await this.db
@@ -80,21 +97,25 @@ export class DrizzleWorkStore implements HarnessWorkStore {
   ) {
     const rows = await this.db
       .update(harnessRequests)
-      .set({ ...patch, state: to, updatedAt: new Date() })
+      .set({ ...patch, state: to, updatedAt: this.stamp() })
       .where(and(eq(harnessRequests.id, id), inArray(harnessRequests.state, [...from])))
       .returning({ id: harnessRequests.id });
     return rows.length > 0;
   }
 
   async insertJob(job: HarnessJobInsert) {
-    const [row] = await this.db.insert(harnessJobs).values(job).returning();
+    const now = this.stamp();
+    const [row] = await this.db
+      .insert(harnessJobs)
+      .values({ ...job, createdAt: now, updatedAt: now })
+      .returning();
     return row!;
   }
 
   async updateJob(id: string, patch: HarnessJobPatch) {
     await this.db
       .update(harnessJobs)
-      .set({ ...patch, updatedAt: new Date() })
+      .set({ ...patch, updatedAt: this.stamp() })
       .where(eq(harnessJobs.id, id));
   }
 
@@ -125,7 +146,10 @@ export class DrizzleWorkStore implements HarnessWorkStore {
   }
 
   async recordMessage(message: HarnessMessageInsert) {
-    await this.db.insert(harnessMessages).values(message).onConflictDoNothing();
+    await this.db
+      .insert(harnessMessages)
+      .values({ ...message, createdAt: this.stamp() })
+      .onConflictDoNothing();
   }
 
   async findMessage(chatId: number, messageId: number) {

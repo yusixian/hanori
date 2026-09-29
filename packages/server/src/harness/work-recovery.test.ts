@@ -76,7 +76,7 @@ describe("restarts", () => {
       leaseUntil: new Date(START.getTime() + 60_000),
     });
     const request = [...store.requests.values()][0]!;
-    await store.updateRequest(request.id, { state: S.starting });
+    await store.transitionRequest(request.id, [request.state], S.starting);
     const second = await setup({ store });
     await second.service.work.scheduler.tick();
     expect([...store.requests.values()][0]!.state).toBe(S.starting);

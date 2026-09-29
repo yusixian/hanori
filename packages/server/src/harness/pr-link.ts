@@ -52,26 +52,3 @@ export async function findLinkedRequest(
   }
   return null;
 }
-
-const KEPT_WHILE_OPEN: readonly string[] = [
-  S.received,
-  S.queued,
-  S.starting,
-  S.needsAttention,
-  S.needsSpec,
-];
-
-/**
- * Open-PR state for a request. Bug requests keep their own stage while the PR stays open; a push
- * from the working session (or first linking, which counts as one) moves it to `pr_ready`.
- */
-export function openStateFor(request: HarnessRequestRecord, headChanged: boolean): string {
-  if (!isWorkRequest(request)) return S.open;
-  if (request.state === S.completed) return S.prReady;
-  if (isTerminal(request.state) && request.state !== S.closed) return request.state;
-  if (KEPT_WHILE_OPEN.includes(request.state)) return request.state;
-  if (request.state === S.revising || request.state === S.running) {
-    return headChanged ? S.prReady : request.state;
-  }
-  return S.prReady;
-}

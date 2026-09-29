@@ -31,6 +31,13 @@ export const RELAY_MARKER = "<!-- dev-harness:relay -->";
 
 const MAX_TURN_ENDS = 500;
 
+/** A work request's part in a PR sync; `state` replaces the one the PR implies. */
+export interface PrSyncFollowUp {
+  state?: string;
+  fields?: HarnessRequestPatch;
+  apply?: () => Promise<void>;
+}
+
 /** Execution side of the harness: sessions, job cards, prompts, and PR follow-ups. */
 export class HarnessWork {
   /** Per-request lock (`req:<id>`) for job actions, scheduling, and polling. */
@@ -308,56 +315,70 @@ export class HarnessWork {
   }
 
   /**
-   * Called inside the PR sync (PR lock held): returns request changes for the card and handles
-   * CI auto-fix rounds and session archiving. Must not call back into the PR flow.
+   * Called inside the PR sync (PR lock held) with the state the PR implies. Returns what the sync's
+   * guarded write also carries, and in `apply` the session side (archiving, or the next CI auto-fix
+   * round), which the sync runs only once that write won. Must not call back into the PR flow.
    */
   async onPrSync(
     request: HarnessRequestRecord,
     pr: PullRequestInfo,
     checks: CheckSummary,
-  ): Promise<HarnessRequestPatch> {
+  ): Promise<PrSyncFollowUp> {
     if (!isWorkRequest(request)) return {};
     const { service } = this;
-    const job = await service.store.latestJob(request.id);
     if ((TERMINAL_STATES as readonly string[]).includes(request.state)) {
-      if (job?.sessionId && job.state === JOB_STATES.running && request.state !== S.cancelled) {
-        const archived = await service.lody().archiveSession(job.sessionId);
-        await service.store.updateJob(job.id, {
-          state: JOB_STATES.done,
-          endedAt: service.now(),
-          ...(archived.ok ? {} : { error: `归档失败：${archived.message}` }),
-        });
-      }
-      return {};
+      return request.state === S.cancelled ? {} : { apply: () => this.archiveSession(request.id) };
     }
     if (checks.state !== "failure" || request.lastFixSha === pr.headSha) return {};
+    const job = await service.store.latestJob(request.id);
     if (!job?.sessionId || job.state !== JOB_STATES.running) return {};
     const config = this.requireConfig(request.projectKey);
     const max = config.guardrails.autoFixRounds;
     if (request.fixRounds >= max) {
-      await service.recordEvent({
-        type: "autofix.exhausted",
-        projectKey: request.projectKey,
-        requestId: request.id,
-        payload: { rounds: request.fixRounds, sha: pr.headSha },
-      });
       return {
         state: S.needsAttention,
-        stateReason: `CI 连续失败 ${request.fixRounds} 轮`,
-        lastFixSha: pr.headSha,
+        fields: { stateReason: `CI 连续失败 ${request.fixRounds} 轮`, lastFixSha: pr.headSha },
+        apply: () =>
+          service.recordEvent({
+            type: "autofix.exhausted",
+            projectKey: request.projectKey,
+            requestId: request.id,
+            payload: { rounds: request.fixRounds, sha: pr.headSha },
+          }),
       };
     }
     const round = request.fixRounds + 1;
-    const sent = await this.sendToSession(request, "ci_failed", {
-      failures: checks.failedNames,
-      round,
+    return {
+      apply: async () => {
+        const sent = await this.sendToSession(request, "ci_failed", {
+          failures: checks.failedNames,
+          round,
+        });
+        await service.recordEvent({
+          type: "autofix.sent",
+          projectKey: request.projectKey,
+          requestId: request.id,
+          payload: { round, sha: pr.headSha, ok: sent.ok },
+        });
+        if (sent.ok) {
+          await service.store.updateRequest(request.id, {
+            fixRounds: round,
+            lastFixSha: pr.headSha,
+          });
+        }
+      },
+    };
+  }
+
+  private async archiveSession(requestId: string) {
+    const { service } = this;
+    const job = await service.store.latestJob(requestId);
+    if (!job?.sessionId || job.state !== JOB_STATES.running) return;
+    const archived = await service.lody().archiveSession(job.sessionId);
+    await service.store.updateJob(job.id, {
+      state: JOB_STATES.done,
+      endedAt: service.now(),
+      ...(archived.ok ? {} : { error: `归档失败：${archived.message}` }),
     });
-    await service.recordEvent({
-      type: "autofix.sent",
-      projectKey: request.projectKey,
-      requestId: request.id,
-      payload: { round, sha: pr.headSha, ok: sent.ok },
-    });
-    return sent.ok ? { fixRounds: round, lastFixSha: pr.headSha } : {};
   }
 }

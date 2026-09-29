@@ -9,7 +9,8 @@ import type { PullRequestInfo } from "./github.js";
 import { acceptsPullRequest } from "./intake.js";
 import { errorText } from "./pr-actions.js";
 import { type PrCardInput, renderPrCard } from "./pr-card.js";
-import { findLinkedRequest, openStateFor } from "./pr-link.js";
+import { findLinkedRequest } from "./pr-link.js";
+import { optimisticTransition, prTransition } from "./request-lifecycle.js";
 import { assessRisk } from "./risk.js";
 import type { HarnessService } from "./service.js";
 import { REQUEST_STATES as S, isOpenPrState } from "./states.js";
@@ -200,7 +201,11 @@ export class HarnessPrFlow {
     return { summary, summaryKey: key };
   }
 
-  /** Caller must hold the PR lock. */
+  /**
+   * Caller must hold the PR lock. The request lock stays free, so the state moves by
+   * `optimisticTransition` and only while it still is what the published card was rendered from.
+   * What GitHub reported (head, event times) is recorded even when every attempt loses.
+   */
   async syncUnlocked(projectKey: string, number: number, options: SyncOptions) {
     const { service } = this;
     const config = this.project(projectKey);
@@ -211,15 +216,10 @@ export class HarnessPrFlow {
     if (!request && pr.state === "open") {
       const linked = await findLinkedRequest(service.store, config, pr);
       if (linked) {
-        const link = {
-          prNumber: number,
-          headSha: pr.headSha,
-          bodyEditedAt: pr.createdAt,
-          lastPushAt: pr.createdAt,
-        };
+        const link = { prNumber: number, bodyEditedAt: pr.createdAt, lastPushAt: pr.createdAt };
         await service.store.updateRequest(linked.id, link);
-        // Keep the pre-link head so linking counts as the session's first push.
-        request = { ...linked, ...link, headSha: linked.headSha };
+        // The head stays pre-link until the state write, so linking counts as the first push.
+        request = { ...linked, ...link };
         await service.recordEvent({
           type: "pr.linked",
           projectKey,
@@ -270,18 +270,7 @@ export class HarnessPrFlow {
         payload: { from: request.headSha, to: pr.headSha, invalidated },
       });
     }
-    const state = pr.merged
-      ? S.merged
-      : pr.state === "closed"
-        ? S.closed
-        : openStateFor(request, headChanged);
-    const open = isOpenPrState(state);
-    if (!open) await service.store.invalidateApprovals(request.id, state, now);
-    patch.state = state;
-    if (state === S.prReady && request.state !== S.prReady) patch.stateReason = null;
-    let current: HarnessRequestRecord = { ...request, ...patch };
-
-    const evaluation = await this.evaluate(config, pr, current);
+    const evaluation = await this.evaluate(config, pr, { ...request, ...patch });
     const key = prLockKey(repo, number);
     if (pr.state === "open") this.drafts.set(key, pr.draft);
     else this.drafts.delete(key);
@@ -290,39 +279,62 @@ export class HarnessPrFlow {
     } else {
       this.registrationWaits.delete(key);
     }
-    Object.assign(patch, await this.summarize(config, pr, current));
-    Object.assign(patch, await service.work.onPrSync(current, pr, evaluation.checks));
-    current = { ...current, ...patch };
-    const approval = isOpenPrState(current.state)
-      ? await ensureCardApproval(service.store, current, pr.headSha, config.approvals.ttl, now)
-      : null;
-    const cardInput: PrCardInput = {
-      repo,
-      number,
-      title: pr.title,
-      url: pr.htmlUrl,
-      author: pr.author,
-      state: pr.state,
-      merged: pr.merged,
-      draft: pr.draft,
-      tier: evaluation.risk.tier,
-      summary: patch.summary ?? null,
-      checks: evaluation.checks,
-      contract: evaluation.contract,
-      approvalId: approval?.id ?? null,
-      confirmingMerge: options.confirmingMerge,
-      details:
-        options.expanded || options.confirmingMerge ? { files: evaluation.risk.files } : null,
-      imageUrl: config.telegram.cards.screenshot === "first" ? extractFirstImage(pr.body) : null,
-      note: options.note ?? stageNote(current),
-      footer: await service.work.footerFor(current, config),
-      controls: approval
-        ? await service.work.prControls(current, config, options.confirmingCancel)
-        : null,
-    };
+    Object.assign(patch, await this.summarize(config, pr, request));
     patch.riskTier = evaluation.risk.tier;
-    Object.assign(patch, await this.publish(projectKey, current, cardInput));
-    await service.store.updateRequest(request.id, patch);
+
+    const settled = await optimisticTransition(service.store, request, async (snapshot) => {
+      const moved = prTransition(snapshot, pr, headChanged);
+      const followUp = await service.work.onPrSync(
+        { ...snapshot, ...patch, ...moved.fields, state: moved.to },
+        pr,
+        evaluation.checks,
+      );
+      const to = followUp.state ?? moved.to;
+      const fields = { ...patch, ...moved.fields, ...followUp.fields };
+      const current: HarnessRequestRecord = { ...snapshot, ...fields, state: to };
+      const approval = isOpenPrState(to)
+        ? await ensureCardApproval(service.store, current, pr.headSha, config.approvals.ttl, now)
+        : null;
+      const cardInput: PrCardInput = {
+        repo,
+        number,
+        title: pr.title,
+        url: pr.htmlUrl,
+        author: pr.author,
+        state: pr.state,
+        merged: pr.merged,
+        draft: pr.draft,
+        tier: evaluation.risk.tier,
+        summary: patch.summary ?? null,
+        checks: evaluation.checks,
+        contract: evaluation.contract,
+        approvalId: approval?.id ?? null,
+        confirmingMerge: options.confirmingMerge,
+        details:
+          options.expanded || options.confirmingMerge ? { files: evaluation.risk.files } : null,
+        imageUrl: config.telegram.cards.screenshot === "first" ? extractFirstImage(pr.body) : null,
+        note: options.note ?? stageNote(current),
+        footer: await service.work.footerFor(current, config),
+        controls: approval
+          ? await service.work.prControls(current, config, options.confirmingCancel)
+          : null,
+      };
+      return {
+        to,
+        fields,
+        facts: await this.publish(projectKey, current, cardInput),
+        after: async () => {
+          if (!isOpenPrState(to)) await service.store.invalidateApprovals(request.id, to, now);
+          await followUp.apply?.();
+        },
+      };
+    });
+    if (!settled) {
+      await service.store.updateRequest(request.id, patch);
+      service.logger.warn(
+        `Dev Harness PR ${repo}#${number}: its state kept changing; kept the PR fields only`,
+      );
+    }
   }
 
   private async publish(projectKey: string, request: HarnessRequestRecord, input: PrCardInput) {
