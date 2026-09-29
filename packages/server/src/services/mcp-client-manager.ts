@@ -1,6 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import { mcpServers } from "@cos-tool-bot/database";
 import type { McpServerStatus, McpServerToolInfo } from "@cos-tool-bot/shared";
+import type { McpToolEntry } from "@cos-tool-bot/bot";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -21,17 +22,27 @@ interface McpClientEntry {
   retryCount: number;
 }
 
-interface McpToolEntry {
-  serverId: number;
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  prefix?: string;
-  adminOnly?: boolean;
-}
-
 const MAX_RETRIES = 10;
 const CALL_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * GitHub MCP servers act with the credentials in their configured headers, so only Bot admins get
+ * their tools.
+ */
+export function isAdminOnlyMcpServer(server: { presetId: string | null; url: string }): boolean {
+  if (server.presetId === "github") return true;
+  try {
+    const hostname = new URL(server.url).hostname.toLowerCase();
+    return (
+      hostname === "github.com" ||
+      hostname.endsWith(".github.com") ||
+      hostname === "githubcopilot.com" ||
+      hostname.endsWith(".githubcopilot.com")
+    );
+  } catch {
+    return false;
+  }
+}
 
 export class McpClientManager {
   private clients = new Map<number, McpClientEntry>();
@@ -103,21 +114,7 @@ export class McpClientManager {
       connected: false,
       lastConnectedAt: null,
       error: null,
-      adminOnly:
-        server.presetId === "github" ||
-        (() => {
-          try {
-            const hostname = new URL(server.url).hostname.toLowerCase();
-            return (
-              hostname === "github.com" ||
-              hostname.endsWith(".github.com") ||
-              hostname === "githubcopilot.com" ||
-              hostname.endsWith(".githubcopilot.com")
-            );
-          } catch {
-            return false;
-          }
-        })(),
+      adminOnly: isAdminOnlyMcpServer(server),
       retryTimeout: null,
       retryCount: 0,
     };

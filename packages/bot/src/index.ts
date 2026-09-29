@@ -839,3 +839,4 @@ export {
   type PixAITaskTerminalStatus,
   type RecoverPixAIGenerationOptions,
 } from "./tools/pixai.js";
+export type { McpToolEntry, McpToolsOptions } from "./tools/mcp.js";
