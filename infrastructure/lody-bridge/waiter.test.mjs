@@ -132,6 +132,8 @@ describe("waiting turns", () => {
     process.env.FAKE_LODY_TURN_MS = "300";
     const streamed = await (await exec(CHAT, "continue", "harness-turn-1")).json();
     expect(JSON.parse(streamed.stdout)).toEqual({ ok: true });
+    // Turn ends are POSTed as they finish; if this child boots slowly the quiet turn can end first.
+    await vi.waitFor(() => expect(app.received).toHaveLength(1), { timeout: 5_000 });
 
     process.env.FAKE_LODY_MODE = "quiet";
     const started = Date.now();

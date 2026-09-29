@@ -2,23 +2,21 @@ import type { Database } from "@cos-tool-bot/database";
 import { Hono } from "hono";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BotPool } from "../services/bot-pool.js";
 import type { BotLifecycleService } from "../services/bot-lifecycle-service.js";
 import type { ModelCapabilityService } from "../services/model-capability-service.js";
 import type { AuthVariables } from "../middleware/better-auth.js";
 import { PeopleProfileStore } from "../services/people-profile-store.js";
+import { botsRoutes } from "./bots.js";
 
-process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
-process.env.BETTER_AUTH_SECRET ??= "test-secret";
-process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
-
-let botsRoutes: (typeof import("./bots.js"))["botsRoutes"];
-const botIds: string[] = [];
-
-beforeAll(async () => {
-  ({ botsRoutes } = await import("./bots.js"));
+vi.hoisted(() => {
+  process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
+  process.env.BETTER_AUTH_SECRET ??= "test-secret";
+  process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
 });
+
+const botIds: string[] = [];
 
 afterEach(async () => {
   await Promise.all(
