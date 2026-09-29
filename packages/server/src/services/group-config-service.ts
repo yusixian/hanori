@@ -1,6 +1,8 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots, miniAppAuditEvents, summaryConfigs, telegramChats } from "@cos-tool-bot/database";
 import {
+  AI_SETTING_BOUNDS,
+  clampToBounds,
   DEFAULT_CONVERSATION_CONFIG,
   type AiConfigStored,
   type AiGroupOverride,
@@ -108,6 +110,12 @@ export function nextGroupConfigUpdatedAt(
   );
 }
 
+/**
+ * Numeric AI fields are clamped into AI_SETTING_BOUNDS: stored values can predate those bounds,
+ * and the Mini App rejects a whole group projection when one field falls outside them. Only the
+ * displayed projection is clamped; the stored value, which the bot runtime keeps using, converges
+ * on the next admin save.
+ */
 export function projectGroupConfig(
   bot: BotConfigRow,
   chatId: number,
@@ -128,16 +136,25 @@ export function projectGroupConfig(
         replyToBot: override?.triggerConfig?.replyToBot ?? trigger?.replyToBot ?? true,
         mentionBot: override?.triggerConfig?.mentionBot ?? trigger?.mentionBot ?? true,
         triggerWords: override?.triggerConfig?.triggerWords ?? trigger?.triggerWords ?? [],
-        randomReplyPercent:
+        randomReplyPercent: clampToBounds(
           override?.triggerConfig?.randomReplyPercent ?? trigger?.randomReplyPercent ?? 0,
-        randomReplyCooldown:
+          AI_SETTING_BOUNDS.randomReplyPercent,
+        ),
+        randomReplyCooldown: clampToBounds(
           override?.triggerConfig?.randomReplyCooldown ?? trigger?.randomReplyCooldown ?? 0,
+          AI_SETTING_BOUNDS.randomReplyCooldown,
+        ),
       },
       conversation: {
         enabled: override?.conversationEnabled ?? conversation.enabled,
-        maxContextMessages: override?.maxContextMessages ?? conversation.maxContextMessages,
-        groupHistoryMaxTokens:
+        maxContextMessages: clampToBounds(
+          override?.maxContextMessages ?? conversation.maxContextMessages,
+          AI_SETTING_BOUNDS.maxContextMessages,
+        ),
+        groupHistoryMaxTokens: clampToBounds(
           override?.groupHistoryMaxTokens ?? conversation.groupHistoryMaxTokens,
+          AI_SETTING_BOUNDS.groupHistoryMaxTokens,
+        ),
       },
     },
     summary: {

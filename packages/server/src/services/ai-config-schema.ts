@@ -1,4 +1,6 @@
 import {
+  AI_SETTING_BOUNDS,
+  clampToBounds,
   DEFAULT_CONVERSATION_CONFIG,
   IMAGE_GENERATION_PROMPT_PREVIEW_MAX_LENGTH,
   IMAGE_GENERATION_RECEIPT_TEXT_MAX_LENGTH,
@@ -8,8 +10,39 @@ import {
   MAX_SUB_AGENT_STEPS,
   MAX_TIMER_MAX_SECONDS,
   MIN_TIMER_MAX_SECONDS,
+  type NumericSettingBounds,
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
+
+export function boundedNumberSchema(bounds: NumericSettingBounds) {
+  const number = bounds.integer ? z.number().int() : z.number();
+  return number.min(bounds.min).max(bounds.max);
+}
+
+/** Older admin saves allowed decimals for this in-range setting; store them rounded. */
+function roundedNumberSchema(bounds: NumericSettingBounds) {
+  return z.number().min(bounds.min).max(bounds.max).transform(Math.round);
+}
+
+/**
+ * Older admin saves allowed decimals and had no upper bound here, and the admin page saves back
+ * whatever is stored. Keep rejecting values below the minimum, but store the rest clamped into
+ * range so re-saving an existing config never starts failing.
+ */
+function clampedNumberSchema(bounds: NumericSettingBounds) {
+  return z
+    .number()
+    .min(bounds.min)
+    .transform((value) => clampToBounds(value, bounds));
+}
+
+const triggerConfigSchema = z.object({
+  replyToBot: z.boolean(),
+  mentionBot: z.boolean(),
+  triggerWords: z.array(z.string()),
+  randomReplyPercent: boundedNumberSchema(AI_SETTING_BOUNDS.randomReplyPercent),
+  randomReplyCooldown: clampedNumberSchema(AI_SETTING_BOUNDS.randomReplyCooldown),
+});
 
 export const modelDiscoveryPathSchema = z
   .string()
@@ -70,13 +103,7 @@ export const aiConfigSchema = z
     systemPrompt: z.string(),
     behavioralPrompt: z.string().optional(),
     groupBehavioralPrompt: z.string().optional(),
-    triggerConfig: z.object({
-      replyToBot: z.boolean(),
-      mentionBot: z.boolean(),
-      triggerWords: z.array(z.string()),
-      randomReplyPercent: z.number().min(0).max(100),
-      randomReplyCooldown: z.number().min(0),
-    }),
+    triggerConfig: triggerConfigSchema,
     groupOverrides: z.record(
       z.string(),
       z.object({
@@ -85,19 +112,12 @@ export const aiConfigSchema = z
         enabled: z.boolean().optional(),
         whitelisted: z.boolean(),
         systemPrompt: z.string().optional(),
-        triggerConfig: z
-          .object({
-            replyToBot: z.boolean(),
-            mentionBot: z.boolean(),
-            triggerWords: z.array(z.string()),
-            randomReplyPercent: z.number().min(0).max(100),
-            randomReplyCooldown: z.number().min(0),
-          })
-          .partial()
-          .optional(),
+        triggerConfig: triggerConfigSchema.partial().optional(),
         conversationEnabled: z.boolean().optional(),
-        maxContextMessages: z.number().min(1).max(100).optional(),
-        groupHistoryMaxTokens: z.number().int().min(2_000).max(64_000).optional(),
+        maxContextMessages: roundedNumberSchema(AI_SETTING_BOUNDS.maxContextMessages).optional(),
+        groupHistoryMaxTokens: boundedNumberSchema(
+          AI_SETTING_BOUNDS.groupHistoryMaxTokens,
+        ).optional(),
         imageGenerationEnabled: z.boolean().optional(),
         engagement: engagementPolicySchema.partial().nullable().optional(),
       }),
@@ -105,13 +125,10 @@ export const aiConfigSchema = z
     conversationConfig: z
       .object({
         enabled: z.boolean(),
-        maxContextMessages: z.number().min(1).max(100),
-        groupHistoryMaxTokens: z
-          .number()
-          .int()
-          .min(2_000)
-          .max(64_000)
-          .default(DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens),
+        maxContextMessages: roundedNumberSchema(AI_SETTING_BOUNDS.maxContextMessages),
+        groupHistoryMaxTokens: boundedNumberSchema(AI_SETTING_BOUNDS.groupHistoryMaxTokens).default(
+          DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
+        ),
         historyFormat: z.enum(["prompt", "messages"]).optional(),
         groupBufferSize: z.number().min(10).max(200),
         groupContextMode: z.enum(["all", "random_only", "none"]),

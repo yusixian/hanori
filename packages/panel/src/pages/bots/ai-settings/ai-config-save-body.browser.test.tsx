@@ -46,3 +46,27 @@ test("saves a new key even before policy fields are edited without adding it to 
   expect(body.engagement).toMatchObject({ ...DEFAULT_ENGAGEMENT_POLICY, apiKey: "test-new-key" });
   expect(body.webToolsConfig).not.toHaveProperty("engagement");
 });
+
+test("sends a typed web tool key only to its own tool and never echoes key indicators", () => {
+  const input = fixture();
+  input.config = {
+    ...input.config,
+    webToolsConfig: {
+      enabled: true,
+      search: { provider: "brave", hasApiKey: true, baseURL: "https://search.example.com" },
+      imageGeneration: { provider: "openai", hasApiKey: false, model: "gpt-image-1" },
+    },
+  };
+  input.webImageApiKey = "new-image-key";
+  const body = buildAiConfigSaveBody(input);
+  expect(body.webToolsConfig?.search).toEqual({
+    provider: "brave",
+    baseURL: "https://search.example.com",
+  });
+  expect(body.webToolsConfig?.imageGeneration).toMatchObject({
+    provider: "openai",
+    model: "gpt-image-1",
+    apiKey: "new-image-key",
+  });
+  expect(JSON.stringify(body.webToolsConfig)).not.toContain("hasApiKey");
+});

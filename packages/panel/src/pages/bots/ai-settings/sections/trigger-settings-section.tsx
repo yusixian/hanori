@@ -1,7 +1,8 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import type { AiTriggerConfig } from "@cos-tool-bot/shared";
+import { settingInputBounds } from "@/lib/setting-input-bounds";
+import { AI_SETTING_BOUNDS, type AiTriggerConfig } from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function TriggerSettingsSection({
@@ -71,8 +72,7 @@ export function TriggerSettingsSection({
             <label className="text-sm font-medium">{t("triggerSettings.randomReply")}</label>
             <Input
               type="number"
-              min={0}
-              max={100}
+              {...settingInputBounds(AI_SETTING_BOUNDS.randomReplyPercent)}
               value={config.randomReplyPercent}
               onChange={(e) => onUpdate("randomReplyPercent", Number(e.target.value))}
             />
@@ -81,7 +81,7 @@ export function TriggerSettingsSection({
             <label className="text-sm font-medium">{t("triggerSettings.cooldown")}</label>
             <Input
               type="number"
-              min={0}
+              {...settingInputBounds(AI_SETTING_BOUNDS.randomReplyCooldown)}
               value={config.randomReplyCooldown}
               onChange={(e) => onUpdate("randomReplyCooldown", Number(e.target.value))}
             />

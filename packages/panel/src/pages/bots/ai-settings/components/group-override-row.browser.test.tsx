@@ -25,4 +25,7 @@ test("warns when a group override exceeds the default history budget", async () 
   await page.getByRole("button", { name: "Expand group settings" }).click();
 
   await expect.element(page.getByText(/This budget exceeds the default/)).toBeVisible();
+  const historyBudget = page.getByRole("spinbutton").last();
+  await expect.element(historyBudget).toHaveAttribute("min", "2000");
+  await expect.element(historyBudget).toHaveAttribute("step", "1000");
 });

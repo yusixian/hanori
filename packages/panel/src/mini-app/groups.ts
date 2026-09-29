@@ -1,3 +1,5 @@
+import { AI_SETTING_BOUNDS, isWithinBounds } from "@cos-tool-bot/shared";
+
 export interface MiniAppGroupTriggerConfig {
   replyToBot: boolean;
   mentionBot: boolean;
@@ -135,8 +137,8 @@ function nullableIntegerInRange(
 function parseTrigger(value: unknown): MiniAppGroupTriggerConfig | null {
   if (!isRecord(value) || !Array.isArray(value["triggerWords"])) return null;
   const triggerWords = value["triggerWords"];
-  const randomReplyPercent = integerInRange(value["randomReplyPercent"], 0, 100);
-  const randomReplyCooldown = integerInRange(value["randomReplyCooldown"], 0, 86_400);
+  const randomReplyPercent = value["randomReplyPercent"];
+  const randomReplyCooldown = value["randomReplyCooldown"];
   if (
     typeof value["replyToBot"] !== "boolean" ||
     typeof value["mentionBot"] !== "boolean" ||
@@ -144,8 +146,8 @@ function parseTrigger(value: unknown): MiniAppGroupTriggerConfig | null {
     !triggerWords.every(
       (word) => typeof word === "string" && word.trim().length > 0 && word.trim().length <= 64,
     ) ||
-    randomReplyPercent === undefined ||
-    randomReplyCooldown === undefined
+    !isWithinBounds(randomReplyPercent, AI_SETTING_BOUNDS.randomReplyPercent) ||
+    !isWithinBounds(randomReplyCooldown, AI_SETTING_BOUNDS.randomReplyCooldown)
   ) {
     return null;
   }
@@ -160,12 +162,12 @@ function parseTrigger(value: unknown): MiniAppGroupTriggerConfig | null {
 
 function parseConversation(value: unknown): MiniAppGroupConversationConfig | null {
   if (!isRecord(value)) return null;
-  const maxContextMessages = integerInRange(value["maxContextMessages"], 1, 100);
-  const groupHistoryMaxTokens = integerInRange(value["groupHistoryMaxTokens"], 2_000, 64_000);
+  const maxContextMessages = value["maxContextMessages"];
+  const groupHistoryMaxTokens = value["groupHistoryMaxTokens"];
   if (
     typeof value["enabled"] !== "boolean" ||
-    maxContextMessages === undefined ||
-    groupHistoryMaxTokens === undefined
+    !isWithinBounds(maxContextMessages, AI_SETTING_BOUNDS.maxContextMessages) ||
+    !isWithinBounds(groupHistoryMaxTokens, AI_SETTING_BOUNDS.groupHistoryMaxTokens)
   ) {
     return null;
   }

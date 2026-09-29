@@ -1,12 +1,10 @@
-import { DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
+import { DEFAULT_ENGAGEMENT_POLICY, toWebToolsConfigUpdate } from "@cos-tool-bot/shared";
 import type { client } from "@/lib/client";
 import type {
   AiConfigPublic,
   AiExecutionConfig,
   ImageOcrConfig,
   SummaryConfigStored,
-  WebToolsConfig,
-  WebToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 import type { InferRequestType } from "hono/client";
 
@@ -27,35 +25,6 @@ export interface AiConfigSaveInput {
   webImageApiKey: string;
   embeddingApiKey: string;
   engagementApiKey?: string;
-}
-
-function toWebToolsConfigUpdate(
-  config: WebToolsConfigPublic | undefined,
-  searchApiKey: string,
-  imageApiKey: string,
-): WebToolsConfig | undefined {
-  if (!config) return undefined;
-  return {
-    enabled: config.enabled,
-    trustedPrivateHosts: config.trustedPrivateHosts,
-    search: config.search
-      ? {
-          provider: config.search.provider,
-          apiKey: searchApiKey || undefined,
-          baseURL: config.search.baseURL,
-        }
-      : undefined,
-    imageGeneration: config.imageGeneration
-      ? {
-          provider: config.imageGeneration.provider,
-          apiKey: imageApiKey || undefined,
-          baseURL: config.imageGeneration.baseURL,
-          model: config.imageGeneration.model,
-          size: config.imageGeneration.size,
-          pixaiConfig: config.imageGeneration.pixaiConfig,
-        }
-      : undefined,
-  };
 }
 
 export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBody {
@@ -106,7 +75,10 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
     conversationConfig: config.conversationConfig,
     memoryConfig: config.memoryConfig,
     botMemoryConfig: config.botMemoryConfig,
-    webToolsConfig: toWebToolsConfigUpdate(config.webToolsConfig, webSearchApiKey, webImageApiKey),
+    webToolsConfig: toWebToolsConfigUpdate(config.webToolsConfig, {
+      search: webSearchApiKey,
+      imageGeneration: webImageApiKey,
+    }),
     imageGenerationReceiptConfig: config.imageGenerationReceiptConfig,
     agentToolsConfig: config.agentToolsConfig,
     githubToolsConfig: config.githubToolsConfig

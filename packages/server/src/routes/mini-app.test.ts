@@ -880,6 +880,39 @@ describe("Mini App group configuration routes", () => {
       latest: { chatId: -1001, config: { revision: "rev-1" } },
     });
   });
+
+  it("rejects group patches outside the shared AI setting bounds", async () => {
+    const { app, groupConfigService } = testApp();
+    const session = await sessionFor(app);
+    const patchGroup = (group: Record<string, unknown>) =>
+      app.request(`/mini-app/${BOT_A}/groups/-1001`, {
+        method: "PATCH",
+        headers: {
+          cookie: session.cookie,
+          origin: ORIGIN,
+          "content-type": "application/json",
+          "x-mini-app-csrf": session.csrfToken,
+        },
+        body: JSON.stringify({ expectedRevision: "rev-1", patch: { group } }),
+      });
+
+    for (const group of [
+      { trigger: { randomReplyCooldown: 86_401 } },
+      { trigger: { randomReplyCooldown: 1.5 } },
+      { trigger: { randomReplyPercent: 100.5 } },
+      { conversation: { maxContextMessages: 10.5 } },
+      { conversation: { groupHistoryMaxTokens: 1_999 } },
+    ]) {
+      expect((await patchGroup(group)).status).toBe(400);
+    }
+    expect(groupConfigService.patch).not.toHaveBeenCalled();
+
+    const accepted = await patchGroup({
+      trigger: { randomReplyPercent: 0.5, randomReplyCooldown: 86_400 },
+    });
+    expect(accepted.status).toBe(200);
+    expect(groupConfigService.patch).toHaveBeenCalledOnce();
+  });
 });
 
 describe("Mini App lifecycle routes", () => {

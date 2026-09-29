@@ -9,9 +9,11 @@ import {
   Search,
   UsersRound,
 } from "lucide-react";
+import { AI_SETTING_BOUNDS, isWithinBounds } from "@cos-tool-bot/shared";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, useParams } from "react-router";
+import { settingInputBounds } from "@/lib/setting-input-bounds";
 import { GroupAiSelectionCard } from "./ai-selection-panel";
 import type { MiniAppSessionView } from "./session";
 import {
@@ -147,18 +149,10 @@ function draftIsValid(draft: DraftConfig): boolean {
   return (
     trigger.triggerWords.length <= 32 &&
     trigger.triggerWords.every((word) => word.length >= 1 && word.length <= 64) &&
-    Number.isInteger(trigger.randomReplyPercent) &&
-    trigger.randomReplyPercent >= 0 &&
-    trigger.randomReplyPercent <= 100 &&
-    Number.isInteger(trigger.randomReplyCooldown) &&
-    trigger.randomReplyCooldown >= 0 &&
-    trigger.randomReplyCooldown <= 86_400 &&
-    Number.isInteger(conversation.maxContextMessages) &&
-    conversation.maxContextMessages >= 1 &&
-    conversation.maxContextMessages <= 100 &&
-    Number.isInteger(conversation.groupHistoryMaxTokens) &&
-    conversation.groupHistoryMaxTokens >= 2_000 &&
-    conversation.groupHistoryMaxTokens <= 64_000 &&
+    isWithinBounds(trigger.randomReplyPercent, AI_SETTING_BOUNDS.randomReplyPercent) &&
+    isWithinBounds(trigger.randomReplyCooldown, AI_SETTING_BOUNDS.randomReplyCooldown) &&
+    isWithinBounds(conversation.maxContextMessages, AI_SETTING_BOUNDS.maxContextMessages) &&
+    isWithinBounds(conversation.groupHistoryMaxTokens, AI_SETTING_BOUNDS.groupHistoryMaxTokens) &&
     (summary.scheduleHour === null ||
       (Number.isInteger(summary.scheduleHour) &&
         summary.scheduleHour >= 0 &&
@@ -459,6 +453,7 @@ function NumberField({
   value,
   min,
   max,
+  step,
   nullable = false,
   onChange,
 }: {
@@ -466,6 +461,7 @@ function NumberField({
   value: number | null;
   min: number;
   max: number;
+  step?: number | "any";
   nullable?: boolean;
   onChange: (value: number | null) => void;
 }) {
@@ -477,6 +473,7 @@ function NumberField({
         value={value ?? ""}
         min={min}
         max={max}
+        step={step}
         required={!nullable}
         onChange={(event) => onChange(parseNullableInteger(event.target.value))}
       />
@@ -556,8 +553,7 @@ function GroupEditor({
             <NumberField
               label={t("groups.fields.randomReplyPercent")}
               value={draft.group.trigger.randomReplyPercent}
-              min={0}
-              max={100}
+              {...settingInputBounds(AI_SETTING_BOUNDS.randomReplyPercent)}
               onChange={(randomReplyPercent) =>
                 updateTrigger({ randomReplyPercent: randomReplyPercent ?? 0 })
               }
@@ -565,8 +561,7 @@ function GroupEditor({
             <NumberField
               label={t("groups.fields.randomReplyCooldown")}
               value={draft.group.trigger.randomReplyCooldown}
-              min={0}
-              max={86_400}
+              {...settingInputBounds(AI_SETTING_BOUNDS.randomReplyCooldown)}
               onChange={(randomReplyCooldown) =>
                 updateTrigger({ randomReplyCooldown: randomReplyCooldown ?? 0 })
               }
@@ -579,8 +574,7 @@ function GroupEditor({
             <NumberField
               label={t("groups.fields.maxContextMessages")}
               value={draft.group.conversation.maxContextMessages}
-              min={1}
-              max={100}
+              {...settingInputBounds(AI_SETTING_BOUNDS.maxContextMessages)}
               onChange={(maxContextMessages) =>
                 updateConversation({ maxContextMessages: maxContextMessages ?? 0 })
               }
@@ -588,8 +582,7 @@ function GroupEditor({
             <NumberField
               label={t("groups.fields.groupHistoryMaxTokens")}
               value={draft.group.conversation.groupHistoryMaxTokens}
-              min={2_000}
-              max={64_000}
+              {...settingInputBounds(AI_SETTING_BOUNDS.groupHistoryMaxTokens)}
               onChange={(groupHistoryMaxTokens) =>
                 updateConversation({ groupHistoryMaxTokens: groupHistoryMaxTokens ?? 0 })
               }

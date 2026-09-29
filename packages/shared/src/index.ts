@@ -1,4 +1,6 @@
 export * from "./types.js";
+export * from "./ai-settings/bounds.js";
+export * from "./ai-settings/web-tools.js";
 export * from "./image-generation.js";
 export { parseParams } from "./param-parser.js";
 export { inferCapabilities } from "./model-capabilities.js";

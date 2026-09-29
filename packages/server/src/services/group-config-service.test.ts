@@ -1,5 +1,5 @@
 import type { Database } from "@cos-tool-bot/database";
-import type { AiConfigStored } from "@cos-tool-bot/shared";
+import { DEFAULT_CONVERSATION_CONFIG, type AiConfigStored } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   GroupConfigService,
@@ -152,6 +152,36 @@ describe("projectGroupConfig", () => {
     expect(
       projectGroupConfig({ aiConfig: null, updatedAt: null }, -1001, undefined).aiConfigured,
     ).toBe(false);
+  });
+
+  it("projects legacy out-of-range values inside the Mini App bounds", () => {
+    const aiConfig: AiConfigStored = {
+      enabled: true,
+      encryptedApiKey: null,
+      baseURL: "",
+      model: "",
+      systemPrompt: "",
+      triggerConfig: {
+        replyToBot: true,
+        mentionBot: true,
+        triggerWords: [],
+        randomReplyPercent: 0.5,
+        randomReplyCooldown: 90_000,
+      },
+      conversationConfig: { ...DEFAULT_CONVERSATION_CONFIG, maxContextMessages: 12.5 },
+      groupOverrides: {},
+    };
+
+    const projected = projectGroupConfig({ aiConfig, updatedAt: null }, -1001, undefined);
+
+    expect(projected.group.trigger).toMatchObject({
+      randomReplyPercent: 0.5,
+      randomReplyCooldown: 86_400,
+    });
+    expect(projected.group.conversation).toMatchObject({
+      maxContextMessages: 13,
+      groupHistoryMaxTokens: DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
+    });
   });
 });
 

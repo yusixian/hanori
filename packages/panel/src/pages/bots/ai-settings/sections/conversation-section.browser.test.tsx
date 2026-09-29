@@ -48,3 +48,21 @@ test("selects an optional dedicated Provider for conversation compression", asyn
 
   expect(onUpdate).toHaveBeenCalledWith({ compressionProviderId: "summary-provider" });
 });
+
+test("bounds the context inputs by the shared settings and keeps the coarse token step", async () => {
+  render(
+    <ConversationSection
+      config={DEFAULT_CONVERSATION_CONFIG}
+      providers={providers}
+      activeProviderId="chat-provider"
+      onUpdate={vi.fn()}
+    />,
+  );
+
+  const maxContext = page.getByRole("spinbutton").nth(0);
+  const historyBudget = page.getByRole("spinbutton").nth(1);
+  await expect.element(maxContext).toHaveAttribute("max", "100");
+  await expect.element(maxContext).toHaveAttribute("step", "1");
+  await expect.element(historyBudget).toHaveAttribute("max", "64000");
+  await expect.element(historyBudget).toHaveAttribute("step", "1000");
+});

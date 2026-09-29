@@ -2,7 +2,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { SelectMenu } from "@/components/ui/select-menu";
 import { Switch } from "@/components/ui/switch";
-import type { AiProviderEntryPublic, ConversationConfig } from "@cos-tool-bot/shared";
+import { settingInputBounds } from "@/lib/setting-input-bounds";
+import {
+  AI_SETTING_BOUNDS,
+  type AiProviderEntryPublic,
+  type ConversationConfig,
+} from "@cos-tool-bot/shared";
 import { useTranslation } from "react-i18next";
 
 export function ConversationSection({
@@ -70,8 +75,7 @@ export function ConversationSection({
               <label className="text-sm font-medium">{t("conversation.maxContext")}</label>
               <Input
                 type="number"
-                min={1}
-                max={100}
+                {...settingInputBounds(AI_SETTING_BOUNDS.maxContextMessages)}
                 disabled={!config.enabled}
                 value={config.maxContextMessages}
                 onChange={(e) => onUpdate({ maxContextMessages: Number(e.target.value) })}
@@ -86,8 +90,7 @@ export function ConversationSection({
               </label>
               <Input
                 type="number"
-                min={2_000}
-                max={64_000}
+                {...settingInputBounds(AI_SETTING_BOUNDS.groupHistoryMaxTokens)}
                 step={1_000}
                 disabled={!config.enabled}
                 value={config.groupHistoryMaxTokens}

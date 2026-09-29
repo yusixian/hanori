@@ -3,13 +3,13 @@ import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
 import {
   DEFAULT_AI_EXECUTION_CONFIG,
   DEFAULT_ENGAGEMENT_POLICY,
+  mergeWebToolsConfigUpdate,
   resolveImageGenerationReceiptConfig,
 } from "@cos-tool-bot/shared";
 import type { AiConfigStored, AiGroupOverride, AiProviderEntry } from "@cos-tool-bot/shared";
 import { migrateAiConfig, normalizeAiProvider } from "../utils/ai-config-migrate.js";
 import { encrypt } from "../utils/crypto.js";
 import { normalizeBaseURLForComparison, type AiConfigPatch } from "./ai-config-schema.js";
-import { mergeWebToolsApiKeys } from "./ai-config-web-tools.js";
 import { resolvePixaiTaskTimeoutMs } from "./generation-recovery.js";
 import {
   assertGitHubCodingModelSelection,
@@ -252,7 +252,10 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     conversationConfig,
     memoryConfig: patch.memoryConfig,
     stickerPacks: patch.stickerPacks ?? current?.stickerPacks,
-    webToolsConfig: mergeWebToolsApiKeys(existingMigrated?.webToolsConfig, patch.webToolsConfig),
+    webToolsConfig: mergeWebToolsConfigUpdate(
+      existingMigrated?.webToolsConfig,
+      patch.webToolsConfig,
+    ),
     imageGenerationReceiptConfig:
       patch.imageGenerationReceiptConfig === undefined
         ? existingMigrated?.imageGenerationReceiptConfig

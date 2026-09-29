@@ -1,9 +1,10 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
-import type { MiniAppCapability } from "@cos-tool-bot/shared";
+import { AI_SETTING_BOUNDS, type MiniAppCapability } from "@cos-tool-bot/shared";
 import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
+import { boundedNumberSchema } from "../services/ai-config-schema.js";
 import { tryDecrypt } from "../utils/crypto.js";
 import {
   GroupConfigArchivedError,
@@ -189,16 +190,24 @@ const groupConfigPatchSchema = z
                 replyToBot: z.boolean().optional(),
                 mentionBot: z.boolean().optional(),
                 triggerWords: z.array(z.string().trim().min(1).max(64)).max(32).optional(),
-                randomReplyPercent: z.number().min(0).max(100).optional(),
-                randomReplyCooldown: z.number().int().min(0).max(86_400).optional(),
+                randomReplyPercent: boundedNumberSchema(
+                  AI_SETTING_BOUNDS.randomReplyPercent,
+                ).optional(),
+                randomReplyCooldown: boundedNumberSchema(
+                  AI_SETTING_BOUNDS.randomReplyCooldown,
+                ).optional(),
               })
               .strict()
               .optional(),
             conversation: z
               .object({
                 enabled: z.boolean().optional(),
-                maxContextMessages: z.number().int().min(1).max(100).optional(),
-                groupHistoryMaxTokens: z.number().int().min(2_000).max(64_000).optional(),
+                maxContextMessages: boundedNumberSchema(
+                  AI_SETTING_BOUNDS.maxContextMessages,
+                ).optional(),
+                groupHistoryMaxTokens: boundedNumberSchema(
+                  AI_SETTING_BOUNDS.groupHistoryMaxTokens,
+                ).optional(),
               })
               .strict()
               .optional(),

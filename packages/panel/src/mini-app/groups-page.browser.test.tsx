@@ -281,3 +281,45 @@ test("rejects malformed and sensitive group projections before rendering", () =>
   expect(parseMiniAppGroup({ ...GROUP, systemPrompt: "PRIVATE_SYSTEM_PROMPT" })).toBeNull();
   expect(parseMiniAppGroup({ ...GROUP, provider: { model: "PRIVATE_MODEL" } })).toBeNull();
 });
+
+test("edits a group with a fractional random reply percentage within the shared bounds", async () => {
+  const fractional = {
+    ...GROUP,
+    config: {
+      ...GROUP.config,
+      group: {
+        ...GROUP.config.group,
+        trigger: { ...GROUP.config.group.trigger, randomReplyPercent: 0.5 },
+      },
+    },
+  };
+  let mutationBody: unknown;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input, init) => {
+      if (init?.method === "PATCH") {
+        mutationBody = JSON.parse(String(init.body));
+        return Response.json({ ok: true, persisted: true, applied: true, group: fractional });
+      }
+      return Response.json({ ok: true, editable: true, group: fractional });
+    }),
+  );
+  renderGroups("operator");
+
+  await expect.element(page.getByRole("heading", { name: "Build Room" })).toBeVisible();
+  const percent = page.getByRole("spinbutton", { name: "Random reply percent" });
+  const cooldown = page.getByRole("spinbutton", { name: "Random reply cooldown (seconds)" });
+  const save = page.getByRole("button", { name: "Save changes" });
+  await expect.element(percent).toHaveAttribute("step", "any");
+  expect((percent.element() as HTMLInputElement).validity.valid).toBe(true);
+  await expect.element(cooldown).toHaveAttribute("step", "1");
+  await cooldown.fill("86401");
+  await expect.element(save).toBeDisabled();
+  await cooldown.fill("86400");
+  await save.click();
+  await expect.element(page.getByText("Changes were persisted and applied.")).toBeVisible();
+  expect(mutationBody).toEqual({
+    expectedRevision: "revision-1",
+    patch: { group: { trigger: { randomReplyCooldown: 86_400 } } },
+  });
+});

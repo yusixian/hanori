@@ -1,5 +1,11 @@
 import type { Database } from "@cos-tool-bot/database";
-import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_TIMER_MAX_SECONDS } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_CONVERSATION_CONFIG,
+  DEFAULT_TIMER_MAX_SECONDS,
+  type AiConfigPublic,
+  type AiConfigStored,
+} from "@cos-tool-bot/shared";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { describe, expect, it, vi } from "vitest";
@@ -1356,5 +1362,64 @@ describe("AI provider model configuration", () => {
     expect(savedAiConfig?.imageGenerationReceiptConfig).toEqual(
       existing.imageGenerationReceiptConfig,
     );
+  });
+});
+
+describe("AI setting bounds on full-page saves", () => {
+  it("re-saves a loaded legacy config by normalising values the schema no longer allows", async () => {
+    let savedAiConfig: AiConfigStored | undefined;
+    const legacy = {
+      ...existingAiConfig,
+      triggerConfig: { ...existingAiConfig.triggerConfig, randomReplyCooldown: 90_000 },
+      conversationConfig: { ...DEFAULT_CONVERSATION_CONFIG, maxContextMessages: 12.5 },
+      groupOverrides: {
+        "-1001": { chatId: -1001, whitelisted: false, triggerConfig: { randomReplyCooldown: 1.5 } },
+      },
+    };
+    const app = routeApp(
+      routeDatabase((aiConfig) => {
+        savedAiConfig = aiConfig as AiConfigStored;
+      }, legacy),
+      savingBotPool(),
+    );
+    const loaded = (await (await app.request("/api/bots/bot-1/ai-config")).json()) as {
+      data: AiConfigPublic;
+      revision: string;
+    };
+
+    const response = await app.request("/api/bots/bot-1/ai-config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...requestBody(),
+        revision: loaded.revision,
+        triggerConfig: loaded.data.triggerConfig,
+        conversationConfig: loaded.data.conversationConfig,
+        groupOverrides: loaded.data.groupOverrides,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(savedAiConfig?.triggerConfig.randomReplyCooldown).toBe(86_400);
+    expect(savedAiConfig?.conversationConfig?.maxContextMessages).toBe(13);
+    expect(savedAiConfig?.groupOverrides["-1001"]?.triggerConfig?.randomReplyCooldown).toBe(2);
+  });
+
+  it("still rejects a context size above 100 instead of clamping it", async () => {
+    const save = vi.fn();
+    const response = await routeApp(routeDatabase(save), savingBotPool()).request(
+      "/api/bots/bot-1/ai-config",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...requestBody(),
+          conversationConfig: { ...DEFAULT_CONVERSATION_CONFIG, maxContextMessages: 150 },
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(save).not.toHaveBeenCalled();
   });
 });

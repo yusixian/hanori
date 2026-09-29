@@ -1,5 +1,9 @@
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
-import { DEFAULT_AI_EXECUTION_CONFIG, DEFAULT_ENGAGEMENT_POLICY } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_AI_EXECUTION_CONFIG,
+  DEFAULT_ENGAGEMENT_POLICY,
+  toWebToolsConfigPublic,
+} from "@cos-tool-bot/shared";
 import type {
   AiConfigPublic,
   AiConfigStored,
@@ -9,7 +13,6 @@ import type {
   GitHubToolsConfigStored,
 } from "@cos-tool-bot/shared";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
-import { toWebToolsConfigPublic } from "./ai-config-web-tools.js";
 import { resolvePixaiTaskTimeoutMs } from "./generation-recovery.js";
 
 function emptyAiConfigPublic(): AiConfigPublic {

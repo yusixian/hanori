@@ -5,7 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DEFAULT_CONVERSATION_CONFIG, type AiGroupOverride } from "@cos-tool-bot/shared";
+import { settingInputBounds } from "@/lib/setting-input-bounds";
+import {
+  AI_SETTING_BOUNDS,
+  DEFAULT_CONVERSATION_CONFIG,
+  type AiGroupOverride,
+} from "@cos-tool-bot/shared";
 import { ChevronRight, Trash2, UsersRound } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -161,8 +166,7 @@ export function GroupOverrideRow({
               <label className="text-sm">{t("groupOverride.maxContextMessages")}</label>
               <Input
                 type="number"
-                min={1}
-                max={100}
+                {...settingInputBounds(AI_SETTING_BOUNDS.maxContextMessages)}
                 value={override.maxContextMessages ?? ""}
                 onChange={(e) =>
                   onUpdate({
@@ -176,8 +180,7 @@ export function GroupOverrideRow({
               <label className="text-sm">{t("groupOverride.groupHistoryMaxTokens")}</label>
               <Input
                 type="number"
-                min={2_000}
-                max={64_000}
+                {...settingInputBounds(AI_SETTING_BOUNDS.groupHistoryMaxTokens)}
                 step={1_000}
                 value={override.groupHistoryMaxTokens ?? ""}
                 onChange={(e) =>
