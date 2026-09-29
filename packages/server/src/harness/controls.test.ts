@@ -164,6 +164,26 @@ describe("/cancel", () => {
     );
     expect((await run(ctx, "cancel")).html).toBe("没有可以取消的请求。");
   });
+
+  it("reads an all-digit short id as an id, and a shorter bare number as an issue", async () => {
+    const ctx = await setup();
+    for (const [id, issueNumber] of [
+      ["12345678-0000-4000-8000-000000000000", 41],
+      ["abcdef01-0000-4000-8000-000000000000", 42],
+    ] as const) {
+      await ctx.store.insertRequest({
+        id,
+        projectKey: "sandbox",
+        type: "bug",
+        state: S.received,
+        repo: TEST_REPO,
+        issueNumber,
+        title: "问题",
+      });
+    }
+    expect((await run(ctx, "cancel", "12345678", null)).html).toBe("⚫ 已取消 #41 问题");
+    expect((await run(ctx, "cancel", "42")).html).toBe("⚫ 已取消 #42 问题");
+  });
 });
 
 describe("/retry", () => {

@@ -102,10 +102,13 @@ export async function listRequests(
   return { html: fit(lines) };
 }
 
-/** `#12` or `12` matches an issue or PR number; anything else is an id prefix. */
+/**
+ * `#12` or a bare number shorter than a short id matches an issue or PR number; anything else is
+ * an id prefix, so a short id from /list that happens to be all digits still names its request.
+ */
 function matches(request: HarnessRequestRecord, target: string): boolean {
   const number = /^#?(\d+)$/.exec(target)?.[1];
-  if (number) {
+  if (number && (target.startsWith("#") || target.length < SHORT_ID)) {
     const value = Number(number);
     return request.issueNumber === value || request.prNumber === value;
   }
