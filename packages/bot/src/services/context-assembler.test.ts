@@ -1,6 +1,7 @@
 import type { BotMemory, BotMemoryCallbacks, ConversationCallbacks } from "@cos-tool-bot/shared";
 import { describe, expect, it, vi } from "vitest";
 import { resolveBuiltInSkills } from "../skills/catalog.js";
+import { deriveCapabilitiesFromTools } from "../utils/tool-capabilities.js";
 import {
   appendCurrentRequest,
   assembleContext,
@@ -63,8 +64,12 @@ function runtimeInput(overrides: Partial<ContextAssemblyInput> = {}): ContextAss
     chatId: 42,
     userName: "Nahida",
     maxContextMessages: 20,
-    memoryTools: {},
-    botMemoryTools: {},
+    toolCapabilities: deriveCapabilitiesFromTools({
+      get_profile: {},
+      recall_memories: {},
+      read_file: {},
+      multi_message: {},
+    }),
     botMemoryConfig: { enabled: true, autoInjectMemories: true, maxMemories: 5 },
     botMemory: createBotMemory(),
     retrievalQuery: "current question",
@@ -116,8 +121,7 @@ describe("prompt bundle", () => {
       chatId: input.chatId,
       moodState: new Map(),
       dataFiles: input.dataFiles,
-      memoryTools: {},
-      botMemoryTools: {},
+      toolCapabilities: input.toolCapabilities,
       botMemoryConfig: input.botMemoryConfig,
       botMemory: input.botMemory,
     });
@@ -256,6 +260,7 @@ describe("prompt bundle", () => {
       userId: 42,
       privacyMode: "isolated",
       moodState: new Map(),
+      toolCapabilities: new Set(),
       botMemoryConfig: { enabled: true, autoInjectMemories: true, maxMemories: 5 },
       botMemory,
       retrievalQuery: "timer event",
@@ -552,6 +557,7 @@ describe("prompt bundle", () => {
       conversation: createConversation(),
       chatId: 42,
       moodState: new Map([[42, { mood: "focused", timestamp: 1 }]]),
+      toolCapabilities: new Set(),
       botMemoryConfig: { enabled: true, autoInjectMemories: true, maxMemories: 5 },
       botMemory: createBotMemory(),
       retrievalQuery: "timer fired",
@@ -577,6 +583,7 @@ describe("prompt bundle", () => {
           groupBehavioralPrompt: "Stay on topic in groups",
           chatId,
           moodState: new Map(),
+          toolCapabilities: new Set(),
         })
       ).trace.sections.map((item) => item.id);
 

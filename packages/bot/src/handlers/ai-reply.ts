@@ -1,6 +1,10 @@
-import { createProfileAvatarTools } from "../tools/profile-avatar.js";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
-import { createTurnInteractionTools } from "../tools/turn-interaction.js";
+import {
+  createTurnToolset,
+  resolveImageGenerationActor,
+  type TurnInteractionInput,
+  type TurnToolsetConfig,
+} from "../tools/turn-toolset.js";
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
 import type {
   AgentToolsConfig,
@@ -39,7 +43,6 @@ import type {
 } from "@cos-tool-bot/shared";
 import {
   DEFAULT_AI_EXECUTION_CONFIG,
-  DEFAULT_BOT_MEMORY_CONFIG,
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_ENGAGEMENT_POLICY,
   DEFAULT_MAX_MODEL_INPUT_IMAGE_BYTES,
@@ -92,25 +95,13 @@ import {
   type CoalesceScope,
 } from "../services/ai-turn-coalescer.js";
 import {
-  createActionTools,
   createAgentTools,
-  createBotMemoryTools,
-  createDanbooruTools,
-  createGenerationLibraryTools,
-  createMemoryTools,
-  createMcpTools,
-  createGitHubTools,
-  createImageGenerationTools,
   type GitHubCodeCallbacks,
   type McpToolsOptions,
-  createRssTools,
-  createSkillTools,
   createWebTools,
 } from "../tools/index.js";
 import type { RssToolsOptions } from "../tools/index.js";
 import type { ReceivedFile } from "../tools/telegram.js";
-import { createFileTools } from "../tools/file-tools.js";
-import { explicitlyRequestsMemoryForget } from "../tools/bot-memory.js";
 import type { MoodInfo } from "../tools/index.js";
 import { createOnceGuard, createPerStepAbort, createRequestCache } from "../tools/utils.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
@@ -133,11 +124,7 @@ import {
 } from "../services/video-sticker-media.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
 import { startChatActionHeartbeat } from "../utils/chat-action-heartbeat.js";
-import {
-  createCacheFingerprint,
-  createToolSchemaHash,
-  sortToolsForPromptCache,
-} from "../utils/prompt-cache.js";
+import { createCacheFingerprint, createToolSchemaHash } from "../utils/prompt-cache.js";
 import { createMetaPrefixStreamFilter, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { createThinkingStreamFilter, stripThinkingContent } from "../utils/strip-thinking.js";
 import {
@@ -145,6 +132,7 @@ import {
   type AiProviderRuntime,
   type AiSelectionMutations,
   type AiSelectionSnapshot,
+  type ResolvedAiSelection,
 } from "./ai-selection.js";
 
 export { wrapToolsWithStatus } from "../utils/tool-pipeline.js";
@@ -1163,28 +1151,20 @@ export function createAiReplyHandler(
     selectionRuntime.resetProvider(chatId, actorTelegramUserId);
   const getProvidersList = () => selectionRuntime.getProvidersList();
 
-  // Memory tools setup
   const memoryCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-  let memoryTools: Record<string, Tool> | undefined;
   let profileObserver: TelegramProfileObserver | undefined;
-  if (memoryCfg.enabled && config.memory) {
-    memoryTools = createMemoryTools(config.memory);
-    if (memoryCfg.autoUpdateLastSeen) {
-      profileObserver = new TelegramProfileObserver({
-        memory: config.memory,
-        token: config.token,
-        dataDir: config.dataFiles?.dataDir,
-        onError: (error) =>
-          config.onLog?.({
-            level: "error",
-            message: `Profile avatar refresh failed: ${error instanceof Error ? error.message : String(error)}`,
-          }),
-      });
-    }
+  if (memoryCfg.enabled && config.memory && memoryCfg.autoUpdateLastSeen) {
+    profileObserver = new TelegramProfileObserver({
+      memory: config.memory,
+      token: config.token,
+      dataDir: config.dataFiles?.dataDir,
+      onError: (error) =>
+        config.onLog?.({
+          level: "error",
+          message: `Profile avatar refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+        }),
+    });
   }
-
-  // Memory tools are bound to the trusted actor and chat for each turn below.
-  const botMemoryCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
 
   // Web tools setup (singleton, not per-request)
   let webTools: Record<string, Tool> | undefined;
@@ -1192,21 +1172,6 @@ export function createAiReplyHandler(
     webTools = createWebTools({
       config: config.webToolsConfig,
       timeoutConfig: config.timeoutConfig,
-    });
-  }
-
-  const skillTools = createSkillTools({
-    skills: config.skills ?? [],
-    hasImageGeneration: !!config.imageGenerationPort,
-    hasWebSearch: !!webTools?.web_search,
-  });
-
-  // File tools setup (singleton, not per-request)
-  let fileTools: Record<string, Tool> | undefined;
-  if (config.dataFiles) {
-    fileTools = createFileTools({
-      dataDir: config.dataFiles.dataDir,
-      protectedFiles: config.dataFiles.injectableFiles,
     });
   }
 
@@ -1284,6 +1249,25 @@ export function createAiReplyHandler(
     return { custom: { thinking } };
   }
 
+  function createDelegation(
+    selection: Readonly<ResolvedAiSelection>,
+    onLog: AiReplyConfig["onLog"],
+  ): ((actor?: GenerationLibraryActor) => Record<string, Tool>) | undefined {
+    const agentConfig = config.agentToolsConfig;
+    if (!agentConfig?.enabled) return undefined;
+    return (actor) =>
+      createAgentTools({
+        provider: (model) => selection.providerFactory(model),
+        model: selection.modelId,
+        agentConfig,
+        webToolsConfig: config.webToolsConfig,
+        onLog,
+        timeoutConfig: config.timeoutConfig,
+        generationLibraryPort: config.generationLibraryPort,
+        getActor: actor ? () => actor : undefined,
+      });
+  }
+
   function buildContinueChatConfig(): ContinueChatConfig {
     return {
       botId: config.botId,
@@ -1299,19 +1283,7 @@ export function createAiReplyHandler(
             selection.modelEntry,
             selection.providerRuntime.providerFormat,
           ),
-          agentToolsFactory: config.agentToolsConfig?.enabled
-            ? (actor?: GenerationLibraryActor) =>
-                createAgentTools({
-                  provider: (model) => selection.providerFactory(model),
-                  model: selection.modelId,
-                  agentConfig: config.agentToolsConfig!,
-                  webToolsConfig: config.webToolsConfig,
-                  onLog: config.onLog,
-                  timeoutConfig: config.timeoutConfig,
-                  generationLibraryPort: config.generationLibraryPort,
-                  getActor: actor ? () => actor : undefined,
-                })
-            : undefined,
+          agentToolsFactory: createDelegation(selection, config.onLog),
         });
       },
       isAiDisabled: () => aiDisabled,
@@ -1386,7 +1358,6 @@ export function createAiReplyHandler(
       pendingAdminActions,
       recentBotMessageIds,
       moodState,
-      stickerPacks: config.stickerPacks,
       onTimerFired: async (timerChatId, timerId, reason) => {
         await onTimerFired(timerChatId, timerId, reason);
       },
@@ -1972,15 +1943,6 @@ export function createAiReplyHandler(
         // Create per-request once guard to prevent duplicate side-effect tool calls
         const onceGuard = createOnceGuard();
 
-        // Create per-request action tools
-        const actionTools = createActionTools({
-          api: ctx.api,
-          chatId,
-          messageId: msg.message_id,
-          stickerCache,
-          onceGuard,
-        });
-
         // Extract received files metadata
         const receivedFiles = extractFilesFromMessage(msg);
         const reusableReceivedFiles = receivedFiles.filter((file) => file.type !== "sticker");
@@ -1992,28 +1954,31 @@ export function createAiReplyHandler(
         // Extract reply-to message metadata
         const replyMsg = ctx.reply_to_message;
         const replyFiles = extractFilesFromMessage(replyMsg);
-        const isDelegatedGroupAdmin =
-          config.imageGenerationPort && !isPrivate && !isAdmin
-            ? (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true
-            : false;
-        const imageGenerationActor = config.imageGenerationPort
-          ? {
-              botId: config.botId,
-              chatId,
-              userId,
-              chatType: isPrivate ? ("private" as const) : ("supergroup" as const),
-              isBotAdmin: isAdmin,
-              isDelegatedGroupAdmin,
-            }
-          : undefined;
-        const generationLibraryActor = config.generationLibraryPort
-          ? {
-              botId: config.botId,
-              source: "telegram" as const,
-              telegramUserId: userId,
-              isAdmin,
-            }
-          : undefined;
+        const toolsetConfig: TurnToolsetConfig = {
+          botId: config.botId,
+          adminIds: config.adminChatIds,
+          memoryConfig: config.memoryConfig,
+          memory: config.memory,
+          botMemoryConfig: config.botMemoryConfig,
+          botMemory: config.botMemory,
+          messageConfig: turnMessageConfig,
+          stickerPacks: config.stickerPacks,
+          webTools,
+          artworkToolsConfig: config.artworkToolsConfig,
+          timeoutConfig: config.timeoutConfig,
+          dataFiles: config.dataFiles,
+          skills: config.skills,
+          generationLibraryPort: config.generationLibraryPort,
+          imageGenerationPort: config.imageGenerationPort,
+          isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
+          rssCallbacks: config.rssCallbacks,
+          pendingAdminActions,
+        };
+        const imageGenerationActor = await resolveImageGenerationActor(toolsetConfig, {
+          chatId,
+          isPrivate,
+          userId,
+        });
         const repliedGenerationPromise =
           config.imageGenerationPort && imageGenerationActor && replyMsg
             ? config.imageGenerationPort
@@ -2026,13 +1991,10 @@ export function createAiReplyHandler(
         const replyableMessageIds: number[] = [msg.message_id];
 
         const deliveredMultiMessages: string[] = [];
-        const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
-          api: ctx.api,
-          chatId,
+        const interaction: TurnInteractionInput = {
           recentBotMessageIds: chatBotMsgIds,
           onceGuard,
           telegram: {
-            userId,
             getReplyableMessageIds: () => replyableMessageIds,
             pendingActions,
             onTimerFired: async (timerChatId, timerId, reason) => {
@@ -2051,59 +2013,15 @@ export function createAiReplyHandler(
           },
           behavior: {
             moodState,
-            richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
-            onLog: onLog,
             onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
           },
-          artwork: config.artworkToolsConfig
-            ? { config: config.artworkToolsConfig, timeoutConfig: config.timeoutConfig }
-            : undefined,
-        });
-        if (!personalizationEnabled) delete telegramTools.set_timer;
-        if (!personalizationEnabled) delete behaviorTools.set_mood;
+        };
 
         // Resolve one immutable provider/model/factory snapshot after acquiring the scheduler slot.
         const currentSelection = selectionRuntime.resolve(chatId);
         const currentModel = currentSelection.modelId;
         const currentProviderRuntime = currentSelection.providerRuntime;
         const currentProviderFactory = currentSelection.providerFactory;
-
-        // Create agent tools if enabled
-        let agentTools: Record<string, Tool> = {};
-        if (config.agentToolsConfig?.enabled) {
-          agentTools = createAgentTools({
-            provider: (m) => currentProviderFactory(m),
-            model: currentModel,
-            agentConfig: config.agentToolsConfig,
-            webToolsConfig: config.webToolsConfig,
-            onLog: onLog,
-            timeoutConfig: config.timeoutConfig,
-            generationLibraryPort: config.generationLibraryPort,
-            getActor: generationLibraryActor ? () => generationLibraryActor : undefined,
-          });
-        }
-
-        let githubTools: Record<string, Tool> = {};
-        if (
-          config.githubToolsConfig?.enabled &&
-          (isAdmin || config.githubToolsConfig.publicReadEnabled)
-        ) {
-          githubTools = createGitHubTools({
-            config: config.githubToolsConfig,
-            isAdmin,
-            userId,
-            chatId,
-            api: ctx.api,
-            pendingActions: pendingAdminActions,
-            codeCallbacks: config.githubCodeCallbacks,
-            codingModel: resolveGitHubCodingModelConfig(
-              config.githubToolsConfig,
-              config.providers,
-              currentProviderRuntime,
-              currentModel,
-            ),
-          });
-        }
 
         // Collect group context from ring buffer
         let ringBufferContext = "";
@@ -2331,26 +2249,6 @@ export function createAiReplyHandler(
         const retrievalQuery = [rawContent || messageText, ...coalescedExtras.map((e) => e.text)]
           .join("\n")
           .trim();
-        const profileAvatars = createProfileAvatarTools(
-          personalizationEnabled && memoryCfg.enabled ? config.memory : undefined,
-          userId,
-        );
-        const requestMemoryTools =
-          personalizationEnabled && memoryTools
-            ? { ...memoryTools, ...profileAvatars.tools }
-            : undefined;
-        const requestBotMemoryTools =
-          personalizationEnabled && botMemoryCfg.enabled && config.botMemory
-            ? createBotMemoryTools(config.botMemory, {
-                chatId,
-                userId,
-                messageId: msg.message_id,
-                privacyMode,
-                allowSave: !hasForwardOrigin,
-                allowMutations: !hasForwardOrigin,
-                allowHardDelete: !hasForwardOrigin && explicitlyRequestsMemoryForget(messageText),
-              })
-            : undefined;
 
         if (!isPrivate && persistConversation) {
           try {
@@ -2386,6 +2284,43 @@ export function createAiReplyHandler(
           }
         }
 
+        const toolset = await createTurnToolset({
+          entry: {
+            kind: "reply",
+            message: {
+              id: msg.message_id,
+              text: messageText,
+              forwarded: hasForwardOrigin,
+              replyToMessageId: replyMsg?.message_id,
+            },
+            preserveQueuedMessage,
+            stickerCache,
+            mcp: config.mcpTools,
+            github: config.githubToolsConfig
+              ? {
+                  config: config.githubToolsConfig,
+                  codeCallbacks: config.githubCodeCallbacks,
+                  codingModel: resolveGitHubCodingModelConfig(
+                    config.githubToolsConfig,
+                    config.providers,
+                    currentProviderRuntime,
+                    currentModel,
+                  ),
+                }
+              : undefined,
+          },
+          chatId,
+          isPrivate,
+          userId,
+          privacyMode,
+          imageGenerationActor,
+          api: ctx.api,
+          config: toolsetConfig,
+          interaction,
+          delegation: createDelegation(currentSelection, onLog),
+          onLog,
+        });
+
         // Build context after OCR/file enrichment so automatic memory retrieval sees
         // the same textual request that is persisted and sent to the model.
         const promptBundle = await assembleContext({
@@ -2413,20 +2348,14 @@ export function createAiReplyHandler(
           privacyMode,
           includeCrossChatUserHistory: privacyMode === "normal",
           crossChatHistoryBeforeId: admissionHistoryWatermark,
-          memoryTools: requestMemoryTools,
           botMemoryConfig: config.botMemoryConfig,
           botMemory: personalizationEnabled ? config.botMemory : undefined,
-          botMemoryTools: requestBotMemoryTools,
           retrievalQuery,
           currentMood: personalizationEnabled ? moodState.get(chatId) : undefined,
-          stickerPacks: config.stickerPacks,
+          toolCapabilities: toolset.capabilities,
           webToolsConfig: config.webToolsConfig,
-          webTools,
-          hasImageGeneration: !!config.imageGenerationPort,
           skills: config.skills,
           agentToolsConfig: config.agentToolsConfig,
-          artworkToolsEnabled: config.artworkToolsConfig?.enabled,
-          hasFileTools: !!fileTools,
           dataFiles: config.dataFiles,
           messageConfig: turnMessageConfig,
           timerMaxSeconds,
@@ -2452,88 +2381,12 @@ export function createAiReplyHandler(
           .map((section) => section.details?.["historyBudget"])
           .find((details) => details !== undefined);
 
-        // Combine all tools
-        const allTools: Record<string, Tool> = {
-          ...requestMemoryTools,
-          ...requestBotMemoryTools,
-          ...actionTools,
-          ...telegramTools,
-          ...behaviorTools,
-          ...webTools,
-          ...agentTools,
-          ...githubTools,
-          ...artworkTools,
-          ...fileTools,
-          ...skillTools,
-          ...createDanbooruTools({
-            timeoutConfig: config.timeoutConfig,
-            generationLibraryPort: config.generationLibraryPort,
-            getActor: generationLibraryActor ? () => generationLibraryActor : undefined,
-            onLog,
-          }),
-        };
-
-        if (config.generationLibraryPort && generationLibraryActor) {
-          Object.assign(
-            allTools,
-            createGenerationLibraryTools({
-              port: config.generationLibraryPort,
-              getActor: () => generationLibraryActor,
-            }),
-          );
-        }
-
-        // RSS tools (per-request: depends on chatId)
-        if (config.rssCallbacks) {
-          const rssTools = createRssTools({
-            ...config.rssCallbacks,
-            chatId,
-            userId,
-            adminChatIds: config.adminChatIds,
-            api: ctx.api,
-            pendingActions: pendingAdminActions,
-          });
-          Object.assign(allTools, rssTools);
-        }
-
-        // MCP tools (external MCP server tools, resolved dynamically per request)
-        if (config.mcpTools) {
-          const mcpTools = createMcpTools(config.mcpTools, { includeAdminTools: isAdmin });
-          const mcpToolKeys = Object.keys(mcpTools);
-          if (mcpToolKeys.length > 0) {
-            Object.assign(allTools, mcpTools);
-            onLog?.({
-              level: "info",
-              message: `MCP tools injected: ${mcpToolKeys.join(", ")}`,
-            });
-          } else {
-            onLog?.({
-              level: "warn",
-              message: "MCP config present but no tools available (servers may be disconnected)",
-            });
-          }
-        }
-
-        if (config.imageGenerationPort) {
-          Object.assign(
-            allTools,
-            await createImageGenerationTools({
-              port: config.imageGenerationPort,
-              getActor: () => imageGenerationActor!,
-              replyMessageId: replyMsg?.message_id,
-            }),
-          );
-        }
-
         // Stream mode and segment mode are mutually exclusive:
         // - Stream: multi_message is removed; private chats use the configured draft format
         // - Segment: multi_message is available; AI sends messages via tool, no streaming
         const msgCfg = turnMessageConfig;
         const isStreamMode = isStreamReplyMode(msgCfg) && !preserveQueuedMessage;
         const richMessageEnabled = isRichMessageEnabled(msgCfg) && !preserveQueuedMessage;
-        if (isStreamMode || preserveQueuedMessage) {
-          delete allTools.multi_message;
-        }
 
         // Increase maxSteps when agent tools, web tools, or artwork tools are available
         const baseMaxSteps = memoryCfg.maxSteps || DEFAULT_MEMORY_CONFIG.maxSteps;
@@ -2548,8 +2401,7 @@ export function createAiReplyHandler(
           2,
         );
         const toolChoice = memoryCfg.toolChoice ?? "auto";
-        const stableTools = sortToolsForPromptCache(allTools);
-        const toolSchemaHash = createToolSchemaHash(stableTools);
+        const toolSchemaHash = createToolSchemaHash(toolset.tools);
         const cacheFingerprint = createCacheFingerprint({
           providerId: currentProviderRuntime.id,
           model: currentModel,
@@ -2583,7 +2435,7 @@ export function createAiReplyHandler(
               "degraded" in historyBudget
                 ? historyBudget.degraded
                 : false,
-            toolsEnabled: Object.keys(stableTools),
+            toolsEnabled: Object.keys(toolset.tools),
             maxSteps,
             toolChoice,
             chatId,
@@ -2597,7 +2449,7 @@ export function createAiReplyHandler(
         let stepCounter = 0;
         let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
-        const wrappedTools = composeTurnTools(stableTools, {
+        const wrappedTools = composeTurnTools(toolset.tools, {
           requestCache,
           onLog: onLog,
           getStep: () => stepCounter + 1,
@@ -2639,7 +2491,7 @@ export function createAiReplyHandler(
           model: currentProviderFactory(currentModel),
           messages,
           tools: wrappedTools,
-          prepareStep: profileAvatars.prepareStep,
+          prepareStep: toolset.prepareStep,
           stopWhen: stepCountIs(maxSteps),
           toolChoice,
           abortSignal: perStepAbort.signal,

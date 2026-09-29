@@ -34,6 +34,7 @@ function input(overrides: Partial<ContextAssemblyInput> = {}): ContextAssemblyIn
     userName: "cos",
     maxContextMessages: 20,
     conversation: conversation(),
+    toolCapabilities: new Set(),
     ...overrides,
   };
 }
@@ -62,6 +63,7 @@ describe("replyable message ids in the assembled prompt", () => {
               chatId: -1001,
               conversation: conversation(),
               moodState: new Map(),
+              toolCapabilities: new Set(),
             });
       const instructions = bundle.messages[0]!.content;
       expect(instructions).toContain("包括对话历史和近期群聊消息");

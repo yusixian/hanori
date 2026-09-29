@@ -1,12 +1,14 @@
 import type { Tool } from "ai";
 import { describe, expect, it } from "vitest";
+import { deriveCapabilitiesFromTools } from "../utils/tool-capabilities.js";
 import {
   assembleContext,
   assemblePromptPreview,
   buildContinueChatPromptBundle,
 } from "./context-assembler.js";
 
-const resolvedWebTools = {
+const segmentTurnTools = {
+  multi_message: {} as Tool,
   get_current_time: {} as Tool,
   web_search: {} as Tool,
   fetch_webpage: {} as Tool,
@@ -26,7 +28,7 @@ describe("prompt tool capabilities", () => {
       maxContextMessages: 20,
       timerMaxSeconds: 604_800,
       webToolsConfig: runtimeConfig,
-      webTools: resolvedWebTools,
+      toolCapabilities: deriveCapabilitiesFromTools(segmentTurnTools),
     });
     const preview = await assemblePromptPreview({
       systemPrompt: "System",
@@ -45,7 +47,7 @@ describe("prompt tool capabilities", () => {
       moodState: new Map(),
       timerMaxSeconds: 604_800,
       webToolsConfig: runtimeConfig,
-      webTools: resolvedWebTools,
+      toolCapabilities: deriveCapabilitiesFromTools(segmentTurnTools),
     });
 
     expect(preview.trace.staticPrefixHash).toBe(runtime.trace.staticPrefixHash);
@@ -75,7 +77,7 @@ describe("prompt tool capabilities", () => {
         enabled: true,
         search: { provider: "custom", baseURL: "https://search.example.com" },
       },
-      webTools: { fetch_webpage: {} as Tool },
+      toolCapabilities: deriveCapabilitiesFromTools({ fetch_webpage: {} as Tool }),
     });
 
     for (const prompt of [invalidPreview.fullPrompt, runtimeWithoutSearch.messages[0]!.content]) {

@@ -26,7 +26,7 @@ import {
   formatConversationRelayOrigin,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
-import type { ModelMessage, Tool, UserModelMessage } from "ai";
+import type { ModelMessage, UserModelMessage } from "ai";
 import { getAvailableAgentNames } from "../tools/index.js";
 import type { MoodInfo } from "../tools/index.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
@@ -106,21 +106,16 @@ export interface ContextAssemblyInput {
   includeCrossChatUserHistory?: boolean;
   /** History watermark captured at admission so queued turns ignore newer cross-chat messages. */
   crossChatHistoryBeforeId?: number;
-  memoryTools?: Record<string, Tool>;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
-  botMemoryTools?: Record<string, Tool>;
   /** Text projection of the current request used for late-bound memory retrieval. */
   retrievalQuery?: string;
   currentMood?: MoodInfo;
-  stickerPacks?: string[];
+  /** The turn toolset's capabilities; memory context is injected only with its tools. */
+  toolCapabilities: ReadonlySet<ToolPromptCapability>;
   webToolsConfig?: WebToolsConfig;
-  webTools?: Record<string, Tool>;
-  hasImageGeneration?: boolean;
   skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
-  artworkToolsEnabled?: boolean;
-  hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
   messageConfig?: MessageConfig;
   timerMaxSeconds?: number;
@@ -183,8 +178,6 @@ interface StaticPromptInput {
   groupBehavioralPrompt?: string;
   isPrivate: boolean;
   dataFiles?: DataFilesConfig;
-  memoryInstructions: boolean;
-  botMemoryInstructions: boolean;
   webToolsConfig?: WebToolsConfig | WebToolsConfigPublic;
   toolCapabilities: ReadonlySet<ToolPromptCapability>;
   skills?: readonly BotSkillDefinition[];
@@ -260,7 +253,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
     }
   }
 
-  if (input.memoryInstructions) {
+  if (input.toolCapabilities.has("memory")) {
     sections.push(
       section(
         "static.memory-tools",
@@ -271,7 +264,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
       ),
     );
   }
-  if (input.botMemoryInstructions) {
+  if (input.toolCapabilities.has("bot-memory")) {
     sections.push(
       section(
         "static.bot-memory-tools",
@@ -706,13 +699,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const historyFormat = input.historyFormat ?? conversationConfig.historyFormat ?? "prompt";
   const memoryConfig = input.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
   const botMemoryConfig = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
-  const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
-  const toolCapabilities = deriveToolPromptCapabilities({
-    ...input,
-    webTools: input.webTools ?? {},
-    hasBotMemoryTool: !!input.botMemoryTools,
-    hasFileTools,
-  });
+  const toolCapabilities = input.toolCapabilities;
 
   appendMessage(
     messages,
@@ -723,8 +710,6 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       groupBehavioralPrompt: input.groupBehavioralPrompt,
       isPrivate: input.isPrivate,
       dataFiles: input.dataFiles,
-      memoryInstructions: !!input.memoryTools,
-      botMemoryInstructions: !!input.botMemoryTools,
       webToolsConfig: input.webToolsConfig,
       toolCapabilities,
       skills: input.skills,
@@ -893,7 +878,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     );
   }
 
-  if (input.memoryTools && input.memory) {
+  if (toolCapabilities.has("memory") && input.memory) {
     if (memoryConfig.autoReadProfile && input.userId != null) {
       try {
         const profile = await input.memory.getProfile(input.userId);
@@ -926,7 +911,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     }
   }
 
-  if (input.botMemoryTools && input.botMemory && botMemoryConfig.autoInjectMemories) {
+  if (toolCapabilities.has("bot-memory") && input.botMemory && botMemoryConfig.autoInjectMemories) {
     try {
       const memories = await loadLateBoundMemories({
         botMemory: input.botMemory,
@@ -1002,6 +987,7 @@ export async function assemblePromptPreview(
   const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
   const toolCapabilities = deriveToolPromptCapabilities({
     ...input,
+    hasMemoryTool: input.memoryEnabled,
     hasBotMemoryTool: input.botMemoryEnabled,
     hasFileTools,
   });
@@ -1014,8 +1000,6 @@ export async function assemblePromptPreview(
       groupBehavioralPrompt: input.groupBehavioralPrompt,
       isPrivate: input.isPrivate,
       dataFiles: input.dataFiles,
-      memoryInstructions: input.memoryEnabled,
-      botMemoryInstructions: input.botMemoryEnabled,
       webToolsConfig: input.webToolsConfig,
       toolCapabilities,
       skills: input.skills,
@@ -1107,17 +1091,11 @@ export interface ContinueChatContextInput {
   chatId: number;
   messageConfig?: MessageConfig;
   moodState: Map<number, MoodInfo>;
+  toolCapabilities: ReadonlySet<ToolPromptCapability>;
   webToolsConfig?: WebToolsConfig;
-  webTools?: Record<string, Tool>;
-  hasImageGeneration?: boolean;
   skills?: readonly BotSkillDefinition[];
   agentToolsConfig?: AgentToolsConfig;
-  artworkToolsEnabled?: boolean;
-  hasFileTools?: boolean;
   dataFiles?: DataFilesConfig;
-  stickerPacks?: string[];
-  memoryTools?: Record<string, Tool>;
-  botMemoryTools?: Record<string, Tool>;
   botMemoryConfig?: BotMemoryConfig;
   botMemory?: BotMemoryCallbacks;
   retrievalQuery?: string;
@@ -1135,13 +1113,6 @@ export async function buildContinueChatPromptBundle(
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const botMemoryConfig = input.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
   const isPrivate = input.chatId > 0;
-  const hasFileTools = input.hasFileTools ?? !!input.dataFiles;
-  const toolCapabilities = deriveToolPromptCapabilities({
-    ...input,
-    webTools: input.webTools ?? {},
-    hasBotMemoryTool: !!input.botMemoryTools,
-    hasFileTools,
-  });
 
   appendMessage(
     messages,
@@ -1152,10 +1123,8 @@ export async function buildContinueChatPromptBundle(
       groupBehavioralPrompt: input.groupBehavioralPrompt,
       isPrivate,
       dataFiles: input.dataFiles,
-      memoryInstructions: !!input.memoryTools,
-      botMemoryInstructions: !!input.botMemoryTools,
       webToolsConfig: input.webToolsConfig,
-      toolCapabilities,
+      toolCapabilities: input.toolCapabilities,
       skills: input.skills,
       agentToolsConfig: input.agentToolsConfig,
       messageConfig: input.messageConfig,

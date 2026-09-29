@@ -15,18 +15,32 @@ export type ToolPromptCapability =
   | "bot-memory"
   | "file"
   | "image-generation"
+  | "memory"
   | "multi-message"
   | "sticker"
   | "web"
   | "web-search";
 
+const CAPABILITY_MARKER_TOOLS: Record<ToolPromptCapability, string> = {
+  "agent-delegation": "delegate_task",
+  artwork: "fetch_artwork_info",
+  "bot-memory": "recall_memories",
+  file: "read_file",
+  "image-generation": "get_image_generation",
+  memory: "get_profile",
+  "multi-message": "multi_message",
+  sticker: "send_sticker",
+  web: "fetch_webpage",
+  "web-search": "web_search",
+};
+
+/** Configuration a prompt preview describes; runtime turns use deriveCapabilitiesFromTools. */
 export interface ToolPromptCapabilityInput {
   stickerPacks?: readonly string[];
   webToolsConfig?: WebToolsConfig | WebToolsConfigPublic;
-  /** Resolved runtime tools. Omit only when deriving a configuration preview. */
-  webTools?: Readonly<Record<string, unknown>>;
   hasImageGeneration?: boolean;
   agentToolsConfig?: AgentToolsConfig;
+  hasMemoryTool?: boolean;
   hasBotMemoryTool: boolean;
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
@@ -62,19 +76,34 @@ export function deriveToolPromptCapabilities(
     capabilities.add("image-generation");
   }
   if (input.agentToolsConfig?.enabled) capabilities.add("agent-delegation");
+  if (input.hasMemoryTool) capabilities.add("memory");
   if (input.hasBotMemoryTool) capabilities.add("bot-memory");
   if (input.artworkToolsEnabled) capabilities.add("artwork");
   if (input.hasFileTools) capabilities.add("file");
 
-  if (input.webTools !== undefined) {
-    if (input.webTools.fetch_webpage) capabilities.add("web");
-    if (input.webTools.web_search) capabilities.add("web-search");
-  } else if (input.webToolsConfig?.enabled) {
+  if (input.webToolsConfig?.enabled) {
     capabilities.add("web");
     if (hasWebSearchProviderPrerequisites(input.webToolsConfig.search, true)) {
       capabilities.add("web-search");
     }
   }
 
+  return capabilities;
+}
+
+/**
+ * Reads a runtime turn's capabilities from the tools it offers, so the prompt never describes
+ * a tool the model cannot call. send_sticker is offered even without packs, where it can only
+ * fail, so the sticker capability also needs configured packs.
+ */
+export function deriveCapabilitiesFromTools(
+  tools: Readonly<Record<string, unknown>>,
+  stickerPacks?: readonly string[],
+): ReadonlySet<ToolPromptCapability> {
+  const capabilities = new Set<ToolPromptCapability>();
+  for (const [capability, marker] of Object.entries(CAPABILITY_MARKER_TOOLS)) {
+    if (tools[marker]) capabilities.add(capability as ToolPromptCapability);
+  }
+  if (!stickerPacks?.length) capabilities.delete("sticker");
   return capabilities;
 }

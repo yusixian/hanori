@@ -1,5 +1,8 @@
-import { createProfileAvatarTools } from "../tools/profile-avatar.js";
-import { createTurnInteractionTools } from "../tools/turn-interaction.js";
+import {
+  createTurnToolset,
+  resolveImageGenerationActor,
+  type TurnToolsetConfig,
+} from "../tools/turn-toolset.js";
 import type {
   AgentToolsConfig,
   ArtworkToolsConfig,
@@ -33,33 +36,21 @@ import {
 import type { JSONValue, LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
 import type { Api } from "grammy";
-import {
-  createDanbooruTools,
-  createGenerationLibraryTools,
-  createImageGenerationTools,
-  createRssTools,
-} from "../tools/index.js";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 import { sendMarkdownWithFallback } from "../utils/rich-message.js";
 import { splitMessage } from "../utils/split-message.js";
 import { sleep } from "../utils/sleep.js";
 import { createOnceGuard, createPerStepAbort, createRequestCache } from "../tools/utils.js";
-import { createFileTools } from "../tools/file-tools.js";
 import { streamToChat } from "../utils/stream-reply.js";
 import type { DataFilesConfig } from "../utils/data-files.js";
 import type { BotSkillDefinition } from "../skills/catalog.js";
-import { createSkillTools } from "../tools/skills.js";
 import { filterMetaPrefixStream, stripMetaPrefix } from "../utils/strip-meta-prefix.js";
 import { filterThinkingStream, stripThinkingContent } from "../utils/strip-thinking.js";
 import { extractCacheTokenUsage } from "../utils/cache-usage.js";
 import { startChatActionHeartbeat } from "../utils/chat-action-heartbeat.js";
 import { composeTurnTools } from "../utils/tool-pipeline.js";
-import {
-  createCacheFingerprint,
-  createToolSchemaHash,
-  sortToolsForPromptCache,
-} from "../utils/prompt-cache.js";
+import { createCacheFingerprint, createToolSchemaHash } from "../utils/prompt-cache.js";
 import { appendCurrentRequest, buildContinueChatPromptBundle } from "./context-assembler.js";
 import type { PendingActionRegistry } from "./pending-actions.js";
 import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
@@ -123,7 +114,6 @@ export interface ContinueChatConfig {
   pendingAdminActions: PendingAdminActionRegistry;
   recentBotMessageIds: Map<number, number[]>;
   moodState: Map<number, MoodInfo>;
-  stickerPacks?: string[];
   onTimerFired?: (chatId: number, timerId: string, reason: string) => Promise<void>;
   onTimerCreate?: (params: {
     timerId: string;
@@ -405,8 +395,6 @@ async function doContinueChat(
 ): Promise<boolean> {
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
-  const memCfg = config.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
-  const botMemCfg = config.botMemoryConfig ?? DEFAULT_BOT_MEMORY_CONFIG;
 
   let successfulToolEffectCount = 0;
   let visibleDeliveryCount = 0;
@@ -431,63 +419,7 @@ async function doContinueChat(
     const selection = config.resolveSelection(chatId);
     selectedProviderId = selection.providerId;
     selectedModelId = selection.modelId;
-    const profileAvatars = createProfileAvatarTools(
-      memCfg.enabled ? config.memory : undefined,
-      event.userId,
-    );
-    let memoryTools: Record<string, Tool> | undefined;
-    if (memCfg.enabled && config.memory) {
-      const { createMemoryTools } = await import("../tools/index.js");
-      memoryTools = { ...createMemoryTools(config.memory), ...profileAvatars.tools };
-    }
-    let botMemoryTools: Record<string, Tool> | undefined;
-    if (botMemCfg.enabled && config.botMemory) {
-      const { createBotMemoryTools } = await import("../tools/bot-memory.js");
-      botMemoryTools = createBotMemoryTools(config.botMemory, {
-        chatId,
-        userId: event.userId,
-        privacyMode,
-        allowSave: false,
-        allowMutations: false,
-        allowHardDelete: false,
-      });
-    }
 
-    // Build messages using ContextAssembler
-    const promptBundle = await buildContinueChatPromptBundle({
-      systemPrompt: config.systemPrompt,
-      behavioralPrompt: config.behavioralPrompt,
-      groupBehavioralPrompt: config.groupBehavioralPrompt,
-      conversationConfig: config.conversationConfig,
-      conversation: config.conversation,
-      chatId,
-      messageConfig: config.messageConfig,
-      moodState: config.moodState,
-      webToolsConfig: config.webToolsConfig,
-      webTools: config.webTools,
-      hasImageGeneration: !!config.imageGenerationPort,
-      skills: config.skills,
-      agentToolsConfig: config.agentToolsConfig,
-      artworkToolsEnabled: config.artworkToolsConfig?.enabled,
-      hasFileTools: !!config.dataFiles,
-      dataFiles: config.dataFiles,
-      stickerPacks: config.stickerPacks,
-      memoryTools,
-      botMemoryTools,
-      botMemoryConfig: config.botMemoryConfig,
-      botMemory: config.botMemory,
-      retrievalQuery: eventDescription,
-      userId: event.userId,
-      privacyMode,
-      timerMaxSeconds: config.timerMaxSeconds,
-    });
-
-    const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, {
-      role: "user",
-      content: `[系统事件通知] ${eventDescription}`,
-    });
-
-    // Build tools
     let chatBotMsgIds = config.recentBotMessageIds.get(chatId);
     if (!chatBotMsgIds) {
       chatBotMsgIds = [];
@@ -528,147 +460,97 @@ async function doContinueChat(
       : undefined;
 
     const deliveredMultiMessages: string[] = [];
-    const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
-      api,
+    let replyableMessageIds: readonly number[] = [];
+    const isPrivate = chatId > 0;
+    const toolsetConfig: TurnToolsetConfig = {
+      botId: config.botId,
+      adminIds: config.adminIds,
+      memoryConfig: config.memoryConfig,
+      memory: config.memory,
+      botMemoryConfig: config.botMemoryConfig,
+      botMemory: config.botMemory,
+      messageConfig: config.messageConfig,
+      webTools: config.webTools,
+      artworkToolsConfig: config.artworkToolsConfig,
+      timeoutConfig: config.timeoutConfig,
+      dataFiles: config.dataFiles,
+      skills: config.skills,
+      generationLibraryPort: config.generationLibraryPort,
+      imageGenerationPort: config.imageGenerationPort,
+      isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
+      rssCallbacks: config.rssCallbacks,
+      pendingAdminActions: config.pendingAdminActions,
+    };
+    const toolset = await createTurnToolset({
+      entry: { kind: "continue", timerDepth, allowRssWrites: event.allowRssWrites },
       chatId,
-      recentBotMessageIds: chatBotMsgIds,
-      onceGuard,
-      telegram: {
+      isPrivate,
+      userId: event.userId,
+      privacyMode,
+      imageGenerationActor: await resolveImageGenerationActor(toolsetConfig, {
+        chatId,
+        isPrivate,
         userId: event.userId,
-        getReplyableMessageIds: () => promptBundle.replyableMessageIds,
-        pendingActions: config.pendingActions,
-        onTimerFired: wrappedOnTimerFired,
-        onTimerCreate:
-          config.onTimerCreate && timerUserId !== undefined
-            ? (params) => config.onTimerCreate?.({ ...params, userId: timerUserId })
-            : undefined,
-        onTimerCancel: config.onTimerCancel,
-        onTimerFiredPersist: config.onTimerFiredPersist,
-        timerMaxSeconds: config.timerMaxSeconds,
-      },
-      behavior: {
-        moodState: config.moodState,
-        richMessageEnabled: isRichMessageEnabled(config.messageConfig),
-        onLog: config.onLog,
-        onMultiMessageSent: (text) => {
-          deliveredMultiMessages.push(text);
-          visibleDeliveryCount += 1;
+      }),
+      api,
+      config: toolsetConfig,
+      interaction: {
+        recentBotMessageIds: chatBotMsgIds,
+        onceGuard,
+        telegram: {
+          getReplyableMessageIds: () => replyableMessageIds,
+          pendingActions: config.pendingActions,
+          onTimerFired: wrappedOnTimerFired,
+          onTimerCreate:
+            config.onTimerCreate && timerUserId !== undefined
+              ? (params) => config.onTimerCreate?.({ ...params, userId: timerUserId })
+              : undefined,
+          onTimerCancel: config.onTimerCancel,
+          onTimerFiredPersist: config.onTimerFiredPersist,
+          timerMaxSeconds: config.timerMaxSeconds,
+        },
+        behavior: {
+          moodState: config.moodState,
+          onMultiMessageSent: (text) => {
+            deliveredMultiMessages.push(text);
+            visibleDeliveryCount += 1;
+          },
         },
       },
-      artwork: config.artworkToolsConfig
-        ? { config: config.artworkToolsConfig, timeoutConfig: config.timeoutConfig }
-        : undefined,
+      delegation: selection.agentToolsFactory,
+      onLog: config.onLog,
     });
 
-    const libraryActor =
-      config.generationLibraryPort && event.userId !== undefined
-        ? {
-            botId: config.botId,
-            source: "telegram" as const,
-            telegramUserId: event.userId,
-            isAdmin: config.adminIds?.includes(event.userId) === true,
-          }
-        : undefined;
-    const allTools: Record<string, Tool> = {
-      ...telegramTools,
-      ...behaviorTools,
-      ...config.webTools,
-      ...createDanbooruTools({
-        timeoutConfig: config.timeoutConfig,
-        generationLibraryPort: config.generationLibraryPort,
-        getActor: libraryActor ? () => libraryActor : undefined,
-        onLog: config.onLog,
-      }),
-      ...createSkillTools({
-        skills: config.skills ?? [],
-        hasImageGeneration: !!config.imageGenerationPort && event.userId !== undefined,
-        hasWebSearch: !!config.webTools?.web_search,
-      }),
-    };
+    const promptBundle = await buildContinueChatPromptBundle({
+      systemPrompt: config.systemPrompt,
+      behavioralPrompt: config.behavioralPrompt,
+      groupBehavioralPrompt: config.groupBehavioralPrompt,
+      conversationConfig: config.conversationConfig,
+      conversation: config.conversation,
+      chatId,
+      messageConfig: config.messageConfig,
+      moodState: config.moodState,
+      toolCapabilities: toolset.capabilities,
+      webToolsConfig: config.webToolsConfig,
+      skills: config.skills,
+      agentToolsConfig: config.agentToolsConfig,
+      dataFiles: config.dataFiles,
+      botMemoryConfig: config.botMemoryConfig,
+      botMemory: config.botMemory,
+      retrievalQuery: eventDescription,
+      userId: event.userId,
+      privacyMode,
+      timerMaxSeconds: config.timerMaxSeconds,
+    });
+    replyableMessageIds = promptBundle.replyableMessageIds;
 
-    // File tools
-    if (config.dataFiles) {
-      const fileTools = createFileTools({ dataDir: config.dataFiles.dataDir });
-      Object.assign(allTools, fileTools);
-    }
+    const { messages, trace: promptTrace } = appendCurrentRequest(promptBundle, {
+      role: "user",
+      content: `[系统事件通知] ${eventDescription}`,
+    });
 
-    // Remove set_timer when timer depth is too deep to prevent recursion
-    if (timerDepth >= 2) {
-      delete allTools.set_timer;
-      config.onLog?.({
-        level: "warn",
-        message: "set_timer disabled due to timer depth limit",
-        meta: { chatId, timerDepth },
-      });
-    }
-
-    if (selection.agentToolsFactory) {
-      Object.assign(allTools, selection.agentToolsFactory(libraryActor));
-    }
-
-    if (config.generationLibraryPort && libraryActor) {
-      Object.assign(
-        allTools,
-        createGenerationLibraryTools({
-          port: config.generationLibraryPort,
-          getActor: () => libraryActor,
-          readOnly: true,
-        }),
-      );
-    }
-
-    if (memoryTools) Object.assign(allTools, memoryTools);
-    if (botMemoryTools) Object.assign(allTools, botMemoryTools);
-
-    if (config.imageGenerationPort && event.userId !== undefined) {
-      const eventUserId = event.userId;
-      const isPrivate = chatId > 0;
-      const isBotAdmin = config.adminIds?.includes(eventUserId) === true;
-      const isDelegatedGroupAdmin =
-        !isPrivate && !isBotAdmin
-          ? (await config.isDelegatedGroupAdmin?.(chatId, eventUserId)) === true
-          : false;
-      Object.assign(
-        allTools,
-        await createImageGenerationTools({
-          port: config.imageGenerationPort,
-          getActor: () => ({
-            botId: config.botId,
-            chatId,
-            userId: eventUserId,
-            chatType: isPrivate ? "private" : "supergroup",
-            isBotAdmin,
-            isDelegatedGroupAdmin,
-          }),
-        }),
-      );
-    }
-
-    Object.assign(allTools, artworkTools);
-
-    // RSS tools
-    if (config.rssCallbacks) {
-      const rssTools = createRssTools({
-        ...config.rssCallbacks,
-        chatId: event.chatId,
-        userId: event.userId,
-        adminChatIds: config.adminIds ?? [],
-        api,
-        pendingActions: config.pendingAdminActions,
-        forceAdmin: event.userId == null,
-        allowWrites: event.userId != null && event.allowRssWrites !== false,
-      });
-      Object.assign(allTools, rssTools);
-    }
-
-    // Remove multi_message tool in stream mode
     const isStreamMode = isStreamReplyMode(config.messageConfig);
-    if (isStreamMode) {
-      delete allTools.multi_message;
-    }
-
-    const stableTools = sortToolsForPromptCache(allTools);
-    const toolSchemaHash = createToolSchemaHash(stableTools);
+    const toolSchemaHash = createToolSchemaHash(toolset.tools);
     const cacheFingerprint = createCacheFingerprint({
       providerId: selection.providerId,
       model: selection.modelId,
@@ -689,7 +571,7 @@ async function doContinueChat(
         staticPrefixHash: promptTrace.staticPrefixHash,
         toolSchemaHash,
         cacheFingerprint,
-        toolsEnabled: Object.keys(stableTools),
+        toolsEnabled: Object.keys(toolset.tools),
       },
     });
 
@@ -716,7 +598,7 @@ async function doContinueChat(
     const result = streamText({
       model: selection.model,
       messages,
-      tools: composeTurnTools(stableTools, {
+      tools: composeTurnTools(toolset.tools, {
         requestCache,
         onLog: config.onLog,
         getStep: () => stepCounter + 1,
@@ -724,7 +606,7 @@ async function doContinueChat(
           successfulToolEffectCount += 1;
         },
       }),
-      prepareStep: profileAvatars.prepareStep,
+      prepareStep: toolset.prepareStep,
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,

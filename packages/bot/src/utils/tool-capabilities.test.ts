@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createWebTools } from "../tools/web.js";
 import { DEFAULT_MESSAGE_CONFIG } from "@cos-tool-bot/shared";
 import {
+  deriveCapabilitiesFromTools,
   deriveToolPromptCapabilities,
   hasWebSearchProviderPrerequisites,
 } from "./tool-capabilities.js";
@@ -60,6 +61,36 @@ describe("tool prompt compatibility", () => {
     });
     expect(capabilities.has("image-generation")).toBe(true);
     expect(capabilities.has("web")).toBe(false);
+  });
+
+  it("reads the same capabilities from a turn's tools as the preview reads from its config", () => {
+    const search = { provider: "tavily" as const, apiKey: "key" };
+    const tools = {
+      ...createWebTools({ config: { enabled: true, search } }),
+      multi_message: {},
+      send_sticker: {},
+      get_profile: {},
+      recall_memories: {},
+      read_file: {},
+      fetch_artwork_info: {},
+      delegate_task: {},
+      get_image_generation: {},
+    };
+
+    expect(deriveCapabilitiesFromTools(tools, ["pack"])).toEqual(
+      deriveToolPromptCapabilities({
+        stickerPacks: ["pack"],
+        webToolsConfig: { enabled: true, search: { provider: "tavily", hasApiKey: true } },
+        hasImageGeneration: true,
+        agentToolsConfig: { enabled: true },
+        hasMemoryTool: true,
+        hasBotMemoryTool: true,
+        artworkToolsEnabled: true,
+        hasFileTools: true,
+      }),
+    );
+    expect(deriveCapabilitiesFromTools(tools).has("sticker")).toBe(false);
+    expect(deriveCapabilitiesFromTools({}).size).toBe(0);
   });
 
   it("offers multi-message by default but omits it in stream mode", () => {
