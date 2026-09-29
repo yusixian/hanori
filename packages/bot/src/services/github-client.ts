@@ -72,8 +72,8 @@ interface GitHubTreeResponse {
 
 export class GitHubApiError extends Error {
   constructor(
-    message: string,
     readonly status: number,
+    message: string,
   ) {
     super(message);
     this.name = "GitHubApiError";
@@ -92,7 +92,7 @@ const COMMIT_SHA_RE = /^[0-9a-f]{40}$/i;
 function encodePath(value: string): string {
   const segments = value.split("/").filter(Boolean);
   if (segments.some((segment) => segment === "." || segment === ".." || segment.includes("\\"))) {
-    throw new GitHubApiError("Invalid GitHub path", 400);
+    throw new GitHubApiError(400, "Invalid GitHub path");
   }
   return segments.map(encodeURIComponent).join("/");
 }
@@ -109,7 +109,7 @@ function assertBranchName(branch: string): void {
     branch.endsWith(".") ||
     branch.endsWith(".lock")
   ) {
-    throw new GitHubApiError("Invalid GitHub branch", 400);
+    throw new GitHubApiError(400, "Invalid GitHub branch");
   }
   encodePath(branch);
 }
@@ -122,7 +122,7 @@ function validatePullRequest(
   expectedHeadSha?: string,
 ): GitHubPullRequest {
   if (!value || typeof value !== "object") {
-    throw new GitHubApiError("GitHub returned an unexpected pull request", 502);
+    throw new GitHubApiError(502, "GitHub returned an unexpected pull request");
   }
   const pull = value as GitHubPullRequest;
   const sameRepository = (name: string | undefined) =>
@@ -143,7 +143,7 @@ function validatePullRequest(
     !COMMIT_SHA_RE.test(pull.base?.sha ?? "") ||
     (expectedHeadSha !== undefined && pull.head.sha !== expectedHeadSha)
   ) {
-    throw new GitHubApiError("GitHub returned an unexpected pull request", 502);
+    throw new GitHubApiError(502, "GitHub returned an unexpected pull request");
   }
   return pull;
 }
@@ -185,9 +185,9 @@ export class GitHubClient {
       `/repos/${encodePath(repository)}/contents/${encodePath(filePath)}${query}`,
       { signal },
     );
-    if (result.type !== "file") throw new GitHubApiError("The requested path is not a file", 400);
+    if (result.type !== "file") throw new GitHubApiError(400, "The requested path is not a file");
     if (result.encoding !== "base64" || !result.content) {
-      throw new GitHubApiError("GitHub did not return inline text content for this file", 413);
+      throw new GitHubApiError(413, "GitHub did not return inline text content for this file");
     }
     return {
       path: result.path,
@@ -264,7 +264,7 @@ export class GitHubClient {
       branchRef.object?.type !== "commit" ||
       !COMMIT_SHA_RE.test(branchRef.object?.sha ?? "")
     ) {
-      throw new GitHubApiError("GitHub returned an unexpected branch ref", 502);
+      throw new GitHubApiError(502, "GitHub returned an unexpected branch ref");
     }
     return { ref: branch, sha: branchRef.object.sha };
   }
@@ -288,7 +288,7 @@ export class GitHubClient {
       signal,
     });
     if (!Array.isArray(pulls)) {
-      throw new GitHubApiError("GitHub returned an unexpected pull request list", 502);
+      throw new GitHubApiError(502, "GitHub returned an unexpected pull request list");
     }
     const match = pulls.find((value) => {
       if (!value || typeof value !== "object") return false;
@@ -351,7 +351,7 @@ export class GitHubClient {
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      throw new GitHubApiError(safeApiError(response.status), response.status);
+      throw new GitHubApiError(response.status, safeApiError(response.status));
     }
     return (await response.json()) as T;
   }

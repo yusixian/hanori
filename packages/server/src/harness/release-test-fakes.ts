@@ -1,4 +1,4 @@
-import { GitHubApiError } from "./github.js";
+import { GitHubApiError } from "../services/github-api.js";
 import type {
   CommitPullRequest,
   CompareResult,

@@ -1,3 +1,9 @@
+import {
+  GitHubApiError,
+  type GitHubErrorKind,
+  type GitHubRequestInit,
+  githubRequest,
+} from "../services/github-api.js";
 import type { GitHubAppCredentialService } from "../services/github-app-credentials.js";
 import type { CheckRunInput, CommitStatusInput } from "./contract.js";
 import {
@@ -16,9 +22,8 @@ import {
 } from "./github-issues.js";
 import { type ReleaseGitHub, createReleaseGitHub } from "./github-release.js";
 import type { ChangedFile } from "./risk.js";
+import type { HarnessLogger } from "./service.js";
 
-const API_ROOT = "https://api.github.com";
-const API_VERSION = "2022-11-28";
 const MAX_FILE_PAGES = 30;
 const MAX_CHECK_PAGES = 5;
 const MAX_INSTALLATIONS = 20;
@@ -32,16 +37,6 @@ export type {
   IssueSummary,
   PullRequestSummary,
 } from "./github-issues.js";
-
-export class GitHubApiError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-    this.name = "GitHubApiError";
-  }
-}
 
 export interface PullRequestInfo {
   number: number;
@@ -93,6 +88,10 @@ export interface HarnessGitHub {
     repo: string,
     sha: string,
   ): Promise<{ runs: CheckRunInput[]; statuses: CommitStatusInput[] }>;
+  /**
+   * Null when the branch is unprotected or the App may not read its protection (logged once per
+   * branch). A rate-limited read throws so the caller retries instead of relaxing the gate.
+   */
   getRequiredChecks(repo: string, branch: string): Promise<string[] | null>;
   mergePullRequest(
     repo: string,
@@ -149,10 +148,15 @@ interface RawPullRequest {
 
 export class GitHubAppHarnessClient implements HarnessGitHub {
   private readonly installations = new Map<string, number>();
-  readonly releases = createReleaseGitHub((repo, path, init) => this.repoRequest(repo, path, init));
+  private readonly unreadableProtection = new Set<string>();
+  readonly releases = createReleaseGitHub(
+    (repo, path, init) => this.repoRequest(repo, path, init),
+    (repo, path, absent) => this.repoRead(repo, path, absent),
+  );
 
   constructor(
     private readonly credentials: Credentials,
+    private readonly logger: Pick<HarnessLogger, "warn">,
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
@@ -172,7 +176,8 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
   async listAccessibleRepositories(): Promise<AccessibleRepository[]> {
     const installations: number[] = [];
     for (let page = 1; page <= MAX_INSTALLATION_PAGES; page++) {
-      const batch = await this.send<Array<{ id: number }>>(
+      const batch = await githubRequest<Array<{ id: number }>>(
+        this.fetchImpl,
         `/app/installations?per_page=100&page=${page}`,
         this.credentials.createAppJwt(),
       );
@@ -183,9 +188,9 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
     for (const installationId of installations.slice(0, MAX_INSTALLATIONS)) {
       const token = await this.credentials.getInstallationToken(installationId);
       for (let page = 1; page <= MAX_REPOSITORY_PAGES; page++) {
-        const batch = await this.send<{
+        const batch = await githubRequest<{
           repositories: Array<{ full_name: string; private: boolean; default_branch?: string }>;
-        }>(`/installation/repositories?per_page=100&page=${page}`, token);
+        }>(this.fetchImpl, `/installation/repositories?per_page=100&page=${page}`, token);
         for (const repo of batch.repositories) {
           this.rememberInstallation(repo.full_name, installationId);
           repos.push({
@@ -204,7 +209,8 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
   private async installationFor(repo: string): Promise<number> {
     const cached = this.installations.get(repo.toLowerCase());
     if (cached) return cached;
-    const response = await this.send<{ id: number }>(
+    const response = await githubRequest<{ id: number }>(
+      this.fetchImpl,
       `/repos/${repo}/installation`,
       this.credentials.createAppJwt(),
     );
@@ -212,35 +218,32 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
     return response.id;
   }
 
-  private async send<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
-    const response = await this.fetchImpl(`${API_ROOT}${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "User-Agent": "cos-tool-bot-harness",
-        "X-GitHub-Api-Version": API_VERSION,
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-      },
-      signal: init.signal ?? AbortSignal.timeout(15_000),
-    });
-    if (response.status === 204) return undefined as T;
-    const text = await response.text();
-    const json = text ? (JSON.parse(text) as unknown) : undefined;
-    if (!response.ok) {
-      const message =
-        (json as { message?: string } | undefined)?.message ?? `GitHub ${response.status}`;
-      throw new GitHubApiError(response.status, message.slice(0, 300));
-    }
-    return json as T;
-  }
-
   private async repoToken(repo: string): Promise<string> {
     return this.credentials.getInstallationToken(await this.installationFor(repo));
   }
 
-  private async repoRequest<T>(repo: string, path: string, init?: RequestInit): Promise<T> {
-    return this.send<T>(`/repos/${repo}${path}`, await this.repoToken(repo), init);
+  private async repoRequest<T>(repo: string, path: string, init?: GitHubRequestInit): Promise<T> {
+    return githubRequest<T>(
+      this.fetchImpl,
+      `/repos/${repo}${path}`,
+      await this.repoToken(repo),
+      init,
+    );
+  }
+
+  /** Null when the repository answers with one of `absent`; credential failures throw. */
+  private async repoRead<T>(
+    repo: string,
+    path: string,
+    absent: readonly GitHubErrorKind[] = ["not_found"],
+  ): Promise<T | null> {
+    const token = await this.repoToken(repo);
+    try {
+      return await githubRequest<T>(this.fetchImpl, `/repos/${repo}${path}`, token);
+    } catch (error) {
+      if (error instanceof GitHubApiError && absent.includes(error.kind)) return null;
+      throw error;
+    }
   }
 
   async getDefaultBranch(repo: string) {
@@ -253,35 +256,25 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
   }
 
   async getFile(repo: string, path: string, ref: string) {
-    try {
-      const file = await this.repoRequest<{ content?: string; encoding?: string; type?: string }>(
-        repo,
-        `/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`,
-      );
-      if (file.type !== "file" || file.encoding !== "base64" || !file.content) return null;
-      return Buffer.from(file.content, "base64").toString("utf8");
-    } catch (error) {
-      if (error instanceof GitHubApiError && error.status === 404) return null;
-      throw error;
-    }
+    const file = await this.repoRead<{ content?: string; encoding?: string; type?: string }>(
+      repo,
+      `/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`,
+    );
+    if (file?.type !== "file" || file.encoding !== "base64" || !file.content) return null;
+    return Buffer.from(file.content, "base64").toString("utf8");
   }
 
   async listDirectory(repo: string, path: string, ref: string): Promise<DirectoryEntry[] | null> {
     const suffix = path ? `/${path.split("/").map(encodeURIComponent).join("/")}` : "";
-    try {
-      const entries = await this.repoRequest<unknown>(
-        repo,
-        `/contents${suffix}?ref=${encodeURIComponent(ref)}`,
-      );
-      if (!Array.isArray(entries)) return null;
-      return entries.map((entry: { name: string; type: string }) => ({
-        name: entry.name,
-        type: entry.type === "file" || entry.type === "dir" ? entry.type : "other",
-      }));
-    } catch (error) {
-      if (error instanceof GitHubApiError && error.status === 404) return null;
-      throw error;
-    }
+    const entries = await this.repoRead<unknown>(
+      repo,
+      `/contents${suffix}?ref=${encodeURIComponent(ref)}`,
+    );
+    if (!Array.isArray(entries)) return null;
+    return entries.map((entry: { name: string; type: string }) => ({
+      name: entry.name,
+      type: entry.type === "file" || entry.type === "dir" ? entry.type : "other",
+    }));
   }
 
   async getPullRequest(repo: string, number: number): Promise<PullRequestInfo> {
@@ -369,19 +362,33 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
   }
 
   async getRequiredChecks(repo: string, branch: string) {
+    const token = await this.repoToken(repo);
     try {
-      const protection = await this.repoRequest<{
+      const protection = await githubRequest<{
         contexts?: string[];
         checks?: Array<{ context: string }>;
-      }>(repo, `/branches/${encodeURIComponent(branch)}/protection/required_status_checks`);
+      }>(
+        this.fetchImpl,
+        `/repos/${repo}/branches/${encodeURIComponent(branch)}/protection/required_status_checks`,
+        token,
+      );
       const names = new Set([
         ...(protection.contexts ?? []),
         ...(protection.checks ?? []).map((check) => check.context),
       ]);
       return [...names];
     } catch (error) {
-      if (error instanceof GitHubApiError && [403, 404].includes(error.status)) return null;
-      throw error;
+      if (!(error instanceof GitHubApiError)) throw error;
+      if (error.kind === "not_found") return null;
+      if (error.kind !== "forbidden") throw error;
+      const key = `${repo.toLowerCase()}:${branch}`;
+      if (!this.unreadableProtection.has(key)) {
+        this.unreadableProtection.add(key);
+        this.logger.warn(
+          `Dev Harness cannot read branch protection of ${repo}@${branch} (${error.message}); every visible check gates merges instead`,
+        );
+      }
+      return null;
     }
   }
 
@@ -463,7 +470,8 @@ export class GitHubAppHarnessClient implements HarnessGitHub {
       sort: "updated",
       per_page: String(Math.min(100, limit)),
     });
-    const result = await this.send<{ items: RawIssue[] }>(
+    const result = await githubRequest<{ items: RawIssue[] }>(
+      this.fetchImpl,
       `/search/issues?${params}`,
       await this.repoToken(repo),
     );

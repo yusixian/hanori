@@ -19,6 +19,7 @@ function client(routes: Record<string, { status?: number; body?: unknown }>) {
       createAppJwt: () => "app-jwt",
       getInstallationToken: async () => "installation-token",
     },
+    { warn: () => undefined },
     fetchImpl,
   );
   github.rememberInstallation(REPO, 1);
@@ -112,5 +113,17 @@ describe("GitHub release endpoints", () => {
       "/releases?per_page=30",
       "/actions/runs?head_sha=abc&event=push&per_page=30",
     ]);
+  });
+
+  it("throws a rate-limited Actions read instead of reporting Actions as unreadable", async () => {
+    const { releases } = client({
+      "GET /actions/runs?head_sha=abc&event=push&per_page=30": {
+        status: 403,
+        body: { message: "API rate limit exceeded for installation ID 1." },
+      },
+    });
+    await expect(releases.listWorkflowRuns(REPO, "abc")).rejects.toMatchObject({
+      kind: "rate_limited",
+    });
   });
 });

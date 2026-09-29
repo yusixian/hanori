@@ -1,3 +1,5 @@
+import type { GitHubErrorKind, GitHubRequestInit } from "../services/github-api.js";
+
 const MAX_TAG_PAGES = 5;
 const RELEASE_SCAN = 30;
 const RUN_SCAN = 30;
@@ -63,7 +65,16 @@ export interface ReleaseGitHub {
   listWorkflowRuns(repo: string, headSha: string): Promise<WorkflowRunInfo[] | null>;
 }
 
-export type RepoRequest = <T>(repo: string, path: string, init?: RequestInit) => Promise<T>;
+export type RepoRequest = <T>(repo: string, path: string, init?: GitHubRequestInit) => Promise<T>;
+/**
+ * Null when the repository answers with one of `absent` (default `not_found`); credential failures
+ * throw.
+ */
+export type RepoRead = <T>(
+  repo: string,
+  path: string,
+  absent?: readonly GitHubErrorKind[],
+) => Promise<T | null>;
 
 export function httpStatus(error: unknown): number | null {
   const status = (error as { status?: unknown } | null)?.status;
@@ -71,15 +82,6 @@ export function httpStatus(error: unknown): number | null {
 }
 
 const refPath = (tag: string) => tag.split("/").map(encodeURIComponent).join("/");
-
-async function orNull<T>(read: Promise<T>, statuses: readonly number[] = [404]) {
-  try {
-    return await read;
-  } catch (error) {
-    if (statuses.includes(httpStatus(error) ?? 0)) return null;
-    throw error;
-  }
-}
 
 interface RawRelease {
   tag_name: string;
@@ -95,7 +97,7 @@ const toRelease = (raw: RawRelease): ReleaseInfo => ({
   prerelease: raw.prerelease,
 });
 
-export function createReleaseGitHub(request: RepoRequest): ReleaseGitHub {
+export function createReleaseGitHub(request: RepoRequest, read: RepoRead): ReleaseGitHub {
   return {
     async listTags(repo, limit) {
       const tags: TagInfo[] = [];
@@ -112,7 +114,7 @@ export function createReleaseGitHub(request: RepoRequest): ReleaseGitHub {
 
     async getTagRef(repo, tag) {
       type Ref = { object: { type: string; sha: string } };
-      const ref = await orNull(request<Ref>(repo, `/git/ref/tags/${refPath(tag)}`));
+      const ref = await read<Ref>(repo, `/git/ref/tags/${refPath(tag)}`);
       if (!ref) return null;
       let object = ref.object;
       for (let depth = 0; depth < 5 && object.type === "tag"; depth++) {
@@ -123,9 +125,7 @@ export function createReleaseGitHub(request: RepoRequest): ReleaseGitHub {
     },
 
     async getReleaseByTag(repo, tag) {
-      const published = await orNull(
-        request<RawRelease>(repo, `/releases/tags/${encodeURIComponent(tag)}`),
-      );
+      const published = await read<RawRelease>(repo, `/releases/tags/${encodeURIComponent(tag)}`);
       if (published) return toRelease(published);
       const recent = await request<RawRelease[]>(repo, `/releases?per_page=${RELEASE_SCAN}`);
       const draft = recent.find((release) => release.tag_name === tag);
@@ -202,22 +202,19 @@ export function createReleaseGitHub(request: RepoRequest): ReleaseGitHub {
         event: "push",
         per_page: String(RUN_SCAN),
       });
-      const result = await orNull(
-        request<{
-          workflow_runs: Array<{
-            id: number;
-            name?: string | null;
-            path?: string | null;
-            head_branch?: string | null;
-            event: string;
-            status: string;
-            conclusion: string | null;
-            html_url: string;
-            updated_at?: string | null;
-          }>;
-        }>(repo, `/actions/runs?${params}`),
-        [403, 404],
-      );
+      const result = await read<{
+        workflow_runs: Array<{
+          id: number;
+          name?: string | null;
+          path?: string | null;
+          head_branch?: string | null;
+          event: string;
+          status: string;
+          conclusion: string | null;
+          html_url: string;
+          updated_at?: string | null;
+        }>;
+      }>(repo, `/actions/runs?${params}`, ["not_found", "forbidden"]);
       if (!result) return null;
       return result.workflow_runs.map((run) => ({
         id: run.id,

@@ -1,5 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
-import { GitHubClient } from "./github-client.js";
+import { GitHubApiError, GitHubClient } from "./github-client.js";
+
+describe("GitHubClient errors", () => {
+  it("carries GitHub's status and a message safe to show", async () => {
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 429 }));
+    const client = new GitHubClient({ token: "token", fetch: fetchMock as typeof fetch });
+
+    const error = await client.getRepository("owner/repo").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).toMatchObject({
+      status: 429,
+      message: "GitHub rate-limited the request; try again later",
+    });
+    await expect(client.getRepository("../repo")).rejects.toMatchObject({ status: 400 });
+  });
+});
 
 describe("GitHubClient cancellation", () => {
   it("combines a caller signal with the request timeout", async () => {

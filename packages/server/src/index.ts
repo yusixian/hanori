@@ -299,7 +299,7 @@ if (env.HARNESS_CONFIG_PATH) {
   const service: HarnessService = new HarnessService({
     configPath: env.HARNESS_CONFIG_PATH,
     store: new DrizzleHarnessStore(db),
-    github: new GitHubAppHarnessClient(githubAppService),
+    github: new GitHubAppHarnessClient(githubAppService, dbLogger),
     logger: dbLogger,
     panelUrl: env.BETTER_AUTH_URL,
     attachmentSecret: env.BETTER_AUTH_SECRET,

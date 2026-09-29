@@ -6,10 +6,9 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
+import { GitHubApiError, type GitHubRequestInit, githubRequest } from "./github-api.js";
 
-const GITHUB_API_ROOT = "https://api.github.com";
 const GITHUB_WEB_ROOT = "https://github.com";
-const API_VERSION = "2022-11-28";
 const STATE_TTL_MS = 10 * 60 * 1000;
 const INSTALLATION_TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const INSTALLATION_HEALTH_TTL_MS = 60 * 1000;
@@ -159,15 +158,6 @@ export function resolveGitHubAppConfig(values: Record<string, string | undefined
 
 function encode(value: string | Buffer): string {
   return Buffer.from(value).toString("base64url");
-}
-
-function apiHeaders(token: string): Record<string, string> {
-  return {
-    Accept: "application/vnd.github+json",
-    Authorization: `Bearer ${token}`,
-    "User-Agent": "cos-tool-bot",
-    "X-GitHub-Api-Version": API_VERSION,
-  };
 }
 
 export class GitHubAppCredentialService {
@@ -480,19 +470,14 @@ export class GitHubAppCredentialService {
   }
 
   private async refreshInstallationToken(installationId: number): Promise<string> {
-    const response = await this.fetchImpl(
-      `${GITHUB_API_ROOT}/app/installations/${installationId}/access_tokens`,
+    const result = await this.request<InstallationTokenResponse>(
+      `/app/installations/${installationId}/access_tokens`,
+      this.createAppJwt(),
       {
         method: "POST",
-        headers: apiHeaders(this.createAppJwt()),
-        signal: AbortSignal.timeout(30_000),
+        failureMessage: (status) => `GitHub installation token 获取失败 (${status})`,
       },
     );
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`GitHub installation token 获取失败 (${response.status})`);
-    }
-    const result = (await response.json()) as InstallationTokenResponse;
     const expiresAt = Date.parse(result.expires_at);
     if (!result.token || !Number.isFinite(expiresAt)) {
       throw new Error("GitHub 返回了无效的 installation token");
@@ -504,30 +489,24 @@ export class GitHubAppCredentialService {
   private async refreshInstallationHealth(installationId: number): Promise<string | undefined> {
     let connectionError: string | undefined;
     try {
-      const response = await this.fetchImpl(
-        `${GITHUB_API_ROOT}/app/installations/${installationId}`,
-        {
-          headers: apiHeaders(this.createAppJwt()),
-          signal: AbortSignal.timeout(10_000),
-        },
+      const installation = await this.request<InstallationResponse>(
+        `/app/installations/${installationId}`,
+        this.createAppJwt(),
+        { timeoutMs: 10_000 },
       );
-      if (response.status === 404) {
-        await response.body?.cancel().catch(() => undefined);
-        connectionError = "GitHub App installation 已被撤销或不存在";
-      } else if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
-        connectionError = "暂时无法验证 GitHub App installation 状态";
-      } else {
-        const installation = (await response.json()) as InstallationResponse;
-        if (String(installation.app_id) !== this.requireConfig().appId) {
-          connectionError = "GitHub App installation 不属于当前服务器配置";
-        } else if (installation.suspended_at) {
-          connectionError = "GitHub App installation 已被暂停";
-        }
+      if (String(installation.app_id) !== this.requireConfig().appId) {
+        connectionError = "GitHub App installation 不属于当前服务器配置";
+      } else if (installation.suspended_at) {
+        connectionError = "GitHub App installation 已被暂停";
       }
     } catch (error) {
-      console.error("GitHub App installation health check failed", error);
-      connectionError = "暂时无法验证 GitHub App installation 状态";
+      if (!(error instanceof GitHubApiError)) {
+        console.error("GitHub App installation health check failed", error);
+      }
+      connectionError =
+        error instanceof GitHubApiError && error.kind === "not_found"
+          ? "GitHub App installation 已被撤销或不存在"
+          : "暂时无法验证 GitHub App installation 状态";
     }
     this.healthCache.set(installationId, {
       connectionError,
@@ -566,16 +545,12 @@ export class GitHubAppCredentialService {
     return [...new Set(repositories)].sort();
   }
 
-  private async request<T>(path: string, token: string): Promise<T> {
-    const response = await this.fetchImpl(`${GITHUB_API_ROOT}${path}`, {
-      headers: apiHeaders(token),
-      signal: AbortSignal.timeout(30_000),
+  private request<T>(path: string, token: string, init: GitHubRequestInit = {}): Promise<T> {
+    return githubRequest<T>(this.fetchImpl, path, token, {
+      timeoutMs: 30_000,
+      failureMessage: (status) => `GitHub API 请求失败 (${status})`,
+      ...init,
     });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new Error(`GitHub API 请求失败 (${response.status})`);
-    }
-    return (await response.json()) as T;
   }
 
   private requireConfig(): GitHubAppConfig {

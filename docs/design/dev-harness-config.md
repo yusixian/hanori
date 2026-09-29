@@ -126,6 +126,8 @@ github:
   mergeMethod: squash # squash | merge | rebase
   deleteBranchOnMerge: true
   requireChecks: all # all | required
+  # required 读取分支保护，需要 GitHub App 的 Administration 读权限，且仓库所在套餐支持分支保护；
+  # 读不到时改由所有可见检查决定能否合并，并按分支记录一次警告
   branchPrefix: harness/
   labelPrefix: "harness:"
   ci: # 推送后 CI 尚未登记的窗口，见 §10

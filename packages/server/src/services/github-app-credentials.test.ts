@@ -1,5 +1,6 @@
 import { createHash, generateKeyPairSync, verify } from "node:crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { GitHubApiError } from "./github-api.js";
 import {
   GitHubAppCredentialService,
   resolveGitHubAppConfig,
@@ -355,6 +356,26 @@ describe("GitHubAppCredentialService authorization", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(103);
   });
+
+  it("keeps its own failure text on a GitHub API error while classifying the answer", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: "user-token" }))
+      .mockResolvedValueOnce(jsonResponse({ message: "Server Error" }, 500));
+    const service = new GitHubAppCredentialService({
+      config,
+      stateSecret: "state-secret",
+      fetch: fetchMock,
+    });
+
+    const error = await service.exchangeAndVerifyInstallation("code", 77).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GitHubApiError);
+    expect(error).toMatchObject({
+      message: "GitHub API 请求失败 (500)",
+      status: 500,
+      kind: "other",
+    });
+  });
 });
 
 describe("GitHubAppCredentialService installation token cache", () => {
@@ -414,5 +435,42 @@ describe("GitHubAppCredentialService installation token cache", () => {
     now += 60 * 1000;
     await expect(service.getInstallationConnectionError(77)).resolves.toContain("已被撤销");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("names an installation token failure and marks a rate limit", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ message: "API rate limit exceeded for installation" }), {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0" },
+      }),
+    );
+    const service = new GitHubAppCredentialService({
+      config,
+      stateSecret: "state-secret",
+      fetch: fetchMock,
+    });
+
+    const error = await service.getInstallationToken(77).catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      message: "GitHub installation token 获取失败 (403)",
+      status: 403,
+      kind: "rate_limited",
+    });
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(url).toBe("https://api.github.com/app/installations/77/access_tokens");
+    expect(init?.method).toBe("POST");
+  });
+
+  it("reports unverifiable health for any answer other than a missing installation", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ message: "x" }, 500));
+    const service = new GitHubAppCredentialService({
+      config,
+      stateSecret: "state-secret",
+      fetch: fetchMock,
+    });
+
+    await expect(service.getInstallationConnectionError(77)).resolves.toBe(
+      "暂时无法验证 GitHub App installation 状态",
+    );
   });
 });
