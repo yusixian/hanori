@@ -36,19 +36,17 @@ export const authProvider: AuthProvider = {
   },
 
   check: async () => {
-    const result = await authClient.getSession();
-    if (!("data" in result) || !result.data?.user) {
-      return { authenticated: false, redirectTo: loginPathFor(window.location) };
-    }
-    const membership = await authFetch("/api/authz/me");
+    // The protected endpoint validates both the session and workspace membership.
+    // A separate client-side session check can lag behind a successful sign-in.
+    const membership = await fetch("/api/authz/me", { credentials: "include" });
     if (!membership.ok) {
-      await authClient.signOut();
+      if (membership.status !== 401) await authClient.signOut();
       return { authenticated: false, redirectTo: loginPathFor(window.location) };
     }
     return { authenticated: true };
   },
 
-  // 401s are handled by authFetch (hard redirect to /login); nothing extra to do here.
+  // Other API 401s are handled by authFetch (hard redirect to /login).
   onError: async (error) => {
     return { error };
   },

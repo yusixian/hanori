@@ -8,6 +8,7 @@ import { DEFAULT_CONFIG } from "@/pages/bots/ai-settings/types";
 
 const authState = vi.hoisted(() => ({
   authenticated: false,
+  sessionUnavailable: false,
   failNextSignOut: false,
   signOutCalls: 0,
   getSessionCalls: 0,
@@ -25,7 +26,7 @@ vi.mock("@/lib/auth-client", () => ({
           authState.releaseSessionCheck = resolve;
         });
       }
-      return authState.authenticated
+      return authState.authenticated && !authState.sessionUnavailable
         ? { data: { user: { id: "user-1", email: "owner@example.com" } } }
         : { data: null };
     },
@@ -80,6 +81,7 @@ async function clickLogout() {
 
 beforeEach(async () => {
   authState.authenticated = false;
+  authState.sessionUnavailable = false;
   authState.failNextSignOut = false;
   authState.signOutCalls = 0;
   authState.getSessionCalls = 0;
@@ -92,7 +94,9 @@ beforeEach(async () => {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = requestUrl(input);
       if (url.includes("/api/authz/me")) {
-        return Response.json({ data: { member: { role: "owner" } } });
+        return authState.authenticated
+          ? Response.json({ data: { member: { role: "owner" } } })
+          : Response.json({ error: "Unauthorized" }, { status: 401 });
       }
       if (url.includes("/api/bots/test-id/ai-config")) {
         return Response.json({ ok: true, data: DEFAULT_CONFIG, revision: "revision-1" });
@@ -225,5 +229,21 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   window.dispatchEvent(new PopStateEvent("popstate"));
   await expect.element(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
 
+  rendered.unmount();
+});
+
+test("opens the panel when the server accepts a signed-in session even if the client session check is unavailable", async () => {
+  authState.sessionUnavailable = true;
+  window.history.replaceState({}, "", "/login");
+  window.dispatchEvent(new PopStateEvent("popstate"));
+  const { App } = await import("./App");
+  const rendered = await render(<App />);
+
+  await expect.element(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+  await page.getByRole("textbox", { name: "Email" }).fill("owner@example.com");
+  await page.getByLabelText("Password").fill("password");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await expect.element(page.getByRole("heading", { name: "Bots", exact: true })).toBeVisible();
   rendered.unmount();
 });
