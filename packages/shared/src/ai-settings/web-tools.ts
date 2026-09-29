@@ -1,4 +1,4 @@
-import type { WebToolsConfig, WebToolsConfigPublic } from "../types.js";
+import type { WebToolsConfig, WebToolsConfigPublic } from "../ai-tools.js";
 
 type SearchSettings = Omit<NonNullable<WebToolsConfig["search"]>, "apiKey">;
 type ImageGenerationSettings = Omit<NonNullable<WebToolsConfig["imageGeneration"]>, "apiKey">;

@@ -1,4 +1,4 @@
-import type { ModelCapability } from "./types.js";
+import type { ModelCapability } from "./ai-providers.js";
 
 const KNOWN_CAPABILITIES: Record<string, ModelCapability[]> = {
   // OpenAI

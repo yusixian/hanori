@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { WebToolsConfig } from "../types.js";
+import type { WebToolsConfig } from "../ai-tools.js";
 import {
   mergeWebToolsConfigUpdate,
   toWebToolsConfigPublic,

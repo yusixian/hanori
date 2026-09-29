@@ -1,4 +1,4 @@
-import type { CommandEntity } from "./types.js";
+import type { CommandEntity } from "./bots.js";
 
 export function parseParams(command: string): CommandEntity {
   if (!command)

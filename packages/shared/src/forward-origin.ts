@@ -1,4 +1,4 @@
-import type { ConversationForwardOrigin } from "./types.js";
+import type { ConversationForwardOrigin } from "./conversation.js";
 
 function compactText(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;

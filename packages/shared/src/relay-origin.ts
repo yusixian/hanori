@@ -1,4 +1,4 @@
-import type { ConversationRelayOrigin } from "./types.js";
+import type { ConversationRelayOrigin } from "./conversation.js";
 
 export function parseConversationRelayOrigin(value: unknown): ConversationRelayOrigin | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
