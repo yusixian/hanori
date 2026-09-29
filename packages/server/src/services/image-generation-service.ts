@@ -143,24 +143,15 @@ export class ImageGenerationService implements ImageGenerationPort {
     options?: { includePresets?: boolean },
   ): Promise<ImageRouteCapabilities[]> {
     const config = await this.getConfig(actor.botId);
-    const generalRouteEnabled = config.routes.some(
-      (route) => route.purpose === "general_image" && route.enabled,
-    );
-    const generalBackendConfigured =
-      generalRouteEnabled && config.generalRouteMode !== "off"
-        ? await this.isGeneralBackendConfigured(actor.botId)
-        : false;
+    const generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
     const presets =
       options?.includePresets === false
         ? []
-        : await this.listPresetsForConfig(config, generalBackendConfigured);
+        : await this.listPresetsForConfig(config, generalImageAvailable);
     return config.routes.map((route) => ({
       ...route,
       provider: providerForPurpose(route.purpose),
-      enabled:
-        route.enabled &&
-        (route.purpose !== "general_image" ||
-          (config.generalRouteMode !== "off" && generalBackendConfigured)),
+      enabled: route.enabled && (route.purpose !== "general_image" || generalImageAvailable),
       presets: presets.filter((preset) => preset.provider === providerForPurpose(route.purpose)),
     }));
   }
@@ -170,19 +161,13 @@ export class ImageGenerationService implements ImageGenerationPort {
     purpose?: "anime_illustration" | "general_image",
   ): Promise<ImagePreset[]> {
     const config = await this.getConfig(actor.botId);
-    const generalRouteEnabled = config.routes.some(
-      (route) => route.purpose === "general_image" && route.enabled,
-    );
-    const generalBackendConfigured =
-      generalRouteEnabled && config.generalRouteMode !== "off"
-        ? await this.isGeneralBackendConfigured(actor.botId)
-        : false;
-    return this.listPresetsForConfig(config, generalBackendConfigured, purpose);
+    const generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
+    return this.listPresetsForConfig(config, generalImageAvailable, purpose);
   }
 
   private async listPresetsForConfig(
     config: ImageGovernanceConfig,
-    generalBackendConfigured: boolean,
+    generalImageAvailable: boolean,
     purpose?: "anime_illustration" | "general_image",
   ): Promise<ImagePreset[]> {
     const result: ImagePreset[] = [];
@@ -206,14 +191,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         }
       }
     }
-    if (
-      (!purpose || purpose === "general_image") &&
-      config.routes.some(
-        (candidate) => candidate.purpose === "general_image" && candidate.enabled,
-      ) &&
-      config.generalRouteMode !== "off" &&
-      generalBackendConfigured
-    ) {
+    if ((!purpose || purpose === "general_image") && generalImageAvailable) {
       result.push({
         key: "general-default",
         label: "General image",
@@ -232,13 +210,10 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!(await this.canCreate(actor, config))) return { accepted: false, reason: "not_allowed" };
     const route = config.routes.find((candidate) => candidate.purpose === request.purpose);
     if (!route?.enabled) return { accepted: false, reason: "disabled" };
-    let generalBackendConfigured = false;
+    let generalImageAvailable = false;
     if (request.purpose === "general_image") {
-      if (config.generalRouteMode === "off") {
-        return { accepted: false, reason: "disabled" };
-      }
-      generalBackendConfigured = await this.isGeneralBackendConfigured(actor.botId);
-      if (!generalBackendConfigured) {
+      generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
+      if (!generalImageAvailable) {
         return { accepted: false, reason: "disabled" };
       }
       if (config.generalRouteMode === "explicit_only" && request.routingIntent !== "explicit") {
@@ -282,11 +257,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
     if (!prompt || prompt.length > 8_000) return { accepted: false, reason: "invalid_request" };
 
-    const presets = await this.listPresetsForConfig(
-      config,
-      generalBackendConfigured,
-      request.purpose,
-    );
+    const presets = await this.listPresetsForConfig(config, generalImageAvailable, request.purpose);
     if (request.purpose === "anime_illustration" && presets.length === 0) {
       return { accepted: false, reason: "provider_unavailable" };
     }
@@ -1003,6 +974,17 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (actor.isBotAdmin || actor.isDelegatedGroupAdmin) return true;
     if (actor.chatType === "private") return config.privateChatUserIds.includes(actor.userId);
     return this.isGroupEnabled(actor.botId, actor.chatId);
+  }
+
+  private async isGeneralImageAvailable(
+    botId: string,
+    config: ImageGovernanceConfig,
+  ): Promise<boolean> {
+    return (
+      config.routes.some((route) => route.purpose === "general_image" && route.enabled) &&
+      config.generalRouteMode !== "off" &&
+      (await this.isGeneralBackendConfigured(botId))
+    );
   }
 
   private async isGeneralBackendConfigured(botId: string): Promise<boolean> {
