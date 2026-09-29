@@ -75,12 +75,14 @@ import {
 } from "../services/ai-execution-coordinator.js";
 import { AiIngressLock } from "../services/ai-ingress-lock.js";
 import {
-  createLocalEngagementErrorSample,
-  createLocalEngagementSample,
   EngagementEvaluator,
-  selectEngagementContext,
   type EngagementContextCandidate,
 } from "../services/engagement-evaluator.js";
+import {
+  decideEngagement,
+  type EngagementDecisionGate,
+  type TriggerResult,
+} from "../services/engagement-decision.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
   AiTurnCoalescer,
@@ -413,16 +415,6 @@ function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
   return files;
 }
 
-type TriggerResult =
-  | "reply"
-  | "mention"
-  | "keyword"
-  | "random"
-  | "engagement_continue"
-  | "engagement_addressed"
-  | "engagement_join"
-  | false;
-
 function buildEngagementTurnGuidance(trigger: TriggerResult): string | undefined {
   const shared = "继续遵循既有角色、提示词和工具使用判断。";
   switch (trigger) {
@@ -724,64 +716,6 @@ function resolveGroupConfig(
       DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens,
     engagementPolicy,
   };
-}
-
-function checkLegacyTrigger(
-  ctx: WrapperContext,
-  triggerConfig: AiTriggerConfig,
-  chatId: number,
-  cooldownMap: Map<number, number>,
-): TriggerResult {
-  const text = ctx.message?.text ?? ctx.message?.caption ?? "";
-
-  if (triggerConfig.replyToBot && ctx.message?.reply_to_message?.from?.id === ctx.me.id) {
-    return "reply";
-  }
-
-  if (triggerConfig.mentionBot && ctx.me.username) {
-    if (text.toLowerCase().includes(`@${ctx.me.username.toLowerCase()}`)) {
-      return "mention";
-    }
-  }
-
-  if (triggerConfig.triggerWords.length > 0) {
-    const lowerText = text.toLowerCase();
-    if (triggerConfig.triggerWords.some((w) => lowerText.includes(w.toLowerCase()))) {
-      return "keyword";
-    }
-  }
-
-  if (triggerConfig.randomReplyPercent > 0) {
-    const now = Date.now();
-    const lastTime = cooldownMap.get(chatId) ?? 0;
-    const cooldownMs = triggerConfig.randomReplyCooldown * 1000;
-    if (now - lastTime >= cooldownMs) {
-      if (Math.random() * 100 < triggerConfig.randomReplyPercent) {
-        cooldownMap.set(chatId, now);
-        return "random";
-      }
-    }
-  }
-
-  return false;
-}
-
-function detectExplicitTrigger(ctx: WrapperContext): "reply" | "mention" | false {
-  if (ctx.message?.reply_to_message?.from?.id === ctx.me.id) return "reply";
-  const text = ctx.message?.text ?? ctx.message?.caption ?? "";
-  const entities = ctx.message?.entities ?? ctx.message?.caption_entities ?? [];
-  for (const entity of entities) {
-    if (entity.type === "text_mention" && entity.user.id === ctx.me.id) return "mention";
-    if (
-      entity.type === "mention" &&
-      ctx.me.username &&
-      text.slice(entity.offset, entity.offset + entity.length).toLowerCase() ===
-        `@${ctx.me.username.toLowerCase()}`
-    ) {
-      return "mention";
-    }
-  }
-  return false;
 }
 
 function getDisplayName(from: User | undefined): string {
@@ -1141,6 +1075,16 @@ export function createAiReplyHandler(
 
   function finishEngagementGate(gate: EngagementGate): void {
     engagementGateControllers.delete(gate.controller);
+  }
+
+  function openEngagementDecisionGate(timeoutMs: number): EngagementDecisionGate {
+    const gate = beginEngagementGate(timeoutMs);
+    return {
+      deadlineAt: gate.deadlineAt,
+      race: (operation) => awaitEngagementGate(operation, gate),
+      isStopped: () => gate.generation !== engagementGeneration || aiDisabled,
+      finish: () => finishEngagementGate(gate),
+    };
   }
 
   // Reply mode runtime override (takes precedence over config)
@@ -1606,7 +1550,6 @@ export function createAiReplyHandler(
     const userName = getDisplayName(ctx.from);
 
     let effectivePrompt = config.systemPrompt;
-    let triggerResult: TriggerResult = false;
     let groupConversationEnabled = conversationCfg.enabled;
     let groupMaxContext = conversationCfg.maxContextMessages;
     let groupHistoryMaxTokens = conversationCfg.groupHistoryMaxTokens;
@@ -1744,237 +1687,46 @@ export function createAiReplyHandler(
       (!replyText || replySource?.verifiable === true) &&
       !privacyUserIdsOverflow(...initialEngagementResponsePrivacyGroups);
 
-    const legacyTrigger = isPrivate
-      ? "reply"
-      : checkLegacyTrigger(ctx, groupTriggerConfig, chatId, cooldownMap);
-    triggerResult = legacyTrigger;
-    let engagementSamplePromise: Promise<EngagementSample | undefined> | undefined;
-    let shouldCommitEngagementCooldown = false;
     const engagementCooldownKey = engagementScopeKey(chatId, msg.message_thread_id);
-    const finalizeEngagementSample = (actualTrigger: string | false, finalReasonCode?: string) => {
-      if (!engagementSamplePromise || !config.onEngagementSample) return;
-      void engagementSamplePromise
-        .then((sample) => {
-          if (!sample) return;
-          onLog({
-            level: sample.errorCategory ? "warn" : "info",
-            message: "JEV engagement decision",
-            meta: {
-              mode: sample.mode,
-              style: sample.style,
-              choice: sample.choice,
-              recommendation: sample.engagement,
-              addressed: sample.addressed,
-              actualTrigger: actualTrigger || null,
-              confidence: sample.confidence,
-              probabilities: sample.probabilities,
-              reasonCode: finalReasonCode ?? sample.reasonCode,
-              errorCategory: sample.errorCategory,
-              model: sample.model,
-              configVersion: sample.configVersion,
-              latencyMs: sample.latencyMs,
-              inputTokens: sample.inputTokens,
-              estimatedCostUsd: sample.estimatedCostUsd,
-              contextMessages: sample.context.length,
-            },
-          });
-          return config.onEngagementSample!({
-            ...sample,
-            ...(finalReasonCode ? { reasonCode: finalReasonCode } : {}),
-            actualTrigger: actualTrigger || null,
-          });
-        })
-        .catch((error) => {
-          onLog?.({
-            level: "warn",
-            message: "Failed to record engagement sample",
-            meta: {
-              chatId,
-              messageId: msg.message_id,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          });
-        });
-    };
-
-    if (!isPrivate && !aiDisabled && engagementPolicy && engagementPolicy.mode !== "off") {
-      const explicitTrigger = detectExplicitTrigger(ctx);
-      if (explicitTrigger) {
-        if (engagementPolicy.mode === "active") triggerResult = explicitTrigger;
-      } else if (privacyMode === "off") {
-        if (engagementPolicy.mode === "active") triggerResult = false;
-      } else if (engagementPolicy.mode === "shadow" && !config.onEngagementSample) {
-        // There is no observation sink, so avoid privacy lookups and a classifier call.
-      } else {
-        const currentText = (msg.text ?? msg.caption ?? "").trim();
-        const currentCandidate: EngagementContextCandidate = {
-          messageId: msg.message_id,
-          userId,
-          text: currentText,
-          timestamp: engagementCapturedAt,
-          privacyUserIds: currentEngagementSource.privacyUserIds,
-        };
-        const isFilterCandidate = legacyTrigger === "keyword" || legacyTrigger === "random";
-        const shouldEvaluate =
-          !!currentText &&
-          currentEngagementSource.verifiable &&
-          (engagementPolicy.style !== "filter" || isFilterCandidate);
-        const preparationTimeoutSample = () =>
-          createLocalEngagementErrorSample(
-            {
-              policy: engagementPolicy,
-              context: [],
-              chatId,
-              messageId: msg.message_id,
-              currentMessageId: msg.message_id,
-            },
-            "timeout",
-          );
-        const prepareEvaluationInput = async (gate: EngagementGate) => {
-          const privacyByUser = new Map<number, UserPrivacyMode>();
-          const contextUserIds = [
-            ...new Set(
-              [currentCandidate, ...engagementBufferSnapshot, replyCandidate].flatMap((message) =>
-                message ? (message.privacyUserIds ?? (!message.isBot ? [message.userId] : [])) : [],
-              ),
-            ),
-          ];
-          await Promise.all(
-            contextUserIds.map(async (contextUserId) => {
-              try {
-                privacyByUser.set(
-                  contextUserId,
-                  (await config.privacy?.getMode(contextUserId)) ?? "normal",
-                );
-              } catch {
-                privacyByUser.set(contextUserId, "off");
-              }
-            }),
-          );
-          const isPrivacySafe = (message: EngagementContextCandidate) =>
-            (message.privacyUserIds ?? (!message.isBot ? [message.userId] : [])).every(
-              (contextUserId) => {
-                const resetAt = config.privacy?.getContextResetAt?.(contextUserId);
-                return (
-                  privacyByUser.get(contextUserId) !== "off" &&
-                  (resetAt === undefined ||
-                    (message.privacyCapturedAt ?? message.timestamp) > resetAt)
-                );
-              },
-            );
-          if (!isPrivacySafe(currentCandidate)) return null;
-          const safeSnapshot = engagementBufferSnapshot.filter(isPrivacySafe);
-          const safeReplyCandidate =
-            replyCandidate && isPrivacySafe(replyCandidate) ? replyCandidate : undefined;
-          return {
-            contextSnapshot: safeSnapshot,
-            evaluationInput: {
-              apiKey: config.engagement?.apiKey,
-              assistantIdentity: {
-                displayName: ctx.me.first_name,
-                username: ctx.me.username,
-                triggerWords: groupTriggerConfig.triggerWords,
-              },
-              policy: engagementPolicy,
-              context: selectEngagementContext({
-                messages: safeSnapshot,
-                current: currentCandidate,
-                reply: safeReplyCandidate,
-                maxMessages: engagementPolicy.contextMessages,
-              }),
-              chatId,
-              messageId: msg.message_id,
-              currentMessageId: msg.message_id,
-              replyMessageId: safeReplyCandidate?.messageId,
-              deadlineAt: gate.deadlineAt,
-            },
-          };
-        };
-
-        if (engagementPolicy.mode === "shadow") {
-          if (shouldEvaluate && config.onEngagementSample) {
-            const gate = beginEngagementGate(engagementPolicy.timeoutMs);
-            engagementSamplePromise = (async () => {
-              try {
-                const prepared = await awaitEngagementGate(prepareEvaluationInput(gate), gate);
-                if (prepared) return engagementEvaluator.evaluate(prepared.evaluationInput);
-                return prepared === undefined &&
-                  gate.generation === engagementGeneration &&
-                  !aiDisabled
-                  ? preparationTimeoutSample()
-                  : undefined;
-              } finally {
-                finishEngagementGate(gate);
-              }
-            })();
-          }
-        } else if (!shouldEvaluate) {
-          triggerResult = false;
-        } else {
-          const gate = beginEngagementGate(engagementPolicy.timeoutMs);
-          try {
-            const prepared = await awaitEngagementGate(prepareEvaluationInput(gate), gate);
-            if (prepared === null) {
-              triggerResult = false;
-            } else if (prepared === undefined) {
-              if (gate.generation === engagementGeneration && !aiDisabled) {
-                engagementSamplePromise = Promise.resolve(preparationTimeoutSample());
-                triggerResult = legacyTrigger;
-              } else {
-                triggerResult = false;
-              }
-            } else if (engagementPolicy.keywordDirect && legacyTrigger === "keyword") {
-              triggerResult = "keyword";
-              engagementSamplePromise = Promise.resolve(
-                createLocalEngagementSample(prepared.evaluationInput, "join", "keyword_direct"),
-              );
-            } else {
-              const sample = await engagementEvaluator.evaluate(prepared.evaluationInput);
-              engagementSamplePromise = Promise.resolve(sample);
-              if (gate.generation !== engagementGeneration || aiDisabled) {
-                triggerResult = false;
-              } else if (sample.errorCategory) {
-                triggerResult = legacyTrigger;
-              } else if (sample.engagement === "answer" && sample.choice !== "silent") {
-                const continuationWindowMs =
-                  Math.max(0, engagementPolicy.continuationWindowSeconds) * 1_000;
-                const recentBotUtterance =
-                  continuationWindowMs > 0 &&
-                  prepared.contextSnapshot.some(
-                    (message) =>
-                      message.isBot && Date.now() - message.timestamp <= continuationWindowMs,
-                  );
-                const skipsCooldown =
-                  sample.addressed === true || (sample.choice === "continue" && recentBotUtterance);
-                const lastEngagement = engagementCooldownMap.get(engagementCooldownKey) ?? 0;
-                const cooldownMs = Math.max(0, engagementPolicy.cooldownSeconds) * 1000;
-                if (!skipsCooldown && Date.now() - lastEngagement < cooldownMs) {
-                  engagementSamplePromise = Promise.resolve({
-                    ...sample,
-                    reasonCode: "engagement_cooldown",
-                  });
-                  triggerResult = false;
-                } else {
-                  triggerResult = sample.addressed
-                    ? "engagement_addressed"
-                    : sample.choice === "continue"
-                      ? "engagement_continue"
-                      : "engagement_join";
-                  shouldCommitEngagementCooldown = !skipsCooldown;
-                }
-              } else {
-                triggerResult = false;
-              }
-            }
-          } finally {
-            finishEngagementGate(gate);
-          }
-        }
-      }
-    }
-    if (privacyMode === "off" && triggerResult !== "reply" && triggerResult !== "mention") {
-      triggerResult = false;
-    }
+    const {
+      trigger: triggerResult,
+      commitsCooldown: shouldCommitEngagementCooldown,
+      finalizeSample: finalizeEngagementSample,
+    } = await decideEngagement(
+      {
+        chatId,
+        messageId: msg.message_id,
+        userId,
+        isPrivate,
+        aiDisabled,
+        privacyMode,
+        text: msg.text ?? msg.caption ?? "",
+        entities: msg.entities ?? msg.caption_entities ?? [],
+        replyToUserId: msg.reply_to_message?.from?.id,
+        bot: ctx.me,
+        triggerConfig: groupTriggerConfig,
+        policy: engagementPolicy,
+        apiKey: config.engagement?.apiKey,
+        capturedAt: engagementCapturedAt,
+        source: currentEngagementSource,
+        bufferedContext: engagementBufferSnapshot,
+        replyContext: replyCandidate,
+      },
+      {
+        evaluate: (input) => engagementEvaluator.evaluate(input),
+        openGate: openEngagementDecisionGate,
+        privacy: config.privacy,
+        cooldowns: {
+          lastRandomReplyAt: () => cooldownMap.get(chatId),
+          startRandomReply: (at) => cooldownMap.set(chatId, at),
+          lastEngagementAt: () => engagementCooldownMap.get(engagementCooldownKey),
+        },
+        onSample: config.onEngagementSample,
+        onLog,
+        now: () => Date.now(),
+        random: () => Math.random(),
+      },
+    );
 
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
