@@ -1,4 +1,5 @@
 import { i18n } from "@/i18n";
+import "@/style.css";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -94,5 +95,28 @@ describe("token heatmap calendar grid", () => {
     await expect.element(page.getByText("Less", { exact: true })).toBeVisible();
     await expect.element(page.getByText("No usage data", { exact: true })).not.toBeInTheDocument();
     expect(document.querySelectorAll("svg rect")).toHaveLength(53 * 7);
+  });
+
+  it("resolves all usage colors instead of falling back to black or transparent", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 2, 11, 12));
+    await i18n.changeLanguage("en");
+
+    render(<TokenHeatmap data={[{ date: "2026-03-11", totalTokens: 42 }]} />);
+    await expect.element(page.getByText("Less", { exact: true })).toBeVisible();
+
+    const fills = Array.from(
+      document.querySelectorAll("svg rect"),
+      (cell) => getComputedStyle(cell).fill,
+    );
+    expect(new Set(fills).size).toBe(2);
+    expect(fills).not.toContain("rgb(0, 0, 0)");
+
+    const legendColors = Array.from(
+      document.querySelectorAll<HTMLSpanElement>("span[style*='--color-heatmap-']"),
+      (cell) => getComputedStyle(cell).backgroundColor,
+    );
+    expect(new Set(legendColors).size).toBe(5);
+    expect(legendColors).not.toContain("rgba(0, 0, 0, 0)");
   });
 });

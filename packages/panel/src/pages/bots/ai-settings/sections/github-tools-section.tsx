@@ -57,7 +57,7 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
 
   if (!status.available) {
     return (
-      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-950">
+      <div className="border-warning-border bg-warning-soft text-warning rounded-lg border p-4">
         <div className="flex items-start gap-3">
           <ServerCog className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
           <div className="min-w-0">
@@ -74,9 +74,9 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
 
   if (!status.connected || !installation) {
     return (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="border-border bg-background rounded-lg border p-4">
         <div className="flex items-start gap-3">
-          <GitBranch className="mt-0.5 size-5 shrink-0 text-slate-600" aria-hidden="true" />
+          <GitBranch className="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden="true" />
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-semibold">{t("githubTools.notConnectedTitle")}</p>
@@ -86,7 +86,7 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
               {t("githubTools.notConnectedDescription")}
             </p>
             {status.legacyPat && (
-              <p className="mt-2 text-xs font-medium text-amber-700">
+              <p className="text-warning mt-2 text-xs font-medium">
                 {t("githubTools.legacyPatNotice")}
               </p>
             )}
@@ -99,14 +99,14 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
   const permissionEntries = Object.entries(installation.permissions ?? {});
 
   return (
-    <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-4">
+    <div className="border-success-border bg-success-soft/60 rounded-lg border p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
-          <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-emerald-700" aria-hidden="true" />
+          <CheckCircle2 className="text-success mt-0.5 size-5 shrink-0" aria-hidden="true" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-sm font-semibold">{installation.accountLogin}</p>
-              <Badge className="border-emerald-200 bg-white text-emerald-800">
+              <Badge className="border-success-border text-success bg-white">
                 {t("githubTools.connectedBadge")}
               </Badge>
               <Badge variant="muted">{installation.accountType}</Badge>
@@ -121,18 +121,18 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
             </p>
           </div>
         </div>
-        <span className="font-mono text-[11px] text-slate-500">
+        <span className="text-muted-foreground font-mono text-[11px]">
           {t("githubTools.installationId", { id: installation.installationId })}
         </span>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <div>
-          <p className="text-xs font-semibold text-slate-800">
+          <p className="text-foreground text-xs font-semibold">
             {t("githubTools.authorizedRepositories")}
           </p>
           {installation.repositories.length > 0 ? (
-            <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto text-xs text-slate-700">
+            <ul className="text-foreground mt-2 max-h-32 space-y-1 overflow-y-auto text-xs">
               {installation.repositories.map((repository) => (
                 <li key={repository} className="font-mono break-all">
                   {repository}
@@ -146,7 +146,7 @@ function InstallationStatus({ status }: { status: GitHubAppStatus }) {
           )}
         </div>
         <div>
-          <p className="text-xs font-semibold text-slate-800">
+          <p className="text-foreground text-xs font-semibold">
             {t("githubTools.authorizedPermissions")}
           </p>
           {permissionEntries.length > 0 ? (
@@ -367,7 +367,7 @@ export function GitHubToolsSection({
           </div>
 
           {authorizationBlocked && appStatus?.available && (
-            <p className="text-xs font-medium text-amber-700">
+            <p className="text-warning text-xs font-medium">
               {t("githubTools.saveBeforeAuthorization")}
             </p>
           )}
@@ -384,7 +384,7 @@ export function GitHubToolsSection({
           {visibleConnectionError && (
             <div
               role="alert"
-              className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800"
+              className="border-danger-border bg-danger-soft text-destructive flex items-start gap-2 rounded-lg border p-3 text-xs"
             >
               <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <span>{visibleConnectionError}</span>
@@ -487,12 +487,12 @@ export function GitHubToolsSection({
           </div>
           <p className="text-muted-foreground text-xs">{t("githubTools.codingModelDescription")}</p>
           {config.codingProviderId && !codingProvider && (
-            <p className="text-xs font-medium text-red-700">
+            <p className="text-destructive text-xs font-medium">
               {t("githubTools.codingSelectionInvalid")}
             </p>
           )}
           {codingProvider && !codingProviderHasApiKey && (
-            <p className="text-xs font-medium text-red-700">
+            <p className="text-destructive text-xs font-medium">
               {t("githubTools.codingProviderMissingApiKey")}
             </p>
           )}

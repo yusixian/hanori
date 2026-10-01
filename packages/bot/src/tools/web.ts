@@ -191,7 +191,7 @@ async function extractPageContent(
 
   const res = await fetch(url, {
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; CosToolBot/1.0; +https://github.com/cos-tool-bot)",
+      "User-Agent": "Mozilla/5.0 (compatible; Hanori/1.0)",
       Accept: "text/html,application/xhtml+xml",
     },
     signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_CONFIG.fetchPageMs),

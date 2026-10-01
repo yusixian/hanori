@@ -23,7 +23,7 @@ function parseEmbeddedJson(field: string, value: string): unknown | undefined {
 
 function JsonBlock({ value }: { value: unknown }) {
   return (
-    <pre className="overflow-x-auto rounded-lg bg-slate-950 px-3 py-2.5 text-xs leading-5 break-words whitespace-pre-wrap text-slate-100">
+    <pre className="bg-code text-code-foreground overflow-x-auto rounded-lg px-3 py-2.5 text-xs leading-5 break-words whitespace-pre-wrap">
       {JSON.stringify(value, null, 2)}
     </pre>
   );
@@ -43,7 +43,7 @@ function MetaValue({ field, value }: { field: string; value: unknown }) {
   if (Array.isArray(value)) return <JsonBlock value={value} />;
   if (isComplexValue(value)) {
     return (
-      <div className="space-y-2 border-l border-slate-200 pl-3">
+      <div className="border-border space-y-2 border-l pl-3">
         {Object.entries(value).map(([key, nestedValue]) => (
           <div key={key} className="space-y-1">
             <p className="text-muted-foreground font-mono text-xs break-all">{key}</p>

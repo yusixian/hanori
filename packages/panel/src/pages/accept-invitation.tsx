@@ -83,7 +83,7 @@ export function AcceptInvitationPage() {
   if (!invitationId)
     return (
       <div className="flex min-h-screen items-center justify-center p-5">
-        <p className="max-w-md text-center text-sm text-red-600">{t("invitation.missingId")}</p>
+        <p className="text-destructive max-w-md text-center text-sm">{t("invitation.missingId")}</p>
       </div>
     );
 
@@ -96,7 +96,9 @@ export function AcceptInvitationPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
-            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+            <div className="bg-danger-soft text-destructive rounded-lg px-3 py-2 text-sm">
+              {error}
+            </div>
           )}
           <form onSubmit={signUp} className="grid gap-3">
             <Input

@@ -59,7 +59,7 @@ function ReadFailure({
   return (
     <div
       role="alert"
-      className="m-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"
+      className="border-warning-border bg-warning-soft m-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border p-3 text-sm"
     >
       <div className="min-w-0 flex-1">
         <p className="font-medium">{label}</p>
@@ -840,7 +840,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
     <>
       <div
         inert={confirmDelete !== null}
-        className="flex h-[calc(100dvh-5.5rem)] min-h-[32rem] min-w-0 flex-1 flex-col gap-5 sm:h-[calc(100dvh-6.5rem)] md:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-5rem)]"
+        className="conversations-page flex h-[calc(100dvh-5.5rem)] min-h-[32rem] min-w-0 flex-1 flex-col gap-5 sm:h-[calc(100dvh-6.5rem)] md:h-[calc(100dvh-3rem)] lg:h-[calc(100dvh-5rem)]"
       >
         <div className="shrink-0">
           <div className="min-w-0">
@@ -856,7 +856,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
         {notice ? (
           <div
             role={notice.needsRefresh ? "alert" : "status"}
-            className="flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"
+            className="border-border flex shrink-0 flex-wrap items-center gap-3 rounded-xl border bg-white px-4 py-3 text-sm"
           >
             <p className="min-w-0 flex-1">
               {notice.kind === "active"
@@ -880,15 +880,15 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
           </div>
         ) : null}
 
-        <div className="grid min-h-0 min-w-0 flex-1 overflow-hidden rounded-[20px] bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_-1px_rgb(15_23_42/0.06),0_12px_32px_-20px_rgb(15_23_42/0.2)] xl:grid-cols-[minmax(19rem,21rem)_minmax(0,1fr)]">
+        <div className="grid min-h-0 min-w-0 flex-1 overflow-hidden rounded-[20px] bg-white shadow-[0_0_0_1px_rgb(48_39_52/0.055),0_1px_2px_-1px_rgb(48_39_52/0.06),0_12px_32px_-20px_rgb(48_39_52/0.2)] xl:grid-cols-[minmax(19rem,21rem)_minmax(0,1fr)]">
           <aside
             className={cn(
-              "min-h-0 min-w-0 flex-col bg-white xl:border-r xl:border-slate-200/80",
+              "min-h-0 min-w-0 flex-col bg-white xl:border-r xl:border-border/80",
               selectedConv === null ? "flex" : "hidden xl:flex",
             )}
             aria-label={t("conversations.listLabel")}
           >
-            <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-slate-200/80 px-4">
+            <div className="border-border/80 flex h-[72px] shrink-0 items-center justify-between border-b px-4">
               <div>
                 <h2
                   ref={conversationListHeadingRef}
@@ -905,7 +905,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                 {list.result ? (
                   <span
                     title={loading || list.failed ? t("conversations.staleData") : undefined}
-                    className="text-muted-foreground rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold tabular-nums"
+                    className="text-muted-foreground bg-surface-subtle rounded-lg px-2.5 py-1 text-xs font-semibold tabular-nums"
                   >
                     {total}
                   </span>
@@ -941,7 +941,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
             <form
               role="search"
               aria-label={t("conversations.searchConversations")}
-              className="shrink-0 border-b border-slate-200/80 px-4 py-3"
+              className="border-border/80 shrink-0 border-b px-4 py-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 applySearch(searchDraft);
@@ -1033,7 +1033,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                 ) : null
               ) : conversations.length === 0 ? (
                 <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
-                  <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+                  <span className="bg-surface-subtle flex size-11 items-center justify-center rounded-xl">
                     <Inbox className="size-5" aria-hidden="true" />
                   </span>
                   <p className="text-foreground mt-3 text-sm font-semibold">
@@ -1072,27 +1072,27 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                 totalPages={totalPages}
                 disabled={interactionBusy}
                 onPageChange={handleConversationPageChange}
-                className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 px-3 py-2"
+                className="border-border/80 flex shrink-0 items-center justify-center gap-2 border-t px-3 py-2"
               />
             ) : null}
           </aside>
 
           <section
             className={cn(
-              "min-h-0 min-w-0 flex-col bg-slate-50/70",
+              "min-h-0 min-w-0 flex-col bg-background/70",
               selectedConv !== null ? "flex" : "hidden xl:flex",
             )}
             aria-label={t("conversations.detailsLabel")}
           >
             {selectedConv ? (
               <>
-                <div className="flex min-h-[72px] shrink-0 items-start gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:px-4 xl:h-[72px] xl:items-center">
+                <div className="border-border/80 flex min-h-[72px] shrink-0 items-start gap-2 border-b bg-white px-3 py-2.5 sm:px-4 xl:h-[72px] xl:items-center">
                   <button
                     ref={backButtonRef}
                     type="button"
                     disabled={navigationDisabled}
                     onClick={handleBackToConversations}
-                    className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
+                    className="text-muted-foreground hover:text-foreground focus-visible:ring-ring hover:bg-surface-subtle flex size-10 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] xl:hidden"
                     aria-label={t("conversations.backToList")}
                   >
                     <ArrowLeft className="size-5" aria-hidden="true" />
@@ -1163,7 +1163,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                       ) : null
                     ) : messages.length === 0 ? (
                       <div className="text-muted-foreground flex min-h-56 flex-1 flex-col items-center justify-center px-6 text-center">
-                        <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+                        <span className="bg-surface-subtle flex size-11 items-center justify-center rounded-xl">
                           <MessageSquareText className="size-5" aria-hidden="true" />
                         </span>
                         <p className="text-foreground mt-3 text-sm font-semibold">
@@ -1222,9 +1222,9 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                       </p>
                     ) : null}
                     {summaryList.result ? (
-                      <div className="shrink-0 space-y-2 border-b border-amber-200/70 bg-amber-50/40 px-3 py-2.5 text-xs sm:px-4">
+                      <div className="border-warning-border/70 bg-warning-soft/40 shrink-0 space-y-2 border-b px-3 py-2.5 text-xs sm:px-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="min-w-0 flex-1 leading-5 text-slate-700">
+                          <p className="text-foreground min-w-0 flex-1 leading-5">
                             {t("conversations.summaryRetention")}
                           </p>
                           <Button
@@ -1245,12 +1245,12 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                           </Button>
                         </div>
                         {cleanupPreviewFailed ? (
-                          <p role="alert" className="text-red-700">
+                          <p role="alert" className="text-destructive">
                             {t("conversations.cleanupPreviewFailed")}
                           </p>
                         ) : null}
                         {cleanupPreview ? (
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-600 tabular-nums">
+                          <div className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 tabular-nums">
                             <span>
                               {t("conversations.cleanupPreviewCounts", {
                                 total: cleanupPreview.totalCount,
@@ -1303,20 +1303,20 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                           </div>
                         ) : null}
                         {findActiveSummaryFailed ? (
-                          <p role="alert" className="text-red-700">
+                          <p role="alert" className="text-destructive">
                             {t("conversations.findActiveSummaryFailed")}
                           </p>
                         ) : null}
                         {cleanupConfirm && cleanupPreview && cleanupPreview.eligibleCount > 0 ? (
                           <div
-                            className="rounded-lg border border-amber-300 bg-white p-3"
+                            className="border-warning-border rounded-lg border bg-white p-3"
                             role="group"
                             aria-label={t("conversations.confirmSummaryCleanupTitle")}
                           >
-                            <p className="font-medium text-slate-900">
+                            <p className="text-foreground font-medium">
                               {t("conversations.confirmSummaryCleanupTitle")}
                             </p>
-                            <p className="mt-1 leading-5 text-slate-600">
+                            <p className="text-muted-foreground mt-1 leading-5">
                               {t("conversations.confirmSummaryCleanupDescription", {
                                 count: Math.min(
                                   cleanupPreview.batchMax,
@@ -1361,7 +1361,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                                 ? "status"
                                 : "alert"
                             }
-                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 leading-5"
+                            className="border-border rounded-lg border bg-white px-3 py-2 leading-5"
                           >
                             <p>
                               {summaryFeedback.kind === "cleaned"
@@ -1375,7 +1375,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                                 <summary className="cursor-pointer font-medium">
                                   {t("conversations.unsavedSummaryDraft")}
                                 </summary>
-                                <pre className="mt-1 max-h-32 overflow-auto rounded bg-slate-50 p-2 text-xs break-words whitespace-pre-wrap">
+                                <pre className="bg-background mt-1 max-h-32 overflow-auto rounded p-2 text-xs break-words whitespace-pre-wrap">
                                   {summaryFeedback.draft}
                                 </pre>
                               </details>
@@ -1449,7 +1449,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                                 setSumPage(next);
                               }
                             }}
-                            className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
+                            className="border-border/80 flex shrink-0 items-center justify-center gap-2 border-t bg-white px-3 py-2"
                           />
                         ) : null}
                       </>
@@ -1459,7 +1459,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
               </>
             ) : (
               <div className="text-muted-foreground flex h-full min-h-72 flex-col items-center justify-center px-8 text-center">
-                <span className="flex size-12 items-center justify-center rounded-2xl bg-white text-slate-400 shadow-[0_0_0_1px_rgb(15_23_42/0.06),0_4px_12px_rgb(15_23_42/0.06)]">
+                <span className="text-muted-foreground flex size-12 items-center justify-center rounded-2xl bg-white shadow-[0_0_0_1px_rgb(48_39_52/0.06),0_4px_12px_rgb(48_39_52/0.06)]">
                   <MessageSquareText className="size-5" aria-hidden="true" />
                 </span>
                 <h2 className="text-foreground mt-4 text-sm font-semibold">
@@ -1476,7 +1476,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
 
       {confirmDelete ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center overscroll-contain bg-slate-950/35 p-4 backdrop-blur-[2px]"
+          className="bg-code/35 fixed inset-0 z-50 flex items-center justify-center overscroll-contain p-4 backdrop-blur-[2px]"
           onClick={(event) => event.target === event.currentTarget && closeDeleteDialog()}
         >
           <div
@@ -1485,10 +1485,10 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
             aria-modal="true"
             aria-labelledby="delete-title"
             aria-describedby="delete-description"
-            className="w-full max-w-sm rounded-[20px] bg-white p-5 shadow-[0_24px_64px_rgb(15_23_42/0.22),0_0_0_1px_rgb(15_23_42/0.08)]"
+            className="w-full max-w-sm rounded-[20px] bg-white p-5 shadow-[0_24px_64px_rgb(48_39_52/0.22),0_0_0_1px_rgb(48_39_52/0.08)]"
           >
             <div className="flex items-start gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600">
+              <span className="bg-danger-soft text-destructive flex size-10 shrink-0 items-center justify-center rounded-xl">
                 <Trash2 className="size-4" aria-hidden="true" />
               </span>
               <div>
@@ -1506,7 +1506,7 @@ function BotConversationsContent({ botId }: { botId: string | undefined }) {
                     : t("conversations.deleteDescription", { chatId: confirmDelete.chatId })}
                 </p>
                 {confirmDeleteError ? (
-                  <p className="mt-2 text-sm text-red-600" role="alert">
+                  <p className="text-destructive mt-2 text-sm" role="alert">
                     {confirmDeleteError}
                   </p>
                 ) : null}

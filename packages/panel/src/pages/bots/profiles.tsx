@@ -534,7 +534,7 @@ function BotProfilesContent({ botId }: { botId: string | undefined }) {
       {success && (
         <p
           role="status"
-          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+          className="border-success-border bg-success-soft text-success rounded-lg border px-4 py-3 text-sm"
         >
           {t(`common.${success}`)}
         </p>
@@ -699,7 +699,7 @@ function BotProfilesContent({ botId }: { botId: string | undefined }) {
           className={cn(
             "flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between",
             currentResult
-              ? "border-amber-200 bg-amber-50 text-amber-950"
+              ? "border-warning-border bg-warning-soft text-warning"
               : "border-destructive/30 bg-destructive/5 text-destructive",
           )}
         >
@@ -1020,7 +1020,7 @@ function BotProfilesContent({ botId }: { botId: string | undefined }) {
                           title={t("profiles.deleteTitle")}
                           aria-label={t("profiles.deleteTitle")}
                         >
-                          <Trash2 className="h-4 w-4 text-red-500" />
+                          <Trash2 className="text-destructive h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -1106,7 +1106,7 @@ function BindingEditor({
       </div>
 
       {error && (
-        <p className="text-sm text-red-600" role="alert">
+        <p className="text-destructive text-sm" role="alert">
           {error}
         </p>
       )}
@@ -1127,7 +1127,7 @@ function BindingEditor({
               {canManage && (
                 <button
                   type="button"
-                  className="ml-1 rounded-full hover:text-red-600"
+                  className="hover:text-destructive ml-1 rounded-full"
                   onClick={() => onRemove(binding)}
                   disabled={saving}
                   aria-label={t("profiles.removeBinding", { name: binding.character.name })}

@@ -29,7 +29,7 @@ export function ChatTypeBadge({
     <Badge
       variant="muted"
       className={cn(
-        "shrink-0 whitespace-nowrap border-0 bg-slate-100 px-2 py-1 text-slate-600 shadow-[inset_0_0_0_1px_rgb(15_23_42/0.04)]",
+        "shrink-0 whitespace-nowrap border-0 bg-surface-subtle px-2 py-1 text-muted-foreground shadow-[inset_0_0_0_1px_rgb(48_39_52/0.04)]",
         className,
       )}
     >

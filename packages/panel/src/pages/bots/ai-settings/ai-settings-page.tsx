@@ -499,44 +499,44 @@ export function BotAiSettingsPage() {
     ? {
         icon: Clock3,
         label: t("page.statusSaving"),
-        className: "bg-blue-50 text-blue-800 ring-blue-200",
+        className: "bg-accent text-accent-foreground ring-primary",
       }
     : configApplyRetryPending && !isConfigDirty
       ? {
           icon: AlertCircle,
           label: t("page.statusApplyRetry"),
           detail: message?.text,
-          className: "bg-amber-50 text-amber-900 ring-amber-200",
+          className: "bg-warning-soft text-warning ring-warning-border",
         }
       : message?.type === "error"
         ? {
             icon: AlertCircle,
             label: t("page.statusError"),
             detail: message.text,
-            className: "bg-red-50 text-red-800 ring-red-200",
+            className: "bg-danger-soft text-destructive ring-danger-border",
           }
         : isSelectionDirty
           ? {
               icon: AlertCircle,
               label: t("page.statusSelectionDraft"),
-              className: "bg-amber-50 text-amber-900 ring-amber-200",
+              className: "bg-warning-soft text-warning ring-warning-border",
             }
           : isConfigDirty
             ? {
                 icon: AlertCircle,
                 label: t("page.statusUnsaved"),
-                className: "bg-amber-50 text-amber-900 ring-amber-200",
+                className: "bg-warning-soft text-warning ring-warning-border",
               }
             : revisionRef.current === ""
               ? {
                   icon: AlertCircle,
                   label: t("page.statusUnavailable"),
-                  className: "bg-red-50 text-red-800 ring-red-200",
+                  className: "bg-danger-soft text-destructive ring-danger-border",
                 }
               : {
                   icon: CheckCircle2,
                   label: t("page.statusSaved"),
-                  className: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+                  className: "bg-success-soft text-success ring-success-border",
                 };
   const navigationBlocker = useBlocker(
     ({ currentLocation, nextLocation }) =>
@@ -1027,12 +1027,14 @@ export function BotAiSettingsPage() {
         <div
           ref={settingsHeaderRef}
           data-testid="ai-settings-sticky-header"
-          className="sticky top-0 z-20 -mx-2 space-y-3 bg-slate-50/95 px-2 pt-1 pb-3 backdrop-blur-xl supports-[backdrop-filter]:bg-slate-50/85 md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(15_23_42/0.55)]"
+          className="bg-background/95 supports-[backdrop-filter]:bg-background/85 sticky top-0 z-20 -mx-2 space-y-3 px-2 pt-1 pb-3 backdrop-blur-xl md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(48_39_52/0.55)]"
         >
           <div className="flex items-center justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
-              <p className="mt-1 hidden text-sm text-slate-500 sm:block">{t("page.description")}</p>
+              <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
+                {t("page.description")}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => setPreviewOpen(true)}>
@@ -1069,7 +1071,7 @@ export function BotAiSettingsPage() {
               <SaveStatusIcon aria-hidden="true" className="size-3.5" />
               {saveStatus.label}
             </p>
-            <p id="ai-settings-save-help" className="min-w-0 text-slate-600">
+            <p id="ai-settings-save-help" className="text-muted-foreground min-w-0">
               {saveDisabledReason ??
                 t(
                   configApplyRetryPending && !isConfigDirty
@@ -1101,7 +1103,7 @@ export function BotAiSettingsPage() {
         {saveStatus.detail && (
           <p
             data-testid="ai-settings-error-detail"
-            className="min-w-0 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm break-words text-red-800"
+            className="border-danger-border bg-danger-soft text-destructive min-w-0 rounded-xl border px-3 py-2 text-sm break-words"
           >
             {saveStatus.detail}
           </p>
@@ -1135,10 +1137,10 @@ export function BotAiSettingsPage() {
           <div className="min-w-0">
             <header className="mb-5 flex items-end justify-between gap-4 px-1">
               <div>
-                <h2 className="text-lg font-semibold text-slate-950">
+                <h2 className="text-foreground text-lg font-semibold">
                   {sectionItems.find((item) => item.id === activeSection)?.label}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="text-muted-foreground mt-1 text-sm">
                   {sectionItems.find((item) => item.id === activeSection)?.description}
                 </p>
               </div>
@@ -1266,13 +1268,13 @@ export function BotAiSettingsPage() {
                     onChange={(engagement) => setConfig((prev) => ({ ...prev, engagement }))}
                   />
                   {botId && (
-                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2.5">
+                    <div className="bg-background mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg px-3 py-2.5">
                       <p className="text-muted-foreground text-xs">
                         {t("engagement.reviewRecordsHelp")}
                       </p>
                       <Link
                         to={`/bots/${botId}/debugger?tab=engagement`}
-                        className="focus-visible:ring-ring border-input inline-flex h-10 items-center justify-center rounded-lg border bg-white px-3.5 text-sm font-semibold transition-[background-color,border-color,color] hover:border-slate-400 hover:bg-slate-50 focus-visible:ring-2 focus-visible:outline-none"
+                        className="focus-visible:ring-ring border-input hover:border-input hover:bg-background inline-flex h-10 items-center justify-center rounded-lg border bg-white px-3.5 text-sm font-semibold transition-[background-color,border-color,color] focus-visible:ring-2 focus-visible:outline-none"
                       >
                         {t("engagement.reviewRecords")}
                       </Link>

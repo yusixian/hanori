@@ -426,8 +426,8 @@ export function UsagePage() {
                     dataKey="promptTokens"
                     stackId="1"
                     name={t("usage.prompt")}
-                    stroke="#3b82f6"
-                    fill="#3b82f6"
+                    stroke="var(--color-chart-1)"
+                    fill="var(--color-chart-1)"
                     fillOpacity={0.6}
                   />
                   <Area
@@ -435,8 +435,8 @@ export function UsagePage() {
                     dataKey="completionTokens"
                     stackId="1"
                     name={t("usage.completion")}
-                    stroke="#f97316"
-                    fill="#f97316"
+                    stroke="var(--color-chart-2)"
+                    fill="var(--color-chart-2)"
                     fillOpacity={0.6}
                   />
                 </AreaChart>
@@ -473,13 +473,13 @@ export function UsagePage() {
                         aria-hidden="true"
                       >
                         <div
-                          className="bg-blue-500"
+                          className="bg-chart-1"
                           style={{
                             width: `${(model.promptTokens / maxModelTokens) * 100 || 0}%`,
                           }}
                         />
                         <div
-                          className="bg-orange-500"
+                          className="bg-chart-2"
                           style={{
                             width: `${(model.completionTokens / maxModelTokens) * 100 || 0}%`,
                           }}
@@ -487,11 +487,11 @@ export function UsagePage() {
                       </div>
                       <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs tabular-nums">
                         <span className="flex items-center gap-1.5">
-                          <span className="size-2.5 rounded-sm bg-blue-500" aria-hidden="true" />
+                          <span className="bg-chart-1 size-2.5 rounded-sm" aria-hidden="true" />
                           {t("usage.prompt")}: {formatTokens(model.promptTokens)}
                         </span>
                         <span className="flex items-center gap-1.5">
-                          <span className="size-2.5 rounded-sm bg-orange-500" aria-hidden="true" />
+                          <span className="bg-chart-2 size-2.5 rounded-sm" aria-hidden="true" />
                           {t("usage.completion")}: {formatTokens(model.completionTokens)}
                         </span>
                       </div>
@@ -536,11 +536,16 @@ export function UsagePage() {
                   />
                   <Tooltip formatter={(value) => formatTokens(Number(value))} />
                   <Legend />
-                  <Bar dataKey="promptTokens" name={t("usage.prompt")} fill="#3b82f6" stackId="a" />
+                  <Bar
+                    dataKey="promptTokens"
+                    name={t("usage.prompt")}
+                    fill="var(--color-chart-1)"
+                    stackId="a"
+                  />
                   <Bar
                     dataKey="completionTokens"
                     name={t("usage.completion")}
-                    fill="#f97316"
+                    fill="var(--color-chart-2)"
                     stackId="a"
                   />
                 </BarChart>
@@ -641,21 +646,21 @@ export function UsagePage() {
                       type="monotone"
                       dataKey="cacheTokenHitRate"
                       name={t("usage.cacheTokenHitRate")}
-                      stroke="#22c55e"
+                      stroke="var(--color-chart-4)"
                       connectNulls={false}
                     />
                     <Line
                       type="monotone"
                       dataKey="cacheRequestHitRate"
                       name={t("usage.cacheRequestHitRate")}
-                      stroke="#14b8a6"
+                      stroke="var(--color-chart-2)"
                       connectNulls={false}
                     />
                     <Line
                       type="monotone"
                       dataKey="cacheObservationRate"
                       name={t("usage.cacheObservationRate")}
-                      stroke="#a855f7"
+                      stroke="var(--color-chart-3)"
                       strokeDasharray="5 5"
                     />
                   </LineChart>

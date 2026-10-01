@@ -3,7 +3,7 @@ title: MCP 服务器
 description: 添加和治理 Model Context Protocol 服务器，理解凭据与工具边界。
 ---
 
-MCP（Model Context Protocol）服务器为 Bot 提供一组外部工具或资源。cos-tool-bot 在服务端管理 MCP 连接，再按 Bot、聊天、用户和管理员身份把工具组装到 AI 请求中；浏览器端不会直接持有 MCP 凭据。
+MCP（Model Context Protocol）服务器为 Bot 提供一组外部工具或资源。Hanori 在服务端管理 MCP 连接，再按 Bot、聊天、用户和管理员身份把工具组装到 AI 请求中；浏览器端不会直接持有 MCP 凭据。
 
 ## 添加服务器
 
@@ -39,4 +39,4 @@ MCP（Model Context Protocol）服务器为 Bot 提供一组外部工具或资�
 3. 工具调用超时：检查远端服务可用性、请求上限和重试策略；避免无界重试。
 4. 结果包含秘密：立即停止在公开群使用该工具，审查服务器返回值与日志脱敏，再决定是否继续。
 
-MCP 服务器的协议细节属于外部服务的一部分。本文只描述 cos-tool-bot 的集成边界，实际工具名、输入和费用以服务器能力列表为准。
+MCP 服务器的协议细节属于外部服务的一部分。本文只描述 Hanori 的集成边界，实际工具名、输入和费用以服务器能力列表为准。

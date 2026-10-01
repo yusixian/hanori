@@ -84,7 +84,7 @@ export function AiSettingsSearch({
         <span className="sr-only">{labels.search}</span>
         <Search
           aria-hidden="true"
-          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400"
+          className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
         />
         <Input
           ref={inputRef}
@@ -131,7 +131,7 @@ export function AiSettingsSearch({
             type="button"
             onClick={clearAndFocusSearch}
             aria-label={labels.clear}
-            className="focus-visible:ring-ring absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:outline-none"
+            className="focus-visible:ring-ring text-muted-foreground hover:bg-surface-subtle hover:text-foreground absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg transition-colors focus-visible:ring-2 focus-visible:outline-none"
           >
             <X aria-hidden="true" className="size-4" />
           </button>
@@ -144,7 +144,7 @@ export function AiSettingsSearch({
           id={listboxId}
           role="listbox"
           aria-label={labels.search}
-          className="absolute top-full right-0 left-0 z-30 mt-2 max-h-80 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-[0_16px_40px_rgb(15_23_42/0.18)]"
+          className="border-border absolute top-full right-0 left-0 z-30 mt-2 max-h-80 overflow-y-auto rounded-xl border bg-white p-1.5 shadow-[0_16px_40px_rgb(48_39_52/0.18)]"
         >
           <p className="sr-only" role="status" aria-live="polite">
             {labels.resultCount(results.length)}
@@ -163,27 +163,29 @@ export function AiSettingsSearch({
                 onClick={() => select(item.id)}
                 className={cn(
                   "flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
-                  index === safeActiveIndex ? "bg-blue-50 text-blue-950" : "hover:bg-slate-50",
+                  index === safeActiveIndex
+                    ? "bg-accent text-accent-foreground"
+                    : "hover:bg-background",
                 )}
               >
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold">{item.label}</span>
-                  <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                  <span className="text-muted-foreground mt-0.5 block text-xs leading-5">
                     {item.description}
                   </span>
                 </span>
-                <span className="mt-0.5 shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                <span className="bg-surface-subtle text-muted-foreground mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold">
                   {item.sectionLabel}
                 </span>
               </button>
             ))
           ) : (
             <div className="flex items-center justify-between gap-3 px-3 py-3">
-              <p className="text-sm text-slate-500">{labels.noResults}</p>
+              <p className="text-muted-foreground text-sm">{labels.noResults}</p>
               <button
                 type="button"
                 onClick={clearAndFocusSearch}
-                className="focus-visible:ring-ring shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 focus-visible:ring-2 focus-visible:outline-none"
+                className="focus-visible:ring-ring text-primary hover:bg-accent shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-semibold focus-visible:ring-2 focus-visible:outline-none"
               >
                 {labels.clear}
               </button>

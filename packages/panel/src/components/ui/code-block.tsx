@@ -5,7 +5,7 @@ export function CodeBlock({ className, children, ...props }: HTMLAttributes<HTML
   return (
     <pre
       className={cn(
-        "max-h-72 overflow-auto rounded-lg bg-slate-950 p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-slate-100 shadow-inner",
+        "max-h-72 overflow-auto rounded-lg bg-code p-4 font-mono text-xs leading-5 whitespace-pre-wrap text-code-foreground shadow-inner",
         className,
       )}
       {...props}

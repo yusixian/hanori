@@ -86,7 +86,7 @@ export function TimersListPage() {
             <p className="text-muted-foreground p-6 text-sm">{t("timers.empty")}</p>
           ) : (
             <div>
-              <div className="text-muted-foreground hidden grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] gap-4 bg-slate-50/80 px-5 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase md:grid">
+              <div className="text-muted-foreground bg-background/80 hidden grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] gap-4 px-5 py-2.5 text-[11px] font-bold tracking-[0.08em] uppercase md:grid">
                 <span>{t("timers.type")}</span>
                 <span>{t("timers.timer")}</span>
                 <span>{t("timers.schedule")}</span>
@@ -96,7 +96,7 @@ export function TimersListPage() {
               {timers.map((timer) => (
                 <div
                   key={timer.id}
-                  className="grid gap-3 border-t border-slate-100 px-5 py-4 first:border-t-0 md:grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] md:items-center md:gap-4"
+                  className="border-border grid gap-3 border-t px-5 py-4 first:border-t-0 md:grid-cols-[120px_minmax(0,1fr)_180px_160px_40px] md:items-center md:gap-4"
                 >
                   <Badge
                     variant={timer.type === "ai" ? "default" : "muted"}
@@ -110,12 +110,12 @@ export function TimersListPage() {
                     {timer.type === "ai" ? t("timers.ai") : t("timers.system")}
                   </Badge>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-slate-900">{timer.name}</p>
+                    <p className="text-foreground truncate text-sm font-semibold">{timer.name}</p>
                     <p className="text-muted-foreground mt-0.5 truncate font-mono text-xs">
                       {timer.id}
                     </p>
                   </div>
-                  <div className="text-sm text-slate-700 tabular-nums">
+                  <div className="text-foreground text-sm tabular-nums">
                     <span className="text-muted-foreground mr-2 md:hidden">
                       {t("timers.schedule")}
                     </span>
@@ -123,7 +123,7 @@ export function TimersListPage() {
                       ? t("timers.every", { duration: formatDuration(timer.intervalMs) })
                       : t("timers.oneTime")}
                   </div>
-                  <div className="text-sm text-slate-700 tabular-nums">
+                  <div className="text-foreground text-sm tabular-nums">
                     <span className="text-muted-foreground mr-2 md:hidden">
                       {t("timers.nextRun")}
                     </span>
@@ -136,7 +136,7 @@ export function TimersListPage() {
                       onClick={() => cancelTimer(timer.id)}
                       title={t("timers.cancel")}
                       aria-label={t("timers.cancelNamed", { name: timer.name })}
-                      className="justify-self-end text-red-500 hover:bg-red-50 hover:text-red-700"
+                      className="text-destructive hover:bg-danger-soft hover:text-destructive justify-self-end"
                     >
                       <Trash2 className="h-4 w-4" />
                     </Button>

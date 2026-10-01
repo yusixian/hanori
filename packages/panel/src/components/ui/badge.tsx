@@ -2,11 +2,11 @@ import { cn } from "@/lib/utils";
 import type { HTMLAttributes } from "react";
 
 const variants = {
-  default: "border-slate-300 bg-white text-slate-700",
-  success: "border-slate-300 bg-white text-slate-700",
-  warning: "border-slate-300 bg-white text-slate-700",
-  destructive: "border-red-200 bg-white text-red-700",
-  muted: "border-slate-200 bg-slate-50 text-slate-600",
+  default: "border-input bg-white text-foreground",
+  success: "border-success-border bg-success-soft text-success",
+  warning: "border-warning-border bg-warning-soft text-warning",
+  destructive: "border-danger-border bg-danger-soft text-destructive",
+  muted: "border-border bg-background text-muted-foreground",
 } as const;
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {

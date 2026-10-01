@@ -1,5 +1,6 @@
 import { sidebarCollapsedAtom, sidebarOpenAtom } from "@/atoms/sidebar";
 import { LanguageSwitcher } from "@/components/language-switcher";
+import { HanoriMark } from "@/components/hanori-mark";
 import { usePanelRole } from "@/hooks/use-can-manage-bot";
 import { authClient } from "@/lib/auth-client";
 import { BeforeLogoutProvider, useBeforeLogout } from "./before-logout";
@@ -181,7 +182,7 @@ function GroupLabel({ children, hidden }: { children: ReactNode; hidden?: boolea
   return (
     <p
       className={cn(
-        "px-2 pt-3 pb-1 text-[10px] font-bold tracking-[0.14em] text-slate-400 uppercase first:pt-0",
+        "px-2 pt-3 pb-1 text-[10px] font-bold tracking-[0.14em] text-muted-foreground uppercase first:pt-0",
         hidden && "md:hidden",
       )}
     >
@@ -203,16 +204,15 @@ function NavigationLink({
 }) {
   const className = cn(
     "group flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-sm font-medium transition-[background-color,color] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none md:min-h-9",
-    active ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950",
+    active
+      ? "bg-accent text-accent-foreground"
+      : "text-muted-foreground hover:bg-accent hover:text-foreground",
     collapsed && "md:justify-center md:px-0",
   );
   const content = (
     <>
       <item.icon
-        className={cn(
-          "size-4 shrink-0",
-          active ? "text-blue-600" : "text-slate-400 group-hover:text-slate-600",
-        )}
+        className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
       />
       <span className={cn("truncate", collapsed && "md:hidden")}>{label}</span>
     </>
@@ -275,7 +275,7 @@ function SearchField({
 
   return (
     <div className="relative">
-      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-400" />
+      <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
       <input
         ref={inputRef}
         type="search"
@@ -283,12 +283,12 @@ function SearchField({
         onChange={(event) => setQuery(event.target.value)}
         placeholder={placeholder}
         aria-label={label}
-        className="h-10 w-full appearance-none rounded-lg border border-slate-200 bg-slate-50 pr-9 pl-8 text-sm transition-[border-color,background-color,box-shadow] outline-none placeholder:text-slate-400 focus:border-blue-300 focus:bg-white focus:ring-2 focus:ring-blue-100 [&::-webkit-search-cancel-button]:hidden"
+        className="border-input focus:border-primary focus:ring-accent placeholder:text-muted-foreground h-10 w-full appearance-none rounded-lg border bg-white/70 pr-9 pl-8 text-sm transition-[border-color,background-color,box-shadow] outline-none focus:bg-white focus:ring-2 [&::-webkit-search-cancel-button]:hidden"
       />
       {query && (
         <button
           type="button"
-          className="focus-visible:ring-ring absolute top-1/2 right-0.5 flex size-9 -translate-y-1/2 items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:ring-2 focus-visible:outline-none"
+          className="focus-visible:ring-ring text-muted-foreground hover:bg-accent hover:text-foreground absolute top-1/2 right-0.5 flex size-9 -translate-y-1/2 items-center justify-center rounded-md focus-visible:ring-2 focus-visible:outline-none"
           onClick={() => {
             setQuery("");
             inputRef.current?.focus();
@@ -618,12 +618,12 @@ function AppLayoutContent() {
     if (!results.length) {
       return (
         <div className="px-2 py-8 text-center">
-          <p className="text-sm font-medium text-slate-700">{t("navigation.searchEmpty")}</p>
+          <p className="text-foreground text-sm font-medium">{t("navigation.searchEmpty")}</p>
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="mt-2 h-10 text-blue-700"
+            className="text-primary mt-2 h-10"
             onClick={() => {
               setQuery("");
               searchInputRef.current?.focus();
@@ -641,13 +641,13 @@ function AppLayoutContent() {
           const active = !item.external && isPathActive(item.path, location.pathname);
           const className = cn(
             "group flex min-h-10 items-center gap-2.5 rounded-lg px-2 text-sm font-medium focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-            active ? "bg-blue-50 text-blue-700" : "text-slate-600 hover:bg-slate-100",
+            active ? "bg-accent text-accent-foreground" : "text-muted-foreground hover:bg-accent",
           );
           const content = (
             <>
-              <item.icon className="size-4 shrink-0 text-slate-400" />
+              <item.icon className="text-muted-foreground size-4 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
-              <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-slate-500 uppercase">
+              <span className="bg-muted text-muted-foreground rounded-md px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase">
                 {item.scope}
               </span>
             </>
@@ -672,15 +672,15 @@ function AppLayoutContent() {
   };
 
   return (
-    <div className="flex h-dvh flex-col md:flex-row">
+    <div className="hanori-app-shell flex h-dvh flex-col md:flex-row">
       <a
         href="#main-content"
-        className="sr-only z-[60] rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
+        className="bg-primary sr-only z-[60] rounded-lg px-4 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:top-4 focus:left-4"
       >
         {t("navigation.skipToContent")}
       </a>
 
-      <header className="z-30 flex min-h-14 items-center gap-3 border-b border-slate-200/80 bg-white/85 px-3 pt-[max(0.25rem,env(safe-area-inset-top))] pb-1 backdrop-blur-xl md:hidden">
+      <header className="border-border z-30 flex min-h-14 items-center gap-3 border-b bg-white/85 px-3 pt-[max(0.25rem,env(safe-area-inset-top))] pb-1 backdrop-blur-xl md:hidden">
         <Button
           ref={mobileMenuButtonRef}
           variant="ghost"
@@ -692,16 +692,14 @@ function AppLayoutContent() {
         >
           <Menu className="size-5" />
         </Button>
-        <div className="bg-primary flex size-8 items-center justify-center rounded-xl text-white shadow-[0_6px_14px_rgb(37_99_235/0.24)]">
-          <Bot className="size-4" />
-        </div>
+        <HanoriMark className="size-9 shrink-0" />
         <span className="text-sm font-semibold tracking-tight">{t("app.name")}</span>
       </header>
 
       {sidebarOpen && (
         <button
           type="button"
-          className="fixed inset-0 z-40 bg-slate-950/25 backdrop-blur-[2px] md:hidden"
+          className="bg-code/25 fixed inset-0 z-40 backdrop-blur-[2px] md:hidden"
           onClick={() => {
             setSidebarOpen(false);
             mobileMenuButtonRef.current?.focus();
@@ -721,12 +719,12 @@ function AppLayoutContent() {
         inert={isMobile && !sidebarOpen ? true : undefined}
         onClick={handleMobileNavigation}
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[min(86vw,19rem)] flex-col overflow-hidden border-r border-slate-200/80 bg-white/95 shadow-[14px_0_40px_rgb(15_23_42/0.1)] backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:w-[248px] md:shadow-[8px_0_28px_rgb(15_23_42/0.025)]",
+          "hanori-sidebar fixed inset-y-0 left-0 z-50 flex w-[min(86vw,19rem)] flex-col overflow-hidden border-r border-border shadow-[14px_0_40px_rgb(82_35_64/0.08)] backdrop-blur-xl transition-[width,transform] duration-200 ease-out md:static md:z-auto md:translate-x-0 md:w-[248px] md:shadow-[8px_0_28px_rgb(82_35_64/0.025)]",
           sidebarOpen ? "translate-x-0" : "-translate-x-full",
           collapsed ? "md:w-[68px]" : "md:w-[248px]",
         )}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200/80 px-3">
+        <div className="sidebar-brand border-border flex min-h-20 shrink-0 items-center justify-between border-b px-4">
           {showCollapsed ? (
             <Button
               variant="ghost"
@@ -741,14 +739,12 @@ function AppLayoutContent() {
           ) : (
             <>
               <div className="flex min-w-0 items-center gap-2.5">
-                <div className="bg-primary flex size-8 shrink-0 items-center justify-center rounded-lg text-white shadow-sm">
-                  <Bot className="size-4" />
-                </div>
+                <HanoriMark className="size-9 shrink-0" />
                 <div className="min-w-0">
                   <span className="block truncate text-sm font-semibold tracking-tight">
                     {t("app.name")}
                   </span>
-                  <span className="block truncate text-[10px] text-slate-500">
+                  <span className="text-muted-foreground block truncate text-[10px]">
                     {isBotContext ? t("navigation.botWorkspace") : t("app.subtitle")}
                   </span>
                 </div>
@@ -805,7 +801,7 @@ function AppLayoutContent() {
             renderSearchResults()
           ) : isBotContext ? (
             <>
-              <div className="mb-2 border-b border-slate-200 pb-2">
+              <div className="border-border mb-2 border-b pb-2">
                 <NavigationLink
                   item={{ path: "/", icon: ArrowLeft }}
                   label={t("navigation.backToBots")}
@@ -832,11 +828,11 @@ function AppLayoutContent() {
                 ))}
               </div>
 
-              <div className="mt-3 border-t border-slate-200 pt-2">
+              <div className="border-border mt-3 border-t pt-2">
                 <button
                   type="button"
                   className={cn(
-                    "flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                    "flex min-h-10 w-full items-center gap-2.5 rounded-lg px-2 text-sm font-semibold text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                     showCollapsed && "md:justify-center md:px-0",
                   )}
                   onClick={() => {
@@ -847,7 +843,7 @@ function AppLayoutContent() {
                   aria-label={t("navigation.globalManagement")}
                   title={t("navigation.globalManagement")}
                 >
-                  <Database className="size-4 shrink-0 text-blue-600" />
+                  <Database className="text-primary size-4 shrink-0" />
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate text-left",
@@ -858,14 +854,14 @@ function AppLayoutContent() {
                   </span>
                   <ChevronDown
                     className={cn(
-                      "size-4 shrink-0 text-slate-400 transition-transform",
+                      "size-4 shrink-0 text-muted-foreground transition-transform",
                       globalOpen && "rotate-180",
                       showCollapsed && "md:hidden",
                     )}
                   />
                 </button>
                 {globalOpen && !showCollapsed && (
-                  <div className="mt-1 border-l border-blue-100 pl-2">{renderGlobalGroups()}</div>
+                  <div className="border-border mt-1 border-l pl-2">{renderGlobalGroups()}</div>
                 )}
               </div>
             </>
@@ -876,7 +872,7 @@ function AppLayoutContent() {
 
         <div
           ref={accountRef}
-          className="relative shrink-0 border-t border-slate-200/80 bg-slate-50/70 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]"
+          className="border-border relative shrink-0 border-t bg-white/60 p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]"
         >
           <button
             ref={accountButtonRef}
@@ -895,12 +891,12 @@ function AppLayoutContent() {
             aria-controls="sidebar-account-menu"
             title={accountName}
           >
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
+            <span className="bg-accent text-accent-foreground flex size-8 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
               {initials ?? <UserRound className="size-4" />}
             </span>
             <span
               className={cn(
-                "min-w-0 flex-1 truncate text-sm font-medium text-slate-700",
+                "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
                 showCollapsed && "md:hidden",
               )}
             >
@@ -908,7 +904,7 @@ function AppLayoutContent() {
             </span>
             <ChevronDown
               className={cn(
-                "size-4 shrink-0 text-slate-400 transition-transform",
+                "size-4 shrink-0 text-muted-foreground transition-transform",
                 accountOpen && "rotate-180",
                 showCollapsed && "md:hidden",
               )}
@@ -919,17 +915,17 @@ function AppLayoutContent() {
               id="sidebar-account-menu"
               role="group"
               aria-label={t("navigation.accountMenu")}
-              className="absolute right-2.5 bottom-full left-2.5 max-h-[calc(100dvh-8rem)] space-y-1 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 shadow-[0_-10px_32px_rgb(15_23_42/0.12)]"
+              className="border-border absolute right-2.5 bottom-full left-2.5 max-h-[calc(100dvh-8rem)] space-y-1 overflow-y-auto rounded-xl border bg-white p-2 shadow-[0_-10px_32px_rgb(48_39_52/0.12)]"
             >
               <Link
                 to={settingsNavItem.path}
                 aria-current={settingsActive ? "page" : undefined}
                 className={cn(
-                  "flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                  settingsActive && "bg-blue-50 text-blue-700",
+                  "flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                  settingsActive && "bg-accent text-accent-foreground",
                 )}
               >
-                <Settings className="size-4 shrink-0 text-slate-400" />
+                <Settings className="text-muted-foreground size-4 shrink-0" />
                 {t(settingsNavItem.labelKey)}
               </Link>
               <LanguageSwitcher className="block px-1 py-1" selectClassName="h-10 w-full" />
@@ -937,17 +933,17 @@ function AppLayoutContent() {
                 <a
                   key={item.path}
                   href={item.path}
-                  className="focus-visible:ring-ring flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none"
+                  className="focus-visible:ring-ring text-foreground hover:bg-accent flex min-h-10 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium focus-visible:ring-2 focus-visible:outline-none"
                 >
-                  <item.icon className="size-4 shrink-0 text-slate-400" />
+                  <item.icon className="text-muted-foreground size-4 shrink-0" />
                   {t(item.labelKey)}
                 </a>
               ))}
-              <div className="border-t border-slate-200 pt-1">
+              <div className="border-border border-t pt-1">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="min-h-10 w-full justify-start gap-2.5 px-2.5 text-sm font-medium text-slate-700"
+                  className="text-foreground min-h-10 w-full justify-start gap-2.5 px-2.5 text-sm font-medium"
                   disabled={logoutPending}
                   onClick={() => {
                     setAccountOpen(false);
@@ -975,8 +971,11 @@ function AppLayoutContent() {
         </div>
       </aside>
 
-      <main id="main-content" className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
-        <div className="mx-auto w-full max-w-[1480px] p-4 sm:p-6 lg:p-10">
+      <main
+        id="main-content"
+        className="hanori-workspace min-w-0 flex-1 overflow-x-hidden overflow-y-auto"
+      >
+        <div className="workspace-content mx-auto w-full max-w-[1360px] p-4 sm:p-6 lg:px-10 lg:py-9">
           <Outlet />
         </div>
       </main>

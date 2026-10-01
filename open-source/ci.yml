@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm deploy:dokploy:check
+      - run: pnpm lint
+      - run: pnpm fmt:check
+      - run: pnpm typecheck
+      - run: pnpm i18n:check
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm --filter @cos-tool-bot/panel exec playwright install --with-deps chromium
+      - run: pnpm test:browser
+      - run: pnpm test:docs
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Scan Git history for credentials
+        run: |
+          docker run --rm -v "$PWD:/repo:ro" zricethezav/gitleaks:v8.24.3 \
+            git /repo --config /repo/.gitleaks.toml --max-decode-depth 2 --redact=100 --no-banner

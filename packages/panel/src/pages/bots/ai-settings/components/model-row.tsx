@@ -35,12 +35,14 @@ export function ModelRow({
 
   return (
     <div
-      className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-sm ${isActive ? "bg-primary/10 border-primary/30" : "hover:bg-accent/50 border-transparent"}`}
+      className={`flex min-w-0 flex-wrap items-center gap-2 rounded-md border px-2 py-1.5 text-sm sm:flex-nowrap ${isActive ? "bg-primary/10 border-primary/30" : "hover:bg-accent/50 border-transparent"}`}
     >
       <span className="flex size-8 shrink-0 items-center justify-center">{radioControl}</span>
-      <span className="flex-1 truncate font-mono text-xs">{entry.id}</span>
-      {entry.label && <span className="text-muted-foreground text-xs">({entry.label})</span>}
-      <span className="flex gap-0.5">
+      <span className="min-w-0 flex-1 truncate font-mono text-xs">{entry.id}</span>
+      {entry.label && (
+        <span className="text-muted-foreground max-w-28 truncate text-xs">({entry.label})</span>
+      )}
+      <span className="order-last flex w-full flex-wrap gap-0.5 pl-10 sm:order-none sm:w-auto sm:pl-0">
         {capabilities.map((cap) => (
           <Badge
             key={cap}
@@ -195,7 +197,7 @@ export function ModelRow({
       </Popover>
       <button
         type="button"
-        className="text-muted-foreground focus-visible:ring-ring flex size-8 items-center justify-center rounded-lg hover:bg-red-50 hover:text-red-500 focus-visible:ring-2"
+        className="text-muted-foreground focus-visible:ring-ring hover:bg-danger-soft hover:text-destructive flex size-8 items-center justify-center rounded-lg focus-visible:ring-2"
         onClick={() => {
           if (isActive || window.confirm(t("modelRow.removeConfirm", { model: entry.id }))) {
             onRemove();

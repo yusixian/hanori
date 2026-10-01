@@ -27,7 +27,7 @@ function ScrollButtons({
       <button
         type="button"
         disabled={!canScrollUp}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(48_39_52/0.07),0_4px_12px_rgb(48_39_52/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
         onClick={() => scrollTo(0)}
         aria-label={t("conversations.scrollFirst")}
         title={t("conversations.scrollTop")}
@@ -37,7 +37,7 @@ function ScrollButtons({
       <button
         type="button"
         disabled={!canScrollDown}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(15_23_42/0.07),0_4px_12px_rgb(15_23_42/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-10 items-center justify-center rounded-xl bg-white/95 shadow-[0_0_0_1px_rgb(48_39_52/0.07),0_4px_12px_rgb(48_39_52/0.09)] backdrop-blur transition-[color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-35"
         onClick={() => scrollTo(containerRef.current?.scrollHeight ?? 0)}
         aria-label={t("conversations.scrollLast")}
         title={t("conversations.scrollBottom")}
@@ -130,11 +130,11 @@ export function MessagesPane({
       <div className="relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
-          className="h-full overflow-y-auto overscroll-contain bg-slate-50/70 p-3 pb-16 sm:p-4 sm:pb-16"
+          className="bg-background/70 h-full overflow-y-auto overscroll-contain p-3 pb-16 sm:p-4 sm:pb-16"
         >
           {visibleMessages.length === 0 ? (
             <div className="text-muted-foreground flex h-full min-h-56 flex-col items-center justify-center px-6 text-center">
-              <span className="flex size-11 items-center justify-center rounded-xl bg-slate-100">
+              <span className="bg-surface-subtle flex size-11 items-center justify-center rounded-xl">
                 <FilterX className="size-5" aria-hidden="true" />
               </span>
               <p className="text-foreground mt-3 text-sm font-semibold">
@@ -147,7 +147,7 @@ export function MessagesPane({
           ) : (
             <ol
               ref={listRef}
-              className="divide-y divide-slate-100 overflow-hidden rounded-xl bg-white shadow-[0_0_0_1px_rgb(15_23_42/0.055),0_1px_2px_rgb(15_23_42/0.04)]"
+              className="divide-border divide-y overflow-hidden rounded-xl bg-white shadow-[0_0_0_1px_rgb(48_39_52/0.055),0_1px_2px_rgb(48_39_52/0.04)]"
               aria-label={t("conversations.messageListLabel")}
             >
               {visibleMessages.map((message) => (
@@ -180,7 +180,7 @@ export function MessagesPane({
         totalPages={totalPages}
         disabled={navigationDisabled}
         onPageChange={onPageChange}
-        className="flex shrink-0 items-center justify-center gap-2 border-t border-slate-200/80 bg-white px-3 py-2"
+        className="border-border/80 flex shrink-0 items-center justify-center gap-2 border-t bg-white px-3 py-2"
       />
     </div>
   );

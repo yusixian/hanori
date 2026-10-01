@@ -13,6 +13,7 @@ import { betterAuth } from "better-auth/minimal";
 import { createAccessControl, getOrgAdapter, organization } from "better-auth/plugins";
 import type { Auth } from "better-auth";
 import { and, eq, gt } from "drizzle-orm";
+import { PRODUCT_NAME } from "@cos-tool-bot/shared";
 
 export const AUTH_ORGANIZATION_SLUG = "cos-tool-bot";
 
@@ -81,7 +82,7 @@ export function createAuth(db: Database, config: AuthConfig): AppAuth {
       : undefined;
 
   return betterAuth({
-    appName: "cos-tool-bot",
+    appName: PRODUCT_NAME,
     baseURL: config.baseURL,
     basePath: "/api/auth",
     secret: config.secret,
@@ -205,7 +206,7 @@ export async function ensureAuthBootstrap(
     organizationRecord = await orgAdapter.createOrganization({
       organization: {
         id: context.generateId({ model: "organization" }) || crypto.randomUUID(),
-        name: "cos-tool-bot",
+        name: PRODUCT_NAME,
         slug: AUTH_ORGANIZATION_SLUG,
         createdAt: now,
       },

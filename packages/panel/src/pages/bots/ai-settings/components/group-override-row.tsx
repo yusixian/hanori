@@ -37,7 +37,7 @@ export function GroupOverrideRow({
         <div className="flex min-w-0 items-center gap-3 self-stretch sm:self-auto">
           <button
             type="button"
-            className="flex size-9 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+            className="text-muted-foreground hover:bg-surface-subtle hover:text-foreground flex size-9 items-center justify-center rounded-lg"
             onClick={() => setExpanded(!expanded)}
             aria-label={
               expanded ? t("groupOverride.collapseSettings") : t("groupOverride.expandSettings")
@@ -48,7 +48,7 @@ export function GroupOverrideRow({
               className={`size-4 transition-transform ${expanded ? "rotate-90" : ""}`}
             />
           </button>
-          <span className="flex size-8 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+          <span className="bg-accent text-primary flex size-8 items-center justify-center rounded-full">
             <UsersRound className="size-4" />
           </span>
           <span className="truncate font-mono text-sm">{groupKey}</span>
@@ -81,15 +81,15 @@ export function GroupOverrideRow({
               window.confirm(t("groupOverride.removeConfirm", { group: groupKey })) && onRemove()
             }
             aria-label={t("groupOverride.removeAria", { group: groupKey })}
-            className="ml-auto text-red-500 hover:bg-red-50 hover:text-red-700 sm:ml-0"
+            className="text-destructive hover:bg-danger-soft hover:text-destructive ml-auto sm:ml-0"
           >
-            <Trash2 className="h-4 w-4 text-red-500" />
+            <Trash2 className="text-destructive h-4 w-4" />
           </Button>
         </div>
       </div>
 
       {expanded && (
-        <div className="space-y-5 border-t bg-slate-50/50 px-4 py-4">
+        <div className="bg-background/50 space-y-5 border-t px-4 py-4">
           <div className="space-y-3 rounded-lg border bg-white p-3">
             <p className="text-sm font-medium">{t("engagement.title")}</p>
             <label className="flex items-center gap-2 text-sm">
@@ -192,7 +192,7 @@ export function GroupOverrideRow({
               />
               {(override.groupHistoryMaxTokens ?? 0) >
                 DEFAULT_CONVERSATION_CONFIG.groupHistoryMaxTokens && (
-                <p className="text-xs font-medium text-amber-700">
+                <p className="text-warning text-xs font-medium">
                   {t("groupOverride.groupHistoryMaxTokensWarning")}
                 </p>
               )}

@@ -36,12 +36,12 @@ export function SummaryCard({
   return (
     <article
       className={cn(
-        "rounded-xl border bg-white p-3 shadow-[0_1px_2px_rgb(15_23_42/0.035)] sm:px-3.5",
-        summary.isActive ? "border-emerald-200" : "border-slate-200/80",
+        "rounded-xl border bg-white p-3 shadow-[0_1px_2px_rgb(48_39_52/0.035)] sm:px-3.5",
+        summary.isActive ? "border-success-border" : "border-border/80",
       )}
     >
       <div className="flex items-start gap-2.5">
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
+        <div className="bg-warning-soft text-warning flex size-7 shrink-0 items-center justify-center rounded-lg">
           <BookOpen className="size-3.5" aria-hidden="true" />
         </div>
         <div className="text-muted-foreground min-w-0 flex-1 text-xs tabular-nums">
@@ -51,13 +51,13 @@ export function SummaryCard({
             </span>
             {summary.isActive ? (
               <span
-                className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+                className="bg-success-soft text-success rounded-full px-2 py-0.5 text-[11px] font-medium"
                 title={t("conversations.activeSummaryDescription")}
               >
                 {t("conversations.activeSummary")}
               </span>
             ) : (
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+              <span className="bg-surface-subtle text-muted-foreground rounded-full px-2 py-0.5 text-[11px] font-medium">
                 {t("conversations.historicalSummary")}
               </span>
             )}
@@ -81,7 +81,7 @@ export function SummaryCard({
             onClick={() => onStartEdit(summary)}
             aria-label={t("conversations.editActiveSummary")}
             title={t("conversations.editActiveSummary")}
-            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring flex size-9 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring hover:bg-surface-subtle flex size-9 shrink-0 items-center justify-center rounded-lg focus-visible:ring-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
           >
             <Pencil className="size-3.5" aria-hidden="true" />
           </button>
@@ -106,7 +106,7 @@ export function SummaryCard({
           }
           className={cn(
             "text-muted-foreground hover:text-destructive focus-visible:ring-ring flex size-9 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50",
-            pendingDelete && "bg-red-50 text-red-600",
+            pendingDelete && "bg-danger-soft text-destructive",
           )}
         >
           {busy ? (
@@ -131,7 +131,7 @@ export function SummaryCard({
               onKeyDown={(event) => {
                 if (event.key === "Escape" && !editBusy) onCancelEdit?.();
               }}
-              className="focus-visible:ring-ring min-h-40 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 disabled:opacity-60"
+              className="focus-visible:ring-ring border-border min-h-40 w-full resize-y rounded-lg border bg-white px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 disabled:opacity-60"
             />
             <p className="text-muted-foreground text-xs">{t("conversations.summaryEditHint")}</p>
             <div className="flex flex-wrap gap-2">

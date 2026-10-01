@@ -122,7 +122,7 @@ export function CollectionForm({
           onChange={(e) => setDigestTime(e.target.value)}
         />
       </div>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

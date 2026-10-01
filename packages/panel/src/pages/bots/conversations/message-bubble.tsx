@@ -50,17 +50,17 @@ function UsageBadge({ meta }: { meta: Record<string, unknown> }) {
   return (
     <div className="mt-3 flex flex-wrap gap-1.5">
       {model ? (
-        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600">
+        <span className="bg-surface-subtle text-muted-foreground rounded-md px-2 py-1 font-mono text-[10px]">
           {model}
         </span>
       ) : null}
       {trigger ? (
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-[10px] text-slate-600">
+        <span className="bg-surface-subtle text-muted-foreground rounded-md px-2 py-1 text-[10px]">
           {t("conversations.trigger")}: {trigger}
         </span>
       ) : null}
       {tokenLabel ? (
-        <span className="rounded-md bg-slate-100 px-2 py-1 font-mono text-[10px] text-slate-600 tabular-nums">
+        <span className="bg-surface-subtle text-muted-foreground rounded-md px-2 py-1 font-mono text-[10px] tabular-nums">
           {tokenLabel}
         </span>
       ) : null}
@@ -92,7 +92,7 @@ function ToolCallContent({ meta }: { meta: Record<string, unknown> }) {
             type="button"
             aria-expanded={expanded}
             aria-controls={argsId}
-            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-ring hover:bg-surface-subtle mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
             onClick={() => setExpanded((value) => !value)}
           >
             <DisclosureIcon expanded={expanded} />
@@ -135,7 +135,7 @@ export function MessageBubble({
         <div
           className={cn(
             "flex size-8 shrink-0 items-center justify-center rounded-lg",
-            roleIconStyles[msg.role] ?? "bg-slate-100 text-slate-500",
+            roleIconStyles[msg.role] ?? "bg-surface-subtle text-muted-foreground",
           )}
         >
           <RoleIcon className="size-3.5" aria-hidden="true" />
@@ -176,8 +176,8 @@ export function MessageBubble({
               className={cn(
                 "hover-action focus-visible:ring-ring flex size-10 items-center justify-center rounded-lg transition-[background-color,color,opacity,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none",
                 pendingDelete
-                  ? "bg-red-50 text-red-600 opacity-100"
-                  : "text-muted-foreground hover:bg-red-50 hover:text-destructive",
+                  ? "bg-danger-soft text-destructive opacity-100"
+                  : "text-muted-foreground hover:bg-danger-soft hover:text-destructive",
               )}
               onClick={() => onDelete(msg.id)}
               aria-label={

@@ -38,7 +38,7 @@ export function CollapsibleContent({
         type="button"
         aria-expanded={expanded}
         aria-controls={contentId}
-        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
+        className="text-muted-foreground hover:text-foreground focus-visible:ring-ring hover:bg-surface-subtle mt-1.5 inline-flex min-h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium transition-[background-color,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]"
         onClick={() => setExpanded((value) => !value)}
       >
         <DisclosureIcon expanded={expanded} />

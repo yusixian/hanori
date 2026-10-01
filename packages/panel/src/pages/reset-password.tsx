@@ -49,10 +49,12 @@ export function ResetPasswordPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+            <div className="bg-danger-soft text-destructive mb-4 rounded-lg px-3 py-2 text-sm">
+              {error}
+            </div>
           )}
           {message && (
-            <div className="mb-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            <div className="bg-success-soft text-success mb-4 rounded-lg px-3 py-2 text-sm">
               {message}
             </div>
           )}

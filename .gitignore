@@ -9,6 +9,8 @@ deployment-version
 
 # Environment
 .env
+.env.*
+!.env.example
 .env.local
 .env.*.local
 
@@ -29,9 +31,9 @@ data.db
 # Docker volumes
 pgdata/
 
-# Claude Code
-.claude/skills/
-.claude/plans/
+# Local agent configuration and exported conversations
+.claude/
+.lody/
 
 # Backups (local dev)
 backups/
@@ -45,3 +47,10 @@ downloads/
 
 # Acceptance harness runtime output
 .acceptance/
+
+# Reviewed public snapshots (never include in a future snapshot)
+.open-source/
+
+# Browser test failure artifacts can include private UI data
+__screenshots__/
+.vitest-attachments/

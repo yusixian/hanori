@@ -11,7 +11,7 @@ import {
   IMAGE_EXTENSIONS,
   TEXT_EXTENSIONS,
 } from "@cos-tool-bot/shared";
-import Editor from "@monaco-editor/react";
+import Editor, { type BeforeMount } from "@monaco-editor/react";
 import {
   Archive,
   ArrowLeft,
@@ -37,6 +37,46 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
+
+const configureEditorTheme: BeforeMount = (monaco) => {
+  const styles = getComputedStyle(document.documentElement);
+  const color = (token: string) => {
+    const value = styles.getPropertyValue(`--color-${token}`).trim();
+    // Monaco requires full hex values; production CSS can shorten them.
+    return /^#[\da-f]{3,4}$/i.test(value)
+      ? `#${value
+          .slice(1)
+          .split("")
+          .map((digit) => digit + digit)
+          .join("")}`
+      : value;
+  };
+  monaco.editor.defineTheme("hanori", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "comment", foreground: color("muted-foreground").slice(1) },
+      { token: "string", foreground: color("lilac-foreground").slice(1) },
+      { token: "number", foreground: color("primary").slice(1) },
+      { token: "keyword", foreground: color("primary").slice(1) },
+    ],
+    colors: {
+      "editor.background": color("card"),
+      "editor.foreground": color("foreground"),
+      "editorCursor.foreground": color("primary"),
+      "editor.selectionBackground": color("accent"),
+      "editor.inactiveSelectionBackground": color("surface-subtle"),
+      "editor.lineHighlightBackground": color("surface-subtle"),
+      "editorLineNumber.foreground": color("muted-foreground"),
+      "editorLineNumber.activeForeground": color("primary"),
+      "editorWidget.background": color("card"),
+      "editorWidget.border": color("border"),
+      "editorSuggestWidget.selectedBackground": color("accent"),
+      "editorSuggestWidget.highlightForeground": color("primary"),
+      focusBorder: color("primary"),
+    },
+  });
+};
 
 interface FileEntry {
   name: string;
@@ -595,7 +635,7 @@ export function BotFilesPage() {
       {/* Injection summary bar */}
       <div className="flex items-center gap-3 border-y px-1 py-2">
         <div className="flex items-center gap-2">
-          <Shield className="h-4 w-4 text-blue-500" />
+          <Shield className="text-primary h-4 w-4" />
           <span className="text-muted-foreground text-sm">
             {t("files.promptFiles")}: {numberFormatter.format(injectedFiles.length)} &middot;{" "}
             {formatBytes(injectedSize, byteFormatter)} /{" "}
@@ -648,7 +688,7 @@ export function BotFilesPage() {
             )}
           </span>
           {injectedSize > injection.maxTotalSize && (
-            <span className="text-xs text-red-500">{t("files.exceededLimit")}</span>
+            <span className="text-destructive text-xs">{t("files.exceededLimit")}</span>
           )}
         </div>
       </div>
@@ -663,7 +703,7 @@ export function BotFilesPage() {
         >
           <CardHeader className="py-3">
             <CardTitle className="flex items-center gap-1 text-sm">
-              <FolderOpen className="h-4 w-4 shrink-0 text-blue-500" />
+              <FolderOpen className="text-primary h-4 w-4 shrink-0" />
               <button
                 type="button"
                 className="hover:text-foreground cursor-pointer hover:underline"
@@ -789,7 +829,7 @@ export function BotFilesPage() {
                       onClick={() => navigateTo(file.path)}
                     >
                       <div className="flex min-w-0 items-center gap-1.5">
-                        <Folder className="h-3.5 w-3.5 shrink-0 text-blue-400" />
+                        <Folder className="text-primary h-3.5 w-3.5 shrink-0" />
                         <span className="truncate">{file.name}</span>
                       </div>
                       <Button
@@ -834,8 +874,8 @@ export function BotFilesPage() {
                           type="button"
                           className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors ${
                             isInjectable
-                              ? "border-blue-500 bg-blue-500 text-white"
-                              : "border-muted-foreground/30 hover:border-blue-400"
+                              ? "border-primary bg-primary text-white"
+                              : "border-muted-foreground/30 hover:border-primary"
                           }`}
                           title={
                             isInjectable ? t("files.injectedTitle") : t("files.notInjectedTitle")
@@ -916,7 +956,7 @@ export function BotFilesPage() {
                   )}
                   <span className="text-sm font-medium">{selectedFile}</span>
                   {fileCategory === "text" && isDirty && (
-                    <span className="text-xs text-amber-600">{t("files.unsaved")}</span>
+                    <span className="text-warning text-xs">{t("files.unsaved")}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -962,7 +1002,8 @@ export function BotFilesPage() {
                     language={editorLanguage}
                     value={content}
                     onChange={(value) => setContent(value ?? "")}
-                    theme="vs-dark"
+                    theme="hanori"
+                    beforeMount={configureEditorTheme}
                     options={{
                       automaticLayout: true,
                       minimap: { enabled: false },
@@ -975,7 +1016,7 @@ export function BotFilesPage() {
                     }}
                   />
                 ) : fileCategory === "image" && imageUrl ? (
-                  <div className="flex h-full items-center justify-center bg-neutral-950 p-4">
+                  <div className="bg-code flex h-full items-center justify-center p-4">
                     <img
                       src={imageUrl}
                       alt={selectedFile}

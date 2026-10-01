@@ -67,7 +67,7 @@ export const bots = {
     sendTest: "Send Test",
     dangerZone: "Danger zone",
     deleteBot: "Delete Bot",
-    larkTestMessage: "Test message from the cos-tool-bot panel",
+    larkTestMessage: "Test message from the Hanori workspace",
   },
   create: {
     title: "Add Bot",

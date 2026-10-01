@@ -34,7 +34,7 @@ export function GenerationGallery({
     <>
       <div className={cn("grid gap-1", images.length > 1 && "grid-cols-2")}>
         {images.map((image, imageIndex) => (
-          <div key={image} className="group relative overflow-hidden bg-slate-100">
+          <div key={image} className="group bg-surface-subtle relative overflow-hidden">
             <button
               type="button"
               className="block w-full overflow-hidden text-left"
@@ -62,7 +62,7 @@ export function GenerationGallery({
             {blurred && (
               <button
                 type="button"
-                className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-slate-950/20 text-white"
+                className="bg-code/20 absolute inset-0 flex flex-col items-center justify-center gap-2 text-white"
                 onClick={() => setRevealed(true)}
               >
                 <EyeOff className="size-7 drop-shadow" />
@@ -123,7 +123,7 @@ function GenerationLightbox({
   };
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4">
+    <div className="bg-code/90 fixed inset-0 z-50 flex items-center justify-center p-4">
       <button
         type="button"
         className="absolute inset-0"

@@ -63,7 +63,7 @@ export function McpServersSection({
         {loading ? (
           <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
         ) : error ? (
-          <p className="text-sm text-red-500">{error}</p>
+          <p className="text-destructive text-sm">{error}</p>
         ) : servers.length === 0 ? (
           <p className="text-muted-foreground text-sm">
             {t("mcpServers.emptyBefore")}{" "}

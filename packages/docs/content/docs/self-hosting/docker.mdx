@@ -3,7 +3,7 @@ title: Docker 部署
 description: 使用 Docker Compose 启动服务、执行健康检查并安全地更新实例。
 ---
 
-下面的命令假设你已经取得源码或构建上下文，并在项目根目录执行。项目当前不是公开仓库，因此不要直接复制一个未经授权的 clone 地址；先使用维护者提供的来源和版本。
+取得维护者提供的仓库或发行源码，选择明确的版本后，在项目根目录执行下面的命令。
 
 ## 1. 准备环境
 
@@ -26,6 +26,14 @@ cp .env.example .env
 chmod 600 .env
 ```
 
+也可以使用 Node.js 22.19+ 自动生成 Docker 专用配置，无需先安装应用依赖：
+
+```bash
+node scripts/init-env.mjs --email owner@example.com --url https://bot.example.com
+```
+
+替换为自己的邮箱和 HTTPS origin；本机试用可以使用 `http://localhost:43100`。这两种方式二选一，脚本拒绝覆盖已有 `.env`。脚本分别生成数据库密码、认证密钥、加密密钥、bootstrap 密码和 Mini App 会话密钥，使用 `0600` 权限保存，不在终端输出密钥。生成的文件用于 Docker，`DATABASE_URL` 留空以避免意外连接开发数据库；源码开发仍使用 `.env.example` 模板。首次登录密码在本地文件的 `PANEL_PASSWORD` 中查看。
+
 至少填写 `DATABASE_URL`（或 Compose 使用的 `DB_PASSWORD`）、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、`AUTH_OWNER_EMAIL` 和首次启动用的 `PANEL_PASSWORD`。生产环境再显式填写 `ENCRYPTION_KEY`。不要把 `.env` 加入版本库、镜像或日志。
 
 ## 3. 启动最小服务
@@ -38,7 +46,7 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 
 不要使用 `docker compose down -v`，它会删除数据库存储卷。更新前先阅读[备份与升级](/docs/self-hosting/backup-upgrade)。
 
-如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。`TRAEFIK_DOCKER_NETWORK` 可覆盖 Compose 中的默认代理网络名；当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。使用 Dokploy 的 Domains 页面管理域名时，保留 Compose 中 `labels` 的列表形式，让平台追加域名路由标签。容器自身的健康检查通过不代表公网路由可用。
+如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。请显式设置 `TRAEFIK_DOCKER_NETWORK` 为自己的共享网络；默认值只是部署模板，不保证网络实际存在。当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。使用 Dokploy 的 Domains 页面管理域名时，保留 Compose 中 `labels` 的列表形式，让平台追加域名路由标签。容器自身的健康检查通过不代表公网路由可用。
 
 ## 4. 验证启动
 
@@ -62,3 +70,18 @@ curl -fsS http://127.0.0.1:43100/api/health/ready
 ## 6. 后续更新
 
 更新前先做数据库备份，确认工作区没有手工修改，拉取已核验版本后重新构建 app。启动完成后重新检查 `/api/health/ready`、面板登录、Bot `/status`、一次 AI 私聊和关键集成。部署检查通过不等于真实 Telegram 群组、外部 Provider 或生产流量已经完整验证。
+
+## 隔离部署检查
+
+在真正部署前，可以用 Node.js 和本机 Docker 对当前源码进行一次抛弃式验收：
+
+```bash
+node scripts/smoke-deployment.mjs --check
+node scripts/smoke-deployment.mjs
+```
+
+`--check` 只渲染并验证 Compose 隔离配置，无需启动 Docker daemon。完整检查需要自行启动本机 Docker，随后构建 app，用随机项目名和独立密钥启动空数据库。它检查迁移、无 Bot Token 启动、owner 登录、匿名文档、同一候选容器重建后的数据保留，以及数据库和挂载文件的备份恢复。源码归档没有 `.git`，应加上 `--sha <该版本的完整 Git SHA>`。
+
+脚本不读取已有 `.env`，拒绝远程 Docker、外部 volume、宿主机目录挂载和端口发布。检查结束后删除本次随机项目的容器、volume、网络和 app 镜像；中断或失败也会尝试清理，若清理失败会保留权限受限的临时配置并输出仅针对该项目的清理命令。该删除流程只用于脚本创建的临时资源，不能用于自己的部署项目。
+
+此检查使用当前候选源码；即使通过，也不代表已经完成上一发行版本升级、真实 Telegram 或第三方集成验收。数据库恢复检查发生在第二个临时数据库中，不会替换应用正在使用的数据库。

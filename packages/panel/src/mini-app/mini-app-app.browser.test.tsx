@@ -38,7 +38,7 @@ test("renders public Help without Telegram SDK or a working session API", async 
   expect(page.getByRole("navigation").getByText("Groups").query()).toBeNull();
   expect(document.querySelector(".mini-app-header")).toBeNull();
   expect(page.getByText("Telegram control deck", { exact: true }).query()).toBeNull();
-  expect(page.getByText("COS Tool Bot", { exact: true }).query()).toBeNull();
+  expect(page.getByText("Hanori", { exact: true }).query()).toBeNull();
   expect(document.querySelector(".mini-app-hero")).toBeNull();
   expect(document.querySelector(".mini-app-command-section")).not.toBeNull();
   expect(document.body.textContent).not.toContain("providers configured");

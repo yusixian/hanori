@@ -133,9 +133,7 @@ export function BotLogsPage() {
             {t("logs.clear")}
           </Button>
           <div className="flex shrink-0 items-center gap-2">
-            <Radio
-              className={connected ? "size-4 text-emerald-600" : "text-muted-foreground size-4"}
-            />
+            <Radio className={connected ? "text-success size-4" : "text-muted-foreground size-4"} />
             <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
               {livePaused ? t("logs.paused") : connected ? t("logs.live") : t("logs.disconnected")}
             </span>
@@ -232,7 +230,7 @@ export function BotLogsPage() {
           {isLoading ? (
             <p className="text-muted-foreground p-6 text-sm">{t("common:common.loading")}</p>
           ) : isError ? (
-            <div role="alert" className="flex items-center gap-3 p-6 text-sm text-red-700">
+            <div role="alert" className="text-destructive flex items-center gap-3 p-6 text-sm">
               <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex-1">{t("logs.loadError")}</span>
               <Button variant="outline" size="sm" onClick={() => void refetch()}>

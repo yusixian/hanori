@@ -331,7 +331,7 @@ function createConnection(
     authProvider,
     fetch: fetchFn,
   });
-  const client = new Client({ name: "cos-tool-bot-pixai", version: "1.0.0" });
+  const client = new Client({ name: "Hanori-pixai", version: "1.0.0" });
   return { client, transport };
 }
 

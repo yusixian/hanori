@@ -10,7 +10,7 @@ export const miniApp = {
     commandLabel: "Telegram command /{{command}}",
     projectTitle: "About",
     projectBody:
-      "COS Tool Bot is a self-hosted, multi-Bot assistant. Public help and authorized controls share this panel.",
+      "Hanori is a self-hosted AI companion with multiple Bots. Public help and authorized controls share this panel.",
   },
   categories: {
     general: "Essentials",

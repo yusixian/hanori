@@ -64,7 +64,7 @@ export function Pagination({
         <button
           type="button"
           disabled={disabled}
-          className="text-muted-foreground hover:text-foreground min-h-10 cursor-pointer rounded-lg px-2 text-sm tabular-nums transition-colors hover:bg-slate-100"
+          className="text-muted-foreground hover:text-foreground hover:bg-surface-subtle min-h-10 cursor-pointer rounded-lg px-2 text-sm tabular-nums transition-colors"
           onClick={() => setEditValue("")}
           title={t("pagination.jumpToPage")}
         >

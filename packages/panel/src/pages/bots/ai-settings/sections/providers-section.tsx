@@ -118,7 +118,7 @@ export function ProvidersSection({
 
   return (
     <Card>
-      <CardHeader className="border-b border-slate-100 px-5 py-4 sm:px-5 sm:py-4">
+      <CardHeader className="border-border border-b px-5 py-4 sm:px-5 sm:py-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">{t("providers.title")}</CardTitle>
           <Button variant="outline" size="sm" onClick={() => setAdding((v) => !v)}>
@@ -136,8 +136,8 @@ export function ProvidersSection({
 
         {/* Existing providers */}
         {providers.map((p) => (
-          <div key={p.id} className="border-b border-slate-100 last:border-b-0">
-            <div className="group flex min-h-16 items-center gap-3 px-5 py-3 transition-colors duration-150 hover:bg-slate-50/80">
+          <div key={p.id} className="border-border border-b last:border-b-0">
+            <div className="group hover:bg-background/80 flex min-h-16 items-center gap-3 px-5 py-3 transition-colors duration-150">
               <button
                 type="button"
                 className="focus-visible:ring-ring flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
@@ -147,21 +147,23 @@ export function ProvidersSection({
                 }}
                 aria-expanded={expandedId === p.id}
               >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-600/10 ring-inset">
+                <span className="bg-accent text-primary ring-primary/10 flex size-9 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset">
                   <Server className="size-4" />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2">
-                    <span className="truncate text-sm font-semibold text-slate-900">{p.label}</span>
+                  <span className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="text-foreground w-full min-w-0 truncate text-sm font-semibold sm:w-auto">
+                      {p.label}
+                    </span>
                     {p.id === activeProviderId && (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700 ring-1 ring-emerald-600/10 ring-inset">
+                      <span className="bg-success-soft text-success ring-success/10 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ring-1 ring-inset">
                         <Check className="size-3" /> {t("common.default")}
                       </span>
                     )}
                     {p.id === managedProviderId && (
                       <Badge
                         variant="muted"
-                        className="shrink-0 gap-1 border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-700"
+                        className="border-primary bg-accent text-primary shrink-0 gap-1 px-2 py-0.5 text-[10px] font-bold"
                       >
                         <SlidersHorizontal className="size-3" />
                         {t("providers.managed")}
@@ -190,7 +192,7 @@ export function ProvidersSection({
               </button>
             </div>
             {expandedId === p.id && (
-              <div className="border-t border-slate-100 bg-slate-50/50 px-5 py-4">
+              <div className="border-border bg-background/50 border-t px-5 py-4">
                 <div className="grid gap-3 lg:grid-cols-2">
                   <div className="space-y-1">
                     <label className="text-muted-foreground text-xs font-medium">
@@ -269,7 +271,7 @@ export function ProvidersSection({
                     />
                   </div>
                 </div>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-3">
+                <div className="border-border mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
                   <p className="text-muted-foreground text-xs">{t("providers.chatOverrideHelp")}</p>
                   <div className="flex items-center gap-2">
                     {p.id !== activeProviderId && canChangeActiveProvider && (
@@ -292,7 +294,7 @@ export function ProvidersSection({
                           : t("providers.delete")
                       }
                       aria-label={t("providers.deleteAria", { provider: p.label })}
-                      className="text-red-500 hover:bg-red-50 hover:text-red-700"
+                      className="text-destructive hover:bg-danger-soft hover:text-destructive"
                     >
                       <Trash2 className="size-4" />
                     </Button>
@@ -305,7 +307,7 @@ export function ProvidersSection({
 
         {/* New provider form */}
         {adding && (
-          <div className="space-y-3 border-b border-dashed border-blue-200 bg-blue-50/30 p-5">
+          <div className="border-primary bg-accent/30 space-y-3 border-b border-dashed p-5">
             <p className="text-sm font-medium">{t("providers.newProvider")}</p>
             <div className="grid gap-3 lg:grid-cols-2">
               <div className="space-y-1">

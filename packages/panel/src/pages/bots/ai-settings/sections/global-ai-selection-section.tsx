@@ -43,11 +43,11 @@ export function GlobalAiSelectionSection({
   const busy = saving || retrying;
 
   return (
-    <Card className="overflow-hidden border-sky-200 bg-[linear-gradient(135deg,#f8fbff_0%,#eef8ff_60%,#f8fafc_100%)] shadow-sm">
-      <CardHeader className="border-b border-sky-100 pb-4">
+    <Card className="hanori-section-banner border-border overflow-hidden shadow-sm">
+      <CardHeader className="border-border border-b pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex size-9 items-center justify-center rounded-xl bg-sky-600 text-white shadow-sm shadow-sky-600/20">
+            <span className="text-primary mt-0.5 flex size-9 items-center justify-center rounded-xl bg-white/75">
               <RadioTower className="size-4" />
             </span>
             <div>
@@ -63,7 +63,7 @@ export function GlobalAiSelectionSection({
       <CardContent className="space-y-4 pt-5">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700">{t("common.provider")}</label>
+            <label className="text-foreground text-xs font-semibold">{t("common.provider")}</label>
             <SelectMenu
               value={draft.providerId}
               onValueChange={(providerId) => {
@@ -83,7 +83,7 @@ export function GlobalAiSelectionSection({
             />
           </div>
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-700">{t("common.model")}</label>
+            <label className="text-foreground text-xs font-semibold">{t("common.model")}</label>
             <SelectMenu
               value={draft.modelId ?? provider?.defaultModelId}
               onValueChange={(modelId) => onChange({ ...draft, modelId })}
@@ -97,9 +97,9 @@ export function GlobalAiSelectionSection({
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-sky-100 bg-white/75 px-4 py-3">
+        <div className="border-border flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-white/75 px-4 py-3">
           <div>
-            <p className="text-sm font-semibold text-slate-800">{t("selection.publicTitle")}</p>
+            <p className="text-foreground text-sm font-semibold">{t("selection.publicTitle")}</p>
             <p className="text-muted-foreground mt-0.5 text-xs">
               {t("selection.publicDescription")}
             </p>

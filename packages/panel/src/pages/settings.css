@@ -1,0 +1,684 @@
+.settings-eyebrow {
+  margin: 0 0 0.875rem;
+  color: var(--color-primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.settings-page {
+  max-width: 1160px;
+  margin-inline: auto;
+}
+
+.settings-heading {
+  position: relative;
+  min-height: 180px;
+  padding-block: 1.25rem 2.25rem;
+  margin-bottom: 2rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-heading-copy {
+  max-width: calc(100% - 280px);
+}
+
+.settings-heading h1 {
+  font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.settings-introduction {
+  margin-top: 0.875rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+
+.settings-heading-art {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-end: 0;
+  width: 244px;
+  height: 144px;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  box-shadow: 0 8px 24px rgb(82 35 64 / 0.045);
+}
+
+.settings-heading-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 75% 0;
+  outline: 1px solid oklch(0 0 0 / 0.1);
+  outline-offset: -1px;
+  border-radius: inherit;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  align-items: start;
+  gap: clamp(1.5rem, 3vw, 3rem);
+}
+
+.settings-rail {
+  position: sticky;
+  top: 1.5rem;
+  min-width: 0;
+}
+
+.settings-profile {
+  padding: 1.25rem;
+  border-radius: 1.125rem;
+  background: linear-gradient(135deg, #f8eaf1, #edf3fb);
+}
+
+.settings-avatar {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  place-items: center;
+  margin-bottom: 1rem;
+  border: 3px solid rgb(255 255 255 / 0.85);
+  border-radius: 50%;
+  background: #fff9fc;
+  color: var(--color-primary);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.settings-profile h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.settings-email {
+  margin: 0.375rem 0 0.875rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  width: fit-content;
+  border-radius: 0.5rem;
+  padding: 0.3rem 0.625rem;
+  background: #f6edf4;
+  color: #814b6a;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.settings-role > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.settings-profile-workspace {
+  padding-top: 1rem;
+  margin-top: 1.25rem;
+  border-top: 1px solid rgb(255 255 255 / 0.8);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-profile-workspace p {
+  margin-bottom: 0.375rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.settings-profile-workspace strong {
+  font-weight: 500;
+}
+
+.settings-jump-links {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 1rem;
+}
+
+.settings-jump-links a {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: 44px;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.625rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  transition:
+    color 150ms ease-out,
+    background-color 150ms ease-out;
+}
+
+.settings-jump-links a svg:last-child {
+  margin-inline-start: auto;
+  opacity: 0.6;
+}
+
+.settings-jump-links a:hover {
+  background: var(--color-accent);
+  color: var(--color-primary);
+}
+
+.settings-jump-links a:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.settings-body {
+  display: grid;
+  min-width: 0;
+  gap: 2rem;
+}
+
+.settings-body > [role="status"]:empty {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.settings-section {
+  min-width: 0;
+  scroll-margin-top: 1.5rem;
+}
+
+.settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.settings-section-icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 0.75rem;
+  background: #f3edf5;
+  color: #8e6088;
+}
+
+.settings-section-heading h2 {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings-section-heading p {
+  margin-top: 0.25rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+}
+
+.settings-surface > div {
+  padding: 1.5rem;
+}
+
+.settings-password-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem;
+}
+
+.settings-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.settings-field-full {
+  grid-column: 1 / -1;
+}
+
+.settings-field input {
+  height: 44px;
+}
+
+.settings-field input[aria-invalid="true"] {
+  border-color: var(--color-destructive);
+}
+
+.settings-form-footer {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  padding-top: 1.25rem;
+  margin-top: 0.25rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-form-footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.settings-list-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  margin-bottom: 0.5rem;
+}
+
+.settings-list-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.settings-count {
+  display: grid;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding-inline: 0.375rem;
+  place-items: center;
+  border-radius: 0.5rem;
+  background: var(--color-muted);
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-member {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-height: 76px;
+  padding-block: 0.875rem;
+}
+
+.settings-member + .settings-member {
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-member-avatar {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: #eef1fa;
+  color: #77628d;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.settings-member:nth-child(2n) .settings-member-avatar {
+  background: #f8ecf0;
+  color: #a06078;
+}
+
+.settings-member-identity {
+  display: grid;
+  flex: 1;
+  min-width: 120px;
+  gap: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-member-identity strong,
+.settings-invitation strong {
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.settings-member-identity span,
+.settings-invitation span {
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.settings-member-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-inline-start: auto;
+}
+
+.settings-role-select {
+  width: auto;
+  min-width: 100px;
+  border: 1px solid var(--color-border);
+  font-size: 0.75rem;
+  box-shadow: none;
+}
+
+.settings-reset-button {
+  padding-inline: 0.5rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.settings-invite-block {
+  padding: 1.25rem;
+  margin: 1rem -0.25rem 0;
+  border-radius: 0.875rem;
+  background: linear-gradient(110deg, #fcf5f9, #f6f8fc);
+}
+
+.settings-invite-block > p {
+  max-width: 60ch;
+  margin-block: 0.5rem 1rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.7;
+}
+
+.settings-invite-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8rem;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.settings-invite-role {
+  height: 44px;
+  font-size: 0.8125rem;
+}
+
+.settings-invite-form > button {
+  grid-column: 1 / -1;
+  justify-self: end;
+}
+
+.settings-invitations {
+  margin-top: 1.75rem;
+}
+
+.settings-invitation {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding-block: 0.75rem;
+}
+
+.settings-invitation > svg,
+.settings-invitation-empty > svg {
+  flex-shrink: 0;
+  color: var(--color-muted-foreground);
+}
+
+.settings-invitation > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 0.25rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-invitation-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding-block: 0.75rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+}
+
+.settings-organization {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.settings-organization > div {
+  flex: 1;
+  min-width: 160px;
+  overflow-wrap: anywhere;
+}
+
+.settings-organization h3 {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.settings-organization p {
+  margin-top: 0.5rem;
+  color: var(--color-muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+
+.settings-feedback,
+.settings-load-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 1rem;
+  border-radius: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.settings-feedback {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 5;
+  box-shadow: 0 4px 12px rgb(43 30 55 / 0.06);
+}
+
+.settings-feedback svg {
+  flex-shrink: 0;
+  margin-top: 0.125rem;
+}
+
+.settings-feedback-error,
+.settings-load-error {
+  background: var(--color-danger-soft);
+  color: var(--color-destructive);
+}
+
+.settings-feedback-success {
+  background: var(--color-success-soft);
+  color: var(--color-success);
+}
+
+.settings-generated-link {
+  display: block;
+  padding: 0.625rem;
+  margin-top: 0.5rem;
+  border-radius: 0.5rem;
+  background: rgb(255 255 255 / 0.65);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  min-height: 240px;
+  color: var(--color-muted-foreground);
+  font-size: 0.875rem;
+}
+
+.settings-loading-dot {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--color-brand-pink);
+  box-shadow: 0 0 0 5px var(--color-accent);
+}
+
+@media (min-width: 80rem) {
+  .settings-invite-form {
+    grid-template-columns: minmax(0, 1fr) 7rem auto;
+  }
+
+  .settings-invite-form > button {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 63.99rem) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-rail {
+    position: static;
+  }
+
+  .settings-profile {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    column-gap: 1rem;
+    align-items: center;
+  }
+
+  .settings-avatar {
+    grid-row: 1 / 3;
+    margin: 0;
+  }
+
+  .settings-profile h2,
+  .settings-email {
+    grid-column: 2;
+    margin: 0;
+  }
+
+  .settings-profile > .settings-role {
+    grid-column: 3;
+    grid-row: 1 / 3;
+  }
+
+  .settings-profile-workspace {
+    display: none;
+  }
+
+  .settings-jump-links {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    margin-top: 0.5rem;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding-block: 0.125rem;
+  }
+
+  .settings-jump-links a {
+    flex-shrink: 0;
+  }
+
+  .settings-heading-art {
+    width: 190px;
+    height: 132px;
+  }
+
+  .settings-heading-copy {
+    max-width: calc(100% - 220px);
+  }
+}
+
+@media (max-width: 39.99rem) {
+  .settings-heading {
+    min-height: 0;
+    padding-top: 0.75rem;
+    padding-bottom: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .settings-heading-copy {
+    max-width: none;
+  }
+
+  .settings-heading-art {
+    display: none;
+  }
+
+  .settings-introduction {
+    max-width: 26ch;
+  }
+
+  .settings-profile {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    padding: 1rem;
+    column-gap: 0.75rem;
+  }
+
+  .settings-avatar {
+    width: 3rem;
+    height: 3rem;
+    grid-row: 1 / 3;
+  }
+
+  .settings-profile > .settings-role {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0;
+  }
+
+  .settings-email {
+    grid-column: 2 / -1;
+  }
+
+  .settings-surface > div {
+    padding: 1.25rem;
+  }
+
+  .settings-password-form,
+  .settings-invite-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-form-footer > button,
+  .settings-invite-form > button {
+    width: 100%;
+    min-height: 44px;
+    height: auto;
+    padding-block: 0.625rem;
+    line-height: 1.4;
+  }
+
+  .settings-member-actions {
+    width: 100%;
+    margin-inline-start: 3rem;
+  }
+
+  .settings-invite-block {
+    margin-inline: -0.25rem;
+    padding: 1rem;
+  }
+}
+
+@media (forced-colors: active) {
+  .settings-jump-links a:focus-visible {
+    outline-color: Highlight;
+  }
+}

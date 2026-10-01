@@ -1,3 +1,4 @@
+import { HanoriMark } from "@/components/hanori-mark";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -107,10 +108,10 @@ export function BotListPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="bot-list-page space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div className="max-w-2xl">
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-slate-950 sm:text-4xl">
+          <h1 className="text-foreground text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
             {t("list.title")}
           </h1>
           <p className="text-muted-foreground mt-3 max-w-xl text-sm leading-6 sm:text-base">
@@ -120,11 +121,11 @@ export function BotListPage() {
         <div className="flex flex-wrap items-center gap-3">
           {data && (
             <div>
-              <p className="text-xs text-slate-500">
+              <p className="text-muted-foreground text-xs">
                 {search ? t("list.matchCount") : t("list.botCount")}
               </p>
               <p
-                className="mt-0.5 text-lg font-semibold text-slate-900 tabular-nums"
+                className="text-foreground mt-0.5 text-lg font-semibold tabular-nums"
                 data-testid="bot-total"
               >
                 {total}
@@ -139,7 +140,7 @@ export function BotListPage() {
       </div>
 
       <div className="max-w-md">
-        <label htmlFor="bot-search" className="mb-2 block text-sm font-medium text-slate-900">
+        <label htmlFor="bot-search" className="text-foreground mb-2 block text-sm font-medium">
           {t("list.searchLabel")}
         </label>
         <div className="relative">
@@ -200,7 +201,7 @@ export function BotListPage() {
 
       {isError && data && (
         <div
-          className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+          className="border-warning-border bg-warning-soft text-warning flex flex-col gap-3 rounded-xl border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
           role="alert"
         >
           <span className="flex items-start gap-2">
@@ -221,14 +222,17 @@ export function BotListPage() {
           aria-label={t("list.loading")}
         >
           {[0, 1, 2].map((item) => (
-            <div key={item} className="h-40 animate-pulse rounded-xl border bg-white" />
+            <div
+              key={item}
+              className="to-muted h-40 animate-pulse rounded-xl border bg-gradient-to-br from-white"
+            />
           ))}
         </div>
       ) : isError && !data ? (
         <Card role="alert">
           <CardContent className="flex flex-col items-start gap-4 px-5 py-8 sm:px-6 sm:py-8">
             <div>
-              <p className="font-semibold text-slate-900">{t("list.loadErrorTitle")}</p>
+              <p className="text-foreground font-semibold">{t("list.loadErrorTitle")}</p>
               <p className="text-muted-foreground mt-1 text-sm">{t("list.loadErrorDescription")}</p>
             </div>
             <Button disabled={isFetching} onClick={() => void refetch()}>
@@ -241,7 +245,7 @@ export function BotListPage() {
         <Card>
           <CardContent className="flex flex-col items-start gap-4 px-5 py-8 sm:px-6">
             <div>
-              <h2 className="font-semibold text-slate-900">{t("list.noMatchesTitle")}</h2>
+              <h2 className="text-foreground font-semibold">{t("list.noMatchesTitle")}</h2>
               <p className="text-muted-foreground mt-1 text-sm">{t("list.noMatchesDescription")}</p>
             </div>
             <Button variant="outline" onClick={clearSearch}>
@@ -250,23 +254,25 @@ export function BotListPage() {
           </CardContent>
         </Card>
       ) : bots.length === 0 ? (
-        <Card className="overflow-hidden">
-          <CardContent className="flex flex-col items-center gap-4 px-6 py-20 text-center sm:py-24">
-            <Bot className="text-primary size-9" />
+        <Card className="bot-empty-state overflow-hidden">
+          <CardContent className="flex flex-col items-center gap-6 px-6 py-12 text-center sm:flex-row sm:gap-8 sm:px-10 sm:py-14 sm:text-left">
+            <div className="hanori-empty-mark" aria-hidden="true">
+              <HanoriMark className="size-14" />
+            </div>
             <div>
               <p
                 id="bot-list-heading"
                 tabIndex={-1}
-                className="text-lg font-semibold text-slate-900"
+                className="text-foreground text-lg font-semibold"
               >
                 {t("list.emptyTitle")}
               </p>
               <p className="text-muted-foreground mt-2 text-sm">{t("list.emptyDescription")}</p>
+              <Button className="mt-5" onClick={() => navigate("/bots/new")}>
+                <Plus className="h-4 w-4" />
+                {t("list.addFirstBot")}
+              </Button>
             </div>
-            <Button onClick={() => navigate("/bots/new")}>
-              <Plus className="h-4 w-4" />
-              {t("list.addFirstBot")}
-            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -276,13 +282,13 @@ export function BotListPage() {
               <h2
                 id="bot-list-heading"
                 tabIndex={-1}
-                className="text-lg font-semibold tracking-tight text-slate-900"
+                className="text-foreground text-lg font-semibold tracking-tight"
               >
                 {t("list.yourBots")}
               </h2>
               <p className="text-muted-foreground mt-1 text-sm">{t("list.chooseBot")}</p>
             </div>
-            <span className="hidden text-xs text-slate-500 sm:inline-flex">
+            <span className="text-muted-foreground hidden text-xs sm:inline-flex">
               {t("list.autoRefresh")}
             </span>
           </div>
@@ -291,19 +297,22 @@ export function BotListPage() {
               <Card
                 key={bot.id}
                 data-testid="bot-card"
-                className="group relative overflow-hidden transition-[border-color,box-shadow] duration-150 hover:border-slate-300 hover:shadow-[var(--shadow-surface-hover)]"
+                className="group hover:border-input relative overflow-hidden transition-[border-color,box-shadow] duration-150 hover:shadow-[var(--shadow-surface-hover)]"
               >
                 <Link
                   to={`/bots/${bot.id}`}
-                  className="block p-4 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-inset"
+                  className="focus-visible:ring-ring block p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 items-start gap-3">
-                      <div className="flex size-7 shrink-0 items-center justify-center text-slate-500">
-                        <Bot className="size-4.5" />
+                      <div
+                        className="bot-initial bg-accent text-primary flex size-9 shrink-0 items-center justify-center rounded-xl"
+                        aria-hidden="true"
+                      >
+                        {bot.name.trim().slice(0, 1) || <Bot className="size-4.5" />}
                       </div>
                       <div className="min-w-0">
-                        <h3 className="line-clamp-2 text-base leading-6 font-semibold tracking-tight text-slate-900 transition-colors duration-150 group-hover:text-blue-700">
+                        <h3 className="text-foreground group-hover:text-primary line-clamp-2 text-base leading-6 font-semibold tracking-tight transition-colors duration-150">
                           {bot.name}
                         </h3>
                         {bot.platform === "lark-webhook" && (
@@ -317,10 +326,10 @@ export function BotListPage() {
                       <span
                         className={`mr-1.5 size-1.5 rounded-full ${
                           bot.status === "running"
-                            ? "bg-emerald-500"
+                            ? "bg-success"
                             : bot.status === "restarting"
-                              ? "bg-amber-500"
-                              : "bg-red-500"
+                              ? "bg-warning"
+                              : "bg-destructive"
                         }`}
                       />
                       {t(`status.${bot.status}`)}
@@ -328,7 +337,7 @@ export function BotListPage() {
                   </div>
                 </Link>
                 <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
-                  <span className="min-w-0 text-xs font-medium text-slate-500 tabular-nums">
+                  <span className="text-muted-foreground min-w-0 text-xs font-medium tabular-nums">
                     <span className="truncate">
                       {t("status.uptimeLabel")} ·{" "}
                       {bot.uptime == null ? "-" : t("status.uptime", getUptimeParts(bot.uptime)!)}
@@ -336,7 +345,12 @@ export function BotListPage() {
                   </span>
                   <Button
                     size="sm"
-                    variant={bot.status === "running" ? "destructive" : "default"}
+                    variant={bot.status === "running" ? "outline" : "default"}
+                    className={
+                      bot.status === "running"
+                        ? "border-danger-border bg-danger-soft/50 text-destructive hover:bg-danger-soft"
+                        : undefined
+                    }
                     disabled={busy === bot.id}
                     aria-busy={busy === bot.id}
                     onClick={() => toggleBot(bot)}
@@ -357,7 +371,7 @@ export function BotListPage() {
               </Card>
             ))}
           </div>
-          <div className="mt-5 flex flex-col items-center justify-between gap-3 text-sm text-slate-500 sm:flex-row">
+          <div className="text-muted-foreground mt-5 flex flex-col items-center justify-between gap-3 text-sm sm:flex-row">
             <span>
               {t("list.pageSummary", {
                 from: (page - 1) * PAGE_SIZE + 1,

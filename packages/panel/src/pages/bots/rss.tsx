@@ -194,7 +194,7 @@ export function BotRssPage() {
 
       {toast && (
         <p
-          className={`text-sm ${toast.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}
+          className={`text-sm ${toast.type === "error" ? "text-destructive" : "text-success dark:text-success"}`}
         >
           {toast.message}
           <Button
@@ -275,7 +275,9 @@ export function BotRssPage() {
                   onClick={() => deleteCollection(col.id)}
                   title={confirmDelete === col.id ? t("rss.clickAgain") : t("common:common.delete")}
                 >
-                  <Trash2 className={`h-4 w-4 ${confirmDelete === col.id ? "" : "text-red-500"}`} />
+                  <Trash2
+                    className={`h-4 w-4 ${confirmDelete === col.id ? "" : "text-destructive"}`}
+                  />
                 </Button>
               </div>
             </div>

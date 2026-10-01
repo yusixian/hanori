@@ -312,11 +312,11 @@ function BotGenerationsContent({ botId }: { botId: string }) {
 
   return (
     <div className="space-y-6">
-      <header className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-6 text-white shadow-sm sm:p-8">
-        <div className="pointer-events-none absolute -top-20 -right-12 size-64 rounded-full bg-cyan-400/10 blur-3xl" />
+      <header className="hanori-section-banner relative overflow-hidden rounded-2xl border p-6 shadow-sm sm:p-8">
+        <div className="bg-brand-pink/15 pointer-events-none absolute -top-20 -right-12 size-64 rounded-full blur-3xl" />
         <div className="relative flex flex-wrap items-end justify-between gap-4">
           <div className="space-y-2">
-            <div className="flex items-center gap-2 text-cyan-200">
+            <div className="text-secondary-foreground flex items-center gap-2">
               <Archive className="size-4" />
               <span className="text-xs font-semibold tracking-[0.18em] uppercase">
                 {t("generations.archiveEyebrow")}
@@ -329,15 +329,15 @@ function BotGenerationsContent({ botId }: { botId: string }) {
             >
               {t("generations.title")}
             </h1>
-            <p className="max-w-2xl text-sm leading-6 text-slate-300">
+            <p className="text-muted-foreground max-w-2xl text-sm leading-6">
               {t("generations.archiveDescription")}
             </p>
           </div>
-          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur">
+          <div className="border-border rounded-xl border bg-white/60 px-4 py-3 backdrop-blur">
             <div className="text-2xl font-semibold tabular-nums">
               {list.result ? numberFormatter.format(total) : "—"}
             </div>
-            <div className="text-xs text-slate-400">{t("generations.archivedTasks")}</div>
+            <div className="text-muted-foreground text-xs">{t("generations.archivedTasks")}</div>
           </div>
         </div>
       </header>
@@ -443,7 +443,7 @@ function BotGenerationsContent({ botId }: { botId: string }) {
 
       {list.failure === "failed" && deleteNotice?.kind !== "deleted-refresh-failed" ? (
         <div
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="border-danger-border bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm"
           role="alert"
         >
           <span className="flex items-center gap-2">
@@ -549,14 +549,14 @@ function BotGenerationsContent({ botId }: { botId: string }) {
                   </div>
 
                   {item.errorMessage && (
-                    <p className="rounded-lg bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+                    <p className="bg-danger-soft text-destructive rounded-lg px-3 py-2 text-xs leading-5">
                       {item.errorMessage}
                     </p>
                   )}
 
                   <div className="flex items-center gap-2 border-t pt-4">
                     <Link
-                      className="bg-primary text-primary-foreground focus-visible:ring-ring flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors hover:bg-blue-700 focus-visible:ring-2 focus-visible:outline-none"
+                      className="bg-primary text-primary-foreground focus-visible:ring-ring hover:bg-primary-hover flex h-10 flex-1 items-center justify-center gap-2 rounded-lg px-3.5 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:outline-none"
                       to={`/bots/${encodeURIComponent(botId!)}/generations/${item.source}/${encodeURIComponent(item.id)}`}
                       aria-disabled={operationBusy}
                       tabIndex={operationBusy ? -1 : undefined}

@@ -5,6 +5,7 @@ export * from "./ai-selection.js";
 export * from "./ai-tools.js";
 export * from "./backup.js";
 export * from "./bots.js";
+export * from "./brand.js";
 export * from "./conversation.js";
 export * from "./data-transfer.js";
 export * from "./embedding.js";

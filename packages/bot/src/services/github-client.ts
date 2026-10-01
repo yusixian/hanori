@@ -334,7 +334,7 @@ export class GitHubClient {
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = new Headers(init.headers);
     headers.set("Accept", "application/vnd.github+json");
-    headers.set("User-Agent", "cos-tool-bot");
+    headers.set("User-Agent", "Hanori");
     headers.set("X-GitHub-Api-Version", "2022-11-28");
     const token = this.options.tokenProvider
       ? await this.options.tokenProvider()

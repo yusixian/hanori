@@ -71,7 +71,7 @@ export function FeedList({
         </Button>
       </div>
 
-      {error && <p className="text-xs text-red-500">{error}</p>}
+      {error && <p className="text-destructive text-xs">{error}</p>}
 
       {showAdd && (
         <form onSubmit={addFeed} className="flex gap-2">
@@ -111,7 +111,7 @@ export function FeedList({
                   }
                 >
                   <Trash2
-                    className={`h-3 w-3 ${confirmRemove === feed.id ? "" : "text-red-500"}`}
+                    className={`h-3 w-3 ${confirmRemove === feed.id ? "" : "text-destructive"}`}
                   />
                 </Button>
               </div>

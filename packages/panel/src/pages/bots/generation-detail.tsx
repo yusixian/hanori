@@ -253,8 +253,8 @@ function BotGenerationDetailContent({
         className="mx-auto flex max-w-xl flex-col items-center gap-4 py-16 text-center"
         role="alert"
       >
-        <AlertTriangle className="size-8 text-red-600" aria-hidden="true" />
-        <p className="text-sm text-red-700">{t("generations.detailLoadFailed")}</p>
+        <AlertTriangle className="text-destructive size-8" aria-hidden="true" />
+        <p className="text-destructive text-sm">{t("generations.detailLoadFailed")}</p>
         <Button
           onClick={() => {
             focusAfterReadRef.current = true;
@@ -355,8 +355,8 @@ function BotGenerationDetailContent({
         {t("generations.backToArchive")}
       </Link>
 
-      <header className="relative overflow-hidden rounded-2xl border bg-slate-950 p-6 text-white shadow-sm sm:p-8">
-        <div className="pointer-events-none absolute -top-20 left-1/3 h-48 w-80 rounded-full bg-violet-500/15 blur-3xl" />
+      <header className="hanori-section-banner relative overflow-hidden rounded-2xl border p-6 shadow-sm sm:p-8">
+        <div className="bg-lilac-foreground/15 pointer-events-none absolute -top-20 left-1/3 h-48 w-80 rounded-full blur-3xl" />
         <div className="relative grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
@@ -367,14 +367,14 @@ function BotGenerationDetailContent({
                 {detail.state}
               </Badge>
               {ACTIVE_STATES.has(detail.state) && (
-                <span className="flex items-center gap-1.5 text-xs text-cyan-200">
+                <span className="text-secondary-foreground flex items-center gap-1.5 text-xs">
                   <Loader2 className="size-3.5 animate-spin" />
                   {t("generations.liveUpdating")}
                 </span>
               )}
             </div>
             <div>
-              <div className="mb-2 flex items-center gap-2 text-violet-200">
+              <div className="text-lilac-foreground mb-2 flex items-center gap-2">
                 <Sparkles className="size-4" />
                 <span className="text-xs font-semibold tracking-[0.18em] uppercase">
                   {t("generations.generationArchive")}
@@ -387,7 +387,7 @@ function BotGenerationDetailContent({
               >
                 {t("generations.taskDetail")}
               </h1>
-              <p className="mt-2 font-mono text-xs break-all text-slate-400">{detail.id}</p>
+              <p className="text-muted-foreground mt-2 font-mono text-xs break-all">{detail.id}</p>
             </div>
           </div>
           <CopyButton
@@ -399,7 +399,7 @@ function BotGenerationDetailContent({
 
       {detailResource.failure ? (
         <div
-          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          className="border-danger-border bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm"
           role="alert"
         >
           <span className="flex items-center gap-2">
@@ -445,12 +445,12 @@ function BotGenerationDetailContent({
           />
         </Card>
       ) : detail.filesPurgedAt ? (
-        <Card className="border-amber-200 bg-amber-50/60">
-          <CardContent className="flex gap-3 pt-5 text-amber-900 sm:pt-6">
+        <Card className="border-warning-border bg-warning-soft/60">
+          <CardContent className="text-warning flex gap-3 pt-5 sm:pt-6">
             <FileWarning className="mt-0.5 size-5 shrink-0" />
             <div>
               <p className="font-semibold">{t("generations.originalPurged")}</p>
-              <p className="mt-1 text-sm leading-6 text-amber-800">
+              <p className="text-warning mt-1 text-sm leading-6">
                 {t("generations.metadataRetained")}
               </p>
             </div>
@@ -482,10 +482,10 @@ function BotGenerationDetailContent({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ol className="relative ml-2 border-l border-slate-200">
+              <ol className="border-border relative ml-2 border-l">
                 {detail.events.map((event) => (
                   <li key={event.id} className="relative pb-6 pl-6 last:pb-0">
-                    <span className="border-background absolute top-1 -left-[5px] size-2.5 rounded-full border-2 bg-violet-500" />
+                    <span className="border-background bg-lilac-foreground absolute top-1 -left-[5px] size-2.5 rounded-full border-2" />
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <span className="text-sm font-semibold">
                         {t(`generations.event.${event.kind}`, { defaultValue: event.kind })}
@@ -584,9 +584,9 @@ function BotGenerationDetailContent({
             </div>
           ) : null}
 
-          <Card className="border-red-200">
+          <Card className="border-danger-border">
             <CardHeader>
-              <div className="flex items-center gap-2 text-red-700">
+              <div className="text-destructive flex items-center gap-2">
                 <ShieldAlert className="size-5" />
                 <CardTitle>{t("generations.dangerZone")}</CardTitle>
               </div>
@@ -636,7 +636,7 @@ function PromptCard({
         <CopyButton value={value} label={copyLabel} disabled={disabled} compact />
       </CardHeader>
       <CardContent>
-        <pre className="max-h-[32rem] overflow-auto rounded-xl border bg-slate-950 p-4 font-mono text-xs leading-6 break-words whitespace-pre-wrap text-slate-100 sm:text-sm">
+        <pre className="bg-code text-code-foreground max-h-[32rem] overflow-auto rounded-xl border p-4 font-mono text-xs leading-6 break-words whitespace-pre-wrap sm:text-sm">
           {value}
         </pre>
       </CardContent>
@@ -670,7 +670,7 @@ function CopyButton({
       className={
         compact
           ? undefined
-          : "border-white/20 bg-white/10 text-white hover:bg-white/15 hover:text-white"
+          : "border-input text-foreground hover:bg-accent hover:text-primary bg-white/75"
       }
       onClick={copy}
       disabled={disabled}

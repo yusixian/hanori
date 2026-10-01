@@ -1,9 +1,12 @@
 import { Button } from "@/components/ui/button";
+import { HanoriMark } from "@/components/hanori-mark";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import sakura from "../../../docs/public/docs/brand/hanori-sakura-v1.webp";
 import { authClient } from "@/lib/auth-client";
 import { authFetch } from "@/lib/client";
-import { Bot, LockKeyhole, Mail } from "lucide-react";
+import { LockKeyhole, Mail } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useNavigate, useSearchParams } from "react-router";
@@ -45,76 +48,92 @@ export function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center gap-6 overflow-hidden p-5">
-      <div className="pointer-events-none absolute -top-32 left-1/2 size-[34rem] -translate-x-1/2 rounded-full bg-blue-200/40 blur-3xl" />
-      <Card className="relative w-full max-w-[420px]">
-        <CardHeader className="items-center px-7 pt-8 text-center">
-          <div className="bg-primary mb-3 flex size-12 items-center justify-center rounded-2xl text-white shadow-lg shadow-blue-600/20">
-            <Bot className="h-6 w-6" />
+    <div className="login-page">
+      <header className="login-topbar">
+        <div className="login-wordmark">
+          <HanoriMark className="size-11" />
+          <span>{t("common:app.name")}</span>
+        </div>
+        <LanguageSwitcher />
+      </header>
+      <main className="login-main">
+        <section className="login-intro" aria-labelledby="login-headline">
+          <div className="login-scene" aria-hidden="true">
+            <img src={sakura} alt="" width={1536} height={1024} fetchPriority="high" />
           </div>
-          <CardTitle className="text-xl">{t("login.title")}</CardTitle>
-          <CardDescription>{t("login.description")}</CardDescription>
-        </CardHeader>
-        <CardContent className="px-7 pb-8">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {error && (
-              <div role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
+          <p className="login-eyebrow">{t("common:app.subtitle")}</p>
+          <h1 id="login-headline">{t("login.headline")}</h1>
+          <p className="login-intro-description">{t("login.companionDescription")}</p>
+        </section>
+        <Card className="login-card">
+          <CardHeader className="px-7 pt-8">
+            <CardTitle className="text-xl">{t("login.title")}</CardTitle>
+            <CardDescription>{t("login.description")}</CardDescription>
+          </CardHeader>
+          <CardContent className="px-7 pb-8">
+            <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+              {error && (
+                <div
+                  role="alert"
+                  className="border-danger-border bg-danger-soft text-destructive rounded-lg border px-3 py-2 text-sm"
+                >
+                  {error}
+                </div>
+              )}
+              <label className="space-y-2">
+                <span className="text-sm font-medium">{t("login.emailLabel")}</span>
+                <div className="relative">
+                  <Mail className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
+                  <Input
+                    className="pl-10"
+                    type="email"
+                    placeholder={t("login.emailPlaceholder")}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    autoComplete="email"
+                    autoFocus
+                  />
+                </div>
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium">{t("login.passwordLabel")}</span>
+                <div className="relative">
+                  <LockKeyhole className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
+                  <Input
+                    className="pl-10"
+                    type="password"
+                    placeholder={t("login.passwordPlaceholder")}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                </div>
+              </label>
+              <Button type="submit" disabled={loading || !email || !password}>
+                {loading ? t("login.submitting") : t("login.submit")}
+              </Button>
+              <div className="text-muted-foreground flex items-center gap-3 text-xs">
+                <div className="bg-border h-px flex-1" />
+                <span>{t("login.separator")}</span>
+                <div className="bg-border h-px flex-1" />
               </div>
-            )}
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("login.emailLabel")}</span>
-              <div className="relative">
-                <Mail className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
-                <Input
-                  className="pl-10"
-                  type="email"
-                  placeholder={t("login.emailPlaceholder")}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                  autoFocus
-                />
-              </div>
-            </label>
-            <label className="space-y-2">
-              <span className="text-sm font-medium">{t("login.passwordLabel")}</span>
-              <div className="relative">
-                <LockKeyhole className="text-muted-foreground pointer-events-none absolute top-1/2 left-3.5 h-4 w-4 -translate-y-1/2" />
-                <Input
-                  className="pl-10"
-                  type="password"
-                  placeholder={t("login.passwordPlaceholder")}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                />
-              </div>
-            </label>
-            <Button type="submit" disabled={loading || !email || !password}>
-              {loading ? t("login.submitting") : t("login.submit")}
-            </Button>
-            <div className="text-muted-foreground flex items-center gap-3 text-xs">
-              <div className="bg-border h-px flex-1" />
-              <span>{t("login.separator")}</span>
-              <div className="bg-border h-px flex-1" />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                authClient.signIn.social({
-                  provider: "google",
-                  callbackURL: `${window.location.origin}${returnTo}`,
-                })
-              }
-            >
-              {t("login.google")}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-      <footer className="text-muted-foreground relative flex items-center gap-4 text-sm">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  authClient.signIn.social({
+                    provider: "google",
+                    callbackURL: `${window.location.origin}${returnTo}`,
+                  })
+                }
+              >
+                {t("login.google")}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </main>
+      <footer className="login-footer text-muted-foreground flex items-center gap-4 text-sm">
         <a
           href="/docs/"
           className="hover:text-foreground focus-visible:ring-ring rounded-sm underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:outline-none"

@@ -26,13 +26,11 @@ export async function loader({ params }: Route.LoaderArgs) {
 
 export function meta({ loaderData }: Route.MetaArgs) {
   if (!loaderData) {
-    return [{ title: "页面未找到 · cos-tool-bot 文档" }];
+    return [{ title: "页面未找到 · Hanori 文档" }];
   }
 
   const title =
-    loaderData.title === "cos-tool-bot 文档"
-      ? loaderData.title
-      : `${loaderData.title} · cos-tool-bot 文档`;
+    loaderData.title === "Hanori 文档" ? loaderData.title : `${loaderData.title} · Hanori 文档`;
 
   return [{ title }, { name: "description", content: loaderData.description }];
 }

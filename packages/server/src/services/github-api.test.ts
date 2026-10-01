@@ -39,7 +39,7 @@ describe("githubRequest", () => {
     expect(init?.headers).toEqual({
       Accept: "application/vnd.github+json",
       Authorization: "Bearer installation-token",
-      "User-Agent": "cos-tool-bot",
+      "User-Agent": "Hanori",
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
     });

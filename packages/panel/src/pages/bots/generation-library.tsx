@@ -496,8 +496,8 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       </div>
 
       {error && (
-        <Card className="border-red-200 bg-red-50/60">
-          <CardContent className="flex items-start justify-between gap-4 pt-5 text-sm text-red-700">
+        <Card className="border-danger-border bg-danger-soft/60">
+          <CardContent className="text-destructive flex items-start justify-between gap-4 pt-5 text-sm">
             <p role="alert">{error}</p>
             <Button
               variant="ghost"
@@ -941,7 +941,7 @@ function CharacterFormCard({
                   disabled={editing || characterSource === "danbooru" || profilesLoading}
                 />
                 {form.ownerTelegramId ? (
-                  <div className="flex items-center justify-between gap-2 rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                  <div className="bg-background flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs">
                     <span>
                       {t("generationLibrary.selectedProfile", { id: form.ownerTelegramId })}
                     </span>
@@ -975,7 +975,7 @@ function CharacterFormCard({
                         className={`block w-full rounded-md border px-3 py-2 text-left text-xs transition-colors ${
                           form.ownerTelegramId === String(profile.telegramId)
                             ? "border-primary bg-accent"
-                            : "bg-white hover:bg-slate-50"
+                            : "hover:bg-background bg-white"
                         }`}
                         onClick={() => onOwnerProfileSelect(String(profile.telegramId))}
                         disabled={editing || characterSource === "danbooru"}
@@ -1188,7 +1188,7 @@ function CharacterCard({
                   disabled={mutationLoading}
                   aria-label={t("generationLibrary.deleteCharacter")}
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
+                  <Trash2 className="text-destructive h-4 w-4" />
                 </Button>
               </>
             )}
@@ -1298,7 +1298,7 @@ function AssetCard({
                   disabled={mutationLoading}
                   aria-label={t("generationLibrary.deleteAsset")}
                 >
-                  <Trash2 className="h-4 w-4 text-red-500" />
+                  <Trash2 className="text-destructive h-4 w-4" />
                 </Button>
               </>
             )}

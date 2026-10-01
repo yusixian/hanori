@@ -27,7 +27,7 @@ export function AccordionTrigger({
         {...props}
       >
         {children}
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors group-hover:bg-slate-100 group-hover:text-slate-700">
+        <span className="text-muted-foreground group-hover:bg-surface-subtle group-hover:text-foreground flex size-10 shrink-0 items-center justify-center rounded-lg transition-colors">
           <ChevronDown className="size-4 transition-transform duration-200 group-data-[state=open]:rotate-180" />
         </span>
       </AccordionPrimitive.Trigger>

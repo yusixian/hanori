@@ -1,1 +1,11 @@
 packages/database/drizzle/
+.lody/
+.claude/
+.open-source/
+.acceptance/
+packages/docs/build/
+packages/docs/.source/
+packages/docs/.react-router/
+packages/docs/content/docs/changelog/v*.mdx
+HANDOFF.md
+packages/bot/src/skills/$OUT/

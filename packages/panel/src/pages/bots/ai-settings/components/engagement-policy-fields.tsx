@@ -126,7 +126,7 @@ export function EngagementPolicyFields({
         </label>
         <p className="text-muted-foreground text-xs">{t("engagement.preferencesExampleHelp")}</p>
         {selectedExample && (
-          <div className="space-y-2 rounded-md bg-slate-50 p-2.5">
+          <div className="bg-background space-y-2 rounded-md p-2.5">
             <p className="text-xs font-medium">
               {t("engagement.preferencesExamplePreview", {
                 name: t(`engagement.preferencesExamples.${selectedExample}.label`),

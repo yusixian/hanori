@@ -4,12 +4,17 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 function Wordmark() {
   return (
     <span className="docs-wordmark">
-      <span aria-hidden="true" className="docs-wordmark__mark">
-        C
-      </span>
+      <img
+        src="/docs/icon.svg"
+        alt=""
+        aria-hidden="true"
+        className="docs-wordmark__mark"
+        width={36}
+        height={36}
+      />
       <span className="docs-wordmark__text">
-        <strong>cos-tool-bot</strong>
-        <small>使用文档</small>
+        <strong>Hanori</strong>
+        <small>花织 · 使用文档</small>
       </span>
     </span>
   );

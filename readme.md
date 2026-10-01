@@ -1,8 +1,12 @@
-# cos-tool-bot
+# Hanori · 花织
 
 pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框架 + [Hono](https://hono.dev/) API 服务 + [React](https://react.dev/) + [Refine](https://refine.dev/) 管理面板。
 
 [快速开始](packages/docs/content/docs/getting-started/quickstart.mdx) · [功能指南](packages/docs/content/docs/index.mdx) · [自托管](packages/docs/content/docs/self-hosting/index.mdx) · [更新说明](packages/docs/content/docs/changelog/index.mdx)
+
+开源准备、独立公开仓库同步和改名兼容方案见 [开源准备设计](docs/design/open-source-readiness.md)。`pnpm public:export` 创建不含历史的白名单快照，`pnpm public:check` 检查内容与哈希，`pnpm public:sync` 默认只展示同步计划；公开仓库使用独立的 [README 与 CI 模板](open-source/readme.md)。首次 Docker 配置可通过 `pnpm setup:env` 安全生成，详见[部署指南](packages/docs/content/docs/self-hosting/docker.mdx)。
+
+`pnpm deployment:smoke --check` 只验证部署隔离配置；本机 Docker 启动后运行 `pnpm deployment:smoke`，可用随机项目、临时密钥和空数据库验证首次启动、登录、重建持久性与备份恢复。它不读取已有 `.env`，结束后只清理本次测试资源；前版本升级和真实集成仍需单独验收。
 
 ## 文档与更新说明
 

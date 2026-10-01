@@ -60,7 +60,7 @@ export function PrivateChatWhitelistSection({
             {whitelist.map((userId) => (
               <div key={userId} className="flex min-h-12 items-center justify-between px-3 py-2">
                 <span className="flex items-center gap-3 font-mono text-sm">
-                  <span className="flex size-8 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                  <span className="bg-surface-subtle text-muted-foreground flex size-8 items-center justify-center rounded-full">
                     <UserRound className="size-4" />
                   </span>
                   {userId}
@@ -68,7 +68,7 @@ export function PrivateChatWhitelistSection({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  className="text-muted-foreground hover:bg-danger-soft hover:text-destructive"
                   onClick={() =>
                     window.confirm(t("privateWhitelist.removeConfirm", { user: userId })) &&
                     onRemove(userId)

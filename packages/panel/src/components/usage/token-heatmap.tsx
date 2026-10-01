@@ -20,7 +20,7 @@ const DAYS = 7;
 const LABEL_WIDTH = 28;
 const HEADER_HEIGHT = 16;
 
-const COLORS = ["#161b22", "#0e4429", "#1d4ed8", "#3b82f6", "#60a5fa"];
+const COLORS = Array.from({ length: 5 }, (_, level) => `var(--color-heatmap-${level})`);
 
 function toLocalISO(d: Date): string {
   const y = d.getFullYear();
@@ -149,7 +149,11 @@ export function TokenHeatmap({ data, loading }: TokenHeatmapProps) {
         {loading ? (
           <div
             className="animate-pulse rounded"
-            style={{ width: svgWidth, height: svgHeight, backgroundColor: "#161b22" }}
+            style={{
+              width: svgWidth,
+              height: svgHeight,
+              backgroundColor: "var(--color-surface-subtle)",
+            }}
           />
         ) : !hasData ? (
           <div

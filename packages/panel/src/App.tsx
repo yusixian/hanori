@@ -40,7 +40,7 @@ class SurfaceChunkErrorBoundary extends Component<
         className={`surface-failure${this.props.miniApp ? " surface-failure--mini-app" : ""}`}
         role="alert"
       >
-        <p className="surface-failure__eyebrow">cos-tool-bot</p>
+        <p className="surface-failure__eyebrow">Hanori</p>
         <h1>{this.props.miniApp ? "Mini App 无法加载" : "管理面板无法加载"}</h1>
         <p>请检查网络后重新载入页面。</p>
         <button type="button" onClick={() => globalThis.location.reload()}>

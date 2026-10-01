@@ -72,7 +72,7 @@ export function UnsavedChangesDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center overscroll-contain bg-slate-950/35 p-4 backdrop-blur-[2px]"
+      className="bg-code/35 fixed inset-0 z-[80] flex items-center justify-center overscroll-contain p-4 backdrop-blur-[2px]"
       onClick={(event) => event.target === event.currentTarget && !busy && onStay()}
     >
       <div
@@ -82,10 +82,10 @@ export function UnsavedChangesDialog({
         aria-labelledby="unsaved-changes-title"
         aria-describedby="unsaved-changes-description"
         aria-busy={busy}
-        className="w-full max-w-md rounded-[20px] bg-white p-5 shadow-[0_24px_64px_rgb(15_23_42/0.22),0_0_0_1px_rgb(15_23_42/0.08)]"
+        className="w-full max-w-md rounded-[20px] bg-white p-5 shadow-[0_24px_64px_rgb(48_39_52/0.22),0_0_0_1px_rgb(48_39_52/0.08)]"
       >
         <div className="flex items-start gap-3">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+          <span className="bg-warning-soft text-warning flex size-10 shrink-0 items-center justify-center rounded-xl">
             <AlertTriangle aria-hidden="true" className="size-5" />
           </span>
           <div>
@@ -94,7 +94,7 @@ export function UnsavedChangesDialog({
             </h2>
             <p
               id="unsaved-changes-description"
-              className="mt-1.5 text-sm leading-6 text-pretty text-slate-600"
+              className="text-muted-foreground mt-1.5 text-sm leading-6 text-pretty"
             >
               {description}
             </p>

@@ -224,7 +224,7 @@ export function McpServersPage() {
 
       {message && (
         <div
-          className={`rounded-md p-3 text-sm ${message.type === "success" ? "bg-green-500/10 text-green-600" : "bg-red-500/10 text-red-600"}`}
+          className={`rounded-md p-3 text-sm ${message.type === "success" ? "bg-success/10 text-success" : "bg-destructive/10 text-destructive"}`}
         >
           {message.text ?? (message.key ? t(message.key) : null)}
         </div>
@@ -279,7 +279,7 @@ export function McpServersPage() {
                     <div className="text-muted-foreground mt-0.5 text-xs">{server.description}</div>
                   )}
                   {server.status.error && (
-                    <div className="mt-1 text-xs text-red-500">{server.status.error}</div>
+                    <div className="text-destructive mt-1 text-xs">{server.status.error}</div>
                   )}
                 </div>
                 <div className="flex shrink-0 gap-1">

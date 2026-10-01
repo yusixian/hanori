@@ -27,8 +27,8 @@ function FilterToggle({
 }) {
   const activeTone =
     tone === "violet"
-      ? "bg-violet-50 text-violet-700 shadow-[inset_0_0_0_1px_rgb(124_58_237/0.12)]"
-      : "bg-amber-50 text-amber-700 shadow-[inset_0_0_0_1px_rgb(217_119_6/0.14)]";
+      ? "bg-lilac text-lilac-foreground shadow-[inset_0_0_0_1px_rgb(121_92_135/0.12)]"
+      : "bg-secondary text-secondary-foreground shadow-[inset_0_0_0_1px_rgb(82_107_134/0.14)]";
 
   return (
     <button
@@ -38,7 +38,9 @@ function FilterToggle({
       onClick={onPressedChange}
       className={cn(
         "focus-visible:ring-ring inline-flex h-10 items-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,box-shadow,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]",
-        pressed ? activeTone : "text-muted-foreground hover:bg-slate-100 hover:text-foreground",
+        pressed
+          ? activeTone
+          : "text-muted-foreground hover:bg-surface-subtle hover:text-foreground",
       )}
     >
       <Icon className="size-3.5" aria-hidden="true" />
@@ -46,7 +48,11 @@ function FilterToggle({
       <span
         className={cn(
           "size-1.5 rounded-full transition-[background-color] duration-150",
-          pressed ? (tone === "violet" ? "bg-violet-500" : "bg-amber-500") : "bg-slate-300",
+          pressed
+            ? tone === "violet"
+              ? "bg-lilac-foreground"
+              : "bg-secondary-foreground"
+            : "bg-input",
         )}
         aria-hidden="true"
       />
@@ -102,7 +108,7 @@ export function ConversationToolbar({
   return (
     <div
       className={cn(
-        "flex shrink-0 gap-2 border-b border-slate-200/80 bg-white px-3 py-2.5 sm:px-4",
+        "flex shrink-0 gap-2 border-b border-border/80 bg-white px-3 py-2.5 sm:px-4",
         view === "messages"
           ? "flex-col sm:flex-row sm:items-center sm:justify-between"
           : "items-center justify-between",
@@ -111,7 +117,7 @@ export function ConversationToolbar({
       <div
         role="tablist"
         aria-label={t("conversations.detailView")}
-        className="grid w-full grid-cols-2 rounded-xl bg-slate-100 p-1 sm:w-auto"
+        className="bg-surface-subtle grid w-full grid-cols-2 rounded-xl p-1 sm:w-auto"
       >
         <button
           disabled={disabled}
@@ -126,7 +132,7 @@ export function ConversationToolbar({
           className={cn(
             "focus-visible:ring-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,box-shadow,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96]",
             view === "messages"
-              ? "text-foreground bg-white shadow-[0_1px_2px_rgb(15_23_42/0.08),0_0_0_1px_rgb(15_23_42/0.04)]"
+              ? "text-foreground bg-white shadow-[0_1px_2px_rgb(48_39_52/0.08),0_0_0_1px_rgb(48_39_52/0.04)]"
               : "text-muted-foreground hover:text-foreground",
           )}
         >
@@ -149,13 +155,13 @@ export function ConversationToolbar({
           className={cn(
             "focus-visible:ring-ring inline-flex h-10 items-center justify-center gap-2 rounded-lg px-3 text-xs font-semibold transition-[background-color,box-shadow,color,scale] duration-150 ease-out focus-visible:ring-2 focus-visible:outline-none active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40",
             view === "summaries"
-              ? "text-foreground bg-white shadow-[0_1px_2px_rgb(15_23_42/0.08),0_0_0_1px_rgb(15_23_42/0.04)]"
+              ? "text-foreground bg-white shadow-[0_1px_2px_rgb(48_39_52/0.08),0_0_0_1px_rgb(48_39_52/0.04)]"
               : "text-muted-foreground hover:text-foreground",
           )}
           title={hasSummaries ? undefined : t("conversations.noSummaries")}
         >
           <BookOpen
-            className={cn("size-3.5", view === "summaries" && "text-amber-600")}
+            className={cn("size-3.5", view === "summaries" && "text-warning")}
             aria-hidden="true"
           />
           {t("conversations.summaries")}
@@ -198,7 +204,7 @@ export function ConversationToolbar({
                 ? "conversations.refreshMessages"
                 : "conversations.refreshSummaries",
             )}
-            className="text-muted-foreground focus-visible:ring-ring flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-slate-100 focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
+            className="text-muted-foreground focus-visible:ring-ring hover:bg-surface-subtle flex size-10 shrink-0 items-center justify-center rounded-lg focus-visible:ring-2 focus-visible:outline-none disabled:opacity-50"
           >
             <RefreshCw className={cn("size-4", refreshing && "animate-spin")} aria-hidden="true" />
           </button>

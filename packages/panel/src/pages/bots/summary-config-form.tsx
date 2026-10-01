@@ -278,7 +278,7 @@ export function SummaryConfigForm({
               </option>
             ))}
           </Select>
-          {providersError && <p className="text-xs text-red-500">{providersError}</p>}
+          {providersError && <p className="text-destructive text-xs">{providersError}</p>}
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">{t("summary.form.modelId")}</label>
@@ -341,7 +341,7 @@ export function SummaryConfigForm({
         </p>
       </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-destructive text-sm">{error}</p>}
 
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>

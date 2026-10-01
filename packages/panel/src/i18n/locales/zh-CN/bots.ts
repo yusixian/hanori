@@ -67,7 +67,7 @@ export const bots = {
     sendTest: "发送测试消息",
     dangerZone: "危险操作",
     deleteBot: "删除 Bot",
-    larkTestMessage: "来自 cos-tool-bot 管理面板的测试消息",
+    larkTestMessage: "来自 Hanori · 花织工作台的测试消息",
   },
   create: {
     title: "添加 Bot",

@@ -264,7 +264,7 @@ test("search, navigation and theme controls work with the production CSP", async
   await expect(page.getByText("清除筛选", { exact: true })).toBeVisible();
   await page.screenshot({ path: info.outputPath("record-management-guide.png"), fullPage: true });
   await page.locator('a[href="/docs"]').filter({ visible: true }).first().click();
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("cos-tool-bot 文档");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Hanori 文档");
 
   if (info.project.name === "mobile") {
     await page.getByRole("button", { name: "打开侧边栏", exact: true }).click();

@@ -89,7 +89,7 @@ export function LogEntryRow({
   };
 
   return (
-    <article className={live ? "bg-blue-50/50" : undefined} data-log-id={log.id}>
+    <article className={live ? "bg-accent/50" : undefined} data-log-id={log.id}>
       <details className="group">
         <summary className="focus-visible:ring-ring cursor-pointer list-none px-4 py-3.5 focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset [&::-webkit-details-marker]:hidden">
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-3 gap-y-2 sm:flex sm:gap-3">
@@ -122,7 +122,7 @@ export function LogEntryRow({
             </span>
           </div>
         </summary>
-        <div className="border-t bg-slate-50/70 px-4 py-3.5">
+        <div className="bg-background/70 border-t px-4 py-3.5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-sm font-semibold">{labels.metadata}</p>
             <Button variant="outline" size="sm" onClick={() => void copyJson()}>

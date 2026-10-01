@@ -344,7 +344,7 @@ function ImportSection() {
             ref={fileInputRef}
             type="file"
             accept=".json,.gz"
-            className="file:border-input file:bg-background file:text-foreground text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border file:px-3 file:py-1.5 file:text-sm"
+            className="file:border-input file:bg-background file:text-foreground w-full min-w-0 text-sm file:mr-3 file:cursor-pointer file:rounded-md file:border file:px-3 file:py-1.5 file:text-sm"
             onChange={(e) => {
               const f = e.target.files?.[0];
               if (f) handleFileSelect(f);
@@ -353,9 +353,9 @@ function ImportSection() {
         </div>
 
         {importError && (
-          <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-700 dark:text-red-400">{importError}</p>
+          <div className="border-danger-border bg-danger-soft flex items-start gap-2 rounded-md border p-3">
+            <AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-destructive text-sm">{importError}</p>
           </div>
         )}
 
@@ -383,11 +383,9 @@ function ImportSection() {
                 </Badge>
               ))}
             </div>
-            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900 dark:bg-amber-950">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-              <p className="text-sm text-amber-700 dark:text-amber-400">
-                {t("data.import.secretsWarning")}
-              </p>
+            <div className="border-warning-border bg-warning-soft flex items-start gap-2 rounded-md border p-3">
+              <AlertCircle className="text-warning mt-0.5 h-4 w-4 shrink-0" />
+              <p className="text-warning text-sm">{t("data.import.secretsWarning")}</p>
             </div>
             <div className="flex gap-2">
               <Button onClick={handleImport} disabled={importing}>
@@ -406,10 +404,8 @@ function ImportSection() {
         )}
 
         {importResult && (
-          <div className="space-y-3 rounded-md border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-950">
-            <p className="text-sm font-medium text-green-700 dark:text-green-400">
-              {t("data.import.success")}
-            </p>
+          <div className="border-success-border bg-success-soft space-y-3 rounded-md border p-4">
+            <p className="text-success text-sm font-medium">{t("data.import.success")}</p>
             {importResult.importedBots.map((bot) => (
               <div key={bot.newId} className="text-sm">
                 <p>{t("data.import.botCreated", { name: bot.name })}</p>

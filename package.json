@@ -1,8 +1,8 @@
 {
-  "name": "cos-tool-bot",
+  "name": "hanori",
   "version": "0.17.0",
   "private": true,
-  "description": "A grammy Telegram bot with Hono API and Vue panel",
+  "description": "A self-hosted AI companion for Telegram, memory and creative tools",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"pnpm --filter @cos-tool-bot/server dev\" \"pnpm --filter @cos-tool-bot/panel dev\" \"pnpm dev:docs\"",
@@ -24,6 +24,11 @@
     "docker:logs": "docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml logs -f app",
     "docker:prune": "docker image prune -f",
     "deploy:dokploy:check": "node scripts/check-dokploy-compose.mjs",
+    "deployment:smoke": "node scripts/smoke-deployment.mjs",
+    "setup:env": "node scripts/init-env.mjs",
+    "public:export": "node scripts/export-public.mjs",
+    "public:check": "node scripts/check-public.mjs",
+    "public:sync": "node scripts/sync-public.mjs",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "lint": "oxlint .",

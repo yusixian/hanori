@@ -1,7 +1,9 @@
+import { PRODUCT_DISPLAY_NAME } from "@cos-tool-bot/shared";
+
 export const common = {
   app: {
-    name: "cos-tool-bot",
-    subtitle: "控制中心",
+    name: PRODUCT_DISPLAY_NAME,
+    subtitle: "AI 伙伴工作台",
   },
   language: {
     label: "界面语言",

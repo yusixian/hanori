@@ -6,6 +6,7 @@ export default defineConfig({
       "packages/{bot,server,shared,coding-worker}/src/**/*.test.ts",
       "acceptance/**/*.test.mjs",
       "infrastructure/**/*.test.mjs",
+      "scripts/**/*.test.mjs",
     ],
     coverage: {
       provider: "v8",

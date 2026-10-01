@@ -256,7 +256,7 @@ export function ModelsSection({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              <SlidersHorizontal className="size-4 text-blue-600" />
+              <SlidersHorizontal className="text-primary size-4" />
               {t("models.managingTitle", { provider: providerLabel })}
             </CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">{t("models.managingDescription")}</p>
@@ -273,9 +273,9 @@ export function ModelsSection({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="space-y-2 rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+        <div className="border-border bg-accent/40 space-y-2 rounded-xl border p-3">
           <div>
-            <p className="text-sm font-medium text-slate-900">{t("models.manualAdd")}</p>
+            <p className="text-foreground text-sm font-medium">{t("models.manualAdd")}</p>
             <p className="text-muted-foreground mt-0.5 text-xs">
               {t("models.manualAddDescription")}
             </p>
@@ -295,6 +295,7 @@ export function ModelsSection({
             <Button
               type="button"
               size="sm"
+              className="shrink-0 whitespace-nowrap"
               onClick={addManualModels}
               disabled={!manualModelIds.trim()}
             >
@@ -311,7 +312,11 @@ export function ModelsSection({
 
         {/* Configured models list */}
         {models.length > 0 ? (
-          <RadioGroup value={activeModel} onValueChange={onActiveModelChange} className="space-y-2">
+          <RadioGroup
+            value={activeModel}
+            onValueChange={onActiveModelChange}
+            className="grid-cols-[minmax(0,1fr)] space-y-2"
+          >
             {groupModelsByProvider(models).map(([group, entries]) => (
               <div key={group}>
                 <p className="text-muted-foreground mb-1 text-xs font-medium uppercase">{group}</p>
@@ -560,18 +565,22 @@ export function ModelsSection({
             value={modelCommandAccess}
             onValueChange={(value) => onModelCommandAccessChange(value as "admin" | "all")}
           >
-            <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
+            <label className="hover:bg-background flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3">
               <RadioGroupItem value="admin" />
               <span>
                 <span className="block text-sm font-medium">{t("models.adminOnly")}</span>
-                <span className="text-xs text-slate-500">{t("models.adminOnlyDescription")}</span>
+                <span className="text-muted-foreground text-xs">
+                  {t("models.adminOnlyDescription")}
+                </span>
               </span>
             </label>
-            <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3 hover:bg-slate-50">
+            <label className="hover:bg-background flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-3">
               <RadioGroupItem value="all" />
               <span>
                 <span className="block text-sm font-medium">{t("models.allUsers")}</span>
-                <span className="text-xs text-slate-500">{t("models.allUsersDescription")}</span>
+                <span className="text-muted-foreground text-xs">
+                  {t("models.allUsersDescription")}
+                </span>
               </span>
             </label>
           </RadioGroup>

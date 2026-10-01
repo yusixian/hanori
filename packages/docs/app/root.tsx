@@ -35,7 +35,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="theme-color" content="#f5f1e8" />
+        <meta name="theme-color" content="#fff8fb" />
         <link rel="icon" href="/docs/icon.svg" type="image/svg+xml" />
         <Meta />
         <Links />

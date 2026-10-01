@@ -69,7 +69,7 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
       token_endpoint_auth_method: "none",
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
-      client_name: options.clientName ?? "COS Tool Bot",
+      client_name: options.clientName ?? "Hanori",
       client_uri: options.clientUri,
       scope: PIXAI_MCP_OAUTH_SCOPES.join(" "),
     };

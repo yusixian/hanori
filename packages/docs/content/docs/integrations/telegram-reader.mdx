@@ -5,7 +5,7 @@ description: 配置独立 MCP Platform Reader 的用户账号、白名单与 OAu
 
 Telegram 私有消息链接不适合当作普通网页抓取。Telegram Reader 在独立的 **MCP Platform** 中使用用户账号，通过 MTProto 读取明确允许的频道和超级群组，再以只读 MCP 工具提供给客户端。不需要再创建一个 BotFather bot，也不需要另行部署 userbot 进程。
 
-> 截至 2026-09-21：Reader 的 Admin 配置和 MCP 服务已实现；cos-tool-bot 的通用 MCP 连接仍缺少这项集成需要的 OAuth 登录与刷新流程。完成本文的 Reader 配置，不代表把链接发给原 Bot 就能自动读取。图片 MCP 的专用 OAuth 授权也不能直接复用。
+> 截至 2026-09-21：Reader 的 Admin 配置和 MCP 服务已实现；Hanori 的通用 MCP 连接仍缺少这项集成需要的 OAuth 登录与刷新流程。完成本文的 Reader 配置，不代表把链接发给原 Bot 就能自动读取。图片 MCP 的专用 OAuth 授权也不能直接复用。
 
 ## 先分清两个管理面板
 
@@ -13,9 +13,9 @@ Telegram 私有消息链接不适合当作普通网页抓取。Telegram Reader �
 | --------------------------------- | ------------------------------------------------------------------ |
 | MCP Platform Admin 的 `/telegram` | Telegram 应用凭据、用户登录、聊天白名单和链接测试                  |
 | MCP Platform 的 `/mcp/telegram`   | 对外提供受 OAuth 保护的只读工具                                    |
-| cos-tool-bot 面板的 MCP Servers   | Bot 侧的外部工具连接与使用范围；当前不能仅填 Reader URL 就完成授权 |
+| Hanori 面板的 MCP Servers         | Bot 侧的外部工具连接与使用范围；当前不能仅填 Reader URL 就完成授权 |
 
-本文使用 `https://mcp.example.com` 表示你自己的 MCP Platform 公网 HTTPS 地址，操作时替换为实际域名。它不是 cos-tool-bot 文档站的地址。
+本文使用 `https://mcp.example.com` 表示你自己的 MCP Platform 公网 HTTPS 地址，操作时替换为实际域名。它不是 Hanori 文档站的地址。
 
 ## 1. 确认 Reader 服务可用
 
@@ -26,7 +26,7 @@ Telegram 私有消息链接不适合当作普通网页抓取。Telegram Reader �
 3. `/telegram` 页面可以通过 Owner 账号访问。
 4. 服务器可以连接 Telegram 的 MTProto 服务。普通网页能打开，不代表这条网络可用。
 
-首次引入 Reader 的版本包含 `0013_wonderful_grim_reaper.sql` 迁移。MCP Platform 在 `MIGRATION_MODE=run` 时启动执行迁移；设置为 `skip` 时，需要部署流程提前完成迁移。不要把它当作 cos-tool-bot 的迁移，也不要为消除报错随意修改生产迁移模式。
+首次引入 Reader 的版本包含 `0013_wonderful_grim_reaper.sql` 迁移。MCP Platform 在 `MIGRATION_MODE=run` 时启动执行迁移；设置为 `skip` 时，需要部署流程提前完成迁移。不要把它当作 Hanori 的迁移，也不要为消除报错随意修改生产迁移模式。
 
 升级前准备可恢复的数据库备份，并单独保护现有凭据加密主密钥。Reader 的账号会话保存在加密凭据存储中，不需要挂载额外的 SQLite session 文件，也不需要新增 Telegram 专用环境变量。
 
@@ -113,7 +113,7 @@ Reader 返回文本是不可信内容，不应被当作指令覆盖系统提示�
 
 ## 7. 要让原 Bot 自动读取，还差什么
 
-当前 cos-tool-bot 的通用 MCP 管理器仅通过静态 headers 建立连接；已有图片 MCP 使用专用 OAuth 流程，不等于通用 MCP 已支持 Reader 授权。因此本文到此可以验收 **Admin → Telegram** 和 **OAuth 客户端 → Reader**，不能宣称 **原 Bot → Reader** 已完成。
+当前 Hanori 的通用 MCP 管理器仅通过静态 headers 建立连接；已有图片 MCP 使用专用 OAuth 流程，不等于通用 MCP 已支持 Reader 授权。因此本文到此可以验收 **Admin → Telegram** 和 **OAuth 客户端 → Reader**，不能宣称 **原 Bot → Reader** 已完成。
 
 后续接入需要实现并验证：
 

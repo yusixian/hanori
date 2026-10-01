@@ -292,9 +292,7 @@ export function LogsListPage() {
             {t("logs.clear")}
           </Button>
           <div className="flex shrink-0 items-center gap-2">
-            <Radio
-              className={connected ? "size-4 text-emerald-600" : "text-muted-foreground size-4"}
-            />
+            <Radio className={connected ? "text-success size-4" : "text-muted-foreground size-4"} />
             <span className="text-muted-foreground shrink-0 text-xs whitespace-nowrap">
               {livePaused ? t("logs.paused") : connected ? t("logs.live") : t("logs.disconnected")}
             </span>
@@ -374,7 +372,7 @@ export function LogsListPage() {
               <span className={botId ? "truncate" : "text-muted-foreground truncate"}>
                 {botId ? (selectedBot?.name ?? botId) : t("logs.allBots")}
               </span>
-              <ChevronDown className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
+              <ChevronDown className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
             </Button>
           }
         >
@@ -541,7 +539,7 @@ export function LogsListPage() {
         <div
           role={botOptionsLoading ? "status" : "alert"}
           aria-live="polite"
-          className="flex items-center gap-3 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800"
+          className="border-danger-border bg-danger-soft text-destructive flex items-center gap-3 rounded-md border p-3 text-sm"
         >
           <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
           <span className="flex-1">
@@ -573,7 +571,7 @@ export function LogsListPage() {
           {isLoading ? (
             <p className="text-muted-foreground p-6 text-sm">{t("logs.loading")}</p>
           ) : isError ? (
-            <div role="alert" className="flex items-center gap-3 p-6 text-sm text-red-700">
+            <div role="alert" className="text-destructive flex items-center gap-3 p-6 text-sm">
               <AlertCircle className="size-4 shrink-0" aria-hidden="true" />
               <span className="flex-1">{t("logs.loadError")}</span>
               <Button variant="outline" size="sm" onClick={() => void refetch()}>

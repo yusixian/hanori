@@ -103,7 +103,7 @@ function LoadingFallback() {
   return (
     <div className="flex items-center justify-center py-20" role="status" aria-live="polite">
       <div className="text-muted-foreground flex items-center gap-3 text-sm">
-        <span className="border-t-primary size-4 animate-spin rounded-full border-2 border-slate-200" />
+        <span className="border-t-primary border-border size-4 animate-spin rounded-full border-2" />
         {t("common.loading")}
       </div>
     </div>
@@ -114,9 +114,7 @@ function PublicLanguageSwitcher() {
   const { pathname } = useLocation();
   const normalizedPathname = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const isPublicAuthPage =
-    normalizedPathname === "/login" ||
-    normalizedPathname === "/accept-invitation" ||
-    normalizedPathname === "/reset-password";
+    normalizedPathname === "/accept-invitation" || normalizedPathname === "/reset-password";
   return isPublicAuthPage ? <LanguageSwitcher className="fixed top-4 right-4 z-[70]" /> : null;
 }
 

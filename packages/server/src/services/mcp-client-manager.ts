@@ -104,7 +104,7 @@ export class McpClientManager {
         ? new StreamableHTTPClientTransport(url, { requestInit: headers ? { headers } : undefined })
         : new SSEClientTransport(url, { requestInit: headers ? { headers } : undefined });
 
-    const client = new Client({ name: "cos-tool-bot", version: "1.0.0" });
+    const client = new Client({ name: "Hanori", version: "1.0.0" });
 
     const entry: McpClientEntry = {
       client,

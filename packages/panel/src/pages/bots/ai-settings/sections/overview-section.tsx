@@ -36,11 +36,11 @@ export function OverviewSection({
   return (
     <div className="space-y-5">
       {!activeProvider && config.enabled && (
-        <div className="flex items-start gap-3 rounded-lg border bg-white p-4 text-slate-900">
+        <div className="text-foreground flex items-start gap-3 rounded-lg border bg-white p-4">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" />
           <div className="text-sm">
             <p className="font-semibold">{t("overview.providerRequired")}</p>
-            <p className="mt-0.5 text-xs leading-5 text-slate-600">
+            <p className="text-muted-foreground mt-0.5 text-xs leading-5">
               {t("overview.providerRequiredDescription")}
             </p>
           </div>
@@ -50,12 +50,14 @@ export function OverviewSection({
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex items-start gap-4">
-            <span className={cn("mt-0.5", config.enabled ? "text-blue-600" : "text-slate-400")}>
+            <span
+              className={cn("mt-0.5", config.enabled ? "text-primary" : "text-muted-foreground")}
+            >
               <Bot className="size-5" />
             </span>
             <div>
-              <h2 className="text-base font-semibold text-slate-950">{t("overview.aiReplies")}</h2>
-              <p className="mt-1 text-sm text-slate-500">
+              <h2 className="text-foreground text-base font-semibold">{t("overview.aiReplies")}</h2>
+              <p className="text-muted-foreground mt-1 text-sm">
                 {config.enabled ? t("overview.aiRepliesEnabled") : t("overview.aiRepliesDisabled")}
               </p>
             </div>
@@ -116,17 +118,19 @@ function OverviewCard({
     <button
       type="button"
       onClick={onClick}
-      className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors duration-150 hover:bg-slate-50"
+      className="hover:bg-background flex w-full items-center gap-4 px-5 py-4 text-left transition-colors duration-150"
     >
-      <Icon className="size-5 shrink-0 text-slate-500" />
+      <Icon className="text-muted-foreground size-5 shrink-0" />
       <span className="min-w-0 flex-1">
-        <span className="block text-sm font-semibold text-slate-950">{label}</span>
-        <span className="mt-0.5 block truncate text-xs text-slate-500">{detail}</span>
+        <span className="text-foreground block text-sm font-semibold">{label}</span>
+        <span className="text-muted-foreground mt-0.5 block truncate text-xs">{detail}</span>
       </span>
-      <span className={cn("text-sm font-medium", healthy ? "text-slate-800" : "text-slate-500")}>
+      <span
+        className={cn("text-sm font-medium", healthy ? "text-foreground" : "text-muted-foreground")}
+      >
         {value}
       </span>
-      <ChevronRight className="size-4 shrink-0 text-slate-400" />
+      <ChevronRight className="text-muted-foreground size-4 shrink-0" />
     </button>
   );
 }

@@ -1,6 +1,8 @@
+import { PRODUCT_NAME } from "@cos-tool-bot/shared";
+
 const API_ROOT = "https://api.github.com";
 const API_VERSION = "2022-11-28";
-const USER_AGENT = "cos-tool-bot";
+const USER_AGENT = PRODUCT_NAME;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_MESSAGE_LENGTH = 300;
 

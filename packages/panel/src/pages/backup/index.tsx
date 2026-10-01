@@ -84,15 +84,15 @@ function CreateBackupSection({ onCreated }: { onCreated: () => void }) {
           {creating ? t("backup.create.creating") : t("backup.create.action")}
         </Button>
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-600">{error}</p>
+          <div className="border-danger-border bg-danger-soft flex items-start gap-2 rounded-md border p-3">
+            <AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-destructive text-sm">{error}</p>
           </div>
         )}
         {success && (
-          <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-emerald-600">{success}</p>
+          <div className="border-success-border bg-success-soft flex items-start gap-2 rounded-md border p-3">
+            <CheckCircle2 className="text-success mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-success text-sm">{success}</p>
           </div>
         )}
       </CardContent>
@@ -203,7 +203,7 @@ function BackupHistorySection({
                       </Badge>
                       {record.error && (
                         <span
-                          className="ml-1 cursor-help text-xs text-red-500"
+                          className="text-destructive ml-1 cursor-help text-xs"
                           title={record.error}
                         >
                           !
@@ -747,15 +747,17 @@ function StorageConfigSection() {
           <div
             className={cn(
               "flex items-start gap-2 rounded-md border p-3",
-              testResult.ok ? "border-green-900 bg-green-950" : "border-red-900 bg-red-950",
+              testResult.ok
+                ? "border-success-border bg-success-soft"
+                : "border-danger-border bg-danger-soft",
             )}
           >
             {testResult.ok ? (
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+              <CheckCircle2 className="text-success mt-0.5 h-4 w-4 shrink-0" />
             ) : (
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+              <AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
             )}
-            <p className={cn("text-sm", testResult.ok ? "text-emerald-600" : "text-red-600")}>
+            <p className={cn("text-sm", testResult.ok ? "text-success" : "text-destructive")}>
               {testResult.ok
                 ? t("backup.storage.connectionSuccessful")
                 : t("backup.storage.connectionFailed", {
@@ -765,15 +767,15 @@ function StorageConfigSection() {
           </div>
         )}
         {error && (
-          <div className="flex items-start gap-2 rounded-md border border-red-900 bg-red-950 p-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
-            <p className="text-sm text-red-600">{error}</p>
+          <div className="border-danger-border bg-danger-soft flex items-start gap-2 rounded-md border p-3">
+            <AlertCircle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-destructive text-sm">{error}</p>
           </div>
         )}
         {success && (
-          <div className="flex items-start gap-2 rounded-md border border-green-900 bg-green-950 p-3">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-            <p className="text-sm text-emerald-600">{success}</p>
+          <div className="border-success-border bg-success-soft flex items-start gap-2 rounded-md border p-3">
+            <CheckCircle2 className="text-success mt-0.5 h-4 w-4 shrink-0" />
+            <p className="text-success text-sm">{success}</p>
           </div>
         )}
       </CardContent>

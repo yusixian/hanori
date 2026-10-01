@@ -418,7 +418,7 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
           </Select>
         </div>
 
-        <details className="group rounded-lg border bg-slate-50/60 px-3 py-2">
+        <details className="group bg-background/60 rounded-lg border px-3 py-2">
           <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-medium [&::-webkit-details-marker]:hidden">
             <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
             {t("engagementSamples.moreFilters")}
@@ -527,8 +527,8 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
             role={error ? "alert" : "status"}
             className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 text-sm ${
               error
-                ? "border-red-200 bg-red-50 text-red-700"
-                : "border-emerald-200 bg-emerald-50 text-emerald-800"
+                ? "border-danger-border bg-danger-soft text-destructive"
+                : "border-success-border bg-success-soft text-success"
             }`}
           >
             {error && <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />}
@@ -537,7 +537,7 @@ export function EngagementSamplesSection({ botId }: EngagementSamplesSectionProp
               <Button
                 variant="ghost"
                 size="icon"
-                className="-my-1 -mr-1 text-red-700"
+                className="text-destructive -my-1 -mr-1"
                 onClick={() => void load()}
                 aria-label={t("engagementSamples.retry")}
               >
@@ -624,7 +624,7 @@ function MetricsSummary({ metrics }: { metrics: EngagementSamplesResponse["metri
   const { t } = useTranslation("aiSettings");
   const evaluation = metrics.evaluationByFormat;
   return (
-    <div className="space-y-2 rounded-lg border bg-slate-50 px-3 py-2.5 text-xs">
+    <div className="bg-background space-y-2 rounded-lg border px-3 py-2.5 text-xs">
       <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label={t("engagementSamples.records")} value={String(metrics.total ?? 0)} />
         <Metric
@@ -826,7 +826,7 @@ function EngagementSampleRowView({
               <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
               {t("engagementSamples.details")}
             </summary>
-            <div className="mt-2 min-w-0 space-y-3 rounded-lg bg-slate-50 px-3 py-2 text-xs">
+            <div className="bg-background mt-2 min-w-0 space-y-3 rounded-lg px-3 py-2 text-xs">
               <div className="text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
                 <span className="inline-flex items-center gap-1">
                   <Clock3 className="size-3" aria-hidden="true" />

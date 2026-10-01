@@ -453,12 +453,12 @@ export function BotForm({
             </>
           ) : (
             <>
-              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-sm dark:border-blue-900 dark:bg-blue-950">
+              <div className="border-secondary-border bg-secondary rounded-md border p-3 text-sm">
                 {t("form.larkFirstTime")}{" "}
                 <Link
                   to="/guides/lark-setup"
                   target="_blank"
-                  className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                  className="text-secondary-foreground hover:text-primary font-medium underline underline-offset-2"
                 >
                   {t("form.larkSetupGuide")} &rarr;
                 </Link>

@@ -14,7 +14,7 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
       className={cn(
         embedded
           ? "bg-transparent text-card-foreground"
-          : "rounded-xl border bg-card text-card-foreground shadow-[var(--shadow-surface)]",
+          : "ui-card rounded-xl border bg-card text-card-foreground shadow-[var(--shadow-surface)]",
         className,
       )}
       {...props}

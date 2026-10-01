@@ -1,0 +1,31 @@
+title = "Public source credential checks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Generated SHA-256 entries, verified by public:check"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)\.public-manifest\.json$''']
+regexes = ['''^\s*"[^"]+": "[a-f0-9]{64}",?\s*$''']
+
+[[rules.allowlists]]
+description = "Exact synthetic secret used only to render Compose validation"
+condition = "AND"
+regexTarget = "secret"
+paths = ['''(^|/)scripts/check-dokploy-compose\.mjs$''']
+regexes = ['''^validation-secret-at-least-32-characters$''']
+
+[[rules]]
+id = "sumologic-access-token"
+
+[[rules.allowlists]]
+description = "Generated SHA-256 entries, verified by public:check"
+condition = "AND"
+regexTarget = "line"
+paths = ['''(^|/)\.public-manifest\.json$''']
+regexes = ['''^\s*"[^"]+": "[a-f0-9]{64}",?\s*$''']

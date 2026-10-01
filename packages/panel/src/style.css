@@ -4,31 +4,71 @@
    OS-level dark preference cannot partially recolor otherwise light surfaces. */
 @custom-variant dark (&:where(.dark, .dark *));
 
-@theme {
-  /* Native UI faces suit an operational control panel and avoid a branded web-font dependency. */
-  --font-sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --color-background: #f6f8fc;
-  --color-foreground: #152033;
+/* Charts and Monaco read these tokens at runtime. */
+@theme static {
+  --font-sans:
+    "Avenir Next", "PingFang SC", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --color-background: #fbf9fc;
+  --color-foreground: #302734;
   --color-card: #ffffff;
-  --color-card-foreground: #152033;
-  --color-muted: #f0f3f8;
-  --color-muted-foreground: #64748b;
-  --color-border: #e5eaf2;
-  --color-input: #d7dfeb;
-  --color-primary: #2563eb;
+  --color-card-foreground: #302734;
+  --color-muted: #f9edf3;
+  --color-muted-foreground: #756676;
+  --color-border: #ece5ed;
+  --color-input: #ddd2df;
+  --color-primary: #b13c67;
+  --color-primary-hover: #a33862;
   --color-primary-foreground: #ffffff;
-  --color-destructive: #dc2626;
-  --color-accent: #edf3ff;
-  --color-accent-foreground: #1d4ed8;
+  --color-destructive: #b34556;
+  --color-destructive-hover: #9b3546;
+  --color-accent: #fbe7ef;
+  --color-accent-foreground: #96355b;
   --color-popover: #ffffff;
-  --color-popover-foreground: #152033;
-  --color-ring: #2563eb;
+  --color-popover-foreground: #302734;
+  --color-ring: #b13c67;
+  --color-brand-pink: #efacc9;
+  --color-brand-blue: #a7cbe5;
+  --color-surface-subtle: #f5f2f6;
+  --color-secondary: #edf3fa;
+  --color-secondary-foreground: #526b86;
+  --color-secondary-border: #d6e2ee;
+  --color-lilac: #f3edf6;
+  --color-lilac-foreground: #795c87;
+  --color-lilac-border: #e5d9ed;
+  --color-success: #2f7158;
+  --color-success-soft: #eef7f2;
+  --color-success-border: #d3e7dc;
+  --color-warning: #936126;
+  --color-warning-soft: #fcf6e9;
+  --color-warning-border: #ebdfc2;
+  --color-danger-soft: #fff1f3;
+  --color-danger-border: #efd5dc;
+  --color-code: #352d3d;
+  --color-code-foreground: #f2ecf6;
+  --color-chart-1: #b13c67;
+  --color-chart-2: #7199b7;
+  --color-chart-3: #9273a2;
+  --color-chart-4: #60957f;
+  --color-chart-5: #c49470;
+  --color-heatmap-0: #f0eaf1;
+  --color-heatmap-1: #f1cfdd;
+  --color-heatmap-2: #e8a6c0;
+  --color-heatmap-3: #cf7397;
+  --color-heatmap-4: #a93965;
 }
 
 :root {
   color-scheme: light;
-  --shadow-surface: 0 1px 2px rgb(15 23 42 / 0.05);
-  --shadow-surface-hover: 0 2px 6px rgb(15 23 42 / 0.08);
+  --shadow-surface: 0 1px 2px rgb(48 39 52 / 0.025), 0 4px 16px rgb(48 39 52 / 0.025);
+  --shadow-surface-hover: 0 2px 4px rgb(48 39 52 / 0.035), 0 8px 24px rgb(48 39 52 / 0.06);
+}
+
+@media (forced-colors: active) {
+  .ui-button:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
 }
 
 * {
@@ -75,7 +115,7 @@ body {
 }
 
 .surface-failure__eyebrow {
-  color: #229ed9;
+  color: var(--color-primary);
   font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.16em;
@@ -88,17 +128,26 @@ body {
   border: 0;
   border-radius: 999px;
   padding: 0.7rem 1.1rem;
-  background: #229ed9;
+  background: var(--color-primary);
   color: #fff;
   cursor: pointer;
   font-weight: 700;
+}
+
+.surface-failure--mini-app .surface-failure__eyebrow {
+  color: #229ed9;
+}
+
+.surface-failure--mini-app button {
+  background: #229ed9;
 }
 
 button,
 input,
 select,
 textarea {
-  font: inherit;
+  font-family: inherit;
+  accent-color: var(--color-primary);
 }
 
 button,
@@ -118,8 +167,327 @@ li {
   text-wrap: pretty;
 }
 
+:focus-visible {
+  outline-color: var(--color-ring);
+}
+
 ::selection {
-  background: rgb(37 99 235 / 0.18);
+  background: rgb(185 68 112 / 0.18);
+}
+
+.hanori-sidebar {
+  background: linear-gradient(180deg, #fffafd, #fff 60%, #f7fafe);
+}
+
+.hanori-sidebar a[aria-current="page"] {
+  background: linear-gradient(100deg, #f8e7ef, #f3edf7);
+  box-shadow: inset 2px 0 var(--color-primary);
+}
+
+.hanori-workspace {
+  background:
+    radial-gradient(ellipse at 100% 0, rgb(167 203 229 / 0.12), transparent 34rem),
+    var(--color-background);
+}
+
+.workspace-content h1 {
+  font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.hanori-section-banner {
+  background: linear-gradient(120deg, var(--color-accent), var(--color-secondary));
+  color: var(--color-foreground);
+}
+
+.hanori-section-banner h1 {
+  font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+}
+
+.hanori-json {
+  padding: 1rem;
+  background: var(--color-code);
+  color: var(--color-code-foreground);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.hanori-json-string {
+  color: #d4b4d9;
+}
+
+.hanori-json-number {
+  color: var(--color-brand-blue);
+}
+
+.hanori-json-boolean {
+  color: var(--color-brand-pink);
+}
+
+.hanori-json-muted {
+  color: #c5bacb;
+}
+
+@media (max-width: 47.99rem) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select,
+  [role="combobox"] {
+    min-height: 40px;
+    font-size: 16px;
+  }
+}
+
+.bot-list-page h1,
+.bot-dashboard-page h1 {
+  font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
+  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+}
+
+.bot-list-page > div:first-child {
+  padding-block: 0.5rem 1.5rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.bot-list-page [data-testid="bot-card"] > a {
+  padding: 1.25rem;
+}
+
+.bot-initial {
+  font-family: "Iowan Old Style", "Songti SC", Georgia, serif;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.bot-list-page [data-testid="bot-card"]:nth-child(3n + 2) .bot-initial {
+  background: #eaf1fa;
+  color: #527495;
+}
+
+.bot-list-page [data-testid="bot-card"]:nth-child(3n + 3) .bot-initial {
+  background: #f0eafa;
+  color: #7f6198;
+}
+
+.bot-quick-link {
+  box-shadow: var(--shadow-surface);
+}
+
+@media (min-width: 48rem) {
+  .hanori-app-shell {
+    background: #f6f1f7;
+  }
+
+  .hanori-workspace {
+    margin: 0.75rem 0.75rem 0.75rem 0;
+    border-radius: 1.5rem;
+    box-shadow:
+      0 0 0 1px oklch(0 0 0 / 0.045),
+      0 6px 24px oklch(0 0 0 / 0.025);
+  }
+
+  .hanori-sidebar {
+    border-inline-end-color: transparent;
+  }
+}
+
+.workspace-content .ui-card {
+  border-radius: 1rem;
+}
+
+.hanori-sidebar nav a {
+  transition:
+    background-color 150ms ease-out,
+    color 150ms ease-out;
+}
+
+.hanori-sidebar nav a svg {
+  stroke-width: 1.5;
+}
+
+.hanori-sidebar nav a[aria-current="page"] svg {
+  stroke-width: 2;
+}
+
+.hanori-sidebar nav p {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+
+.sidebar-brand {
+  background: radial-gradient(ellipse at 0 0, rgb(239 172 201 / 0.13), transparent 85%);
+}
+
+.hanori-empty-mark {
+  display: grid;
+  width: 5rem;
+  height: 5rem;
+  place-items: center;
+  border-radius: 42% 58% 55% 45%;
+  background: linear-gradient(135deg, var(--color-accent), #eaf3fb);
+}
+
+.login-page {
+  display: flex;
+  min-height: 100svh;
+  flex-direction: column;
+  padding: 2rem clamp(1.25rem, 5vw, 4rem);
+  background:
+    radial-gradient(ellipse at 5% 45%, #fce5ee 0, transparent 55%),
+    radial-gradient(ellipse at 100% 5%, #e6f1fa 0, transparent 45%), #fffafc;
+}
+
+.login-topbar,
+.login-main {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+}
+
+.login-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.login-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1.25rem;
+  font-weight: 750;
+  letter-spacing: -0.04em;
+}
+
+.login-main {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 400px);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 5rem);
+  padding-block: 2.5rem;
+}
+
+.login-eyebrow {
+  margin: 1.5rem 0 0.75rem;
+  color: var(--color-primary);
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.login-intro h1 {
+  margin: 0;
+  font-size: clamp(2rem, 3.4vw, 2.75rem);
+  font-weight: 750;
+  letter-spacing: -0.05em;
+  line-height: 1.3;
+  white-space: pre-line;
+}
+
+.login-intro-description {
+  max-width: 31rem;
+  margin-block: 1rem 0;
+  color: var(--color-muted-foreground);
+  font-size: 1rem;
+  line-height: 1.8;
+}
+
+.login-scene {
+  overflow: hidden;
+  aspect-ratio: 3 / 2;
+  border: 1px solid rgb(255 255 255 / 0.85);
+  border-radius: 1.75rem 1.75rem 4rem 1.75rem;
+  background: linear-gradient(135deg, #d9edf8, #fce3ed);
+  box-shadow: 0 12px 40px rgb(82 35 64 / 0.06);
+}
+
+.login-scene img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 75% 25%;
+}
+
+.login-card {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 1.5rem;
+  background: rgb(255 255 255 / 0.92);
+  box-shadow: 0 18px 60px rgb(90 46 75 / 0.07);
+}
+
+.login-card::before {
+  position: absolute;
+  inset: 0 1.5rem auto;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-brand-pink), var(--color-brand-blue));
+  content: "";
+}
+
+.login-card input,
+.login-card button {
+  min-height: 2.75rem;
+}
+
+.login-footer {
+  justify-content: center;
+}
+
+@media (max-width: 767px) {
+  .login-page {
+    padding-block: 1.25rem 1.5rem;
+  }
+
+  .login-wordmark {
+    font-size: 1rem;
+  }
+
+  .login-wordmark img {
+    width: 2.25rem;
+    height: 2.25rem;
+    flex-shrink: 0;
+  }
+
+  .login-main {
+    max-width: 440px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.75rem;
+    padding-block: 1.5rem;
+  }
+
+  .login-intro h1 {
+    font-size: 1.75rem;
+  }
+
+  .login-intro-description {
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  .login-eyebrow {
+    margin: 1rem 0 0.5rem;
+  }
+
+  .login-scene {
+    aspect-ratio: 2 / 1;
+    border-radius: 1.25rem 1.25rem 2.5rem 1.25rem;
+  }
+
+  .login-scene img {
+    object-position: 75% 0%;
+  }
+
+  .login-card > div {
+    padding-inline: 1.25rem;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -130,7 +498,7 @@ li {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: rgb(100 116 139 / 0.38);
+  background: rgb(117 102 118 / 0.38);
   background-clip: padding-box;
 }
 

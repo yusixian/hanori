@@ -72,7 +72,7 @@ function HistoryDetailModal({
           )}
         </div>
         {record.errorMessage ? (
-          <p className="text-sm text-red-500">{record.errorMessage}</p>
+          <p className="text-destructive text-sm">{record.errorMessage}</p>
         ) : (
           <CodeBlock className="max-h-none text-sm">{record.content}</CodeBlock>
         )}
@@ -183,7 +183,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
 
       {toast && (
         <p
-          className={`text-sm ${toast.type === "error" ? "text-red-500" : "text-green-600 dark:text-green-400"}`}
+          className={`text-sm ${toast.type === "error" ? "text-destructive" : "text-success dark:text-success"}`}
         >
           {toast.message}
           <Button
@@ -256,7 +256,9 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
                   onClick={() => deleteConfig(cfg.id)}
                   title={confirmDelete === cfg.id ? t("rss.clickAgain") : t("common:common.delete")}
                 >
-                  <Trash2 className={`h-4 w-4 ${confirmDelete === cfg.id ? "" : "text-red-500"}`} />
+                  <Trash2
+                    className={`h-4 w-4 ${confirmDelete === cfg.id ? "" : "text-destructive"}`}
+                  />
                 </Button>
               </div>
             </div>
@@ -418,7 +420,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
                   <span>{rec.modelId}</span>
                 </div>
                 {rec.errorMessage && (
-                  <p className="mt-1 truncate text-xs text-red-500">{rec.errorMessage}</p>
+                  <p className="text-destructive mt-1 truncate text-xs">{rec.errorMessage}</p>
                 )}
               </div>
               <div className="ml-2 flex shrink-0 items-center gap-1">
@@ -443,7 +445,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Trash2
-                      className={`h-4 w-4 ${confirmDelete === rec.id ? "" : "text-red-500"}`}
+                      className={`h-4 w-4 ${confirmDelete === rec.id ? "" : "text-destructive"}`}
                     />
                   )}
                 </Button>

@@ -8,7 +8,7 @@ export const miniApp = {
     privacyBody: "面板权限与 AI 白名单独立；此页不显示配置、凭据或私有群组数据。",
     commandLabel: "Telegram 命令 /{{command}}",
     projectTitle: "关于项目",
-    projectBody: "COS Tool Bot 是可自托管的多 Bot 助手；公开帮助与授权管理共用此面板。",
+    projectBody: "Hanori · 花织是可自托管的 AI 伙伴，支持多个 Bot；公开帮助与授权管理共用此面板。",
   },
   categories: {
     general: "常用",

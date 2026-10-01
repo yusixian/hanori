@@ -36,7 +36,7 @@ export default defineConfig(({ mode }) => {
       port: panelPort,
       strictPort: true,
       proxy: {
-        "/api": {
+        "^/api(?:/|$)": {
           target: `http://localhost:${serverPort}`,
           changeOrigin: true,
         },

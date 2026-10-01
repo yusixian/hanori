@@ -1,7 +1,9 @@
 export const auth = {
   login: {
     title: "欢迎回来",
-    description: "登录 cos-tool-bot 管理面板",
+    description: "登录你的花织工作台",
+    headline: "聊聊日常，\n也一起创造。",
+    companionDescription: "在 Telegram 相遇，留下值得记住的片段，把灵感画出来。",
     emailLabel: "邮箱",
     emailPlaceholder: "you@example.com",
     passwordLabel: "密码",
@@ -31,6 +33,15 @@ export const auth = {
     success: "密码已重置，请重新登录。",
   },
   settings: {
+    eyebrow: "花织 · 你的专属空间",
+    workspaceLabel: "工作区",
+    sectionNavigation: "设置分区",
+    securityTitle: "登录与安全",
+    securityDescription: "更换密码后，其他设备上的登录会失效。",
+    passwordHint: "新密码至少需要 8 位",
+    teamTitle: "一起使用花织",
+    teamDescription: "邀请你信任的人，为每个人安排合适的权限。",
+    memberRole: "{{name}}的角色",
     loading: "正在加载设置…",
     title: "设置",
     description: "管理账户、成员和工作区权限",

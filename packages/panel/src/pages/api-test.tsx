@@ -52,6 +52,17 @@ const PRESETS = [
   },
 ];
 
+const jsonStyles = {
+  ...darkStyles,
+  container: "hanori-json",
+  stringValue: "hanori-json-string",
+  numberValue: "hanori-json-number",
+  booleanValue: "hanori-json-boolean",
+  nullValue: "hanori-json-muted",
+  undefinedValue: "hanori-json-muted",
+  otherValue: "hanori-json-muted",
+};
+
 export function ApiTestPage() {
   const { t, i18n } = useTranslation("admin");
   const nextIdRef = useRef(0);
@@ -252,7 +263,7 @@ export function ApiTestPage() {
               {t("apiTest.response")}
               {selectedEntry.status != null && (
                 <span
-                  className={`ml-2 text-sm font-normal ${selectedEntry.status < 300 ? "text-green-600" : "text-red-600"}`}
+                  className={`ml-2 text-sm font-normal ${selectedEntry.status < 300 ? "text-success" : "text-destructive"}`}
                 >
                   HTTP {selectedEntry.status}
                 </span>
@@ -261,12 +272,12 @@ export function ApiTestPage() {
           </CardHeader>
           <CardContent>
             {selectedEntry.error ? (
-              <div className="rounded bg-red-500/10 p-3 text-sm text-red-600">
+              <div className="bg-destructive/10 text-destructive rounded p-3 text-sm">
                 {selectedEntry.error}
               </div>
             ) : (
-              <div className="max-h-[600px] overflow-auto rounded bg-gray-950 p-3">
-                <JsonView data={selectedEntry.data as object} style={darkStyles} />
+              <div className="bg-code max-h-[600px] overflow-auto rounded p-3">
+                <JsonView data={selectedEntry.data as object} style={jsonStyles} />
               </div>
             )}
           </CardContent>
@@ -301,8 +312,8 @@ export function ApiTestPage() {
                     className={cn(
                       "rounded px-1.5 py-0.5 font-mono text-xs",
                       entry.method === "GET"
-                        ? "bg-blue-500/10 text-blue-600"
-                        : "bg-green-500/10 text-green-600",
+                        ? "bg-primary/10 text-primary"
+                        : "bg-success/10 text-success",
                     )}
                   >
                     {entry.method}
@@ -314,10 +325,10 @@ export function ApiTestPage() {
                     className={cn(
                       "text-xs",
                       entry.error
-                        ? "text-red-500"
+                        ? "text-destructive"
                         : entry.status && entry.status < 300
-                          ? "text-green-500"
-                          : "text-yellow-500",
+                          ? "text-success"
+                          : "text-warning",
                     )}
                   >
                     {entry.error ? "ERR" : entry.status}

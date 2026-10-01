@@ -76,7 +76,7 @@ function highlightDynamic(text: string): React.ReactNode[] {
     parts.push(
       <span
         key={key++}
-        className="rounded border border-dashed border-amber-500/40 bg-amber-500/10 px-1 text-amber-300"
+        className="border-brand-pink/40 bg-brand-pink/10 text-brand-pink rounded border border-dashed px-1"
       >
         {matchedPattern}
       </span>,
@@ -197,7 +197,7 @@ export function PromptPreviewDialog({
         {/* Header */}
         <div className="flex items-center justify-between border-b px-5 py-4">
           <div className="flex items-center gap-3">
-            <Eye className="h-5 w-5 text-purple-500" />
+            <Eye className="text-lilac-foreground h-5 w-5" />
             <h2 id="prompt-preview-title" className="text-lg font-semibold">
               {t("promptPreview.title")}
             </h2>
@@ -321,7 +321,7 @@ export function PromptPreviewDialog({
           </div>
           <div className="flex items-center gap-2">
             <span
-              className="inline-block h-2.5 w-2.5 rounded border border-dashed border-amber-400/60 bg-amber-500/10"
+              className="border-brand-pink/60 bg-brand-pink/10 inline-block h-2.5 w-2.5 rounded border border-dashed"
               title={t("promptPreview.dynamicPlaceholder")}
             />
             <span className="text-muted-foreground text-xs">

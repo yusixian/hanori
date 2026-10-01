@@ -53,8 +53,8 @@ export function ConversationListItem({
         className={cn(
           "focus-visible:ring-ring relative w-full min-w-0 rounded-xl px-3 py-3 pr-12 text-left transition-[background-color,box-shadow] duration-150 ease-out focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none",
           selected
-            ? "bg-accent shadow-[inset_3px_0_0_#2563eb]"
-            : "hover:bg-slate-50 active:bg-slate-100",
+            ? "bg-accent shadow-[inset_3px_0_0_var(--color-primary)]"
+            : "hover:bg-background active:bg-surface-subtle",
         )}
       >
         <div className="flex min-w-0 items-center gap-2">

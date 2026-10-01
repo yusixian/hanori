@@ -3,7 +3,7 @@ title: 备份与升级
 description: 在迁移、升级和回滚前保护数据库、文件与加密数据。
 ---
 
-cos-tool-bot 的数据库中可能包含 Bot 配置、认证、消息、档案、记忆、日志、RSS、总结、生成记录和集成凭据。生产升级的第一步应是可恢复的备份，而不是直接重建容器。
+Hanori 的数据库中可能包含 Bot 配置、认证、消息、档案、记忆、日志、RSS、总结、生成记录和集成凭据。生产升级的第一步应是可恢复的备份，而不是直接重建容器。
 
 ## 备份什么
 
@@ -26,6 +26,26 @@ cos-tool-bot 的数据库中可能包含 Bot 配置、认证、消息、档案�
 ## 执行升级
 
 使用实例维护者提供的更新脚本或 Compose 流程，先拉取目标版本，再构建并启动数据库和 app。应用启动时会执行尚未应用的 Drizzle 迁移；迁移完成后再启动 BotPool 和可选 worker。
+
+对于通过 Git 克隆且数据库已经运行的直接 Compose 部署，可以指定一个已审查的 release tag：
+
+```bash
+./scripts/update-production.sh --version vX.Y.Z
+```
+
+用远程仓库真实存在的版本替换 `vX.Y.Z`。脚本从 `DEPLOY_REMOTE`（默认 `origin`）读取 tag 对应的完整 commit，验证数据库备份后进入 detached HEAD，构建并等待 `/api/health/ready`。只允许当前代码的向前升级，不自动降级或切换到没有共同历史的仓库。`--force` 可与 `--version` 一起使用以重新部署当前版本。不要把成功备份等同于已完成数据库恢复演练。
+
+已有维护者部署仍可在 `main` 分支执行不带 `--version` 的旧命令。跟随 `main` 使用的是开发分支状态；第三方长期实例应选定已发布 tag。备份目录可以用 `DEPLOY_BACKUP_DIR` 指定，旧的 `COS_BOT_BACKUP_DIR` 继续兼容；Compose 项目名通过进程环境变量 `DEPLOY_PROJECT_NAME` 指定，默认仍是 `cos-bot-prod`。这些参数不会自动读取 `.env`，请在调用命令时显式传入或写入自己受保护的运维配置。
+
+### 更换产品名或源码仓库
+
+界面名称或仓库目录的变化不需要数据库迁移。继续使用原来的 Compose 项目名、数据库名、volume、认证组织标识和 `.env` 中的稳定密钥。改变 Compose 项目名可能创建新的空 volume，使原数据看起来消失。
+
+Hanori · 花织沿用早期 `cos-tool-bot` 实例的存储标识：`@cos-tool-bot/*` workspace scope、`cos_tool_bot` 数据库、默认 `cos-bot-prod` Compose 项目、认证组织 slug、浏览器语言与 Mini App 本地存储 key，以及备份文件默认前缀继续兼容。旧组织默认名在工作台中显示为新品牌，数据库记录和自定义组织名称不会被改写。已有 OAuth 客户端无需为了显示名称重新注册；新建客户端会使用 Hanori 名称。
+
+私有源码仓库与独立初始化的公开源码仓库可能没有共同 Git 历史。不要用 `git pull`、强制 reset 或改远程后的一键升级来跨越这条边界；在新目录取得目标源码，带上受保护的配置，先备份数据库和文件，再以原来的 Compose 项目名重建。停止旧 app 后才启动新 app，避免同一 Telegram Bot 被两个实例同时轮询。Dokploy 的新应用会有新的资源命名，需要按平台的备份恢复流程迁移全部 volume，不能只移动源码。
+
+源码归档没有 `.git`。构建归档前，设置公开 release 对应的完整 Git SHA 为 `APP_VERSION`；健康接口版本继续代表实际部署来源，不使用产品 SemVer 替代。归档部署使用手动 Compose 更新流程，不运行需要 Git 的更新脚本。
 
 如果从不带 pgvector 的 PostgreSQL 镜像升级，先确认数据库大版本和 volume 兼容，再让应用创建 `vector` 扩展、列和索引。embedding 回填可以后置；未回填的数据通常仍可走关键词搜索，但语义搜索覆盖不完整。
 

@@ -1701,7 +1701,7 @@ export function botsRoutes(
       zValidator(
         "json",
         z.object({
-          message: z.string().min(1).max(500).default("Test message from cos-tool-bot panel"),
+          message: z.string().min(1).max(500).default("Test message from Hanori workspace"),
         }),
       ),
       async (c) => {

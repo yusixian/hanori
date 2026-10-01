@@ -2,9 +2,11 @@
 
 set -Eeuo pipefail
 
-PROJECT_NAME="cos-bot-prod"
+PROJECT_NAME="${DEPLOY_PROJECT_NAME:-cos-bot-prod}"
 BRANCH="main"
-BACKUP_DIR="${COS_BOT_BACKUP_DIR:-$HOME/cos-tool-bot-backups}"
+BACKUP_DIR="${DEPLOY_BACKUP_DIR:-${COS_BOT_BACKUP_DIR:-$HOME/cos-tool-bot-backups}}"
+REMOTE="${DEPLOY_REMOTE:-origin}"
+VERSION=""
 DEPLOYED_MARKER="$BACKUP_DIR/last-deployed-commit"
 FORCE=0
 
@@ -13,9 +15,13 @@ usage() {
 用法：
   ./scripts/update-production.sh          拉取 main，有更新时备份并部署
   ./scripts/update-production.sh --force  即使代码未更新也重新备份并部署
+  ./scripts/update-production.sh --version vX.Y.Z  部署远程已发布 tag，使用 detached HEAD
 
 可选环境变量：
   COS_BOT_BACKUP_DIR=/path/to/backups      修改数据库备份目录
+  DEPLOY_BACKUP_DIR=/path/to/backups       通用备份目录（优先于旧变量）
+  DEPLOY_PROJECT_NAME=cos-bot-prod          已有实例保持原项目名，避免创建空 volume
+  DEPLOY_REMOTE=origin                    获取版本的远程名称
 
 .env 可选功能：
   COMPOSE_PROFILES=coding                  部署 Pi worker 与出口代理
@@ -143,43 +149,48 @@ remove_disabled_coding_services() {
   printf '已确认禁用的 Pi worker 和出口代理容器均不存在。\n'
 }
 
-case "${1:-}" in
-  "") ;;
-  --force) FORCE=1 ;;
-  -h | --help)
-    usage
-    exit 0
-    ;;
-  *)
-    usage >&2
-    exit 2
-    ;;
-esac
-
-[[ $# -le 1 ]] || {
-  usage >&2
-  exit 2
-}
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force) FORCE=1; shift ;;
+    --version)
+      [[ $# -ge 2 && -z "$VERSION" ]] || fail "--version 需要且只能填写一个 vX.Y.Z tag。"
+      VERSION="$2"
+      [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "版本必须为 vX.Y.Z。"
+      shift 2
+      ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ "$PROJECT_NAME" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || fail "DEPLOY_PROJECT_NAME 不是有效的 Compose 项目名。"
+[[ "$REMOTE" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || fail "DEPLOY_REMOTE 不是有效的远程名称。"
 
 command -v git >/dev/null 2>&1 || fail "没有找到 git。"
 command -v docker >/dev/null 2>&1 || fail "没有找到 docker。"
 docker compose version >/dev/null 2>&1 || fail "没有找到 Docker Compose 插件。"
 docker info >/dev/null 2>&1 || fail "Docker 没有运行，或当前用户没有 Docker 权限。"
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd -P)"
 cd "$REPO_ROOT"
 
 [[ "$(git rev-parse --show-toplevel)" == "$REPO_ROOT" ]] || fail "脚本不在仓库根目录中。"
-[[ "$(git branch --show-current)" == "$BRANCH" ]] || fail "生产服务器必须位于 main 分支。"
+if [[ -z "$VERSION" ]]; then
+  [[ "$(git branch --show-current)" == "$BRANCH" ]] || fail "跟随 main 更新需要位于 main 分支；发布版升级请使用 --version。"
+fi
 [[ -z "$(git status --porcelain)" ]] || fail "仓库存在未提交文件。请先处理 git status 显示的内容。"
-git remote get-url origin >/dev/null 2>&1 || fail "仓库没有 origin 远程地址。"
+git remote get-url "$REMOTE" >/dev/null 2>&1 || fail "仓库没有指定的远程地址。"
 
 step 1 "检查远程更新"
-git fetch --prune origin "$BRANCH"
+if [[ -n "$VERSION" ]]; then
+  git fetch --no-tags "$REMOTE" "refs/tags/$VERSION"
+  TARGET_COMMIT="$(git rev-parse 'FETCH_HEAD^{commit}')"
+else
+  git fetch "$REMOTE" "refs/heads/$BRANCH"
+  TARGET_COMMIT="$(git rev-parse 'FETCH_HEAD^{commit}')"
+fi
 
 CURRENT_COMMIT="$(git rev-parse HEAD)"
-TARGET_COMMIT="$(git rev-parse "origin/$BRANCH")"
 CURRENT_SHORT="$(git rev-parse --short "$CURRENT_COMMIT")"
 TARGET_SHORT="$(git rev-parse --short "$TARGET_COMMIT")"
 DEPLOYED_COMMIT=""
@@ -189,13 +200,16 @@ if [[ -f "$DEPLOYED_MARKER" ]]; then
 fi
 
 if [[ "$CURRENT_COMMIT" == "$TARGET_COMMIT" && "$DEPLOYED_COMMIT" == "$TARGET_COMMIT" && "$FORCE" -eq 0 ]]; then
+  if [[ -n "$VERSION" ]]; then
+    git checkout --detach "$TARGET_COMMIT"
+  fi
   printf '当前已经是最新版本 %s，无需部署。\n' "$CURRENT_SHORT"
   exit 0
 fi
 
 if [[ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]]; then
   git merge-base --is-ancestor "$CURRENT_COMMIT" "$TARGET_COMMIT" ||
-    fail "本地 main 与 origin/main 已分叉，脚本不会自动覆盖本地提交。"
+    fail "目标版本不是当前代码的向前升级。脚本不自动降级、跨历史迁移或覆盖本地提交。"
 
   printf '准备更新：%s -> %s\n' "$CURRENT_SHORT" "$TARGET_SHORT"
   git log --oneline --no-decorate "$CURRENT_COMMIT..$TARGET_COMMIT"
@@ -239,7 +253,7 @@ fi
 
 printf '备份完成：%s\n' "$BACKUP_PATH"
 
-step 3 "更新 main 分支"
+step 3 "更新到目标版本"
 INFRA_CHANGED=0
 CHANGE_BASE="$CURRENT_COMMIT"
 
@@ -252,8 +266,10 @@ else
   INFRA_CHANGED=1
 fi
 
-if [[ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]]; then
-  git merge --ff-only "origin/$BRANCH"
+if [[ -n "$VERSION" ]]; then
+  git checkout --detach "$TARGET_COMMIT"
+elif [[ "$CURRENT_COMMIT" != "$TARGET_COMMIT" ]]; then
+  git merge --ff-only "$TARGET_COMMIT"
 fi
 
 git diff --quiet "$CHANGE_BASE" "$TARGET_COMMIT" -- \
@@ -298,7 +314,7 @@ step 7 "等待健康检查"
 HEALTHY=0
 for ((attempt = 1; attempt <= 60; attempt++)); do
   if "${COMPOSE[@]}" exec -T app \
-    wget --spider -q http://localhost:3000/api/health >/dev/null 2>&1; then
+    wget --spider -q http://localhost:3000/api/health/ready >/dev/null 2>&1; then
     HEALTHY=1
     break
   fi

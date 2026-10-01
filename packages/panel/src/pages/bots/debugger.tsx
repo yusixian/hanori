@@ -367,7 +367,7 @@ export function BotDebuggerPage() {
       <div
         role="tablist"
         aria-label={t("debugger.tabs.ariaLabel")}
-        className="flex w-fit max-w-full gap-1 rounded-lg bg-slate-100 p-1 xl:shrink-0"
+        className="bg-surface-subtle flex w-fit max-w-full gap-1 rounded-lg p-1 xl:shrink-0"
       >
         {(["runs", "engagement"] as const).map((tab) => (
           <button
@@ -377,7 +377,7 @@ export function BotDebuggerPage() {
             id={`debugger-tab-${tab}`}
             aria-controls={`debugger-panel-${tab}`}
             aria-selected={activeTab === tab}
-            className="focus-visible:ring-ring rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:outline-none aria-selected:bg-white aria-selected:text-slate-950 aria-selected:shadow-sm"
+            className="focus-visible:ring-ring aria-selected:text-foreground rounded-md px-3 py-2 text-sm font-medium transition-[background-color,color,box-shadow] focus-visible:ring-2 focus-visible:outline-none aria-selected:bg-white aria-selected:shadow-sm"
             onClick={() => {
               const next = new URLSearchParams(searchParams);
               if (tab === "runs") next.delete("tab");
@@ -489,7 +489,7 @@ export function BotDebuggerPage() {
                 <p className="text-muted-foreground text-sm">
                   {t("debugger.richMessage.description")}
                 </p>
-                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <p className="bg-warning-soft text-warning rounded-lg px-3 py-2 text-xs">
                   {t("debugger.richMessage.warning")}
                 </p>
                 <label className="space-y-1.5">
@@ -545,7 +545,7 @@ export function BotDebuggerPage() {
                   </p>
                 )}
                 {richReceipt && (
-                  <p role="status" className="text-sm text-emerald-700">
+                  <p role="status" className="text-success text-sm">
                     {t("debugger.richMessage.success", {
                       messageId: richReceipt.messageId,
                       chatId: richReceipt.chatId,
@@ -693,11 +693,11 @@ export function BotDebuggerPage() {
                     )}
                   </pre>
                 </details>
-                <div className="relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-px before:bg-slate-200">
+                <div className="before:bg-surface-subtle relative space-y-3 before:absolute before:top-2 before:bottom-2 before:left-[7px] before:w-px">
                   {sortedEvents.map((event) => (
                     <div key={event.id} className="relative pl-7">
                       <span
-                        className={`absolute top-1.5 left-0 size-3.5 rounded-full border-2 border-white ${event.level === "error" ? "bg-red-500" : "bg-blue-500"}`}
+                        className={`absolute top-1.5 left-0 size-3.5 rounded-full border-2 border-white ${event.level === "error" ? "bg-destructive" : "bg-primary"}`}
                       />
                       <div className="rounded-lg border bg-white p-3">
                         <div className="flex items-center justify-between gap-3">

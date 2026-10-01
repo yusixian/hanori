@@ -71,7 +71,7 @@ export function BotDashboardPage() {
       <Card role="alert">
         <CardContent className="flex flex-col items-start gap-4 px-5 py-8 sm:px-6 sm:py-8">
           <div>
-            <p className="font-semibold text-slate-900">{t("dashboard.loadErrorTitle")}</p>
+            <p className="text-foreground font-semibold">{t("dashboard.loadErrorTitle")}</p>
             <p className="text-muted-foreground mt-1 text-sm">
               {t("dashboard.loadErrorDescription")}
             </p>
@@ -130,10 +130,10 @@ export function BotDashboardPage() {
   };
 
   return (
-    <div className="space-y-7">
+    <div className="bot-dashboard-page space-y-7">
       {isError && (
         <div
-          className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+          className="border-warning-border bg-warning-soft text-warning flex flex-col gap-3 rounded-xl border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
           role="alert"
         >
           <span className="flex items-start gap-2">
@@ -170,13 +170,17 @@ export function BotDashboardPage() {
               <Link
                 key={item.to}
                 to={item.to}
-                className="group flex min-h-11 items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition-[border-color,color,box-shadow] duration-150 hover:border-slate-300 hover:text-blue-700 hover:shadow-[var(--shadow-surface-hover)] focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+                className="bot-quick-link group border-border text-foreground hover:border-input hover:text-primary focus-visible:ring-ring flex min-h-11 items-center gap-2.5 rounded-xl border bg-white px-3.5 py-2.5 text-sm font-medium transition-[border-color,color,box-shadow] duration-150 hover:shadow-[var(--shadow-surface-hover)] focus-visible:ring-2 focus-visible:outline-none"
               >
-                <Icon aria-hidden="true" className="size-4 shrink-0 text-slate-500" />
+                <Icon
+                  aria-hidden="true"
+                  strokeWidth={1.5}
+                  className="text-primary size-4 shrink-0"
+                />
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 <ArrowUpRight
                   aria-hidden="true"
-                  className="size-3.5 shrink-0 text-slate-400 transition-colors duration-150 group-hover:text-blue-600"
+                  className="text-muted-foreground group-hover:text-primary size-3.5 shrink-0 transition-colors duration-150"
                 />
               </Link>
             );

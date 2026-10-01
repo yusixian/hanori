@@ -952,7 +952,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       {successMessage && (
         <div
           role="status"
-          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+          className="border-success-border bg-success-soft text-success rounded-lg border px-4 py-3 text-sm"
         >
           {successMessage}
         </div>
@@ -1250,7 +1250,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
       {loadError === "stale" && hasCurrentData && (
         <div
           role="alert"
-          className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 sm:flex-row sm:items-center sm:justify-between"
+          className="border-warning-border bg-warning-soft text-warning flex flex-col gap-3 rounded-lg border px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
         >
           <span className="flex items-start gap-2">
             <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
@@ -1534,7 +1534,7 @@ function BotMemoriesContent({ botId }: { botId: string }) {
                           pendingMutation.memoryId === m.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
-                            <Trash2 className="h-4 w-4 text-red-500" />
+                            <Trash2 className="text-destructive h-4 w-4" />
                           )}
                         </Button>
                       </div>

@@ -125,7 +125,7 @@ export function GovernanceSubjectPicker({
           <span className={value ? "truncate" : "text-muted-foreground truncate"}>
             {visibleLabel}
           </span>
-          <ChevronDown className="size-4 shrink-0 text-slate-400" aria-hidden="true" />
+          <ChevronDown className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
         </Button>
       }
     >

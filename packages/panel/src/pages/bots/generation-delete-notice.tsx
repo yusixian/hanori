@@ -39,7 +39,7 @@ export function GenerationDeleteNotice({
               : "common.deleted";
   return (
     <div
-      className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${needsRecovery ? "border-amber-200 bg-amber-50 text-amber-900" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm ${needsRecovery ? "border-warning-border bg-warning-soft text-warning" : "border-success-border bg-success-soft text-success"}`}
       role={needsRecovery ? "alert" : "status"}
     >
       <span className="flex items-center gap-2">

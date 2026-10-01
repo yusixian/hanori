@@ -222,7 +222,7 @@ function toCharacterCandidate(item: DanbooruAutocompleteItem): DanbooruCharacter
 
 async function fetchJson<T>(fetchImpl: typeof fetch, url: URL, timeoutMs: number): Promise<T> {
   const response = await fetchImpl(url, {
-    headers: { "User-Agent": "cos-tool-bot/0.1 Danbooru tag lookup" },
+    headers: { "User-Agent": "Hanori/0.1 Danbooru tag lookup" },
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok) throw new Error(`Danbooru request failed (${response.status})`);

@@ -1,7 +1,10 @@
 export const auth = {
   login: {
     title: "Welcome back",
-    description: "Sign in to the cos-tool-bot admin panel",
+    description: "Sign in to your Hanori workspace",
+    headline: "Good company.\nRoom for imagination.",
+    companionDescription:
+      "Chat on Telegram, keep the moments that matter, and create something together.",
     emailLabel: "Email",
     emailPlaceholder: "you@example.com",
     passwordLabel: "Password",
@@ -31,6 +34,15 @@ export const auth = {
     success: "Your password has been reset. Please sign in again.",
   },
   settings: {
+    eyebrow: "Your corner of Hanori",
+    workspaceLabel: "Workspace",
+    sectionNavigation: "Settings sections",
+    securityTitle: "Sign-in & security",
+    securityDescription: "Changing your password signs out your other devices.",
+    passwordHint: "Use at least 8 characters",
+    teamTitle: "A space to share",
+    teamDescription: "Choose who joins your workspace and what they can do.",
+    memberRole: "Role for {{name}}",
     loading: "Loading settings…",
     title: "Settings",
     description: "Manage your account, members, and workspace permissions",

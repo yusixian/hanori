@@ -53,5 +53,5 @@ export interface EmailForwardConfigPublic {
   hasPassword: boolean;
 }
 
-export const DEFAULT_LARK_MENTION_MAP: Record<string, string> = {
-};
+// Instance-specific identities belong in each Bot's saved email configuration.
+export const DEFAULT_LARK_MENTION_MAP: Record<string, string> = {};

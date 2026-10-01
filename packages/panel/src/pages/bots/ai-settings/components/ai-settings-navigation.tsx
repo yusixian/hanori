@@ -58,14 +58,14 @@ export function AiSettingsNavigation({
                 className={cn(
                   "flex min-h-10 items-center justify-center gap-2 rounded-xl px-4 py-2 text-center transition-[background-color,color,box-shadow,transform] active:scale-[0.96]",
                   active
-                    ? "bg-blue-600 text-white shadow-[0_6px_16px_rgb(37_99_235/0.22)]"
-                    : "bg-white text-slate-600 shadow-sm ring-1 ring-slate-950/[0.05] hover:bg-slate-50 hover:text-slate-950",
+                    ? "bg-primary text-white shadow-[0_6px_16px_rgb(185_68_112/0.22)]"
+                    : "bg-white text-muted-foreground shadow-sm ring-1 ring-foreground/[0.05] hover:bg-background hover:text-foreground",
                 )}
               >
                 <span
                   className={cn(
                     "flex size-5 shrink-0 items-center justify-center",
-                    active ? "text-white" : "text-slate-400",
+                    active ? "text-white" : "text-muted-foreground",
                   )}
                 >
                   <item.icon className="size-4" />

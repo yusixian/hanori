@@ -39,7 +39,7 @@ export function Popover({
     onOpenChange: setIsOpen,
     placement,
     strategy: "fixed",
-    middleware: [offset(8), flip(), shift({ padding: 8 })],
+    middleware: [offset(8), flip(), shift({ padding: 8, crossAxis: true })],
     whileElementsMounted: autoUpdate,
   });
 
@@ -61,7 +61,7 @@ export function Popover({
             style={floatingStyles}
             {...getFloatingProps()}
             className={cn(
-              "z-50 rounded-xl bg-popover text-popover-foreground shadow-[0_0_0_1px_rgb(15_23_42/0.06),0_12px_32px_rgb(15_23_42/0.12)] outline-none",
+              "z-50 max-h-[calc(100dvh-1rem)] overflow-y-auto rounded-xl bg-popover text-popover-foreground shadow-[0_0_0_1px_rgb(48_39_52/0.06),0_12px_32px_rgb(48_39_52/0.12)] outline-none",
               className,
             )}
           >

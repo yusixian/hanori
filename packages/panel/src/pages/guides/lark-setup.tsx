@@ -112,7 +112,7 @@ export function LarkSetupGuidePage() {
                 href="https://myaccount.google.com/apppasswords"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-400 underline underline-offset-2"
+                className="text-primary underline underline-offset-2"
               >
                 {t("larkGuide.steps.email.googleAppPasswords")}
               </a>{" "}

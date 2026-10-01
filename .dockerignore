@@ -8,6 +8,8 @@ packages/docs/content/docs/changelog/v*.mdx
 .acceptance
 acceptance
 coverage
+**/__screenshots__
+**/.vitest-attachments
 .git
 !.git/
 .git/*
@@ -21,6 +23,15 @@ coverage
 data
 *.log
 .claude
+.lody
+.cos
+.superset
+.open-source
+open-source
+tasks
+backups
+temp
+downloads
 .cursor
 .vscode
 *.md

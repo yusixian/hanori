@@ -33,13 +33,13 @@ export function SelectMenu({
         id={id}
         aria-label={ariaLabel}
         className={cn(
-          "border-input focus-visible:ring-ring flex h-10 w-full items-center justify-between rounded-lg border bg-white px-3 text-sm shadow-sm outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50",
+          "border-input focus-visible:ring-ring/20 focus-visible:border-primary flex h-10 w-full items-center justify-between rounded-lg border bg-white px-3 text-sm shadow-sm outline-none focus-visible:ring-2 disabled:cursor-not-allowed disabled:opacity-50",
           className,
         )}
       >
         <SelectPrimitive.Value placeholder={placeholder} />
         <SelectPrimitive.Icon>
-          <ChevronDown className="size-4 text-slate-400" />
+          <ChevronDown className="text-muted-foreground size-4" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
