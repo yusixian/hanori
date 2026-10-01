@@ -10,6 +10,7 @@ import type {
   HarnessAdminProjectInput,
   HarnessAdminProjectPatch,
   HarnessAdminRepoList,
+  HarnessAdminRuntimeUpdate,
 } from "@cos-tool-bot/shared";
 
 export type HarnessAdminFetcher = (input: string, init?: RequestInit) => Promise<Response>;
@@ -27,6 +28,7 @@ const ERROR_CODES: readonly HarnessAdminErrorCode[] = [
   "read_only",
   "invalid",
   "github_unavailable",
+  "lody_unavailable",
 ];
 
 export class HarnessAdminApiError extends Error {
@@ -49,6 +51,8 @@ export interface HarnessAdminApi {
   updateProject(key: string, patch: HarnessAdminProjectPatch): Promise<HarnessAdminProject>;
   deleteProject(key: string): Promise<void>;
   updateExecution(execution: HarnessAdminExecution): Promise<HarnessAdminExecutionView>;
+  refreshExecution(): Promise<HarnessAdminExecutionView>;
+  updateRuntime(): Promise<HarnessAdminRuntimeUpdate>;
 }
 
 type Body = Record<string, unknown>;
@@ -198,6 +202,19 @@ export function createHarnessAdminApi({
     deleteProject: (key) => call(projectPath(key), () => undefined, "DELETE"),
     updateExecution: (execution) =>
       call("/execution", (body) => parseExecution(body["execution"]), "PUT", execution),
+    refreshExecution: () =>
+      call("/execution/refresh", (body) => parseExecution(body["execution"]), "POST"),
+    updateRuntime: () =>
+      call(
+        "/runtime/update",
+        (body) => {
+          const runtime = body["runtime"];
+          return isRecord(runtime) && typeof runtime["updated"] === "boolean"
+            ? (runtime as unknown as HarnessAdminRuntimeUpdate)
+            : null;
+        },
+        "POST",
+      ),
   };
 }
 

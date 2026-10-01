@@ -151,7 +151,7 @@ export class HarnessScheduler {
 
   private async runTick() {
     const { service } = this.work;
-    if (!service.active || !service.telegram) return;
+    if (!service.active || !service.telegram || service.lodyUpdating) return;
     for (const step of [
       () => this.recoverStale(),
       () => this.startQueued(),
@@ -161,6 +161,7 @@ export class HarnessScheduler {
       () => service.releases.poll(),
       () => this.reconciler.run(),
     ]) {
+      if (service.lodyUpdating) return;
       try {
         await step();
       } catch (error) {
@@ -329,6 +330,7 @@ export class HarnessScheduler {
   ): Promise<boolean> {
     const { service } = this.work;
     return this.work.withRequest(request.id, async () => {
+      if (service.lodyUpdating) return false;
       const now = service.now();
       if (
         !(await service.store.transitionRequest(request.id, [S.queued], S.starting, {

@@ -38,6 +38,32 @@ async function failure(promise: Promise<unknown>): Promise<HarnessAdminApiError>
 }
 
 describe("harness admin client", () => {
+  it("sends CSRF-protected maintenance requests from the Mini App", async () => {
+    const runtime = {
+      version: "0.103.0",
+      machineName: "server",
+      updating: false,
+      canUpdate: true,
+      updated: true,
+    };
+    const execution = {
+      effective: { agentConfig: null, model: null, effort: null },
+      panel: null,
+      agents: [],
+    };
+    const { calls, fetcher } = captureFetch(() => Response.json({ ok: true, runtime, execution }));
+    const api = createMiniAppHarnessAdminApi("bot", "csrf", fetcher);
+    await expect(api.updateRuntime()).resolves.toEqual(runtime);
+    await expect(api.refreshExecution()).resolves.toEqual(execution);
+    expect(calls.map((call) => call.url)).toEqual([
+      "/api/mini-app/bot/harness/runtime/update",
+      "/api/mini-app/bot/harness/execution/refresh",
+    ]);
+    for (const call of calls) {
+      expect(call.init.method).toBe("POST");
+      expect(new Headers(call.init.headers).get("x-mini-app-csrf")).toBe("csrf");
+    }
+  });
   it("adds the Mini App CSRF header to writes only", async () => {
     const { calls, fetcher } = captureFetch(() =>
       Response.json({ ok: true, project: { key: "koyori" } }),

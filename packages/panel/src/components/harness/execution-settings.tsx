@@ -2,8 +2,9 @@ import type {
   HarnessAdminAgentOption,
   HarnessAdminExecution,
   HarnessAdminExecutionView,
+  HarnessAdminRuntimeUpdate,
 } from "@cos-tool-bot/shared";
-import { ChevronDown, Cpu, RotateCcw, Save } from "lucide-react";
+import { ChevronDown, Cpu, Download, RefreshCw, RotateCcw, Save } from "lucide-react";
 import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { HarnessAdminApiError, type HarnessAdminApi } from "@/lib/harness-admin-client";
@@ -185,7 +186,7 @@ export function ExecutionFields({
             <FreeText
               id={`${id}-effort`}
               value={draft.effort}
-              disabled={disabled}
+              disabled={disabled || efforts?.length === 0}
               placeholder={t("execution.default")}
               list={allEfforts.length > 0 ? `${id}-efforts` : undefined}
               onChange={(effort) => onChange({ ...draft, effort })}
@@ -257,11 +258,34 @@ export function GlobalExecutionCard({
   const { t } = useTranslation("harness");
   const [draft, setDraft] = useState(view.panel ?? DEFAULT_EXECUTION);
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<"save" | "restore" | null>(null);
+  const [busy, setBusy] = useState<"save" | "restore" | "refresh" | "update" | null>(null);
   const [error, setError] = useState<HarnessAdminApiError | null>(null);
   const [saved, setSaved] = useState(false);
+  const [runtimeResult, setRuntimeResult] = useState<HarnessAdminRuntimeUpdate | null>(null);
+  const [refreshed, setRefreshed] = useState(false);
   const dirty = !sameExecution(normalizeExecution(draft), view.panel ?? DEFAULT_EXECUTION);
   const summary = formatExecution(view.effective, view.agents);
+  const maintaining = busy !== null || view.runtime?.updating === true;
+
+  const maintain = async (action: "refresh" | "update") => {
+    setBusy(action);
+    setError(null);
+    setRefreshed(false);
+    setRuntimeResult(null);
+    try {
+      if (action === "update") setRuntimeResult(await api.updateRuntime());
+      onSaved(await api.refreshExecution());
+      setRefreshed(true);
+    } catch (cause) {
+      setError(
+        cause instanceof HarnessAdminApiError
+          ? cause
+          : new HarnessAdminApiError(String(cause), 0, "unavailable"),
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const submit = async (execution: HarnessAdminExecution, action: "save" | "restore") => {
     setBusy(action);
@@ -296,7 +320,62 @@ export function GlobalExecutionCard({
         <span className="harness-hint">{t("execution.effective")}</span>
         <strong>{summary ?? t("execution.default")}</strong>
       </p>
-      {view.agents === null ? <Notice kind="warning">{t("execution.unreachable")}</Notice> : null}
+      <div className="harness-runtime">
+        {view.runtime ? (
+          <p className="harness-hint">
+            {t("execution.cliVersion", {
+              machine: view.runtime.machineName,
+              version: runtimeResult?.version ?? view.runtime.version ?? "—",
+            })}
+          </p>
+        ) : null}
+        <div className="harness-actions">
+          <button
+            type="button"
+            className="harness-button is-secondary"
+            disabled={maintaining}
+            onClick={() => void maintain("refresh")}
+          >
+            <RefreshCw aria-hidden="true" />
+            {t(busy === "refresh" ? "execution.refreshing" : "execution.refreshModels")}
+          </button>
+          <button
+            type="button"
+            className="harness-button is-secondary"
+            disabled={maintaining || !view.runtime?.canUpdate}
+            onClick={() => void maintain("update")}
+          >
+            <Download aria-hidden="true" />
+            {t(
+              busy === "update" || view.runtime?.updating
+                ? "execution.updatingCli"
+                : "execution.updateCli",
+            )}
+          </button>
+        </div>
+        <p className="harness-hint">
+          {t(
+            view.runtime?.canUpdate ? "execution.updateCliHint" : "execution.updateCliUnavailable",
+          )}
+        </p>
+      </div>
+      {view.agents === null ? (
+        <Notice kind="warning">
+          {t("execution.unreachable")}
+          {view.agentError ? <p>{view.agentError}</p> : null}
+        </Notice>
+      ) : null}
+      {runtimeResult ? (
+        <Notice kind="success">
+          {t(runtimeResult.updated ? "execution.cliUpdated" : "execution.cliCurrent", {
+            version: runtimeResult.version,
+          })}
+        </Notice>
+      ) : null}
+      {refreshed && !runtimeResult ? (
+        <Notice kind="success">{t("execution.modelsRefreshed")}</Notice>
+      ) : null}
+      {error ? <ApiErrorNotice error={error} /> : null}
       <details
         className="harness-advanced"
         open={open}
@@ -312,19 +391,18 @@ export function GlobalExecutionCard({
             agents={view.agents}
             draft={draft}
             effective={view.effective}
-            disabled={busy !== null}
+            disabled={maintaining}
             onChange={(next) => {
               setDraft(next);
               setSaved(false);
             }}
           />
-          {error ? <ApiErrorNotice error={error} /> : null}
           {saved ? <Notice kind="success">{t("execution.saved")}</Notice> : null}
           <div className="harness-footer">
             <button
               type="button"
               className="harness-button is-secondary"
-              disabled={busy !== null || view.panel === null}
+              disabled={maintaining || view.panel === null}
               onClick={() => void submit(DEFAULT_EXECUTION, "restore")}
             >
               <RotateCcw aria-hidden="true" />
@@ -333,7 +411,7 @@ export function GlobalExecutionCard({
             <button
               type="button"
               className="harness-button"
-              disabled={busy !== null || !dirty}
+              disabled={maintaining || !dirty}
               onClick={() => void submit(normalizeExecution(draft), "save")}
             >
               <Save aria-hidden="true" />

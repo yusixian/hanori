@@ -1,7 +1,7 @@
 import type { LodyExecutorConfig } from "./config/schema.js";
 import { durationMs } from "./config/units.js";
 import { type ExecFileLike, LodyCli } from "./lody.js";
-import { createBridgeExec } from "./lody-bridge.js";
+import { createBridgeExec, createBridgeRuntimeClient } from "./lody-bridge.js";
 import { type TurnEnd, createLocalExec } from "./lody-wait.js";
 
 export type CreateLody = (
@@ -52,5 +52,10 @@ export class LodyClients {
 
   transport(lody: LodyExecutorConfig): "bridge" | "local" {
     return this.readEnv(lody.bridge.urlEnv) ? "bridge" : "local";
+  }
+
+  runtime(lody: LodyExecutorConfig) {
+    const url = this.readEnv(lody.bridge.urlEnv);
+    return url ? createBridgeRuntimeClient(url, this.readEnv(lody.bridge.secretEnv)) : null;
   }
 }

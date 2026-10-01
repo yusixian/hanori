@@ -6,6 +6,7 @@ import type {
   HarnessTelegram,
 } from "@cos-tool-bot/bot";
 import { validateHarnessConfig } from "./config/loader.js";
+import type { AgentConfigInfo } from "./config/execution.js";
 import type { CheckRunInput, CommitStatusInput } from "./contract.js";
 import type {
   AccessibleRepository,
@@ -325,6 +326,7 @@ function withAgentList(lody: Partial<LodyCli> | undefined): LodyCli {
   if (!("listAgentConfigs" in cli)) {
     Object.assign(cli, { listAgentConfigs: async () => LODY_UNAVAILABLE });
   }
+  if (!("clearCatalogCache" in cli)) Object.assign(cli, { clearCatalogCache: () => {} });
   return cli;
 }
 
@@ -357,7 +359,9 @@ export class FakeLody {
     return { ok: true as const, value: parseMachineList(extractJson(MACHINE_FIXTURE), this.now()) };
   }
 
-  agentConfigs = TEST_AGENT_CONFIGS;
+  agentConfigs: AgentConfigInfo[] = TEST_AGENT_CONFIGS;
+
+  clearCatalogCache() {}
 
   async listAgentConfigs() {
     return { ok: true as const, value: this.agentConfigs };

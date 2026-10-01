@@ -40,6 +40,16 @@ function fakeAdmin(): HarnessAdminPort & { calls: unknown[] } {
     }),
     deleteProject: vi.fn(async () => {}),
     setExecution: vi.fn(async () => ({ execution: {} as never })),
+    refreshExecution: vi.fn(async () => ({ execution: {} as never })),
+    updateRuntime: vi.fn(async () => ({
+      runtime: {
+        version: "0.103.0",
+        machineName: "server",
+        updating: false,
+        canUpdate: true,
+        updated: true,
+      },
+    })),
   };
 }
 
@@ -56,6 +66,22 @@ function panelApp(role: string, admin = fakeAdmin()) {
 }
 
 describe("web panel harness admin routes", () => {
+  it("allows runtime maintenance only for owners", async () => {
+    const { app, admin } = panelApp("owner");
+    expect(
+      (await app.request("/api/harness/admin/runtime/update", { method: "POST" })).status,
+    ).toBe(200);
+    expect(admin.updateRuntime).toHaveBeenCalledWith({
+      via: "panel",
+      actorId: null,
+      panelUserId: "user-1",
+    });
+    const denied = panelApp("admin");
+    expect(
+      (await denied.app.request("/api/harness/admin/runtime/update", { method: "POST" })).status,
+    ).toBe(403);
+    expect(denied.admin.updateRuntime).not.toHaveBeenCalled();
+  });
   it("serves owners and maps admin errors to status codes", async () => {
     const { app, admin } = panelApp("owner");
     const overview = await app.request("/api/harness/admin/overview");
@@ -112,6 +138,35 @@ function cookie(botId: string, userId: number) {
 
 describe("Mini App harness admin routes", () => {
   const url = (botId: string, path: string) => `/api/mini-app/${botId}/harness/${path}`;
+
+  it("requires owner identity, the correct Bot, origin and CSRF for CLI updates", async () => {
+    const { app, admin } = miniApp();
+    const path = url(HARNESS_BOT, "runtime/update");
+    const headers = { cookie: cookie(HARNESS_BOT, OWNER), origin: ORIGIN, "x-mini-app-csrf": CSRF };
+    expect(
+      (await app.request(path, { method: "POST", headers: { cookie: headers.cookie } })).status,
+    ).toBe(403);
+    expect(
+      (
+        await app.request(path, {
+          method: "POST",
+          headers: { ...headers, cookie: cookie(HARNESS_BOT, 7) },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await app.request(url(OTHER_BOT, "runtime/update"), {
+          method: "POST",
+          headers: { ...headers, cookie: cookie(OTHER_BOT, OWNER) },
+        })
+      ).status,
+    ).toBe(404);
+    expect(admin.updateRuntime).not.toHaveBeenCalled();
+    expect((await app.request(path, { method: "POST", headers })).status).toBe(200);
+    expect(admin.updateRuntime).toHaveBeenCalledOnce();
+    expect(admin.updateRuntime).toHaveBeenCalledWith({ via: "mini-app", actorId: OWNER });
+  });
 
   it("lets harness owners read and write with the session's CSRF token", async () => {
     const { app, admin } = miniApp();

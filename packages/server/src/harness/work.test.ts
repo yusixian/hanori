@@ -17,6 +17,17 @@ async function openHarnessPr(ctx: Ctx, requestId: string) {
 }
 
 describe("/bug", () => {
+  it("keeps queued work waiting while the Lody CLI is being updated", async () => {
+    const ctx = await setup();
+    await bug(ctx);
+    ctx.service.lodyUpdating = true;
+    await ctx.service.work.scheduler.tick();
+    expect(onlyRequest(ctx).state).toBe(S.queued);
+    expect(ctx.lody.created).toHaveLength(0);
+    ctx.service.lodyUpdating = false;
+    await ctx.service.work.scheduler.tick();
+    expect(onlyRequest(ctx).state).toBe(S.running);
+  });
   it("creates a labeled issue, one card, and a Lody session with the prompt on stdin", async () => {
     const ctx = await setup();
     expect(await bug(ctx)).toEqual({ html: "" });

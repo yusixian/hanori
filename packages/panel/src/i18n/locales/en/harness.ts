@@ -113,6 +113,18 @@ export const harness = {
     resetPending: "Saving restores the repository policy.",
   },
   execution: {
+    cliVersion: "{{machine}} · Lody CLI {{version}}",
+    refreshModels: "Refresh agents / models",
+    refreshing: "Refreshing…",
+    modelsRefreshed: "Loaded the latest agents and models reported by Lody.",
+    updateCli: "Update server CLI",
+    updatingCli: "Updating CLI…",
+    updateCliHint:
+      "Install the latest stable server CLI and restart Lody. Update CLIs on other machines from those machines.",
+    updateCliUnavailable:
+      "CLI updates are unavailable. Check the lody-bridge connection and version; update local CLIs on their host machine.",
+    cliUpdated: "Server Lody CLI updated to {{version}}.",
+    cliCurrent: "Server Lody CLI is already on the latest stable version, {{version}}.",
     title: "Execution",
     intro: "Lody agent, model, and reasoning effort for the worker session.",
     effective: "In effect",
@@ -136,6 +148,8 @@ export const harness = {
   },
   notices: { created: "Added {{key}}. It is active now.", deleted: "Deleted {{key}}." },
   errors: {
+    lody_unavailable:
+      "The Lody operation did not complete. Check the error details before retrying.",
     not_enabled: "Dev Harness is not enabled.",
     forbidden: "You are not allowed to do this.",
     not_found: "The project does not exist.",

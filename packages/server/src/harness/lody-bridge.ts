@@ -1,7 +1,10 @@
 import type { ExecFileLike } from "./lody.js";
+import type { HarnessAdminRuntime, HarnessAdminRuntimeUpdate } from "@cos-tool-bot/shared";
 
 /** Grace beyond the command timeout for the bridge to kill the child and answer. */
 const RESPONSE_GRACE_MS = 5_000;
+// Includes watchdog recovery, installation, verification, restart and a failed-start rollback.
+const RUNTIME_UPDATE_TIMEOUT_MS = 600_000;
 const UNREACHABLE = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH"]);
 
 interface BridgeResult {
@@ -73,7 +76,7 @@ export function createBridgeExec(
     if (response.status === 401) throw rejected("lody-bridge 拒绝了认证，请检查共享密钥");
     // Pool full, or a bridge that predates `--wait`: the command never ran, so it may run plain.
     if (response.status === 429) throw execError({ code: "EWAIT_REFUSED" });
-    if (response.status === 400) {
+    if (response.status === 400 || response.status === 409) {
       const body = (await response.json().catch(() => null)) as { error?: string } | null;
       if (args.includes("--wait") && /--(wait|timeout|jsonl)\b/.test(body?.error ?? "")) {
         throw execError({ code: "EWAIT_REFUSED" });
@@ -95,5 +98,39 @@ export function createBridgeExec(
     if (result.exitCode !== 0) throw execError({ code: result.exitCode ?? "exit", stdout });
     if (stdout.length > options.maxBuffer) throw execError({ killed: true });
     return { stdout };
+  };
+}
+
+export function createBridgeRuntimeClient(
+  baseUrl: string,
+  secret: string | undefined,
+  fetchImpl: typeof fetch = fetch,
+) {
+  async function call<T>(method: "GET" | "POST"): Promise<T> {
+    if (!secret || secret.length < 32)
+      throw new Error("lody-bridge 共享密钥未配置或少于 32 个字符");
+    const endpoint = new URL("/runtime", baseUrl);
+    if (!["http:", "https:"].includes(endpoint.protocol)) throw new Error("lody-bridge 地址无效");
+    const response = await fetchImpl(endpoint, {
+      method,
+      headers: { authorization: `Bearer ${secret}` },
+      signal: AbortSignal.timeout(method === "GET" ? 15_000 : RUNTIME_UPDATE_TIMEOUT_MS),
+    });
+    const body = (await response.json()) as {
+      ok?: boolean;
+      runtime?: T;
+      code?: string;
+      error?: string;
+    };
+    if (!response.ok || body.ok !== true || !body.runtime) {
+      throw Object.assign(new Error(body.error ?? "lody-bridge 不可达或尚未支持 CLI 更新"), {
+        code: body.code,
+      });
+    }
+    return body.runtime;
+  }
+  return {
+    status: () => call<HarnessAdminRuntime>("GET"),
+    update: () => call<HarnessAdminRuntimeUpdate>("POST"),
   };
 }

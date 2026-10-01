@@ -29,7 +29,7 @@ export function findModel(
 }
 
 export function preferredEffort(efforts: readonly string[]): string | null {
-  return efforts.includes("high") ? "high" : (efforts[0] ?? null);
+  return efforts.includes("high") ? "high" : (efforts[0] ?? "default");
 }
 
 /** The agent whose catalog applies: the draft's choice, else the effective one. */
@@ -50,7 +50,8 @@ export function withModel(
 ): HarnessAdminExecution {
   const next = { ...draft, model };
   const efforts = findModel(agent, model)?.efforts;
-  if (!efforts || efforts.length === 0) return next;
+  if (!efforts) return next;
+  if (efforts.length === 0) return { ...next, effort: "default" };
   const currentEffort = draft.effort ?? effective.effort;
   return currentEffort && efforts.includes(currentEffort)
     ? next

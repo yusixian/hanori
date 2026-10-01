@@ -294,7 +294,7 @@ services:
       context: .
       target: lody-bridge
       args:
-        - LODY_VERSION=${LODY_VERSION:-0.100.0}
+        - LODY_VERSION=${LODY_VERSION:-0.103.0}
     init: true
     environment:
       - LODY_CLI_TOKEN=${LODY_CLI_TOKEN:-}

@@ -7,6 +7,7 @@ import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 import { checkArgs } from "./allowlist.mjs";
 import { DEFAULT_CALLBACK_URL, deliverTurnEnd, startTurn } from "./waiter.mjs";
+import { createRuntime, RuntimeError } from "./runtime.mjs";
 
 const MAX_BODY_BYTES = 512 * 1024;
 const MAX_STDIN_BYTES = 256 * 1024;
@@ -67,7 +68,7 @@ function readBody(req) {
  */
 export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
   return new Promise((resolve) => {
-    const [file, ...prefix] = command;
+    const [file, ...prefix] = typeof command === "function" ? command() : command;
     let stdout = "";
     let bytes = 0;
     let timedOut = false;
@@ -112,7 +113,7 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
 /** Exit code only; stdio is ignored so a detached daemon cannot hold a pipe open. */
 function runQuiet(command, args, timeoutMs) {
   return new Promise((resolve) => {
-    const [file, ...prefix] = command;
+    const [file, ...prefix] = typeof command === "function" ? command() : command;
     const child = spawn(file, [...prefix, ...args], { stdio: "ignore", env: childEnv() });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("error", () => resolve(null));
@@ -127,21 +128,29 @@ function runQuiet(command, args, timeoutMs) {
  * Restarts the daemon when `lody daemon status` says it is gone. `daemon start` reuses the login
  * saved in ~/.lody, so the watchdog never needs the CLI token. Logs only state transitions.
  */
-export function watchDaemon({ command, machineName, intervalMs = DEFAULT_WATCH_MS, log }) {
+export function watchDaemon({
+  command,
+  machineName,
+  intervalMs = DEFAULT_WATCH_MS,
+  log,
+  paused = () => false,
+}) {
   const state = { daemon: "unknown" };
   let busy = false;
+  const idleWaiters = [];
   const set = (next, line) => {
     if (state.daemon !== next) log(line);
     state.daemon = next;
   };
   const tick = async () => {
-    if (busy) return;
+    if (busy || paused()) return;
     busy = true;
     try {
       if ((await runQuiet(command, ["daemon", "status"], 20_000)) === 0) {
         set("running", "lody-bridge: daemon running");
         return;
       }
+      if (paused()) return;
       const started = await runQuiet(
         command,
         ["daemon", "start", "--machine-name", machineName],
@@ -155,11 +164,17 @@ export function watchDaemon({ command, machineName, intervalMs = DEFAULT_WATCH_M
       }
     } finally {
       busy = false;
+      idleWaiters.splice(0).forEach((resolve) => resolve());
     }
   };
   const timer = intervalMs > 0 ? setInterval(tick, intervalMs) : null;
   timer?.unref();
-  return { state, tick, stop: () => timer && clearInterval(timer) };
+  return {
+    state,
+    tick,
+    idle: () => (busy ? new Promise((resolve) => idleWaiters.push(resolve)) : Promise.resolve()),
+    stop: () => timer && clearInterval(timer),
+  };
 }
 
 export function createBridgeServer(options) {
@@ -174,6 +189,7 @@ export function createBridgeServer(options) {
     maxWaiters = DEFAULT_MAX_WAITERS,
     acceptMs = DEFAULT_ACCEPT_MS,
     deliver = deliverTurnEnd,
+    runtime = null,
   } = options;
   if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH) {
     throw new Error(`HARNESS_LODY_BRIDGE_SECRET must be at least ${MIN_SECRET_LENGTH} characters`);
@@ -183,12 +199,13 @@ export function createBridgeServer(options) {
   }
   let version = null;
   let waiters = 0;
+  let executions = 0;
 
   /** Answers at acceptance; the child keeps running and its end is POSTed to the app. */
   const runWaiting = (args, stdin, timeoutMs, checked, turnId) => {
     waiters++;
     const started = Date.now();
-    const turn = startTurn(command, args, {
+    const turn = startTurn(typeof command === "function" ? command() : command, args, {
       stdin,
       turnId,
       env: childEnv(),
@@ -215,7 +232,7 @@ export function createBridgeServer(options) {
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://bridge");
     if (req.method === "GET" && url.pathname === "/health") {
-      version ??= await runLody(command, ["--version"], {
+      version = await runLody(command, ["--version"], {
         timeoutMs: 10_000,
         maxOutputBytes: 4096,
       }).then((result) => (result.exitCode === 0 ? result.stdout.trim().slice(0, 40) : null));
@@ -224,13 +241,51 @@ export function createBridgeServer(options) {
       else send(res, 200, { ok: true, lody: version, ...(state ? { daemon: state } : {}) });
       return;
     }
-    if (req.method !== "POST" || url.pathname !== "/exec") {
+    const runtimeRequest = url.pathname === "/runtime" && ["GET", "POST"].includes(req.method);
+    if (!runtimeRequest && (req.method !== "POST" || url.pathname !== "/exec")) {
       send(res, 404, { ok: false, error: "not found" });
       return;
     }
     if (!authorized(req.headers.authorization, secret)) {
       log("lody-bridge: rejected unauthenticated request");
       send(res, 401, { ok: false, error: "unauthorized" });
+      return;
+    }
+    if (runtimeRequest) {
+      if (!runtime) {
+        send(res, 503, {
+          ok: false,
+          code: "lody_unavailable",
+          error: "此 bridge 不支持 CLI 更新。",
+        });
+        return;
+      }
+      if (req.method === "POST" && (waiters > 0 || executions > 0 || runtime.updating)) {
+        send(res, 409, {
+          ok: false,
+          code: "conflict",
+          error: "Lody 正在执行命令或更新，请稍后重试。",
+        });
+        return;
+      }
+      try {
+        const result = req.method === "GET" ? await runtime.status() : await runtime.update();
+        if (req.method === "POST" && result.updated && daemon) daemon.daemon = "running";
+        log(`lody-bridge: runtime ${req.method === "GET" ? "status" : "update"} -> ok`);
+        send(res, 200, { ok: true, runtime: result });
+      } catch (error) {
+        const code = error instanceof RuntimeError ? error.code : "lody_unavailable";
+        log(`lody-bridge: runtime update -> ${code}`);
+        send(res, code === "conflict" ? 409 : 503, {
+          ok: false,
+          code,
+          error: error instanceof RuntimeError ? error.message : "Lody CLI 更新失败。",
+        });
+      }
+      return;
+    }
+    if (runtime?.updating) {
+      send(res, 409, { ok: false, error: "Lody CLI 正在更新，请稍后重试。" });
       return;
     }
     let body;
@@ -270,9 +325,19 @@ export function createBridgeServer(options) {
       return;
     }
     const started = Date.now();
-    const result = checked.waits
-      ? await runWaiting(body.args, stdin, timeoutMs, checked, turnId)
-      : await runLody(command, body.args, { stdin, timeoutMs, maxOutputBytes });
+    if (runtime?.updating) {
+      send(res, 409, { ok: false, error: "Lody CLI 正在更新，请稍后重试。" });
+      return;
+    }
+    executions++;
+    let result;
+    try {
+      result = checked.waits
+        ? await runWaiting(body.args, stdin, timeoutMs, checked, turnId)
+        : await runLody(command, body.args, { stdin, timeoutMs, maxOutputBytes });
+    } finally {
+      executions--;
+    }
     if (checked.command === "agent-config list" && typeof result.stdout === "string") {
       result.stdout = redactAgentConfigs(result.stdout);
     }
@@ -326,13 +391,38 @@ export function redactAgentConfigs(stdout) {
   }
   return JSON.stringify({
     ok: json.ok !== false,
+    ...(typeof json.hasMore === "boolean" ? { hasMore: json.hasMore } : {}),
+    ...(typeof json.nextCursor === "string" ? { nextCursor: json.nextCursor } : {}),
     agentConfigs: json.agentConfigs
       .filter((config) => config && typeof config === "object")
-      .map((config) =>
-        Object.fromEntries(
+      .map((config) => ({
+        ...Object.fromEntries(
           AGENT_CONFIG_FIELDS.filter((key) => key in config).map((key) => [key, config[key]]),
         ),
-      ),
+        ...(config.runConfig && Array.isArray(config.runConfig.models)
+          ? {
+              runConfig: {
+                models: config.runConfig.models
+                  .filter(
+                    (model) => model && typeof model.id === "string" && model.id.length <= 120,
+                  )
+                  .slice(0, 500)
+                  .map((model) => ({
+                    id: model.id,
+                    name: typeof model.name === "string" ? model.name.slice(0, 200) : model.id,
+                    reasoningEffortValues: (Array.isArray(model.reasoningEffortValues)
+                      ? model.reasoningEffortValues
+                      : Array.isArray(config.runConfig.reasoningEffortValues)
+                        ? config.runConfig.reasoningEffortValues
+                        : []
+                    )
+                      .filter((effort) => typeof effort === "string" && effort.length <= 32)
+                      .slice(0, 20),
+                  })),
+              },
+            }
+          : {}),
+      })),
   });
 }
 
@@ -376,10 +466,18 @@ function commandFromEnv(value) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const port = Number(process.env.LODY_BRIDGE_PORT ?? 43190);
-  const command = commandFromEnv(process.env.LODY_BRIDGE_COMMAND);
-  const watch = watchDaemon({
+  const machineName = process.env.LODY_MACHINE_NAME || "cos-tool-bot-server";
+  let watch;
+  const runtime = createRuntime({
+    machineName,
+    fallback: commandFromEnv(process.env.LODY_BRIDGE_COMMAND),
+    beforeUpdate: () => watch?.idle(),
+  });
+  const command = runtime.command;
+  watch = watchDaemon({
     command,
-    machineName: process.env.LODY_MACHINE_NAME || "cos-tool-bot-server",
+    machineName,
+    paused: () => runtime.updating,
     intervalMs: Number(process.env.LODY_DAEMON_WATCH_MS ?? DEFAULT_WATCH_MS),
     log: (line) => process.stdout.write(`${line}\n`),
   });
@@ -387,6 +485,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     secret: process.env.HARNESS_LODY_BRIDGE_SECRET,
     command,
     daemon: watch.state,
+    runtime,
     callbackUrl: process.env.HARNESS_LODY_CALLBACK_URL || DEFAULT_CALLBACK_URL,
     maxWaiters: Number(process.env.LODY_BRIDGE_MAX_WAITERS || DEFAULT_MAX_WAITERS),
   });

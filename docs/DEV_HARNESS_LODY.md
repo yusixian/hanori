@@ -3,14 +3,15 @@
 `/bug` 需要调用 `lody session create --machine <id>` 在 owner 的 Mac 上开会话，而 `session create` 要求调用方本机运行 Lody daemon。生产镜像 `node:22-alpine` 装不上 Lody 的原生模块（`@lydell/node-pty` 没有 musl 预编译），所以 Lody 放在独立的 sidecar `lody-bridge` 中运行：
 
 ```text
-app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim，lody@0.100.0 + daemon） ──► Lody 云 ──► Mac
+app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim，lody@0.103.0 + daemon） ──► Lody 云 ──► Mac
              harness-bridge 网络（internal）              harness-egress 网络（出站）
 ```
 
 ## 边界
 
 - bridge 只执行白名单内的命令：`--version`、`machine list`、`agent-config list`、`session create|chat|show|status|history|cancel|archive` 及其已知参数（见 `infrastructure/lody-bridge/allowlist.mjs`）。`login`、`daemon`、`delete`、`--env`、`--debug`、位置参数形式的 prompt 和 `--flag=value` 写法一律拒绝；`--config-option` 只接受 `reasoning_effort=<强度>` 和 `effort=<强度>`。`--wait --timeout <10–86400 秒>` 只允许用在 `session create`（人类可读输出，不带 `--json`）和带 `--jsonl` 的 `session chat` 上，两者必须同时出现。
-- `agent-config list` 的输出在 bridge 内先裁剪，只保留每个执行配置的 `id`、`name`、`agentType`、`machineId`；`env`（可能含 API key）不会离开 sidecar。
+- `agent-config list` 的输出在 bridge 内先裁剪，只保留每个执行配置的 `id`、`name`、`agentType`、`machineId`、模型 ID、名称和推理强度，以及分页信息；`env`（可能含 API key）不会离开 sidecar。
+- 经认证的 `GET /runtime` 返回服务器 CLI 版本，`POST /runtime` 安装官方 npm 最新稳定版并重启 daemon。更新包写入 `lodyhome` 卷的 `cli/releases/`，验证后原子切换 `cli/current`；重建容器沿用此版本。安装失败保留旧版，启动失败尝试恢复旧版。运行命令、等待回合或本机会话仍运行时拒绝更新；更新期间暂停 daemon watchdog、拒绝新的 `/exec`。app 还会暂停任务调度并拒绝在已有活动任务时开始更新。此端点不接受包名、版本、命令或安装路径等客户端参数。
 - prompt 只能通过 stdin（`--prompt-file -`）传入，最大 256 KiB。每条命令有超时（最长 180 秒）和 8 MiB 输出上限，超出时强制终止，harness 按「结果未知」处理，不会自动重试 `session create`。
 - 认证使用 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），用固定长度摘要做常量时间比较。bridge 日志只记录子命令、退出状态和耗时，不记录参数值、prompt、token 或 stdout。
 - 子进程的环境变量中去掉了 `LODY_CLI_TOKEN` 和 bridge 密钥；bridge 进程启动前入口脚本也会 `unset LODY_CLI_TOKEN`。
@@ -29,7 +30,7 @@ app（alpine） ──HTTP + Bearer 密钥──► lody-bridge（bookworm-slim�
 | `HARNESS_LODY_BRIDGE_URL`    | app         | `http://lody-bridge:43190`；留空时 harness 使用本地 `lody` CLI              |
 | `LODY_MACHINE_NAME`          | lody-bridge | 可选，注册到 Lody 的机器名，默认 `cos-tool-bot-server`                      |
 | `LODY_DAEMON_WATCH_MS`       | lody-bridge | 可选，daemon 巡检间隔，默认 `60000`；`0` 关闭自动重启                       |
-| `LODY_VERSION`               | 构建参数    | 可选，默认 `0.100.0`；升级前需复核白名单与 `--help`                         |
+| `LODY_VERSION`               | 构建参数    | 可选，默认 `0.103.0`；作为未安装持久化更新时的初始 CLI 版本                 |
 | `HARNESS_LODY_CALLBACK_URL`  | lody-bridge | 可选，回合结束回调地址，默认 `http://app:3000/api/harness/lody/turn`        |
 | `LODY_BRIDGE_MAX_WAITERS`    | lody-bridge | 可选，同时等待结束的回合数上限，默认 `8`                                    |
 

@@ -18,7 +18,7 @@ export type ModelOption = z.infer<typeof modelOptionSchema>;
 const CODEX_EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const CLAUDE_EFFORTS: Effort[] = ["default", "low", "medium", "high", "xhigh", "max"];
 
-/** The CLI does not list models, so the GUI offers these; `executors.lody.models` replaces a type's list. */
+/** Fallback for older CLIs without model capabilities; YAML can override a type's list. */
 export const DEFAULT_MODEL_CATALOG: Record<string, ModelOption[]> = {
   codex: [
     { id: "gpt-6-sol", name: "GPT-6 Sol", efforts: CODEX_EFFORTS },
@@ -47,6 +47,15 @@ export interface AgentConfigInfo {
   name: string;
   agentType: string;
   machineId: string | null;
+  models?: ModelOption[];
+}
+
+export function modelsForAgent(
+  agent: AgentConfigInfo | null,
+  overrides: Record<string, ModelOption[]>,
+) {
+  const type = normalizeAgentType(agent?.agentType ?? "");
+  return overrides[type] ?? agent?.models ?? DEFAULT_MODEL_CATALOG[type] ?? [];
 }
 
 export function normalizeAgentType(agentType: string): string {

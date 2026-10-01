@@ -75,6 +75,7 @@ export interface ScopedView<T> {
 }
 
 export class HarnessService {
+  lodyUpdating = false;
   readonly store: HarnessStore;
   readonly github: HarnessGitHub | null;
   readonly logger: HarnessServiceOptions["logger"];
@@ -350,6 +351,10 @@ export class HarnessService {
 
   lodyTransport(): "bridge" | "local" {
     return this.lodyClients.transport(this.globalView().config.executors.lody);
+  }
+
+  lodyRuntime() {
+    return this.lodyClients.runtime(this.globalView().config.executors.lody);
   }
 
   async recordEvent(event: HarnessEventInput): Promise<void> {

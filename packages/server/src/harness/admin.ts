@@ -14,7 +14,6 @@ import {
   HarnessAdminError,
   checkExecution,
   executionView,
-  listAgents,
   parseInput,
   toAdminExecution,
   withTimeout,
@@ -112,7 +111,7 @@ export class HarnessAdmin {
   }
 
   private get lodyTimeoutMs() {
-    return this.options.machineTimeoutMs ?? 4_000;
+    return this.options.machineTimeoutMs ?? 15_000;
   }
 
   async overview(): Promise<HarnessAdminOverview> {
@@ -129,10 +128,12 @@ export class HarnessAdmin {
       const configError = issues.length > 0 ? formatIssues(issues, 10) : "harness.yaml 未加载";
       return { enabled: true, configError, ...empty };
     }
-    const [machines, agents] = await Promise.all([
+    const [machines, agentResult, runtime] = await Promise.all([
       this.machines(),
-      listAgents(service, this.lodyTimeoutMs),
+      withTimeout(service.lody().listAgentConfigs(), this.lodyTimeoutMs),
+      this.runtimeStatus(),
     ]);
+    const agents = agentResult?.ok ? agentResult.value : null;
     const projects = service.projectKeys().flatMap((key) => this.project(key, agents) ?? []);
     const warnings: string[] = [];
     for (const [key, reason] of service.shadowedPanelProjects) {
@@ -148,9 +149,74 @@ export class HarnessAdmin {
       chatId: service.file.telegram.chatId,
       projects,
       machines,
-      execution: executionView(service, agents),
+      execution: {
+        ...executionView(service, agents),
+        runtime,
+        agentError: agentResult?.ok
+          ? null
+          : (agentResult?.message ?? "读取 Lody 执行配置超时，请刷新重试。"),
+      },
       ...(warnings.length > 0 ? { warnings } : {}),
     };
+  }
+
+  private async runtimeStatus() {
+    const runtime = this.requireService().lodyRuntime();
+    return runtime ? withTimeout(runtime.status(), this.lodyTimeoutMs) : null;
+  }
+
+  async refreshExecution() {
+    const service = this.requireService();
+    service.lody().clearCatalogCache();
+    const result = await withTimeout(service.lody().listAgentConfigs(), this.lodyTimeoutMs);
+    if (!result?.ok)
+      throw new HarnessAdminError(
+        "lody_unavailable",
+        result?.message ?? "读取 Lody 执行配置超时，请稍后重试。",
+      );
+    return {
+      execution: {
+        ...executionView(service, result.value),
+        agentError: null,
+        runtime: await this.runtimeStatus(),
+      },
+    };
+  }
+
+  async updateRuntime(actor: HarnessAdminActor) {
+    const service = this.requireService();
+    const runtime = service.lodyRuntime();
+    if (!runtime)
+      throw new HarnessAdminError(
+        "lody_unavailable",
+        "本地 CLI 请在所在机器上更新；页面更新需要 lody-bridge。",
+      );
+    if (service.lodyUpdating) throw new HarnessAdminError("conflict", "Lody CLI 正在更新。");
+    service.lodyUpdating = true;
+    try {
+      await service.work.scheduler.tick();
+      if ((await service.store.listRequestsByState(ACTIVE_STATES)).length > 0) {
+        throw new HarnessAdminError("conflict", "Harness 仍有运行中的任务，请结束后再更新 CLI。");
+      }
+      const result = await runtime.update();
+      service.lody().clearCatalogCache();
+      await service.recordEvent({
+        type: "runtime.updated",
+        actorId: actor.actorId,
+        payload: { via: actor.via, version: result.version, updated: result.updated },
+      });
+      return { runtime: result };
+    } catch (cause) {
+      if (cause instanceof HarnessAdminError) throw cause;
+      throw new HarnessAdminError(
+        (cause as { code?: string }).code === "conflict" ? "conflict" : "lody_unavailable",
+        cause instanceof Error ? cause.message : "Lody CLI 更新失败。请刷新查看当前版本后再重试。",
+      );
+    } finally {
+      // A lost HTTP response can leave the bridge updating; discard pre-update online results.
+      service.lody().clearCatalogCache();
+      service.lodyUpdating = false;
+    }
   }
 
   private async machines(): Promise<HarnessAdminMachine[]> {

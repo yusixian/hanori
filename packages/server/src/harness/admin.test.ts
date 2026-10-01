@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { type HarnessAdminActor, HarnessAdmin, HarnessAdminError } from "./admin.js";
 import { sourceOf } from "./config/layers.js";
 import { MemoryHarnessStore } from "./memory-store.js";
@@ -298,6 +298,111 @@ describe("lead execution", () => {
       model: "gpt-6-sol",
       effort: "high",
     });
+  });
+
+  it("uses newly reported model capabilities and preserves explicit YAML catalogs", async () => {
+    const lody = new FakeLody(() => new Date());
+    lody.agentConfigs = [
+      {
+        id: "new-agent",
+        name: "New Codex",
+        agentType: "codex",
+        machineId: "server",
+        models: [{ id: "new-model", name: "New model", efforts: ["low"] }],
+      },
+    ];
+    const ctx = await setup({ lody });
+    expect((await ctx.admin.overview()).execution.agents?.[0]?.models).toEqual(
+      lody.agentConfigs[0]!.models,
+    );
+    const clear = vi.spyOn(lody, "clearCatalogCache");
+    expect((await ctx.admin.refreshExecution()).execution.agents?.[0]?.models[0]?.id).toBe(
+      "new-model",
+    );
+    expect(clear).toHaveBeenCalledOnce();
+    const invalid = await rejection(
+      ctx.admin.setExecution(
+        { agentConfig: "new-agent", model: "new-model", effort: "high" },
+        actor,
+      ),
+    );
+    expect(invalid.issues?.[0]?.path).toBe("execution.effort");
+    ctx.setRaw(
+      testConfigRaw({
+        machines: MACHINES,
+        executors: {
+          lody: { models: { codex: [{ id: "manual", name: "Manual", efforts: ["high"] }] } },
+        },
+      }),
+    );
+    await ctx.service.reload();
+    expect((await ctx.admin.overview()).execution.agents?.[0]?.models[0]?.id).toBe("manual");
+  });
+
+  it("reports the connection failure instead of silently hiding model options", async () => {
+    const ctx = await setup();
+    expect((await ctx.admin.overview()).execution.agentError).toContain("未找到 lody CLI");
+    expect((await rejection(ctx.admin.refreshExecution())).code).toBe("lody_unavailable");
+  });
+
+  it("updates the bridge runtime and records the resulting version", async () => {
+    const ctx = await withLody();
+    const runtime = {
+      version: "0.103.0",
+      machineName: "server",
+      updating: false,
+      canUpdate: true,
+      updated: true,
+    };
+    const update = vi.fn(async () => runtime);
+    vi.spyOn(ctx.service, "lodyRuntime").mockReturnValue({ status: async () => runtime, update });
+    await expect(ctx.admin.updateRuntime(actor)).resolves.toEqual({ runtime });
+    expect(update).toHaveBeenCalledOnce();
+    expect(ctx.store.events.at(-1)).toMatchObject({
+      type: "runtime.updated",
+      payload: { version: "0.103.0" },
+    });
+  });
+
+  it("refuses updates with live work and clears the maintenance flag", async () => {
+    const ctx = await withLody();
+    const runtime = {
+      version: "0.103.0",
+      machineName: "server",
+      updating: false,
+      canUpdate: true,
+      updated: true,
+    };
+    const update = vi.fn(async () => runtime);
+    vi.spyOn(ctx.service, "lodyRuntime").mockReturnValue({ status: async () => runtime, update });
+    await ctx.store.insertRequest({
+      projectKey: "sandbox",
+      type: "bug",
+      state: "running",
+      repo: TEST_REPO,
+    });
+    expect((await rejection(ctx.admin.updateRuntime(actor))).code).toBe("conflict");
+    expect(update).not.toHaveBeenCalled();
+    expect(ctx.service.lodyUpdating).toBe(false);
+  });
+
+  it("discards cached availability after losing the update response", async () => {
+    const ctx = await withLody();
+    const clear = vi.spyOn(ctx.service.lody(), "clearCatalogCache");
+    vi.spyOn(ctx.service, "lodyRuntime").mockReturnValue({
+      status: async () => ({
+        version: "0.100.0",
+        machineName: "server",
+        updating: true,
+        canUpdate: true,
+      }),
+      update: async () => {
+        throw new Error("connection lost");
+      },
+    });
+    expect((await rejection(ctx.admin.updateRuntime(actor))).code).toBe("lody_unavailable");
+    expect(clear).toHaveBeenCalledOnce();
+    expect(ctx.service.lodyUpdating).toBe(false);
   });
 
   it.each([

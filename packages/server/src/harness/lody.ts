@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import type { AgentConfigInfo } from "./config/execution.js";
+import { type AgentConfigInfo, EFFORTS, MODEL_ID_PATTERN } from "./config/execution.js";
 import { isPlainObject } from "./config/layers.js";
 
 export const FIVE_HOUR_SECONDS = 18_000;
@@ -136,6 +136,23 @@ export function parseAgentConfigs(json: unknown): AgentConfigInfo[] {
         name,
         agentType: asString(config.agentType) ?? "",
         machineId: asString(config.machineId),
+        ...(isPlainObject(config.runConfig) && Array.isArray(config.runConfig.models)
+          ? {
+              models: config.runConfig.models.filter(isPlainObject).flatMap((model) => {
+                const id = asString(model.id);
+                if (!id || !MODEL_ID_PATTERN.test(id)) return [];
+                const reportedEfforts =
+                  model.reasoningEffortValues ??
+                  (config.runConfig as Record<string, unknown>).reasoningEffortValues;
+                const efforts = Array.isArray(reportedEfforts)
+                  ? reportedEfforts.filter((value): value is (typeof EFFORTS)[number] =>
+                      EFFORTS.includes(value as (typeof EFFORTS)[number]),
+                    )
+                  : [];
+                return [{ id, name: asString(model.name) ?? id, efforts }];
+              }),
+            }
+          : {}),
       },
     ];
   });
@@ -318,6 +335,7 @@ const WAIT_REFUSED = "EWAIT_REFUSED";
 
 /** Wrapper around the `lody` CLI. Every call is bounded by a timeout and returns a result. */
 export class LodyCli {
+  private catalogGeneration = 0;
   private machineCache: { at: number; value: LodyResult<LodyMachine[]> } | null = null;
   private agentCache: { at: number; value: LodyResult<AgentConfigInfo[]> } | null = null;
 
@@ -375,6 +393,7 @@ export class LodyCli {
   }
 
   async listMachines(): Promise<LodyResult<LodyMachine[]>> {
+    const generation = this.catalogGeneration;
     const at = this.now().getTime();
     if (this.machineCache && at - this.machineCache.at < MACHINE_CACHE_MS) {
       return this.machineCache.value;
@@ -389,24 +408,48 @@ export class LodyCli {
         value = { ok: false, reason: "failed", message: (error as Error).message };
       }
     }
-    this.machineCache = { at, value };
+    if (generation === this.catalogGeneration) this.machineCache = { at, value };
     return value;
   }
 
+  clearCatalogCache(): void {
+    this.catalogGeneration++;
+    this.agentCache = null;
+    this.machineCache = null;
+  }
+
   async listAgentConfigs(): Promise<LodyResult<AgentConfigInfo[]>> {
+    const generation = this.catalogGeneration;
     const at = this.now().getTime();
     if (this.agentCache && at - this.agentCache.at < MACHINE_CACHE_MS) return this.agentCache.value;
-    const result = await this.run(["agent-config", "list", "--json"]);
+    let result = await this.run(["agent-config", "list", "--json"]);
     let value: LodyResult<AgentConfigInfo[]>;
     if (!result.ok) value = result;
     else {
       try {
-        value = { ok: true, value: parseAgentConfigs(result.value) };
+        const agents = parseAgentConfigs(result.value);
+        const seen = new Set<string>();
+        while (
+          result.ok &&
+          typeof result.value.nextCursor === "string" &&
+          result.value.hasMore === true
+        ) {
+          const cursor = result.value.nextCursor;
+          if (seen.has(cursor) || seen.size >= 50) throw new Error("Lody 执行配置分页异常");
+          seen.add(cursor);
+          result = await this.run(["agent-config", "list", "--cursor", cursor, "--json"]);
+          if (!result.ok) {
+            if (generation === this.catalogGeneration) this.agentCache = { at, value: result };
+            return result;
+          }
+          agents.push(...parseAgentConfigs(result.value));
+        }
+        value = { ok: true, value: agents };
       } catch (error) {
         value = { ok: false, reason: "failed", message: (error as Error).message };
       }
     }
-    this.agentCache = { at, value };
+    if (generation === this.catalogGeneration) this.agentCache = { at, value };
     return value;
   }
 

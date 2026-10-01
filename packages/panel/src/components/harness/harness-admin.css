@@ -420,3 +420,12 @@
   border: 1px solid var(--harness-muted);
   background: transparent;
 }
+.harness-runtime {
+  display: grid;
+  gap: 0.625rem;
+  margin-block: 1rem;
+}
+
+.harness-runtime .harness-actions {
+  flex-wrap: wrap;
+}

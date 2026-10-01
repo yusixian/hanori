@@ -17,6 +17,8 @@ export type HarnessAdminPort = Pick<
   | "updateProject"
   | "deleteProject"
   | "setExecution"
+  | "refreshExecution"
+  | "updateRuntime"
 >;
 
 const ERROR_STATUS = {
@@ -27,6 +29,7 @@ const ERROR_STATUS = {
   read_only: 409,
   invalid: 400,
   github_unavailable: 503,
+  lody_unavailable: 503,
 } as const satisfies Record<HarnessAdminErrorCode, number>;
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -75,6 +78,8 @@ export function harnessAdminRoutes(admin: HarnessAdminPort) {
       c.header("Cache-Control", "private, no-store");
     })
     .get("/overview", (c) => respond(c, () => admin.overview()))
+    .post("/execution/refresh", (c) => respond(c, () => admin.refreshExecution()))
+    .post("/runtime/update", (c) => respond(c, () => admin.updateRuntime(actor(c))))
     .get("/repos", (c) => respond(c, () => admin.repos()))
     .post("/preview", limitBody, (c) => respond(c, async () => admin.preview(await readBody(c))))
     .post("/projects", limitBody, (c) =>
@@ -125,6 +130,10 @@ export function harnessMiniAppRoutes(admin: HarnessAdminPort, sessions: MiniAppS
       await next();
     })
     .get("/:botId/harness/overview", (c) => respond(c, () => admin.overview()))
+    .post("/:botId/harness/execution/refresh", (c) => respond(c, () => admin.refreshExecution()))
+    .post("/:botId/harness/runtime/update", (c) =>
+      respond(c, () => admin.updateRuntime(c.get("harnessActor"))),
+    )
     .get("/:botId/harness/repos", (c) => respond(c, () => admin.repos()))
     .post("/:botId/harness/preview", limitBody, (c) =>
       respond(c, async () => admin.preview(await readBody(c))),

@@ -10,8 +10,8 @@ import {
   type WorkerExecution,
   executionLayerData,
   findAgentConfig,
+  modelsForAgent,
   modelCatalog,
-  normalizeAgentType,
   resolveWorkerExecution,
 } from "./config/execution.js";
 import { type ConfigIssue, deepMerge, formatIssues } from "./config/layers.js";
@@ -71,7 +71,6 @@ export function executionView(
   agents: readonly AgentConfigInfo[] | null,
 ): HarnessAdminExecutionView {
   const config = service.globalView().config;
-  const catalog = modelCatalog(config.executors.lody.models);
   return {
     effective: toAdminExecution(resolveWorkerExecution(config, agents)),
     panel: service.panelExecutionSetting,
@@ -80,7 +79,7 @@ export function executionView(
         id: agent.id,
         name: agent.name,
         agentType: agent.agentType,
-        models: catalog[normalizeAgentType(agent.agentType)] ?? [],
+        models: modelsForAgent(agent, config.executors.lody.models),
       })) ?? null,
   };
 }
@@ -101,8 +100,11 @@ export function validateExecution(
     ]);
   }
   const resolved = resolveWorkerExecution(candidate, agents);
-  if (!resolved.effort) return;
-  const models = modelCatalog(candidate.executors.lody.models)[resolved.vendor] ?? [];
+  if (!resolved.effort || resolved.effort === "default") return;
+  const selectedAgent = findAgentConfig(agents, resolved.agent);
+  const models = selectedAgent
+    ? modelsForAgent(selectedAgent, candidate.executors.lody.models)
+    : (modelCatalog(candidate.executors.lody.models)[resolved.vendor] ?? []);
   const option = models.find((model) => model.id === (resolved.model ?? "default"));
   if (option && !(option.efforts as string[]).includes(resolved.effort)) {
     throw new HarnessAdminError("invalid", `${option.name} 不支持推理强度 ${resolved.effort}`, [

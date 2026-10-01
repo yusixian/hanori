@@ -125,6 +125,74 @@ describe("checkArgs", () => {
 });
 
 describe("bridge server", () => {
+  it("authenticates runtime updates and blocks commands during maintenance", async () => {
+    const runtime = {
+      updating: false,
+      status: async () => ({
+        version: "0.103.0",
+        machineName: "server",
+        updating: false,
+        canUpdate: true,
+      }),
+      update: async () => ({
+        version: "0.103.0",
+        machineName: "server",
+        updating: false,
+        canUpdate: true,
+        updated: true,
+      }),
+    };
+    const daemon = { daemon: "down" };
+    const { port, exec } = await start({ runtime, daemon });
+    const url = `http://127.0.0.1:${port}/runtime`;
+    expect((await fetch(url, { method: "POST" })).status).toBe(401);
+    const headers = { authorization: `Bearer ${SECRET}` };
+    expect((await (await fetch(url, { headers, method: "POST" })).json()).runtime.updated).toBe(
+      true,
+    );
+    expect(daemon.daemon).toBe("running");
+    runtime.updating = true;
+    expect((await fetch(url, { method: "POST", headers })).status).toBe(409);
+    expect((await exec({ args: ["machine", "list", "--json"] })).status).toBe(409);
+  });
+
+  it("preserves only safe model capability fields and pagination through the bridge", () => {
+    const output = redactAgentConfigs(
+      JSON.stringify({
+        ok: true,
+        hasMore: true,
+        nextCursor: "page-2",
+        agentConfigs: [
+          {
+            id: "cfg",
+            name: "Agent",
+            agentType: "codex",
+            machineId: "server",
+            env: { KEY: "secret" },
+            runConfig: {
+              secret: "secret",
+              models: [
+                {
+                  id: "new-model",
+                  name: "New model",
+                  reasoningEffortValues: ["high"],
+                  secret: "secret",
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    expect(JSON.parse(output)).toMatchObject({
+      hasMore: true,
+      nextCursor: "page-2",
+      agentConfigs: [
+        { runConfig: { models: [{ id: "new-model", reasoningEffortValues: ["high"] }] } },
+      ],
+    });
+    expect(output).not.toContain("secret");
+  });
   it("refuses to start with a short secret", () => {
     expect(() => createBridgeServer({ secret: "short" })).toThrow(/at least 32/);
   });

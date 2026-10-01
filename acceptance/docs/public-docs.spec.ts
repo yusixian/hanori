@@ -105,6 +105,34 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
+test("the current release supports anonymous deep links, navigation and search", async ({
+  page,
+}, info) => {
+  await page.goto("/docs/changelog/");
+  await page.getByRole("link", { name: "v0.18.0：更新 Lody CLI 与模型列表", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("v0.18.0");
+  await expect(page.getByText("更新 Lody CLI 与模型列表", { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 2, name: /^使用与升级/ })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: info.outputPath("release-v0.18.0.png"), fullPage: true });
+  await page.goto("/docs/");
+  await page
+    .getByRole("button", { name: /搜索文档/ })
+    .filter({ visible: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input").fill("v0.18.0");
+  await dialog
+    .getByRole("button", { name: /v0\.18\.0/ })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/\/docs\/changelog\/v0\.18\.0\/?$/);
+});
+
 test("JEV tuning guide is searchable and explains independent thresholds", async ({
   page,
 }, info) => {

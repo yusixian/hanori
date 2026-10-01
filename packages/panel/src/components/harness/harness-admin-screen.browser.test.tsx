@@ -125,6 +125,14 @@ function fakeApi(patch: Partial<HarnessAdminApi> = {}) {
       panel: execution,
       agents: AGENTS,
     })),
+    refreshExecution: vi.fn(async () => overview().execution),
+    updateRuntime: vi.fn(async () => ({
+      version: "0.103.0",
+      machineName: "server",
+      canUpdate: true,
+      updating: false,
+      updated: true,
+    })),
     ...patch,
   } satisfies HarnessAdminApi;
 }
@@ -144,6 +152,79 @@ function renderScreen(api: HarnessAdminApi, path = "/harness") {
 
 beforeEach(async () => {
   await i18n.changeLanguage("zh-CN");
+  await page.viewport(1280, 900);
+});
+
+test.each([1280, 390])(
+  "updates the CLI and refreshes models without discarding a draft at %i px",
+  async (width) => {
+    await page.viewport(width, 844);
+    const runtime = { version: "0.100.0", machineName: "server", updating: false, canUpdate: true };
+    const fresh = {
+      ...overview().execution,
+      runtime: { ...runtime, version: "0.103.0" },
+      agents: AGENTS.map((agent) => ({
+        ...agent,
+        models: [...agent.models, { id: "new-model", name: "New model", efforts: ["high"] }],
+      })),
+    };
+    let refreshed = false;
+    const api = fakeApi({
+      overview: vi.fn(async () =>
+        overview({ execution: refreshed ? fresh : { ...overview().execution, runtime } }),
+      ),
+      refreshExecution: vi.fn(async () => {
+        refreshed = true;
+        return fresh;
+      }),
+    });
+    renderScreen(api);
+    await expect.element(page.getByText("server · Lody CLI 0.100.0")).toBeVisible();
+    await page.getByText("修改执行设置").click();
+    const model = page.getByRole("combobox", { name: "模型" });
+    await model.selectOptions("gpt-6-mini");
+    await page.getByRole("button", { name: "更新服务器 CLI" }).click();
+    await expect.element(page.getByText("服务器 Lody CLI 已更新至 0.103.0。")).toBeVisible();
+    await expect.element(model).toHaveValue("gpt-6-mini");
+    await expect.element(page.getByRole("option", { name: "New model" })).toBeInTheDocument();
+    expect(api.updateRuntime).toHaveBeenCalledOnce();
+    expect(api.refreshExecution).toHaveBeenCalledOnce();
+    expect(api.updateExecution).not.toHaveBeenCalled();
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  },
+);
+
+test("shows refresh failures while CLI updates remain unavailable", async () => {
+  const api = fakeApi({
+    refreshExecution: vi.fn(async () => {
+      throw new HarnessAdminApiError("共享密钥不匹配", 503, "lody_unavailable");
+    }),
+  });
+  renderScreen(api);
+  await expect.element(page.getByRole("button", { name: "更新服务器 CLI" })).toBeDisabled();
+  await page.getByRole("button", { name: "刷新 Agent / 模型" }).click();
+  await expect.element(page.getByText("共享密钥不匹配")).toBeVisible();
+  expect(api.updateRuntime).not.toHaveBeenCalled();
+});
+
+test("clears inherited reasoning effort for models that do not support it", async () => {
+  const agents = AGENTS.map((agent) => ({
+    ...agent,
+    models: [...agent.models, { id: "no-effort", name: "No effort model", efforts: [] }],
+  }));
+  const api = fakeApi({
+    overview: vi.fn(async () => overview({ execution: { ...overview().execution, agents } })),
+  });
+  renderScreen(api);
+  await expect.element(page.getByRole("heading", { name: "执行设置" })).toBeVisible();
+  await page.getByText("修改执行设置").click();
+  await page.getByRole("combobox", { name: "模型" }).selectOptions("no-effort");
+  await page.getByRole("button", { name: "保存执行设置" }).click();
+  expect(api.updateExecution).toHaveBeenLastCalledWith({
+    agentConfig: "agent-codex",
+    model: "no-effort",
+    effort: "default",
+  });
 });
 
 test("lists projects with source, machines, topic, policy, and problems", async () => {

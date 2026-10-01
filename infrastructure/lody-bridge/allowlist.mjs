@@ -30,6 +30,7 @@ const VALUE_RULES = {
   "--prompt-file": /^-$/,
   "--turn-id": /^[\w:-]{1,160}$/,
   "--limit": /^([1-9]|1\d|20)$/,
+  "--cursor": /^[\w+/=-]{1,4096}$/,
   "--timeout": /^[1-9]\d{1,4}$/,
 };
 
@@ -52,7 +53,7 @@ const COMMANDS = [
   {
     path: ["agent-config", "list"],
     session: false,
-    values: ["--workspace", "--machine"],
+    values: ["--workspace", "--machine", "--cursor"],
     flags: ["--json"],
   },
   {
@@ -117,7 +118,7 @@ export function checkArgs(args) {
   if (!Array.isArray(args) || args.length === 0 || args.length > 64) {
     return { ok: false, error: "args must be a non-empty array" };
   }
-  if (!args.every((arg) => typeof arg === "string" && arg.length <= 500 && !arg.includes("\0"))) {
+  if (!args.every((arg) => typeof arg === "string" && arg.length <= 4096 && !arg.includes("\0"))) {
     return { ok: false, error: "args must be short strings" };
   }
   const spec = COMMANDS.find((candidate) =>

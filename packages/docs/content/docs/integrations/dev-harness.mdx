@@ -31,8 +31,14 @@ Bot 在 BotFather 中配置了主 Mini App 时，「⚙️ 管理项目」打开
 「Dev Harness」页可以设置 lead 会话默认使用的 Lody 执行配置、模型和推理强度，也可以为单个项目（包括 YAML 项目）单独设置。面板设置高于 `harness.yaml`，低于 Telegram 的 `/harness set` 临时覆盖；留空的项继续使用 YAML 或内置默认。
 
 - 内置默认是 Lody 中名为 `Codex` 的执行配置、`gpt-6-sol`、推理强度 `high`。
-- 执行配置列表从 Lody 读取；模型可以从内置列表中选，也可以填自定义 ID。需要调整列表时在 YAML 中设置 `executors.lody.models`。
+- 执行配置和模型列表从 Lody 上报的能力读取；旧 CLI 未上报能力时使用内置列表，也可以填自定义模型 ID。YAML 中的 `executors.lody.models` 优先于自动发现。
 - 子会话跟随 lead 的厂商，审查换另一家：Codex lead 用 Claude Code 审查，Claude lead 用 Codex 审查。
+
+「刷新 Agent / 模型」会跳过 Harness 的列表缓存，重新读取 Lody 已上报的能力，保留尚未保存的执行设置。远程机器的新模型仍未出现时，在那台机器的 Lody Agent 配置中刷新能力；Lody CLI 的 `agent-config refresh-capabilities` 只支持当前机器。
+
+使用支持更新的 `lody-bridge` 时，执行设置显示服务器 CLI 版本，并提供「更新服务器 CLI」。按钮从官方 npm 安装最新稳定版，验证版本后重启服务器的 Lody daemon；已有运行任务或会话时拒绝更新。安装失败保留旧版，重启失败尝试恢复旧版并重新启动。更新保存到 bridge 的 `.lody` 持久卷，重建容器后继续使用。更新只影响服务器上的 Lody CLI；MacBook 等远程机器的 CLI、单独安装的自定义 Agent 仍须在对应机器更新。
+
+CLI 更新仅对面板 owner 和 Harness Mini App owner 开放。首次使用需同步升级 app 与 bridge；旧 bridge 或本地 CLI 模式下按钮不可用。若页面显示「Lody 暂不可达」，先检查显示的连接错误、bridge 共享密钥和 daemon 状态，更新 CLI 不能代替修复连接。
 
 ## 在群里使用
 

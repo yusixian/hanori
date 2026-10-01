@@ -8,6 +8,7 @@ import {
   parseSessionStatus,
   findMachine,
   parseMachineList,
+  parseAgentConfigs,
   parseSession,
   quotaBreaches,
 } from "./lody.js";
@@ -18,6 +19,28 @@ const fixture = (name: string) =>
 const NOW = new Date("2026-09-24T12:00:00Z");
 
 describe("Lody output parsing", () => {
+  it("keeps current Lody model capabilities instead of relying on a static catalog", () => {
+    const [agent] = parseAgentConfigs({
+      agentConfigs: [
+        {
+          id: "cfg-new",
+          name: "Codex",
+          agentType: "codex",
+          machineId: "m1",
+          env: { KEY: "secret" },
+          runConfig: {
+            models: [
+              { id: "new-model", name: "New model", reasoningEffortValues: ["low", "high"] },
+            ],
+          },
+        },
+      ],
+    });
+    expect(agent).toMatchObject({
+      models: [{ id: "new-model", name: "New model", efforts: ["low", "high"] }],
+    });
+    expect(JSON.stringify(agent)).not.toContain("secret");
+  });
   it("skips transport log lines before the JSON document", () => {
     expect(extractJson(fixture("lody-machine-list.txt"))).toMatchObject({ ok: true });
     expect(extractJson("no json here")).toBeNull();
@@ -216,6 +239,62 @@ describe("LodyCli", () => {
       "list",
       "--json",
     ]);
+  });
+
+  it("reads later catalog pages so agents beyond the first twenty remain available", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          hasMore: true,
+          nextCursor: "page-2",
+          agentConfigs: [{ id: "first", name: "First" }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          ok: true,
+          hasMore: false,
+          agentConfigs: [{ id: "second", name: "Second" }],
+        }),
+      });
+    const cli = new LodyCli(["lody"], 1000, exec, () => NOW);
+    expect(await cli.listAgentConfigs()).toMatchObject({
+      ok: true,
+      value: [{ id: "first" }, { id: "second" }],
+    });
+    expect(exec.mock.calls[1]?.[1]).toEqual([
+      "agent-config",
+      "list",
+      "--cursor",
+      "page-2",
+      "--json",
+    ]);
+  });
+
+  it("does not restore a stale catalog when an older in-flight read finishes after refresh", async () => {
+    let finishOld!: (value: { stdout: string }) => void;
+    const output = (id: string) => ({
+      stdout: JSON.stringify({ ok: true, agentConfigs: [{ id, name: id }] }),
+    });
+    const exec = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishOld = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(output("fresh"));
+    const cli = new LodyCli(["lody"], 1000, exec, () => NOW);
+    const old = cli.listAgentConfigs();
+    cli.clearCatalogCache();
+    await cli.listAgentConfigs();
+    finishOld(output("old"));
+    await old;
+    expect(await cli.listAgentConfigs()).toMatchObject({ ok: true, value: [{ id: "fresh" }] });
+    expect(exec).toHaveBeenCalledTimes(2);
   });
 
   it("chats, cancels, and archives by session id only", async () => {

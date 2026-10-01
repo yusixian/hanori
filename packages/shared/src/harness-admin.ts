@@ -11,6 +11,8 @@
  * PATCH  /projects/:key     HarnessAdminProjectPatch -> { project }
  * DELETE /projects/:key     -> {}
  * PUT    /execution         HarnessAdminExecution -> { execution: HarnessAdminExecutionView }
+ * POST   /execution/refresh -> { execution: HarnessAdminExecutionView }
+ * POST   /runtime/update    -> { runtime: HarnessAdminRuntimeUpdate }
  *
  * Every response is `{ ok: true, ...body }` or HarnessAdminError.
  */
@@ -112,6 +114,20 @@ export interface HarnessAdminExecutionView {
   panel: HarnessAdminExecution | null;
   /** null when Lody could not be reached. */
   agents: HarnessAdminAgentOption[] | null;
+  agentError?: string | null;
+  /** Server-side bridge runtime; it does not manage CLIs on remote worker machines. */
+  runtime?: HarnessAdminRuntime | null;
+}
+
+export interface HarnessAdminRuntime {
+  version: string | null;
+  machineName: string;
+  updating: boolean;
+  canUpdate: boolean;
+}
+
+export interface HarnessAdminRuntimeUpdate extends HarnessAdminRuntime {
+  updated: boolean;
 }
 
 export interface HarnessAdminRepo {
@@ -161,7 +177,8 @@ export type HarnessAdminErrorCode =
   | "conflict"
   | "read_only"
   | "invalid"
-  | "github_unavailable";
+  | "github_unavailable"
+  | "lody_unavailable";
 
 export interface HarnessAdminError {
   ok: false;

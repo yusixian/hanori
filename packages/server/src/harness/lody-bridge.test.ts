@@ -1,8 +1,8 @@
 import { type IncomingMessage, type Server, createServer } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { LodyCli } from "./lody.js";
-import { createBridgeExec } from "./lody-bridge.js";
+import { createBridgeExec, createBridgeRuntimeClient } from "./lody-bridge.js";
 import { TEST_CHAT_ID, TEST_OWNER, createTestService, testConfigRaw } from "./test-fakes.js";
 
 const SECRET = "b".repeat(40);
@@ -10,6 +10,7 @@ const NOW = new Date("2026-09-25T12:00:00Z");
 const servers: Server[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(servers.splice(0).map((s) => new Promise((resolve) => s.close(resolve))));
 });
 
@@ -52,6 +53,50 @@ const CREATE = {
   prompt: "owner words",
   workspace: null,
 };
+
+describe("lody-bridge runtime transport", () => {
+  it("authenticates maintenance and waits through installation and failed-start rollback", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const runtime = {
+      version: "0.103.0",
+      machineName: "server",
+      updating: false,
+      canUpdate: true,
+      updated: true,
+    };
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ ok: true, runtime }));
+    const client = createBridgeRuntimeClient("http://bridge", SECRET, fetchImpl);
+    await expect(client.status()).resolves.toEqual(runtime);
+    await expect(client.update()).resolves.toEqual(runtime);
+    expect(
+      fetchImpl.mock.calls.map(([url, init]) => [String(url), init?.method, init?.headers]),
+    ).toEqual([
+      ["http://bridge/runtime", "GET", { authorization: `Bearer ${SECRET}` }],
+      ["http://bridge/runtime", "POST", { authorization: `Bearer ${SECRET}` }],
+    ]);
+    expect(timeout.mock.calls[0]?.[0]).toBe(15_000);
+    const maximumRecovery =
+      140_000 +
+      15_000 +
+      10_000 +
+      180_000 +
+      10_000 +
+      15_000 +
+      30_000 +
+      30_000 +
+      60_000 +
+      30_000 +
+      60_000;
+    expect(timeout.mock.calls[1]?.[0]).toBeGreaterThan(maximumRecovery);
+  });
+
+  it("preserves an explicit maintenance conflict", async () => {
+    const client = createBridgeRuntimeClient("http://bridge", SECRET, async () =>
+      Response.json({ ok: false, code: "conflict", error: "busy" }, { status: 409 }),
+    );
+    await expect(client.update()).rejects.toMatchObject({ code: "conflict", message: "busy" });
+  });
+});
 
 describe("lody-bridge transport", () => {
   it("sends argv, stdin, and the timeout with the bearer secret", async () => {

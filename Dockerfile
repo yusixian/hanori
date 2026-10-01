@@ -83,7 +83,7 @@ CMD ["node", "--max-old-space-size=512", "packages/server/dist/index.js"]
 
 # Lody's native modules (node-pty) have no musl prebuilds, so the harness bridge runs on glibc.
 FROM node:22-bookworm-slim AS lody-bridge
-ARG LODY_VERSION=0.100.0
+ARG LODY_VERSION=0.103.0
 ENV NODE_ENV=production
 RUN npm install -g "lody@${LODY_VERSION}" \
   && npm cache clean --force \
@@ -91,9 +91,9 @@ RUN npm install -g "lody@${LODY_VERSION}" \
   && chown node:node /home/node/.lody
 # Older BuildKit applies COPY --chmod to directories it creates, which left /opt/lody-bridge
 # untraversable for the node user; create it first and set modes explicitly.
-COPY infrastructure/lody-bridge/server.mjs infrastructure/lody-bridge/allowlist.mjs infrastructure/lody-bridge/waiter.mjs infrastructure/lody-bridge/entrypoint.sh /opt/lody-bridge/
+COPY infrastructure/lody-bridge/server.mjs infrastructure/lody-bridge/allowlist.mjs infrastructure/lody-bridge/waiter.mjs infrastructure/lody-bridge/runtime.mjs infrastructure/lody-bridge/entrypoint.sh /opt/lody-bridge/
 RUN chmod 755 /opt/lody-bridge /opt/lody-bridge/entrypoint.sh \
-  && chmod 644 /opt/lody-bridge/server.mjs /opt/lody-bridge/allowlist.mjs /opt/lody-bridge/waiter.mjs
+  && chmod 644 /opt/lody-bridge/server.mjs /opt/lody-bridge/allowlist.mjs /opt/lody-bridge/waiter.mjs /opt/lody-bridge/runtime.mjs
 USER node
 ENV HOME=/home/node
 ENTRYPOINT ["/opt/lody-bridge/entrypoint.sh"]
