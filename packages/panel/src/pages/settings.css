@@ -1,5 +1,5 @@
 .settings-eyebrow {
-  margin: 0 0 0.875rem;
+  margin: 0 0 0.5rem;
   color: var(--color-primary);
   font-size: 0.75rem;
   font-weight: 600;
@@ -13,26 +13,26 @@
 
 .settings-heading {
   position: relative;
-  min-height: 180px;
-  padding-block: 1.25rem 2.25rem;
-  margin-bottom: 2rem;
+  min-height: 124px;
+  padding-block: 0.5rem 1.25rem;
+  margin-bottom: 1.5rem;
   border-bottom: 1px solid var(--color-border);
 }
 
 .settings-heading-copy {
-  max-width: calc(100% - 280px);
+  max-width: calc(100% - 214px);
 }
 
 .settings-heading h1 {
   font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
-  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-size: clamp(1.5rem, 2vw, 1.875rem);
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.2;
 }
 
 .settings-introduction {
-  margin-top: 0.875rem;
+  margin-top: 0.5rem;
   color: var(--color-muted-foreground);
   font-size: 0.875rem;
   line-height: 1.7;
@@ -42,8 +42,8 @@
   position: absolute;
   inset-block-start: 0.5rem;
   inset-inline-end: 0;
-  width: 244px;
-  height: 144px;
+  width: 190px;
+  height: 104px;
   overflow: hidden;
   border-radius: 1.25rem;
   box-shadow: 0 8px 24px rgb(82 35 64 / 0.045);
@@ -63,7 +63,7 @@
   display: grid;
   grid-template-columns: 212px minmax(0, 1fr);
   align-items: start;
-  gap: clamp(1.5rem, 3vw, 3rem);
+  gap: 1.5rem;
 }
 
 .settings-rail {
@@ -182,7 +182,7 @@
 .settings-body {
   display: grid;
   min-width: 0;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
 .settings-body > [role="status"]:empty {
@@ -229,13 +229,13 @@
 }
 
 .settings-surface > div {
-  padding: 1.5rem;
+  padding: 1.25rem;
 }
 
 .settings-password-form {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.25rem;
+  gap: 1rem;
 }
 
 .settings-field {
@@ -265,8 +265,8 @@
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 1rem;
-  padding-top: 1.25rem;
-  margin-top: 0.25rem;
+  padding-top: 1rem;
+  margin-top: 0;
   border-top: 1px solid var(--color-border);
 }
 
@@ -311,8 +311,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
-  min-height: 76px;
-  padding-block: 0.875rem;
+  min-height: 64px;
+  padding-block: 0.625rem;
 }
 
 .settings-member + .settings-member {
@@ -597,21 +597,21 @@
   }
 
   .settings-heading-art {
-    width: 190px;
-    height: 132px;
+    width: 164px;
+    height: 100px;
   }
 
   .settings-heading-copy {
-    max-width: calc(100% - 220px);
+    max-width: calc(100% - 196px);
   }
 }
 
 @media (max-width: 39.99rem) {
   .settings-heading {
     min-height: 0;
-    padding-top: 0.75rem;
-    padding-bottom: 1.5rem;
-    margin-bottom: 1.5rem;
+    padding-top: 0;
+    padding-bottom: 1rem;
+    margin-bottom: 1rem;
   }
 
   .settings-heading-copy {
@@ -622,8 +622,12 @@
     display: none;
   }
 
+  .settings-layout {
+    gap: 1rem;
+  }
+
   .settings-introduction {
-    max-width: 26ch;
+    max-width: 36ch;
   }
 
   .settings-profile {
@@ -649,7 +653,7 @@
   }
 
   .settings-surface > div {
-    padding: 1.25rem;
+    padding: 1rem;
   }
 
   .settings-password-form,

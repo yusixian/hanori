@@ -975,7 +975,7 @@ function AppLayoutContent() {
         id="main-content"
         className="hanori-workspace min-w-0 flex-1 overflow-x-hidden overflow-y-auto"
       >
-        <div className="workspace-content mx-auto w-full max-w-[1360px] p-4 sm:p-6 lg:px-10 lg:py-9">
+        <div className="workspace-content mx-auto w-full max-w-[1360px] p-4 sm:p-6 lg:px-7">
           <Outlet />
         </div>
       </main>

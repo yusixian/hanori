@@ -74,7 +74,7 @@ export function AiSettingsSearch({
 
   return (
     <div
-      className="relative max-w-xl"
+      className="ai-settings-search relative min-w-0"
       onFocusCapture={() => setFocused(true)}
       onBlurCapture={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
@@ -113,7 +113,7 @@ export function AiSettingsSearch({
               clear();
             }
           }}
-          className="h-11 bg-white pr-10 pl-10 [&::-webkit-search-cancel-button]:appearance-none"
+          className="h-10 bg-white pr-10 pl-10 [&::-webkit-search-cancel-button]:appearance-none"
           placeholder={labels.search}
           aria-label={labels.search}
           role="combobox"

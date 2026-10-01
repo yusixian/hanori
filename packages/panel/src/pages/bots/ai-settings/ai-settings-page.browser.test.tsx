@@ -578,3 +578,34 @@ test("keeps setting summaries visible on a mobile viewport", async () => {
   expect(row).not.toBeNull();
   await expect.element(page.elementLocator(row!).getByText("Disabled").first()).toBeVisible();
 });
+
+test("keeps save and category navigation reachable in a narrow desktop workspace", async () => {
+  await page.viewport(768, 900);
+  stubAiSettingsFetch();
+  await renderAiSettings("/bots/test-id/ai?section=replies");
+  await expect.element(page.getByTestId("ai-settings-sticky-header")).toBeVisible();
+  const header = page.getByTestId("ai-settings-sticky-header").element() as HTMLElement;
+  const workspace = header.parentElement!;
+  // A desktop sidebar leaves only this much room even though the viewport is wider.
+  workspace.style.width = "460px";
+  const prompt = page.getByPlaceholder("You are a helpful assistant…");
+  await prompt.fill("Keep this draft while switching categories");
+  const save = page.getByRole("button", { name: "Save", exact: true });
+  await expect.element(save).toBeEnabled();
+  await expect
+    .poll(() => {
+      const button = save.element().getBoundingClientRect();
+      const bounds = header.getBoundingClientRect();
+      return button.left >= bounds.left && button.right <= bounds.right;
+    })
+    .toBe(true);
+  const sections = page.getByRole("combobox", { name: "Settings section", exact: true });
+  await expect.element(sections).toBeVisible();
+  await sections.click();
+  await page.getByRole("option", { name: "Memory", exact: true }).click();
+  await sections.click();
+  await page.getByRole("option", { name: "Reply Behavior", exact: true }).click();
+  await expect.element(prompt).toHaveValue("Keep this draft while switching categories");
+  await save.click();
+  await expect.element(page.getByText("All changes saved", { exact: true })).toBeVisible();
+});

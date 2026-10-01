@@ -16,7 +16,7 @@ export const bots = {
   },
   list: {
     title: "Bots",
-    description: "Manage, run, and inspect your bot instances. Status is synced automatically.",
+    description: "Manage your AI companions and automation bots.",
     botCount: "Bots",
     matchCount: "Matches",
     matchAnnouncement: "Matching bots: {{count}}",

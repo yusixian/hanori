@@ -281,7 +281,10 @@ export function BotAiSettingsPage() {
     const frame = window.requestAnimationFrame(() => {
       const target = document.getElementById(settingElementId(requestedSetting.id));
       if (!target) return;
-      target.style.scrollMarginTop = `${(settingsHeaderRef.current?.offsetHeight ?? 0) + 16}px`;
+      const header = settingsHeaderRef.current;
+      const headerHeight =
+        header && window.getComputedStyle(header).position === "sticky" ? header.offsetHeight : 0;
+      target.style.scrollMarginTop = `${headerHeight + 16}px`;
       target.scrollIntoView({ block: "start" });
     });
     return () => window.cancelAnimationFrame(frame);
@@ -1023,24 +1026,31 @@ export function BotAiSettingsPage() {
 
   return (
     <>
-      <div className="mx-auto max-w-[1180px] space-y-5" inert={leaveDialogOpen ? true : undefined}>
+      <div
+        className="ai-settings-page mx-auto max-w-[1180px] space-y-5"
+        inert={leaveDialogOpen ? true : undefined}
+      >
         <div
           ref={settingsHeaderRef}
           data-testid="ai-settings-sticky-header"
-          className="bg-background/95 supports-[backdrop-filter]:bg-background/85 sticky top-0 z-20 -mx-2 space-y-3 px-2 pt-1 pb-3 backdrop-blur-xl md:rounded-b-2xl md:shadow-[0_12px_24px_-22px_rgb(48_39_52/0.55)]"
+          className="ai-settings-header bg-background/95 supports-[backdrop-filter]:bg-background/85 sticky top-0 z-20 -mx-2 space-y-2 px-2 pt-1 pb-3 backdrop-blur-xl"
         >
-          <div className="flex items-center justify-between gap-4">
-            <div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
               <h1 className="text-2xl font-bold text-balance">{t("page.title")}</h1>
               <p className="text-muted-foreground mt-1 hidden text-sm sm:block">
                 {t("page.description")}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={() => setPreviewOpen(true)}>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                className="shrink-0 px-2.5 sm:px-4"
+                onClick={() => setPreviewOpen(true)}
+              >
                 <Eye className="h-4 w-4" />
                 <span className="hidden sm:inline">{t("page.previewPrompt")}</span>
-                <span className="sm:hidden">{t("page.preview")}</span>
+                <span className="sr-only sm:hidden">{t("page.preview")}</span>
               </Button>
               <Button
                 onClick={handleSave}
@@ -1066,7 +1076,7 @@ export function BotAiSettingsPage() {
             aria-live="polite"
           >
             <p
-              className={`inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 py-1 font-semibold ring-1 ${saveStatus.className}`}
+              className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-medium ${saveStatus.className}`}
             >
               <SaveStatusIcon aria-hidden="true" className="size-3.5" />
               {saveStatus.label}
@@ -1080,24 +1090,26 @@ export function BotAiSettingsPage() {
                 )}
             </p>
           </div>
-          <AiSettingsSearch
-            items={settingItems}
-            onSelect={(settingId) => {
-              setPendingFocusSettingId(settingId);
-              setActiveSetting(settingId);
-            }}
-            labels={{
-              search: t("navigation.searchSettings"),
-              clear: t("navigation.clearSearch"),
-              noResults: t("navigation.noSearchResults"),
-              resultCount: (count) => t("navigation.searchResultCount", { count }),
-            }}
-          />
-          <AiSettingsNavigation
-            items={sectionItems}
-            activeId={activeSection}
-            onChange={setActiveSection}
-          />
+          <div className="ai-settings-navigation-row">
+            <AiSettingsSearch
+              items={settingItems}
+              onSelect={(settingId) => {
+                setPendingFocusSettingId(settingId);
+                setActiveSetting(settingId);
+              }}
+              labels={{
+                search: t("navigation.searchSettings"),
+                clear: t("navigation.clearSearch"),
+                noResults: t("navigation.noSearchResults"),
+                resultCount: (count) => t("navigation.searchResultCount", { count }),
+              }}
+            />
+            <AiSettingsNavigation
+              items={sectionItems}
+              activeId={activeSection}
+              onChange={setActiveSection}
+            />
+          </div>
         </div>
 
         {saveStatus.detail && (
@@ -1135,7 +1147,7 @@ export function BotAiSettingsPage() {
           className="min-w-0 space-y-5 disabled:opacity-70"
         >
           <div className="min-w-0">
-            <header className="mb-5 flex items-end justify-between gap-4 px-1">
+            <header className="mb-3 flex flex-wrap items-baseline justify-between gap-2 px-1">
               <div>
                 <h2 className="text-foreground text-lg font-semibold">
                   {sectionItems.find((item) => item.id === activeSection)?.label}

@@ -44,7 +44,7 @@ export function GlobalAiSelectionSection({
 
   return (
     <Card className="hanori-section-banner border-border overflow-hidden shadow-sm">
-      <CardHeader className="border-border border-b pb-4">
+      <CardHeader className="border-border border-b p-4 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <span className="text-primary mt-0.5 flex size-9 items-center justify-center rounded-xl bg-white/75">
@@ -60,7 +60,7 @@ export function GlobalAiSelectionSection({
           </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 pt-5">
+      <CardContent className="space-y-3 p-4 sm:p-4">
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1.5">
             <label className="text-foreground text-xs font-semibold">{t("common.provider")}</label>
@@ -97,7 +97,7 @@ export function GlobalAiSelectionSection({
           </div>
         </div>
 
-        <div className="border-border flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-white/75 px-4 py-3">
+        <div className="border-border flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white/75 px-3 py-2">
           <div>
             <p className="text-foreground text-sm font-semibold">{t("selection.publicTitle")}</p>
             <p className="text-muted-foreground mt-0.5 text-xs">

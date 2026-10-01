@@ -65,7 +65,8 @@
 }
 
 @media (forced-colors: active) {
-  .ui-button:focus-visible {
+  .ui-button:focus-visible,
+  .ai-settings-desktop-nav button:focus-visible {
     outline: 2px solid Highlight;
     outline-offset: 2px;
   }
@@ -192,9 +193,56 @@ li {
 
 .workspace-content h1 {
   font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
-  font-size: clamp(1.75rem, 3vw, 2.25rem);
+  font-size: clamp(1.5rem, 2vw, 1.75rem);
   font-weight: 600;
   letter-spacing: -0.035em;
+}
+
+.ai-settings-page {
+  container: ai-settings / inline-size;
+}
+
+.ai-settings-desktop-nav {
+  display: none;
+}
+
+.ai-settings-navigation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.ai-settings-header {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Keep short landscape windows usable when the toolbar needs several rows. */
+@media (max-height: 36rem) {
+  .ai-settings-header {
+    position: static;
+  }
+}
+
+@container ai-settings (min-width: 42rem) {
+  .ai-settings-mobile-nav {
+    display: none;
+  }
+
+  .ai-settings-desktop-nav {
+    display: block;
+  }
+
+  .ai-settings-search {
+    max-width: 24rem;
+  }
+}
+
+@container ai-settings (min-width: 64rem) {
+  .ai-settings-navigation-row {
+    grid-template-columns: minmax(12rem, 1fr) auto;
+    gap: 1rem;
+  }
 }
 
 .hanori-section-banner {
@@ -242,19 +290,10 @@ li {
 .bot-list-page h1,
 .bot-dashboard-page h1 {
   font-family: "Iowan Old Style", "Songti SC", "STSong", Georgia, serif;
-  font-size: clamp(2rem, 3vw, 2.5rem);
+  font-size: clamp(1.5rem, 2vw, 1.875rem);
   font-weight: 600;
   letter-spacing: -0.03em;
   line-height: 1.2;
-}
-
-.bot-list-page > div:first-child {
-  padding-block: 0.5rem 1.5rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.bot-list-page [data-testid="bot-card"] > a {
-  padding: 1.25rem;
 }
 
 .bot-initial {

@@ -16,7 +16,7 @@ export const bots = {
   },
   list: {
     title: "Bot",
-    description: "管理、运行并检查你的机器人实例，所有状态会自动同步。",
+    description: "管理你的 AI 伙伴与自动化 Bot。",
     botCount: "Bot",
     matchCount: "匹配 Bot",
     matchAnnouncement: "匹配 {{count}} 个 Bot",

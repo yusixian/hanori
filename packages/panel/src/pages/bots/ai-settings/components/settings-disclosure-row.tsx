@@ -48,11 +48,11 @@ export function SettingsDisclosureRow({
       >
         <AccordionItem
           value="content"
-          className="ring-foreground/[0.04] data-[state=open]:ring-primary/15 rounded-2xl bg-white shadow-[var(--shadow-surface)] ring-1"
+          className="ring-foreground/[0.04] data-[state=open]:ring-primary/15 rounded-xl bg-white shadow-[var(--shadow-surface)] ring-1"
         >
           <AccordionTrigger
             id={`${settingElementId(settingId)}-trigger`}
-            className="data-[state=open]:bg-accent/45 relative min-h-20 gap-4 px-5 py-4 sm:px-6"
+            className="data-[state=open]:bg-accent/45 relative min-h-16 gap-3 px-4 py-3 sm:px-5"
           >
             <span
               aria-hidden="true"
@@ -79,7 +79,7 @@ export function SettingsDisclosureRow({
               </span>
             )}
           </AccordionTrigger>
-          <AccordionContent className="border-border border-t bg-white px-5 py-5 sm:px-6">
+          <AccordionContent className="border-border border-t bg-white px-4 py-4 sm:px-5">
             {flattenCard ? <EmbeddedCardProvider>{children}</EmbeddedCardProvider> : children}
           </AccordionContent>
         </AccordionItem>

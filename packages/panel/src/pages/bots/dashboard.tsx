@@ -188,7 +188,7 @@ export function BotDashboardPage() {
         </div>
       </nav>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t("dashboard.botInfo")}</CardTitle>
@@ -196,11 +196,13 @@ export function BotDashboardPage() {
           <CardContent className="space-y-3">
             <div className="flex items-center justify-between gap-4 border-b pb-3">
               <span className="text-muted-foreground text-sm">{t("dashboard.token")}</span>
-              <span className="font-mono text-sm">{bot.tokenMasked}</span>
+              <span className="min-w-0 text-right font-mono text-sm break-all">
+                {bot.tokenMasked}
+              </span>
             </div>
             <div className="flex items-center justify-between gap-4 border-b pb-3">
               <span className="text-muted-foreground text-sm">{t("status.uptimeLabel")}</span>
-              <span className="font-mono text-sm tabular-nums">
+              <span className="min-w-0 text-right text-sm tabular-nums">
                 {bot.uptime == null ? "-" : t("status.uptime", getUptimeParts(bot.uptime)!)}
               </span>
             </div>
@@ -227,7 +229,9 @@ export function BotDashboardPage() {
             {bot.adminChatIds.length > 0 && (
               <div className="flex items-center justify-between gap-4">
                 <span className="text-muted-foreground text-sm">{t("dashboard.admins")}</span>
-                <span className="font-mono text-sm">{bot.adminChatIds.join(", ")}</span>
+                <span className="min-w-0 text-right font-mono text-sm break-words">
+                  {bot.adminChatIds.join(", ")}
+                </span>
               </div>
             )}
           </CardContent>
@@ -251,7 +255,8 @@ export function BotDashboardPage() {
               </Button>
               <Button
                 size="sm"
-                variant="destructive"
+                variant="outline"
+                className="border-danger-border text-destructive hover:bg-danger-soft"
                 disabled={!isRunning || busy}
                 onClick={() =>
                   action(() => client.api.bots[":botId"].stop.$post({ param: { botId } }))
@@ -287,7 +292,12 @@ export function BotDashboardPage() {
               <p className="text-muted-foreground mb-3 text-xs font-medium tracking-wide uppercase">
                 {t("dashboard.dangerZone")}
               </p>
-              <Button variant="destructive" size="sm" onClick={handleDelete}>
+              <Button
+                variant="outline"
+                className="border-danger-border text-destructive hover:bg-danger-soft"
+                size="sm"
+                onClick={handleDelete}
+              >
                 <Trash2 className="h-4 w-4" />
                 {t("dashboard.deleteBot")}
               </Button>

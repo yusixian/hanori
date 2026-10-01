@@ -108,35 +108,30 @@ export function BotListPage() {
   };
 
   return (
-    <div className="bot-list-page space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="max-w-2xl">
-          <h1 className="text-foreground text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
-            {t("list.title")}
-          </h1>
-          <p className="text-muted-foreground mt-3 max-w-xl text-sm leading-6 sm:text-base">
-            {t("list.description")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="bot-list-page space-y-5">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5">
+        <h1 className="text-foreground text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+          {t("list.title")}
+        </h1>
+        <div className="flex flex-wrap items-center justify-end gap-3">
           {data && (
-            <div>
-              <p className="text-muted-foreground text-xs">
+            <p className="text-muted-foreground flex items-center gap-1.5 text-sm">
+              <span className="sr-only sm:not-sr-only">
                 {search ? t("list.matchCount") : t("list.botCount")}
-              </p>
-              <p
-                className="text-foreground mt-0.5 text-lg font-semibold tabular-nums"
-                data-testid="bot-total"
-              >
+              </span>
+              <span className="text-foreground font-semibold tabular-nums" data-testid="bot-total">
                 {total}
-              </p>
-            </div>
+              </span>
+            </p>
           )}
           <Button onClick={() => navigate("/bots/new")}>
             <Plus className="h-4 w-4" />
             {t("list.addBot")}
           </Button>
         </div>
+        <p className="text-muted-foreground col-span-full max-w-xl text-sm leading-6">
+          {t("list.description")}
+        </p>
       </div>
 
       <div className="max-w-md">
@@ -277,16 +272,15 @@ export function BotListPage() {
         </Card>
       ) : (
         <section aria-labelledby="bot-list-heading">
-          <div className="mb-4 flex items-center justify-between gap-4">
+          <div className="mb-3 flex items-center justify-between gap-4">
             <div>
               <h2
                 id="bot-list-heading"
                 tabIndex={-1}
-                className="text-foreground text-lg font-semibold tracking-tight"
+                className="text-foreground text-sm font-semibold tracking-tight"
               >
                 {t("list.yourBots")}
               </h2>
-              <p className="text-muted-foreground mt-1 text-sm">{t("list.chooseBot")}</p>
             </div>
             <span className="text-muted-foreground hidden text-xs sm:inline-flex">
               {t("list.autoRefresh")}
@@ -336,16 +330,16 @@ export function BotListPage() {
                     </Badge>
                   </div>
                 </Link>
-                <div className="flex items-center justify-between gap-3 border-t px-4 py-3">
+                <div className="flex items-center justify-between gap-3 border-t px-4 py-2.5">
                   <span className="text-muted-foreground min-w-0 text-xs font-medium tabular-nums">
-                    <span className="truncate">
+                    <span className="block">
                       {t("status.uptimeLabel")} ·{" "}
                       {bot.uptime == null ? "-" : t("status.uptime", getUptimeParts(bot.uptime)!)}
                     </span>
                   </span>
                   <Button
                     size="sm"
-                    variant={bot.status === "running" ? "outline" : "default"}
+                    variant="outline"
                     className={
                       bot.status === "running"
                         ? "border-danger-border bg-danger-soft/50 text-destructive hover:bg-danger-soft"
