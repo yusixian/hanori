@@ -1,3 +1,4 @@
+import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +28,19 @@ import type {
   PromptAssetInput,
   PromptAssetType,
 } from "@cos-tool-bot/shared";
-import { Loader2, Pencil, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
+import {
+  ChevronDown,
+  Layers,
+  Loader2,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
@@ -152,6 +165,7 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
   const [tab, setTab] = useState<Tab>("characters");
   const [settingsDraft, setSettingsDraft] = useState<GenerationLibrarySettings | null>(null);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [settingsFailed, setSettingsFailed] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [characters, setCharacters] = useState<LibraryCharacter[]>([]);
   const [charactersTotal, setCharactersTotal] = useState(0);
@@ -162,6 +176,7 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
   const [characterSource, setCharacterSource] = useState<"" | "danbooru" | "original">("");
   const [characterSort, setCharacterSort] = useState<"frequency" | "recent">("recent");
   const [charactersLoading, setCharactersLoading] = useState(true);
+  const [charactersFailed, setCharactersFailed] = useState(false);
   const [assets, setAssets] = useState<PromptAsset[]>([]);
   const [assetsTotal, setAssetsTotal] = useState(0);
   const [assetPage, setAssetPage] = useState(1);
@@ -172,6 +187,7 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
   const [assetSafety, setAssetSafety] = useState<"" | AssetSafety>("");
   const [assetSort, setAssetSort] = useState<"frequency" | "recent">("recent");
   const [assetsLoading, setAssetsLoading] = useState(false);
+  const [assetsFailed, setAssetsFailed] = useState(false);
   const [characterForm, setCharacterForm] = useState<CharacterFormState | null>(null);
   const [editingCharacterId, setEditingCharacterId] = useState<number | null>(null);
   const [editingCharacterSource, setEditingCharacterSource] = useState<
@@ -195,22 +211,24 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
     if (!botId) return;
     const requestId = ++settingsRequestRef.current;
     setSettingsLoading(true);
+    setSettingsFailed(false);
     try {
       const value = await getLibrarySettings(botId);
       if (requestId !== settingsRequestRef.current) return;
       setSettingsDraft(value);
-    } catch (err) {
+    } catch {
       if (requestId !== settingsRequestRef.current) return;
-      setError(err instanceof Error ? err.message : t("generationLibrary.loadFailed"));
+      setSettingsFailed(true);
     } finally {
       if (requestId === settingsRequestRef.current) setSettingsLoading(false);
     }
-  }, [botId, t]);
+  }, [botId]);
 
   const loadCharacters = useCallback(async () => {
     if (!botId) return;
     const requestId = ++charactersRequestRef.current;
     setCharactersLoading(true);
+    setCharactersFailed(false);
     try {
       const result = await listLibraryCharacters(botId, {
         search: characterSearch || undefined,
@@ -222,18 +240,19 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       if (requestId !== charactersRequestRef.current) return;
       setCharacters(result.data);
       setCharactersTotal(result.total);
-    } catch (err) {
+    } catch {
       if (requestId !== charactersRequestRef.current) return;
-      setError(err instanceof Error ? err.message : t("generationLibrary.loadFailed"));
+      setCharactersFailed(true);
     } finally {
       if (requestId === charactersRequestRef.current) setCharactersLoading(false);
     }
-  }, [botId, characterPage, characterSearch, characterSort, characterSource, t]);
+  }, [botId, characterPage, characterSearch, characterSort, characterSource]);
 
   const loadAssets = useCallback(async () => {
     if (!botId) return;
     const requestId = ++assetsRequestRef.current;
     setAssetsLoading(true);
+    setAssetsFailed(false);
     try {
       const result = await listLibraryAssets(botId, {
         search: assetSearch || undefined,
@@ -246,13 +265,13 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       if (requestId !== assetsRequestRef.current) return;
       setAssets(result.data);
       setAssetsTotal(result.total);
-    } catch (err) {
+    } catch {
       if (requestId !== assetsRequestRef.current) return;
-      setError(err instanceof Error ? err.message : t("generationLibrary.loadFailed"));
+      setAssetsFailed(true);
     } finally {
       if (requestId === assetsRequestRef.current) setAssetsLoading(false);
     }
-  }, [assetPage, assetSafety, assetSearch, assetSort, assetType, botId, t]);
+  }, [assetPage, assetSafety, assetSearch, assetSort, assetType, botId]);
 
   useEffect(() => {
     settingsRequestRef.current += 1;
@@ -477,10 +496,7 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-muted-foreground text-xs font-semibold tracking-[0.16em] uppercase">
-            {t("generationLibrary.eyebrow")}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold">{t("generationLibrary.title")}</h1>
+          <h1 className="text-2xl font-bold">{t("generationLibrary.title")}</h1>
           <p className="text-muted-foreground mt-2 max-w-3xl text-sm">
             {t("generationLibrary.description")}
           </p>
@@ -512,60 +528,68 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">{t("generationLibrary.settingsTitle")}</CardTitle>
-          <CardDescription>{t("generationLibrary.settingsDescription")}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {settingsLoading || !settingsDraft ? (
-            <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
-          ) : (
-            <div className="space-y-4">
-              {(
-                [
-                  ["charactersEnabled", "charactersEnabled", "charactersEnabledDescription"],
-                  ["assetsEnabled", "assetsEnabled", "assetsEnabledDescription"],
-                  ["injectionEnabled", "injectionEnabled", "injectionEnabledDescription"],
-                  ["nsfwEnabled", "nsfwEnabled", "nsfwEnabledDescription"],
-                ] as const
-              ).map(([key, labelKey, descriptionKey]) => (
-                <div key={key} className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-medium">{t(`generationLibrary.${labelKey}`)}</p>
-                    <p className="text-muted-foreground text-xs">
-                      {t(`generationLibrary.${descriptionKey}`)}
-                    </p>
+        <details className="group/library-settings">
+          <summary className="focus-visible:ring-ring flex cursor-pointer list-none items-center gap-3 rounded-xl px-5 py-4 text-sm font-semibold focus-visible:ring-2 focus-visible:outline-none forced-colors:focus-visible:[outline:2px_solid_Highlight] forced-colors:focus-visible:outline-offset-2 [&::-webkit-details-marker]:hidden">
+            <Settings2 className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
+            {t("generationLibrary.settingsTitle")}
+            <ChevronDown
+              className="text-muted-foreground ml-auto size-4 shrink-0 group-open/library-settings:rotate-180"
+              aria-hidden="true"
+            />
+          </summary>
+          <CardContent className="space-y-4">
+            <CardDescription>{t("generationLibrary.settingsDescription")}</CardDescription>
+            {settingsFailed && <LibraryReadFailure onRetry={() => void loadSettings()} />}
+            {settingsLoading ? (
+              <p className="text-muted-foreground text-sm">{t("common.loading")}</p>
+            ) : !settingsDraft ? null : (
+              <div className="space-y-4">
+                {(
+                  [
+                    ["charactersEnabled", "charactersEnabled", "charactersEnabledDescription"],
+                    ["assetsEnabled", "assetsEnabled", "assetsEnabledDescription"],
+                    ["injectionEnabled", "injectionEnabled", "injectionEnabledDescription"],
+                    ["nsfwEnabled", "nsfwEnabled", "nsfwEnabledDescription"],
+                  ] as const
+                ).map(([key, labelKey, descriptionKey]) => (
+                  <div key={key} className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium">{t(`generationLibrary.${labelKey}`)}</p>
+                      <p className="text-muted-foreground text-xs">
+                        {t(`generationLibrary.${descriptionKey}`)}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settingsDraft[key]}
+                      disabled={!canManage || settingsSaving}
+                      onCheckedChange={(checked) =>
+                        setSettingsDraft((current) =>
+                          current ? { ...current, [key]: checked } : current,
+                        )
+                      }
+                      aria-label={t(`generationLibrary.${labelKey}`)}
+                    />
                   </div>
-                  <Switch
-                    checked={settingsDraft[key]}
-                    disabled={!canManage || settingsSaving}
-                    onCheckedChange={(checked) =>
-                      setSettingsDraft((current) =>
-                        current ? { ...current, [key]: checked } : current,
-                      )
-                    }
-                    aria-label={t(`generationLibrary.${labelKey}`)}
-                  />
-                </div>
-              ))}
-              {canManage && (
-                <div className="flex justify-end pt-1">
-                  <Button
-                    size="sm"
-                    onClick={() => void handleSaveSettings()}
-                    disabled={settingsSaving}
-                  >
-                    {settingsSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                    {t("common.save")}
-                  </Button>
-                </div>
-              )}
-              {!canManage && (
-                <p className="text-muted-foreground text-xs">{t("generationLibrary.readOnly")}</p>
-              )}
-            </div>
-          )}
-        </CardContent>
+                ))}
+                {canManage && (
+                  <div className="flex justify-end pt-1">
+                    <Button
+                      size="sm"
+                      onClick={() => void handleSaveSettings()}
+                      disabled={settingsSaving}
+                    >
+                      {settingsSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                      {t("common.save")}
+                    </Button>
+                  </div>
+                )}
+                {!canManage && (
+                  <p className="text-muted-foreground text-xs">{t("generationLibrary.readOnly")}</p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </details>
       </Card>
 
       <div className="border-b">
@@ -575,13 +599,31 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
               key={item}
               type="button"
               role="tab"
+              id={`library-${item}-tab`}
+              aria-controls={tab === item ? `library-${item}-panel` : undefined}
+              tabIndex={tab === item ? 0 : -1}
               aria-selected={tab === item}
-              className={`border-b-2 px-1 pb-3 text-sm font-semibold transition-colors ${
+              className={`focus-visible:ring-ring min-h-10 rounded-t-lg border-b-2 px-2 pb-3 text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:outline-none forced-colors:focus-visible:[outline:2px_solid_Highlight] forced-colors:focus-visible:outline-offset-2 ${
                 tab === item
                   ? "border-primary text-primary"
                   : "text-muted-foreground hover:text-foreground border-transparent"
               }`}
               onClick={() => setTab(item)}
+              onKeyDown={(event) => {
+                let next: Tab;
+                if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                  next = item === "characters" ? "assets" : "characters";
+                } else if (event.key === "Home") {
+                  next = "characters";
+                } else if (event.key === "End") {
+                  next = "assets";
+                } else return;
+                event.preventDefault();
+                setTab(next);
+                requestAnimationFrame(() =>
+                  document.getElementById(`library-${next}-tab`)?.focus(),
+                );
+              }}
             >
               {t(`generationLibrary.tabs.${item}`)}
             </button>
@@ -592,48 +634,62 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       {tab === "characters" ? (
         <section
           role="tabpanel"
-          aria-label={t("generationLibrary.tabs.characters")}
+          id="library-characters-panel"
+          aria-labelledby="library-characters-tab"
           className="space-y-4"
         >
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="relative w-full lg:max-w-md">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-              <Input
-                value={characterSearchInput}
-                onChange={(event) => setCharacterSearchInput(event.target.value)}
-                onCompositionStart={() => setCharacterComposing(true)}
-                onCompositionEnd={() => setCharacterComposing(false)}
-                placeholder={t("generationLibrary.characterSearchPlaceholder")}
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={characterSource}
-              onChange={(event) => {
-                setCharacterSource(event.target.value as "" | "danbooru" | "original");
-                setCharacterPage(1);
-              }}
-              aria-label={t("generationLibrary.source")}
-            >
-              <option value="">{t("generationLibrary.allSources")}</option>
-              <option value="danbooru">{t("generationLibrary.danbooru")}</option>
-              <option value="original">{t("generationLibrary.original")}</option>
-            </Select>
-            <Select
-              value={characterSort}
-              onChange={(event) => {
-                setCharacterSort(event.target.value as "frequency" | "recent");
-                setCharacterPage(1);
-              }}
-              aria-label={t("generationLibrary.sort")}
-            >
-              <option value="recent">{t("generationLibrary.recent")}</option>
-              <option value="frequency">{t("generationLibrary.frequency")}</option>
-            </Select>
+          <div className="grid grid-cols-2 items-end gap-3 xl:flex">
+            <label className="col-span-2 flex min-w-0 flex-col gap-1.5 xl:flex-1">
+              <span className="text-muted-foreground text-xs">
+                {t("generationLibrary.searchCharacters")}
+              </span>
+              <div className="relative">
+                <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+                <Input
+                  value={characterSearchInput}
+                  onChange={(event) => setCharacterSearchInput(event.target.value)}
+                  onCompositionStart={() => setCharacterComposing(true)}
+                  onCompositionEnd={() => setCharacterComposing(false)}
+                  placeholder={t("generationLibrary.characterSearchPlaceholder")}
+                  className="pl-9"
+                />
+              </div>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 xl:w-44">
+              <span className="text-muted-foreground text-xs">{t("generationLibrary.source")}</span>
+              <Select
+                value={characterSource}
+                className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+                onChange={(event) => {
+                  setCharacterSource(event.target.value as "" | "danbooru" | "original");
+                  setCharacterPage(1);
+                }}
+                aria-label={t("generationLibrary.source")}
+              >
+                <option value="">{t("generationLibrary.allSources")}</option>
+                <option value="danbooru">{t("generationLibrary.danbooru")}</option>
+                <option value="original">{t("generationLibrary.original")}</option>
+              </Select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 xl:w-44">
+              <span className="text-muted-foreground text-xs">{t("generationLibrary.sort")}</span>
+              <Select
+                value={characterSort}
+                className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+                onChange={(event) => {
+                  setCharacterSort(event.target.value as "frequency" | "recent");
+                  setCharacterPage(1);
+                }}
+                aria-label={t("generationLibrary.sort")}
+              >
+                <option value="recent">{t("generationLibrary.recent")}</option>
+                <option value="frequency">{t("generationLibrary.frequency")}</option>
+              </Select>
+            </label>
             {canManage && (
               <Button
                 size="sm"
-                className="shrink-0 whitespace-nowrap lg:ml-auto"
+                className="col-span-2 w-fit shrink-0 whitespace-nowrap xl:ml-auto"
                 onClick={openNewCharacter}
                 disabled={mutationLoading}
               >
@@ -665,10 +721,39 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
             />
           )}
 
+          {charactersFailed && <LibraryReadFailure onRetry={() => void loadCharacters()} />}
           {charactersLoading ? (
             <LoadingRow label={t("common.loading")} />
           ) : characters.length === 0 ? (
-            <EmptyRow label={t("generationLibrary.charactersEmpty")} />
+            charactersFailed ? null : (
+              <EmptyState
+                icon={Users}
+                title={t(
+                  characterSearch || characterSource
+                    ? "generationLibrary.filteredEmpty"
+                    : "generationLibrary.charactersEmpty",
+                )}
+                description={t(
+                  characterSearch || characterSource
+                    ? "generationLibrary.filteredEmptyDescription"
+                    : "generationLibrary.charactersEmptyDescription",
+                )}
+              >
+                {characterSearch || characterSource ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setCharacterSearchInput("");
+                      setCharacterSource("");
+                      setCharacterPage(1);
+                    }}
+                  >
+                    {t("common.clearFilters")}
+                  </Button>
+                ) : null}
+              </EmptyState>
+            )
           ) : (
             <div className="grid gap-3 xl:grid-cols-2">
               {characters.map((character) => (
@@ -700,63 +785,83 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
       ) : (
         <section
           role="tabpanel"
-          aria-label={t("generationLibrary.tabs.assets")}
+          id="library-assets-panel"
+          aria-labelledby="library-assets-tab"
           className="space-y-4"
         >
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
-            <div className="relative w-full lg:max-w-md">
-              <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
-              <Input
-                value={assetSearchInput}
-                onChange={(event) => setAssetSearchInput(event.target.value)}
-                onCompositionStart={() => setAssetComposing(true)}
-                onCompositionEnd={() => setAssetComposing(false)}
-                placeholder={t("generationLibrary.assetSearchPlaceholder")}
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={assetType}
-              onChange={(event) => {
-                setAssetType(event.target.value as "" | PromptAssetType);
-                setAssetPage(1);
-              }}
-              aria-label={t("generationLibrary.assetType")}
-            >
-              <option value="">{t("generationLibrary.allAssetTypes")}</option>
-              {assetTypes.map((type) => (
-                <option key={type} value={type}>
-                  {t(`generationLibrary.assetTypes.${type}`)}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={assetSafety}
-              onChange={(event) => {
-                setAssetSafety(event.target.value as "" | AssetSafety);
-                setAssetPage(1);
-              }}
-              aria-label={t("generationLibrary.safety")}
-            >
-              <option value="">{t("generationLibrary.allSafety")}</option>
-              <option value="safe">{t("generationLibrary.safe")}</option>
-              <option value="nsfw">{t("generationLibrary.nsfw")}</option>
-            </Select>
-            <Select
-              value={assetSort}
-              onChange={(event) => {
-                setAssetSort(event.target.value as "frequency" | "recent");
-                setAssetPage(1);
-              }}
-              aria-label={t("generationLibrary.sort")}
-            >
-              <option value="recent">{t("generationLibrary.recent")}</option>
-              <option value="frequency">{t("generationLibrary.frequency")}</option>
-            </Select>
+          <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-3 xl:flex">
+            <label className="col-span-2 flex min-w-0 flex-col gap-1.5 sm:col-span-3 xl:flex-1">
+              <span className="text-muted-foreground text-xs">
+                {t("generationLibrary.searchAssets")}
+              </span>
+              <div className="relative">
+                <Search className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
+                <Input
+                  value={assetSearchInput}
+                  onChange={(event) => setAssetSearchInput(event.target.value)}
+                  onCompositionStart={() => setAssetComposing(true)}
+                  onCompositionEnd={() => setAssetComposing(false)}
+                  placeholder={t("generationLibrary.assetSearchPlaceholder")}
+                  className="pl-9"
+                />
+              </div>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 xl:w-44">
+              <span className="text-muted-foreground text-xs">
+                {t("generationLibrary.assetType")}
+              </span>
+              <Select
+                value={assetType}
+                className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+                onChange={(event) => {
+                  setAssetType(event.target.value as "" | PromptAssetType);
+                  setAssetPage(1);
+                }}
+                aria-label={t("generationLibrary.assetType")}
+              >
+                <option value="">{t("generationLibrary.allAssetTypes")}</option>
+                {assetTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {t(`generationLibrary.assetTypes.${type}`)}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 xl:w-44">
+              <span className="text-muted-foreground text-xs">{t("generationLibrary.safety")}</span>
+              <Select
+                value={assetSafety}
+                className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+                onChange={(event) => {
+                  setAssetSafety(event.target.value as "" | AssetSafety);
+                  setAssetPage(1);
+                }}
+                aria-label={t("generationLibrary.safety")}
+              >
+                <option value="">{t("generationLibrary.allSafety")}</option>
+                <option value="safe">{t("generationLibrary.safe")}</option>
+                <option value="nsfw">{t("generationLibrary.nsfw")}</option>
+              </Select>
+            </label>
+            <label className="flex min-w-0 flex-col gap-1.5 xl:w-44">
+              <span className="text-muted-foreground text-xs">{t("generationLibrary.sort")}</span>
+              <Select
+                value={assetSort}
+                className="[&>span:first-child]:min-w-0 [&>span:first-child]:truncate [&>span:last-child]:shrink-0"
+                onChange={(event) => {
+                  setAssetSort(event.target.value as "frequency" | "recent");
+                  setAssetPage(1);
+                }}
+                aria-label={t("generationLibrary.sort")}
+              >
+                <option value="recent">{t("generationLibrary.recent")}</option>
+                <option value="frequency">{t("generationLibrary.frequency")}</option>
+              </Select>
+            </label>
             {canManage && (
               <Button
                 size="sm"
-                className="shrink-0 whitespace-nowrap lg:ml-auto"
+                className="col-span-2 w-fit shrink-0 whitespace-nowrap sm:col-span-3 xl:ml-auto"
                 onClick={openNewAsset}
                 disabled={mutationLoading}
               >
@@ -778,10 +883,40 @@ function GenerationLibraryContent({ botId }: { botId: string }) {
             />
           )}
 
+          {assetsFailed && <LibraryReadFailure onRetry={() => void loadAssets()} />}
           {assetsLoading ? (
             <LoadingRow label={t("common.loading")} />
           ) : assets.length === 0 ? (
-            <EmptyRow label={t("generationLibrary.assetsEmpty")} />
+            assetsFailed ? null : (
+              <EmptyState
+                icon={Layers}
+                title={t(
+                  assetSearch || assetType || assetSafety
+                    ? "generationLibrary.filteredEmpty"
+                    : "generationLibrary.assetsEmpty",
+                )}
+                description={t(
+                  assetSearch || assetType || assetSafety
+                    ? "generationLibrary.filteredEmptyDescription"
+                    : "generationLibrary.assetsEmptyDescription",
+                )}
+              >
+                {assetSearch || assetType || assetSafety ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setAssetSearchInput("");
+                      setAssetType("");
+                      setAssetSafety("");
+                      setAssetPage(1);
+                    }}
+                  >
+                    {t("common.clearFilters")}
+                  </Button>
+                ) : null}
+              </EmptyState>
+            )
           ) : (
             <div className="grid gap-3 xl:grid-cols-2">
               {assets.map((asset) => (
@@ -815,11 +950,18 @@ function LoadingRow({ label }: { label: string }) {
   return <p className="text-muted-foreground py-8 text-center text-sm">{label}</p>;
 }
 
-function EmptyRow({ label }: { label: string }) {
+function LibraryReadFailure({ onRetry }: { onRetry: () => void }) {
+  const { t } = useTranslation("botData");
   return (
-    <p className="text-muted-foreground rounded-xl border border-dashed p-8 text-center text-sm">
-      {label}
-    </p>
+    <div
+      role="alert"
+      className="border-danger-border bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl border p-4 text-sm"
+    >
+      <p>{t("common.loadFailed")}</p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        {t("common.retry")}
+      </Button>
+    </div>
   );
 }
 
@@ -1159,14 +1301,14 @@ function CharacterCard({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-base">{character.name}</CardTitle>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 basis-40">
+            <CardTitle className="text-base leading-6 wrap-anywhere">{character.name}</CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
               {character.aliases.join(", ") || t("generationLibrary.noAliases")}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex max-w-full flex-wrap items-center gap-1">
             <Badge variant={character.source === "original" ? "success" : "muted"}>
               {t(`generationLibrary.${character.source}`)}
             </Badge>
@@ -1268,14 +1410,14 @@ function AssetCard({
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-base">{asset.name}</CardTitle>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 flex-1 basis-40">
+            <CardTitle className="text-base leading-6 wrap-anywhere">{asset.name}</CardTitle>
             <p className="text-muted-foreground mt-1 text-xs">
               {t(`generationLibrary.assetTypes.${asset.type}`)}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div className="flex max-w-full flex-wrap items-center gap-1">
             <Badge variant={asset.safety === "nsfw" ? "destructive" : "success"}>
               {t(`generationLibrary.${asset.safety}`)}
             </Badge>
