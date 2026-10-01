@@ -42,7 +42,8 @@ jobs:
         run: pnpm build:docs
 
       - name: Unit tests
-        run: pnpm test
+        # Bound process-heavy Git/CLI fixtures on the shared self-hosted runner.
+        run: pnpm test --maxWorkers=4
 
       - name: Install Chromium
         # Playwright's --with-deps option is only supported on Debian/Ubuntu.

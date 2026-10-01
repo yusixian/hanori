@@ -284,7 +284,7 @@ describe("public repository synchronization", () => {
     );
     expect(publicGit("rev-parse", "HEAD")).toBe(head);
     expect(publicGit("status", "--porcelain")).not.toBe("");
-  });
+  }, 15_000);
   it("refuses to overwrite community changes and protected branches", () => {
     const { publicRoot, publicGit, commitPublic, sync } = syncFixture();
     const path = join(publicRoot, "packages/shared/src/index.ts");
@@ -294,5 +294,5 @@ describe("public repository synchronization", () => {
     expect(readFileSync(path, "utf8")).toBe("community change\n");
     publicGit("branch", "-m", "main");
     expect(sync(true).stderr).toContain("feature branch");
-  });
+  }, 15_000);
 });
