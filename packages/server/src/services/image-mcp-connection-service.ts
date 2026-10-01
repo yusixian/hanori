@@ -1,6 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { pixaiMcpConnections } from "@cos-tool-bot/database";
-import { eq } from "drizzle-orm";
+import { eq, ne } from "drizzle-orm";
 import type { Logger } from "pino";
 import { PixaiMcpAdapter } from "./pixai-mcp-adapter.js";
 import { PixaiMcpArtifactReader } from "./pixai-mcp-artifacts.js";
@@ -66,6 +66,7 @@ export class ImageMcpConnectionService {
         ) {
           await this.recordError(
             code === "AUTHORIZATION_REQUIRED" ? code : `MCP_${toolName.toUpperCase()}_${code}`,
+            { preserveAuthorization: true },
           );
         }
       },
@@ -234,7 +235,10 @@ export class ImageMcpConnectionService {
       });
   }
 
-  private async recordError(code: string): Promise<void> {
+  private async recordError(
+    code: string,
+    options: { preserveAuthorization?: boolean } = {},
+  ): Promise<void> {
     this.logger.warn({ code }, "PixAI MCP connection needs attention");
     await this.db
       .insert(pixaiMcpConnections)
@@ -242,6 +246,10 @@ export class ImageMcpConnectionService {
       .onConflictDoUpdate({
         target: pixaiMcpConnections.id,
         set: { status: "error", lastErrorCode: code, updatedAt: new Date() },
+        // Background polling must not invalidate the owner's pending OAuth callback.
+        setWhere: options.preserveAuthorization
+          ? ne(pixaiMcpConnections.status, "authorizing")
+          : undefined,
       });
   }
 }
