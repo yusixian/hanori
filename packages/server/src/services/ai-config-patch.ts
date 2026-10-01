@@ -72,6 +72,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
         providerFormat: p.providerFormat,
         defaultModel: p.defaultModel,
         models: p.models,
+        excludedModelIds: p.excludedModelIds ?? existing?.excludedModelIds,
       });
     });
     if (requestedInitialProviderId && providerIdMap.has(requestedInitialProviderId)) {

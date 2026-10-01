@@ -30,6 +30,18 @@ MCP（Model Context Protocol）服务器为 Bot 提供一组外部工具或资�
 
 图片生成可以连接专用图片 MCP 服务。管理面板可能提供单独的授权入口和连接状态页面；这类连接通常只允许 owner 执行 OAuth，其他管理员负责查看或使用已连接状态。授权回调地址必须与实例公开 origin 完全一致。
 
+先部署自己的 MCP Platform，在 Hanori 的环境配置中设置完整地址：
+
+```dotenv
+PIXAI_MCP_URL=https://mcp.example.com/mcp/pixai
+```
+
+将示例域名换成自己的服务地址，再重建 Hanori app。留空时图片 MCP 保持关闭，其他功能和独立配置的通用生图仍可使用。生产地址必须为 HTTPS，且不能包含用户名、密码、查询参数或片段；本机开发可使用 `http://127.0.0.1:43128/mcp/pixai`。
+
+在 MCP Platform 中配置自己的 PixAI 凭据，再从 Hanori 的 owner 账号发起 OAuth 授权；两套应用各自保存自己的登录配置和密钥，Hanori 不需要复制 Platform 的主密钥、数据库或 PixAI API Key。Hanori 的 OAuth 回调为 `BETTER_AUTH_URL` 下的 `/api/image-mcp/oauth/callback`。
+
+更换 MCP 地址时，先等待已有生图任务结束。授权凭据绑定到完整 MCP 地址，旧地址的 token、客户端注册和发现结果不会复用于新地址。升级自固定地址版本时，需显式填写原来的 MCP 地址并由 owner 重新授权一次；旧授权不会被自动发送到新配置的服务。
+
 连接图片 MCP 后，仍需配置图片路由、preset、用量和内容安全检查。请按[图片、贴纸与媒体](/docs/guides/media)的流程先在测试聊天验证。
 
 ## 排错

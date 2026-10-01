@@ -26,6 +26,8 @@ export interface AiProviderEntry {
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: ModelEntry[];
+  /** Model IDs explicitly removed by the owner; discovery must not add them back. */
+  excludedModelIds?: string[];
 }
 
 export interface AiProviderEntryPublic {
@@ -38,4 +40,5 @@ export interface AiProviderEntryPublic {
   providerFormat: "openai" | "gemini";
   defaultModel: string;
   models?: ModelEntry[];
+  excludedModelIds?: string[];
 }

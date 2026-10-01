@@ -44,7 +44,7 @@ function createConversation(): ConversationCallbacks {
   return {
     getHistory: vi.fn().mockResolvedValue({
       summary: "Earlier summary",
-      messages: [{ role: "user", content: "Earlier question", userName: "Nahida" }],
+      messages: [{ role: "user", content: "Earlier question", userName: "Alice" }],
     }),
     getRecentUserMessagesAcrossChats: vi.fn().mockResolvedValue([]),
     addMessage: vi.fn(),
@@ -62,7 +62,7 @@ function runtimeInput(overrides: Partial<ContextAssemblyInput> = {}): ContextAss
     behavioralPrompt: "Be concise",
     isPrivate: true,
     chatId: 42,
-    userName: "Nahida",
+    userName: "Alice",
     maxContextMessages: 20,
     toolCapabilities: deriveCapabilitiesFromTools({
       get_profile: {},
@@ -381,7 +381,7 @@ describe("prompt bundle", () => {
     vi.mocked(conversation.getHistory)
       .mockResolvedValueOnce({
         summary: null,
-        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Nahida" }],
+        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Alice" }],
         budgetTrace: {
           configuredTokens: 12_000,
           usedTokens: 200,
@@ -395,7 +395,7 @@ describe("prompt bundle", () => {
       })
       .mockResolvedValueOnce({
         summary: "Compacted earlier history",
-        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Nahida" }],
+        messages: [{ id: 9, role: "user", content: "latest tail", userName: "Alice" }],
         budgetTrace: {
           configuredTokens: 12_000,
           usedTokens: 500,
@@ -436,7 +436,7 @@ describe("prompt bundle", () => {
           {
             role: "user",
             content: "Forwarded words",
-            userName: "Nahida",
+            userName: "Casey",
             forwardOrigin: { type: "user", name: "Alice", username: "alice" },
           },
           { role: "assistant", content: "Earlier answer", userName: null },
@@ -471,7 +471,7 @@ describe("prompt bundle", () => {
       const conversation = createConversation();
       vi.mocked(conversation.getHistory).mockResolvedValue({
         summary: null,
-        messages: [{ role: "user", content: "Ordinary words", userName: "Nahida" }],
+        messages: [{ role: "user", content: "Ordinary words", userName: "Alice" }],
       });
 
       const result = await assembleContext(
@@ -480,7 +480,7 @@ describe("prompt bundle", () => {
       const serialized = JSON.stringify(result.messages);
 
       expect(serialized).toContain(
-        historyFormat === "prompt" ? "Nahida: Ordinary words" : "[Nahida]: Ordinary words",
+        historyFormat === "prompt" ? "Alice: Ordinary words" : "[Alice]: Ordinary words",
       );
       expect(serialized).not.toContain("Forwarded from");
     },
@@ -513,8 +513,8 @@ describe("prompt bundle", () => {
       summary: "Summary",
       messages: [
         { role: "context", content: "Group context", userName: null },
-        { role: "user", content: "First", userName: "Nahida" },
-        { role: "user", content: "Second", userName: "Nahida" },
+        { role: "user", content: "First", userName: "Alice" },
+        { role: "user", content: "Second", userName: "Alice" },
         { role: "assistant", content: "Answer", userName: null },
       ],
     });

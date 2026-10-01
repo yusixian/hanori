@@ -107,6 +107,7 @@ export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiC
     providerFormat: p.providerFormat,
     defaultModel: p.defaultModel,
     models: p.models,
+    excludedModelIds: p.excludedModelIds,
   }));
   return {
     engagement: toEngagementConfigPublic(migrated.engagement),

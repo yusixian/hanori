@@ -10,6 +10,7 @@ vi.hoisted(() => {
   process.env.DATABASE_URL ||= "postgresql://localhost/cos_tool_bot_test";
   process.env.BETTER_AUTH_SECRET ||= "test-secret";
   process.env.AUTH_OWNER_EMAIL ||= "owner@example.com";
+  process.env.ENCRYPTION_KEY ||= "test-encryption-key";
 });
 
 it("uses a deterministic creation order and ID tie-breaker across Bot pages", async () => {

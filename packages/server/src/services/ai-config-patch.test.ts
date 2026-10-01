@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { decrypt } from "../utils/crypto.js";
 import { AiConfigPatchError, absorbAiConfigPatch } from "./ai-config-patch.js";
 import { aiConfigSchema, type AiConfigPatch } from "./ai-config-schema.js";
+import { toAiConfigPublic } from "./ai-config-public-view.js";
 
 const ENCRYPTION_KEY = "test-key";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -129,6 +130,26 @@ const patchProvider = {
 };
 
 describe("absorbAiConfigPatch provider keys", () => {
+  it("round-trips model exclusions and preserves them for clients that omit the field", () => {
+    const saved = absorb(
+      storedConfig(),
+      buildPatch({
+        providers: [{ ...patchProvider, excludedModelIds: ["removed-model"] }],
+      }),
+    );
+    expect(saved.providers![0]!.excludedModelIds).toEqual(["removed-model"]);
+    expect(toAiConfigPublic(saved).providers[0]!.excludedModelIds).toEqual(["removed-model"]);
+    const legacySave = absorb(saved, buildPatch({ providers: [patchProvider] }));
+    expect(legacySave.providers![0]!.excludedModelIds).toEqual(["removed-model"]);
+    const restored = absorb(
+      saved,
+      buildPatch({
+        providers: [{ ...patchProvider, excludedModelIds: [] }],
+      }),
+    );
+    expect(toAiConfigPublic(restored).providers[0]!.excludedModelIds).toEqual([]);
+  });
+
   it("encrypts a newly supplied provider key", () => {
     const result = absorb(
       null,

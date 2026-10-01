@@ -5,7 +5,6 @@ import {
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { describe, expect, it, vi } from "vitest";
 import {
-  PIXAI_MCP_PRODUCTION_ENDPOINT,
   PixaiMcpClient,
   PixaiMcpClientError,
   normalizePixaiMcpToolResponse,
@@ -24,19 +23,48 @@ const authProvider = {
 };
 
 describe("PixaiMcpClient", () => {
-  it("pins production and permits only a constructor override outside production", () => {
+  it("uses the configured production endpoint and allows loopback HTTP only in development", () => {
     expect(
       resolvePixaiMcpEndpoint({
         environment: "production",
-        endpointOverride: "http://127.0.0.1:9999/mcp/pixai",
-      }).toString(),
-    ).toBe(PIXAI_MCP_PRODUCTION_ENDPOINT);
+        endpointOverride: "https://images.example.com/mcp/pixai",
+      })?.href,
+    ).toBe("https://images.example.com/mcp/pixai");
     expect(
       resolvePixaiMcpEndpoint({
         environment: "non-production",
         endpointOverride: "http://127.0.0.1:9999/mcp/pixai",
-      }).toString(),
+      })?.href,
     ).toBe("http://127.0.0.1:9999/mcp/pixai");
+    expect(resolvePixaiMcpEndpoint({ environment: "production" })).toBeUndefined();
+  });
+
+  it.each([
+    "http://127.0.0.1:9999/mcp/pixai",
+    "https://user:secret@mcp.example.com/mcp/pixai",
+    "https://mcp.example.com/mcp/pixai?token=secret",
+    "https://mcp.example.com/mcp/pixai#secret",
+    "not-a-url-secret",
+  ])("rejects unsafe production endpoints without exposing the URL", (endpointOverride) => {
+    try {
+      resolvePixaiMcpEndpoint({ environment: "production", endpointOverride });
+      expect.fail("expected invalid configuration");
+    } catch (error) {
+      expect((error as Error).message).toBe(
+        "PIXAI_MCP_URL must be an HTTPS URL without credentials, query or fragment",
+      );
+    }
+  });
+
+  it("leaves an unconfigured client inactive without constructing a transport", async () => {
+    const connectionFactory = vi.fn();
+    const client = new PixaiMcpClient({ authProvider, connectionFactory });
+    await expect(client.connect()).rejects.toEqual(new PixaiMcpClientError("NOT_CONFIGURED"));
+    await expect(client.getTask("operation-1")).rejects.toEqual(
+      new PixaiMcpClientError("NOT_CONFIGURED"),
+    );
+    await client.close();
+    expect(connectionFactory).not.toHaveBeenCalled();
   });
 
   it("retains structured output, images, and protected resource links", () => {
@@ -47,7 +75,7 @@ describe("PixaiMcpClient", () => {
         { type: "image", data: "aGVsbG8=", mimeType: "image/webp" },
         {
           type: "resource_link",
-          uri: "https://mcp.aistine.com/api/artifacts/11111111-1111-4111-8111-111111111111",
+          uri: "https://mcp.example.com/api/artifacts/11111111-1111-4111-8111-111111111111",
           name: "result",
           mimeType: "image/webp",
         },
@@ -67,6 +95,7 @@ describe("PixaiMcpClient", () => {
       callTool,
     };
     const client = new PixaiMcpClient({
+      endpointOverride: "https://mcp.example.com/mcp/pixai",
       authProvider,
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
@@ -96,6 +125,7 @@ describe("PixaiMcpClient", () => {
       callTool,
     };
     const client = new PixaiMcpClient({
+      endpointOverride: "https://mcp.example.com/mcp/pixai",
       authProvider,
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
@@ -130,7 +160,11 @@ describe("PixaiMcpClient", () => {
       client: clients.shift()!,
       transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
     }));
-    const client = new PixaiMcpClient({ authProvider, connectionFactory });
+    const client = new PixaiMcpClient({
+      authProvider,
+      connectionFactory,
+      endpointOverride: "https://mcp.example.com/mcp/pixai",
+    });
 
     await client.connect();
     await client.close();
@@ -149,6 +183,7 @@ describe("PixaiMcpClient", () => {
       callTool: vi.fn(),
     };
     const client = new PixaiMcpClient({
+      endpointOverride: "https://mcp.example.com/mcp/pixai",
       authProvider,
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
@@ -170,6 +205,7 @@ describe("PixaiMcpClient", () => {
       callTool,
     };
     const client = new PixaiMcpClient({
+      endpointOverride: "https://mcp.example.com/mcp/pixai",
       authProvider,
       onCallError,
       connectionFactory: (endpoint, provider) => ({

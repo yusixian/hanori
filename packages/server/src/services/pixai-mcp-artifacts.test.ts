@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { PixaiMcpArtifactError, PixaiMcpArtifactReader } from "./pixai-mcp-artifacts.js";
 
-const artifactUrl = "https://mcp.aistine.com/api/artifacts/11111111-1111-4111-8111-111111111111";
+const artifactUrl = "https://mcp.example.com/api/artifacts/11111111-1111-4111-8111-111111111111";
 
 function reader(fetchFn: typeof fetch, maxBytes = 1024) {
   return new PixaiMcpArtifactReader({
-    endpoint: "https://mcp.aistine.com/mcp/pixai",
+    endpoint: "https://mcp.example.com/mcp/pixai",
     authProvider: {
       tokens: async () => ({ access_token: "access-secret", token_type: "Bearer" }),
     },
@@ -31,7 +31,7 @@ describe("PixaiMcpArtifactReader", () => {
     const invalidUris = [
       "https://evil.example/api/artifacts/11111111-1111-4111-8111-111111111111",
       `${artifactUrl}?download=1`,
-      "https://mcp.aistine.com/api/artifacts/not-a-uuid",
+      "https://mcp.example.com/api/artifacts/not-a-uuid",
     ];
     for (const uri of invalidUris) {
       await expect(
@@ -84,7 +84,7 @@ describe("PixaiMcpArtifactReader", () => {
 
   it("sanitizes credential-store failures", async () => {
     const artifactReader = new PixaiMcpArtifactReader({
-      endpoint: "https://mcp.aistine.com/mcp/pixai",
+      endpoint: "https://mcp.example.com/mcp/pixai",
       authProvider: {
         tokens: async () => {
           throw new Error("access-secret refresh-secret");

@@ -372,6 +372,7 @@ export const aiConfigSchema = z
           modelDiscoveryPath: modelDiscoveryPathSchema.optional(),
           providerFormat: z.enum(["openai", "gemini"]),
           defaultModel: z.string().trim(),
+          excludedModelIds: z.array(z.string().trim().min(1)).optional(),
           models: z
             .array(
               z.object({

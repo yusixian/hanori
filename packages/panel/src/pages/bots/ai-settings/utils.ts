@@ -5,7 +5,7 @@ import type {
   ModelEntry,
   SummaryConfigStored,
 } from "@cos-tool-bot/shared";
-import type { ModelOption } from "./types";
+import { replaceProviderModels } from "./model-discovery";
 
 export type AiConfigSaveRecoveryResult = "not-applicable" | "reloaded" | "reload-failed";
 
@@ -34,17 +34,6 @@ export function groupModelsByProvider(models: ModelEntry[]): [string, ModelEntry
     groups.set(provider, list);
   }
   return [...groups.entries()];
-}
-
-export function groupFetchedModels(models: ModelOption[]): [string, ModelOption[]][] {
-  const groups = new Map<string, ModelOption[]>();
-  for (const m of models) {
-    const key = m.owned_by || "other";
-    const list = groups.get(key) ?? [];
-    list.push(m);
-    groups.set(key, list);
-  }
-  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
 
 export function resolveManagedProviderIdAfterSave({
@@ -97,11 +86,13 @@ export function renameProviderModelReferences({
       providers: config.providers.map((provider) =>
         provider.id === providerId
           ? {
-              ...provider,
-              defaultModel: provider.defaultModel === currentId ? nextId : provider.defaultModel,
-              models: provider.models?.map((model) =>
-                model.id === currentId ? { ...model, id: nextId } : model,
+              ...replaceProviderModels(
+                provider,
+                (provider.models ?? []).map((model) =>
+                  model.id === currentId ? { ...model, id: nextId } : model,
+                ),
               ),
+              defaultModel: provider.defaultModel === currentId ? nextId : provider.defaultModel,
             }
           : provider,
       ),

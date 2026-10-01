@@ -31,6 +31,8 @@ const reviewedFixtures = new Set([
 const runtimeScripts = new Set([
   "init-env.mjs",
   "init-env.test.mjs",
+  "preserve-upgrade-env.mjs",
+  "preserve-upgrade-env.test.mjs",
   "smoke-deployment.mjs",
   "smoke-deployment.test.mjs",
   "update-production.sh",
@@ -85,6 +87,10 @@ const syntheticUrls = new Map([
     ]),
   ],
   ["scripts/init-env.test.mjs", new Set(["https://user:secret@bot.example.com"])],
+  [
+    "packages/server/src/services/pixai-mcp-client.test.ts",
+    new Set(["https://user:secret@mcp.example.com"]),
+  ],
 ]);
 const rules = [
   ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/g],

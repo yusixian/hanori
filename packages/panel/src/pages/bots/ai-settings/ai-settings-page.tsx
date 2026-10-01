@@ -44,6 +44,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildAiConfigSaveBody } from "./ai-config-save-body";
+import {
+  mergeDiscoveredModels,
+  modelDiscoveryPath,
+  replaceProviderModels,
+} from "./model-discovery";
+import { useModelDiscovery } from "./use-model-discovery";
 import { PromptPreviewDialog } from "./prompt-preview-dialog";
 import { Link, useBlocker, useParams, useSearchParams } from "react-router";
 import {
@@ -140,6 +146,9 @@ export function BotAiSettingsPage() {
   const { t, i18n } = useTranslation("aiSettings");
   const [searchParams, setSearchParams] = useSearchParams();
   const [config, setConfig] = useState<AiConfigPublic>(DEFAULT_CONFIG);
+  const [configBotId, setConfigBotId] = useState<string>();
+  const currentBotIdRef = useRef(botId);
+  currentBotIdRef.current = botId;
   const [managedProviderId, setManagedProviderId] = useState<string>();
   const savedDraftRef = useRef("");
   const revisionRef = useRef("");
@@ -243,6 +252,20 @@ export function BotAiSettingsPage() {
   const activeSection =
     requestedSetting?.section ??
     (sectionItems.some((item) => item.id === requestedSection) ? requestedSection! : "overview");
+  const discovery = useModelDiscovery({
+    botId: botId ?? "",
+    enabled: configBotId === botId && !loading && activeSection === "providers",
+    providers: config.providers,
+    apiKeys: providerApiKeys,
+    onDiscover: (providerId, models) => {
+      setConfig((previous) => ({
+        ...previous,
+        providers: previous.providers.map((provider) =>
+          provider.id === providerId ? mergeDiscoveredModels(provider, models) : provider,
+        ),
+      }));
+    },
+  });
   const setActiveSection = (section: AiSettingsSectionId) => {
     const next = new URLSearchParams(searchParams);
     if (section === "overview") next.delete("section");
@@ -346,6 +369,7 @@ export function BotAiSettingsPage() {
       try {
         const res = await client.api.bots[":botId"]["ai-config"].$get({ param: { botId } });
         const json = await res.json();
+        if (currentBotIdRef.current !== botId) return false;
         if (json.ok) {
           setConfigApplyRetryPending(false);
           revisionRef.current = json.revision;
@@ -355,6 +379,7 @@ export function BotAiSettingsPage() {
           const nextOcr = json.data.imageOcrConfig ?? DEFAULT_IMAGE_OCR_CONFIG;
           const nextExecution = createExecutionConfigDraft(json.data.executionConfig);
           setConfig(json.data);
+          setConfigBotId(botId);
           setManagedProviderId((current) =>
             json.data.providers.some((provider) => provider.id === current)
               ? current
@@ -385,12 +410,12 @@ export function BotAiSettingsPage() {
         }
         return false;
       } catch {
-        if (reportError) {
+        if (reportError && currentBotIdRef.current === botId) {
           setMessage({ type: "error", text: i18n.t("page.loadError", { ns: "aiSettings" }) });
         }
         return false;
       } finally {
-        setLoading(false);
+        if (currentBotIdRef.current === botId) setLoading(false);
       }
     },
     [botId, i18n],
@@ -484,15 +509,17 @@ export function BotAiSettingsPage() {
   const pageBusy = saving || savingSelection || retryingSelection;
   const saveDisabledReason = pageBusy
     ? t("page.saveInProgress")
-    : revisionRef.current === ""
-      ? t("page.saveUnavailable")
-      : isSelectionDirty
-        ? t("selection.applyBeforeCatalogSave")
-        : executionConfigUpdate === null
-          ? t("execution.validation.fixErrors")
-          : !isConfigDirty && !configApplyRetryPending
-            ? t("page.noChangesToSave")
-            : null;
+    : discovery.fetching.size > 0
+      ? t("models.refreshing")
+      : revisionRef.current === ""
+        ? t("page.saveUnavailable")
+        : isSelectionDirty
+          ? t("selection.applyBeforeCatalogSave")
+          : executionConfigUpdate === null
+            ? t("execution.validation.fixErrors")
+            : !isConfigDirty && !configApplyRetryPending
+              ? t("page.noChangesToSave")
+              : null;
   const saveStatus: {
     icon: typeof CheckCircle2;
     label: string;
@@ -589,7 +616,13 @@ export function BotAiSettingsPage() {
   };
 
   const handleSave = async () => {
-    if (!botId || pageBusy || (!isConfigDirty && !configApplyRetryPending) || isSelectionDirty)
+    if (
+      !botId ||
+      pageBusy ||
+      discovery.fetching.size > 0 ||
+      (!isConfigDirty && !configApplyRetryPending) ||
+      isSelectionDirty
+    )
       return;
     if (!executionConfigUpdate) {
       setMessage({ type: "error", text: t("execution.validation.fixErrors") });
@@ -1168,6 +1201,18 @@ export function BotAiSettingsPage() {
 
             {activeSection === "providers" && (
               <div className="space-y-5">
+                {config.providers.map(
+                  (provider) =>
+                    discovery.errors[provider.id] && (
+                      <p
+                        key={provider.id}
+                        role="alert"
+                        className="text-destructive text-sm break-words"
+                      >
+                        {provider.label}: {discovery.errors[provider.id]}
+                      </p>
+                    ),
+                )}
                 {globalSelection && globalSelectionDraft && (
                   <GlobalAiSelectionSection
                     selection={globalSelection}
@@ -1229,19 +1274,28 @@ export function BotAiSettingsPage() {
 
                 {managedProvider && (
                   <ModelsSection
-                    botId={botId!}
+                    key={`${botId}:${managedProvider.id}`}
                     models={managedProvider.models ?? []}
                     activeModel={managedProvider.defaultModel}
                     modelCommandAccess={config.modelCommandAccess ?? "admin"}
-                    providerId={managedProvider.id}
                     providerLabel={managedProvider.label}
-                    baseURL={managedProvider.baseURL}
-                    apiKey={providerApiKeys[managedProvider.id] ?? ""}
-                    modelDiscoveryPath={
-                      managedProvider.modelDiscoveryPath ??
-                      (managedProvider.providerFormat === "openai" ? "/models" : "")
+                    canFetch={Boolean(
+                      modelDiscoveryPath(managedProvider).trim() &&
+                      managedProvider.baseURL &&
+                      (managedProvider.hasApiKey || providerApiKeys[managedProvider.id]?.trim()),
+                    )}
+                    fetchingModels={discovery.fetching.has(managedProvider.id)}
+                    onRefresh={() => void discovery.refresh(managedProvider.id)}
+                    onModelsChange={(models) =>
+                      setConfig((previous) => ({
+                        ...previous,
+                        providers: previous.providers.map((provider) =>
+                          provider.id === managedProvider.id
+                            ? replaceProviderModels(provider, models)
+                            : provider,
+                        ),
+                      }))
                     }
-                    onModelsChange={(models) => updateManagedProvider({ models })}
                     onActiveModelChange={(defaultModel) => updateManagedProvider({ defaultModel })}
                     onModelRename={renameManagedProviderModel}
                     onModelCommandAccessChange={(modelCommandAccess) =>

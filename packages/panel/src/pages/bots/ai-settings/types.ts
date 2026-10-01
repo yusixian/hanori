@@ -9,12 +9,6 @@ import {
   type GitHubToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 
-export interface ModelOption {
-  id: string;
-  owned_by?: string;
-  capabilities: ModelCapability[];
-}
-
 export const CAPABILITY_BADGES: Record<ModelCapability, { emoji: string; labelKey: string }> = {
   vision: { emoji: "👁", labelKey: "capabilities.vision" },
   tool_calling: { emoji: "🔧", labelKey: "capabilities.toolCalling" },

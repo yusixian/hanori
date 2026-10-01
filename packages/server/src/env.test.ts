@@ -32,11 +32,20 @@ afterEach(() => {
 });
 
 describe("server environment", () => {
-  it("keeps the legacy encryption key fallback during a production migration", async () => {
-    const developmentEnvironment = await loadEnvironment("development");
-    const productionEnvironment = await loadEnvironment("production", "");
+  it.each(["development", "production"] as const)(
+    "requires an explicit key in %s",
+    async (mode) => {
+      await expect(loadEnvironment(mode)).rejects.toThrow("Missing required env: ENCRYPTION_KEY");
+      await expect(loadEnvironment(mode, "")).rejects.toThrow(
+        "Missing required env: ENCRYPTION_KEY",
+      );
+    },
+  );
 
-    expect(productionEnvironment.ENCRYPTION_KEY).toBe(developmentEnvironment.ENCRYPTION_KEY);
-    expect(productionEnvironment.USING_DEFAULT_ENCRYPTION_KEY).toBe(true);
+  it.each(["development", "production"] as const)("preserves the exact key in %s", async (mode) => {
+    const key = "  synthetic-$key#with-spaces  ";
+    const environment = await loadEnvironment(mode, key);
+    expect(environment.ENCRYPTION_KEY).toBe(key);
+    expect(environment).not.toHaveProperty("USING_DEFAULT_ENCRYPTION_KEY");
   });
 });

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { BotAiSettingsPage } from "./ai-settings-page";
 import { DEFAULT_CONFIG, type GlobalAiSelection } from "./types";
 import { BeforeLogoutProvider } from "@/components/layout/before-logout";
+import type { AiConfigPublic } from "@cos-tool-bot/shared";
 
 function Destination() {
   const location = useLocation();
@@ -26,7 +27,9 @@ function PageHarness() {
       <button type="button" onClick={() => navigate("/outside")}>
         Test programmatic outside
       </button>
-      <BotAiSettingsPage />
+      <div className="workspace-content mx-auto w-full max-w-[1360px] p-4 sm:p-6 lg:px-7">
+        <BotAiSettingsPage />
+      </div>
     </>
   );
 }
@@ -142,6 +145,133 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await page.viewport(1440, 900);
+});
+
+function stubModelDiscovery(discover?: (providerId: string) => Promise<Response>) {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  let config: AiConfigPublic = {
+    ...DEFAULT_CONFIG,
+    activeProviderId: "provider-a",
+    providers: ["a", "b"].map((id) => ({
+      id: `provider-${id}`,
+      label: `Provider ${id.toUpperCase()}`,
+      baseURL: `https://${id}.example/v1`,
+      hasApiKey: true,
+      providerFormat: "openai" as const,
+      defaultModel: `model-${id}`,
+      models: [{ id: `model-${id}` }, { id: "manual-model", temperature: 0.5 }],
+      excludedModelIds: ["removed-model"],
+    })),
+  };
+  const discovered: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/ai-config")) {
+        if (requestMethod(input, init) === "PUT") {
+          const body = JSON.parse(String(init?.body));
+          config = {
+            ...config,
+            providers: body.providers.map((provider: AiConfigPublic["providers"][number]) => ({
+              ...provider,
+              hasApiKey: true,
+            })),
+          };
+        }
+        return Response.json({ ok: true, data: config, revision: "revision-1" });
+      }
+      if (url.endsWith("/ai-models")) {
+        const { providerId } = JSON.parse(String(init?.body));
+        discovered.push(providerId);
+        return discover
+          ? discover(providerId)
+          : Response.json({
+              ok: true,
+              data: [
+                { id: `${providerId}-new`, capabilities: [] },
+                { id: "removed-model", capabilities: [] },
+                { id: "manual-model", capabilities: [] },
+              ],
+            });
+      }
+      return Response.json({ ok: false }, { status: 404 });
+    }),
+  );
+  return { discovered, saved: () => config };
+}
+
+test.each([
+  [1440, 900],
+  [390, 844],
+])(
+  "discovers every provider on entry and remembers removals after saving at %ix%i",
+  async (width, height) => {
+    await page.viewport(width, height);
+    const server = stubModelDiscovery();
+
+    const { rendered, router } = await renderAiSettings("/bots/test-id/ai?section=providers");
+
+    await expect.poll(() => server.discovered.sort()).toEqual(["provider-a", "provider-b"]);
+    await expect.element(page.getByText("provider-a-new", { exact: true })).toBeVisible();
+    await expect.element(page.getByText("removed-model", { exact: true })).not.toBeInTheDocument();
+    await page.getByRole("button", { name: /Provider B/ }).click();
+    await expect.element(page.getByText("provider-b-new", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /Provider A/ }).click();
+    await page.getByRole("button", { name: "Remove provider-a-new" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(page.getByText("All changes saved")).toBeVisible();
+    expect(server.saved().providers[0]!.excludedModelIds).toEqual([
+      "removed-model",
+      "provider-a-new",
+    ]);
+    expect(server.saved().providers[0]!.models).toContainEqual({
+      id: "manual-model",
+      temperature: 0.5,
+    });
+
+    await router.navigate("/bots/test-id/ai?section=replies");
+    await expect.element(page.getByPlaceholder("You are a helpful assistant…")).toBeVisible();
+    await router.navigate("/bots/test-id/ai?section=providers");
+    await expect.poll(() => server.discovered.length).toBe(4);
+    await expect.element(page.getByRole("button", { name: "Refresh Models" })).toBeEnabled();
+    await expect.element(page.getByText("provider-a-new", { exact: true })).not.toBeInTheDocument();
+    await rendered.unmount();
+    await renderAiSettings("/bots/test-id/ai?section=providers");
+    await expect.poll(() => server.discovered.length).toBe(6);
+    await expect.element(page.getByRole("button", { name: "Refresh Models" })).toBeEnabled();
+    await expect.element(page.getByText("provider-a-new", { exact: true })).not.toBeInTheDocument();
+    await page.getByRole("textbox", { name: "Model IDs to add" }).fill("provider-a-new");
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(page.getByText("All changes saved")).toBeVisible();
+    expect(server.saved().providers[0]!.excludedModelIds).toEqual(["removed-model"]);
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  },
+);
+
+test("preserves a removal made while automatic discovery is still pending", async () => {
+  let resolveDiscovery!: (response: Response) => void;
+  stubModelDiscovery(async (providerId) =>
+    providerId === "provider-a"
+      ? new Promise<Response>((resolve) => {
+          resolveDiscovery = resolve;
+        })
+      : Response.json({ ok: true, data: [] }),
+  );
+  await renderAiSettings("/bots/test-id/ai?section=providers");
+  await page.getByRole("button", { name: "Remove manual-model" }).click();
+  resolveDiscovery(
+    Response.json({
+      ok: true,
+      data: [
+        { id: "manual-model", capabilities: [] },
+        { id: "new-model", capabilities: [] },
+      ],
+    }),
+  );
+  await expect.element(page.getByText("new-model", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("manual-model", { exact: true })).not.toBeInTheDocument();
 });
 
 test("shows clean, dirty, saving, and saved states without duplicate saves", async () => {

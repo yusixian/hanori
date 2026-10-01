@@ -7,10 +7,10 @@ import {
 } from "./context-assembler.js";
 
 const HISTORY = [
-  { role: "user", content: "这个 hydration 的文章讲了啥", userName: "Nahida", tgMessageId: 4820 },
+  { role: "user", content: "这个 hydration 的文章讲了啥", userName: "Alice", tgMessageId: 4820 },
   { role: "assistant", content: "我看看", userName: null, tgMessageId: 4821 },
-  { role: "user", content: "帮我写个频道摘要", userName: "cos", tgMessageId: 4822 },
-  { role: "user", content: "压缩时丢了 id 的旧消息", userName: "cos" },
+  { role: "user", content: "帮我写个频道摘要", userName: "Bob", tgMessageId: 4822 },
+  { role: "user", content: "压缩时丢了 id 的旧消息", userName: "Bob" },
 ];
 
 function conversation(): ConversationCallbacks {
@@ -31,7 +31,7 @@ function input(overrides: Partial<ContextAssemblyInput> = {}): ContextAssemblyIn
     systemPrompt: "Base system",
     isPrivate: false,
     chatId: -1001,
-    userName: "cos",
+    userName: "Bob",
     maxContextMessages: 20,
     conversation: conversation(),
     toolCapabilities: new Set(),
@@ -47,8 +47,8 @@ describe("replyable message ids in the assembled prompt", () => {
   it("labels group history messages with their Telegram id and reports them", async () => {
     const bundle = await assembleContext(input({ historyFormat: "prompt" }));
 
-    expect(promptText(bundle.messages)).toContain("[#4820 Nahida]: 这个 hydration 的文章讲了啥");
-    expect(promptText(bundle.messages)).toContain("[#4822 cos]: 帮我写个频道摘要");
+    expect(promptText(bundle.messages)).toContain("[#4820 Alice]: 这个 hydration 的文章讲了啥");
+    expect(promptText(bundle.messages)).toContain("[#4822 Bob]: 帮我写个频道摘要");
     expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
   });
 
@@ -68,7 +68,7 @@ describe("replyable message ids in the assembled prompt", () => {
       const instructions = bundle.messages[0]!.content;
       expect(instructions).toContain("包括对话历史和近期群聊消息");
       expect(instructions).not.toContain("其它位置的历史消息没有 ID");
-      expect(promptText(bundle.messages)).toContain("[#4820 Nahida]");
+      expect(promptText(bundle.messages)).toContain("[#4820 Alice]");
       expect(bundle.replyableMessageIds).toContain(4820);
     },
   );
@@ -76,7 +76,7 @@ describe("replyable message ids in the assembled prompt", () => {
   it("labels group history the same way in messages format", async () => {
     const bundle = await assembleContext(input({ historyFormat: "messages" }));
 
-    expect(promptText(bundle.messages)).toContain("[#4820 Nahida]: 这个 hydration 的文章讲了啥");
+    expect(promptText(bundle.messages)).toContain("[#4820 Alice]: 这个 hydration 的文章讲了啥");
     expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
   });
 
@@ -97,7 +97,7 @@ describe("replyable message ids in the assembled prompt", () => {
   it("keeps a message that lost its id out of the reply target set", async () => {
     const bundle = await assembleContext(input({ historyFormat: "prompt" }));
 
-    expect(promptText(bundle.messages)).toContain("cos: 压缩时丢了 id 的旧消息");
+    expect(promptText(bundle.messages)).toContain("Bob: 压缩时丢了 id 的旧消息");
     expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
   });
 });

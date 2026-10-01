@@ -92,6 +92,7 @@ test("renames the provider model, default, and explicitly owned references", () 
   expect(renamed.config.providers[0]).toMatchObject({
     defaultModel: "new-model",
     models: [{ id: "new-model" }, { id: "other-model" }],
+    excludedModelIds: ["old-model"],
   });
   expect(renamed.config.providers[1]?.defaultModel).toBe("old-model");
   expect(renamed.config.githubToolsConfig?.codingModelId).toBe("new-model");

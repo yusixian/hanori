@@ -119,7 +119,7 @@ describe("turn toolset", () => {
       systemPrompt: "System",
       isPrivate: false,
       chatId: GROUP_ID,
-      userName: "Nahida",
+      userName: "Alice",
       maxContextMessages: 20,
       webToolsConfig: {
         enabled: true,

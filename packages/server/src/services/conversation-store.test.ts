@@ -215,7 +215,7 @@ describe("ConversationStore.getHistory", () => {
           id: 201,
           role: "user",
           content: "带 id 的消息",
-          userName: "Nahida",
+          userName: "Casey",
           createdAt: new Date("2026-07-29T00:00:01.000Z"),
           turnOrderId: 201,
           meta: {
@@ -229,7 +229,7 @@ describe("ConversationStore.getHistory", () => {
           id: 202,
           role: "user",
           content: "没有 id 的消息",
-          userName: "cos",
+          userName: "Bob",
           createdAt: new Date("2026-07-29T00:00:02.000Z"),
           turnOrderId: 202,
           meta: { tgMessageId: "4821" },

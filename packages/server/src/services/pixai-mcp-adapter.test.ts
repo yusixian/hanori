@@ -51,7 +51,7 @@ describe("PixaiMcpAdapter", () => {
         resourceLinks: [
           {
             type: "resource_link",
-            uri: "https://mcp.aistine.com/api/artifacts/11111111-1111-4111-8111-111111111111",
+            uri: "https://mcp.example.com/api/artifacts/11111111-1111-4111-8111-111111111111",
             name: "result",
           },
         ],

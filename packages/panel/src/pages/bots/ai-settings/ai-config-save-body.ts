@@ -126,6 +126,7 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
       modelDiscoveryPath: p.modelDiscoveryPath,
       apiKey: providerApiKeys[p.id] || undefined,
       models: p.models,
+      excludedModelIds: p.excludedModelIds,
     })),
     activeProviderId: config.activeProviderId,
   };

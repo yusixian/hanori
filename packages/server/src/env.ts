@@ -15,7 +15,6 @@ function optionalInt(name: string, fallback: number): number {
   return Number.isNaN(value) ? fallback : value;
 }
 
-const DEFAULT_ENCRYPTION_KEY = "c0s-t00l-b0t$2024!dEf@uLt#EnCrYpT10n-K3y";
 const DEFAULT_PORT = process.env.NODE_ENV === "production" ? 3000 : 43100;
 
 export const env = {
@@ -38,8 +37,7 @@ export const env = {
   PANEL_PASSWORD: optional("PANEL_PASSWORD"),
   MINI_APP_SESSION_SECRET: optional("MINI_APP_SESSION_SECRET"),
   ADMIN_CHAT_IDS: JSON.parse(optional("ADMIN_CHAT_IDS", "[]")) as number[],
-  ENCRYPTION_KEY: optional("ENCRYPTION_KEY", DEFAULT_ENCRYPTION_KEY),
-  USING_DEFAULT_ENCRYPTION_KEY: !process.env.ENCRYPTION_KEY,
+  ENCRYPTION_KEY: required("ENCRYPTION_KEY"),
   APP_VERSION: optional("APP_VERSION"),
   PORT: optionalInt("PORT", DEFAULT_PORT),
   LOG_RETENTION_DAYS: optionalInt("LOG_RETENTION_DAYS", 30),
