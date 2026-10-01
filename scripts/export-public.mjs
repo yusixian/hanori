@@ -61,6 +61,8 @@ if (values.help) {
     ".gitleaks.toml",
     "scripts/init-env.mjs",
     "scripts/init-env.test.mjs",
+    "scripts/preserve-upgrade-env.mjs",
+    "scripts/preserve-upgrade-env.test.mjs",
     "scripts/smoke-deployment.mjs",
     "scripts/smoke-deployment.test.mjs",
     "packages/shared/src/brand.ts",
@@ -71,6 +73,8 @@ if (values.help) {
     "packages/docs/public/docs/brand/README.md",
     "scripts/update-production.test.mjs",
     "packages/docs/content/docs/integrations/dev-harness.mdx",
+    "packages/server/src/services/image-mcp-connection-service.test.ts",
+    "packages/server/src/services/pixai-mcp-oauth-store.test.ts",
   ];
   if (values.worktree) {
     for (const path of [...templates.keys(), ...additions]) {

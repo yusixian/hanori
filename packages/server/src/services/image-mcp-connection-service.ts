@@ -45,6 +45,7 @@ export class ImageMcpConnectionService {
       endpointOverride: options.endpointOverride,
     });
     this.provider = new PixaiMcpOAuthProvider({
+      endpoint,
       store: new PixaiMcpOAuthDbStore(options.db, options.encryptionKey),
       redirectUrl: new URL("/api/image-mcp/oauth/callback", options.baseURL),
       onAuthorizationUrl: (url) => {
@@ -57,6 +58,7 @@ export class ImageMcpConnectionService {
       environment: options.environment,
       endpointOverride: options.endpointOverride,
       onCallError: async ({ toolName, code }) => {
+        if (code === "NOT_CONFIGURED") return;
         if (
           toolName === "get_capabilities" ||
           code === "AUTHORIZATION_REQUIRED" ||
@@ -73,6 +75,7 @@ export class ImageMcpConnectionService {
   }
 
   async initialize(): Promise<void> {
+    if (!this.client.endpoint) return;
     const state = await this.provider.tokens().catch(() => undefined);
     if (!state) return;
     if (!state.refresh_token) {
@@ -88,6 +91,7 @@ export class ImageMcpConnectionService {
   }
 
   async beginAuthorization(ownerUserId: string): Promise<string> {
+    if (!this.client.endpoint) throw new PixaiMcpClientError("NOT_CONFIGURED");
     this.authorizationUrl = undefined;
     await this.client.close();
     await this.provider.invalidateCredentials("tokens");
@@ -180,6 +184,9 @@ export class ImageMcpConnectionService {
   }
 
   async getStatus(): Promise<ImageMcpConnectionStatus> {
+    if (!this.client.endpoint) {
+      return { status: "disconnected", scopes: [], lastError: "NOT_CONFIGURED" };
+    }
     const [row] = await this.db
       .select({
         status: pixaiMcpConnections.status,
@@ -189,6 +196,9 @@ export class ImageMcpConnectionService {
       .from(pixaiMcpConnections)
       .where(eq(pixaiMcpConnections.id, "default"))
       .limit(1);
+    if (row?.status === "connected" && !(await this.provider.tokens())) {
+      return { status: "disconnected", scopes: [], lastError: "AUTHORIZATION_REQUIRED" };
+    }
     return {
       status: (row?.status as ImageMcpConnectionStatus["status"] | undefined) ?? "disconnected",
       scopes: row?.grantedScopes ?? [],

@@ -8,17 +8,24 @@ import {
 } from "./pixai-mcp-oauth-provider.js";
 
 function memoryStore(initial: PixaiMcpOAuthState = {}) {
-  let state = { ...initial };
+  let state: PixaiMcpOAuthState = { endpoint: "https://mcp.example.com/mcp/pixai", ...initial };
   const store: PixaiMcpOAuthStore = {
     read: vi.fn(async () => state),
-    patch: vi.fn(async (update) => {
+    patch: vi.fn(async (endpoint, update) => {
+      if (!endpoint || state.endpoint !== endpoint) state = {};
+      if (endpoint) state.endpoint = endpoint;
       for (const [key, value] of Object.entries(update)) {
         if (value === null) delete state[key as keyof PixaiMcpOAuthState];
         else Object.assign(state, { [key]: value });
       }
     }),
-    consumeAuthorizationState: vi.fn(async (receivedState) => {
-      if (!state.authorizationState || state.authorizationState !== receivedState) return false;
+    consumeAuthorizationState: vi.fn(async (endpoint, receivedState) => {
+      if (
+        state.endpoint !== endpoint ||
+        !state.authorizationState ||
+        state.authorizationState !== receivedState
+      )
+        return false;
       delete state.authorizationState;
       return true;
     }),
@@ -27,10 +34,66 @@ function memoryStore(initial: PixaiMcpOAuthState = {}) {
 }
 
 describe("PixaiMcpOAuthProvider", () => {
+  it.each([undefined, "https://old.example.com/mcp/pixai", "https://mcp.example.com/mcp/other"])(
+    "does not reuse unbound or foreign credentials (%s)",
+    async (endpoint) => {
+      const memory = memoryStore({
+        endpoint,
+        clientInformation: { client_id: "old-client" },
+        tokens: { access_token: "old-access", refresh_token: "old-refresh", token_type: "Bearer" },
+        codeVerifier: "old-verifier",
+        authorizationState: "old-state",
+        discoveryState: { authorizationServerUrl: "https://old-auth.example" },
+      });
+      const provider = new PixaiMcpOAuthProvider({
+        endpoint: "https://mcp.example.com/mcp/pixai",
+        store: memory.store,
+        redirectUrl: "https://bot.example/callback",
+        onAuthorizationUrl: vi.fn(),
+      });
+      expect(await provider.tokens()).toBeUndefined();
+      expect(await provider.clientInformation()).toBeUndefined();
+      expect(await provider.discoveryState()).toBeUndefined();
+      await expect(provider.codeVerifier()).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+      expect(await provider.consumeAuthorizationState("old-state")).toBe(false);
+      expect(memory.store.patch).not.toHaveBeenCalled();
+
+      await provider.saveClientInformation({ client_id: "new-client" });
+      expect(memory.current()).toEqual({
+        endpoint: "https://mcp.example.com/mcp/pixai",
+        clientInformation: { client_id: "new-client" },
+      });
+      await provider.saveTokens({ access_token: "new-access", token_type: "Bearer" });
+      expect(await provider.tokens()).toEqual({ access_token: "new-access", token_type: "Bearer" });
+    },
+  );
+
+  it("does not expose credentials while the endpoint is disabled", async () => {
+    const memory = memoryStore({
+      tokens: { access_token: "saved-access", token_type: "Bearer" },
+    });
+    const provider = new PixaiMcpOAuthProvider({
+      endpoint: undefined,
+      store: memory.store,
+      redirectUrl: "https://bot.example/callback",
+      onAuthorizationUrl: vi.fn(),
+    });
+    expect(await provider.tokens()).toBeUndefined();
+    expect(await provider.consumeAuthorizationState("saved-state")).toBe(false);
+    expect(memory.store.consumeAuthorizationState).not.toHaveBeenCalled();
+    await expect(
+      provider.saveTokens({ access_token: "new", token_type: "Bearer" }),
+    ).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+    expect(memory.current().tokens?.access_token).toBe("saved-access");
+    await provider.invalidateCredentials("all");
+    expect(memory.current()).toEqual({});
+  });
+
   it("persists the full owner grant and consumes callback state once", async () => {
     const memory = memoryStore();
     const onAuthorizationUrl = vi.fn();
     const provider = new PixaiMcpOAuthProvider({
+      endpoint: "https://mcp.example.com/mcp/pixai",
       store: memory.store,
       redirectUrl: "https://bot.example/oauth/pixai/callback",
       onAuthorizationUrl,
@@ -73,6 +136,7 @@ describe("PixaiMcpOAuthProvider", () => {
       },
     });
     const provider = new PixaiMcpOAuthProvider({
+      endpoint: "https://mcp.example.com/mcp/pixai",
       store: memory.store,
       redirectUrl: "https://bot.example/callback",
       onAuthorizationUrl: vi.fn(),
@@ -95,6 +159,7 @@ describe("PixaiMcpOAuthProvider", () => {
       discoveryState: { authorizationServerUrl: "https://auth.example" },
     });
     const provider = new PixaiMcpOAuthProvider({
+      endpoint: "https://mcp.example.com/mcp/pixai",
       store: memory.store,
       redirectUrl: "https://bot.example/callback",
       onAuthorizationUrl: vi.fn(),
@@ -109,6 +174,7 @@ describe("PixaiMcpOAuthProvider", () => {
   it("requests the full owner grant while preserving authorization-server scopes", async () => {
     const onAuthorizationUrl = vi.fn();
     const provider = new PixaiMcpOAuthProvider({
+      endpoint: "https://mcp.example.com/mcp/pixai",
       store: memoryStore().store,
       redirectUrl: "https://bot.example/callback",
       onAuthorizationUrl,
@@ -126,11 +192,14 @@ describe("PixaiMcpOAuthProvider", () => {
 
   it("replaces secret-bearing storage errors with a fixed error", async () => {
     const provider = new PixaiMcpOAuthProvider({
+      endpoint: "https://mcp.example.com/mcp/pixai",
       store: {
         read: async () => {
           throw new Error("access-secret verifier-secret");
         },
-        patch: async () => {},
+        patch: async () => {
+          throw new Error("patch-secret");
+        },
         consumeAuthorizationState: async () => {
           throw new Error("state-secret");
         },
@@ -141,5 +210,11 @@ describe("PixaiMcpOAuthProvider", () => {
 
     await expect(provider.tokens()).rejects.toEqual(new PixaiMcpOAuthPersistenceError());
     await expect(provider.tokens()).rejects.not.toThrow(/secret/);
+    await expect(provider.saveCodeVerifier("verifier")).rejects.toEqual(
+      new PixaiMcpOAuthPersistenceError(),
+    );
+    await expect(provider.consumeAuthorizationState("state")).rejects.toEqual(
+      new PixaiMcpOAuthPersistenceError(),
+    );
   });
 });

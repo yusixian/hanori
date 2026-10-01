@@ -24,7 +24,7 @@ describe("prompt tool capabilities", () => {
       systemPrompt: "System",
       isPrivate: true,
       chatId: 42,
-      userName: "Nahida",
+      userName: "Alice",
       maxContextMessages: 20,
       timerMaxSeconds: 604_800,
       webToolsConfig: runtimeConfig,
@@ -71,7 +71,7 @@ describe("prompt tool capabilities", () => {
       systemPrompt: "System",
       isPrivate: true,
       chatId: 42,
-      userName: "Nahida",
+      userName: "Alice",
       maxContextMessages: 20,
       webToolsConfig: {
         enabled: true,

@@ -13,24 +13,24 @@ function buffered(messageId: number, userName: string, text: string): BufferedMe
 describe("group ring buffer message ids", () => {
   it("attaches the Telegram message id to every rendered line", () => {
     const rendered = formatGroupContextMessages([
-      buffered(4820, "Nahida", "这个 hydration 的文章讲了啥"),
-      buffered(4821, "cos", "帮我写个频道摘要"),
+      buffered(4820, "Alice", "这个 hydration 的文章讲了啥"),
+      buffered(4821, "Bob", "帮我写个频道摘要"),
     ]);
 
     expect(rendered).toBe(
-      "[#4820 Nahida]: 这个 hydration 的文章讲了啥\n[#4821 cos]: 帮我写个频道摘要",
+      "[#4820 Alice]: 这个 hydration 的文章讲了啥\n[#4821 Bob]: 帮我写个频道摘要",
     );
   });
 
   it("keeps the forward attribution below the id line", () => {
     const rendered = formatGroupContextMessages([
       {
-        ...buffered(4822, "cos", "转发的正文"),
+        ...buffered(4822, "Bob", "转发的正文"),
         forwardOrigin: { type: "channel", name: "某频道" },
       },
     ]);
 
-    expect(rendered.startsWith("[#4822 cos]: ")).toBe(true);
+    expect(rendered.startsWith("[#4822 Bob]: ")).toBe(true);
     expect(rendered).toContain("转发的正文");
   });
 });
@@ -38,9 +38,9 @@ describe("group ring buffer message ids", () => {
 describe("a reply target that the sliding window dropped", () => {
   it("disappears from the prompt and the tool refuses it", async () => {
     const buffer = new RingBuffer<BufferedMessage>(3);
-    buffer.push(buffered(4820, "Nahida", "这个 hydration 的文章讲了啥"));
+    buffer.push(buffered(4820, "Alice", "这个 hydration 的文章讲了啥"));
     for (const id of [4831, 4832, 4833]) {
-      buffer.push(buffered(id, "cos", `后来的第 ${id} 条`));
+      buffer.push(buffered(id, "Bob", `后来的第 ${id} 条`));
     }
 
     const visible = buffer.getAll();

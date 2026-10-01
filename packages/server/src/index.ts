@@ -76,13 +76,6 @@ process.on("unhandledRejection", (reason) => {
   process.exit(1);
 });
 
-// Warn about default encryption key
-if (env.USING_DEFAULT_ENCRYPTION_KEY) {
-  logger.warn(
-    "⚠ ENCRYPTION_KEY is not set — using built-in default. Set ENCRYPTION_KEY in .env for production!",
-  );
-}
-
 // Database
 await runMigrations(env.DATABASE_URL);
 logger.info("Database migrated");

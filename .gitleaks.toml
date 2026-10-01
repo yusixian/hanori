@@ -11,7 +11,14 @@ description = "Generated SHA-256 entries, verified by public:check"
 condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)\.public-manifest\.json$''']
-regexes = ['''^\s*"[^"]+": "[a-f0-9]{64}",?\s*$''']
+# Gitleaks can include earlier lines when a hash ends a scan fragment.
+# Match the final hash entry only, never an earlier valid line before a secret.
+# public:check still verifies complete hashes and rejects malformed manifests.
+regexes = [
+  '''(?:^|\n)[ \t]*"(?:packages|scripts|acceptance|infrastructure|docs|\.github)/[^"\r\n]+": "[a-f0-9]{64}",?\s*$''',
+  '''(?:^|\n)[ \t]*"(?:packages|scripts|acceptance|infrastructure|docs|\.github)/[^"\r\n]+": "[a-f0-9]{1,64}$''',
+  '''(?:^|\n)[ \t]*"(?:\.(?:gitleaks\.toml|dockerignore|env\.example|gitignore|npmrc|node-version|oxfmtrc\.json|prettierignore)|(?:AGENTS|CONTRIBUTING|SECURITY|readme)\.md|Dockerfile|LICENSE|(?:oxlint|package|tsconfig(?:\.base)?)\.json|pnpm-(?:lock|workspace)\.yaml|vitest\.config\.ts|harness\.example\.yaml|docker-compose(?:\.(?:direct|dev))?\.yml)": "[a-f0-9]{64}",?\s*$''',
+]
 
 [[rules.allowlists]]
 description = "Exact synthetic secret used only to render Compose validation"
@@ -28,4 +35,11 @@ description = "Generated SHA-256 entries, verified by public:check"
 condition = "AND"
 regexTarget = "line"
 paths = ['''(^|/)\.public-manifest\.json$''']
-regexes = ['''^\s*"[^"]+": "[a-f0-9]{64}",?\s*$''']
+# Gitleaks can include earlier lines when a hash ends a scan fragment.
+# Match the final hash entry only, never an earlier valid line before a secret.
+# public:check still verifies complete hashes and rejects malformed manifests.
+regexes = [
+  '''(?:^|\n)[ \t]*"(?:packages|scripts|acceptance|infrastructure|docs|\.github)/[^"\r\n]+": "[a-f0-9]{64}",?\s*$''',
+  '''(?:^|\n)[ \t]*"(?:packages|scripts|acceptance|infrastructure|docs|\.github)/[^"\r\n]+": "[a-f0-9]{1,64}$''',
+  '''(?:^|\n)[ \t]*"(?:\.(?:gitleaks\.toml|dockerignore|env\.example|gitignore|npmrc|node-version|oxfmtrc\.json|prettierignore)|(?:AGENTS|CONTRIBUTING|SECURITY|readme)\.md|Dockerfile|LICENSE|(?:oxlint|package|tsconfig(?:\.base)?)\.json|pnpm-(?:lock|workspace)\.yaml|vitest\.config\.ts|harness\.example\.yaml|docker-compose(?:\.(?:direct|dev))?\.yml)": "[a-f0-9]{64}",?\s*$''',
+]

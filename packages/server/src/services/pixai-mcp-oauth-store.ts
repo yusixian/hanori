@@ -6,6 +6,7 @@ import {
   constantTimeEqual,
   type PixaiMcpOAuthState,
   type PixaiMcpOAuthStore,
+  type PixaiMcpOAuthUpdate,
 } from "./pixai-mcp-oauth-provider.js";
 
 const CONNECTION_ID = "default";
@@ -33,9 +34,7 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
     return this.decode(row?.encryptedState ?? null);
   }
 
-  async patch(update: {
-    [K in keyof PixaiMcpOAuthState]?: PixaiMcpOAuthState[K] | null;
-  }): Promise<void> {
+  async patch(endpoint: string | undefined, update: PixaiMcpOAuthUpdate): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`);
       const [row] = await tx
@@ -43,7 +42,10 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
         .from(pixaiMcpConnections)
         .where(sql`${pixaiMcpConnections.id} = ${CONNECTION_ID}`)
         .limit(1);
-      const next: PixaiMcpOAuthState = { ...this.decode(row?.encryptedState ?? null) };
+      const current = this.decode(row?.encryptedState ?? null);
+      const next: PixaiMcpOAuthState =
+        endpoint && current?.endpoint === endpoint ? { ...current } : {};
+      if (endpoint) next.endpoint = endpoint;
       for (const [key, value] of Object.entries(update) as [
         keyof PixaiMcpOAuthState,
         PixaiMcpOAuthState[keyof PixaiMcpOAuthState] | null,
@@ -63,7 +65,7 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
     });
   }
 
-  async consumeAuthorizationState(receivedState: string): Promise<boolean> {
+  async consumeAuthorizationState(endpoint: string, receivedState: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`);
       const [row] = await tx
@@ -73,7 +75,8 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
         .limit(1);
       const current = this.decode(row?.encryptedState ?? null) ?? {};
       const expected = current.authorizationState;
-      if (!expected || !constantTimeEqual(expected, receivedState)) return false;
+      if (current.endpoint !== endpoint || !expected || !constantTimeEqual(expected, receivedState))
+        return false;
       const next = { ...current };
       delete next.authorizationState;
       const encryptedState =

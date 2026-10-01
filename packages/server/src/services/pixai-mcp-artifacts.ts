@@ -29,7 +29,7 @@ export interface PixaiMcpArtifactData {
 }
 
 export interface PixaiMcpArtifactReaderOptions {
-  endpoint: string | URL;
+  endpoint: string | URL | undefined;
   authProvider: Pick<OAuthClientProvider, "tokens">;
   fetch?: typeof fetch;
   maxBytes?: number;
@@ -40,7 +40,7 @@ export interface PixaiMcpArtifactReaderOptions {
 
 /** Safely turns MCP image blocks or protected links into bounded image bytes. */
 export class PixaiMcpArtifactReader {
-  private readonly origin: string;
+  private readonly origin: string | undefined;
   private readonly authProvider: Pick<OAuthClientProvider, "tokens">;
   private readonly fetchFn: typeof fetch;
   private readonly maxBytes: number;
@@ -49,7 +49,7 @@ export class PixaiMcpArtifactReader {
   private readonly allowedMimeTypes: ReadonlySet<string>;
 
   constructor(options: PixaiMcpArtifactReaderOptions) {
-    this.origin = new URL(options.endpoint).origin;
+    this.origin = options.endpoint ? new URL(options.endpoint).origin : undefined;
     this.authProvider = options.authProvider;
     this.fetchFn = options.fetch ?? fetch;
     this.maxBytes = options.maxBytes ?? 5 * 1024 * 1024;

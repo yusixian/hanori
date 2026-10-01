@@ -26,6 +26,7 @@
     "deploy:dokploy:check": "node scripts/check-dokploy-compose.mjs",
     "deployment:smoke": "node scripts/smoke-deployment.mjs",
     "setup:env": "node scripts/init-env.mjs",
+    "upgrade:env": "node scripts/preserve-upgrade-env.mjs",
     "public:export": "node scripts/export-public.mjs",
     "public:check": "node scripts/check-public.mjs",
     "public:sync": "node scripts/sync-public.mjs",

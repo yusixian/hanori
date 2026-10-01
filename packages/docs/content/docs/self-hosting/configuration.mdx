@@ -30,19 +30,23 @@ description: 按类别说明环境变量、密钥轮换和可选服务的启用�
 | `MINI_APP_SESSION_SECRET`                   | Mini App 独立会话签名密钥。                                         |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | 可选 Google OAuth；两个必须同时配置。                               |
 
-生产环境务必显式设置 `ENCRYPTION_KEY`。已经保存数据后不要随意修改它，否则旧密文无法解密。Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini App secret 会让现有 Mini App 会话失效。
+所有环境都必须显式设置非空 `ENCRYPTION_KEY`，包括本地开发；缺失时应用会在启动时拒绝运行。全新 Docker 实例可按[部署指南](/docs/self-hosting/docker)使用 `pnpm setup:env --email owner@example.com --url https://bot.example.com` 生成配置，并替换示例邮箱与域名。本地开发复制 `.env.example` 后，可用 `openssl rand -hex 32` 生成独立随机密钥，安全写入配置后再启动。应用按原值派生加密密钥，两端空格也属于密钥的一部分。
+
+已有数据的实例必须保留原密钥，不要重新运行初始化工具来替换配置。若旧版本使用了内置默认值，先按[备份与升级](/docs/self-hosting/backup-upgrade)中的离线步骤恢复并显式保存旧值。升级工具只保留密钥，不执行轮换；更换它会导致旧密文无法解密。
+
+Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini App secret 会让现有 Mini App 会话失效。
 
 ## AI、媒体和清理
 
-| 变量                         | 用途                                                          |
-| ---------------------------- | ------------------------------------------------------------- |
-| `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。       |
-| `PIXAI_MCP_URL`              | 开发或特定环境使用的 PixAI MCP 地址；生产地址由实例配置决定。 |
-| `NSFW_API_URL`               | 可选的图片内容安全服务地址。                                  |
-| `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                            |
-| `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                            |
-| `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                |
-| `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                            |
+| 变量                         | 用途                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。                                                                                          |
+| `PIXAI_MCP_URL`              | 可选的图片 MCP 完整 HTTPS 地址，例如 `https://mcp.example.com/mcp/pixai`。留空关闭该集成；开发环境允许本机 HTTP。更换地址后需要 owner 重新授权。 |
+| `NSFW_API_URL`               | 可选的图片内容安全服务地址。                                                                                                                     |
+| `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                                                                                                               |
+| `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                               |
+| `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                   |
+| `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                               |
 
 Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
 

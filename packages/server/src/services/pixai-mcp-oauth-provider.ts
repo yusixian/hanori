@@ -19,6 +19,7 @@ export const PIXAI_MCP_OAUTH_SCOPES = [
 ] as const;
 
 export interface PixaiMcpOAuthState {
+  endpoint?: string;
   clientInformation?: OAuthClientInformationMixed;
   tokens?: OAuthTokens;
   codeVerifier?: string;
@@ -26,18 +27,24 @@ export interface PixaiMcpOAuthState {
   discoveryState?: OAuthDiscoveryState;
 }
 
+export type PixaiMcpOAuthUpdate = {
+  [K in Exclude<keyof PixaiMcpOAuthState, "endpoint">]?: PixaiMcpOAuthState[K] | null;
+};
+
 /**
  * Persistence boundary for the single, instance-wide PixAI MCP owner grant.
- * Implementations must encrypt secrets at rest and apply each patch atomically.
- * A null value deletes that field.
+ * Encrypt secrets at rest. Check the endpoint and reset a foreign grant in the
+ * same transaction as each patch; callback consumption must check it atomically too.
+ * A null value deletes that field; an undefined endpoint clears disabled grants.
  */
 export interface PixaiMcpOAuthStore {
   read(): Promise<Readonly<PixaiMcpOAuthState> | undefined>;
-  patch(update: { [K in keyof PixaiMcpOAuthState]?: PixaiMcpOAuthState[K] | null }): Promise<void>;
-  consumeAuthorizationState(receivedState: string): Promise<boolean>;
+  patch(endpoint: string | undefined, update: PixaiMcpOAuthUpdate): Promise<void>;
+  consumeAuthorizationState(endpoint: string, receivedState: string): Promise<boolean>;
 }
 
 export interface PixaiMcpOAuthProviderOptions {
+  endpoint: string | URL | undefined;
   store: PixaiMcpOAuthStore;
   redirectUrl: string | URL;
   onAuthorizationUrl: (url: URL) => void | Promise<void>;
@@ -58,10 +65,12 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   readonly clientMetadata: OAuthClientMetadata;
 
   private readonly store: PixaiMcpOAuthStore;
+  private readonly endpoint: string | undefined;
   private readonly onAuthorizationUrl: (url: URL) => void | Promise<void>;
 
   constructor(options: PixaiMcpOAuthProviderOptions) {
     this.store = options.store;
+    this.endpoint = options.endpoint ? new URL(options.endpoint).href : undefined;
     this.redirectUrl = new URL(options.redirectUrl);
     this.onAuthorizationUrl = options.onAuthorizationUrl;
     this.clientMetadata = {
@@ -134,7 +143,7 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
-    const update: { [K in keyof PixaiMcpOAuthState]?: null } = {};
+    const update: PixaiMcpOAuthUpdate = {};
     if (scope === "all" || scope === "client") update.clientInformation = null;
     if (scope === "all" || scope === "tokens") update.tokens = null;
     if (scope === "all" || scope === "verifier") {
@@ -148,7 +157,8 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   /** Validate the OAuth callback state once, then invalidate it to prevent replay. */
   async consumeAuthorizationState(receivedState: string): Promise<boolean> {
     try {
-      return await this.store.consumeAuthorizationState(receivedState);
+      if (!this.endpoint) return false;
+      return await this.store.consumeAuthorizationState(this.endpoint, receivedState);
     } catch {
       throw new PixaiMcpOAuthPersistenceError();
     }
@@ -156,17 +166,20 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
 
   private async read(): Promise<Readonly<PixaiMcpOAuthState>> {
     try {
-      return (await this.store.read()) ?? {};
+      const state = (await this.store.read()) ?? {};
+      // Legacy grants and grants for another endpoint require owner reauthorization.
+      return this.endpoint && state.endpoint === this.endpoint ? state : {};
     } catch {
       throw new PixaiMcpOAuthPersistenceError();
     }
   }
 
-  private async patch(update: {
-    [K in keyof PixaiMcpOAuthState]?: PixaiMcpOAuthState[K] | null;
-  }): Promise<void> {
+  private async patch(update: PixaiMcpOAuthUpdate): Promise<void> {
     try {
-      await this.store.patch(update);
+      if (!this.endpoint && Object.values(update).some((value) => value !== null)) {
+        throw new PixaiMcpOAuthPersistenceError();
+      }
+      await this.store.patch(this.endpoint, update);
     } catch {
       throw new PixaiMcpOAuthPersistenceError();
     }

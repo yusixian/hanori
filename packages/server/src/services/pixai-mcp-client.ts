@@ -6,7 +6,6 @@ import {
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-export const PIXAI_MCP_PRODUCTION_ENDPOINT = "https://mcp.aistine.com/mcp/pixai";
 export const PIXAI_MCP_TOOL_NAMES = [
   "get_capabilities",
   "list_models",
@@ -45,6 +44,7 @@ export interface PixaiMcpToolResponse<T = unknown> {
 }
 
 export type PixaiMcpClientErrorCode =
+  | "NOT_CONFIGURED"
   | "AUTHORIZATION_REQUIRED"
   | "CONNECTION_FAILED"
   | "NOT_CONNECTED"
@@ -94,22 +94,40 @@ export interface PixaiMcpClientOptions {
 export function resolvePixaiMcpEndpoint(input: {
   environment: "production" | "non-production";
   endpointOverride?: string | URL;
-}): URL {
-  if (input.environment === "production" || input.endpointOverride === undefined) {
-    return new URL(PIXAI_MCP_PRODUCTION_ENDPOINT);
+}): URL | undefined {
+  const value = input.endpointOverride?.toString().trim();
+  if (!value) return undefined;
+  let endpoint: URL;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error("PIXAI_MCP_URL must be an HTTPS URL without credentials, query or fragment");
   }
-  return new URL(input.endpointOverride);
+  const localDevelopment =
+    input.environment === "non-production" &&
+    endpoint.protocol === "http:" &&
+    ["localhost", "127.0.0.1", "[::1]"].includes(endpoint.hostname);
+  if (
+    (endpoint.protocol !== "https:" && !localDevelopment) ||
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  ) {
+    throw new Error("PIXAI_MCP_URL must be an HTTPS URL without credentials, query or fragment");
+  }
+  return endpoint;
 }
 
 export class PixaiMcpClient {
-  readonly endpoint: URL;
+  readonly endpoint: URL | undefined;
 
   private readonly callTimeoutMs: number;
   private readonly connectionFactory: NonNullable<PixaiMcpClientOptions["connectionFactory"]>;
   private readonly authProvider: OAuthClientProvider;
   private readonly fetchFn?: typeof fetch;
   private readonly onCallError?: PixaiMcpClientOptions["onCallError"];
-  private connection: PixaiMcpConnection;
+  private connection: PixaiMcpConnection | undefined;
   private connected = false;
 
   constructor(options: PixaiMcpClientOptions) {
@@ -126,6 +144,7 @@ export class PixaiMcpClient {
   }
 
   async connect(): Promise<void> {
+    if (!this.connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
     if (this.connected) return;
     try {
       await this.connection.client.connect(this.connection.transport);
@@ -138,6 +157,7 @@ export class PixaiMcpClient {
   }
 
   async finishAuthorization(authorizationCode: string): Promise<void> {
+    if (!this.connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
     try {
       await this.connection.transport.finishAuth(authorizationCode);
       try {
@@ -145,8 +165,10 @@ export class PixaiMcpClient {
       } catch {
         // The unauthorized handshake may already have closed this client.
       }
-      this.connection = this.createConnection();
-      await this.connection.client.connect(this.connection.transport);
+      const connection = this.createConnection();
+      if (!connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
+      this.connection = connection;
+      await connection.client.connect(connection.transport);
       this.connected = true;
     } catch {
       throw new PixaiMcpClientError("OAUTH_CALLBACK_FAILED");
@@ -156,7 +178,7 @@ export class PixaiMcpClient {
   async close(): Promise<void> {
     this.connected = false;
     try {
-      await this.connection.client.close();
+      await this.connection?.client.close();
     } catch {
       // Closing is best-effort and must not expose transport details.
     } finally {
@@ -166,8 +188,10 @@ export class PixaiMcpClient {
     }
   }
 
-  private createConnection(): PixaiMcpConnection {
-    return this.connectionFactory(this.endpoint, this.authProvider, this.fetchFn);
+  private createConnection(): PixaiMcpConnection | undefined {
+    return this.endpoint
+      ? this.connectionFactory(this.endpoint, this.authProvider, this.fetchFn)
+      : undefined;
   }
 
   getCapabilities<T = unknown>(signal?: AbortSignal): Promise<PixaiMcpToolResponse<T>> {
@@ -238,8 +262,8 @@ export class PixaiMcpClient {
     signal?: AbortSignal,
     timeoutMs = this.callTimeoutMs,
   ): Promise<PixaiMcpToolResponse<T>> {
-    if (!this.connected) {
-      const error = new PixaiMcpClientError("NOT_CONNECTED");
+    if (!this.connected || !this.connection) {
+      const error = new PixaiMcpClientError(this.endpoint ? "NOT_CONNECTED" : "NOT_CONFIGURED");
       await this.notifyCallError(name, error.code);
       throw error;
     }
@@ -345,6 +369,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function messageForCode(code: PixaiMcpClientErrorCode): string {
   switch (code) {
+    case "NOT_CONFIGURED":
+      return "Set PIXAI_MCP_URL before connecting the image MCP service";
     case "AUTHORIZATION_REQUIRED":
       return "PixAI MCP owner authorization is required";
     case "CONNECTION_FAILED":

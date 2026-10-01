@@ -10,6 +10,7 @@ import { RuntimeHealth } from "./runtime-health.js";
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost:5432/test";
 process.env.BETTER_AUTH_SECRET ??= "test-secret";
 process.env.AUTH_OWNER_EMAIL ??= "owner@example.com";
+process.env.ENCRYPTION_KEY ||= "test-encryption-key";
 
 let createApp: (typeof import("./app.js"))["createApp"];
 const TEST_SHA = "0123456789abcdef0123456789abcdef01234567";
