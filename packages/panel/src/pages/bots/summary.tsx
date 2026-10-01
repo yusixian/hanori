@@ -503,7 +503,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
       <div className="space-y-2">
         {history.map((rec) => (
           <Card key={rec.id}>
-            <CardContent className="flex flex-wrap items-start justify-between gap-3 py-4">
+            <CardContent className="flex flex-wrap items-start justify-between gap-3 py-4 sm:py-4">
               <div className="min-w-[min(100%,16rem)] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm">
