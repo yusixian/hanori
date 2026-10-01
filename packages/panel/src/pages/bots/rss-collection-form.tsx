@@ -5,7 +5,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { client } from "@/lib/client";
 import type { RssCollectionRecord } from "@cos-tool-bot/shared";
 import { Loader2 } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 export function CollectionForm({
@@ -21,6 +21,7 @@ export function CollectionForm({
 }) {
   const { t } = useTranslation("bots");
   const isEdit = !!collection;
+  const formId = useId();
   const [name, setName] = useState(collection?.name ?? "");
   const [chatId, setChatId] = useState(collection ? String(collection.chatId) : "");
   const [description, setDescription] = useState(collection?.description ?? "");
@@ -73,29 +74,47 @@ export function CollectionForm({
   };
 
   const form = (
-    <form onSubmit={handleSubmit} className="space-y-3">
+    <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <label htmlFor={`${formId}-name`} className="text-sm font-medium">
+            {t("rss.collectionName")}
+          </label>
+          <Input
+            id={`${formId}-name`}
+            placeholder={t("rss.collectionName")}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <label htmlFor={`${formId}-chat`} className="text-sm font-medium">
+            {t("rss.targetChatId")}
+          </label>
+          <Input
+            id={`${formId}-chat`}
+            type="number"
+            placeholder={t("rss.targetChatId")}
+            value={chatId}
+            onChange={(e) => setChatId(e.target.value)}
+            required
+          />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <label htmlFor={`${formId}-description`} className="text-sm font-medium">
+          {t("rss.collectionDescription")}
+        </label>
         <Input
-          placeholder={t("rss.collectionName")}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          required
-        />
-        <Input
-          type="number"
-          placeholder={t("rss.targetChatId")}
-          value={chatId}
-          onChange={(e) => setChatId(e.target.value)}
-          required
+          id={`${formId}-description`}
+          placeholder={t("rss.descriptionPlaceholder")}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
         />
       </div>
-      <Input
-        placeholder={t("rss.descriptionPlaceholder")}
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      <div className="space-y-1">
-        <label className="text-muted-foreground text-xs">
+      <div className="space-y-2">
+        <label htmlFor={`${formId}-prompt`} className="text-sm font-medium">
           {t("rss.digestPromptLabel", {
             name: "{{name}}",
             slug: "{{slug}}",
@@ -103,6 +122,7 @@ export function CollectionForm({
           })}
         </label>
         <Textarea
+          id={`${formId}-prompt`}
           className="border-input placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-24 w-full rounded-md border bg-transparent px-3 py-2 text-sm focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           placeholder={t("rss.digestPromptPlaceholder", {
             slug: "{{slug}}",
@@ -113,16 +133,23 @@ export function CollectionForm({
           rows={5}
         />
       </div>
-      <div className="flex items-center gap-3">
-        <label className="text-sm">{t("rss.digestTime")}</label>
+      <div className="flex flex-wrap items-center gap-3">
+        <label htmlFor={`${formId}-time`} className="text-sm font-medium">
+          {t("rss.digestTime")}
+        </label>
         <Input
+          id={`${formId}-time`}
           type="time"
-          className="w-28"
+          className="w-40"
           value={digestTime}
           onChange={(e) => setDigestTime(e.target.value)}
         />
       </div>
-      {error && <p className="text-destructive text-sm">{error}</p>}
+      {error && (
+        <p role="alert" className="text-destructive text-sm">
+          {error}
+        </p>
+      )}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={submitting}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}

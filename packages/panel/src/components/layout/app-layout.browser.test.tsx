@@ -5,10 +5,17 @@ import { Provider, createStore } from "jotai";
 import { page, userEvent } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { AppLayout } from "./app-layout";
 
+const { botQuery } = vi.hoisted(() => ({
+  botQuery: vi.fn(({ id }: { id?: string }) => ({
+    data: { data: { id, name: id === "second-id" ? "Night radio" : "Hanori companion" } },
+  })),
+}));
+
 vi.mock("@refinedev/core", () => ({
+  useOne: botQuery,
   useLogout: () => ({ mutateAsync: vi.fn(), isLoading: false }),
 }));
 
@@ -24,7 +31,7 @@ function LocationProbe() {
   return <div data-testid="location">{useLocation().pathname}</div>;
 }
 
-async function renderLayout(path = "/bots/test-id", collapsed = false) {
+async function renderLayout(path = "/bots/test-id", collapsed = false, navigationProbe = false) {
   const store = createStore();
   store.set(sidebarCollapsedAtom, collapsed);
   store.set(sidebarOpenAtom, false);
@@ -33,7 +40,20 @@ async function renderLayout(path = "/bots/test-id", collapsed = false) {
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route element={<AppLayout />}>
-            <Route path="*" element={<LocationProbe />} />
+            <Route
+              path="*"
+              element={
+                <>
+                  <LocationProbe />
+                  {navigationProbe && (
+                    <>
+                      <Link to="/bots/second-id/ai">Switch Bot</Link>
+                      <Link to="/bots/new">Create Bot</Link>
+                    </>
+                  )}
+                </>
+              }
+            />
           </Route>
         </Routes>
       </MemoryRouter>
@@ -281,4 +301,22 @@ test("resets account options when the mobile drawer closes", async () => {
   await expect
     .element(page.getByRole("group", { name: "Account options" }))
     .not.toBeInTheDocument();
+});
+
+test("keeps the current Bot identifiable across desktop, mobile, and Bot transitions", async () => {
+  await renderLayout("/bots/test-id/ai", false, true);
+  await expect.element(page.getByTestId("sidebar-bot-name")).toHaveTextContent("Hanori companion");
+  await page.getByRole("link", { name: "Switch Bot" }).click();
+  await expect.element(page.getByTestId("sidebar-bot-name")).toHaveTextContent("Night radio");
+  await page.viewport(390, 844);
+  await expect.element(page.getByTestId("mobile-bot-name")).toHaveTextContent("Night radio");
+  await page.getByRole("link", { name: "Create Bot" }).click();
+  await expect.element(page.getByTestId("mobile-bot-name")).not.toBeInTheDocument();
+  expect(botQuery.mock.lastCall?.[0]).toMatchObject({ queryOptions: { enabled: false } });
+});
+
+test("does not show a previous Bot name while the new route is loading", async () => {
+  botQuery.mockReturnValueOnce({ data: { data: { id: "previous-id", name: "Previous Bot" } } });
+  await renderLayout("/bots/next-id/ai");
+  await expect.element(page.getByTestId("sidebar-bot-name")).not.toHaveTextContent("Previous Bot");
 });

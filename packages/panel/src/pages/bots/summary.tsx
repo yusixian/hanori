@@ -2,12 +2,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { CodeBlock } from "@/components/ui/code-block";
+import { EmptyState } from "@/components/ui/empty-state";
 import { client } from "@/lib/client";
 import type { ChatSummaryRecord, SummaryConfigRecord } from "@cos-tool-bot/shared";
 import {
   ChevronLeft,
   ChevronRight,
+  FileText,
+  History,
   Loader2,
   Pencil,
   Plus,
@@ -16,7 +18,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
 import { SummaryConfigForm } from "./summary-config-form";
 import { useTranslation } from "react-i18next";
@@ -34,27 +36,59 @@ function HistoryDetailModal({
 }) {
   const { t, i18n } = useTranslation("bots");
 
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.showModal();
+    return () => dialog?.close();
+  }, []);
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={onClose}
+    <dialog
+      ref={dialogRef}
+      aria-labelledby={titleId}
+      className="bg-card text-foreground backdrop:bg-code/30 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-2xl overflow-auto rounded-2xl border p-0 shadow-xl backdrop:backdrop-blur-xs"
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (
+          event.clientX < bounds.left ||
+          event.clientX >= bounds.right ||
+          event.clientY < bounds.top ||
+          event.clientY >= bounds.bottom
+        ) {
+          onClose();
+        }
+      }}
     >
-      <div
-        className="bg-card max-h-[80vh] w-full max-w-2xl overflow-auto rounded-lg border p-6 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-base font-semibold">
-            {t("summary.detailTitle", {
-              chatId: record.chatId,
-              date: formatDate(record.createdAt, i18n.resolvedLanguage),
-            })}
-          </h2>
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="text-muted-foreground mb-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <div className="bg-card/95 sticky top-0 z-10 flex items-start justify-between gap-3 border-b px-5 py-4 backdrop-blur-sm sm:px-6">
+        <h2
+          id={titleId}
+          className="min-w-0 text-base leading-6 font-semibold [overflow-wrap:anywhere]"
+        >
+          {t("summary.detailTitle", {
+            chatId: record.chatId,
+            date: formatDate(record.createdAt, i18n.resolvedLanguage),
+          })}
+        </h2>
+        <Button
+          autoFocus
+          size="icon"
+          variant="ghost"
+          onClick={onClose}
+          aria-label={t("common:common.close")}
+          className="shrink-0"
+        >
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <div className="space-y-5 p-5 sm:p-6">
+        <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 text-xs leading-5 [overflow-wrap:anywhere]">
           <span>
             {t("summary.trigger")}:{" "}
             {record.trigger === "manual" ? t("summary.manual") : t("summary.scheduled")}
@@ -74,10 +108,12 @@ function HistoryDetailModal({
         {record.errorMessage ? (
           <p className="text-destructive text-sm">{record.errorMessage}</p>
         ) : (
-          <CodeBlock className="max-h-none text-sm">{record.content}</CodeBlock>
+          <div className="text-foreground max-w-prose text-sm leading-7 [overflow-wrap:anywhere] whitespace-pre-wrap">
+            {record.content}
+          </div>
         )}
       </div>
-    </div>
+    </dialog>
   );
 }
 
@@ -85,6 +121,7 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
   const { t, i18n } = useTranslation("bots");
   const [configs, setConfigs] = useState<SummaryConfigRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -97,10 +134,15 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
   }, []);
 
   const fetchConfigs = useCallback(async () => {
+    setLoading(true);
+    setLoadFailed(false);
     try {
       const res = await client.api.bots[":botId"].summary.configs.$get({ param: { botId } });
       const json = await res.json();
-      if (json.ok) setConfigs(json.data);
+      if (!json.ok) throw new Error("Unable to load summary configurations");
+      setConfigs(json.data);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -157,18 +199,41 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
     });
   };
 
-  if (loading) return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
+  if (loading && configs.length === 0 && !showCreate)
+    return (
+      <p role="status" className="text-muted-foreground text-sm">
+        {t("common:common.loading")}
+      </p>
+    );
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <h2 className="text-lg font-semibold">{t("summary.configList")}</h2>
-        <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4" />
-          {t("summary.addConfig")}
-        </Button>
+        {configs.length > 0 && !showCreate && (
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" />
+            {t("summary.addConfig")}
+          </Button>
+        )}
       </div>
 
+      {loadFailed && (
+        <div
+          role="alert"
+          className="bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl p-4 text-sm"
+        >
+          <p>{t("summary.loadConfigsFailed")}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={loading}
+            onClick={() => void fetchConfigs()}
+          >
+            {t("common:common.retry")}
+          </Button>
+        </div>
+      )}
       {showCreate && (
         <SummaryConfigForm
           botId={botId}
@@ -197,14 +262,23 @@ function SummaryConfigList({ botId, onChanged }: { botId: string; onChanged?: ()
         </p>
       )}
 
-      {configs.length === 0 && !showCreate && (
-        <p className="text-muted-foreground text-sm">{t("summary.noConfigs")}</p>
+      {!loadFailed && configs.length === 0 && !showCreate && (
+        <EmptyState
+          icon={FileText}
+          title={t("summary.emptyTitle")}
+          description={t("summary.emptyDescription")}
+        >
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="size-4" />
+            {t("summary.addConfig")}
+          </Button>
+        </EmptyState>
       )}
 
       {configs.map((cfg) => (
         <Card key={cfg.id}>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <CardTitle className="font-mono text-base">
                   {t("summary.chatTitle", { chatId: cfg.chatId })}
@@ -306,12 +380,14 @@ function SummaryHistoryList({ botId }: { botId: string }) {
   const [limit] = useState(20);
   const [filterChatId, setFilterChatId] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ChatSummaryRecord | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
 
   const fetchHistory = useCallback(async () => {
     setLoading(true);
+    setLoadFailed(false);
     try {
       const query: Record<string, string> = {
         page: String(page),
@@ -323,10 +399,11 @@ function SummaryHistoryList({ botId }: { botId: string }) {
         query,
       });
       const json = await res.json();
-      if (json.ok) {
-        setHistory(json.data as ChatSummaryRecord[]);
-        setTotal(json.total);
-      }
+      if (!json.ok) throw new Error("Unable to load summary history");
+      setHistory(json.data as ChatSummaryRecord[]);
+      setTotal(json.total);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -358,9 +435,15 @@ function SummaryHistoryList({ botId }: { botId: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <h2 className="text-lg font-semibold">{t("summary.history")}</h2>
-        <Button size="sm" variant="outline" onClick={fetchHistory} disabled={loading}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={fetchHistory}
+          disabled={loading}
+          aria-label={t("common:common.refresh")}
+        >
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -373,7 +456,8 @@ function SummaryHistoryList({ botId }: { botId: string }) {
         <Input
           type="number"
           placeholder={t("summary.filterChatId")}
-          className="w-40"
+          aria-label={t("summary.filterChatId")}
+          className="w-full sm:w-56"
           value={filterChatId}
           onChange={(e) => {
             setFilterChatId(e.target.value);
@@ -384,6 +468,7 @@ function SummaryHistoryList({ botId }: { botId: string }) {
           <Button
             size="sm"
             variant="ghost"
+            aria-label={t("common:common.clear")}
             onClick={() => {
               setFilterChatId("");
               setPage(1);
@@ -394,15 +479,32 @@ function SummaryHistoryList({ botId }: { botId: string }) {
         )}
       </div>
 
-      {history.length === 0 && !loading && (
-        <p className="text-muted-foreground text-sm">{t("summary.noHistory")}</p>
+      {loadFailed && (
+        <div
+          role="alert"
+          className="bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl p-4 text-sm"
+        >
+          <p>{t("summary.loadHistoryFailed")}</p>
+          <Button variant="outline" size="sm" onClick={() => void fetchHistory()}>
+            {t("common:common.retry")}
+          </Button>
+        </div>
+      )}
+      {history.length === 0 && !loading && !loadFailed && (
+        <EmptyState
+          icon={History}
+          title={filterChatId ? t("summary.filteredEmpty") : t("summary.noHistory")}
+          description={
+            filterChatId ? t("summary.filteredEmptyDescription") : t("summary.noHistoryDescription")
+          }
+        />
       )}
 
       <div className="space-y-2">
         {history.map((rec) => (
           <Card key={rec.id}>
-            <CardContent className="flex items-center justify-between py-3">
-              <div className="min-w-0 flex-1">
+            <CardContent className="flex flex-wrap items-start justify-between gap-3 py-4">
+              <div className="min-w-[min(100%,16rem)] flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-sm">
                     {t("summary.chatTitle", { chatId: rec.chatId })}
@@ -495,7 +597,12 @@ export function BotSummaryPage() {
 
   return (
     <div className="space-y-8">
-      <h1 className="text-2xl font-bold">{t("summary.title")}</h1>
+      <div>
+        <h1 className="text-2xl font-bold">{t("summary.title")}</h1>
+        <p className="text-muted-foreground mt-2 max-w-prose text-sm leading-6">
+          {t("summary.description")}
+        </p>
+      </div>
 
       <SummaryConfigList botId={botId} onChanged={() => setHistoryKey((k) => k + 1)} />
 

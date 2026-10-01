@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { client } from "@/lib/client";
 import type { RssCollectionRecord, RssFeedRecord, RssItemRecord } from "@cos-tool-bot/shared";
 import {
@@ -13,6 +14,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Rss,
   Send,
   Trash2,
 } from "lucide-react";
@@ -32,6 +34,7 @@ export function BotRssPage() {
   const { botId } = useParams<{ botId: string }>();
   const [collections, setCollections] = useState<CollectionWithFeeds[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [itemsMap, setItemsMap] = useState<
@@ -49,12 +52,17 @@ export function BotRssPage() {
 
   const fetchCollections = useCallback(async () => {
     if (!botId) return;
+    setLoading(true);
+    setLoadFailed(false);
     try {
       const res = await client.api.bots[":botId"].rss.collections.$get({
         param: { botId },
       });
       const json = await res.json();
-      if (json.ok) setCollections(json.data);
+      if (!json.ok) throw new Error("Unable to load RSS collections");
+      setCollections(json.data);
+    } catch {
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -169,17 +177,39 @@ export function BotRssPage() {
     });
   };
 
-  if (loading) return <p className="text-muted-foreground text-sm">{t("common:common.loading")}</p>;
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">{t("rss.title")}</h1>
-        <Button size="sm" onClick={() => setShowCreate(!showCreate)}>
-          <Plus className="h-4 w-4" />
-          {t("rss.newCollection")}
-        </Button>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold">{t("rss.title")}</h1>
+          <p className="text-muted-foreground mt-2 max-w-prose text-sm leading-6">
+            {t("rss.description")}
+          </p>
+        </div>
+        {collections.length > 0 && !showCreate && (
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="h-4 w-4" />
+            {t("rss.newCollection")}
+          </Button>
+        )}
       </div>
+
+      {loading && (
+        <p role="status" className="text-muted-foreground text-sm">
+          {t("common:common.loading")}
+        </p>
+      )}
+      {loadFailed && (
+        <div
+          role="alert"
+          className="bg-danger-soft text-destructive flex flex-wrap items-center justify-between gap-3 rounded-xl p-4 text-sm"
+        >
+          <p>{t("rss.loadFailed")}</p>
+          <Button variant="outline" size="sm" onClick={() => void fetchCollections()}>
+            {t("common:common.retry")}
+          </Button>
+        </div>
+      )}
 
       {showCreate && botId && (
         <CollectionForm
@@ -208,31 +238,48 @@ export function BotRssPage() {
         </p>
       )}
 
-      {collections.length === 0 && !showCreate && (
-        <p className="text-muted-foreground text-sm">{t("rss.empty")}</p>
+      {!loading && !loadFailed && collections.length === 0 && !showCreate && (
+        <EmptyState icon={Rss} title={t("rss.emptyTitle")} description={t("rss.emptyDescription")}>
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="size-4" />
+            {t("rss.newCollection")}
+          </Button>
+        </EmptyState>
       )}
 
       {collections.map((col) => (
         <Card key={col.id}>
-          <CardHeader className="cursor-pointer" onClick={() => expandCollection(col.id)}>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <button
+                type="button"
+                className="focus-visible:ring-ring flex min-h-10 min-w-[min(100%,20rem)] flex-1 items-start gap-2 rounded-lg text-left focus-visible:ring-2 focus-visible:outline-none"
+                onClick={() => void expandCollection(col.id)}
+                aria-expanded={expandedId === col.id}
+                aria-controls={expandedId === col.id ? `rss-collection-${col.id}` : undefined}
+              >
                 {expandedId === col.id ? (
-                  <ChevronDown className="h-4 w-4" />
+                  <ChevronDown className="mt-1 size-4 shrink-0" />
                 ) : (
-                  <ChevronRight className="h-4 w-4" />
+                  <ChevronRight className="mt-1 size-4 shrink-0" />
                 )}
-                <CardTitle className="text-base">{col.name}</CardTitle>
-                <Badge variant={col.isActive ? "default" : "muted"}>
-                  {col.isActive ? t("rss.active") : t("rss.paused")}
-                </Badge>
-                <span className="text-muted-foreground flex items-center gap-1 text-xs">
-                  <Clock className="h-3 w-3" />
-                  UTC {String(col.digestHour).padStart(2, "0")}:
-                  {String(col.digestMinute).padStart(2, "0")}
+                <span className="min-w-0 flex-1 space-y-2">
+                  <span className="block text-base leading-6 font-semibold [overflow-wrap:anywhere]">
+                    {col.name}
+                  </span>
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Badge variant={col.isActive ? "default" : "muted"}>
+                      {col.isActive ? t("rss.active") : t("rss.paused")}
+                    </Badge>
+                    <span className="text-muted-foreground flex items-center gap-1 text-xs">
+                      <Clock className="h-3 w-3" />
+                      UTC {String(col.digestHour).padStart(2, "0")}:
+                      {String(col.digestMinute).padStart(2, "0")}
+                    </span>
+                  </span>
                 </span>
-              </div>
-              <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+              </button>
+              <div className="flex shrink-0 items-center gap-1">
                 <Button
                   size="sm"
                   variant="ghost"
@@ -287,7 +334,7 @@ export function BotRssPage() {
           </CardHeader>
 
           {expandedId === col.id && (
-            <CardContent className="space-y-4">
+            <CardContent id={`rss-collection-${col.id}`} className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">{t("rss.settings")}</h3>
                 <Button

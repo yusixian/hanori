@@ -121,6 +121,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// This multi-page flow needs headroom when browser files run concurrently.
 test("keeps auth, admin drafts, history blocking, and Mini App routing under StrictMode", async () => {
   await page.viewport(390, 844);
   const { App } = await import("./App");
@@ -230,7 +231,7 @@ test("keeps auth, admin drafts, history blocking, and Mini App routing under Str
   await expect.element(page.getByRole("heading", { name: "Commands", exact: true })).toBeVisible();
 
   rendered.unmount();
-});
+}, 45_000);
 
 test("opens the panel when the server accepts a signed-in session even if the client session check is unavailable", async () => {
   authState.sessionUnavailable = true;

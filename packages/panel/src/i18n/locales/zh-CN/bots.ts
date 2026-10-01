@@ -320,6 +320,10 @@ export const bots = {
     },
   },
   rss: {
+    loadFailed: "无法加载 RSS 集合，请重试。",
+    description: "订阅喜欢的信息源，让 Bot 帮你收集每天的新鲜内容。",
+    emptyTitle: "把喜欢的阅读放在一起",
+    emptyDescription: "先创建一个集合，再添加 RSS 或 Atom 订阅源，选择接收每日摘要的会话。",
     title: "RSS 集合",
     newCollection: "新建集合",
     dismiss: "关闭",
@@ -348,6 +352,7 @@ export const bots = {
     digested: "已生成摘要",
     collectionName: "集合名称",
     targetChatId: "目标 Chat ID",
+    collectionDescription: "描述（可选）",
     descriptionPlaceholder: "描述（可选，将显示在集合标题下）",
     digestPromptLabel: "摘要提示词（可选；变量：{{name}}、{{slug}}、{{date}}）",
     digestPromptPlaceholder:
@@ -358,6 +363,14 @@ export const bots = {
     networkError: "网络错误，请重试",
   },
   summary: {
+    loadConfigsFailed: "无法加载总结配置，请重试。",
+    loadHistoryFailed: "无法加载总结记录，请重试。",
+    description: "随时回顾群里的讨论，也可以让 Bot 按时整理。",
+    emptyTitle: "让 Bot 帮你回顾群聊",
+    emptyDescription: "选择一个群和回顾范围，就能手动生成总结，或设置定时整理。",
+    noHistoryDescription: "手动或定时生成的群聊总结会显示在这里。",
+    filteredEmpty: "没有找到这个会话的总结",
+    filteredEmptyDescription: "试试其他 Chat ID，或清空筛选查看全部总结。",
     title: "群聊总结",
     detailTitle: "总结内容 — Chat {{chatId}} · {{date}}",
     chatTitle: "会话 {{chatId}}",

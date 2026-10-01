@@ -5,7 +5,8 @@ import { usePanelRole } from "@/hooks/use-can-manage-bot";
 import { authClient } from "@/lib/auth-client";
 import { BeforeLogoutProvider, useBeforeLogout } from "./before-logout";
 import { cn } from "@/lib/utils";
-import { useLogout } from "@refinedev/core";
+import { useLogout, useOne } from "@refinedev/core";
+import type { BotWithStatus } from "@cos-tool-bot/shared";
 import { toast } from "sonner";
 import { useAtom } from "jotai";
 import {
@@ -344,6 +345,14 @@ function AppLayoutContent() {
   const botIdMatch = location.pathname.match(/^\/bots\/([^/]+)/);
   const botId = botIdMatch?.[1];
   const isBotContext = botId != null && botId !== "new";
+  const { data: currentBot } = useOne<BotWithStatus>({
+    resource: "bots",
+    id: botId ?? "",
+    queryOptions: { enabled: isBotContext, staleTime: 30_000, retry: false },
+    errorNotification: false,
+  });
+  // A route transition must never label the new workspace with the previous Bot.
+  const botName = isBotContext && currentBot?.data.id === botId ? currentBot.data.name : undefined;
 
   const botNavGroups = useMemo(
     () =>
@@ -693,7 +702,25 @@ function AppLayoutContent() {
           <Menu className="size-5" />
         </Button>
         <HanoriMark className="size-9 shrink-0" />
-        <span className="text-sm font-semibold tracking-tight">{t("app.name")}</span>
+        <div className="min-w-0 flex-1">
+          <span
+            className={cn(
+              "block font-semibold tracking-tight",
+              isBotContext ? "text-muted-foreground text-[11px]" : "text-sm",
+            )}
+          >
+            {t("app.name")}
+          </span>
+          {isBotContext && (
+            <span
+              data-testid="mobile-bot-name"
+              className="block truncate text-sm font-semibold"
+              title={botName}
+            >
+              {botName ?? t("navigation.botWorkspace")}
+            </span>
+          )}
+        </div>
       </header>
 
       {sidebarOpen && (
@@ -744,8 +771,12 @@ function AppLayoutContent() {
                   <span className="block truncate text-sm font-semibold tracking-tight">
                     {t("app.name")}
                   </span>
-                  <span className="text-muted-foreground block truncate text-[10px]">
-                    {isBotContext ? t("navigation.botWorkspace") : t("app.subtitle")}
+                  <span
+                    data-testid="sidebar-bot-name"
+                    className="text-muted-foreground mt-0.5 block truncate text-xs"
+                    title={isBotContext ? botName : undefined}
+                  >
+                    {isBotContext ? (botName ?? t("navigation.botWorkspace")) : t("app.subtitle")}
                   </span>
                 </div>
               </div>

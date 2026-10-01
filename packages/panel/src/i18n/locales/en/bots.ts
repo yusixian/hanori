@@ -333,6 +333,11 @@ export const bots = {
     },
   },
   rss: {
+    loadFailed: "Could not load RSS collections. Try again.",
+    description: "Follow the sources you love and let your Bot collect a daily digest.",
+    emptyTitle: "Make room for your favorite reads",
+    emptyDescription:
+      "Create a collection, add RSS or Atom feeds, and choose a chat to receive the digest.",
     title: "RSS Collections",
     newCollection: "New Collection",
     dismiss: "Dismiss",
@@ -363,6 +368,7 @@ export const bots = {
     digested: "digested",
     collectionName: "Collection name",
     targetChatId: "Chat ID (target)",
+    collectionDescription: "Description (optional)",
     descriptionPlaceholder: "Description (optional, shown in collection header)",
     digestPromptLabel: "Digest Prompt (optional; variables: {{name}}, {{slug}}, {{date}})",
     digestPromptPlaceholder:
@@ -373,6 +379,15 @@ export const bots = {
     networkError: "Network error, please try again",
   },
   summary: {
+    loadConfigsFailed: "Could not load summary configurations. Try again.",
+    loadHistoryFailed: "Could not load summary history. Try again.",
+    description: "Keep up with group conversations, with summaries on demand or on a schedule.",
+    emptyTitle: "Your next catch-up starts here",
+    emptyDescription:
+      "Choose a group and a time window. You can generate its summary yourself or set a schedule.",
+    noHistoryDescription: "Summaries will appear here after a manual or scheduled run.",
+    filteredEmpty: "No summaries for this chat",
+    filteredEmptyDescription: "Try another Chat ID or clear the filter to see all summaries.",
     title: "Chat Summaries",
     detailTitle: "Summary — Chat {{chatId}} · {{date}}",
     chatTitle: "Chat {{chatId}}",
