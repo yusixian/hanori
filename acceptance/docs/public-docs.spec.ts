@@ -109,7 +109,7 @@ for (const { version, theme } of [
   { version: "v0.18.0", theme: "更新 Lody CLI 与模型列表" },
   { version: "v0.19.0", theme: "自动发现模型与显式配置" },
   { version: "v0.19.1", theme: "授权期间保留 MCP 连接状态" },
-  { version: "v0.20.0", theme: "在聊天中诊断 Bot 运行情况" },
+  { version: "v0.20.0", theme: "插件市场、统一检索与 Bot 运行诊断" },
 ]) {
   test(`${version} supports anonymous deep links, navigation and search`, async ({
     page,
