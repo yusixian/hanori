@@ -122,11 +122,13 @@ pnpm build
 | Repository           | `example-owner/cos-tool-bot`               |
 | Branch               | `main`                                |
 | Compose Path         | `./docker-compose.yml`                |
-| Isolated Deployments | 开启                                  |
+| Isolated Deployments | 关闭，保留仓库声明的网络边界          |
 | Auto Deploy          | 迁移完成前关闭                        |
 | Advanced Command     | 复制默认命令并追加 `--force-recreate` |
 
 Dokploy 的 Environment 会用于 Compose 变量插值；容器真正需要的变量已经在 `docker-compose.yml` 中显式映射。不要添加 `env_file: .env`，避免把数据库密码等无关变量全部注入 app。
+
+使用默认 Domains 网络时，设置 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只为 `app` 配置域名。不要开启 **Enable Isolated Deployment**：该选项会向所有服务注入网络，与媒体 worker 的 `network_mode: none` 冲突，并绕过编码 worker 仅连接 `coding-sandbox` 的网络边界。刷新仓库来源后检查 Preview Compose，确认 app 保留 `default`、`harness-bridge` 并连接代理网络，media worker 没有 `networks` 字段，coding worker 只有 `coding-sandbox`。已有实例调整开关时保留项目名和 volume 配置，不能删除或重新初始化已有数据卷。
 
 Dokploy 默认使用 `docker compose ... up -d --build --remove-orphans`。已经成功退出的
 `db-backup` 容器在配置未变化时可能被复用，因此只保留默认命令不能保证再次执行备份。
