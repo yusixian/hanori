@@ -102,8 +102,9 @@ esac
   const backup = join(directory, "backups");
   const run = (extraEnv = {}, args = ["--version", "v1.0.0"]) => {
     if (extraEnv.TEST_MEDIA_EXISTING === "1") writeFileSync(mediaContainer, "existing container");
-    return spawnSync("bash", [join(source, "scripts/update-production.sh"), ...args], {
+    const result = spawnSync("bash", [join(source, "scripts/update-production.sh"), ...args], {
       encoding: "utf8",
+      timeout: 20_000,
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
@@ -115,11 +116,14 @@ esac
         TEST_MEDIA_JSON_SECRET: JSON.stringify(extraEnv.TEST_MEDIA_SECRET ?? "").slice(1, -1),
       },
     });
+    if (result.error) throw result.error;
+    return result;
   };
   return { source, before, target, git, calls, backup, mediaContainer, run };
 }
 
-describe("release upgrades", () => {
+// Each integration case creates a Git repository and launches real child processes.
+describe("release upgrades", { timeout: 30_000 }, () => {
   it("pins an already deployed tag without restarting services", () => {
     const { git, calls, run } = fixture();
     expect(run().status).toBe(0);
@@ -273,26 +277,20 @@ describe("release upgrades", () => {
     },
   );
 
-  it(
-    "does not record deployment success when app is ready but media-worker remains unhealthy",
-    // All 60 health probes spawn processes, even with sleep stubbed out.
-    { timeout: 30_000 },
-    () => {
-      const { calls, backup, run } = fixture();
-      const result = run({
-        TEST_COMPOSE_PROFILES: "media",
-        TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
-        TEST_MEDIA_HEALTH_FAIL: "1",
-      });
-      expect(result.error).toBeUndefined();
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("音频转换 worker");
-      const commands = readFileSync(calls, "utf8");
-      expect(commands).toContain("/api/health/ready");
-      expect(
-        commands.match(/inspect --format \{\{\.State.Health.Status\}\} media-fixture/g),
-      ).toHaveLength(60);
-      expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
-    },
-  );
+  it("does not record deployment success when app is ready but media-worker remains unhealthy", () => {
+    const { calls, backup, run } = fixture();
+    const result = run({
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
+      TEST_MEDIA_HEALTH_FAIL: "1",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("音频转换 worker");
+    const commands = readFileSync(calls, "utf8");
+    expect(commands).toContain("/api/health/ready");
+    expect(
+      commands.match(/inspect --format \{\{\.State.Health.Status\}\} media-fixture/g),
+    ).toHaveLength(60);
+    expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
+  });
 });
