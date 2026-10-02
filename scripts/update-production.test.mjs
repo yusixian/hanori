@@ -273,16 +273,26 @@ describe("release upgrades", () => {
     },
   );
 
-  it("does not record deployment success when app is ready but media-worker remains unhealthy", () => {
-    const { calls, backup, run } = fixture();
-    const result = run({
-      TEST_COMPOSE_PROFILES: "media",
-      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
-      TEST_MEDIA_HEALTH_FAIL: "1",
-    });
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("音频转换 worker");
-    expect(readFileSync(calls, "utf8")).toContain("/api/health/ready");
-    expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
-  });
+  it(
+    "does not record deployment success when app is ready but media-worker remains unhealthy",
+    // All 60 health probes spawn processes, even with sleep stubbed out.
+    { timeout: 30_000 },
+    () => {
+      const { calls, backup, run } = fixture();
+      const result = run({
+        TEST_COMPOSE_PROFILES: "media",
+        TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
+        TEST_MEDIA_HEALTH_FAIL: "1",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("音频转换 worker");
+      const commands = readFileSync(calls, "utf8");
+      expect(commands).toContain("/api/health/ready");
+      expect(
+        commands.match(/inspect --format \{\{\.State.Health.Status\}\} media-fixture/g),
+      ).toHaveLength(60);
+      expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
+    },
+  );
 });
