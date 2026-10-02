@@ -261,7 +261,12 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
         "memory.tool-contract",
         "static",
         "developer",
-        MEMORY_SYSTEM_PROMPT,
+        input.toolCapabilities.has("unified-search")
+          ? MEMORY_SYSTEM_PROMPT.replaceAll("search_profiles", "search(scope=profiles)").replaceAll(
+              "search_history",
+              "search(scope=history)",
+            )
+          : MEMORY_SYSTEM_PROMPT,
       ),
     );
   }
@@ -272,7 +277,9 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
         "bot-memory.tool-contract",
         "static",
         "developer",
-        BOT_MEMORY_SYSTEM_PROMPT,
+        input.toolCapabilities.has("unified-search")
+          ? BOT_MEMORY_SYSTEM_PROMPT.replaceAll("recall_memories", "search(scope=memory)")
+          : BOT_MEMORY_SYSTEM_PROMPT,
       ),
     );
   }
@@ -949,6 +956,7 @@ export async function assembleContext(input: ContextAssemblyInput): Promise<Asse
 }
 
 export interface PromptPreviewInput {
+  unifiedSearchEnabled?: boolean;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;

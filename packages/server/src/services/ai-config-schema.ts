@@ -154,6 +154,7 @@ export const aiConfigSchema = z
         toolChoice: z.enum(["auto", "required"]),
       })
       .optional(),
+    unifiedSearchEnabled: z.boolean().optional(),
     webToolsConfig: z
       .object({
         enabled: z.boolean(),

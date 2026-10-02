@@ -59,3 +59,23 @@ describe("load_skill", () => {
     ).resolves.toMatchObject({ ok: false, error: "resource_not_found" });
   });
 });
+
+it("supplies bounded host search mappings for both Skill instructions and resources", async () => {
+  const tools = createSkillTools({
+    skills: resolveBuiltInSkills(["prompt-atelier"]),
+    hasImageGeneration: false,
+    hasWebSearch: false,
+    unifiedSearchEnabled: true,
+  });
+  await expect(executeLoadSkill(tools, { skill: "prompt-atelier" })).resolves.toMatchObject({
+    runtime: {
+      webSearch: expect.stringContaining("search(scope=web) is unavailable"),
+      retrieval: expect.stringContaining("read_reference"),
+    },
+  });
+  await expect(
+    executeLoadSkill(tools, { skill: "prompt-atelier", resource: "references/styles.md" }),
+  ).resolves.toMatchObject({
+    runtime: { retrieval: expect.stringContaining("These old names are not callable") },
+  });
+});

@@ -5,6 +5,7 @@ import type {
   WebToolsConfigPublic,
 } from "@cos-tool-bot/shared";
 import { isStreamReplyMode } from "@cos-tool-bot/shared";
+import { getUnifiedSearchScopes } from "../tools/search.js";
 
 type SearchConfig = NonNullable<WebToolsConfig["search"]>;
 type PublicSearchConfig = NonNullable<WebToolsConfigPublic["search"]>;
@@ -19,7 +20,8 @@ export type ToolPromptCapability =
   | "multi-message"
   | "sticker"
   | "web"
-  | "web-search";
+  | "web-search"
+  | "unified-search";
 
 const CAPABILITY_MARKER_TOOLS: Record<ToolPromptCapability, string> = {
   "agent-delegation": "delegate_task",
@@ -32,6 +34,7 @@ const CAPABILITY_MARKER_TOOLS: Record<ToolPromptCapability, string> = {
   sticker: "send_sticker",
   web: "fetch_webpage",
   "web-search": "web_search",
+  "unified-search": "search",
 };
 
 /** Configuration a prompt preview describes; runtime turns use deriveCapabilitiesFromTools. */
@@ -45,6 +48,7 @@ export interface ToolPromptCapabilityInput {
   artworkToolsEnabled?: boolean;
   hasFileTools?: boolean;
   messageConfig?: MessageConfig;
+  unifiedSearchEnabled?: boolean;
 }
 
 export function hasWebSearchProviderPrerequisites(
@@ -69,6 +73,7 @@ export function deriveToolPromptCapabilities(
   input: ToolPromptCapabilityInput,
 ): ReadonlySet<ToolPromptCapability> {
   const capabilities = new Set<ToolPromptCapability>();
+  if (input.unifiedSearchEnabled === true) capabilities.add("unified-search");
 
   if (input.stickerPacks?.length) capabilities.add("sticker");
   if (!isStreamReplyMode(input.messageConfig)) capabilities.add("multi-message");
@@ -104,6 +109,10 @@ export function deriveCapabilitiesFromTools(
   for (const [capability, marker] of Object.entries(CAPABILITY_MARKER_TOOLS)) {
     if (tools[marker]) capabilities.add(capability as ToolPromptCapability);
   }
+  const scopes = getUnifiedSearchScopes(tools.search);
+  if (scopes?.has("web")) capabilities.add("web-search");
+  if (scopes?.has("memory")) capabilities.add("bot-memory");
+  if (scopes?.has("artwork")) capabilities.add("artwork");
   if (!stickerPacks?.length) capabilities.delete("sticker");
   return capabilities;
 }

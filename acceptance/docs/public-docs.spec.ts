@@ -171,6 +171,25 @@ test("JEV tuning guide is searchable and explains independent thresholds", async
   await page.screenshot({ path: info.outputPath("jev-tuning-guide.png"), fullPage: true });
 });
 
+test("unified search guide can be found and reopened without authentication", async ({ page }) => {
+  await page.goto("/docs/");
+  await page
+    .getByRole("button", { name: /搜索文档/ })
+    .filter({ visible: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator("input").fill("统一检索");
+  await dialog.getByRole("button", { name: "Docs 使用指南 统一检索", exact: true }).click();
+  await expect(page).toHaveURL(/\/docs\/guides\/search\/?$/);
+  await page.reload();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("统一检索");
+  await expect(page.getByRole("heading", { name: "排查与回退" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
 test("management guides are searchable and readable on desktop and mobile", async ({
   page,
 }, info) => {

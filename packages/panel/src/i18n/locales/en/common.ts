@@ -71,6 +71,7 @@ export const common = {
     backup: "Backup",
     timers: "Timers",
     mcp: "MCP",
+    plugins: "Plugins",
     apiTest: "API Test",
     harness: "Dev Harness",
     logs: "Logs",

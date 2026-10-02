@@ -48,6 +48,7 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
   return {
     revision,
     enabled: config.enabled,
+    unifiedSearchEnabled: config.unifiedSearchEnabled !== false,
     engagement: config.engagement
       ? { ...config.engagement, apiKey: input.engagementApiKey || undefined }
       : input.engagementApiKey

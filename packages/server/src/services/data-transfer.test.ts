@@ -71,6 +71,80 @@ function exportPayload(
 }
 
 describe("DataTransferService credential sanitization", () => {
+  it("exports plugin settings without ciphertext and does not copy a secret into ordinary values", async () => {
+    const db = {
+      select: () => ({
+        from: (table: Parameters<typeof getTableName>[0]) => ({
+          where: async () =>
+            table === schema.bots
+              ? [{ id: "old-bot", name: "Synthetic Bot" }]
+              : table === schema.botPluginConfigs
+                ? [
+                    {
+                      botId: "old-bot",
+                      pluginId: "fixture.plugin",
+                      manifestVersion: "1.0.0",
+                      manifestHash: "a".repeat(64),
+                      values: { limit: 7, cookie: "unsafe-duplicate" },
+                      encryptedSecrets: { cookie: "private-ciphertext" },
+                      enabled: true,
+                      revision: 12,
+                    },
+                  ]
+                : [],
+        }),
+      }),
+    } as unknown as Database;
+    const service = new DataTransferService(db, "a".repeat(64));
+    expect(service.getDiscoveredTables()).toContain("bot_plugin_configs");
+    expect(service.getDiscoveredTables()).not.toContain("media_transcription_jobs");
+    const payload = await service.exportBot("old-bot");
+    expect(payload.botPluginConfigs).toEqual([
+      expect.objectContaining({
+        botId: "old-bot",
+        pluginId: "fixture.plugin",
+        values: { limit: 7 },
+        encryptedSecrets: {},
+        enabled: false,
+        revision: 1,
+      }),
+    ]);
+    expect(JSON.stringify(payload)).not.toMatch(/private-ciphertext|unsafe-duplicate/);
+  });
+
+  it("strips forged plugin credentials and forces imported plugin settings to stay disabled", async () => {
+    const { db, inserts } = createImportDb();
+    const service = new DataTransferService(db, "a".repeat(64));
+    await service.importData(
+      exportPayload([{ id: "old-bot", name: "Synthetic" }], {
+        botPluginConfigs: [
+          {
+            botId: "old-bot",
+            pluginId: "fixture.plugin",
+            manifestVersion: "1.0.0",
+            manifestHash: "a".repeat(64),
+            values: { limit: 7, cookie: "unsafe-duplicate", token: "unsafe-token" },
+            encryptedSecrets: { cookie: "forged-cookie" },
+            encrypted_secrets: { token: "forged-token" },
+            enabled: true,
+            revision: 12,
+          },
+        ],
+      }),
+    );
+    const rows = inserts.find((insert) => insert.table === "bot_plugin_configs")!.rows;
+    expect(rows).toEqual([
+      expect.objectContaining({
+        botId: "new-bot-Synthetic",
+        values: { limit: 7 },
+        encryptedSecrets: {},
+        enabled: false,
+        revision: 1,
+      }),
+    ]);
+    expect(JSON.stringify(rows)).not.toMatch(/forged-|unsafe-|encrypted_secrets/);
+  });
+
   it("strips forged GitHub credentials and installation metadata during import", async () => {
     let insertedBot: Record<string, unknown> | undefined;
     const transaction = vi.fn(async (operation: (tx: unknown) => Promise<void>) => {

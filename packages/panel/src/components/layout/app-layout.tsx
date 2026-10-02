@@ -91,6 +91,7 @@ const globalNavGroups: readonly {
     items: [
       { labelKey: "navigation.data", path: "/data", icon: Database },
       { labelKey: "navigation.backup", path: "/backup", icon: HardDrive },
+      { labelKey: "navigation.plugins", path: "/plugins", icon: Plug, aliases: ["plugin", "插件"] },
       { labelKey: "navigation.mcp", path: "/mcp-servers", icon: Plug, aliases: ["server"] },
       { labelKey: "navigation.apiTest", path: "/api-test", icon: FlaskConical, aliases: ["api"] },
     ],

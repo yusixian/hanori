@@ -26,6 +26,8 @@ usage() {
 .env 可选功能：
   COMPOSE_PROFILES=coding                  部署 Pi worker 与出口代理
   CODING_WORKER_SECRET=<随机值>             启用 coding profile 时必须填写
+  COMPOSE_PROFILES=media                   部署隔离的音频转换 worker（可与 coding,harness 组合）
+  MEDIA_WORKER_SECRET=<32至256字符随机值>    启用 media profile 时必须填写；停用时清空
   GITHUB_APP_*                             五项必须全填或全空
 EOF
 }
@@ -101,7 +103,7 @@ detect_coding_profile() {
     [[ -z "$secret" ]] ||
       fail "CODING_WORKER_SECRET 已填写，但 coding profile 未启用。请在 .env 设置 COMPOSE_PROFILES=coding，或清空该 secret。"
     CODING_PROFILE_ENABLED=0
-    printf 'Pi coding profile 未启用；本次只部署主应用。\n'
+    printf 'Pi coding profile 未启用。\n'
     return
   fi
 
@@ -112,7 +114,31 @@ detect_coding_profile() {
   printf 'Pi coding profile 已启用；将同时部署 worker 和出口代理。\n'
 }
 
-coding_service_container_ids() {
+detect_media_profile() {
+  local services secret configuration
+  local LC_ALL=C
+  local secret_pattern='"MEDIA_WORKER_SECRET"[[:space:]]*:[[:space:]]*"([^"]*)"'
+
+  services="$("${COMPOSE[@]}" config --services)" || fail "无法读取 Docker Compose 服务列表。"
+  configuration="$("${COMPOSE[@]}" config --format json)" || fail "无法读取 Docker Compose 配置。"
+  # Validate the complete JSON string without decoding escapes or evaluating secret contents.
+  [[ "$configuration" =~ $secret_pattern ]] || fail "无法读取音频转换 worker 的 secret 配置。"
+  secret="${BASH_REMATCH[1]}"
+  if ! grep -qx 'media-worker' <<<"$services"; then
+    [[ -z "$secret" ]] ||
+      fail "MEDIA_WORKER_SECRET 已填写，但 media profile 未启用。请启用 COMPOSE_PROFILES=media，或清空该 secret。"
+    MEDIA_PROFILE_ENABLED=0
+    printf '音频转换 media profile 未启用。\n'
+    return
+  fi
+
+  [[ "${#secret}" -ge 32 && "${#secret}" -le 256 && "$secret" =~ ^[A-Za-z0-9_+/=-]+$ ]] ||
+    fail "已启用 media profile，但 MEDIA_WORKER_SECRET 必须为 32 至 256 个字母、数字或 /+_=- 字符。请执行 openssl rand -hex 32 并写入 .env。"
+  MEDIA_PROFILE_ENABLED=1
+  printf '音频转换 media profile 已启用；将部署隔离 worker。\n'
+}
+
+service_container_ids() {
   local service="$1"
   docker ps -aq \
     --filter "label=com.docker.compose.project=$PROJECT_NAME" \
@@ -124,7 +150,7 @@ verify_coding_services_removed() {
   local -a remaining=()
 
   for service in coding-worker coding-egress-proxy; do
-    ids="$(coding_service_container_ids "$service")" ||
+    ids="$(service_container_ids "$service")" ||
       fail "无法检查已禁用的 $service 容器。"
     [[ -z "$ids" ]] || remaining+=("$service")
   done
@@ -137,7 +163,7 @@ remove_disabled_coding_services() {
   local service ids
 
   for service in coding-worker coding-egress-proxy; do
-    ids="$(coding_service_container_ids "$service")" ||
+    ids="$(service_container_ids "$service")" ||
       fail "无法检查待清理的 $service 容器。"
     [[ -n "$ids" ]] || continue
 
@@ -147,6 +173,28 @@ remove_disabled_coding_services() {
 
   verify_coding_services_removed
   printf '已确认禁用的 Pi worker 和出口代理容器均不存在。\n'
+}
+
+verify_media_service_removed() {
+  local ids
+  ids="$(service_container_ids media-worker)" || fail "无法检查已禁用的 media-worker 容器。"
+  [[ -z "$ids" ]] || fail "media profile 已禁用，但 media-worker 容器仍然存在。"
+}
+
+remove_disabled_media_service() {
+  local ids id
+  local -a containers=()
+  ids="$(service_container_ids media-worker)" || fail "无法检查待清理的 media-worker 容器。"
+  while IFS= read -r id; do
+    [[ -z "$id" ]] || containers+=("$id")
+  done <<<"$ids"
+  if [[ "${#containers[@]}" -gt 0 ]]; then
+    # Use label-scoped IDs so cleanup also works with a release lacking this optional service.
+    docker stop "${containers[@]}" || fail "停止已禁用的 media-worker 失败。"
+    docker rm "${containers[@]}" || fail "删除已禁用的 media-worker 失败。"
+  fi
+  verify_media_service_removed
+  printf '已确认禁用的音频转换 worker 容器不存在；共享卷保留。\n'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -231,6 +279,8 @@ COMPOSE_ENVIRONMENT="$(compose_environment)"
 validate_optional_github_app "$COMPOSE_ENVIRONMENT"
 CODING_PROFILE_ENABLED=0
 detect_coding_profile "$COMPOSE_ENVIRONMENT"
+MEDIA_PROFILE_ENABLED=0
+detect_media_profile
 "${COMPOSE[@]}" exec -T db pg_isready -U bot -d cos_tool_bot >/dev/null 2>&1 ||
   fail "生产数据库没有运行。请先执行 docker compose -p $PROJECT_NAME ps。"
 
@@ -282,6 +332,7 @@ step 4 "检查新版本配置"
 COMPOSE_ENVIRONMENT="$(compose_environment)"
 validate_optional_github_app "$COMPOSE_ENVIRONMENT"
 detect_coding_profile "$COMPOSE_ENVIRONMENT"
+detect_media_profile
 
 LEGACY_PIXAI_PENDING="$("${COMPOSE[@]}" exec -T db \
   psql -U bot -d cos_tool_bot -Atc \
@@ -295,17 +346,23 @@ BUILD_SERVICES=(app)
 if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
   BUILD_SERVICES+=(coding-egress-proxy coding-worker)
 fi
+if [[ "$MEDIA_PROFILE_ENABLED" -eq 1 ]]; then
+  BUILD_SERVICES+=(media-worker)
+fi
 "${COMPOSE[@]}" build "${BUILD_SERVICES[@]}"
 
 step 6 "启动新版本"
 if [[ "$CODING_PROFILE_ENABLED" -eq 0 ]]; then
   remove_disabled_coding_services
 fi
+if [[ "$MEDIA_PROFILE_ENABLED" -eq 0 ]]; then
+  remove_disabled_media_service
+fi
 if [[ "$INFRA_CHANGED" -eq 1 ]]; then
   printf '首次运行脚本或检测到 docker-compose.yml 有变化，将应用完整 Compose 配置。\n'
   "${COMPOSE[@]}" up -d
-elif [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
-  "${COMPOSE[@]}" up -d app coding-egress-proxy coding-worker
+elif [[ "$CODING_PROFILE_ENABLED" -eq 1 || "$MEDIA_PROFILE_ENABLED" -eq 1 ]]; then
+  "${COMPOSE[@]}" up -d "${BUILD_SERVICES[@]}"
 else
   "${COMPOSE[@]}" up -d --no-deps app
 fi
@@ -349,11 +406,34 @@ if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
     fail "Pi coding worker 或出口代理在 120 秒内没有通过健康检查。"
   fi
 
-  "${COMPOSE[@]}" ps app db coding-worker coding-egress-proxy
 else
   verify_coding_services_removed
-  "${COMPOSE[@]}" ps app db
 fi
+if [[ "$MEDIA_PROFILE_ENABLED" -eq 1 ]]; then
+  MEDIA_HEALTHY=0
+  for ((attempt = 1; attempt <= 60; attempt++)); do
+    MEDIA_WORKER_ID="$("${COMPOSE[@]}" ps -q media-worker)"
+    if [[ -n "$MEDIA_WORKER_ID" ]] &&
+      [[ "$(docker inspect --format '{{.State.Health.Status}}' "$MEDIA_WORKER_ID" 2>/dev/null)" == "healthy" ]]; then
+      MEDIA_HEALTHY=1
+      break
+    fi
+    printf '.'
+    sleep 2
+  done
+  printf '\n'
+  [[ "$MEDIA_HEALTHY" -eq 1 ]] || fail "音频转换 worker 在 120 秒内没有通过健康检查。"
+else
+  verify_media_service_removed
+fi
+STATUS_SERVICES=(app db)
+if [[ "$CODING_PROFILE_ENABLED" -eq 1 ]]; then
+  STATUS_SERVICES+=(coding-worker coding-egress-proxy)
+fi
+if [[ "$MEDIA_PROFILE_ENABLED" -eq 1 ]]; then
+  STATUS_SERVICES+=(media-worker)
+fi
+"${COMPOSE[@]}" ps "${STATUS_SERVICES[@]}"
 MARKER_TMP="$DEPLOYED_MARKER.tmp"
 printf '%s\n' "$TARGET_COMMIT" >"$MARKER_TMP"
 mv "$MARKER_TMP" "$DEPLOYED_MARKER"

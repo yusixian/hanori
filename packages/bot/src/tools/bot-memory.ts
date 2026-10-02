@@ -13,6 +13,7 @@ export interface BotMemoryTurnContext {
   allowSave?: boolean;
   allowMutations?: boolean;
   allowHardDelete?: boolean;
+  unifiedSearchEnabled?: boolean;
 }
 
 const memoryKindSchema = z.enum(["fact", "preference", "event", "commitment", "relationship"]);
@@ -156,7 +157,11 @@ export function createBotMemoryTools(
                 expected_content: z
                   .string()
                   .min(1)
-                  .describe("刚从 recall_memories 看到的原文，用于防止覆盖已变化的记忆"),
+                  .describe(
+                    context.unifiedSearchEnabled === true
+                      ? "先用 search(scope=memory) 检索，再用 read_reference 分段读取完整原文，用于防止覆盖已变化的记忆；不得使用截断的 summary。若无法读取完整原文，不要更新。"
+                      : "刚从 recall_memories 看到的原文，用于防止覆盖已变化的记忆",
+                  ),
                 content: z.string().min(1).optional().describe("新的准确内容"),
                 category: z.string().nullable().optional(),
                 kind: memoryKindSchema.nullable().optional(),
@@ -211,7 +216,11 @@ export function createBotMemoryTools(
                 expected_content: z
                   .string()
                   .min(1)
-                  .describe("刚从 recall_memories 看到的原文，用于防止停用已变化的记忆"),
+                  .describe(
+                    context.unifiedSearchEnabled === true
+                      ? "先用 search(scope=memory) 检索，再用 read_reference 分段读取完整原文，用于防止停用已变化的记忆；不得使用截断的 summary。若无法读取完整原文，不要停用。"
+                      : "刚从 recall_memories 看到的原文，用于防止停用已变化的记忆",
+                  ),
                 superseded_by_id: z
                   .number()
                   .int()

@@ -17,6 +17,8 @@ export interface ToolDescriptor {
    * Returns the key suffix; `getToolCacheKey` prefixes the tool name.
    */
   cacheKey?: (args: Record<string, unknown>) => string;
+  /** Body-bearing references are logged only as an allowlisted metadata projection. */
+  outputLog?: "reference_metadata" | "search_metadata";
 }
 
 const TWITTER_HOSTS = new Set([
@@ -63,6 +65,21 @@ const queryCacheKey = (args: Record<string, unknown>) =>
     .trim();
 
 export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
+  // References can expire from the bounded turn-local store, so neither tool uses result memoization.
+  {
+    name: "search",
+    statusLabel: "🔎 搜索中...",
+    effect: "read_only",
+    callLimit: 64,
+    outputLog: "search_metadata",
+  },
+  {
+    name: "read_reference",
+    statusLabel: "📄 阅读检索结果...",
+    effect: "read_only",
+    callLimit: 128,
+    outputLog: "reference_metadata",
+  },
   ...[
     "get_runtime_status",
     "get_effective_config",

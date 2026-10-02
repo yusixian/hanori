@@ -29,3 +29,66 @@ describe("wrapToolsWithCache", () => {
     expect(execute).toHaveBeenCalledTimes(64);
   });
 });
+
+describe("unified search result caching", () => {
+  it("does not reuse results or reference bodies across query/provider/filter/page/limit changes or eviction", async () => {
+    const { createUnifiedSearchTools } = await import("./search.js");
+    const search = vi.fn().mockImplementation(async (request) => ({
+      status: "ok",
+      items: [
+        {
+          id: "item",
+          title: "title",
+          summary: JSON.stringify(request),
+          content: "x".repeat(32_000),
+        },
+      ],
+      hasMore: true,
+    }));
+    const tools = wrapToolsWithCache(
+      createUnifiedSearchTools([
+        {
+          id: "p",
+          scope: "characters",
+          description: "test",
+          pagination: "native",
+          filters: { tag: { type: "string", description: "tag" } },
+          search,
+        },
+        { id: "q", scope: "characters", description: "other", pagination: "native", search },
+      ]),
+      createRequestCache(),
+    );
+    const options = { toolCallId: "test", messages: [] };
+    const input = { scope: "characters", provider: "p", query: "Tag_ID", page: 1, limit: 1 };
+    const first = (await tools.search!.execute!(
+      input as never,
+      options,
+    )) as import("@cos-tool-bot/shared").SearchResult;
+    const reference = first.items[0]!.reference;
+    await expect(
+      tools.read_reference!.execute!({ reference, offset: 0, limit: 1 } as never, options),
+    ).resolves.toMatchObject({ content: "x" });
+    for (const change of [
+      {},
+      { query: "tag_id" },
+      { scope: "missing" },
+      { provider: "q" },
+      { filters: { tag: "Exact_TAG" } },
+      { page: 2 },
+      { limit: 2 },
+    ])
+      await tools.search!.execute!({ ...input, ...change } as never, options);
+    expect(search).toHaveBeenCalledTimes(7);
+    const summaries = search.mock.calls.map(([request]) => JSON.stringify(request));
+    expect(summaries).toContain(JSON.stringify({ ...input, query: "tag_id" }));
+    expect(summaries).toContain(JSON.stringify({ ...input, filters: { tag: "Exact_TAG" } }));
+    for (let index = 0; index < 20; index++) await tools.search!.execute!(input as never, options);
+    await expect(
+      tools.read_reference!.execute!({ reference, offset: 0, limit: 1 } as never, options),
+    ).resolves.toMatchObject({ status: "forbidden", content: "" });
+    await expect(
+      tools.read_reference!.execute!({ reference, offset: 1, limit: 2 } as never, options),
+    ).resolves.toMatchObject({ status: "forbidden", content: "" });
+  });
+});

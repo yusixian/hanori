@@ -113,6 +113,7 @@ export function PromptPreviewDialog({
         param: { botId },
         json: {
           isPrivate,
+          unifiedSearchEnabled: config.unifiedSearchEnabled !== false,
           systemPrompt: config.systemPrompt,
           behavioralPrompt: config.behavioralPrompt,
           groupBehavioralPrompt: config.groupBehavioralPrompt,

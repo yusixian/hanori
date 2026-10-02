@@ -37,6 +37,26 @@ function expectPatchError(absorbCall: () => AiConfigStored, message: string) {
   expect(absorbCall).toThrow(message);
 }
 
+describe("unified search configuration", () => {
+  it("defaults to unified search and preserves explicit rollback through older clients", () => {
+    const enabled = absorb(null, buildPatch({ enabled: false }));
+    expect(enabled.unifiedSearchEnabled).toBe(true);
+    expect(toAiConfigPublic(enabled).unifiedSearchEnabled).toBe(true);
+    const disabled = absorb(enabled, buildPatch({ enabled: false, unifiedSearchEnabled: false }));
+    expect(disabled.unifiedSearchEnabled).toBe(false);
+    expect(toAiConfigPublic(disabled).unifiedSearchEnabled).toBe(false);
+    expect(absorb(disabled, buildPatch({ enabled: false })).unifiedSearchEnabled).toBe(false);
+    expect(
+      absorb(disabled, buildPatch({ enabled: false, unifiedSearchEnabled: true }))
+        .unifiedSearchEnabled,
+    ).toBe(true);
+  });
+
+  it("rejects a nonboolean switch value", () => {
+    expect(() => buildPatch({ enabled: false, unifiedSearchEnabled: "false" })).toThrow();
+  });
+});
+
 describe("engagement config validation", () => {
   it.each([
     ["addressedConfidenceThreshold", -0.1],

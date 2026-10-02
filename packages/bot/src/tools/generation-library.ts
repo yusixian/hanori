@@ -15,6 +15,8 @@ export interface GenerationLibraryToolOptions {
   getActor: () => GenerationLibraryActor;
   /** Background continuations and researchers may inspect but cannot perform CRUD or binding writes. */
   readOnly?: boolean;
+  /** Disable query-hit persistence for strictly read-only search registries. */
+  trackSearchHits?: boolean;
 }
 
 const characterSearchSchema = z.object({
@@ -51,6 +53,7 @@ export function createGenerationLibraryTools({
   port,
   getActor,
   readOnly = false,
+  trackSearchHits = true,
 }: GenerationLibraryToolOptions): Record<string, Tool> {
   const tools: Record<string, Tool> = {
     search_generation_characters: tool({
@@ -60,7 +63,7 @@ export function createGenerationLibraryTools({
       execute: async ({ search, page, limit }) => ({
         source: "local_generation_library",
         freshness: "stored",
-        ...(await port.listCharacters(getActor(), { search, page, limit }, true)),
+        ...(await port.listCharacters(getActor(), { search, page, limit }, trackSearchHits)),
       }),
     }),
     save_original_character: tool({

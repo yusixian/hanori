@@ -27,6 +27,10 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 
 管理面板的任务分组、导航搜索和全局管理入口见[管理面板导航](packages/docs/content/docs/guides/panel-navigation.mdx)。
 
+统一 `search` 的来源、权限、按需读取与网页回退开关见[统一检索指南](packages/docs/content/docs/guides/search.mdx)。
+
+网页安装、按 Bot 启停及 Cookie 配置见[插件市场指南](packages/docs/content/docs/guides/plugins.mdx)；第三方插件的 manifest、JavaScript 入口和示例见[插件开发指南](packages/docs/content/docs/integrations/plugin-development.mdx)。
+
 图片任务的查找、参数回查与删除核对见[生成记录与问题恢复](packages/docs/content/docs/guides/generation-records.mdx)。
 
 管理员通过 AI 查询运行状态、有效配置和上一条消息执行链路的用法及权限边界见[AI 运行诊断](packages/docs/content/docs/reference/runtime-diagnostics.mdx)。

@@ -52,6 +52,8 @@ export interface DanbooruToolOptions {
   timeoutConfig?: TimeoutConfig;
   generationLibraryPort?: GenerationLibraryPort;
   getActor?: () => GenerationLibraryActor;
+  /** Disable local asset persistence for strictly read-only search registries. */
+  persistSearchResults?: boolean;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
@@ -160,7 +162,11 @@ export function createDanbooruTools(options: DanbooruToolOptions = {}): Record<s
           fetch: options.fetch,
           timeoutMs: options.timeoutConfig?.searchMs ?? DEFAULT_TIMEOUT_CONFIG.searchMs,
         });
-        if (options.generationLibraryPort && options.getActor) {
+        if (
+          options.persistSearchResults !== false &&
+          options.generationLibraryPort &&
+          options.getActor
+        ) {
           try {
             await options.generationLibraryPort.recordDanbooru(
               options.getActor(),

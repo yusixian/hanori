@@ -20,11 +20,16 @@ export interface ArtworkToolsOptions {
   config: ArtworkToolsConfig;
   onceGuard?: OnceGuardContext;
   timeoutConfig?: TimeoutConfig;
+  unifiedSearchEnabled?: boolean;
 }
 
 export function createArtworkTools(options: ArtworkToolsOptions): Record<string, Tool> {
   const { api, chatId, recentBotMessageIds, config, onceGuard, timeoutConfig } = options;
   const imageDownloadMs = timeoutConfig?.imageDownloadMs ?? DEFAULT_TIMEOUT_CONFIG.imageDownloadMs;
+  const artworkLookup =
+    options.unifiedSearchEnabled === true
+      ? "search(scope=artwork, query=作品URL)"
+      : "fetch_artwork_info";
 
   // Cache last fetched artwork for send_artwork to look up provider headers
   let lastArtworkInfo: ArtworkInfo | undefined;
@@ -79,8 +84,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
     }),
 
     send_artwork: tool({
-      description:
-        "发送作品图片。在调用 fetch_artwork_info 后使用。支持单图/多图发送，可设置 NSFW 遮罩。",
+      description: `发送作品图片。在调用 ${artworkLookup} 后使用。支持单图/多图发送，可设置 NSFW 遮罩。`,
       inputSchema: zodToAiSchema(
         z.object({
           caption: z.string().optional().describe("图片说明文字（支持 HTML 格式）"),
@@ -101,7 +105,7 @@ export function createArtworkTools(options: ArtworkToolsOptions): Record<string,
       execute: async ({ caption, image_indices, has_spoiler, use_original }) => {
         try {
           if (!lastArtworkInfo) {
-            return { error: "请先调用 fetch_artwork_info 获取作品信息" };
+            return { error: `请先调用 ${artworkLookup} 获取作品信息` };
           }
 
           const info = lastArtworkInfo;

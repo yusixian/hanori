@@ -4,6 +4,35 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createDanbooruTools, searchDanbooruCharacterTags } from "./danbooru.js";
 
 describe("searchDanbooruCharacterTags", () => {
+  it("does not persist results in read-only unified search", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            { type: "tag", label: "readonly_character", value: "readonly_character", category: 4 },
+          ]),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([])));
+    const recordDanbooru = vi.fn();
+    const tools = createDanbooruTools({
+      fetch: fetchMock,
+      generationLibraryPort: { recordDanbooru } as unknown as GenerationLibraryPort,
+      getActor: () => ({ botId: "bot-1", source: "telegram", telegramUserId: 42, isAdmin: false }),
+      persistSearchResults: false,
+    });
+    await expect(
+      (
+        tools.search_danbooru_character_tags as unknown as {
+          execute(input: { query: string; limit: number }): Promise<unknown>;
+        }
+      ).execute({ query: "readonly character unique", limit: 1 }),
+    ).resolves.toMatchObject({
+      tags: [expect.objectContaining({ tag: "readonly_character" })],
+    });
+    expect(recordDanbooru).not.toHaveBeenCalled();
+  });
   afterEach(() => vi.useRealTimers());
   it("resolves a Chinese alias to a canonical English character tag", async () => {
     const fetchMock = vi

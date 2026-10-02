@@ -1,3 +1,4 @@
+import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import {
   createTurnToolset,
   resolveImageGenerationActor,
@@ -70,7 +71,10 @@ export interface ContinueChatSelection {
   temperature?: number;
   maxTokens?: number;
   providerOptions?: Record<string, Record<string, JSONValue>>;
-  agentToolsFactory?: (actor?: GenerationLibraryActor) => Record<string, Tool>;
+  agentToolsFactory?: (
+    actor?: GenerationLibraryActor,
+    plugins?: (signal?: AbortSignal) => Promise<PluginTurnSession>,
+  ) => Record<string, Tool>;
 }
 
 export interface ContinueChatRunContext {
@@ -100,6 +104,8 @@ export interface ContinueChatConfig {
   botMemory?: BotMemoryCallbacks;
   messageConfig?: MessageConfig;
   webToolsConfig?: WebToolsConfig;
+  unifiedSearchEnabled?: boolean;
+  plugins?: PluginRuntimePort;
   agentToolsConfig?: AgentToolsConfig;
   artworkToolsConfig?: ArtworkToolsConfig;
   timeoutConfig?: TimeoutConfig;
@@ -408,6 +414,7 @@ async function doContinueChat(
     meta: { chatId, userId: event.userId, eventDescriptionLength: eventDescription.length },
   });
 
+  let disposePluginTools: (() => Promise<void>) | undefined;
   let manualAbort: AbortController | null = null;
   let stopChatActionHeartbeat: (() => void) | undefined;
   const isExecutionCancelled = () =>
@@ -416,6 +423,8 @@ async function doContinueChat(
     !!executionContext?.signal.aborted ||
     executionContext?.isCurrent() === false;
   try {
+    manualAbort = new AbortController();
+    config.registerAbortController?.(manualAbort);
     const selection = config.resolveSelection(chatId);
     selectedProviderId = selection.providerId;
     selectedModelId = selection.modelId;
@@ -471,6 +480,8 @@ async function doContinueChat(
       botMemory: config.botMemory,
       messageConfig: config.messageConfig,
       webTools: config.webTools,
+      unifiedSearchEnabled: config.unifiedSearchEnabled === true,
+      plugins: config.plugins,
       artworkToolsConfig: config.artworkToolsConfig,
       timeoutConfig: config.timeoutConfig,
       dataFiles: config.dataFiles,
@@ -482,6 +493,10 @@ async function doContinueChat(
       pendingAdminActions: config.pendingAdminActions,
     };
     const toolset = await createTurnToolset({
+      signal: AbortSignal.any([
+        ...(executionContext ? [executionContext.signal] : []),
+        ...(manualAbort ? [manualAbort.signal] : []),
+      ]),
       entry: { kind: "continue", timerDepth, allowRssWrites: event.allowRssWrites },
       chatId,
       isPrivate,
@@ -520,6 +535,7 @@ async function doContinueChat(
       delegation: selection.agentToolsFactory,
       onLog: config.onLog,
     });
+    disposePluginTools = toolset.dispose;
 
     const promptBundle = await buildContinueChatPromptBundle({
       systemPrompt: config.systemPrompt,
@@ -579,8 +595,6 @@ async function doContinueChat(
     let streamedMessageCount = 0;
     let stepCounter = 0;
     const requestCache = createRequestCache();
-    manualAbort = new AbortController();
-    config.registerAbortController?.(manualAbort);
     const abortSignals: AbortSignal[] = [
       AbortSignal.timeout(config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs),
       manualAbort.signal,
@@ -926,6 +940,7 @@ async function doContinueChat(
     if (event.requireDelivery) throw err;
     return false;
   } finally {
+    await disposePluginTools?.();
     stopChatActionHeartbeat?.();
     if (manualAbort) config.unregisterAbortController?.(manualAbort);
   }

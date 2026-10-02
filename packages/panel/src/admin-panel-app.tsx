@@ -81,6 +81,7 @@ const BotSummaryPage = lazy(() =>
 const BotDebuggerPage = lazy(() =>
   import("@/pages/bots/debugger").then((m) => ({ default: m.BotDebuggerPage })),
 );
+const PluginsPage = lazy(() => import("@/pages/plugins").then((m) => ({ default: m.PluginsPage })));
 const McpServersPage = lazy(() =>
   import("@/pages/mcp-servers").then((m) => ({ default: m.McpServersPage })),
 );
@@ -172,6 +173,7 @@ export function AdminPanelApp() {
               <Route path="/usage" element={<UsagePage />} />
               <Route path="/timers" element={<TimersListPage />} />
               <Route path="/logs" element={<LogsListPage />} />
+              <Route path="/plugins" element={<PluginsPage />} />
               <Route path="/mcp-servers" element={<McpServersPage />} />
               <Route path="/harness/*" element={<HarnessPage />} />
               <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />

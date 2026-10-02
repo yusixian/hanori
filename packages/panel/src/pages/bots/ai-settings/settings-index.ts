@@ -74,6 +74,12 @@ export const AI_SETTING_DEFINITIONS = [
     descriptionKey: "disclosures.chatSummaries.description",
   },
   {
+    id: "unified-search",
+    section: "tools",
+    titleKey: "unifiedSearch.title",
+    descriptionKey: "unifiedSearch.description",
+  },
+  {
     id: "web-tools",
     section: "tools",
     titleKey: "disclosures.webTools.title",

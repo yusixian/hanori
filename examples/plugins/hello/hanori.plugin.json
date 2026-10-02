@@ -1,0 +1,20 @@
+{
+  "apiVersion": 1,
+  "id": "example.hello",
+  "name": "Hello plugin",
+  "version": "1.0.0",
+  "description": "A dependency-free example with a read-only greeting tool and a synthetic search catalogue.",
+  "author": "Example plugin author",
+  "config": [
+    {
+      "key": "greeting",
+      "label": "Greeting",
+      "description": "A short greeting used by the example tool. No credential is required.",
+      "type": "string",
+      "required": false,
+      "default": "Hello",
+      "min": 1,
+      "max": 120
+    }
+  ]
+}

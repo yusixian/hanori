@@ -352,7 +352,7 @@ describe("turn toolset parity with the per-caller assembly it replaced", () => {
     expect(Object.keys(tools)).toEqual(Object.keys(legacy).sort((a, b) => a.localeCompare(b)));
     expect(createToolSchemaHash(tools)).toBe(createToolSchemaHash(legacy));
     expect(listRoutes.mock.calls[0]).toEqual(listRoutes.mock.calls[1]);
-    expect(delegation.mock.calls[0]).toEqual(delegation.mock.calls[1]);
+    expect(delegation.mock.calls[0]).toEqual([...delegation.mock.calls[1]!, undefined]);
     await expect(run(tools, "load_skill", { skill: "prompt-atelier" })).resolves.toEqual(
       await run(legacy, "load_skill", { skill: "prompt-atelier" }),
     );

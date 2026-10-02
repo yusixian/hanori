@@ -43,9 +43,10 @@ describe("coding worker Compose isolation", () => {
       readFile(path.resolve(process.cwd(), "Dockerfile"), "utf8"),
       readFile(path.resolve(process.cwd(), "infrastructure/coding-worker/entrypoint.sh"), "utf8"),
     ]);
+    const workerStart = dockerfile.indexOf("FROM base AS coding-worker");
     const workerImage = dockerfile.slice(
-      dockerfile.indexOf("FROM base AS coding-worker"),
-      dockerfile.indexOf("FROM runner AS app"),
+      workerStart,
+      dockerfile.indexOf("\nFROM ", workerStart + 1),
     );
 
     expect(workerImage).toContain("apk add --no-cache bash git ripgrep su-exec tini");

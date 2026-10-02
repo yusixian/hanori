@@ -1,0 +1,1 @@
+ALTER TABLE "plugin_installations" ADD COLUMN "is_installed" boolean DEFAULT true NOT NULL;

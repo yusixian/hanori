@@ -67,6 +67,24 @@ curl -fsS http://127.0.0.1:43100/api/health/ready
 
 启用编码 worker 时，把 `COMPOSE_PROFILES=coding` 和 `CODING_WORKER_SECRET` 一起设置，再重建服务。检查 worker 与出口代理的健康状态，确认它们未暴露到公网。
 
+### 可选音频转换服务
+
+Bilibili 音频转录需要 `media` profile，默认不启用。为转换服务单独生成 `MEDIA_WORKER_SECRET`，不要复用数据库、认证、编码 worker 或 ASR 密钥。它接受 32 至 256 个 ASCII 字母、数字或 `/+_=-` 字符，不接受空格和换行；下面的命令会生成符合要求的值：
+
+```bash
+openssl rand -hex 32
+```
+
+把新值保存在受保护的 `.env` 或部署 Secret 中，并设置 `COMPOSE_PROFILES=media`；同时使用编码 worker 时设为 `coding,media`。使用前面的 Compose 命令重建服务，再检查 `media-worker` 状态与日志。不要把生成的密钥贴到终端记录、工单或网页插件配置中。
+
+Compose 已为 app 与转换服务设置 `MEDIA_WORKER_SOCKET=/media-control/worker.sock`、`MEDIA_JOB_DIR=/media-jobs` 和 `MEDIA_WORKER_GID=1000`，通过本机 Unix socket 与临时 volume 交换任务。自行以源码部署时也必须提供匹配的绝对 socket 路径、共享任务目录和权限；不能用公网服务地址替代 socket。`mediajobs`、`mediacontrol` 是临时存储，不作为媒体备份目录。
+
+转换容器完全没有网络，使用只读根文件系统并限制资源，只接收已下载的音频进行格式转换，不接收平台 Cookie、ASR API Key 或数据库凭据。音频下载和向外部 ASR 发送音频由 app 执行。这个隔离只保护音频转换流程，可信插件仍在 app 进程中运行，不能把它当作第三方插件的沙箱。
+
+Cookie、ASR 服务地址、模型、密钥、音频外传许可与每用户预算在网页按 Bot 配置，不放在这些基础设施变量里。还需要在 [插件管理](/docs/guides/plugins#可选-bilibili-音频转录)明确启用转录；仅启动容器不会自动下载音频或调用 ASR。
+
+容器健康检查只验证本地转换服务，不证明真实 Cookie、平台下载权限或外部 ASR 可用。当前这些外部链路尚未完成真实凭据验证。
+
 ## 6. 后续更新
 
 更新前先做数据库备份，确认工作区没有手工修改，拉取已核验版本后重新构建 app。启动完成后重新检查 `/api/health/ready`、面板登录、Bot `/status`、一次 AI 私聊和关键集成。部署检查通过不等于真实 Telegram 群组、外部 Provider 或生产流量已经完整验证。
