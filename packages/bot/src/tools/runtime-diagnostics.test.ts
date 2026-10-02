@@ -66,3 +66,81 @@ describe("runtime diagnostic tools", () => {
     expect(JSON.stringify(events.mock.calls)).not.toContain("forbidden");
   });
 });
+
+describe("diagnostic argument schemas and normalization", () => {
+  function fixture() {
+    const service = port();
+    const actor = { chatId: -100, userId: 7, messageId: 8283 };
+    return {
+      service,
+      actor,
+      tools: createRuntimeDiagnosticTools({ port: service, actor, adminIds: [7] }),
+    };
+  }
+  async function execute(tool: import("ai").Tool, input: unknown) {
+    return tool.execute!(input as never, { toolCallId: "actual-call", messages: [] });
+  }
+  it("normalizes empty online identifiers without changing valid parameters", async () => {
+    const { service, actor, tools } = fixture();
+    await execute(tools.get_runtime_status!, {
+      messageId: 1,
+      toolCallId: "",
+      traceId: "  ",
+      previous: true,
+      windowMs: 3600000,
+      limit: 20,
+      offset: 0,
+    });
+    expect(service.query).toHaveBeenCalledWith(actor, {
+      operation: "get_runtime_status",
+      messageId: 1,
+      previous: true,
+      windowMs: 3600000,
+      limit: 20,
+      offset: 0,
+    });
+  });
+  it("uses defaults for null input and null optional fields", async () => {
+    const { service, actor, tools } = fixture();
+    await execute(tools.get_request_trace!, null);
+    expect(service.query).toHaveBeenLastCalledWith(actor, { operation: "get_request_trace" });
+    await execute(tools.get_request_trace!, {
+      traceId: null,
+      messageId: null,
+      toolCallId: null,
+      previous: null,
+      windowMs: null,
+      limit: null,
+      offset: null,
+    });
+    expect(service.query).toHaveBeenLastCalledWith(actor, { operation: "get_request_trace" });
+  });
+  it("preserves unknown scope keys and invalid numbers for server rejection", async () => {
+    const { service, actor, tools } = fixture();
+    await execute(tools.query_sanitized_logs!, {
+      chatId: 999,
+      operation: "get_runtime_status",
+      limit: -1,
+      traceId: "real-trace",
+      toolCallId: "real-tool",
+    });
+    expect(service.query).toHaveBeenLastCalledWith(actor, {
+      operation: "query_sanitized_logs",
+      chatId: 999,
+      limit: -1,
+      traceId: "real-trace",
+      toolCallId: "real-tool",
+    });
+  });
+  it("exposes only parameters meaningful for each operation", () => {
+    const { tools } = fixture();
+    const schema = (name: string) =>
+      (tools[name]!.inputSchema as { jsonSchema: { properties: Record<string, unknown> } })
+        .jsonSchema;
+    expect(Object.keys(schema("get_runtime_status").properties)).toEqual([]);
+    expect(Object.keys(schema("get_effective_config").properties)).toEqual([]);
+    expect(schema("get_request_trace").properties).toHaveProperty("previous");
+    expect(schema("query_sanitized_logs").properties).not.toHaveProperty("previous");
+    expect(schema("get_recent_errors").properties).not.toHaveProperty("previous");
+  });
+});

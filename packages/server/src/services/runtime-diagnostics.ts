@@ -81,6 +81,7 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
   private rate = { startedAt: 0, count: 0 };
   private evicted = false;
   private auditsInFlight = 0;
+  private readonly auditQueue: { start(): void }[] = [];
 
   constructor(private readonly options: Options) {
     this.now = options.now ?? Date.now;
@@ -212,6 +213,41 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
     }
     bucket.count++;
     return this.rate.count > 60 || bucket.count > 10;
+  }
+  private writeAudit(write: () => Promise<void>): Promise<void> {
+    if (this.auditsInFlight >= 4 && this.auditQueue.length >= 8)
+      return Promise.reject(new Error("Diagnostic audit unavailable"));
+    const deadline = Date.now() + 1000;
+    return new Promise((resolve, reject) => {
+      const fail = () => reject(new Error("Diagnostic audit unavailable"));
+      const timeout = setTimeout(() => {
+        const index = this.auditQueue.indexOf(entry);
+        if (index >= 0) this.auditQueue.splice(index, 1);
+        fail();
+      }, 1000);
+      const entry = {
+        start: () => {
+          if (Date.now() >= deadline) {
+            clearTimeout(timeout);
+            fail();
+            return;
+          }
+          this.auditsInFlight++;
+          void Promise.resolve()
+            .then(write)
+            .then(resolve, fail)
+            .finally(() => {
+              clearTimeout(timeout);
+              // A timed-out write still occupies its slot until the driver settles.
+              this.auditsInFlight--;
+              while (this.auditsInFlight < 4 && this.auditQueue.length > 0)
+                this.auditQueue.shift()!.start();
+            });
+        },
+      };
+      if (this.auditsInFlight < 4) entry.start();
+      else this.auditQueue.push(entry);
+    });
   }
   async query(
     actor: RuntimeDiagnosticActor,
@@ -449,50 +485,30 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
         };
       }
     }
-    if (this.auditsInFlight >= 4) throw new Error("Diagnostic audit unavailable");
-    this.auditsInFlight++;
-    let auditTimeout: ReturnType<typeof setTimeout> | undefined;
-    const audit = Promise.resolve()
-      .then(() =>
-        this.options.audit({
-          actor,
-          operation: this.safeIdentifier(operation) ?? "invalid",
-          outcome: response.code ?? "succeeded",
-          windowMs: response.ok ? (request.windowMs ?? this.retentionMs) : undefined,
-          limit: response.ok ? (request.limit ?? 10) : undefined,
-          offset: response.ok ? (request.offset ?? 0) : undefined,
-          traceId:
-            response.ok &&
-            typeof request.traceId === "string" &&
-            /^[a-f0-9-]{36}$/i.test(request.traceId)
-              ? request.traceId
-              : undefined,
-          messageId: response.ok ? request.messageId : undefined,
-          toolCallId: response.ok ? this.safeIdentifier(request.toolCallId) : undefined,
-          previous:
-            response.ok && operation === "get_request_trace"
-              ? (request.previous ??
-                (!request.traceId && request.messageId === undefined && !request.toolCallId))
-              : undefined,
-          resultCount: response.traces?.length ?? (response.config || response.runtime ? 1 : 0),
-        }),
-      )
-      .finally(() => {
-        this.auditsInFlight--;
-      });
-    try {
-      await Promise.race([
-        audit,
-        new Promise((_, reject) => {
-          auditTimeout = setTimeout(() => reject(new Error("Diagnostic audit unavailable")), 1000);
-        }),
-      ]);
-    } catch {
-      // Driver errors may contain connection strings. They must never become model input.
-      throw new Error("Diagnostic audit unavailable");
-    } finally {
-      if (auditTimeout) clearTimeout(auditTimeout);
-    }
+    await this.writeAudit(() =>
+      this.options.audit({
+        actor,
+        operation: this.safeIdentifier(operation) ?? "invalid",
+        outcome: response.code ?? "succeeded",
+        windowMs: response.ok ? (request.windowMs ?? this.retentionMs) : undefined,
+        limit: response.ok ? (request.limit ?? 10) : undefined,
+        offset: response.ok ? (request.offset ?? 0) : undefined,
+        traceId:
+          response.ok &&
+          typeof request.traceId === "string" &&
+          /^[a-f0-9-]{36}$/i.test(request.traceId)
+            ? request.traceId
+            : undefined,
+        messageId: response.ok ? request.messageId : undefined,
+        toolCallId: response.ok ? this.safeIdentifier(request.toolCallId) : undefined,
+        previous:
+          response.ok && operation === "get_request_trace"
+            ? (request.previous ??
+              (!request.traceId && request.messageId === undefined && !request.toolCallId))
+            : undefined,
+        resultCount: response.traces?.length ?? (response.config || response.runtime ? 1 : 0),
+      }),
+    );
     return response;
   }
 }

@@ -3,7 +3,7 @@ import { RuntimeDiagnostics } from "./runtime-diagnostics.js";
 
 function setup(overrides: { maxTraces?: number; maxEvents?: number; retentionMs?: number } = {}) {
   let now = 100_000;
-  const audit = vi.fn(async () => undefined);
+  const audit = vi.fn(async (): Promise<void> => undefined);
   const service = new RuntimeDiagnostics({
     adminIds: [1],
     audit,
@@ -247,6 +247,30 @@ describe("RuntimeDiagnostics", () => {
         ?.traceId,
     ).toBe(id);
   });
+  it("allows five healthy concurrent queries while keeping at most four audit writes active", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, audit } = setup();
+      let active = 0;
+      let peak = 0;
+      audit.mockImplementation(async () => {
+        peak = Math.max(peak, ++active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active--;
+      });
+      const results = Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.query(actor, { operation: "query_sanitized_logs" }).catch((error) => error),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(25);
+      expect(await results).toEqual(Array(5).fill(expect.objectContaining({ ok: true })));
+      expect(peak).toBe(4);
+      expect(audit).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("fails closed on bounded audit timeout and retains occupied slots until writes settle", async () => {
     vi.useFakeTimers();
     try {
@@ -259,10 +283,69 @@ describe("RuntimeDiagnostics", () => {
       );
       await vi.advanceTimersByTimeAsync(1001);
       expect(await Promise.all(pending)).toEqual(Array(4).fill("Diagnostic audit unavailable"));
-      await expect(service.query(actor, { operation: "query_sanitized_logs" })).rejects.toThrow(
-        "Diagnostic audit unavailable",
-      );
+      const waiting = service
+        .query(actor, { operation: "query_sanitized_logs" })
+        .catch((error: Error) => error.message);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await waiting).toBe("Diagnostic audit unavailable");
       expect(audit).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("bounds the audit queue, removes timed-out waiters and recovers after occupied slots settle", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, audit } = setup();
+      const releases: (() => void)[] = [];
+      audit.mockImplementation(() => new Promise<void>((resolve) => releases.push(resolve)));
+      const pending = Array.from({ length: 12 }, (_, chatId) =>
+        service
+          .query({ ...actor, chatId }, { operation: "query_sanitized_logs" })
+          .catch((error: Error) => error.message),
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(audit).toHaveBeenCalledTimes(4);
+      await expect(
+        service.query({ ...actor, chatId: 12 }, { operation: "query_sanitized_logs" }),
+      ).rejects.toThrow("Diagnostic audit unavailable");
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await Promise.all(pending)).toEqual(Array(12).fill("Diagnostic audit unavailable"));
+      releases.forEach((resolve) => resolve());
+      await vi.advanceTimersByTimeAsync(0);
+      // Expired queue entries cannot write later when an occupied slot becomes available.
+      expect(audit).toHaveBeenCalledTimes(4);
+      audit.mockResolvedValue(undefined);
+      await expect(
+        service.query({ ...actor, chatId: 13 }, { operation: "query_sanitized_logs" }),
+      ).resolves.toMatchObject({ ok: true });
+      expect(audit).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("includes time spent queued in the one-second audit deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const { service, audit } = setup();
+      let calls = 0;
+      audit.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, ++calls <= 4 ? 900 : 200);
+          }),
+      );
+      const pending = Array.from({ length: 5 }, () =>
+        service
+          .query(actor, { operation: "query_sanitized_logs" })
+          .catch((error: Error) => error.message),
+      );
+      await vi.advanceTimersByTimeAsync(1000);
+      const results = await Promise.all(pending);
+      expect(results.slice(0, 4)).toEqual(Array(4).fill(expect.objectContaining({ ok: true })));
+      expect(results[4]).toBe("Diagnostic audit unavailable");
+      expect(audit).toHaveBeenCalledTimes(5);
+      await vi.advanceTimersByTimeAsync(100);
     } finally {
       vi.useRealTimers();
     }
