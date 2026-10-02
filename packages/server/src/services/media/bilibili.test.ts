@@ -92,7 +92,7 @@ describe("Bilibili metadata and scoped references", () => {
     { pages: [videoData().pages[0], videoData().pages[0]] },
     { pages: Array.from({ length: 1001 }, () => videoData().pages[0]) },
     { owner: { mid: 0, name: "invalid" } },
-    { duration: 86_401 },
+    { duration: Math.floor(Number.MAX_SAFE_INTEGER / 1000) + 1 },
     { aid: Number.MAX_SAFE_INTEGER + 1 },
     { desc: null },
   ])("rejects malformed or oversized metadata before storing a reference", async (override) => {
@@ -285,12 +285,62 @@ describe("Bilibili host-only audio extraction", () => {
       ],
     },
   });
-  async function video(cookie: string | undefined = "SESSDATA=synthetic", downloadable = true) {
-    apiResult({ ...videoData(), rights: { download: downloadable ? 1 : 0 } });
+  async function video(
+    cookie: string | undefined = "SESSDATA=synthetic",
+    downloadable = true,
+    duration = 20,
+  ) {
+    const data = videoData();
+    apiResult({
+      ...data,
+      duration: duration + 10,
+      pages: [data.pages[0], { ...data.pages[1], duration }],
+      rights: { download: downloadable ? 1 : 0 },
+    });
     const client = createBilibiliClient({ cookie });
     const result = await client.getVideo("https://www.bilibili.com/video/av42?p=2");
     return { client, result };
   }
+
+  it("allows601s and metadata beyond24h under the explicit requested duration limit", async () => {
+    for (const duration of [601, 86_401]) {
+      const { client, result } = await video("SESSDATA=synthetic", true, duration);
+      apiResult(navigation());
+      apiResult({ ...play(), timelength: duration * 1000 });
+      await expect(client.getAudio(result.reference, undefined, duration)).resolves.toMatchObject({
+        durationSeconds: duration,
+      });
+    }
+  });
+
+  it("rejects metadata exceeding the user limit before requesting play information", async () => {
+    const { client, result } = await video("SESSDATA=synthetic", true, 601);
+    await expect(client.getAudio(result.reference, undefined, 600)).rejects.toMatchObject({
+      code: "api_rejected",
+    });
+    expect(readMediaDocument).toHaveBeenCalledOnce();
+  });
+
+  it("rejects returned audio exceeding the user limit despite rounded video metadata", async () => {
+    const { client, result } = await video("SESSDATA=synthetic", true, 600);
+    apiResult(navigation());
+    apiResult({ ...play(), timelength: 601_000 });
+    await expect(client.getAudio(result.reference, undefined, 600)).rejects.toMatchObject({
+      code: "api_rejected",
+    });
+    expect(readMediaDocument).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])(
+    "rejects an invalid explicit audio duration bound %s",
+    async (limit) => {
+      const { client, result } = await video();
+      await expect(client.getAudio(result.reference, undefined, limit)).rejects.toMatchObject({
+        code: "api_rejected",
+      });
+      expect(readMediaDocument).toHaveBeenCalledOnce();
+    },
+  );
 
   it("binds signed play info to the selected part and returns only a host-internal audio URL", async () => {
     const { client, result } = await video();

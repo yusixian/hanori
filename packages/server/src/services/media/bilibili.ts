@@ -157,7 +157,7 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
         part: integer(page.page, 1, 1000),
         cid: integer(page.cid),
         title: text(page.part, 300),
-        durationSeconds: integer(page.duration, 0, 86_400),
+        durationSeconds: integer(page.duration, 0, Math.floor(Number.MAX_SAFE_INTEGER / 1000)),
       };
     });
     if (new Set(pages.map((page) => page.part)).size !== pages.length) invalid();
@@ -177,7 +177,7 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
         name: text(owner.name, 256),
         url: `https://space.bilibili.com/${ownerId}`,
       },
-      durationSeconds: integer(data.duration, 0, 86_400),
+      durationSeconds: integer(data.duration, 0, Math.floor(Number.MAX_SAFE_INTEGER / 1000)),
       publishedAt: integer(data.pubdate, 0, 253_402_300_799),
       selectedPart: resource.part,
       parts: pages.map(({ cid: _cid, ...part }) => part),
@@ -277,11 +277,22 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
   }
 
   /** Host-only audio-job operation. Signed CDN URLs must never enter model tools or logs. */
-  async function getAudio(reference: string, signal?: AbortSignal) {
+  async function getAudio(
+    reference: string,
+    signal?: AbortSignal,
+    maxDurationSeconds = Number.MAX_SAFE_INTEGER,
+  ) {
     signal?.throwIfAborted();
     const video = videos.get(reference);
     if (!video) throw new BilibiliClientError("invalid_reference");
-    if (!video.downloadable || !cookie || video.duration <= 0 || video.duration > 600)
+    if (
+      !Number.isSafeInteger(maxDurationSeconds) ||
+      maxDurationSeconds < 1 ||
+      !video.downloadable ||
+      !cookie ||
+      video.duration <= 0 ||
+      video.duration > maxDurationSeconds
+    )
       throw new BilibiliClientError("api_rejected");
     const navigation = await api("/x/web-interface/nav", {}, signal);
     if (navigation.isLogin !== true) throw new BilibiliClientError("api_rejected");
@@ -321,8 +332,9 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
       (data.drm_tech_type !== undefined && data.drm_tech_type !== 0)
     )
       throw new BilibiliClientError("api_rejected");
-    const duration = integer(data.timelength, 1, 600_000) / 1000;
-    if (Math.abs(duration - video.duration) > 2) throw new BilibiliClientError("api_rejected");
+    const duration = integer(data.timelength, 1, Number.MAX_SAFE_INTEGER) / 1000;
+    if (duration > maxDurationSeconds || Math.abs(duration - video.duration) > 2)
+      throw new BilibiliClientError("api_rejected");
     const dash = object(data.dash);
     if (!Array.isArray(dash.audio) || !dash.audio.length || dash.audio.length > 20) invalid();
     const audio = dash.audio

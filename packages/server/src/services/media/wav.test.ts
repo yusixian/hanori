@@ -18,6 +18,18 @@ function pcm(seconds = 1) {
   return data;
 }
 describe("isolated converter output verification", () => {
+  it("accepts complete601s audio only when the user limit allows it", () => {
+    const bytes = pcm(601);
+    expect(inspectConvertedWav(bytes, 601)).toEqual({ durationSeconds: 601 });
+    expect(inspectConvertedWav(bytes, 3600)).toEqual({ durationSeconds: 601 });
+    expect(() => inspectConvertedWav(bytes, 600)).toThrow("invalid_converted_audio");
+  });
+  it.each([0, -1, NaN, Infinity])("rejects an invalid duration bound %s", (limit) => {
+    expect(() => inspectConvertedWav(pcm(), limit)).toThrow("invalid_converted_audio");
+  });
+  it("retains the20MiB resource bound even with a larger configured duration", () => {
+    expect(() => inspectConvertedWav(pcm(656), 3600)).toThrow("invalid_converted_audio");
+  });
   it("derives duration from mono16k signed PCM data", () =>
     expect(inspectConvertedWav(pcm(), 10)).toEqual({ durationSeconds: 1 }));
   it("rejects a worker's falsely short duration or non-PCM format", () => {

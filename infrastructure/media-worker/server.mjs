@@ -219,8 +219,9 @@ async function convert(job, body, options, signal) {
     await readVerifiedInput(input, body.sha256, signal);
     const metadata = await probe(input, "mov", signal, options.spawnProcess);
     if (!["aac", "opus"].includes(metadata.stream.codec_name)) fail("unsupported_codec");
-    if (metadata.duration > body.maxDurationSeconds || metadata.duration > 600)
-      fail("duration_limit");
+    if (metadata.duration > body.maxDurationSeconds) fail("duration_limit");
+    // Reject a known oversized PCM result before -fs could truncate it near the timing tolerance.
+    if (Math.ceil(metadata.duration * 32_000) + 44 > OUTPUT_LIMIT) fail("invalid_output");
     checkAbort(signal);
     const handle = await open(
       output,
@@ -263,7 +264,7 @@ async function convert(job, body, options, signal) {
         "-c:a",
         "pcm_s16le",
         "-t",
-        String(body.maxDurationSeconds + 1),
+        String(metadata.duration + 1),
         "-fs",
         String(OUTPUT_LIMIT),
         "-f",
@@ -361,9 +362,8 @@ async function jsonBody(request, signal) {
     Object.keys(body).some((key) => !["sha256", "maxDurationSeconds"].includes(key)) ||
     typeof body.sha256 !== "string" ||
     !SHA256.test(body.sha256) ||
-    !Number.isInteger(body.maxDurationSeconds) ||
-    body.maxDurationSeconds < 1 ||
-    body.maxDurationSeconds > 600
+    !Number.isSafeInteger(body.maxDurationSeconds) ||
+    body.maxDurationSeconds < 1
   )
     fail("invalid_request");
   return body;

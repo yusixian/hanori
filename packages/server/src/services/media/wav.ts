@@ -9,7 +9,6 @@ export function inspectConvertedWav(
   if (
     !Number.isFinite(maxSeconds) ||
     maxSeconds <= 0 ||
-    maxSeconds > 600 ||
     bytes.length < 44 ||
     bytes.length > 20 * 1024 * 1024 ||
     !bytes.subarray(0, 4).equals(Buffer.from("RIFF")) ||

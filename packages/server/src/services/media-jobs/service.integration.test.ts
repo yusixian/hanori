@@ -80,6 +80,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
       "0061_sour_meteorite.sql",
       "0062_black_midnight.sql",
       "0063_thin_power_pack.sql",
+      "0064_stale_annihilus.sql",
     ]) {
       const migration = await readFile(
         new URL(`../../../../database/drizzle/${filename}`, import.meta.url),
@@ -441,15 +442,46 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
   it("rejects missing or invalid quota configuration before resource inspection", async () => {
     for (const invalid of [
       null,
-      { ...fixtureConfig(), limits: { ...fixtureConfig().limits, dailyJobs: 11 } },
+      { ...fixtureConfig(), limits: { ...fixtureConfig().limits, dailyJobs: 1.5 } },
       { ...fixtureConfig(), limits: { ...fixtureConfig().limits, dailyMinutes: NaN } },
-      { ...fixtureConfig(), limits: { ...fixtureConfig().limits, maxDurationSeconds: 601 } },
+      { ...fixtureConfig(), limits: { ...fixtureConfig().limits, maxDurationSeconds: 0 } },
       { ...fixtureConfig(), limits: { ...fixtureConfig().limits, costPerMinute: 0 } },
     ]) {
       configuration = invalid;
       await expect(create()).rejects.toMatchObject({ code: "configuration_required" });
     }
     expect(deps.inspect).not.toHaveBeenCalled();
+  });
+
+  it("queues above the former limits while enforcing the owner's larger job quota", async () => {
+    configuration!.limits = {
+      maxDurationSeconds: 1200,
+      dailyJobs: 12,
+      dailyMinutes: 120,
+      costPerMinute: 101,
+      maxDailyCost: 2000,
+    };
+    for (let part = 1; part <= 12; part++) expect((await create(part)).status).toBe("queued");
+    await expect(create(13)).rejects.toMatchObject({ code: "quota_exceeded" });
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(12);
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("accepts longer configured tasks but rejects media beyond the owner's duration before execution", async () => {
+    configuration!.limits.maxDurationSeconds = 1200;
+    configuration!.limits.dailyMinutes = Number.MAX_SAFE_INTEGER;
+    const inspect = deps.inspect;
+    let durationSeconds = 1201;
+    deps.inspect = vi.fn(async (...args: Parameters<MediaJobDependencies["inspect"]>) => ({
+      ...(await inspect(...args)),
+      durationSeconds,
+    }));
+    await expect(create()).rejects.toMatchObject({ code: "duration_limit" });
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(0);
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    durationSeconds = 900;
+    expect(await create()).toMatchObject({ status: "queued", durationSeconds: 900 });
   });
 
   it("requires platform subtitles when present and bounds duration before reserving a job", async () => {

@@ -109,8 +109,7 @@ export class IsolatedAudioConverter {
     if (
       !/^[a-f0-9]{64}$/.test(sha256) ||
       !Number.isSafeInteger(maxDurationSeconds) ||
-      maxDurationSeconds < 1 ||
-      maxDurationSeconds > 600
+      maxDurationSeconds < 1
     )
       throw new MediaConversionError("conversion_failed");
     const result = await this.call(

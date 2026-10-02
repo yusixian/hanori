@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 import type { TranscriptDocument } from "@cos-tool-bot/shared";
 import { MediaHttpError, sendMediaDocument } from "./http.js";
+import { inspectConvertedWav } from "./wav.js";
 
 export type AsrFailure =
   | "invalid_configuration"
@@ -32,6 +33,8 @@ export interface AsrConfiguration {
 }
 
 const MAX_WAV_BYTES = 20 * 1024 * 1024;
+// Match the source-duration allowance; the converted PCM itself still obeys the user limit.
+const TIMING_TOLERANCE_SECONDS = 2;
 const LANGUAGE = /^[A-Za-z0-9-]{1,64}$/;
 
 function invalid(code: AsrFailure = "invalid_response"): never {
@@ -103,7 +106,11 @@ export async function readAsrWav(path: string, signal: AbortSignal): Promise<Buf
   }
 }
 
-function transcript(bytes: Buffer, configuredLanguage?: string): TranscriptDocument {
+function transcript(
+  bytes: Buffer,
+  audioDurationSeconds: number,
+  configuredLanguage?: string,
+): TranscriptDocument {
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -119,7 +126,7 @@ function transcript(bytes: Buffer, configuredLanguage?: string): TranscriptDocum
     (typeof data.duration !== "number" ||
       !Number.isFinite(data.duration) ||
       data.duration < 0 ||
-      data.duration > 600)
+      data.duration > audioDurationSeconds + TIMING_TOLERANCE_SECONDS)
   )
     invalid();
   const language = data.language ?? configuredLanguage ?? null;
@@ -137,7 +144,7 @@ function transcript(bytes: Buffer, configuredLanguage?: string): TranscriptDocum
       !Number.isFinite(segment.end) ||
       segment.start < 0 ||
       segment.end <= segment.start ||
-      segment.end > 600 ||
+      segment.end > audioDurationSeconds + TIMING_TOLERANCE_SECONDS ||
       typeof segment.text !== "string" ||
       segment.text.length > 16_384
     )
@@ -210,6 +217,12 @@ export function createAsrClient(config: AsrConfiguration) {
         wav.readUInt32LE(4) + 8 !== wav.length
       )
         invalid("invalid_file");
+      let audioDurationSeconds: number;
+      try {
+        audioDurationSeconds = inspectConvertedWav(wav, Number.MAX_SAFE_INTEGER).durationSeconds;
+      } catch {
+        return invalid("invalid_file");
+      }
       const boundary = `hanori_${randomBytes(16).toString("hex")}`;
       const fields = {
         model,
@@ -244,7 +257,7 @@ export function createAsrClient(config: AsrConfiguration) {
         { bytes: body, contentType: `multipart/form-data; boundary=${boundary}` },
       );
       signal.throwIfAborted();
-      return transcript(response.bytes, language);
+      return transcript(response.bytes, audioDurationSeconds, language);
     } catch (error) {
       if (callSignal?.aborted) throw new AsrClientError("cancelled");
       if (deadline.signal.aborted) throw new AsrClientError("timeout");

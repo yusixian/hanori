@@ -299,6 +299,52 @@ describe("media executor isolated conversion pipeline", () => {
     expect(await readdir(jobs)).toEqual([]);
   }, 15_000);
 
+  it("converts more than ten minutes when allowed by the saved duration limit", async (context) => {
+    if (!hasFfmpeg) {
+      context.skip("FFmpeg/ffprobe unavailable");
+      return;
+    }
+    const longFixture = join(root, "long.m4a");
+    await exec("ffmpeg", [
+      "-hide_banner",
+      "-v",
+      "error",
+      "-nostdin",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=r=16000:cl=mono",
+      "-t",
+      "601",
+      "-c:a",
+      "aac",
+      "-f",
+      "mp4",
+      longFixture,
+    ]);
+    mocks.getVideo.mockResolvedValue({
+      ...video(),
+      parts: [{ part: 1, durationSeconds: 601 }],
+    });
+    mocks.download.mockImplementation(async (_url, _policy, destination: string) => {
+      await copyFile(longFixture, destination, constants.COPYFILE_EXCL);
+      return metadata(await readFile(destination), 601);
+    });
+    await startWorker();
+    const options = {
+      ...configuration,
+      limits: { ...configuration.limits, maxDurationSeconds: 900 },
+    };
+    expect(
+      await executor.execute(job({ durationSeconds: 601 }), options, { signal: signal(), onStage }),
+    ).toEqual(document);
+    expect(mocks.getAudio).toHaveBeenCalledWith("synthetic-ref", expect.any(AbortSignal), 900);
+    const bytes = mocks.transcribeBytes.mock.calls[0]![0] as Buffer;
+    expect(inspectConvertedWav(bytes, 900).durationSeconds).toBeGreaterThanOrEqual(601);
+    expect(bytes.length).toBeLessThanOrEqual(20 * 1024 * 1024);
+    expect(stages).toEqual(["downloading", "converting", "transcribing"]);
+  }, 15_000);
+
   it("returns the subtitle flag without fetching or downloading audio during inspection", async () => {
     fakeConverter(async () => metadata(pcm()));
     expect(await executor.inspect(sourceUrl, configuration, signal())).toMatchObject({

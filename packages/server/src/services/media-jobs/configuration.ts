@@ -37,10 +37,11 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
   {
     key: "asrMaxSeconds",
     label: "单视频秒数上限 / Maximum seconds per video",
+    description:
+      "超过此时长会拒绝。单次 WAV 仍限 20 MiB（约 10 分 55 秒），暂不自动分段。 / Reject longer videos. A single WAV remains limited to 20 MiB (about 10m 55s); automatic splitting is not supported.",
     type: "integer",
     default: 300,
     min: 1,
-    max: 600,
   },
   {
     key: "asrDailyJobs",
@@ -48,7 +49,6 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
     type: "integer",
     default: 3,
     min: 1,
-    max: 10,
   },
   {
     key: "asrDailyMinutes",
@@ -56,7 +56,6 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
     type: "integer",
     default: 10,
     min: 1,
-    max: 60,
   },
   {
     key: "asrCostPerMinute",
@@ -66,7 +65,6 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
     type: "number",
     default: 0,
     min: 0,
-    max: 100,
   },
   {
     key: "asrDailyCost",
@@ -74,7 +72,6 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
     type: "number",
     default: 1,
     min: 0.01,
-    max: 100,
   },
   {
     key: "asrAllowExport",

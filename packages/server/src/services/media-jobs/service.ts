@@ -72,13 +72,10 @@ function validConfiguration(value: MediaJobConfiguration | null): value is Media
     value.asr.baseUrl.length > 0 &&
     Number.isSafeInteger(limits.maxDurationSeconds) &&
     limits.maxDurationSeconds >= 1 &&
-    limits.maxDurationSeconds <= 600 &&
     Number.isSafeInteger(limits.dailyJobs) &&
     limits.dailyJobs >= 1 &&
-    limits.dailyJobs <= 10 &&
-    Number.isFinite(limits.dailyMinutes) &&
-    limits.dailyMinutes > 0 &&
-    limits.dailyMinutes <= 60 &&
+    Number.isSafeInteger(limits.dailyMinutes) &&
+    limits.dailyMinutes >= 1 &&
     Number.isFinite(limits.costPerMinute) &&
     limits.costPerMinute > 0 &&
     Number.isFinite(limits.maxDailyCost) &&
@@ -248,13 +245,16 @@ export class MediaJobService implements MediaTranscriptionPort {
     if (
       !Number.isSafeInteger(resource.durationSeconds) ||
       resource.durationSeconds < 1 ||
+      resource.durationSeconds > 2_147_483_647 || // PostgreSQL duration_seconds is an int4.
       resource.durationSeconds > config.limits.maxDurationSeconds
     )
       throw new MediaJobError("duration_limit");
     const now = new Date();
     const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const estimatedCost = (resource.durationSeconds / 60) * config.limits.costPerMinute;
-    if (!Number.isFinite(estimatedCost) || estimatedCost > 3.4e38)
+    // Each reservation must remain positive and representable in numeric(20,12).
+    // This protects storage arithmetic without limiting the owner's configured budget.
+    if (!Number.isFinite(estimatedCost) || estimatedCost < 0.5e-12 || estimatedCost >= 1e8)
       throw new MediaJobError("configuration_required");
     const reservation = await this.db.transaction(async (tx) => {
       await tx.execute(
@@ -300,10 +300,20 @@ export class MediaJobService implements MediaTranscriptionPort {
         );
       if (
         !usage ||
+        !Number.isSafeInteger(usage.count) ||
+        usage.count < 0 ||
+        !Number.isSafeInteger(usage.seconds) ||
+        usage.seconds < 0 ||
+        !Number.isFinite(usage.cost) ||
+        usage.cost < 0 ||
         usage.count >= config.limits.dailyJobs ||
-        usage.seconds + resource.durationSeconds > config.limits.dailyMinutes * 60 ||
-        usage.cost + estimatedCost > config.limits.maxDailyCost + 1e-8
+        BigInt(usage.seconds) + BigInt(resource.durationSeconds) >
+          BigInt(config.limits.dailyMinutes) * 60n
       )
+        throw new MediaJobError("quota_exceeded");
+      const totalCost = usage.cost + estimatedCost;
+      // Preserve tolerance for numeric(20,12) reservation quantization at exact budget edges.
+      if (!Number.isFinite(totalCost) || totalCost > config.limits.maxDailyCost + 1e-8)
         throw new MediaJobError("quota_exceeded");
       assertActive();
       const [saved] = await tx

@@ -16,10 +16,23 @@ const config = {
   model: "whisper-1",
   language: "zh",
 };
-const wav = Buffer.alloc(44);
-wav.write("RIFF", 0);
-wav.writeUInt32LE(36, 4);
-wav.write("WAVE", 8);
+function pcm(seconds = 3) {
+  const bytes = Buffer.alloc(44 + seconds * 32_000);
+  bytes.write("RIFF", 0);
+  bytes.writeUInt32LE(bytes.length - 8, 4);
+  bytes.write("WAVEfmt ", 8);
+  bytes.writeUInt32LE(16, 16);
+  bytes.writeUInt16LE(1, 20);
+  bytes.writeUInt16LE(1, 22);
+  bytes.writeUInt32LE(16_000, 24);
+  bytes.writeUInt32LE(32_000, 28);
+  bytes.writeUInt16LE(2, 32);
+  bytes.writeUInt16LE(16, 34);
+  bytes.write("data", 36);
+  bytes.writeUInt32LE(bytes.length - 44, 40);
+  return bytes;
+}
+const wav = pcm();
 let directory: string;
 let path: string;
 
@@ -42,6 +55,42 @@ function reply(value: unknown) {
 }
 
 describe("ASR segment transcription", () => {
+  it("accepts timestamps beyond600s when the complete PCM audio has that duration", async () => {
+    reply({ duration: 601, segments: [{ start: 600, end: 601, text: "Synthetic final segment" }] });
+    await expect(createAsrClient(config).transcribeBytes(pcm(601))).resolves.toMatchObject({
+      cues: [{ startMs: 600_000, endMs: 601_000, text: "Synthetic final segment" }],
+    });
+    expect(sendMediaDocument).toHaveBeenCalledOnce();
+  });
+
+  it("bounds provider timing tolerance to2s beyond trusted PCM duration", async () => {
+    reply({ duration: 5, segments: [{ start: 2, end: 5, text: "Rounded synthetic" }] });
+    await expect(createAsrClient(config).transcribeBytes(wav)).resolves.toMatchObject({
+      cues: [{ startMs: 2000, endMs: 5000, text: "Rounded synthetic" }],
+    });
+    reply({ duration: 5.001, segments: [] });
+    await expect(createAsrClient(config).transcribeBytes(wav)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+    reply({ segments: [{ start: 2, end: 5.001, text: "Excess timing" }] });
+    await expect(createAsrClient(config).transcribeBytes(wav)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+
+  it("derives timing bounds from PCM bytes and rejects a forged format before upload", async () => {
+    const malformed = Buffer.from(wav);
+    malformed.writeUInt32LE(1000, 28);
+    await expect(createAsrClient(config).transcribeBytes(malformed)).rejects.toMatchObject({
+      code: "invalid_file",
+    });
+    expect(sendMediaDocument).not.toHaveBeenCalled();
+    reply({ segments: [{ start: 0, end: 6, text: "Forged longer audio" }] });
+    await expect(createAsrClient(config).transcribeBytes(wav)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+  });
+
   it("uploads bounded multipart WAV with a generic filename to exactly the configured model/provider", async () => {
     reply({
       language: "english",
