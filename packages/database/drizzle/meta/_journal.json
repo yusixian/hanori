@@ -449,6 +449,13 @@
       "when": 1790953372977,
       "tag": "0063_thin_power_pack",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1790964574290,
+      "tag": "0064_stale_annihilus",
+      "breakpoints": true
     }
   ]
 }

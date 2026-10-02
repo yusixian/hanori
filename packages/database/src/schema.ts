@@ -149,7 +149,7 @@ export const mediaTranscriptionJobs = pgTable(
     ),
     check(
       "media_transcription_jobs_limits_check",
-      sql`${t.durationSeconds} > 0 and ${t.durationSeconds} <= 600 and ${t.part} >= 1 and ${t.part} <= 1000 and ${t.progress} >= 0 and ${t.progress} <= 100 and ${t.attempt} >= 0 and ${t.attempt} <= 2`,
+      sql`${t.durationSeconds} > 0 and ${t.part} >= 1 and ${t.part} <= 1000 and ${t.progress} >= 0 and ${t.progress} <= 100 and ${t.attempt} >= 0 and ${t.attempt} <= 2`,
     ),
   ],
 );

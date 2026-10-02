@@ -134,7 +134,11 @@ export class MediaJobExecutor {
       selected?.durationSeconds !== job.durationSeconds
     )
       throw new MediaExecutorError("source_changed");
-    const audio = await client.getAudio(video.reference, signal);
+    const audio = await client.getAudio(
+      video.reference,
+      signal,
+      configuration.limits.maxDurationSeconds,
+    );
     const downloaded = await downloadMediaFile(
       audio.url,
       {

@@ -1,0 +1,2 @@
+ALTER TABLE "media_transcription_jobs" DROP CONSTRAINT "media_transcription_jobs_limits_check";--> statement-breakpoint
+ALTER TABLE "media_transcription_jobs" ADD CONSTRAINT "media_transcription_jobs_limits_check" CHECK ("media_transcription_jobs"."duration_seconds" > 0 and "media_transcription_jobs"."part" >= 1 and "media_transcription_jobs"."part" <= 1000 and "media_transcription_jobs"."progress" >= 0 and "media_transcription_jobs"."progress" <= 100 and "media_transcription_jobs"."attempt" >= 0 and "media_transcription_jobs"."attempt" <= 2);

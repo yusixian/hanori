@@ -89,6 +89,27 @@ test("allows incomplete drafts and leaves saved secrets untouched when blank", a
   expect(input.onSave).toHaveBeenCalledWith({ values: { ratio: 0, enabled: false } });
 });
 
+test("saves owner-selected numeric limits when the plugin declares no maximum", async () => {
+  await page.viewport(390, 844);
+  const input = props({
+    manifest: {
+      ...manifest,
+      config: [
+        { key: "asrMaxSeconds", label: "Maximum seconds per video", type: "integer", min: 1 },
+        { key: "asrDailyCost", label: "Daily budget", type: "number", min: 0.01 },
+      ],
+    },
+  });
+  render(<PluginConfigForm {...input} />);
+  await page.getByLabelText("Maximum seconds per video").fill("3600");
+  await page.getByLabelText("Daily budget").fill("250.5");
+  await page.getByRole("button", { name: "Save configuration" }).click();
+  expect(input.onSave).toHaveBeenCalledWith({
+    values: { asrMaxSeconds: 3600, asrDailyCost: 250.5 },
+  });
+  await expect.element(page.getByRole("status")).toHaveTextContent("Configuration saved.");
+});
+
 test("explicit clearing can be canceled, replaced or saved without leaking the secret", async () => {
   const input = props({ configuration: { values: {}, configuredSecrets: ["cookie"] } });
   render(<PluginConfigForm {...input} />);

@@ -106,7 +106,7 @@ describe("isolated converter Unix protocol", () => {
   it.each([
     ["A".repeat(64), 10],
     [SHA, 0],
-    [SHA, 601],
+    [SHA, Number.MAX_SAFE_INTEGER + 1],
     [SHA, 1.5],
   ] as const)(
     "rejects invalid checksum/duration before contacting the worker",
@@ -119,6 +119,21 @@ describe("isolated converter Unix protocol", () => {
       expect(seen).toHaveLength(0);
     },
   );
+
+  it("accepts601s under a configured larger limit and rejects excess metadata", async () => {
+    respond = (_request, response) =>
+      response.end(JSON.stringify({ ...result, bytes: 19_232_044, durationSeconds: 601 }));
+    await expect(converter.convert(ID, SHA, 900, new AbortController().signal)).resolves.toEqual({
+      bytes: 19_232_044,
+      sha256: SHA,
+      durationSeconds: 601,
+    });
+    await expect(
+      converter.convert(ID, SHA, 600, new AbortController().signal),
+    ).rejects.toMatchObject({
+      code: "conversion_failed",
+    });
+  });
 
   it("bounds the worker response before parsing", async () => {
     respond = (_request, response) => response.end(" ".repeat(4097));

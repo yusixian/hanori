@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "@cos-tool-bot/database";
-import { publicPluginConfig, type PluginConfiguration } from "@cos-tool-bot/shared";
+import {
+  mergePluginConfig,
+  publicPluginConfig,
+  type PluginConfiguration,
+} from "@cos-tool-bot/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinMediaPlugins } from "../plugins/builtin-media.js";
 import type { PluginManager } from "../plugins/manager.js";
@@ -32,11 +36,235 @@ function state(configuration: PluginConfiguration) {
   return { revision: 7, installationRevision: 11, configuration };
 }
 
+async function jobFixture(
+  overrides: PluginConfiguration = {},
+  durationSeconds = 900,
+  usage = { count: 0, seconds: 0, cost: 0 },
+) {
+  runtimeConfiguration.mockResolvedValue(
+    state(
+      enabled({
+        asrMaxSeconds: 1200,
+        asrDailyJobs: 12,
+        asrDailyMinutes: 120,
+        asrCostPerMinute: 101,
+        asrDailyCost: 2000,
+        ...overrides,
+      }),
+    ),
+  );
+  const values = vi.fn((row: Record<string, unknown>) => ({
+    returning: async () => [
+      {
+        ...row,
+        id: randomUUID(),
+        status: "queued",
+        progress: 0,
+        error: null,
+        result: null,
+        notification: "pending",
+      },
+    ],
+  }));
+  const select = vi
+    .fn()
+    .mockReturnValueOnce({ from: () => ({ where: () => ({ limit: async () => [] }) }) })
+    .mockReturnValueOnce({ from: () => ({ where: async () => [usage] }) });
+  const transaction = vi.fn(async (run: (tx: unknown) => Promise<unknown>) =>
+    run({
+      execute: vi.fn(),
+      select,
+      insert: () => ({ values }),
+    }),
+  );
+  const inspect = vi.fn(async () => ({
+    canonicalUrl: sourceUrl,
+    bvid: "BV1xx411c7mD",
+    part: 1,
+    title: "Synthetic video",
+    durationSeconds,
+    hasSubtitles: false,
+  }));
+  const execute = vi.fn();
+  const service = new MediaJobService({ transaction } as unknown as Database, {
+    configuration: (botId) => loadMediaJobConfiguration(manager, botId),
+    inspect,
+    execute,
+  });
+  const create = () =>
+    service.create({ botId: BOT, chatId: 123, userId: 456, isAdmin: true }, { sourceUrl });
+  return { service, create, transaction, values, inspect, execute };
+}
+
 beforeEach(() => {
   runtimeConfiguration.mockReset();
 });
 
 describe("optional audio ASR configuration", () => {
+  it("accepts owner-selected limits above the former GUI caps without changing defaults", async () => {
+    const manifest = createBuiltinMediaPlugins().find(
+      (entry) => entry.manifest.id === "hanori.bilibili",
+    )!.manifest;
+    const limits = {
+      asrMaxSeconds: 1200,
+      asrDailyJobs: 12,
+      asrDailyMinutes: 120,
+      asrCostPerMinute: 101,
+      asrDailyCost: 2000,
+    };
+    expect(mergePluginConfig(manifest, enabled(), { values: limits })).toMatchObject(limits);
+    for (const key of Object.keys(limits))
+      expect(ASR_CONFIG_FIELDS.find((field) => field.key === key)).not.toHaveProperty("max");
+    expect(defaults).toMatchObject({
+      asrMaxSeconds: 300,
+      asrDailyJobs: 3,
+      asrDailyMinutes: 10,
+      asrDailyCost: 1,
+    });
+    expect(ASR_CONFIG_FIELDS.find((field) => field.key === "asrApiKey")?.max).toBe(4096);
+    const fixture = await jobFixture();
+    try {
+      await expect(fixture.create()).resolves.toMatchObject({
+        status: "queued",
+        durationSeconds: 900,
+      });
+      expect(fixture.values).toHaveBeenCalledWith(expect.objectContaining({ estimatedCost: 1515 }));
+      expect(fixture.execute).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it("rejects duration above the owner's limit before queuing or executing", async () => {
+    const fixture = await jobFixture({}, 1201);
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "duration_limit" });
+      expect(fixture.transaction).not.toHaveBeenCalled();
+      expect(fixture.execute).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it("rejects a source duration that cannot be stored even with a larger configured limit", async () => {
+    const fixture = await jobFixture({ asrMaxSeconds: Number.MAX_SAFE_INTEGER }, 2_147_483_648);
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "duration_limit" });
+      expect(fixture.transaction).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it.each([
+    { count: 12, seconds: 0, cost: 0 },
+    { count: 0, seconds: 7200, cost: 0 },
+    { count: 0, seconds: 0, cost: 1500 },
+    { count: NaN, seconds: 0, cost: 0 },
+    { count: 0, seconds: Number.MAX_SAFE_INTEGER + 1, cost: 0 },
+    { count: 0, seconds: 0, cost: Infinity },
+  ])("retains configured quotas and rejects unsafe stored usage: %j", async (usage) => {
+    const fixture = await jobFixture({}, 900, usage);
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(fixture.values).not.toHaveBeenCalled();
+      expect(fixture.execute).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it("compares a large safe integer minute budget without Number multiplication overflow", async () => {
+    const fixture = await jobFixture({ asrDailyMinutes: Number.MAX_SAFE_INTEGER });
+    try {
+      await expect(fixture.create()).resolves.toMatchObject({ status: "queued" });
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it.each<PluginConfiguration>([
+    { asrMaxSeconds: 0 },
+    { asrMaxSeconds: 1.5 },
+    { asrMaxSeconds: Number.MAX_SAFE_INTEGER + 1 },
+    { asrDailyJobs: 0 },
+    { asrDailyJobs: 1.5 },
+    { asrDailyJobs: Number.MAX_SAFE_INTEGER + 1 },
+    { asrDailyMinutes: 0 },
+    { asrDailyMinutes: 1.5 },
+    { asrDailyMinutes: Number.MAX_SAFE_INTEGER + 1 },
+    { asrDailyMinutes: Infinity },
+    { asrDailyCost: Infinity },
+    { asrCostPerMinute: NaN },
+  ])("rejects illegal numeric limits before inspecting media: %j", async (override) => {
+    const fixture = await jobFixture(override);
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "configuration_required" });
+      expect(fixture.inspect).not.toHaveBeenCalled();
+      expect(fixture.transaction).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it.each([
+    { price: Number.MAX_VALUE, duration: 1200 },
+    { price: 1e8, duration: 60 },
+    { price: Number.MIN_VALUE, duration: 1 },
+    { price: 1e-13, duration: 60 },
+  ])(
+    "rejects a fee reservation that cannot be safely persisted: %j",
+    async ({ price, duration }) => {
+      const fixture = await jobFixture(
+        { asrCostPerMinute: price, asrDailyCost: Number.MAX_VALUE },
+        duration,
+      );
+      try {
+        await expect(fixture.create()).rejects.toMatchObject({ code: "configuration_required" });
+        expect(fixture.transaction).not.toHaveBeenCalled();
+        expect(fixture.execute).not.toHaveBeenCalled();
+      } finally {
+        await fixture.service.close();
+      }
+    },
+  );
+
+  it("still rejects fees above a configured budget", async () => {
+    const fixture = await jobFixture({ asrCostPerMinute: 0.011, asrDailyCost: 0.01 }, 60);
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(fixture.values).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+  it("admits the sixth ten-second reservation after database decimal quantization", async () => {
+    const fixture = await jobFixture({ asrCostPerMinute: 0.1, asrDailyCost: 0.1 }, 10, {
+      count: 5,
+      seconds: 50,
+      cost: 0.083333333335,
+    });
+    try {
+      await expect(fixture.create()).resolves.toMatchObject({ status: "queued" });
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
+  it("rejects the seventh ten-second reservation after database decimal quantization", async () => {
+    const fixture = await jobFixture({ asrCostPerMinute: 0.1, asrDailyCost: 0.1 }, 10, {
+      count: 6,
+      seconds: 60,
+      cost: 0.100000000002,
+    });
+    try {
+      await expect(fixture.create()).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(fixture.values).not.toHaveBeenCalled();
+    } finally {
+      await fixture.service.close();
+    }
+  });
+
   it("defaults to no ASR and no audio transfer or transcript export approval", async () => {
     expect(defaults).toMatchObject({
       asrEnabled: false,

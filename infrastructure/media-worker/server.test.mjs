@@ -184,7 +184,7 @@ describe("isolated media worker protocol", () => {
   it.each([
     {},
     { sha256: "a".repeat(64), maxDurationSeconds: 0 },
-    { sha256: "a".repeat(64), maxDurationSeconds: 601 },
+    { sha256: "a".repeat(64), maxDurationSeconds: Number.MAX_SAFE_INTEGER + 1 },
     { sha256: "a".repeat(64), maxDurationSeconds: 1.5 },
     { sha256: "A".repeat(64), maxDurationSeconds: 10 },
     { sha256: "a".repeat(64) + "\n", maxDurationSeconds: 10 },
@@ -247,7 +247,7 @@ describe("isolated media worker protocol", () => {
         "-fs",
         "20971520",
         "-t",
-        "11",
+        "2",
       ]),
     );
     expect(await readFile(input)).toHaveLength(24);
@@ -351,6 +351,43 @@ describe("isolated media worker protocol", () => {
       expect(spawnProcess.mock.calls.map(([binary]) => binary)).toEqual(["ffprobe"]);
     },
   );
+
+  it("converts601s when allowed without applying a fixed ten-minute cutoff", async () => {
+    inputDuration = outputDuration = 601;
+    outputSize = 44 + 601 * 32_000;
+    expect(await conversion({ maxDurationSeconds: 900 })).toMatchObject({
+      status: 200,
+      body: { ok: true, bytes: outputSize, durationSeconds: 601 },
+    });
+    const args = spawnProcess.mock.calls.find(([binary]) => binary === "ffmpeg")[1];
+    expect(args[args.indexOf("-t") + 1]).toBe("602");
+    expect(args[args.indexOf("-fs") + 1]).toBe("20971520");
+  });
+
+  it("still rejects601s exceeding the requested600s before conversion", async () => {
+    inputDuration = 601;
+    expect((await conversion({ maxDurationSeconds: 600 })).body.error).toBe("duration_limit");
+    expect(spawnProcess.mock.calls.map(([binary]) => binary)).toEqual(["ffprobe"]);
+  });
+
+  it("rejects audio whose full PCM exceeds20MiB instead of truncating near the duration tolerance", async () => {
+    inputDuration = 655.5;
+    outputDuration = 655.35;
+    expect((await conversion({ maxDurationSeconds: 900 })).body.error).toBe("invalid_output");
+    expect(spawnProcess.mock.calls.map(([binary]) => binary)).toEqual(["ffprobe"]);
+    await expect(lstat(join(root, "jobs", job, "output.wav"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("rejects a longer source silently truncated by conversion despite a larger user limit", async () => {
+    inputDuration = 601;
+    outputDuration = 600;
+    expect((await conversion({ maxDurationSeconds: 900 })).body.error).toBe("duration_limit");
+    await expect(lstat(join(root, "jobs", job, "output.wav"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 
   it("rejects unsupported audio codecs", async () => {
     codec = "mp3";
