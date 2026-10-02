@@ -73,3 +73,5 @@ export * from "./engagement.js";
 export * from "./generation-library.js";
 export { parseConversationRelayOrigin, formatConversationRelayOrigin } from "./relay-origin.js";
 export * from "./harness-admin.js";
+
+export * from "./runtime-diagnostics.js";

@@ -177,6 +177,10 @@ export class AiExecutionCoordinator {
     return Object.freeze({ queued: admission.queued, result, start });
   }
 
+  getChatStats(chatId: number): { active: boolean; queued: number } {
+    return this.scheduler.getChatStats(chatId);
+  }
+
   cancelAllNow(reason: unknown = new AiRunCancelledError("AI disabled by /stop")): number {
     this.runtimeEpoch++;
     return this.abortRuns([...this.runs.values()], reason);

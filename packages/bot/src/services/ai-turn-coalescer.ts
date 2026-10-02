@@ -1,6 +1,7 @@
 import type { ConversationForwardOrigin, UserPrivacyMode } from "@cos-tool-bot/shared";
 
 export interface CoalescedTurnMessage {
+  diagnosticTraceId?: string;
   tgMessageId: number;
   /** Full request text, including a reply anchor when present. */
   text: string;

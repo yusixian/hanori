@@ -1,3 +1,4 @@
+import type { RuntimeDiagnosticsPort, RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import {
   createTurnToolset,
@@ -181,6 +182,8 @@ export function resolveGitHubCodingModelConfig(
 }
 
 export interface AiReplyConfig {
+  runtimeDiagnostics?: RuntimeDiagnosticsPort;
+  getDiagnosticTraceId?: (ctx: WrapperContext) => string | undefined;
   botId: string;
   /** @deprecated active provider's apiKey — superseded by providers[] when present */
   apiKey: string;
@@ -609,9 +612,14 @@ async function handleEmptyText(
   chatId: number,
   userId: number,
   finishReason: string,
-): Promise<void> {
+): Promise<boolean> {
   if (successfulToolEffectCount > 0) {
-    await ctx.resolveWait("✅ 操作完成").catch(() => ctx.deleteWaiting());
+    try {
+      return (await ctx.resolveWait("✅ 操作完成")) !== undefined;
+    } catch {
+      await ctx.deleteWaiting().catch(() => {});
+      return false;
+    }
   } else {
     config.onLog?.({
       level: "warn",
@@ -620,6 +628,7 @@ async function handleEmptyText(
     });
     const replyMsgId = await safeReply(ctx, "(AI 未生成回复内容)");
     if (replyMsgId) chatBotMsgIds.push(replyMsgId);
+    return replyMsgId !== undefined;
   }
 }
 
@@ -1476,9 +1485,71 @@ export function createAiReplyHandler(
     isPrivateChat: (chatId) => knownPrivateChats.has(chatId),
   };
 
+  function effectiveMaxSteps(): number {
+    const base = memoryCfg.maxSteps || DEFAULT_MEMORY_CONFIG.maxSteps;
+    const advanced =
+      config.agentToolsConfig?.enabled ||
+      config.githubToolsConfig?.enabled ||
+      config.webToolsConfig?.enabled ||
+      config.artworkToolsConfig?.enabled ||
+      (config.skills?.length ?? 0) > 0;
+    return Math.max(advanced ? Math.max(base, 8) : base, 2);
+  }
+  const diagnosticToolNames = new Map<number, string[]>();
+  config.runtimeDiagnostics?.bindRuntime({
+    effectiveConfig: (chatId) => {
+      const selection = selectionRuntime.resolve(chatId);
+      const group = resolveGroupConfig(config, chatId);
+      return {
+        enabled: !aiDisabled && (knownPrivateChats.has(chatId) || group.enabled),
+        providerId: selection.providerId,
+        modelId: selection.modelId,
+        providerFormat: selection.providerRuntime.providerFormat,
+        engagementMode: group.engagementPolicy?.mode,
+        conversationEnabled: knownPrivateChats.has(chatId)
+          ? conversationCfg.enabled
+          : group.conversationEnabled,
+        memoryEnabled: memoryCfg.enabled,
+        timeoutMs: config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
+        maxSteps: effectiveMaxSteps(),
+        perStepMs: config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
+        aiReplyMs: config.timeoutConfig?.aiReplyMs ?? DEFAULT_TIMEOUT_CONFIG.aiReplyMs,
+        source: "runtime",
+        replyMode: getEffectiveMessageConfig().replyMode ?? DEFAULT_MESSAGE_CONFIG.replyMode,
+        skillNames: config.skills?.map((skill) => skill.name),
+        toolNames: diagnosticToolNames.has(chatId)
+          ? [...diagnosticToolNames.get(chatId)!]
+          : undefined,
+        concurrency: executionCoordinator.stats.maxConcurrent,
+      };
+    },
+    scheduler: (chatId) => {
+      const stats = executionCoordinator.getChatStats(chatId);
+      return {
+        active: Number(stats.active),
+        queued: stats.queued,
+        asyncTasks: [...detachedDeliveryTasks].filter((task) => task.scope.chatId === chatId)
+          .length,
+      };
+    },
+  });
+
   const handleMessage: MiddlewareFn<BotContext> = async (ctx, next) => {
     const msg = ctx.message;
     if (!msg) return next();
+    const traceId =
+      config.getDiagnosticTraceId?.(ctx) ??
+      (ctx.chat && ctx.from
+        ? config.runtimeDiagnostics?.startTrace({
+            chatId: ctx.chat.id,
+            userId: ctx.from.id,
+            messageId: msg.message_id,
+          })
+        : undefined);
+    const diagnostic = (event: RuntimeDiagnosticEvent) => {
+      if (traceId) config.runtimeDiagnostics?.record(traceId, event);
+    };
+    diagnostic({ stage: "ingress", outcome: "succeeded", code: "accepted" });
     const engagementCapturedAt = Date.now();
 
     const chatId = ctx.chat?.id;
@@ -1489,6 +1560,7 @@ export function createAiReplyHandler(
 
     // Skip commands
     if (hasLeadingBotCommand(ctx)) {
+      diagnostic({ stage: "complete", outcome: "skipped", code: "command" });
       turnCoalescer.stopAccepting(coalesceConversationScope);
       return next();
     }
@@ -1516,6 +1588,7 @@ export function createAiReplyHandler(
         config.engagement?.apiKey ?? "",
         ...(config.providers ?? []).map((provider) => provider.apiKey),
       ],
+      traceId,
     );
     const isAdmin = config.adminChatIds.includes(userId);
     const userName = getDisplayName(ctx.from);
@@ -1536,6 +1609,7 @@ export function createAiReplyHandler(
           isBotAdmin: isAdmin,
         })
       ) {
+        diagnostic({ stage: "complete", outcome: "skipped", code: "denied" });
         turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
@@ -1549,6 +1623,7 @@ export function createAiReplyHandler(
           isBotAdmin: isAdmin,
         })
       ) {
+        diagnostic({ stage: "complete", outcome: "skipped", code: "denied" });
         turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
         return next();
       }
@@ -1567,6 +1642,7 @@ export function createAiReplyHandler(
 
     const supportsAiContent = !!(msg.text || msg.photo || msg.document || msg.sticker);
     if (!supportsAiContent) {
+      diagnostic({ stage: "complete", outcome: "skipped", code: "unsupported_content" });
       turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
       return next();
     }
@@ -1658,6 +1734,8 @@ export function createAiReplyHandler(
       (!replyText || replySource?.verifiable === true) &&
       !privacyUserIdsOverflow(...initialEngagementResponsePrivacyGroups);
 
+    diagnostic({ stage: "access", outcome: "succeeded", code: "accepted" });
+    diagnostic({ stage: "engagement", outcome: "started" });
     const engagementCooldownKey = engagementScopeKey(chatId, msg.message_thread_id);
     const {
       trigger: triggerResult,
@@ -1699,6 +1777,11 @@ export function createAiReplyHandler(
       },
     );
 
+    diagnostic({
+      stage: "engagement",
+      outcome: triggerResult ? "succeeded" : "skipped",
+      code: triggerResult ? "triggered" : "not_triggered",
+    });
     const shouldPersistPublicGroupMessage =
       !isPrivate && !!config.conversation && groupConversationEnabled && !!bufferedGroupText;
     const groupTurnSourceKey = `telegram:${msg.message_id}:user`;
@@ -1712,6 +1795,7 @@ export function createAiReplyHandler(
     const tracksGroupTurnCompletion =
       !!config.conversation?.completeTurns || !!config.conversation?.completeTurn;
     if (shouldPersistPublicGroupMessage) {
+      diagnostic({ stage: "persistence", outcome: "started" });
       try {
         const message = {
           chatId,
@@ -1735,7 +1819,9 @@ export function createAiReplyHandler(
         } else {
           await config.conversation!.addMessage({ ...message, role: "user" });
         }
+        diagnostic({ stage: "persistence", outcome: "succeeded" });
       } catch (err) {
+        diagnostic({ stage: "persistence", outcome: "failed", code: "persistence_failed" });
         onLog?.({
           level: "error",
           message: `Failed to capture group message: ${err instanceof Error ? err.message : String(err)}`,
@@ -1764,6 +1850,7 @@ export function createAiReplyHandler(
         !!followUpText &&
         turnCoalescer.tryAppend(coalesceScope, {
           tgMessageId: msg.message_id,
+          diagnosticTraceId: traceId,
           text: followUpText,
           ...(!hasForwardOrigin ? { userAuthoredContent: msg.text.trim() } : {}),
           sourceKey: shouldPersistPublicGroupMessage ? groupTurnSourceKey : undefined,
@@ -1775,6 +1862,7 @@ export function createAiReplyHandler(
           ...(!engagementResponseProvenanceVerified ? { hasUnverifiablePrivacySource: true } : {}),
         });
       if (merged) {
+        diagnostic({ stage: "complete", outcome: "coalesced", code: "coalesced" });
         finalizeEngagementSample("coalesced", "coalesced");
         onLog?.({
           level: "info",
@@ -1788,6 +1876,11 @@ export function createAiReplyHandler(
     // owner's handle still drains extras that were accepted before this boundary.
     turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
     if (!triggerResult || aiDisabled) {
+      diagnostic({
+        stage: "complete",
+        outcome: "skipped",
+        code: aiDisabled ? "ai_disabled" : "not_triggered",
+      });
       finalizeEngagementSample(false, aiDisabled ? "ai_disabled" : undefined);
       if (shouldPersistPublicGroupMessage) {
         void config.conversation!.triggerCompression(chatId);
@@ -1810,6 +1903,7 @@ export function createAiReplyHandler(
       userId: usageResource === "proactive_reply" ? undefined : userId,
     });
     if (usageReservation && !usageReservation.allowed) {
+      diagnostic({ stage: "complete", outcome: "skipped", code: "usage_limited" });
       finalizeEngagementSample(false, "usage_denied");
       if (shouldPersistPublicGroupMessage) {
         try {
@@ -1919,6 +2013,8 @@ export function createAiReplyHandler(
       let manualAbort: AbortController | null = null;
       let stopChatActionHeartbeat: (() => void) | undefined;
       let usageSucceeded = false;
+      let modelSignal: AbortSignal | undefined;
+      let failureStage: RuntimeDiagnosticEvent["stage"] = "context";
       try {
         if (!executionContext.isCurrent()) throw new AiRunCancelledError();
         const turnMessageConfig = Object.freeze({ ...getEffectiveMessageConfig() });
@@ -1955,6 +2051,7 @@ export function createAiReplyHandler(
         const replyMsg = ctx.reply_to_message;
         const replyFiles = extractFilesFromMessage(replyMsg);
         const toolsetConfig: TurnToolsetConfig = {
+          runtimeDiagnostics: config.runtimeDiagnostics,
           botId: config.botId,
           adminIds: config.adminChatIds,
           memoryConfig: config.memoryConfig,
@@ -2285,6 +2382,7 @@ export function createAiReplyHandler(
         }
 
         const toolset = await createTurnToolset({
+          currentTraceId: traceId,
           entry: {
             kind: "reply",
             message: {
@@ -2321,8 +2419,16 @@ export function createAiReplyHandler(
           onLog,
         });
 
+        if (config.runtimeDiagnostics) {
+          diagnosticToolNames.delete(chatId);
+          diagnosticToolNames.set(chatId, Object.keys(toolset.tools));
+          if (diagnosticToolNames.size > 500)
+            diagnosticToolNames.delete(diagnosticToolNames.keys().next().value!);
+        }
+
         // Build context after OCR/file enrichment so automatic memory retrieval sees
         // the same textual request that is persisted and sent to the model.
+        diagnostic({ stage: "context", outcome: "started" });
         const promptBundle = await assembleContext({
           systemPrompt: effectivePrompt,
           behavioralPrompt: config.behavioralPrompt,
@@ -2388,18 +2494,7 @@ export function createAiReplyHandler(
         const isStreamMode = isStreamReplyMode(msgCfg) && !preserveQueuedMessage;
         const richMessageEnabled = isRichMessageEnabled(msgCfg) && !preserveQueuedMessage;
 
-        // Increase maxSteps when agent tools, web tools, or artwork tools are available
-        const baseMaxSteps = memoryCfg.maxSteps || DEFAULT_MEMORY_CONFIG.maxSteps;
-        const hasAdvancedTools =
-          config.agentToolsConfig?.enabled ||
-          config.githubToolsConfig?.enabled ||
-          config.webToolsConfig?.enabled ||
-          config.artworkToolsConfig?.enabled;
-        const hasSkills = (config.skills?.length ?? 0) > 0;
-        const maxSteps = Math.max(
-          hasAdvancedTools || hasSkills ? Math.max(baseMaxSteps, 8) : baseMaxSteps,
-          2,
-        );
+        const maxSteps = effectiveMaxSteps();
         const toolChoice = memoryCfg.toolChoice ?? "auto";
         const toolSchemaHash = createToolSchemaHash(toolset.tools);
         const cacheFingerprint = createCacheFingerprint({
@@ -2446,6 +2541,7 @@ export function createAiReplyHandler(
           },
         });
 
+        diagnostic({ stage: "context", outcome: "succeeded", code: "context_loaded" });
         let stepCounter = 0;
         let successfulToolEffectCount = 0;
         const requestCache = createRequestCache();
@@ -2457,6 +2553,7 @@ export function createAiReplyHandler(
             successfulToolEffectCount += 1;
           },
           statusContext: ctx,
+          onDiagnostic: diagnostic,
         });
         manualAbort = new AbortController();
         activeAbortControllers.add(manualAbort);
@@ -2471,12 +2568,30 @@ export function createAiReplyHandler(
           ]),
         );
 
+        modelSignal = perStepAbort.signal;
+        failureStage = "model";
         // ─── streamText (ai v6 API) ───
         const modelEntry = currentSelection.modelEntry;
         let capturedStreamError: unknown;
+        diagnostic({ stage: "model", outcome: "started" });
         const result = streamText({
           onError: ({ error }) => {
             capturedStreamError ??= error;
+            diagnostic({
+              stage: "model",
+              outcome:
+                executionContext.signal.aborted || manualAbort?.signal.aborted
+                  ? "cancelled"
+                  : perStepAbort.signal.aborted
+                    ? "timed_out"
+                    : "failed",
+              code:
+                executionContext.signal.aborted || manualAbort?.signal.aborted
+                  ? "cancelled"
+                  : perStepAbort.signal.aborted
+                    ? "timed_out"
+                    : "model_failed",
+            });
             onLog({
               level: "error",
               message: "AI provider stream failed",
@@ -2518,6 +2633,7 @@ export function createAiReplyHandler(
         // Track whether multi_message actually delivered content (segment mode only).
         let sentViaMultiMessage = false;
         const logRichFallback = (mode: "rich" | "html", error: unknown) => {
+          diagnostic({ stage: "delivery", outcome: "failed", code: "delivery_failed" });
           onLog?.({
             level: "warn",
             message: `${mode === "rich" ? "Rich Message" : "HTML"} delivery failed, falling back`,
@@ -2645,11 +2761,13 @@ export function createAiReplyHandler(
             message: "AI disabled mid-reply, dropping pending sends",
             meta: { chatId, userId },
           });
+          diagnostic({ stage: "complete", outcome: "cancelled", code: "cancelled" });
           await ctx.deleteWaiting().catch(() => {});
           return;
         }
 
         const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
+        diagnostic({ stage: "model", outcome: "succeeded", code: "model_succeeded" });
         const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
           onLog?.({
             level: "info",
@@ -2665,6 +2783,12 @@ export function createAiReplyHandler(
           });
         });
         const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
+        const emptyResponse = !text.trim() && !deliveredMultiMessageContent.trim();
+        diagnostic({
+          stage: "response",
+          outcome: emptyResponse ? "skipped" : "succeeded",
+          ...(emptyResponse ? { code: "empty_response" as const } : {}),
+        });
         const trailingTextCovered =
           sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
         const steps = await result.steps;
@@ -2675,6 +2799,8 @@ export function createAiReplyHandler(
         stopChatActionHeartbeat = undefined;
         let sentFinalText = false;
 
+        failureStage = "delivery";
+        diagnostic({ stage: "delivery", outcome: "started" });
         // ─── Send final reply (when streaming/multi_message didn't handle it) ───
         if (isStreamMode && !streamStarted) {
           // Group chats cannot stream drafts. Private stream failures also land here only
@@ -2692,7 +2818,7 @@ export function createAiReplyHandler(
             streamStarted = messageIds.length > 0;
             sentFinalText = streamStarted;
           } else {
-            await handleEmptyText(
+            sentFinalText = await handleEmptyText(
               ctx,
               successfulToolEffectCount,
               config,
@@ -2718,7 +2844,7 @@ export function createAiReplyHandler(
             chatBotMsgIds.push(...messageIds);
             sentFinalText = messageIds.length > 0;
           } else {
-            await handleEmptyText(
+            sentFinalText = await handleEmptyText(
               ctx,
               successfulToolEffectCount,
               config,
@@ -2899,10 +3025,13 @@ export function createAiReplyHandler(
 
           if (!executionContext.isCurrent()) return;
           try {
+            diagnostic({ stage: "persistence", outcome: "started" });
             await config.conversation!.addMessages(toSave);
+            diagnostic({ stage: "persistence", outcome: "succeeded" });
             privateExtrasSettled = true;
             if (isPrivate) await config.conversation!.triggerCompression(chatId);
           } catch (err) {
+            diagnostic({ stage: "persistence", outcome: "failed", code: "persistence_failed" });
             onLog?.({
               level: "error",
               message: `Failed to save conversation: ${err instanceof Error ? err.message : String(err)}`,
@@ -2943,6 +3072,13 @@ export function createAiReplyHandler(
           }
         }
 
+        const delivered = streamStarted || sentViaMultiMessage || sentFinalText;
+        diagnostic({
+          stage: "delivery",
+          outcome: delivered ? "succeeded" : "failed",
+          ...(delivered ? {} : { code: "delivery_failed" as const }),
+        });
+        if (!delivered) executionFailure = new Error("Telegram reply delivery failed");
         onLog?.({
           level: "info",
           message: "AI reply sent",
@@ -2961,22 +3097,40 @@ export function createAiReplyHandler(
           streamStarted || sentViaMultiMessage || sentFinalText || successfulToolEffectCount > 0;
       } catch (err) {
         if (!executionContext.isCurrent()) {
+          diagnostic({ stage: "complete", outcome: "cancelled", code: "cancelled" });
           await ctx.deleteWaiting().catch(() => {});
           return;
         }
         executionFailure = err;
+        diagnostic({
+          stage: failureStage,
+          outcome: modelSignal?.aborted && failureStage === "model" ? "timed_out" : "failed",
+          code:
+            modelSignal?.aborted && failureStage === "model"
+              ? "timed_out"
+              : failureStage === "delivery"
+                ? "delivery_failed"
+                : "failed",
+        });
         const errMsg = err instanceof Error ? err.message : String(err);
         onLog?.({
           level: "error",
           message: `AI reply failed: ${errMsg}`,
           meta: { chatId, userId, error: err },
         });
+        diagnostic({ stage: "recovery", outcome: "started" });
         const errorReply = `AI 回复时出错:\n${errMsg}`;
+        let recovered = false;
         try {
-          await ctx.resolveWait(errorReply);
+          recovered = (await ctx.resolveWait(errorReply)) !== undefined;
         } catch {
-          await directlyReplyAndCleanup(ctx, errorReply);
+          recovered = (await directlyReplyAndCleanup(ctx, errorReply)) !== undefined;
         }
+        diagnostic({
+          stage: "recovery",
+          outcome: recovered ? "succeeded" : "failed",
+          code: recovered ? "recovered" : "delivery_failed",
+        });
       } finally {
         stopChatActionHeartbeat?.();
         await finalizeUsage(usageSucceeded);
@@ -3090,6 +3244,8 @@ export function createAiReplyHandler(
       })();
       return groupTurnFinalization;
     };
+    diagnostic({ stage: "trigger", outcome: "succeeded" });
+    diagnostic({ stage: "queue", outcome: "started" });
     const scheduledAt = Date.now();
     let executionStartedAt: number | undefined;
     let scheduled;
@@ -3097,7 +3253,22 @@ export function createAiReplyHandler(
       scheduled = executionCoordinator.schedule({ chatId, userId }, async (executionContext) => {
         // Synchronous drain: everything appended before this instant joins this turn.
         coalescedExtras = coalesceHandle?.drain() ?? [];
+        if (traceId)
+          for (const extra of coalescedExtras) {
+            if (extra.diagnosticTraceId)
+              config.runtimeDiagnostics?.record(extra.diagnosticTraceId, {
+                stage: "complete",
+                outcome: "coalesced",
+                code: "coalesced",
+                parentTraceId: traceId,
+              });
+          }
         executionStartedAt = Date.now();
+        diagnostic({
+          stage: "queue",
+          outcome: "succeeded",
+          durationMs: executionStartedAt - scheduledAt,
+        });
         onLog?.({
           level: "info",
           message: "AI reply execution started",
@@ -3141,6 +3312,8 @@ export function createAiReplyHandler(
       );
       await finalizeUsage(false);
       if (error instanceof AiReplyQueueFullError) {
+        diagnostic({ stage: "queue", outcome: "failed", code: "queue_full" });
+        diagnostic({ stage: "complete", outcome: "failed", code: "queue_full" });
         onLog?.({
           level: "warn",
           message: "AI reply queue is full",
@@ -3165,6 +3338,7 @@ export function createAiReplyHandler(
     }
     finalizeEngagementSample(triggerResult);
 
+    if (scheduled.queued) diagnostic({ stage: "queue", outcome: "queued", code: "queued" });
     preserveQueuedMessage = scheduled.queued && executionConfig.queueNotice.enabled;
     if (scheduled.queued && supportsQueuedTurnCoalescing) {
       coalesceHandle = turnCoalescer.open(coalesceScope, coalesceAdmission);
@@ -3174,12 +3348,28 @@ export function createAiReplyHandler(
         .finally(async () => {
           // A run cancelled while queued never drained; recover its extras for finalization.
           const undrained = coalesceHandle?.close();
-          if (undrained?.length) coalescedExtras = [...coalescedExtras, ...undrained];
+          if (undrained?.length) {
+            coalescedExtras = [...coalescedExtras, ...undrained];
+            if (traceId)
+              for (const extra of undrained) {
+                if (extra.diagnosticTraceId)
+                  config.runtimeDiagnostics?.record(extra.diagnosticTraceId, {
+                    stage: "complete",
+                    outcome: "coalesced",
+                    code: "coalesced",
+                    parentTraceId: traceId,
+                  });
+              }
+          }
           await rescuePrivateExtras();
         })
         .finally(finalizeGroupTurn)
         .then(
           () => {
+            diagnostic({
+              stage: "complete",
+              outcome: executionFailure === undefined ? "succeeded" : "failed",
+            });
             onLog?.({
               level: "info",
               message: "AI reply execution finished",
@@ -3199,6 +3389,7 @@ export function createAiReplyHandler(
             await finalizeUsage(false);
             await queueNotice;
             if (error instanceof AiRunCancelledError) {
+              diagnostic({ stage: "complete", outcome: "cancelled", code: "cancelled" });
               onLog?.({
                 level: "info",
                 message: "AI reply execution cancelled",
@@ -3211,6 +3402,7 @@ export function createAiReplyHandler(
               }
               return;
             }
+            diagnostic({ stage: "complete", outcome: "failed", code: "failed" });
             const message = error instanceof Error ? error.message : String(error);
             onLog?.({
               level: "error",
@@ -3288,6 +3480,7 @@ export function createAiReplyHandler(
       knownPrivateChats.clear();
       lastSystemContent.clear();
       groupBuffers.clear();
+      diagnosticToolNames.clear();
       engagementBuffers.clear();
     }
     let attempt!: Promise<void>;

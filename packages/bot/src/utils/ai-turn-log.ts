@@ -7,8 +7,9 @@ export function createAiTurnLogger(
   onLog: ((entry: BotLogEntry) => void | Promise<void>) | undefined,
   scope: Record<string, unknown>,
   secrets: readonly string[] = [],
+  traceId?: string,
 ): (entry: BotLogEntry) => void {
-  const correlationId = randomUUID();
+  const correlationId = traceId ?? randomUUID();
   return (entry) => {
     if (!onLog) return;
     try {

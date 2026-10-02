@@ -1,3 +1,4 @@
+import type { RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import type { BotLogEntry } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import type { WrapperContext } from "../context.js";
@@ -34,6 +35,7 @@ export function wrapToolsWithStatus(
 }
 
 export interface TurnToolPipelineOptions {
+  onDiagnostic?: (event: RuntimeDiagnosticEvent) => void;
   requestCache: RequestCache;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   getStep: () => number;
@@ -53,7 +55,7 @@ export function composeTurnTools(
 ): Record<string, Tool> {
   const composed = wrapToolsWithLogging(
     wrapToolsWithCache(trackSuccessfulToolEffects(tools, options.onEffect), options.requestCache),
-    { onLog: options.onLog, getStep: options.getStep },
+    { onLog: options.onLog, getStep: options.getStep, onDiagnostic: options.onDiagnostic },
   );
   return options.statusContext ? wrapToolsWithStatus(composed, options.statusContext) : composed;
 }

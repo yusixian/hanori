@@ -1,3 +1,4 @@
+import type { RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import type { BotLogEntry } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 
@@ -138,9 +139,10 @@ export function wrapToolsWithLogging(
   options: {
     onLog?: (entry: BotLogEntry) => void | Promise<void>;
     getStep?: () => number;
+    onDiagnostic?: (event: RuntimeDiagnosticEvent) => void;
   },
 ): Record<string, Tool> {
-  if (!options.onLog) return tools;
+  if (!options.onLog && !options.onDiagnostic) return tools;
 
   const wrapped: Record<string, Tool> = {};
   let callSequence = 0;
@@ -165,6 +167,7 @@ export function wrapToolsWithLogging(
             ? executionOptions.toolCallId
             : undefined;
         const startedAt = Date.now();
+        options.onDiagnostic?.({ stage: "tool", outcome: "started", toolName: name, toolCallId });
         await log({
           level: "debug",
           message: "AI tool call",
@@ -179,6 +182,19 @@ export function wrapToolsWithLogging(
         });
         try {
           const output = await originalExecute(...args);
+          const failed =
+            typeof output === "object" &&
+            output !== null &&
+            (("error" in output && !!output.error) ||
+              ("success" in output && output.success === false) ||
+              ("ok" in output && output.ok === false));
+          options.onDiagnostic?.({
+            stage: "tool",
+            outcome: failed ? "failed" : "succeeded",
+            toolName: name,
+            toolCallId,
+            durationMs: Date.now() - startedAt,
+          });
           await log({
             level: "debug",
             message: "AI tool result",
@@ -195,6 +211,13 @@ export function wrapToolsWithLogging(
           });
           return output;
         } catch (error) {
+          options.onDiagnostic?.({
+            stage: "tool",
+            outcome: "failed",
+            toolName: name,
+            toolCallId,
+            durationMs: Date.now() - startedAt,
+          });
           await log({
             level: "debug",
             message: "AI tool result",

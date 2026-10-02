@@ -1,3 +1,4 @@
+import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import type {
   BotLogEntry,
   ConversationCallbacks,
@@ -109,6 +110,7 @@ export interface TimerCallbacks {
 }
 
 export interface BotConfig {
+  runtimeDiagnostics?: RuntimeDiagnosticsPort;
   token: string;
   botId: string;
   adminChatIds: number[];
@@ -222,6 +224,38 @@ export function createBot(config: BotConfig) {
   // Register ordinary messages before sequentialize or any observation/stream middleware can
   // yield. This preserves arrival order against later destructive commands while the admission
   // remains short-lived and detaches before the long AI execution phase.
+  const diagnosticTraces = new WeakMap<WrapperContext, string>();
+  bot.use(async (ctx, next) => {
+    let traceId: string | undefined;
+    if (config.runtimeDiagnostics && ctx.message && ctx.chat && ctx.from) {
+      traceId = config.runtimeDiagnostics.startTrace({
+        chatId: ctx.chat.id,
+        userId: ctx.from.id,
+        messageId: ctx.message.message_id,
+        updateId: ctx.update.update_id,
+      });
+      diagnosticTraces.set(ctx, traceId);
+      config.runtimeDiagnostics.record(traceId, { stage: "received", outcome: "started" });
+    }
+    try {
+      await next();
+      if (traceId && (hasLeadingBotCommand(ctx) || !config.aiReply)) {
+        config.runtimeDiagnostics?.record(traceId, {
+          stage: "complete",
+          outcome: "skipped",
+          code: hasLeadingBotCommand(ctx) ? "command" : "ai_disabled",
+        });
+      }
+    } catch (error) {
+      if (traceId)
+        config.runtimeDiagnostics?.record(traceId, {
+          stage: "complete",
+          outcome: "failed",
+          code: "failed",
+        });
+      throw error;
+    }
+  });
   if (aiIngressLock) {
     bot.use((ctx, next) => {
       if (!ctx.message) return next();
@@ -313,6 +347,8 @@ export function createBot(config: BotConfig) {
     const result = createAiReplyHandler(
       {
         ...config.aiReply,
+        runtimeDiagnostics: config.runtimeDiagnostics,
+        getDiagnosticTraceId: (ctx) => diagnosticTraces.get(ctx),
         privacy: config.privacy,
         adminChatIds,
         onLog: config.onLog,

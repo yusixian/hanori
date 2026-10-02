@@ -29,6 +29,8 @@ pnpm monorepo 结构的 Telegram Bot，使用 [grammY](https://grammy.dev/) 框�
 
 图片任务的查找、参数回查与删除核对见[生成记录与问题恢复](packages/docs/content/docs/guides/generation-records.mdx)。
 
+管理员通过 AI 查询运行状态、有效配置和上一条消息执行链路的用法及权限边界见[AI 运行诊断](packages/docs/content/docs/reference/runtime-diagnostics.mdx)。
+
 版本详情与 GitHub Release 共用 `docs/releases/v*.md` 正文，避免两份说明长期不一致。公开文档不代表源码仓库已经开源；仓库访问与未来许可证会独立管理。
 
 本地只查看文档可运行 `pnpm dev:docs`，打开 `http://localhost:43102/docs/`，无需数据库或 Bot Token。内容维护和构建方式见 [公开文档维护指南](docs/PUBLIC_DOCUMENTATION.md)。

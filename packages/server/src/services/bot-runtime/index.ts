@@ -2,6 +2,7 @@ import { tokenUsage } from "@cos-tool-bot/database";
 import type { TokenUsageRecord } from "@cos-tool-bot/shared";
 import type { ChatSummaryService } from "../chat-summary-service.js";
 import { assembleAiReply } from "./ai-reply.js";
+import { createRuntimeDiagnostics } from "./diagnostics.js";
 import { createPrivacyCallbacks } from "./conversation.js";
 import { createCosInsideConfig } from "./cos-inside.js";
 import { createGenerationTracker } from "./generation-tracking.js";
@@ -29,6 +30,7 @@ export async function assembleBotRuntime(
   host: BotRuntimeHost,
 ): Promise<BotRuntime> {
   const botId = bot.id;
+  const diagnostics = createRuntimeDiagnostics({ bot, token, aiRuntime }, services, host);
   const privacy = createPrivacyCallbacks(botId, services.userPrivacyService, dbLogger);
   const ai = aiRuntime
     ? await assembleAiReply(botId, aiRuntime, dbLogger, services, host)
@@ -84,6 +86,7 @@ export async function assembleBotRuntime(
   return {
     config: {
       botId,
+      runtimeDiagnostics: diagnostics,
       token,
       adminChatIds: bot.adminChatIds,
       logger: services.logger,

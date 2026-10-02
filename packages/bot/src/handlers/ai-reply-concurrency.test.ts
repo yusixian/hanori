@@ -1,3 +1,6 @@
+import { AiExecutionCoordinator } from "../services/ai-execution-coordinator.js";
+import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
+import { DEFAULT_MEMORY_CONFIG } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { Message, Update, UserFromGetMe } from "grammy/types";
 import type {
@@ -1628,4 +1631,256 @@ describe("AI reply turn coalescing", () => {
     const request = JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages);
     expect(request).toContain(`[回复 Ai 的消息: ${quoted}]`);
   });
+});
+
+describe("AI reply structured diagnostics", () => {
+  function diagnosticConfig() {
+    const record = vi.fn();
+    const runtimeDiagnostics = {
+      startTrace: vi.fn(() => "trace"),
+      record,
+      bindRuntime:
+        vi.fn<(readers: import("@cos-tool-bot/shared").RuntimeDiagnosticReaders) => void>(),
+      query: vi.fn(),
+    };
+    return {
+      record,
+      runtimeDiagnostics,
+      config: { ...createConfig(false), runtimeDiagnostics, getDiagnosticTraceId: () => "trace" },
+    };
+  }
+  it("keeps a detached request open until model and Telegram delivery settle", async () => {
+    const reply = deferred<string>();
+    streamTextMock.mockImplementation(() => streamResult(reply.promise));
+    const { api } = createApi();
+    const diagnostics = diagnosticConfig();
+    const runtime = createAiReplyHandler(diagnostics.config);
+    runtimes.push(runtime);
+    await runtime.handler(createContext(api, 1, 11, "sample hello"), vi.fn());
+    await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalled());
+    expect(diagnostics.record.mock.calls.some(([, event]) => event.stage === "complete")).toBe(
+      false,
+    );
+    const readers = diagnostics.runtimeDiagnostics.bindRuntime.mock.calls[0]![0];
+    const snapshot = readers.effectiveConfig(CHAT_ID);
+    expect(snapshot.toolNames).toEqual(Object.keys(streamTextMock.mock.calls[0]![0].tools));
+    snapshot.toolNames!.push("tampered");
+    expect(readers.effectiveConfig(CHAT_ID).toolNames).not.toContain("tampered");
+    reply.resolve("answer");
+    await vi.waitFor(() =>
+      expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+        stage: "complete",
+        outcome: "succeeded",
+      }),
+    );
+    expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+      stage: "model",
+      outcome: "succeeded",
+      code: "model_succeeded",
+    });
+    expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+      stage: "delivery",
+      outcome: "succeeded",
+    });
+  });
+  it("records recoverable Rich delivery failure followed by successful delivery", async () => {
+    streamTextMock.mockImplementation(() => streamResult(Promise.resolve("# Answer")));
+    const { api, sendRichMessage } = createApi();
+    sendRichMessage.mockRejectedValue(new Error("Telegram rich unavailable"));
+    const diagnostics = diagnosticConfig();
+    const runtime = createAiReplyHandler(diagnostics.config);
+    runtimes.push(runtime);
+    await runtime.handler(createContext(api, 1, 11, "sample hello"), vi.fn());
+    await vi.waitFor(() =>
+      expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+        stage: "complete",
+        outcome: "succeeded",
+      }),
+    );
+    expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+      stage: "delivery",
+      outcome: "failed",
+      code: "delivery_failed",
+    });
+    expect(diagnostics.record).toHaveBeenCalledWith("trace", {
+      stage: "delivery",
+      outcome: "succeeded",
+    });
+  });
+});
+
+describe("AI diagnostic delivery failures", () => {
+  it.each(["empty response", "model failure"])(
+    "does not report successful delivery for %s when every Telegram fallback fails",
+    async (kind) => {
+      if (kind === "empty response")
+        streamTextMock.mockImplementation(() => streamResult(Promise.resolve("")));
+      else
+        streamTextMock.mockImplementation(() => {
+          throw new Error("provider failed");
+        });
+      const record = vi.fn();
+      const { api, sendMessage, sendRichMessage, editMessageText } = createApi();
+      sendMessage.mockRejectedValue(new Error("Telegram unavailable"));
+      sendRichMessage.mockRejectedValue(new Error("Telegram unavailable"));
+      editMessageText.mockRejectedValue(new Error("Telegram unavailable"));
+      const runtime = createAiReplyHandler({
+        ...createConfig(false),
+        runtimeDiagnostics: {
+          startTrace: vi.fn(() => "trace"),
+          record,
+          bindRuntime: vi.fn(),
+          query: vi.fn(),
+        },
+        getDiagnosticTraceId: () => "trace",
+      });
+      runtimes.push(runtime);
+      await runtime.handler(createContext(api, 1, 11, "sample hello"), vi.fn());
+      await vi.waitFor(() =>
+        expect(record).toHaveBeenCalledWith("trace", { stage: "complete", outcome: "failed" }),
+      );
+      expect(
+        record.mock.calls.some(
+          ([, event]) => event.stage === "delivery" && event.outcome === "succeeded",
+        ),
+      ).toBe(false);
+      if (kind === "empty response")
+        expect(record).toHaveBeenCalledWith("trace", {
+          stage: "response",
+          outcome: "skipped",
+          code: "empty_response",
+        });
+      if (kind === "model failure")
+        expect(record).toHaveBeenCalledWith("trace", {
+          stage: "recovery",
+          outcome: "failed",
+          code: "delivery_failed",
+        });
+      else
+        expect(record).toHaveBeenCalledWith("trace", {
+          stage: "delivery",
+          outcome: "failed",
+          code: "delivery_failed",
+        });
+    },
+  );
+  it.each([1, 0, 3])(
+    "uses the execution maxSteps calculation for configured %s",
+    async (maxSteps) => {
+      streamTextMock.mockImplementation(() => streamResult(Promise.resolve("answer")));
+      const bindRuntime =
+        vi.fn<(readers: import("@cos-tool-bot/shared").RuntimeDiagnosticReaders) => void>();
+      const cfg: AiReplyConfig = {
+        ...createConfig(false),
+        memoryConfig: { ...DEFAULT_MEMORY_CONFIG, enabled: true, maxSteps },
+        webToolsConfig: { enabled: true },
+        runtimeDiagnostics: {
+          startTrace: vi.fn(() => "trace"),
+          record: vi.fn(),
+          bindRuntime,
+          query: vi.fn(),
+        },
+      };
+      const { api } = createApi();
+      const runtime = createAiReplyHandler(cfg);
+      runtimes.push(runtime);
+      await runtime.handler(createContext(api, 1, 11, "sample hello"), vi.fn());
+      await vi.waitFor(() => expect(streamTextMock).toHaveBeenCalled());
+      expect(bindRuntime.mock.calls[0]![0].effectiveConfig(CHAT_ID).maxSteps).toBe(
+        Math.max(maxSteps || DEFAULT_MEMORY_CONFIG.maxSteps, 8),
+      );
+      cfg.groupOverrides[String(CHAT_ID)]!.enabled = false;
+      expect(bindRuntime.mock.calls[0]![0].effectiveConfig(CHAT_ID).enabled).toBe(false);
+    },
+  );
+});
+
+it("records successful file mutation separately from failed Telegram confirmation", async () => {
+  const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dataDir = await mkdtemp(join(tmpdir(), "bot-diagnostic-tool-"));
+  try {
+    const record = vi.fn();
+    const { api, sendMessage, sendRichMessage, editMessageText } = createApi();
+    sendMessage.mockRejectedValue(new Error("Telegram unavailable"));
+    sendRichMessage.mockRejectedValue(new Error("Telegram unavailable"));
+    editMessageText.mockRejectedValue(new Error("Telegram unavailable"));
+    streamTextMock.mockImplementation(({ tools }) => {
+      const text = tools.write_file
+        .execute({ path: "note.md", content: "saved" }, { toolCallId: "write", messages: [] })
+        .then(() => "");
+      return streamResult(text);
+    });
+    const runtime = createAiReplyHandler({
+      ...createConfig(false),
+      dataFiles: { dataDir, injectableFiles: new Set(), loadFiles: async () => [] },
+      runtimeDiagnostics: {
+        startTrace: vi.fn(() => "trace"),
+        record,
+        bindRuntime: vi.fn(),
+        query: vi.fn(),
+      },
+      getDiagnosticTraceId: () => "trace",
+    });
+    runtimes.push(runtime);
+    await runtime.handler(createContext(api, 1, 11, "sample save note"), vi.fn());
+    await vi.waitFor(() =>
+      expect(record).toHaveBeenCalledWith("trace", { stage: "complete", outcome: "failed" }),
+    );
+    expect(await readFile(join(dataDir, "note.md"), "utf8")).toBe("saved");
+    expect(record).toHaveBeenCalledWith(
+      "trace",
+      expect.objectContaining({ stage: "tool", toolName: "write_file", outcome: "succeeded" }),
+    );
+    expect(record).toHaveBeenCalledWith("trace", {
+      stage: "delivery",
+      outcome: "failed",
+      code: "delivery_failed",
+    });
+    expect(
+      record.mock.calls.some(
+        ([, event]) => event.stage === "delivery" && event.outcome === "succeeded",
+      ),
+    ).toBe(false);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+it("identifies queue-full admission without a model call", async () => {
+  const admission = vi
+    .spyOn(AiExecutionCoordinator.prototype, "schedule")
+    .mockImplementationOnce(() => {
+      throw new AiReplyQueueFullError(0);
+    });
+  try {
+    const record = vi.fn();
+    const { api } = createApi();
+    const runtime = createAiReplyHandler({
+      ...createConfig(false),
+      runtimeDiagnostics: {
+        startTrace: vi.fn(() => "trace"),
+        record,
+        bindRuntime: vi.fn(),
+        query: vi.fn(),
+      },
+      getDiagnosticTraceId: () => "trace",
+    });
+    runtimes.push(runtime);
+    await runtime.handler(createContext(api, 1, 11, "sample hello"), vi.fn());
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledWith("trace", {
+      stage: "queue",
+      outcome: "failed",
+      code: "queue_full",
+    });
+    expect(record).toHaveBeenCalledWith("trace", {
+      stage: "complete",
+      outcome: "failed",
+      code: "queue_full",
+    });
+  } finally {
+    admission.mockRestore();
+  }
 });

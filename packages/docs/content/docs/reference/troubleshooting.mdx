@@ -38,6 +38,8 @@ description: 按症状定位启动、登录、Telegram、AI、Mini App 和集成
 
 看到“接受任务”但没有最终消息时，继续查看生成、工具和投递阶段的日志，不要立即重复触发。
 
+如果 AI 仍能回复，Bot 管理员可以问“为什么我上一条消息没有回复？请查询请求链路”，让 AI 使用[只读运行诊断工具](/docs/reference/runtime-diagnostics)定位当前聊天的排队、模型、工具和投递状态。
+
 在面板日志中先选择 Bot，再用群聊 ID 或关联 ID 缩小范围；历史记录和实时记录都会应用这些条件。操作说明见[检索和清理日志](/docs/guides/panel-navigation#检索和清理日志)。
 
 ## Provider 或模型不可用

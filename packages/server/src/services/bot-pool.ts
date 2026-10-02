@@ -129,6 +129,10 @@ export class BotPool {
   private readonly githubCredentialGenerations = new GitHubCredentialGenerationGate();
   private readonly services: BotPoolServices;
   private readonly runtimeHost: BotRuntimeHost = {
+    getRuntimeStatus: (botId) => {
+      const manager = this.managers.get(botId);
+      return manager ? { status: manager.status, uptime: manager.uptime } : undefined;
+    },
     restartBot: (botId) => this.restartBot(botId),
     withAiConfigLock: (botId, operation) => this.withAiConfigLock(botId, operation),
     isDelegatedGroupAdmin: (botId, chatId, userId) =>

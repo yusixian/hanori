@@ -1,3 +1,5 @@
+import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
+import { createRuntimeDiagnosticTools } from "./runtime-diagnostics.js";
 import type {
   ArtworkToolsConfig,
   BotLogEntry,
@@ -56,6 +58,7 @@ const MAX_TIMER_CHAIN_DEPTH = 2;
 /** Bot configuration and long-lived ports a turn's tools are bound from. */
 export interface TurnToolsetConfig {
   botId: string;
+  runtimeDiagnostics?: RuntimeDiagnosticsPort;
   adminIds?: number[];
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -112,6 +115,7 @@ export interface TurnInteractionInput {
 }
 
 export interface TurnToolsetInput {
+  currentTraceId?: string;
   entry: ReplyTurn | ContinueTurn;
   chatId: number;
   isPrivate: boolean;
@@ -275,6 +279,18 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
       : {};
 
   const tools: Record<string, Tool> = {
+    ...(entry.kind === "reply" && isAdmin && userId !== undefined && config.runtimeDiagnostics
+      ? createRuntimeDiagnosticTools({
+          port: config.runtimeDiagnostics,
+          adminIds: config.adminIds ?? [],
+          actor: {
+            chatId,
+            userId,
+            messageId: entry.message.id,
+            currentTraceId: input.currentTraceId,
+          },
+        })
+      : {}),
     ...(memoryEnabled && config.memory
       ? { ...createMemoryTools(config.memory), ...profileAvatars.tools }
       : {}),

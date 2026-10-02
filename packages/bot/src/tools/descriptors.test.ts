@@ -32,6 +32,11 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
+  "get_runtime_status",
+  "get_effective_config",
+  "get_request_trace",
+  "query_sanitized_logs",
+  "get_recent_errors",
   "get_chat_info",
   "get_current_time",
   "web_search",

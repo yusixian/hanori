@@ -87,6 +87,13 @@ export class AiReplyScheduler {
     });
   }
 
+  getChatStats(chatId: number): { active: boolean; queued: number } {
+    return {
+      active: this.activeChats.has(chatId),
+      queued: this.queue.filter((entry) => entry.chatId === chatId).length,
+    };
+  }
+
   acquire(options: AiReplyAcquireOptions): AiReplyAdmission {
     if (this.destroyed) throw new AiReplySchedulerDestroyedError();
     if (options.signal?.aborted) throw options.signal.reason ?? createAbortError();

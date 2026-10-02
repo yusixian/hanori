@@ -81,6 +81,9 @@ export interface BotRuntimeServices {
 
 /** BotPool capabilities that the Bot's callbacks call back into while it runs. */
 export interface BotRuntimeHost {
+  getRuntimeStatus?(
+    botId: string,
+  ): { status: "running" | "stopped" | "restarting"; uptime: number | null } | undefined;
   restartBot(botId: string): Promise<void>;
   withAiConfigLock<T>(botId: string, operation: () => Promise<T>): Promise<T>;
   isDelegatedGroupAdmin(botId: string, chatId: number, userId: number): Promise<boolean>;
