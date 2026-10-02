@@ -1,3 +1,4 @@
+import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import type { RuntimeDiagnosticsPort, RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import {
@@ -212,6 +213,8 @@ export interface AiReplyConfig {
   memory?: MemoryCallbacks;
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
+  unifiedSearchEnabled?: boolean;
+  plugins?: PluginRuntimePort;
   imageGenerationPort?: ImageGenerationPort;
   generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];
@@ -1261,15 +1264,22 @@ export function createAiReplyHandler(
   function createDelegation(
     selection: Readonly<ResolvedAiSelection>,
     onLog: AiReplyConfig["onLog"],
-  ): ((actor?: GenerationLibraryActor) => Record<string, Tool>) | undefined {
+  ):
+    | ((
+        actor?: GenerationLibraryActor,
+        plugins?: (signal?: AbortSignal) => Promise<PluginTurnSession>,
+      ) => Record<string, Tool>)
+    | undefined {
     const agentConfig = config.agentToolsConfig;
     if (!agentConfig?.enabled) return undefined;
-    return (actor) =>
+    return (actor, plugins) =>
       createAgentTools({
         provider: (model) => selection.providerFactory(model),
         model: selection.modelId,
         agentConfig,
         webToolsConfig: config.webToolsConfig,
+        unifiedSearchEnabled: config.unifiedSearchEnabled === true,
+        plugins,
         onLog,
         timeoutConfig: config.timeoutConfig,
         generationLibraryPort: config.generationLibraryPort,
@@ -1353,6 +1363,8 @@ export function createAiReplyHandler(
       botMemory: config.botMemory,
       messageConfig: getEffectiveMessageConfig(),
       webToolsConfig: config.webToolsConfig,
+      unifiedSearchEnabled: config.unifiedSearchEnabled === true,
+      plugins: config.plugins,
       agentToolsConfig: config.agentToolsConfig,
       artworkToolsConfig: config.artworkToolsConfig,
       skills: config.skills,
@@ -2010,6 +2022,7 @@ export function createAiReplyHandler(
       preserveQueuedMessage: boolean,
     ): Promise<void> => {
       // Hoisted so the outer finally can unregister even on early errors.
+      let disposePluginTools: (() => Promise<void>) | undefined;
       let manualAbort: AbortController | null = null;
       let stopChatActionHeartbeat: (() => void) | undefined;
       let usageSucceeded = false;
@@ -2061,6 +2074,8 @@ export function createAiReplyHandler(
           messageConfig: turnMessageConfig,
           stickerPacks: config.stickerPacks,
           webTools,
+          unifiedSearchEnabled: config.unifiedSearchEnabled === true,
+          plugins: config.plugins,
           artworkToolsConfig: config.artworkToolsConfig,
           timeoutConfig: config.timeoutConfig,
           dataFiles: config.dataFiles,
@@ -2382,6 +2397,10 @@ export function createAiReplyHandler(
         }
 
         const toolset = await createTurnToolset({
+          signal: AbortSignal.any([
+            executionContext.signal,
+            ...(manualAbort ? [manualAbort.signal] : []),
+          ]),
           currentTraceId: traceId,
           entry: {
             kind: "reply",
@@ -2419,6 +2438,7 @@ export function createAiReplyHandler(
           onLog,
         });
 
+        disposePluginTools = toolset.dispose;
         if (config.runtimeDiagnostics) {
           diagnosticToolNames.delete(chatId);
           diagnosticToolNames.set(chatId, Object.keys(toolset.tools));
@@ -3132,6 +3152,7 @@ export function createAiReplyHandler(
           code: recovered ? "recovered" : "delivery_failed",
         });
       } finally {
+        await disposePluginTools?.();
         stopChatActionHeartbeat?.();
         await finalizeUsage(usageSucceeded);
         if (manualAbort) activeAbortControllers.delete(manualAbort);

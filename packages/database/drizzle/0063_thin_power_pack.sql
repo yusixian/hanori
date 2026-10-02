@@ -1,0 +1,1 @@
+ALTER TABLE "media_transcription_jobs" ALTER COLUMN "estimated_cost" SET DATA TYPE numeric(20, 12);

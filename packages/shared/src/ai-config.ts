@@ -79,6 +79,8 @@ export interface AiConfigStored {
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfig;
+  /** Defaults to true; false restores the legacy individual search tools. */
+  unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsConfigStored;
@@ -124,6 +126,7 @@ export interface AiConfigPublic {
   memoryConfig?: MemoryConfig;
   stickerPacks?: string[];
   webToolsConfig?: WebToolsConfigPublic;
+  unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsConfigPublic;

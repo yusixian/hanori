@@ -728,6 +728,12 @@ export const aiSettings = {
     sectionTokens: "约 {{count}} Token",
     unestimatedParts: "{{count}} 个非文本部分未估算",
   },
+  unifiedSearch: {
+    title: "统一检索",
+    enable: "使用统一检索",
+    description:
+      "开启后，通过同一 search 工具检索此 Bot 已获授权的现有来源；关闭后恢复原有检索工具。各来源的访问权限保持不变。",
+  },
   webTools: {
     title: "联网工具",
     enable: "启用联网工具",

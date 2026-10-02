@@ -14,6 +14,10 @@ import type {
   CharacterSource,
   CharacterRelation,
   PromptAssetType,
+  PluginConfiguration,
+  PluginManifest,
+  MediaJobStatus,
+  TranscriptDocument,
   AssetSafety,
   LarkWebhookConfig,
   UsageBucketCharge,
@@ -28,6 +32,7 @@ import {
   index,
   integer,
   json,
+  numeric,
   pgTable,
   primaryKey,
   real,
@@ -52,6 +57,31 @@ export const settings = pgTable("settings", {
     .$onUpdate(() => new Date()),
 });
 
+export const pluginInstallations = pgTable(
+  "plugin_installations",
+  {
+    isInstalled: boolean("is_installed").notNull().default(true),
+    id: text("id").primaryKey(),
+    source: text("source").$type<"builtin" | "git">().notNull(),
+    repository: text("repository"),
+    commit: text("commit"),
+    previousCommit: text("previous_commit"),
+    manifest: json("manifest").$type<PluginManifest>().notNull(),
+    previousManifest: json("previous_manifest").$type<PluginManifest>(),
+    revision: integer("revision").notNull().default(1),
+    installedAt: timestamp("installed_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    check("plugin_installations_source_check", sql`${t.source} in ('builtin', 'git')`),
+    check("plugin_installations_revision_check", sql`${t.revision} > 0`),
+    check(
+      "plugin_installations_commit_check",
+      sql`(${t.source} = 'builtin' and ${t.commit} is null and ${t.repository} is null) or (${t.source} = 'git' and ${t.commit} ~ '^[a-f0-9]{40}$' and ${t.repository} is not null)`,
+    ),
+  ],
+);
+
 export const bots = pgTable("bots", {
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
@@ -69,6 +99,60 @@ export const bots = pgTable("bots", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export const mediaTranscriptionJobs = pgTable(
+  "media_transcription_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    pluginId: text("plugin_id").notNull().default("hanori.bilibili"),
+    configRevision: integer("config_revision").notNull(),
+    installationRevision: integer("installation_revision").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    bvid: text("bvid").notNull(),
+    part: integer("part").notNull(),
+    title: text("title").notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    providerModel: text("provider_model").notNull(),
+    estimatedCost: numeric("estimated_cost", {
+      precision: 20,
+      scale: 12,
+      mode: "number",
+    }).notNull(),
+    status: text("status").$type<MediaJobStatus>().notNull().default("queued"),
+    progress: integer("progress").notNull().default(0),
+    error: text("error"),
+    result: json("result").$type<TranscriptDocument>(),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    cleanupPending: boolean("cleanup_pending").notNull().default(false),
+    leaseId: uuid("lease_id"),
+    leaseExpiresAt: timestamp("lease_expires_at"),
+    attempt: integer("attempt").notNull().default(0),
+    notification: text("notification")
+      .$type<"pending" | "delivering" | "sent" | "failed">()
+      .notNull()
+      .default("pending"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+  },
+  (t) => [
+    index("media_transcription_jobs_queue_idx").on(t.status, t.createdAt),
+    index("media_transcription_jobs_actor_idx").on(t.botId, t.userId, t.createdAt),
+    check(
+      "media_transcription_jobs_status_check",
+      sql`${t.status} in ('queued','downloading','converting','transcribing','completed','failed','cancelled')`,
+    ),
+    check(
+      "media_transcription_jobs_limits_check",
+      sql`${t.durationSeconds} > 0 and ${t.durationSeconds} <= 600 and ${t.part} >= 1 and ${t.part} <= 1000 and ${t.progress} >= 0 and ${t.progress} <= 100 and ${t.attempt} >= 0 and ${t.attempt} <= 2`,
+    ),
+  ],
+);
 
 export const telegramBotProfiles = pgTable(
   "telegram_bot_profiles",
@@ -239,6 +323,37 @@ export const mcpServers = pgTable("mcp_servers", {
     .defaultNow()
     .$onUpdate(() => new Date()),
 });
+
+export const botPluginConfigs = pgTable(
+  "bot_plugin_configs",
+  {
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    pluginId: text("plugin_id").notNull(),
+    manifestVersion: text("manifest_version").notNull(),
+    manifestHash: text("manifest_hash").notNull(),
+    values: json("values").$type<PluginConfiguration>().notNull().default({}),
+    encryptedSecrets: json("encrypted_secrets")
+      .$type<Record<string, string>>()
+      .notNull()
+      .default({}),
+    // Desired state; the runtime reports whether this revision was successfully applied.
+    enabled: boolean("enabled").notNull().default(false),
+    revision: integer("revision").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.botId, t.pluginId] }),
+    check("bot_plugin_configs_revision_check", sql`${t.revision} > 0`),
+    check("bot_plugin_configs_manifest_hash_check", sql`${t.manifestHash} ~ '^[a-f0-9]{64}$'`),
+    check(
+      "bot_plugin_configs_plugin_id_check",
+      sql`length(${t.pluginId}) <= 100 and ${t.pluginId} ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)+$'`,
+    ),
+  ],
+);
 
 export const botLogs = pgTable(
   "bot_logs",

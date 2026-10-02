@@ -87,6 +87,7 @@ import { SummaryConfigSection } from "./sections/summary-config-section";
 import { ImageOcrConfigSection } from "./sections/image-ocr-config-section";
 import { ImageGenerationReceiptSection } from "./sections/image-generation-receipt-section";
 import { WebToolsSection } from "./sections/web-tools-section";
+import { UnifiedSearchSection } from "./sections/unified-search-section";
 import { ExecutionConfigSection } from "./sections/execution-config-section";
 import {
   createExecutionConfigDraft,
@@ -1458,6 +1459,12 @@ export function BotAiSettingsPage() {
 
             {activeSection === "tools" && (
               <div className="space-y-3">
+                <UnifiedSearchSection
+                  enabled={config.unifiedSearchEnabled !== false}
+                  onChange={(unifiedSearchEnabled) =>
+                    setConfig((current) => ({ ...current, unifiedSearchEnabled }))
+                  }
+                />
                 <SettingsDisclosureRow
                   {...disclosureProps("web-tools")}
                   title={t("disclosures.webTools.title")}

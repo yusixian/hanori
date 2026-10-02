@@ -75,3 +75,10 @@ export { parseConversationRelayOrigin, formatConversationRelayOrigin } from "./r
 export * from "./harness-admin.js";
 
 export * from "./runtime-diagnostics.js";
+export * from "./plugins.js";
+export * from "./plugin-runtime.js";
+export * from "./search.js";
+export * from "./media-links.js";
+export * from "./media-transcript.js";
+
+export * from "./media-jobs.js";

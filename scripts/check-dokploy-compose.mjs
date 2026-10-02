@@ -19,6 +19,7 @@ const requiredEnvironment = {
   GOOGLE_CLIENT_ID: "",
   GOOGLE_CLIENT_SECRET: "",
   MINI_APP_SESSION_SECRET: "",
+  MEDIA_WORKER_SECRET: "validation-media-worker-secret-at-least-32-characters",
   PANEL_PASSWORD: "validation-owner-password",
 };
 
@@ -82,6 +83,173 @@ const coding = renderConfig(["docker-compose.yml"], "coding");
 assert(coding.services["coding-worker"], "coding profile is missing coding-worker");
 assert(coding.services["coding-egress-proxy"], "coding profile is missing coding-egress-proxy");
 
+assert(!services["media-worker"], "media-worker must stay behind the media profile");
+function validateMedia(config) {
+  const worker = config.services["media-worker"];
+  assert(worker, "media profile is missing media-worker");
+  assert(
+    worker.build?.target === "media-worker",
+    "media-worker must build its isolated image stage",
+  );
+  assert(worker.network_mode === "none", "media-worker must have no network");
+  assert(
+    !Object.keys(worker.networks ?? {}).length,
+    "media-worker must not join any Compose network",
+  );
+  assert(!worker.ports?.length, "media-worker must not publish host ports");
+  assert(worker.read_only === true, "media-worker root filesystem must be read-only");
+  assert(
+    !worker.user || ["node", "1000", "1000:1000"].includes(worker.user),
+    "media-worker Compose UID must stay unprivileged UID 1000",
+  );
+  assert(
+    worker.cap_drop?.includes("ALL") && !worker.cap_add?.length,
+    "media-worker must drop all capabilities",
+  );
+  assert(
+    worker.security_opt?.includes("no-new-privileges:true"),
+    "media-worker must prevent privilege escalation",
+  );
+  assert(
+    !worker.privileged && !worker.devices?.length && worker.pid !== "host" && worker.ipc !== "host",
+    "media-worker must not share privileged host resources",
+  );
+  assert(
+    !worker.secrets?.length && !worker.configs?.length,
+    "media-worker must not mount application secrets or extra configuration",
+  );
+  assert(
+    worker.pids_limit > 0 && worker.pids_limit <= 32,
+    "media-worker must bound subprocesses to 32",
+  );
+  assert(
+    worker.mem_limit > 0 && worker.mem_limit <= 256 * 1024 * 1024,
+    "media-worker must bound memory to 256 MiB",
+  );
+  assert(worker.cpus > 0 && worker.cpus <= 1, "media-worker must bound CPU to one core");
+  const expectedMounts = { mediajobs: "/media-jobs", mediacontrol: "/media-control" };
+  assert(worker.volumes?.length === 2, "media-worker may mount only its two shared media volumes");
+  for (const [source, target] of Object.entries(expectedMounts)) {
+    assert(
+      worker.volumes.some(
+        (mount) =>
+          mount.type === "volume" &&
+          mount.source === source &&
+          mount.target === target &&
+          !mount.read_only,
+      ),
+      `media-worker needs only the ${source} shared volume at ${target}`,
+    );
+    assert(
+      config.services.app.volumes.some(
+        (mount) =>
+          mount.type === "volume" &&
+          mount.source === source &&
+          mount.target === target &&
+          !mount.read_only,
+      ),
+      `app must share ${source} with media-worker`,
+    );
+  }
+  assert(
+    Object.keys(worker.environment ?? {})
+      .sort()
+      .join() === "MEDIA_JOB_DIR,MEDIA_WORKER_SECRET,MEDIA_WORKER_SOCKET",
+    "media-worker must receive only its transport secret and media paths",
+  );
+  assert(
+    worker.environment.MEDIA_JOB_DIR === "/media-jobs" &&
+      worker.environment.MEDIA_WORKER_SOCKET === "/media-control/worker.sock",
+    "media-worker must use the shared job directory and Unix socket",
+  );
+  assert(
+    worker.environment.MEDIA_WORKER_SECRET === config.services.app.environment.MEDIA_WORKER_SECRET,
+    "app and media-worker must use the same transport secret",
+  );
+  assert(
+    config.services.app.environment.MEDIA_WORKER_GID === "1000",
+    "app must grant media file access only to worker GID 1000",
+  );
+  const tmpfs = worker.tmpfs ?? [];
+  assert(
+    tmpfs.length === 1 &&
+      tmpfs[0].startsWith("/tmp:") &&
+      /(?:^|,)size=64m(?:,|$)/.test(tmpfs[0].split(":")[1]),
+    "media-worker may use only a bounded 64 MiB /tmp tmpfs",
+  );
+  for (const [name, gid, mode, size] of [
+    ["mediajobs", "0", "0755", "268435456"],
+    ["mediacontrol", "1000", "0770", "1048576"],
+  ]) {
+    const volume = config.volumes?.[name];
+    assert(
+      volume?.driver === "local" &&
+        volume.driver_opts?.type === "tmpfs" &&
+        volume.driver_opts?.device === "tmpfs",
+      `${name} must be a bounded tmpfs volume`,
+    );
+    const options = Object.fromEntries(
+      volume.driver_opts.o.split(",").map((option) => option.split("=")),
+    );
+    assert(
+      options.uid === "0" && options.gid === gid && options.mode === mode && options.size === size,
+      `${name} must preserve the root-owned UID/GID/mode and disk bound`,
+    );
+  }
+  const health = JSON.stringify(worker.healthcheck?.test);
+  assert(
+    health?.includes("/health") &&
+      health.includes("socketPath") &&
+      health.includes("MEDIA_WORKER_SECRET"),
+    "media-worker health must check the authenticated Unix socket",
+  );
+}
+const dockerfile = readFileSync("Dockerfile", "utf8");
+function imageStage(name) {
+  const lines = dockerfile.split(/\r?\n/);
+  const start = lines.findIndex((line) => new RegExp(`^FROM .+ AS ${name}$`, "i").test(line));
+  assert(start >= 0, `Dockerfile is missing ${name} stage`);
+  const end = lines.findIndex((line, index) => index > start && /^FROM /i.test(line));
+  return lines.slice(start + 1, end === -1 ? undefined : end).join("\n");
+}
+const mediaImage = imageStage("media-worker");
+const mediaUsers = [...mediaImage.matchAll(/^USER\s+(.+)$/gm)].map((match) => match[1].trim());
+assert(
+  ["node", "1000", "1000:1000"].includes(mediaUsers.at(-1)),
+  "media-worker image must run as the unprivileged Node UID 1000",
+);
+assert(
+  !/^(?:ENTRYPOINT|CMD).*su-exec/m.test(mediaImage),
+  "media-worker must not elevate its entrypoint",
+);
+const appUsers = [...imageStage("runner").matchAll(/^USER\s+(.+)$/gm)].map((match) =>
+  match[1].trim(),
+);
+assert(
+  !appUsers.length || ["root", "0", "0:0"].includes(appUsers.at(-1)),
+  "app must own the media job parent as UID 0",
+);
+const finalAppUsers = [...imageStage("app").matchAll(/^USER\s+(.+)$/gm)].map((match) =>
+  match[1].trim(),
+);
+assert(
+  !finalAppUsers.length || ["root", "0", "0:0"].includes(finalAppUsers.at(-1)),
+  "final app image must preserve UID 0 for media directory ownership",
+);
+assert(
+  !dokploy.services.app.user || ["root", "0", "0:0"].includes(dokploy.services.app.user),
+  "app Compose UID must preserve root ownership of media directories",
+);
+validateMedia(renderConfig(["docker-compose.yml"], "media"));
+const combined = renderConfig(["docker-compose.yml"], "coding,harness,media");
+validateMedia(combined);
+assert(
+  combined.services["coding-worker"] &&
+    combined.services["coding-egress-proxy"] &&
+    combined.services["lody-bridge"],
+  "media must compose with coding and harness profiles",
+);
+
 assert(!services["lody-bridge"], "lody-bridge must stay behind the harness profile");
 const harness = renderConfig(["docker-compose.yml"], "harness");
 const bridge = harness.services["lody-bridge"];
@@ -107,5 +275,6 @@ assert(
   direct.services["nsfw-api"].ports?.length === 1,
   "legacy direct nsfw-api port mapping is missing",
 );
+validateMedia(renderConfig(["docker-compose.yml", "docker-compose.direct.yml"], "media"));
 
 process.stdout.write("Dokploy and legacy Compose contracts are valid.\n");

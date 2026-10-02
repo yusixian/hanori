@@ -113,5 +113,13 @@ COPY --chmod=755 infrastructure/coding-worker/entrypoint.sh /usr/local/bin/codin
 ENTRYPOINT ["/usr/local/bin/coding-worker-entrypoint"]
 CMD ["node", "--max-old-space-size=768", "packages/coding-worker/dist/index.js"]
 
+# Audio conversion has no network, application dependencies, or provider credentials.
+FROM node:22-alpine AS media-worker
+RUN apk add --no-cache ffmpeg tini && mkdir -p /opt/media-worker /media-control /media-jobs
+COPY infrastructure/media-worker/server.mjs /opt/media-worker/server.mjs
+USER node
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "--max-old-space-size=128", "/opt/media-worker/server.mjs"]
+
 # Keep the existing default `docker build .` behavior on the main application image.
 FROM runner AS app

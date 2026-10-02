@@ -70,3 +70,12 @@ test("sends a typed web tool key only to its own tool and never echoes key indic
   });
   expect(JSON.stringify(body.webToolsConfig)).not.toContain("hasApiKey");
 });
+
+test("defaults unified search to enabled and retains an explicit false in the save body", () => {
+  const input = fixture();
+  expect(buildAiConfigSaveBody(input).unifiedSearchEnabled).toBe(true);
+  input.config = { ...input.config, unifiedSearchEnabled: false };
+  expect(buildAiConfigSaveBody(input).unifiedSearchEnabled).toBe(false);
+  input.config = { ...input.config, unifiedSearchEnabled: true };
+  expect(buildAiConfigSaveBody(input).unifiedSearchEnabled).toBe(true);
+});

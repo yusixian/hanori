@@ -105,3 +105,34 @@ describe("tool prompt compatibility", () => {
     ).toBe(false);
   });
 });
+
+describe("unified search capabilities", () => {
+  it("retains authorized source capabilities after legacy tool names disappear", async () => {
+    const { createUnifiedSearchTools } = await import("../tools/search.js");
+    const tools = {
+      ...createWebTools({ config: { enabled: true } }),
+      ...createUnifiedSearchTools(
+        ["web", "memory", "artwork"].map((scope) => ({
+          id: scope,
+          scope,
+          description: scope,
+          pagination: "single_page" as const,
+          search: async () => ({ status: "empty" as const, items: [], hasMore: false }),
+        })),
+      ),
+      get_profile: {},
+      multi_message: {},
+    };
+    expect(deriveCapabilitiesFromTools(tools)).toEqual(
+      deriveToolPromptCapabilities({
+        hasBotMemoryTool: true,
+        hasMemoryTool: true,
+        artworkToolsEnabled: true,
+        unifiedSearchEnabled: true,
+        webToolsConfig: { enabled: true, search: { provider: "tavily", hasApiKey: true } },
+      }),
+    );
+    expect(deriveCapabilitiesFromTools({ search: {} }).has("bot-memory")).toBe(false);
+    expect(deriveCapabilitiesFromTools({ search: {} }).has("web-search")).toBe(false);
+  });
+});

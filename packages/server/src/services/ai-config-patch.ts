@@ -257,6 +257,8 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       existingMigrated?.webToolsConfig,
       patch.webToolsConfig,
     ),
+    unifiedSearchEnabled:
+      patch.unifiedSearchEnabled ?? existingMigrated?.unifiedSearchEnabled ?? true,
     imageGenerationReceiptConfig:
       patch.imageGenerationReceiptConfig === undefined
         ? existingMigrated?.imageGenerationReceiptConfig

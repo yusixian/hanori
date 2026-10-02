@@ -11,6 +11,17 @@ export interface ExtendedToolsPromptOptions {
 
 export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): string {
   const lines: string[] = [];
+  const unified = opts.capabilities.has("unified-search");
+  if (unified) {
+    lines.push("统一检索工具:");
+    lines.push(
+      "- search: 使用工具定义中列出的 scope/provider 搜索已授权来源；同一 scope 有多个 provider 时必须明确选择。query、page、limit 和 filters 遵循各来源说明；不支持分页的来源仅允许 page=1。",
+    );
+    lines.push(
+      "- read_reference: 分段读取本轮搜索结果的 reference，使用 nextOffset 继续；不可读取其他回合、其他委派或任意 URL。",
+    );
+    lines.push("");
+  }
 
   // Behavior tools (always available)
   lines.push("你拥有以下高级行为工具:");
@@ -57,7 +68,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push("信息获取工具:");
     lines.push("- get_current_time: 获取当前时间");
     if (opts.capabilities.has("web-search")) {
-      lines.push("- web_search: 搜索网络获取最新信息");
+      lines.push(
+        unified
+          ? "- search(scope=web): 搜索网络获取最新信息"
+          : "- web_search: 搜索网络获取最新信息",
+      );
     }
     lines.push("- fetch_webpage: 获取网页正文内容");
   }
@@ -104,7 +119,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   if (opts.capabilities.has("bot-memory")) {
     lines.push("");
     lines.push("长期记忆工具:");
-    lines.push("- recall_memories: 搜索当前聊天可见的长期记忆");
+    lines.push(
+      unified
+        ? "- search(scope=memory): 搜索当前聊天可见的长期记忆"
+        : "- recall_memories: 搜索当前聊天可见的长期记忆",
+    );
     lines.push("- save_memory（可用时）: 有明确证据和长期价值时保存；无需记住每次个人信息披露");
     lines.push("- update_memory（可用时）: 纠正已有记忆或设置到期时间");
     lines.push("- retire_memory（可用时）: 停用过时、重复的记忆");
@@ -116,12 +135,18 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     const platforms = getArtworkPlatforms();
     lines.push("");
     lines.push(`作品图片抓取工具（支持: ${platforms.join(", ")}）:`);
-    lines.push("- fetch_artwork_info: 从 URL 获取作品信息（标题、作者、图片列表、标签等）");
+    lines.push(
+      unified
+        ? "- search(scope=artwork, query=作品URL): 获取作品信息（标题、作者、图片列表、标签等）"
+        : "- fetch_artwork_info: 从 URL 获取作品信息（标题、作者、图片列表、标签等）",
+    );
     lines.push("- send_artwork: 发送作品图片（支持单图/多图、NSFW 遮罩）");
     lines.push("");
     lines.push("作品链接:");
     lines.push(
-      "- 用户消息里有 pixiv.net/artworks/、twitter.com/.../status/、x.com/.../status/ 等作品链接时，用 fetch_artwork_info 获取作品信息，再用 send_artwork 把图片发给用户",
+      unified
+        ? "- 用户消息里有支持的作品链接时，用 search(scope=artwork, query=作品URL) 获取作品信息，再用 send_artwork 把图片发给用户"
+        : "- 用户消息里有 pixiv.net/artworks/、twitter.com/.../status/、x.com/.../status/ 等作品链接时，用 fetch_artwork_info 获取作品信息，再用 send_artwork 把图片发给用户",
     );
     lines.push("- 对 NSFW/R18 内容开启 has_spoiler 遮罩");
     lines.push("- 发完图片后可以用自然语言评论作品");

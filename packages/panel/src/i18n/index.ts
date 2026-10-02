@@ -7,12 +7,14 @@ import { auth as authEn } from "./locales/en/auth";
 import { bots as botsEn } from "./locales/en/bots";
 import { botData as botDataEn } from "./locales/en/bot-data";
 import { common as commonEn } from "./locales/en/common";
+import { plugins as pluginsEn } from "./locales/en/plugins";
 import { admin as adminZhCN } from "./locales/zh-CN/admin";
 import { aiSettings as aiSettingsZhCN } from "./locales/zh-CN/ai-settings";
 import { auth as authZhCN } from "./locales/zh-CN/auth";
 import { bots as botsZhCN } from "./locales/zh-CN/bots";
 import { botData as botDataZhCN } from "./locales/zh-CN/bot-data";
 import { common as commonZhCN } from "./locales/zh-CN/common";
+import { plugins as pluginsZhCN } from "./locales/zh-CN/plugins";
 
 export const supportedLocales = ["en", "zh-CN"] as const;
 export type SupportedLocale = (typeof supportedLocales)[number];
@@ -61,6 +63,7 @@ void i18n.use(initReactI18next).init({
       bots: botsEn,
       botData: botDataEn,
       aiSettings: aiSettingsEn,
+      plugins: pluginsEn,
     },
     "zh-CN": {
       common: commonZhCN,
@@ -69,6 +72,7 @@ void i18n.use(initReactI18next).init({
       bots: botsZhCN,
       botData: botDataZhCN,
       aiSettings: aiSettingsZhCN,
+      plugins: pluginsZhCN,
     },
   },
   lng: detectInitialLocale(),

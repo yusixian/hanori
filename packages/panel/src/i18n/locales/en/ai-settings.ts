@@ -778,6 +778,12 @@ export const aiSettings = {
     sectionTokens: "~{{count}} tokens",
     unestimatedParts: "{{count}} non-text parts unestimated",
   },
+  unifiedSearch: {
+    title: "Unified search",
+    enable: "Use unified search",
+    description:
+      "Use one search tool for existing sources that this Bot is authorized to access. Turn this off to restore the previous search tools. Source permissions stay the same.",
+  },
   webTools: {
     title: "Web Tools",
     enable: "Enable Web Tools",

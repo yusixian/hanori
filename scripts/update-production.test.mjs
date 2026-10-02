@@ -60,13 +60,34 @@ function fixture() {
   const bin = join(directory, "bin");
   mkdirSync(bin);
   const calls = join(directory, "docker-calls");
+  const mediaContainer = join(directory, "media-container");
   writeFileSync(
     join(bin, "docker"),
     `#!/bin/bash
 printf '%s\\n' "$*" >> "$TEST_DOCKER_CALLS"
 case "$*" in
-  *"config --environment"*) printf 'COMPOSE_PROFILES=\\nCODING_WORKER_SECRET=\\n';;
-  *"config --services"*) printf 'app\\ndb\\n';;
+  *"config --environment"*) printf 'COMPOSE_PROFILES=%s\\nCODING_WORKER_SECRET=%s\\nMEDIA_WORKER_SECRET=%s\\n' "\${TEST_COMPOSE_PROFILES:-}" "\${TEST_CODING_SECRET:-}" "\${TEST_MEDIA_SECRET:-}";;
+  *"config --format json"*) printf '{"services":{"app":{"environment":{"MEDIA_WORKER_SECRET":"%s"}}}}\\n' "\${TEST_MEDIA_JSON_SECRET:-}";;
+  *"config --services"*)
+    printf 'app\\ndb\\n'
+    if [[ ",\${TEST_COMPOSE_PROFILES:-}," == *,coding,* ]]; then printf 'coding-worker\\ncoding-egress-proxy\\n'; fi
+    if [[ ",\${TEST_COMPOSE_PROFILES:-}," == *,media,* ]]; then printf 'media-worker\\n'; fi
+    if [[ ",\${TEST_COMPOSE_PROFILES:-}," == *,harness,* ]]; then printf 'lody-bridge\\n'; fi
+    ;;
+  *"label=com.docker.compose.service=media-worker"*)
+    if [[ -f "$TEST_MEDIA_CONTAINER" ]]; then printf 'media-fixture\\n'; fi
+    ;;
+  "stop media-fixture") [[ "\${TEST_MEDIA_STOP_FAIL:-}" != 1 ]];;
+  "rm media-fixture")
+    if [[ "\${TEST_MEDIA_REMOVE_FAIL:-}" != 1 ]]; then rm -f "$TEST_MEDIA_CONTAINER"; fi
+    ;;
+  *"ps -q media-worker"*) printf 'media-fixture\\n';;
+  *"ps -q coding-worker"*) printf 'coding-fixture\\n';;
+  *"ps -q coding-egress-proxy"*) printf 'proxy-fixture\\n';;
+  "inspect "*"media-fixture"*)
+    if [[ "\${TEST_MEDIA_HEALTH_FAIL:-}" == 1 ]]; then printf 'unhealthy\\n'; else printf 'healthy\\n'; fi
+    ;;
+  "inspect "*) printf 'healthy\\n';;
   *"pg_dump"*) printf 'verified fake dump';;
   *"pg_restore --list"*) cat >/dev/null; [[ "\${TEST_BACKUP_FAIL:-}" != 1 ]];;
   *"psql"*) printf '0\\n';;
@@ -76,20 +97,26 @@ esac
 `,
   );
   chmodSync(join(bin, "docker"), 0o755);
+  writeFileSync(join(bin, "sleep"), "#!/bin/bash\nexit 0\n");
+  chmodSync(join(bin, "sleep"), 0o755);
   const backup = join(directory, "backups");
-  const run = (extraEnv = {}, args = ["--version", "v1.0.0"]) =>
-    spawnSync("bash", [join(source, "scripts/update-production.sh"), ...args], {
+  const run = (extraEnv = {}, args = ["--version", "v1.0.0"]) => {
+    if (extraEnv.TEST_MEDIA_EXISTING === "1") writeFileSync(mediaContainer, "existing container");
+    return spawnSync("bash", [join(source, "scripts/update-production.sh"), ...args], {
       encoding: "utf8",
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH}`,
         TEST_DOCKER_CALLS: calls,
+        TEST_MEDIA_CONTAINER: mediaContainer,
         DEPLOY_BACKUP_DIR: backup,
         DEPLOY_PROJECT_NAME: "existing-instance",
         ...extraEnv,
+        TEST_MEDIA_JSON_SECRET: JSON.stringify(extraEnv.TEST_MEDIA_SECRET ?? "").slice(1, -1),
       },
     });
-  return { source, before, target, git, calls, backup, run };
+  };
+  return { source, before, target, git, calls, backup, mediaContainer, run };
 }
 
 describe("release upgrades", () => {
@@ -132,5 +159,130 @@ describe("release upgrades", () => {
     git("checkout", "--detach", target);
     expect(run({}, ["--version", "v0.9.0"]).status).not.toBe(0);
     expect(readFileSync(calls, "utf8")).not.toContain("pg_dump");
+  });
+
+  it.each([
+    { TEST_COMPOSE_PROFILES: "media" },
+    { TEST_COMPOSE_PROFILES: "media", TEST_MEDIA_SECRET: "too-short" },
+    { TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters" },
+    {
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters\nextra-line",
+    },
+    {
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters\r",
+    },
+    { TEST_COMPOSE_PROFILES: "media", TEST_MEDIA_SECRET: "x".repeat(31) },
+    { TEST_COMPOSE_PROFILES: "media", TEST_MEDIA_SECRET: "x".repeat(257) },
+    {
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: 'synthetic-media-secret-at-least-32-characters"suffix',
+    },
+    {
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters\\suffix",
+    },
+    {
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-charactersé",
+    },
+    { TEST_MEDIA_SECRET: "\nsynthetic-media-secret-at-least-32-characters" },
+  ])("requires the media profile and a strong secret together before backup: %j", (environment) => {
+    const { before, git, calls, backup, run } = fixture();
+    const result = run(environment);
+    expect(result.status).not.toBe(0);
+    expect(git("rev-parse", "HEAD")).toBe(before);
+    expect(readFileSync(calls, "utf8")).not.toContain("pg_dump");
+    expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
+    if (environment.TEST_MEDIA_SECRET)
+      expect(result.stdout + result.stderr).not.toContain(environment.TEST_MEDIA_SECRET);
+  });
+
+  it("builds, starts and checks media alongside the existing coding and harness profiles", () => {
+    const { target, calls, backup, run } = fixture();
+    const result = run({
+      TEST_COMPOSE_PROFILES: "coding,harness,media",
+      TEST_CODING_SECRET: "synthetic-coding-secret",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const commands = readFileSync(calls, "utf8");
+    expect(commands).toContain("build app coding-egress-proxy coding-worker media-worker");
+    expect(commands).toContain("ps -q coding-worker");
+    expect(commands).toContain("ps -q coding-egress-proxy");
+    expect(commands).toContain("ps -q media-worker");
+    expect(commands).toContain("inspect --format {{.State.Health.Status}} media-fixture");
+    expect(commands).toContain("ps app db coding-worker coding-egress-proxy media-worker");
+    expect(readFileSync(join(backup, "last-deployed-commit"), "utf8").trim()).toBe(target);
+  });
+
+  it.each(["x".repeat(32), "A+/=_-".repeat(43).slice(0, 256)])(
+    "accepts permitted transport secret characters at both length bounds",
+    (secret) => {
+      const { calls, run } = fixture();
+      const result = run({ TEST_COMPOSE_PROFILES: "media", TEST_MEDIA_SECRET: secret });
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(calls, "utf8")).toContain("config --format json");
+      expect(result.stdout + result.stderr).not.toContain(secret);
+    },
+  );
+
+  it("includes media in a forced incremental startup without restarting database services", () => {
+    const { calls, run } = fixture();
+    expect(run().status).toBe(0);
+    writeFileSync(calls, "");
+    const result = run(
+      {
+        TEST_COMPOSE_PROFILES: "media",
+        TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
+      },
+      ["--version", "v1.0.0", "--force"],
+    );
+    expect(result.status, result.stderr).toBe(0);
+    const commands = readFileSync(calls, "utf8");
+    expect(commands).toContain("build app media-worker");
+    expect(commands).toContain("up -d app media-worker");
+    expect(commands).not.toContain("up -d --no-deps app");
+    expect(commands).not.toContain("up -d app db");
+  });
+
+  it("stops and removes a disabled media container before startup while retaining its volumes", () => {
+    const { calls, mediaContainer, run } = fixture();
+    const result = run({ TEST_MEDIA_EXISTING: "1" });
+    expect(result.status, result.stderr).toBe(0);
+    const commands = readFileSync(calls, "utf8");
+    expect(commands).toContain("label=com.docker.compose.project=existing-instance");
+    expect(commands.indexOf("stop media-fixture")).toBeLessThan(
+      commands.indexOf("rm media-fixture"),
+    );
+    expect(commands.indexOf("rm media-fixture")).toBeLessThan(commands.indexOf(" up -d"));
+    expect(commands).not.toContain("volume rm");
+    expect(commands).not.toMatch(/(?:rm|down)[^\n]*(?: -v|--volumes)/);
+    expect(existsSync(mediaContainer)).toBe(false);
+  });
+
+  it.each([{ TEST_MEDIA_STOP_FAIL: "1" }, { TEST_MEDIA_REMOVE_FAIL: "1" }])(
+    "refuses startup if a disabled worker cannot be removed: %j",
+    (failure) => {
+      const { calls, backup, run } = fixture();
+      const result = run({ TEST_MEDIA_EXISTING: "1", ...failure });
+      expect(result.status).not.toBe(0);
+      expect(readFileSync(calls, "utf8")).not.toContain(" up -d");
+      expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
+    },
+  );
+
+  it("does not record deployment success when app is ready but media-worker remains unhealthy", () => {
+    const { calls, backup, run } = fixture();
+    const result = run({
+      TEST_COMPOSE_PROFILES: "media",
+      TEST_MEDIA_SECRET: "synthetic-media-secret-at-least-32-characters",
+      TEST_MEDIA_HEALTH_FAIL: "1",
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("音频转换 worker");
+    expect(readFileSync(calls, "utf8")).toContain("/api/health/ready");
+    expect(existsSync(join(backup, "last-deployed-commit"))).toBe(false);
   });
 });

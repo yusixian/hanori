@@ -71,6 +71,7 @@ export const common = {
     backup: "备份",
     timers: "定时任务",
     mcp: "MCP",
+    plugins: "插件市场",
     apiTest: "API 测试",
     harness: "Dev Harness",
     logs: "日志",

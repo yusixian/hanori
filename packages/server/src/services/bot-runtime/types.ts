@@ -1,3 +1,4 @@
+import type { PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
 import type { Database, bots } from "@cos-tool-bot/database";
 import type { ImageGenerationPort, TimerRecord, UsageGovernancePort } from "@cos-tool-bot/shared";
@@ -52,6 +53,7 @@ export interface BotRuntimeInput {
  * instance they were assembled with.
  */
 export interface BotRuntimeServices {
+  plugins?: PluginRuntimePort;
   db: Database;
   logger: Logger;
   timerRegistry: TimerRegistry;

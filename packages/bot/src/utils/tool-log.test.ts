@@ -63,3 +63,105 @@ describe("toToolLogValue", () => {
     });
   });
 });
+
+describe("unified search log privacy", () => {
+  it("keeps ordinary queries but omits signed URLs, metadata, snippets and reference bodies", async () => {
+    const { vi } = await import("vitest");
+    const { wrapToolsWithLogging } = await import("./tool-log.js");
+    const onLog = vi.fn();
+    const signedUrl =
+      "https://user:private-password@example.com/art?signature=private-signature#private-fragment";
+    const tools = wrapToolsWithLogging(
+      {
+        search: {
+          execute: async () => ({
+            status: "ok",
+            page: 1,
+            limit: 1,
+            hasMore: false,
+            items: [
+              {
+                id: signedUrl,
+                url: signedUrl,
+                summary: "private search summary",
+                fields: { notes: "private notes" },
+                reference: "opaque-reference",
+              },
+            ],
+          }),
+        },
+        read_reference: {
+          execute: async () => ({
+            status: "ok",
+            reference: "opaque-reference",
+            offset: 0,
+            hasMore: false,
+            source: signedUrl,
+            id: signedUrl,
+            provider: "builtin.web",
+            content: "private reference body",
+          }),
+        },
+      } as unknown as Record<string, import("ai").Tool>,
+      { onLog },
+    );
+    const options = { toolCallId: "test", messages: [] };
+    const result = await tools.search!.execute!(
+      { scope: "web", query: "Exact_TAG ordinary query" } as never,
+      options,
+    );
+    expect(result).toMatchObject({ status: "ok" });
+    await tools.search!.execute!({ scope: "artwork", query: signedUrl } as never, options);
+    await expect(
+      tools.read_reference!.execute!({ reference: "opaque-reference" } as never, options),
+    ).resolves.toMatchObject({ content: "private reference body" });
+    const logs = JSON.stringify(onLog.mock.calls);
+    expect(logs).toContain("Exact_TAG ordinary query");
+    expect(logs).toContain("https://example.com/art");
+    expect(logs).toContain("opaque-reference");
+    expect(logs).toContain("contentLength");
+    for (const value of [
+      "private-password",
+      "private-signature",
+      "private-fragment",
+      "private reference body",
+      "private search summary",
+      "private notes",
+    ])
+      expect(logs).not.toContain(value);
+  });
+
+  it("marks failed search statuses as failed in logs and diagnostics", async () => {
+    const { vi } = await import("vitest");
+    const { wrapToolsWithLogging } = await import("./tool-log.js");
+    const onLog = vi.fn();
+    const onDiagnostic = vi.fn();
+    const tools = wrapToolsWithLogging(
+      {
+        search: {
+          execute: async () => ({
+            status: "forbidden",
+            items: [],
+            page: 1,
+            limit: 1,
+            hasMore: false,
+          }),
+        },
+      } as unknown as Record<string, import("ai").Tool>,
+      { onLog, onDiagnostic },
+    );
+    await tools.search!.execute!({ scope: "github", query: "hello" } as never, {
+      toolCallId: "test",
+      messages: [],
+    });
+    expect(onLog).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          success: false,
+          output: expect.objectContaining({ status: "forbidden", itemCount: 0 }),
+        }),
+      }),
+    );
+    expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "failed" }));
+  });
+});

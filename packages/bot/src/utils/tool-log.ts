@@ -1,6 +1,7 @@
 import type { RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import type { BotLogEntry } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
+import { getToolDescriptor } from "../tools/descriptors.js";
 
 const BEARER_VALUE = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const MAX_STRING_CHARS = 16_384;
@@ -134,6 +135,63 @@ function serializedLength(value: unknown): number {
   }
 }
 
+function loggedToolOutput(name: string, output: unknown): unknown {
+  const mode = getToolDescriptor(name)?.outputLog;
+  if (!mode) return toToolLogValue(output);
+  if (typeof output !== "object" || output === null) return { privateOutput: true };
+  const value = output as Record<string, unknown>;
+  if (mode === "search_metadata")
+    return toToolLogValue({
+      ...Object.fromEntries(
+        ["status", "page", "limit", "hasMore", "truncated"]
+          .filter((key) => Object.hasOwn(value, key))
+          .map((key) => [key, value[key]]),
+      ),
+      itemCount: Array.isArray(value.items) ? value.items.length : 0,
+      references: Array.isArray(value.items)
+        ? value.items
+            .slice(0, 20)
+            .map((item) =>
+              typeof item === "object" && item !== null && "reference" in item
+                ? item.reference
+                : undefined,
+            )
+        : [],
+      privateOutput: true,
+    });
+  return toToolLogValue({
+    ...Object.fromEntries(
+      ["status", "reference", "offset", "nextOffset", "hasMore", "truncated", "provider"]
+        .filter((key) => Object.hasOwn(value, key))
+        .map((key) => [key, value[key]]),
+    ),
+    contentLength: typeof value.content === "string" ? value.content.length : 0,
+    privateOutput: true,
+  });
+}
+
+function loggedToolInput(name: string, input: unknown): unknown {
+  if (
+    name !== "search" ||
+    typeof input !== "object" ||
+    input === null ||
+    !("query" in input) ||
+    typeof input.query !== "string"
+  )
+    return toToolLogValue(input);
+  try {
+    const url = new URL(input.query);
+    if (!/^https?:$/.test(url.protocol)) return toToolLogValue(input);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return toToolLogValue({ ...input, query: url.toString() });
+  } catch {
+    return toToolLogValue(input);
+  }
+}
+
 export function wrapToolsWithLogging(
   tools: Record<string, Tool>,
   options: {
@@ -175,7 +233,7 @@ export function wrapToolsWithLogging(
             step: options.getStep?.(),
             call,
             toolName: name,
-            input: toToolLogValue(input),
+            input: loggedToolInput(name, input),
             argsLength: serializedLength(input),
             toolCallId,
           },
@@ -187,7 +245,10 @@ export function wrapToolsWithLogging(
             output !== null &&
             (("error" in output && !!output.error) ||
               ("success" in output && output.success === false) ||
-              ("ok" in output && output.ok === false));
+              ("ok" in output && output.ok === false) ||
+              ((name === "search" || name === "read_reference") &&
+                "status" in output &&
+                !["ok", "empty"].includes(String(output.status))));
           options.onDiagnostic?.({
             stage: "tool",
             outcome: failed ? "failed" : "succeeded",
@@ -202,9 +263,9 @@ export function wrapToolsWithLogging(
               step: options.getStep?.(),
               call,
               toolName: name,
-              success: true,
+              success: !failed,
               durationMs: Date.now() - startedAt,
-              output: toToolLogValue(output),
+              output: loggedToolOutput(name, output),
               resultLength: serializedLength(output),
               toolCallId,
             },

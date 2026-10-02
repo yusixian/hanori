@@ -87,16 +87,22 @@ function requestMethod(input: RequestInfo | URL, init?: RequestInit) {
 function stubAiSettingsFetch({
   saveResponse,
   selection,
+  config = DEFAULT_CONFIG,
+  previewResponse,
 }: {
   saveResponse?: () => Promise<Response> | Response;
   selection?: GlobalAiSelection;
+  config?: AiConfigPublic;
+  previewResponse?: () => Response;
 } = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/api/bots/test-id/ai-config")) {
       if (requestMethod(input, init) === "PUT" && saveResponse) return saveResponse();
-      return Response.json({ ok: true, data: DEFAULT_CONFIG, revision: "revision-1" });
+      return Response.json({ ok: true, data: config, revision: "revision-1" });
     }
+    if (url.endsWith("/api/bots/test-id/ai-config/prompt-preview") && previewResponse)
+      return previewResponse();
     if (url.endsWith("/api/bots/test-id/ai-selection") && selection) {
       return Response.json({ ok: true, data: selection, canManage: true });
     }
@@ -111,6 +117,63 @@ function stubAiSettingsFetch({
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+test.each([undefined, false])(
+  "defaults unified search on and saves its toggled value when stored as %s",
+  async (unifiedSearchEnabled) => {
+    const config = { ...DEFAULT_CONFIG, unifiedSearchEnabled };
+    const expected = unifiedSearchEnabled === false;
+    const fetchMock = stubAiSettingsFetch({
+      config,
+      saveResponse: () =>
+        Response.json({
+          ok: true,
+          data: { ...config, unifiedSearchEnabled: expected },
+          revision: "revision-2",
+        }),
+    });
+    await renderAiSettings("/bots/test-id/ai?section=tools");
+    const toggle = page.getByRole("switch", { name: "Use unified search" });
+    if (unifiedSearchEnabled === false) await expect.element(toggle).not.toBeChecked();
+    else await expect.element(toggle).toBeChecked();
+    await toggle.click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.element(page.getByText("All changes saved")).toBeVisible();
+    const savedCall = fetchMock.mock.calls.find(
+      ([input, init]) => requestMethod(input, init) === "PUT",
+    );
+    expect(savedCall).toBeDefined();
+    expect(JSON.parse(String(savedCall![1]?.body)).unifiedSearchEnabled).toBe(expected);
+    if (expected) await expect.element(toggle).toBeChecked();
+    else await expect.element(toggle).not.toBeChecked();
+  },
+);
+
+test.each([undefined, false])(
+  "prompt previews include the effective unified search setting when stored as %s",
+  async (unifiedSearchEnabled) => {
+    const fetchMock = stubAiSettingsFetch({
+      config: { ...DEFAULT_CONFIG, unifiedSearchEnabled },
+      previewResponse: () =>
+        Response.json({
+          ok: true,
+          data: { fullPrompt: "Synthetic preview", estimatedTokens: 3, trace: null },
+        }),
+    });
+    await renderAiSettings("/bots/test-id/ai?section=tools");
+    await expect.element(page.getByRole("switch", { name: "Use unified search" })).toBeVisible();
+    await page.getByRole("button", { name: "Preview Prompt", exact: true }).click();
+    await expect.element(page.getByRole("dialog", { name: "Prompt Preview" })).toBeVisible();
+    await expect.element(page.getByText("Synthetic preview")).toBeVisible();
+    const previewCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith("/ai-config/prompt-preview"),
+    );
+    expect(previewCall).toBeDefined();
+    expect(JSON.parse(String(previewCall![1]?.body)).unifiedSearchEnabled).toBe(
+      unifiedSearchEnabled !== false,
+    );
+  },
+);
 
 function stubAiSettingsFetchWithDeferredConfig() {
   let resolveConfig!: (response: Response) => void;
@@ -561,6 +624,39 @@ test("finds settings with the keyboard and restores deep links through history",
     .element(page.getByRole("button", { name: /Timeouts/ }))
     .toHaveAttribute("aria-expanded", "true");
   expect(document.activeElement?.textContent).toContain("Test history back");
+});
+
+test("finds unified search from another category, focuses its switch and restores its deep link", async () => {
+  await i18n.changeLanguage("zh-CN");
+  await page.viewport(390, 844);
+  stubAiSettingsFetch();
+  const { rendered, router } = await renderAiSettings("/bots/test-id/ai?section=memory");
+
+  const search = page.getByRole("combobox", { name: "搜索设置…" });
+  await search.fill("统一检索");
+  await expect.element(page.getByRole("option", { name: /统一检索/ })).toBeVisible();
+  await userEvent.keyboard("{Enter}");
+
+  const toggle = page.getByRole("switch", { name: "使用统一检索" });
+  await expect.element(toggle).toBeVisible();
+  await expect.element(toggle).toHaveFocus();
+  await expect.element(toggle).toHaveAttribute("id", "ai-setting-unified-search-trigger");
+  await expect
+    .element(page.getByLabelText("Current query"))
+    .toHaveTextContent("?section=tools&setting=unified-search");
+  await expect.element(toggle).toBeChecked();
+  await userEvent.keyboard(" ");
+  await expect.element(toggle).not.toBeChecked();
+
+  const deepLink = `/bots/test-id/ai${router.state.location.search}`;
+  await rendered.unmount();
+  await renderAiSettings(deepLink);
+  await expect.element(page.getByRole("switch", { name: "使用统一检索" })).toBeVisible();
+  await expect.element(page.getByRole("heading", { name: "统一检索", exact: true })).toBeVisible();
+  await expect
+    .element(page.getByLabelText("Current query"))
+    .toHaveTextContent("?section=tools&setting=unified-search");
+  expect(document.getElementById("ai-setting-unified-search")).not.toBeNull();
 });
 
 test("does not select a search result while confirming IME input", async () => {

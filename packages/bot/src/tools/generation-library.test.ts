@@ -19,6 +19,21 @@ function execute(tool: Tool, input: Record<string, unknown>) {
 }
 
 describe("generation library tools", () => {
+  it("disables query-hit persistence for read-only unified search", async () => {
+    const listCharacters = vi.fn().mockResolvedValue({ data: [], total: 0 });
+    const tools = createGenerationLibraryTools({
+      port: { listCharacters } as unknown as GenerationLibraryPort,
+      getActor: () => actor,
+      readOnly: true,
+      trackSearchHits: false,
+    });
+    await execute(tools.search_generation_characters!, { search: "白发", page: 1, limit: 10 });
+    expect(listCharacters).toHaveBeenCalledWith(
+      actor,
+      { search: "白发", page: 1, limit: 10 },
+      false,
+    );
+  });
   it("counts model character searches while identifying results as stored data", async () => {
     const listCharacters = vi.fn().mockResolvedValue({ data: [], total: 0 });
     const port = { listCharacters } as unknown as GenerationLibraryPort;

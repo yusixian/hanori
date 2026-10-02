@@ -32,6 +32,7 @@ function emptyAiConfigPublic(): AiConfigPublic {
     },
     groupOverrides: {},
     providers: [],
+    unifiedSearchEnabled: true,
     executionConfig: DEFAULT_AI_EXECUTION_CONFIG,
   };
 }
@@ -129,6 +130,7 @@ export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiC
     memoryConfig: migrated.memoryConfig,
     stickerPacks: migrated.stickerPacks,
     webToolsConfig: toWebToolsConfigPublic(migrated.webToolsConfig),
+    unifiedSearchEnabled: migrated.unifiedSearchEnabled !== false,
     imageGenerationReceiptConfig: migrated.imageGenerationReceiptConfig,
     agentToolsConfig: migrated.agentToolsConfig,
     githubToolsConfig: toGitHubToolsConfigPublic(migrated.githubToolsConfig),

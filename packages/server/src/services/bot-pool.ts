@@ -1,3 +1,4 @@
+import type { PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
@@ -201,6 +202,10 @@ export class BotPool {
 
   getGenerationLibraryService(): GenerationLibraryService {
     return this.generationLibraryService;
+  }
+
+  setPlugins(plugins: PluginRuntimePort) {
+    this.services.plugins = plugins;
   }
 
   setMcpClientManager(manager: McpClientManager) {

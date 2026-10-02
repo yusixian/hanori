@@ -407,6 +407,48 @@
       "when": 1790344570392,
       "tag": "0057_harness_topic_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1790945126441,
+      "tag": "0058_sloppy_jocasta",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1790949267941,
+      "tag": "0059_superb_lifeguard",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1790949773487,
+      "tag": "0060_gigantic_cargill",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1790950642395,
+      "tag": "0061_sour_meteorite",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1790951584007,
+      "tag": "0062_black_midnight",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1790953372977,
+      "tag": "0063_thin_power_pack",
+      "breakpoints": true
     }
   ]
 }

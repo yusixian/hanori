@@ -32,6 +32,8 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
+  "search",
+  "read_reference",
   "get_runtime_status",
   "get_effective_config",
   "get_request_trace",
@@ -77,6 +79,12 @@ describe("tool descriptors", () => {
   });
 
   it("keeps the per-tool call budgets", () => {
+    expect(getToolCallLimit("search")).toBe(64);
+    expect(getToolCallLimit("read_reference")).toBe(128);
+    expect(getToolCacheKey("search", { scope: "web", query: "A" })).toBeUndefined();
+    expect(
+      getToolCacheKey("read_reference", { reference: "ref", offset: 0, limit: 1 }),
+    ).toBeUndefined();
     expect(getToolCallLimit("fetch_webpage")).toBe(128);
     expect(getToolCallLimit("web_search")).toBe(64);
     expect(getToolCallLimit("fetch_artwork_info")).toBe(64);

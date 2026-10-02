@@ -1,3 +1,5 @@
+import type { PluginTurnSession } from "@cos-tool-bot/shared";
+import { createPluginTools } from "./plugins.js";
 import type {
   AgentToolsConfig,
   BotLogEntry,
@@ -10,7 +12,8 @@ import { DEFAULT_SUB_AGENT_MAX_STEPS, DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-b
 import type { LanguageModel, Tool } from "ai";
 import { generateText, stepCountIs, tool } from "ai";
 import { z } from "zod";
-import { zodToAiSchema } from "./utils.js";
+import { createRequestCache, wrapToolsWithCache, zodToAiSchema } from "./utils.js";
+import { createBuiltinSearchProviders, createUnifiedSearchTools } from "./search.js";
 import { createWebTools } from "./web.js";
 import { createDanbooruTools } from "./danbooru.js";
 import { createGenerationLibraryTools } from "./generation-library.js";
@@ -28,6 +31,7 @@ function buildAgentDefinitions(
   generationLibraryPort?: GenerationLibraryPort,
   getActor?: () => GenerationLibraryActor,
   onLog?: (entry: BotLogEntry) => void | Promise<void>,
+  unifiedSearchEnabled = false,
 ): Record<string, AgentDefinition> {
   // Build web tools for researcher if available
   let webTools: Record<string, Tool> = {
@@ -36,9 +40,15 @@ function buildAgentDefinitions(
       generationLibraryPort,
       getActor,
       onLog,
+      persistSearchResults: !unifiedSearchEnabled,
     }),
     ...(generationLibraryPort && getActor
-      ? createGenerationLibraryTools({ port: generationLibraryPort, getActor, readOnly: true })
+      ? createGenerationLibraryTools({
+          port: generationLibraryPort,
+          getActor,
+          readOnly: true,
+          trackSearchHits: !unifiedSearchEnabled,
+        })
       : {}),
   };
   if (webToolsConfig?.enabled) {
@@ -93,6 +103,8 @@ export interface AgentToolsOptions {
   timeoutConfig?: TimeoutConfig;
   generationLibraryPort?: GenerationLibraryPort;
   getActor?: () => GenerationLibraryActor;
+  unifiedSearchEnabled?: boolean;
+  plugins?: (signal?: AbortSignal) => Promise<PluginTurnSession>;
 }
 
 export function createAgentTools(options: AgentToolsOptions): Record<string, Tool> {
@@ -118,6 +130,7 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
     generationLibraryPort,
     getActor,
     onLog,
+    options.unifiedSearchEnabled === true,
   );
   const availableAgents = Object.keys(agentDefs);
 
@@ -133,7 +146,9 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
           context: z.string().optional().describe("相关上下文信息"),
         }),
       ),
-      execute: async ({ agent, task, context }) => {
+      execute: async ({ agent, task, context }, executionOptions) => {
+        const parentSignal = executionOptions?.abortSignal;
+        parentSignal?.throwIfAborted();
         const def = agentDefs[agent];
         if (!def)
           return { error: `Unknown agent: ${agent}. Available: ${availableAgents.join(", ")}` };
@@ -141,7 +156,11 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
         const subAgentModel = agentConfig?.subAgentModel ?? model;
         const maxSteps = agentConfig?.maxSubAgentSteps ?? def.maxSteps;
         const prompt = context ? `背景信息:\n${context}\n\n任务:\n${task}` : task;
-
+        let pluginSession: PluginTurnSession | undefined;
+        const delegateSignal = AbortSignal.any([
+          ...(parentSignal ? [parentSignal] : []),
+          AbortSignal.timeout(agent === "researcher" ? researcherTimeoutMs : defaultAgentTimeoutMs),
+        ]);
         onLog?.({
           level: "debug",
           message: `[delegate] agent=${agent} started`,
@@ -155,16 +174,38 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
         });
 
         try {
+          if (agent === "researcher") pluginSession = await options.plugins?.(delegateSignal);
+          let delegatedTools = {
+            ...def.tools,
+            ...(pluginSession ? createPluginTools(pluginSession) : {}),
+          };
+          if (
+            agent === "researcher" &&
+            (options.unifiedSearchEnabled === true || pluginSession?.searchProviders.length)
+          ) {
+            const { providers, migratedToolNames } =
+              options.unifiedSearchEnabled === true
+                ? createBuiltinSearchProviders(def.tools)
+                : { providers: [], migratedToolNames: [] };
+            for (const name of migratedToolNames) delete delegatedTools[name];
+            Object.assign(
+              delegatedTools,
+              createUnifiedSearchTools([...providers, ...(pluginSession?.searchProviders ?? [])]),
+            );
+            delegatedTools = wrapToolsWithCache(delegatedTools, createRequestCache());
+          }
           const result = await generateText({
             model: provider(subAgentModel),
-            system: def.systemPrompt,
+            system:
+              options.unifiedSearchEnabled === true && agent === "researcher"
+                ? `${def.systemPrompt}\n本次检索使用 search 的可用 scope/provider；search 返回的 reference 可用 read_reference 分段读取。多个 provider 共用 scope 时必须明确选择 provider。仅使用本次工具定义提供的来源；引用只在这次委派内有效。`
+                : def.systemPrompt,
             prompt,
-            tools: def.tools,
+            tools: delegatedTools,
             stopWhen: stepCountIs(maxSteps),
-            abortSignal: AbortSignal.timeout(
-              agent === "researcher" ? researcherTimeoutMs : defaultAgentTimeoutMs,
-            ),
+            abortSignal: delegateSignal,
           });
+          parentSignal?.throwIfAborted();
 
           const text =
             result.text.length > MAX_SUB_AGENT_RESULT_LENGTH
@@ -179,12 +220,15 @@ export function createAgentTools(options: AgentToolsOptions): Record<string, Too
 
           return { agent, result: text, steps: result.steps.length };
         } catch (err) {
+          parentSignal?.throwIfAborted();
           const msg = err instanceof Error ? err.message : String(err);
           onLog?.({
             level: "warn",
             message: `[delegate] agent=${agent} failed: ${msg}`,
           });
           return { error: `Sub-agent ${agent} failed: ${msg}` };
+        } finally {
+          await pluginSession?.dispose();
         }
       },
     }),

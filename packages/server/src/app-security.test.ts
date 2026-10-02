@@ -110,6 +110,35 @@ function createRoleApp(role: string) {
 }
 
 describe("production HTTP policy", () => {
+  it.each(["viewer", "editor"])(
+    "rejects %s access to plugin catalog and credential routes",
+    async (role) => {
+      for (const [url, method] of [
+        ["/api/plugins", "GET"],
+        ["/api/plugins/install", "POST"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}`, "GET"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}`, "PATCH"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}/test`, "POST"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}/jobs`, "GET"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}/jobs/${TEST_BOT_ID}/cancel`, "POST"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}/jobs/${TEST_BOT_ID}/transcript`, "GET"],
+        [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}/jobs/${TEST_BOT_ID}/export`, "POST"],
+        ["/api/plugins/hanori.bilibili", "DELETE"],
+      ]) {
+        expect((await createRoleApp(role).request(url!, { method })).status).toBe(403);
+      }
+    },
+  );
+
+  it.each(["owner", "admin"])(
+    "allows %s through plugin authorization and reports an unavailable host",
+    async (role) => {
+      const result = await createRoleApp(role).request("/api/plugins");
+      expect(result.status).toBe(503);
+      expect(await result.json()).toEqual({ ok: false, error: "plugins_unavailable" });
+    },
+  );
+
   it("preserves the existing owner and admin API boundaries at app composition", async () => {
     const admin = createRoleApp("admin");
     const adminGroups = await admin.request(`/api/bots/${TEST_BOT_ID}/cos-inside/groups?query=ops`);

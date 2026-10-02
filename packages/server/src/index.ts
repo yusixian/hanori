@@ -1,3 +1,11 @@
+import { PluginManager } from "./services/plugins/manager.js";
+import { GitPluginArtifacts } from "./services/plugins/git-artifacts.js";
+import { createBuiltinMediaPlugins } from "./services/plugins/builtin-media.js";
+import type { MediaTranscriptionPort } from "@cos-tool-bot/shared";
+import { MediaJobService } from "./services/media-jobs/service.js";
+import { MediaJobExecutor } from "./services/media-jobs/executor.js";
+import { loadMediaJobConfiguration } from "./services/media-jobs/configuration.js";
+import { IsolatedAudioConverter } from "./services/media/isolated-converter.js";
 import { createDb, runMigrations } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
 import path from "node:path";
@@ -154,9 +162,54 @@ const rssFeedService = new RssFeedService(db, logger);
 
 // MCP Client Manager
 const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
+const mediaConverter = env.MEDIA_WORKER_SECRET
+  ? new IsolatedAudioConverter(env.MEDIA_WORKER_SOCKET, env.MEDIA_WORKER_SECRET)
+  : undefined;
+let mediaJobService: MediaJobService;
+// Built-ins bind this port lazily; sessions only open after all services are composed.
+const mediaTranscription: MediaTranscriptionPort | undefined = mediaConverter
+  ? {
+      create: (actor, input, signal) => mediaJobService!.create(actor, input, signal),
+      get: (actor, id) => mediaJobService!.get(actor, id),
+      cancel: (actor, id) => mediaJobService!.cancel(actor, id),
+      read: (actor, id) => mediaJobService!.read(actor, id),
+    }
+  : undefined;
+const pluginManager = new PluginManager(
+  db,
+  env.ENCRYPTION_KEY,
+  new GitPluginArtifacts(path.resolve(env.PLUGIN_DIRECTORY)),
+  createBuiltinMediaPlugins({ transcription: mediaTranscription }),
+);
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const mediaConfiguration = (botId: string) =>
+  mediaConverter ? loadMediaJobConfiguration(pluginManager, botId) : Promise.resolve(null);
+{
+  // Retention and abandoned-job cleanup continue after the media profile is disabled.
+  const executor = new MediaJobExecutor(
+    env.MEDIA_JOB_DIR,
+    mediaConverter,
+    env.MEDIA_WORKER_GID,
+    env.MEDIA_WORKER_SOCKET,
+  );
+  mediaJobService = new MediaJobService(db, {
+    configuration: mediaConfiguration,
+    inspect: (source, config, signal) => executor.inspect(source, config, signal),
+    execute: (job, config, options) => executor.execute(job, config, options),
+    cleanup: (id, attempt) => executor.cleanup(id, attempt),
+    notify: (job) =>
+      botPool.sendHtml(
+        job.botId,
+        job.chatId,
+        `音频转录任务 / Audio transcription: <code>${job.id}</code>\n${job.status === "completed" ? "已完成 / Completed" : job.status === "cancelled" ? "已取消 / Cancelled" : "未完成 / Failed"}`,
+      ),
+  });
+  pluginManager.onConfigurationChanged(async (pluginId, botId) => {
+    if (pluginId === "hanori.bilibili") await mediaJobService!.cancelForBot(botId);
+  });
+}
 const engagementSampleService = new EngagementSampleService(db);
 const engagementSampleCleaner = new EngagementSampleCleaner(engagementSampleService, logger);
 engagementSampleCleaner.start();
@@ -346,6 +399,7 @@ if (codingWorkerClient.configured) {
 botPool.setBackupService(backupService);
 botPool.setRssFeedService(rssFeedService);
 botPool.setMcpClientManager(mcpClientManager);
+botPool.setPlugins(pluginManager);
 
 // Summary Services
 const summaryConfigService = new SummaryConfigService(db);
@@ -408,6 +462,8 @@ const app = createApp({
   timerRegistry,
   rssFeedService,
   mcpClientManager,
+  pluginManager,
+  mediaJobs: { jobs: mediaJobService, configuration: mediaConfiguration },
   summaryService,
   summaryConfigService,
   githubAppService,
@@ -448,6 +504,8 @@ await usageGovernor.pruneExpiredDetails();
 
 // Start all active bots
 await botPool.startAll();
+if (!mediaConverter) await mediaJobService.cancelForBot();
+await mediaJobService.start();
 await imageGenerationService.recoverPending();
 
 const usageGovernanceCleanupTimer = setInterval(
@@ -493,6 +551,8 @@ logger.info({ version: runtimeHealth.snapshot().version }, "Application ready");
 const shutdown = async (signal: string) => {
   runtimeHealth.markStopping();
   await dbLogger.info(`[${signal}] Shutting down...`);
+  await mediaJobService.close();
+  await pluginManager.close();
   await mcpClientManager.destroyAll();
   await imageMcpConnectionService.close();
   clearInterval(usageGovernanceCleanupTimer);

@@ -166,6 +166,8 @@ export async function assembleAiReply(
     memory,
     stickerPacks: aiConfig.stickerPacks,
     webToolsConfig: aiConfig.webToolsConfig,
+    unifiedSearchEnabled: aiConfig.unifiedSearchEnabled !== false,
+    plugins: services.plugins,
     imageGenerationPort: services.imageGenerationPort,
     generationLibraryPort: services.generationLibraryService,
     skills: resolveBotSkills(aiConfig.skillConfig),

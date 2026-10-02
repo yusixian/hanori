@@ -6,12 +6,13 @@ import type { PgTable, TableConfig } from "drizzle-orm/pg-core";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { encrypt } from "../utils/crypto.js";
 
-// Tables excluded from export (by DB table name)
-const EXCLUDED_TABLES = new Set(["bot_logs"]);
+// Transient media jobs must not be replayed (or expose retained transcripts) through Bot JSON imports.
+const EXCLUDED_TABLES = new Set(["bot_logs", "media_transcription_jobs"]);
 
 // Sensitive field sanitizers per DB table name
 const SENSITIVE_FIELDS: Record<string, (row: Record<string, unknown>) => Record<string, unknown>> =
   {
+    bot_plugin_configs: sanitizePluginConfigTransfer,
     bots: (row) => {
       const { encryptedToken: _encryptedToken, ...rest } = row;
       if (rest.aiConfig && typeof rest.aiConfig === "object") {
@@ -20,6 +21,21 @@ const SENSITIVE_FIELDS: Record<string, (row: Record<string, unknown>) => Record<
       return rest;
     },
   };
+
+function sanitizePluginConfigTransfer(row: Record<string, unknown>): Record<string, unknown> {
+  const { encryptedSecrets, encrypted_secrets, ...rest } = row;
+  const values =
+    rest.values && typeof rest.values === "object" && !Array.isArray(rest.values)
+      ? { ...(rest.values as Record<string, unknown>) }
+      : {};
+  for (const secrets of [encryptedSecrets, encrypted_secrets]) {
+    if (secrets && typeof secrets === "object" && !Array.isArray(secrets)) {
+      for (const key of Object.keys(secrets)) delete values[key];
+    }
+  }
+  // Bot-scoped ciphertext cannot be replayed into an imported Bot. Reconfigure before enabling.
+  return { ...rest, values, encryptedSecrets: {}, enabled: false, revision: 1 };
+}
 
 function sanitizeAiConfig(config: Record<string, unknown>): Record<string, unknown> {
   const { encryptedApiKey: _encryptedApiKey, ...rest } = config;
@@ -421,7 +437,10 @@ export class DataTransferService {
 
           const rows = sourceRows.map((row) => {
             const oldId = idColName ? (row[snakeToCamel(idColName)] ?? row[idColName]) : undefined;
-            const newRow = rehydrateDates(child.table, row);
+            const newRow = rehydrateDates(
+              child.table,
+              child.schemaKey === "botPluginConfigs" ? sanitizePluginConfigTransfer(row) : row,
+            );
             // Replace botId with new UUID
             // Map DB column name to JS field name
             const botField = snakeToCamel(botColName);

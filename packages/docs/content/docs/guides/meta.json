@@ -3,6 +3,8 @@
   "pages": [
     "panel-navigation",
     "ai-chat",
+    "search",
+    "plugins",
     "group-behavior",
     "privacy-memory",
     "commands",

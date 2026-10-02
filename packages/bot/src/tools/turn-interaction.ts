@@ -14,7 +14,7 @@ type TurnInteractionCommonOptions = {
 export interface TurnInteractionToolsOptions extends TurnInteractionCommonOptions {
   telegram: Omit<TelegramToolsOptions, "api" | "chatId" | "recentBotMessageIds" | "onceGuard">;
   behavior: Omit<BehaviorToolsOptions, "api" | "chatId" | "recentBotMessageIds">;
-  artwork?: Pick<ArtworkToolsOptions, "config" | "timeoutConfig">;
+  artwork?: Pick<ArtworkToolsOptions, "config" | "timeoutConfig" | "unifiedSearchEnabled">;
 }
 
 export function createTurnInteractionTools(options: TurnInteractionToolsOptions) {

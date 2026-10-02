@@ -1,0 +1,1 @@
+ALTER TABLE "media_transcription_jobs" ADD COLUMN "cleanup_pending" boolean DEFAULT false NOT NULL;

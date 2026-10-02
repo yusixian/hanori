@@ -1,3 +1,5 @@
+import type { PluginActor, PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
+import { createPluginTools } from "./plugins.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import { createRuntimeDiagnosticTools } from "./runtime-diagnostics.js";
 import type {
@@ -46,6 +48,7 @@ import { createMcpTools, type McpToolsOptions } from "./mcp.js";
 import { createProfileAvatarTools } from "./profile-avatar.js";
 import { createRssTools, type RssToolsOptions } from "./rss.js";
 import { createSkillTools } from "./skills.js";
+import { createBuiltinSearchProviders, createUnifiedSearchTools } from "./search.js";
 import {
   createTurnInteractionTools,
   type TurnInteractionToolsOptions,
@@ -67,6 +70,8 @@ export interface TurnToolsetConfig {
   messageConfig?: MessageConfig;
   stickerPacks?: readonly string[];
   webTools?: Readonly<Record<string, Tool>>;
+  unifiedSearchEnabled?: boolean;
+  plugins?: PluginRuntimePort;
   artworkToolsConfig?: ArtworkToolsConfig;
   timeoutConfig?: TimeoutConfig;
   dataFiles?: DataFilesConfig;
@@ -116,6 +121,7 @@ export interface TurnInteractionInput {
 
 export interface TurnToolsetInput {
   currentTraceId?: string;
+  signal?: AbortSignal;
   entry: ReplyTurn | ContinueTurn;
   chatId: number;
   isPrivate: boolean;
@@ -127,7 +133,10 @@ export interface TurnToolsetInput {
   config: TurnToolsetConfig;
   interaction: TurnInteractionInput;
   /** Builds delegate_task for the turn's model selection; absent when delegation is off. */
-  delegation?: (actor?: GenerationLibraryActor) => Record<string, Tool>;
+  delegation?: (
+    actor?: GenerationLibraryActor,
+    plugins?: (signal?: AbortSignal) => Promise<PluginTurnSession>,
+  ) => Record<string, Tool>;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
 }
 
@@ -136,6 +145,7 @@ type MemoryWritePolicy = Required<
 >;
 
 export interface TurnToolset {
+  dispose?(): Promise<void>;
   /** Sorted by name: the order sent to the provider and hashed for prompt caching. */
   tools: Record<string, Tool>;
   /** Read from `tools`, so the prompt never describes a tool this turn lacks. */
@@ -238,6 +248,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
   const profileAvatars = createProfileAvatarTools(
     memoryEnabled ? config.memory : undefined,
     userId,
+    config.unifiedSearchEnabled === true,
   );
 
   const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
@@ -252,7 +263,11 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
       onLog,
     },
     artwork: config.artworkToolsConfig
-      ? { config: config.artworkToolsConfig, timeoutConfig: config.timeoutConfig }
+      ? {
+          config: config.artworkToolsConfig,
+          timeoutConfig: config.timeoutConfig,
+          unifiedSearchEnabled: config.unifiedSearchEnabled === true,
+        }
       : undefined,
   });
   if (!personalized) {
@@ -278,6 +293,19 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
         })
       : {};
 
+  const pluginActor: PluginActor = {
+    botId: config.botId,
+    chatId,
+    userId,
+    isAdmin,
+    isPrivate: input.isPrivate,
+    readOnly: entry.kind === "continue" || !personalized,
+  };
+  const researcherPlugins = config.plugins
+    ? (signal?: AbortSignal) =>
+        config.plugins!.createSession({ ...pluginActor, readOnly: true }, signal)
+    : undefined;
+
   const tools: Record<string, Tool> = {
     ...(entry.kind === "reply" && isAdmin && userId !== undefined && config.runtimeDiagnostics
       ? createRuntimeDiagnosticTools({
@@ -300,6 +328,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
           userId,
           messageId: entry.kind === "reply" ? entry.message.id : undefined,
           privacyMode: input.privacyMode,
+          unifiedSearchEnabled: config.unifiedSearchEnabled === true,
           ...resolveMemoryWritePolicy(entry),
         })
       : {}),
@@ -315,7 +344,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     ...telegramTools,
     ...behaviorTools,
     ...config.webTools,
-    ...input.delegation?.(libraryActor),
+    ...input.delegation?.(libraryActor, researcherPlugins),
     ...(entry.kind === "reply" ? createReplyGitHubTools(input, entry, isAdmin) : {}),
     ...artworkTools,
     ...(config.dataFiles
@@ -328,18 +357,21 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
       skills: config.skills ?? [],
       hasImageGeneration: !!imageTools.get_image_generation,
       hasWebSearch: !!config.webTools?.web_search,
+      unifiedSearchEnabled: config.unifiedSearchEnabled === true,
     }),
     ...createDanbooruTools({
       timeoutConfig: config.timeoutConfig,
       generationLibraryPort: config.generationLibraryPort,
       getActor: libraryActor ? () => libraryActor : undefined,
       onLog,
+      persistSearchResults: config.unifiedSearchEnabled !== true,
     }),
     ...(config.generationLibraryPort && libraryActor
       ? createGenerationLibraryTools({
           port: config.generationLibraryPort,
           getActor: () => libraryActor,
           readOnly: entry.kind === "continue",
+          trackSearchHits: config.unifiedSearchEnabled !== true,
         })
       : {}),
     ...(config.rssCallbacks
@@ -366,10 +398,34 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     delete tools.multi_message;
   }
 
-  const sortedTools = sortToolsForPromptCache(tools);
-  return {
-    tools: sortedTools,
-    capabilities: deriveCapabilitiesFromTools(sortedTools, config.stickerPacks),
-    prepareStep: profileAvatars.prepareStep,
-  };
+  const pluginSession = await config.plugins?.createSession(pluginActor, input.signal);
+  try {
+    if (pluginSession) {
+      const pluginTools = createPluginTools(pluginSession);
+      if (Object.keys(pluginTools).some((name) => Object.hasOwn(tools, name)))
+        throw new Error("Plugin tool name conflict");
+      Object.assign(tools, pluginTools);
+    }
+    if (config.unifiedSearchEnabled === true || pluginSession?.searchProviders.length) {
+      const { providers, migratedToolNames } =
+        config.unifiedSearchEnabled === true
+          ? createBuiltinSearchProviders(tools, { chatId })
+          : { providers: [], migratedToolNames: [] };
+      for (const name of migratedToolNames) delete tools[name];
+      Object.assign(
+        tools,
+        createUnifiedSearchTools([...providers, ...(pluginSession?.searchProviders ?? [])]),
+      );
+    }
+    const sortedTools = sortToolsForPromptCache(tools);
+    return {
+      tools: sortedTools,
+      capabilities: deriveCapabilitiesFromTools(sortedTools, config.stickerPacks),
+      prepareStep: profileAvatars.prepareStep,
+      ...(pluginSession ? { dispose: () => pluginSession.dispose() } : {}),
+    };
+  } catch (error) {
+    await pluginSession?.dispose();
+    throw error;
+  }
 }

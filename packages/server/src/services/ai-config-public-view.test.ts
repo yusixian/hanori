@@ -128,6 +128,7 @@ describe("toAiConfigPublic", () => {
       },
       groupOverrides: {},
       providers: [],
+      unifiedSearchEnabled: true,
       executionConfig: DEFAULT_AI_EXECUTION_CONFIG,
     });
   });

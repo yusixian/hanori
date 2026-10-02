@@ -1,3 +1,6 @@
+import { pluginRoutes } from "./routes/plugins.js";
+import type { PluginManager } from "./services/plugins/manager.js";
+import type { PluginMediaJobsOptions } from "./routes/plugin-media-jobs.js";
 import type { Database } from "@cos-tool-bot/database";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { publicDocsRoutes } from "./routes/public-docs.js";
@@ -68,6 +71,8 @@ import type { RuntimeHealthReader } from "./runtime-health.js";
 import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
+  pluginManager?: PluginManager;
+  mediaJobs?: PluginMediaJobsOptions;
   db: Database;
   auth: AppAuth;
   baseURL: string;
@@ -265,6 +270,8 @@ export function createApp(options: AppOptions) {
     .route("/api/usage", usageRoutes(db))
     .use("/api/mcp-servers", requireAppAccess(auth, db))
     .use("/api/mcp-servers/*", requireAppAccess(auth, db))
+    .use("/api/plugins/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .route("/api/plugins", pluginRoutes(options.pluginManager, options.mediaJobs))
     .route("/api/mcp-servers", mcpServerRoutes(db, mcpClientManager, encryptionKey))
     .get("/api/health", (c) => c.json({ ok: true as const }))
     .get("/api/health/live", (c) => {
