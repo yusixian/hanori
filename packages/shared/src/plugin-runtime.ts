@@ -5,6 +5,7 @@ import type {
   PluginManifest,
 } from "./plugins.js";
 import type { SearchProvider } from "./search.js";
+import type { PluginLoginAttempt } from "./plugin-login.js";
 
 /** A trusted plugin executes with host-process privileges. This is an integration contract, not a sandbox. */
 export interface PluginActor {
@@ -44,6 +45,8 @@ export interface PluginDefinition {
   apiVersion: 1;
   createSession(context: PluginContext): PluginSession | Promise<PluginSession>;
   check?(context: PluginContext): Promise<{ success: boolean }>;
+  /** Optional QR login declared by manifest.login; credentials stay in the host. */
+  startLogin?(signal: AbortSignal): Promise<PluginLoginAttempt>;
 }
 
 export interface PluginTurnSession {

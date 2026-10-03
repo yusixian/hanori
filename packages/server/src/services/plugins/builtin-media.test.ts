@@ -123,12 +123,14 @@ describe("built-in media plugins", () => {
     for (const builtin of builtins) {
       expect(parsePluginManifest(builtin.manifest)).toMatchObject({
         apiVersion: 1,
-        version: "1.0.0",
+        version: "1.1.0",
+        login: { type: "qr" },
       });
       expect(builtin.manifest.config).toContainEqual(
         expect.objectContaining({ key: "cookie", type: "text", secret: true, required: false }),
       );
       expect(builtin.definition.check).toBeUndefined();
+      expect(builtin.definition.startLogin).toBeTypeOf("function");
       const value = await builtin.definition.createSession(context());
       validatePluginSession(value);
       expect(

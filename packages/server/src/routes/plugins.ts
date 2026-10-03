@@ -6,6 +6,7 @@ import { z } from "zod";
 import { PluginConfigStoreError } from "../services/plugins/config-store.js";
 import { PluginManagerError, type PluginManager } from "../services/plugins/manager.js";
 import { pluginMediaJobRoutes, type PluginMediaJobsOptions } from "./plugin-media-jobs.js";
+import { pluginLoginRoutes } from "./plugin-login.js";
 
 const id = z
   .string()
@@ -60,6 +61,7 @@ export function pluginRoutes(manager?: PluginManager, mediaJobs?: PluginMediaJob
       );
     })
     .route("/", pluginMediaJobRoutes(mediaJobs))
+    .route("/", pluginLoginRoutes(manager?.logins))
     .get("/", async (c) => c.json({ ok: true as const, data: await service().list() }))
     .post(
       "/install",

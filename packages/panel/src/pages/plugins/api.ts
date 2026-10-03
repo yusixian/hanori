@@ -4,6 +4,8 @@ import type {
   PluginBotUpdate,
   PluginCatalogEntry,
   PluginInstallRequest,
+  PluginLoginStart,
+  PluginLoginState,
 } from "@cos-tool-bot/shared";
 
 export class PluginRequestError extends Error {
@@ -75,6 +77,34 @@ export const pluginsApi = {
   async test(id: string, botId: string): Promise<{ success: boolean }> {
     return result(
       await client.api.plugins[":id"].bots[":botId"].test.$post({ param: { id, botId } }),
+    );
+  },
+  async startLogin(
+    id: string,
+    botId: string,
+    request: PluginLoginStart,
+  ): Promise<PluginLoginState> {
+    return result(
+      await client.api.plugins[":id"].bots[":botId"].login.$post({
+        param: { id, botId },
+        json: request,
+      }),
+    );
+  },
+  async pollLogin(id: string, botId: string, sessionId: string): Promise<PluginLoginState> {
+    return result(
+      await client.api.plugins[":id"].bots[":botId"].login[":sessionId"].poll.$post({
+        param: { id, botId, sessionId },
+        json: {},
+      }),
+    );
+  },
+  async cancelLogin(id: string, botId: string, sessionId: string): Promise<PluginLoginState> {
+    return result(
+      await client.api.plugins[":id"].bots[":botId"].login[":sessionId"].cancel.$post({
+        param: { id, botId, sessionId },
+        json: {},
+      }),
     );
   },
 };

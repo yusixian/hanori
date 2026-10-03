@@ -69,6 +69,33 @@ export default {
 
 可选 `check(context)` 返回 `{ success: boolean }`，用于有意义的已保存配置检查。没有该钩子时，面板只创建、校验并销毁会话。不要把这个默认测试当作真实服务连通性或账号认证证明。
 
+## 可选扫码登录
+
+清单声明 `"login": { "type": "qr" }` 后，面板提供统一扫码登录界面。入口同时实现 `startLogin(signal)`，返回私有登录会话：
+
+```ts
+interface LoginAttempt {
+  qrUrl: string;
+  poll(signal: AbortSignal): Promise<
+    | { status: "waiting" | "scanned" | "expired" }
+    | {
+        status: "authorized";
+        secrets: Record<string, string>;
+        account: { name: string };
+      }
+  >;
+  dispose?(): void | Promise<void>;
+}
+```
+
+`qrUrl` 是平台提供的 HTTP(S) 扫码内容，面板本地生成二维码，不通过外部图片服务。`startLogin` 的信号覆盖会话生命周期，`poll` 还须响应单次操作信号。每个尝试使用独立 Cookie jar；创建与轮询不得自行写 Bot 配置。插件应限制登录请求的目标、跳转、大小和超时，不能把私有平台响应或原始异常返回给页面。
+
+返回 `authorized` 前必须调用平台账号接口验证登录，不能仅凭“已扫码”或某个成功状态码判断。`secrets` 仅包含清单中已声明的秘密字段，值为非空字符串；账号名用于显示，应为有界纯文本。秘密仅在服务端返回宿主，宿主核对安装版本、清单和 Bot 配置修订后合并并加密保存。公开状态只有保存成功后才变成 `connected`。
+
+宿主绑定当前管理员网页会话、插件和 Bot，限制并发并串行轮询，最短轮询间隔为 2 秒，扫码会话最多 5 分钟。持久化开始前，关闭、过期、配置改变或插件停止会取消尝试；进入 `saving` 后不再承诺取消写入，确认结果后才报告 `connected`，结果不确定时报告 `save_unknown` 并提示重新加载配置。`dispose` 应销毁 Cookie jar、停止定时器并释放资源。插件不应在模块级缓存凭据。登录不会自动启用插件；现有配置待审核时，需先审核保存再开始登录。
+
+可在不修改面板的情况下实现第三方扫码登录。该扩展仍属于可信服务端插件能力，不提供远程浏览器、密码表单或插件代码沙箱。TypeScript 契约见 `packages/shared/src/plugin-login.ts`。
+
 ## 工具
 
 每个工具声明 `name`、`description`、JSON 对象 `inputSchema`、`effect`、`access`，实现 `execute(input, signal)`。本地名称匹配 `[a-z][a-z0-9_]{0,39}`，同一会话不能重复；宿主会加命名空间，不要在插件内猜测最终工具名。

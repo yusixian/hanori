@@ -9,13 +9,15 @@ import {
   type PluginCatalogEntry,
   type PluginDefinition,
   type PluginInstallRequest,
+  type PluginLoginStart,
   type PluginManifest,
   type PluginRuntimePort,
   type PluginSession,
   type PluginTurnSession,
 } from "@cos-tool-bot/shared";
 import { and, eq, sql } from "drizzle-orm";
-import { PluginConfigStore } from "./config-store.js";
+import { PluginConfigStore, PluginConfigStoreError } from "./config-store.js";
+import { PluginLoginService } from "./login.js";
 import { GitPluginArtifacts } from "./git-artifacts.js";
 import {
   bindPluginSession,
@@ -61,6 +63,7 @@ export class PluginManager implements PluginRuntimePort {
   private mutation: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private readonly shutdown = new AbortController();
+  readonly logins: PluginLoginService;
   private configurationChanged?: (pluginId: string, botId?: string) => Promise<void>;
 
   constructor(
@@ -70,6 +73,9 @@ export class PluginManager implements PluginRuntimePort {
     private readonly builtins: readonly BuiltinPlugin[],
   ) {
     this.configs = new PluginConfigStore(db, encryptionKey);
+    this.logins = new PluginLoginService({
+      open: (id, botId, start, signal) => this.openLogin(id, botId, start, signal),
+    });
   }
 
   onConfigurationChanged(callback: (pluginId: string, botId?: string) => Promise<void>) {
@@ -233,6 +239,7 @@ export class PluginManager implements PluginRuntimePort {
         )
         .returning();
       if (!saved) throw new PluginManagerError("stale_revision");
+      this.logins.invalidate(id);
       await this.stopSessions(id);
       await this.configurationChanged?.(id);
       return this.record(saved);
@@ -266,6 +273,7 @@ export class PluginManager implements PluginRuntimePort {
         )
         .returning();
       if (!saved) throw new PluginManagerError("stale_revision");
+      this.logins.invalidate(id);
       await this.stopSessions(id);
       await this.configurationChanged?.(id);
       return this.record(saved);
@@ -294,6 +302,7 @@ export class PluginManager implements PluginRuntimePort {
           })
           .where(eq(botPluginConfigs.pluginId, id));
       });
+      this.logins.invalidate(id);
       await this.stopSessions(id);
       await this.configurationChanged?.(id);
       // Retain immutable artifacts and encrypted drafts for a recoverable reinstall.
@@ -360,21 +369,75 @@ export class PluginManager implements PluginRuntimePort {
   }
 
   async saveBot(id: string, botId: string, update: PluginBotUpdate): Promise<PluginBotState> {
+    this.logins.invalidate(id, botId);
+    return this.persistBot(id, botId, update);
+  }
+
+  private async persistBot(
+    id: string,
+    botId: string,
+    update: PluginBotUpdate,
+    login?: { installationRevision: number; signal: AbortSignal },
+  ): Promise<PluginBotState> {
     return this.serial(async () => {
+      login?.signal.throwIfAborted();
       await this.db.transaction(async (tx) => {
+        if (login) {
+          await tx.execute(sql`SET LOCAL statement_timeout = '15s'`);
+          await tx.execute(sql`SET LOCAL lock_timeout = '10s'`);
+        }
         const [row] = await tx
           .select()
           .from(pluginInstallations)
           .where(and(eq(pluginInstallations.id, id), eq(pluginInstallations.isInstalled, true)))
           .for("update");
         if (!row) throw new PluginManagerError("not_found");
+        if (login) {
+          this.checkRevision(row, login.installationRevision);
+          login.signal.throwIfAborted();
+        }
         await new PluginConfigStore(tx, this.encryptionKey).save(botId, this.manifest(row), update);
+        login?.signal.throwIfAborted();
       });
       await this.stopSessions(id, botId);
       await this.configurationChanged?.(id, botId);
       this.runtimeErrors.delete(`${botId}:${id}`);
       return this.getBot(id, botId);
     });
+  }
+
+  private async openLogin(id: string, botId: string, start: PluginLoginStart, signal: AbortSignal) {
+    if (this.stopped) throw new PluginRuntimeError("plugin_stopped");
+    const row = await this.installed(id);
+    const manifest = this.manifest(row);
+    if (!manifest.login) throw new PluginManagerError("invalid_installation");
+    const assertCurrent = async () => {
+      signal.throwIfAborted();
+      const current = await this.installed(id);
+      this.checkRevision(current, row.revision);
+      const state = await this.configs.get(botId, this.manifest(current));
+      if (state.revision !== start.expectedRevision)
+        throw new PluginConfigStoreError("stale_revision");
+      if (state.needsReview || state.manifestHash !== start.manifestHash)
+        throw new PluginConfigStoreError("manifest_changed");
+      signal.throwIfAborted();
+    };
+    await assertCurrent();
+    const definition = await this.definition(row);
+    if (!definition.startLogin) throw new PluginManagerError("invalid_installation");
+    signal.throwIfAborted();
+    const attempt = await definition.startLogin(signal);
+    return {
+      attempt,
+      assertCurrent,
+      commit: (secrets: Record<string, string>, commitSignal: AbortSignal) =>
+        this.persistBot(
+          id,
+          botId,
+          { ...start, configuration: { values: {}, secrets } },
+          { installationRevision: row.revision, signal: commitSignal },
+        ),
+    };
   }
 
   async checkBot(id: string, botId: string): Promise<{ success: boolean }> {
@@ -548,6 +611,7 @@ export class PluginManager implements PluginRuntimePort {
   async close() {
     this.stopped = true;
     this.shutdown.abort();
+    await this.logins.close();
     await Promise.allSettled([...this.active].map((entry) => entry.stop()));
     await this.mutation;
   }

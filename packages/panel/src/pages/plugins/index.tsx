@@ -9,6 +9,7 @@ import type {
   PluginCatalogEntry,
   PluginConfigUpdate,
   PluginInstallRequest,
+  PluginLoginStart,
 } from "@cos-tool-bot/shared";
 import { Puzzle, RefreshCw } from "lucide-react";
 import {
@@ -24,6 +25,7 @@ import { useTranslation } from "react-i18next";
 import { PluginRequestError, pluginsApi, type PluginsApi } from "./api";
 import { PluginConfigForm } from "./config-form";
 import { MediaJobsPanel } from "./media-jobs";
+import { PluginQrLoginDialog } from "./qr-login-dialog";
 
 const fullSha = /^[a-f0-9]{40}$/i;
 const githubRepository = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -223,6 +225,8 @@ function BotPluginSettings({
   const [pending, setPending] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [reload, setReload] = useState(0);
+  const [dirty, setDirty] = useState(false);
+  const [loginRequest, setLoginRequest] = useState<PluginLoginStart | null>(null);
   const mounted = useRef(true);
   const busy = useRef(false);
   useEffect(() => {
@@ -305,7 +309,7 @@ function BotPluginSettings({
         {conflict || (!state && error) ? (
           <Button
             variant="outline"
-            disabled={pending}
+            disabled={pending || loginRequest !== null}
             onClick={() => {
               setNotice(null);
               setReload((value) => value + 1);
@@ -332,7 +336,12 @@ function BotPluginSettings({
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant="outline"
-                  disabled={pending || conflict || (!state.enabled && state.needsReview)}
+                  disabled={
+                    pending ||
+                    loginRequest !== null ||
+                    conflict ||
+                    (!state.enabled && state.needsReview)
+                  }
                   onClick={() => {
                     void save(undefined, !state.enabled).catch(() => undefined);
                   }}
@@ -341,7 +350,13 @@ function BotPluginSettings({
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={pending || conflict || !state.enabled || state.needsReview}
+                  disabled={
+                    pending ||
+                    loginRequest !== null ||
+                    conflict ||
+                    !state.enabled ||
+                    state.needsReview
+                  }
                   onClick={() => {
                     void testConnection();
                   }}
@@ -355,12 +370,34 @@ function BotPluginSettings({
               <p className="text-destructive text-sm">{t("runtimeError")}</p>
             ) : null}
             <p className="text-muted-foreground text-sm">{t("savedTestHint")}</p>
+            {entry.manifest.login ? (
+              <div className="space-y-2">
+                <Button
+                  variant="outline"
+                  disabled={
+                    pending || conflict || state.needsReview || dirty || loginRequest !== null
+                  }
+                  onClick={() =>
+                    setLoginRequest({
+                      expectedRevision: state.revision,
+                      manifestHash: state.manifestHash,
+                    })
+                  }
+                >
+                  {t("login.button")}
+                </Button>
+                {dirty ? (
+                  <p className="text-muted-foreground text-sm">{t("login.draftHint")}</p>
+                ) : null}
+              </div>
+            ) : null}
             <PluginConfigForm
               manifest={entry.manifest}
               configuration={state.configuration}
               revision={state.revision}
               scopeKey={`${entry.manifest.id}/${botId}/${reload}`}
-              disabled={pending || conflict}
+              disabled={pending || conflict || loginRequest !== null}
+              onDirtyChange={setDirty}
               onSave={(configuration) => save(configuration)}
             />
             {entry.manifest.id === "hanori.bilibili" ? (
@@ -372,6 +409,24 @@ function BotPluginSettings({
           <p role="status" className="text-muted-foreground text-sm">
             {t(notice)}
           </p>
+        ) : null}
+        {loginRequest ? (
+          <PluginQrLoginDialog
+            pluginId={entry.manifest.id}
+            botId={botId}
+            request={loginRequest}
+            api={api}
+            onClose={() => setLoginRequest(null)}
+            onConflict={() => {
+              setConflict(true);
+              setError("conflict");
+            }}
+            onConnected={(updated) => {
+              setState(updated);
+              setError(null);
+              setConflict(false);
+            }}
+          />
         ) : null}
       </CardContent>
     </Card>
