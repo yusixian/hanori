@@ -65,6 +65,178 @@ describe("isolated converter Unix protocol", () => {
     expect(seen[0]!.path + seen[0]!.body).not.toContain(SECRET);
   });
 
+  it("muxes video with only two hashes and explicit duration/byte bounds", async () => {
+    const input = {
+      videoSha256: SHA,
+      audioSha256: "b".repeat(64),
+      maxDurationSeconds: 10,
+      maxBytes: 45_000_000,
+    };
+    expect(await converter.muxVideo(ID, input, new AbortController().signal)).toEqual({
+      bytes: result.bytes,
+      sha256: SHA,
+      durationSeconds: 1,
+    });
+    expect(seen[0]).toMatchObject({ path: `/jobs/${ID}/mux-video`, body: JSON.stringify(input) });
+  });
+
+  it("rejects excess mux output instead of trusting the worker response", async () => {
+    await expect(
+      converter.muxVideo(
+        ID,
+        { videoSha256: SHA, audioSha256: SHA, maxDurationSeconds: 10, maxBytes: 10 },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "conversion_failed" });
+  });
+
+  it("rejects excessive mux limits before contacting the worker", async () => {
+    await expect(
+      converter.muxVideo(
+        ID,
+        { videoSha256: SHA, audioSha256: SHA, maxDurationSeconds: 10, maxBytes: 50_000_001 },
+        new AbortController().signal,
+      ),
+    ).rejects.toMatchObject({ code: "conversion_failed" });
+    expect(seen).toHaveLength(0);
+  });
+
+  it("serializes ASR and video FIFO requests and starts the request deadline after admission", async () => {
+    const responses: ServerResponse[] = [];
+    respond = (_request, response) => {
+      responses.push(response);
+    };
+    const deadlines = vi.spyOn(AbortSignal, "timeout");
+    const signal = new AbortController().signal;
+    const first = converter.convert(ID, SHA, 10, signal);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    const second = converter.muxVideo(
+      ID,
+      { videoSha256: SHA, audioSha256: SHA, maxDurationSeconds: 10, maxBytes: 45_000_000 },
+      signal,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(seen).toHaveLength(1);
+    expect(deadlines).toHaveBeenCalledTimes(1);
+    responses[0]!.end(JSON.stringify(result));
+    await first;
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    responses[1]!.end(JSON.stringify(result));
+    await second;
+    expect(seen.map((value) => value.path)).toEqual([
+      `/jobs/${ID}/convert`,
+      `/jobs/${ID}/mux-video`,
+    ]);
+    expect(deadlines).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts a queued video without dispatch and leaves direct cancel available while ASR holds the slot", async () => {
+    let held: ServerResponse | undefined;
+    respond = (request, response) => {
+      if (request.method === "DELETE") response.end(JSON.stringify({ ok: true }));
+      else held = response;
+    };
+    const first = converter.convert(ID, SHA, 10, new AbortController().signal);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    const controller = new AbortController();
+    const queued = converter.muxVideo(
+      ID,
+      { videoSha256: SHA, audioSha256: SHA, maxDurationSeconds: 10, maxBytes: 45_000_000 },
+      controller.signal,
+    );
+    const cancelled = expect(queued).rejects.toMatchObject({ code: "conversion_cancelled" });
+    controller.abort();
+    await cancelled;
+    await converter.cancel(ID);
+    expect(seen.map((value) => value.method)).toEqual(["POST", "DELETE"]);
+    held!.end(JSON.stringify(result));
+    await first;
+    respond = (_request, response) => response.end(JSON.stringify(result));
+    await converter.convert(ID, SHA, 10, new AbortController().signal);
+  });
+
+  it("waits for a job held by another converter instance before retrying its unaccepted POST", async () => {
+    const otherId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const other = new IsolatedAudioConverter(socket, SECRET);
+    let held: ServerResponse | undefined;
+    let active = true;
+    respond = (request, response) => {
+      if (request.url === `/jobs/${ID}/convert`) held = response;
+      else if (active) {
+        response.statusCode = 409;
+        response.end(JSON.stringify({ ok: false, error: "busy" }));
+      } else response.end(JSON.stringify(result));
+    };
+    const first = converter.convert(ID, SHA, 10, new AbortController().signal);
+    await vi.waitFor(() => expect(held).toBeDefined());
+    const second = other.muxVideo(
+      otherId,
+      { videoSha256: SHA, audioSha256: SHA, maxDurationSeconds: 10, maxBytes: 45_000_000 },
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+    active = false;
+    held!.end(JSON.stringify(result));
+    await first;
+    await expect(second).resolves.toMatchObject({ bytes: result.bytes });
+    expect(seen.map((value) => `${value.method} ${value.path}`)).toEqual([
+      `POST /jobs/${ID}/convert`,
+      `POST /jobs/${otherId}/mux-video`,
+      `POST /jobs/${otherId}/mux-video`,
+    ]);
+  });
+
+  it("aborts while waiting on another process without another POST or cancelling its active job", async () => {
+    respond = (_request, response) => {
+      response.statusCode = 409;
+      response.end(JSON.stringify({ ok: false, error: "busy" }));
+    };
+    const controller = new AbortController();
+    const pending = converter.convert(ID, SHA, 10, controller.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({ code: "conversion_cancelled" });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    controller.abort();
+    await cancelled;
+    await new Promise((resolve) => setTimeout(resolve, 550));
+    expect(seen.map((value) => value.method)).toEqual(["POST"]);
+  });
+
+  it("does not retry an unknown outcome or mistake a409 cancellation response for busy", async () => {
+    for (const failure of ["disconnect", "internal_error", "cancelled"]) {
+      seen = [];
+      respond = (request, response) => {
+        if (request.method === "DELETE") {
+          response.end(JSON.stringify({ ok: true }));
+          return;
+        }
+        if (failure === "disconnect") response.destroy();
+        else {
+          response.statusCode = failure === "cancelled" ? 409 : 500;
+          response.end(
+            JSON.stringify({ ok: false, error: failure === "cancelled" ? "cancelled" : "busy" }),
+          );
+        }
+      };
+      await expect(
+        converter.convert(ID, SHA, 10, new AbortController().signal),
+      ).rejects.toMatchObject({ code: "conversion_failed" });
+      expect(seen.filter((value) => value.method === "POST")).toHaveLength(1);
+    }
+  });
+
+  it("bounds cross-process busy waiting without cancelling the active job", async () => {
+    const now = vi.spyOn(Date, "now");
+    now.mockReturnValueOnce(0).mockReturnValue(150_000);
+    respond = (_request, response) => {
+      response.statusCode = 409;
+      response.end(JSON.stringify({ ok: false, error: "busy" }));
+    };
+    await expect(
+      converter.convert(ID, SHA, 10, new AbortController().signal),
+    ).rejects.toMatchObject({ code: "conversion_failed" });
+    expect(seen.map((value) => value.method)).toEqual(["POST"]);
+  });
+
   it("uses authenticated health and idempotent cancellation of unknown jobs", async () => {
     respond = (request, response) => {
       response.statusCode = request.method === "DELETE" ? 404 : 200;
@@ -170,7 +342,12 @@ describe("isolated converter Unix protocol", () => {
 
   it("closes an in-flight request on caller cancellation", async () => {
     let closed = false;
-    respond = (_request, response) => {
+    respond = (request, response) => {
+      if (request.method === "DELETE") {
+        response.statusCode = 404;
+        response.end(JSON.stringify({ ok: false }));
+        return;
+      }
       response.once("close", () => {
         closed = true;
       });

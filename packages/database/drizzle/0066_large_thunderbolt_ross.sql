@@ -1,0 +1,1 @@
+ALTER TABLE "video_download_jobs" ADD COLUMN "cleanup_pending" boolean DEFAULT false NOT NULL;

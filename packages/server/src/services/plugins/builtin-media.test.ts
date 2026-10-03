@@ -4,6 +4,7 @@ import {
   type PluginSession,
   type PluginTool,
   type MediaTranscriptionPort,
+  type VideoDownloadPort,
 } from "@cos-tool-bot/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MediaHttpError, readMediaDocument } from "../media/http.js";
@@ -123,7 +124,7 @@ describe("built-in media plugins", () => {
     for (const builtin of builtins) {
       expect(parsePluginManifest(builtin.manifest)).toMatchObject({
         apiVersion: 1,
-        version: "1.1.0",
+        version: builtin.manifest.id === "hanori.bilibili" ? "1.2.0" : "1.1.0",
         login: { type: "qr" },
       });
       expect(builtin.manifest.config).toContainEqual(
@@ -189,6 +190,50 @@ describe("built-in media plugins", () => {
       transcription,
     })[0]!.definition.createSession(ctx);
     expect(withoutUser.tools!.some(({ name }) => name === "transcribe_audio")).toBe(false);
+  });
+
+  it("injects download tools independently of ASR only with enablement, host port and user identity", async () => {
+    const downloads: VideoDownloadPort = { create: vi.fn(), get: vi.fn(), cancel: vi.fn() };
+    const ctx: PluginContext = {
+      ...context(),
+      actor: { ...context().actor, userId: 42, isAdmin: true, readOnly: false },
+      configuration: { downloadEnabled: true },
+    };
+    const [bilibili, netease] = createBuiltinMediaPlugins({ downloads });
+    const value = await bilibili!.definition.createSession(ctx);
+    validatePluginSession(value);
+    expect(value.tools!.map(({ name }) => name)).toEqual([
+      "download_video",
+      "get_video_download",
+      "cancel_video_download",
+      "lookup_video",
+      "list_subtitles",
+      "read_transcript",
+    ]);
+    expect(
+      value
+        .tools!.filter(({ name }) => name.includes("download"))
+        .every(({ access }) => access === "admin"),
+    ).toBe(true);
+    expect((await netease!.definition.createSession(ctx)).tools!.map(({ name }) => name)).toEqual([
+      "lookup_resource",
+      "read_lyrics",
+    ]);
+    expect(netease!.manifest.config.some(({ key }) => key.startsWith("download"))).toBe(false);
+    for (const missing of [
+      { ...ctx, configuration: {} },
+      { ...ctx, actor: { ...ctx.actor, userId: undefined } },
+    ]) {
+      const disabled = await bilibili!.definition.createSession(missing);
+      expect(disabled.tools!.some(({ name }) => name === "download_video")).toBe(false);
+    }
+    expect(
+      (await createBuiltinMediaPlugins()[0]!.definition.createSession(ctx)).tools!.some(
+        ({ name }) => name === "download_video",
+      ),
+    ).toBe(false);
+    expect(downloads.create).not.toHaveBeenCalled();
+    expect(readMediaDocument).not.toHaveBeenCalled();
   });
 
   it("injects host-bound ASR tools only for Bilibili and leaves platform subtitle tools available", async () => {

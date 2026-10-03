@@ -407,3 +407,105 @@ describe("Bilibili host-only audio extraction", () => {
     ).rejects.toMatchObject({ code: "invalid_reference" });
   });
 });
+
+describe("Bilibili host-only video DASH selection", () => {
+  const stream = (height: number, bandwidth: number) => ({
+    mimeType: "video/mp4",
+    codecs: "avc1.640028",
+    bandwidth,
+    width: (height * 16) / 9,
+    height,
+    baseUrl: "https://upos-sz-mirrorcos.bilivideo.com/video.m4s?signature=private",
+  });
+  const play = () => ({
+    timelength: 20_000,
+    dash: {
+      video: [stream(1080, 20_000_000), stream(720, 2_000_000), stream(360, 400_000)],
+      audio: [
+        {
+          mime_type: "audio/mp4",
+          codecs: "mp4a.40.2",
+          bandwidth: 64_000,
+          base_url: "https://upos-sz-mirrorcos.bilivideo.com/audio.m4s?signature=private",
+        },
+      ],
+    },
+  });
+  async function setup(data = play(), rights = 1) {
+    apiResult({ ...videoData(), rights: { download: rights } });
+    const client = createBilibiliClient({ cookie: "SESSDATA=synthetic" });
+    const video = await client.getVideo("https://www.bilibili.com/video/av42?p=2");
+    apiResult({
+      isLogin: true,
+      wbi_img: {
+        img_url: `https://i0.hdslb.com/bfs/wbi/${"a".repeat(32)}.png`,
+        sub_url: `https://i0.hdslb.com/bfs/wbi/${"b".repeat(32)}.png`,
+      },
+    });
+    apiResult(data);
+    return { client, video };
+  }
+  it("chooses the highest AVC resolution that fits the byte limit and keeps CDN credentials out", async () => {
+    const { client, video } = await setup();
+    const media = await client.getVideoMedia(video.reference, undefined, {
+      maxDurationSeconds: 30,
+      maxBytes: 45_000_000,
+    });
+    expect(media).toMatchObject({
+      height: 720,
+      width: 1280,
+      durationSeconds: 20,
+      video: { allowedHosts: ["upos-sz-mirrorcos.bilivideo.com"] },
+      audio: { allowedHosts: ["upos-sz-mirrorcos.bilivideo.com"] },
+    });
+    expect(media.estimatedBytes).toBeLessThan(45_000_000);
+    expect(media.video).not.toHaveProperty("credential");
+    expect(media.audio).not.toHaveProperty("credential");
+    const url = new URL(vi.mocked(readMediaDocument).mock.calls.at(-1)![0]);
+    expect(url.searchParams.get("qn")).toBe("80");
+    expect(url.searchParams.get("cid")).toBe("102");
+  });
+  it("reports source_too_large when even the lowest resolution exceeds the limit", async () => {
+    const { client, video } = await setup();
+    await expect(
+      client.getVideoMedia(video.reference, undefined, {
+        maxDurationSeconds: 30,
+        maxBytes: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "source_too_large" });
+  });
+  it.each([
+    { is_preview: 1 },
+    { is_drm: true },
+    { is_live: true },
+    { timelength: 25_000 },
+    {
+      dash: { ...play().dash, video: [{ ...stream(720, 2_000_000), codecs: "hev1.1.6.L120.90" }] },
+    },
+    {
+      dash: {
+        ...play().dash,
+        video: [{ ...stream(720, 2_000_000), baseUrl: "https://evil.example/video" }],
+      },
+    },
+  ])("rejects inaccessible or incompatible video without fallback: %j", async (extra) => {
+    const { client, video } = await setup({ ...play(), ...extra });
+    await expect(
+      client.getVideoMedia(video.reference, undefined, {
+        maxDurationSeconds: 30,
+        maxBytes: 45_000_000,
+      }),
+    ).rejects.toBeInstanceOf(Error);
+    expect(readMediaDocument).toHaveBeenCalledTimes(3);
+  });
+  it("requires platform download permission before play requests", async () => {
+    const { client, video } = await setup(play(), 0);
+    await expect(
+      client.getVideoMedia(video.reference, undefined, {
+        maxDurationSeconds: 30,
+        maxBytes: 45_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "api_rejected" });
+    expect(readMediaDocument).toHaveBeenCalledOnce();
+  });
+});

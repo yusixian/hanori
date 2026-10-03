@@ -120,6 +120,7 @@ export interface TurnInteractionInput {
 }
 
 export interface TurnToolsetInput {
+  threadId?: number;
   currentTraceId?: string;
   signal?: AbortSignal;
   entry: ReplyTurn | ContinueTurn;
@@ -296,6 +297,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
   const pluginActor: PluginActor = {
     botId: config.botId,
     chatId,
+    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
     userId,
     isAdmin,
     isPrivate: input.isPrivate,

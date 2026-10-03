@@ -456,6 +456,20 @@
       "when": 1790964574290,
       "tag": "0064_stale_annihilus",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1791005294179,
+      "tag": "0065_sturdy_mephisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1791005685401,
+      "tag": "0066_large_thunderbolt_ross",
+      "breakpoints": true
     }
   ]
 }

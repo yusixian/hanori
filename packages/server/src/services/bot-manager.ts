@@ -4,6 +4,7 @@ import {
   disposeBot,
   recoverPixAIGeneration,
   sendLocalImageFiles,
+  sendLocalVideoFile,
 } from "@cos-tool-bot/bot";
 import { run, type FetchOptions, type RunnerHandle } from "@grammyjs/runner";
 import type {
@@ -169,11 +170,37 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     await this.start();
   }
 
-  async sendHtml(chatId: number, html: string): Promise<void> {
+  async sendHtml(
+    chatId: number,
+    html: string,
+    threadId?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     if (!this.bot) {
       throw new Error(`Bot ${this.botId} is not running`);
     }
-    await this.bot.api.sendMessage(chatId, html, { parse_mode: "HTML" });
+    await this.bot.api.sendMessage(
+      chatId,
+      html,
+      {
+        parse_mode: "HTML",
+        ...(threadId === undefined ? {} : { message_thread_id: threadId }),
+      },
+      signal as Parameters<typeof this.bot.api.sendMessage>[3],
+    );
+  }
+
+  async sendVideoFile(
+    chatId: number,
+    path: string,
+    input: {
+      title: string;
+      durationSeconds: number;
+      threadId?: number;
+      signal: AbortSignal;
+    },
+  ): Promise<number> {
+    return sendLocalVideoFile(this.requireRunningBot().api, chatId, path, input);
   }
 
   async sendImageFiles(

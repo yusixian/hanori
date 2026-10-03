@@ -82,12 +82,13 @@ async function hashFile(file, stat, signal, errorCode) {
   return hash.digest("hex");
 }
 
-async function readVerifiedInput(path, digest, signal) {
+async function readVerifiedInput(path, digest, signal, owner) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await file.stat();
     if (!stat.isFile() || stat.nlink !== 1 || stat.size < 16 || stat.size > INPUT_LIMIT)
       fail("invalid_input");
+    if (owner !== undefined && (stat.uid !== owner || stat.mode & 0o022)) fail("invalid_input");
     const header = Buffer.alloc(16);
     const { bytesRead } = await file.read(header, 0, header.length, 0);
     if (
@@ -98,13 +99,18 @@ async function readVerifiedInput(path, digest, signal) {
     )
       fail("invalid_input");
     if ((await hashFile(file, stat, signal, "invalid_input")) !== digest) fail("checksum_mismatch");
+    return stat;
   } finally {
     await file.close();
   }
 }
 
 /** FFmpeg gets no host credentials, shell, stdin, network URLs, or ambient process environment. */
-export async function runProcess(binary, args, { signal, timeoutMs, spawnProcess = spawn }) {
+export async function runProcess(
+  binary,
+  args,
+  { signal, timeoutMs, spawnProcess = spawn, outputPath, maxBytes },
+) {
   checkAbort(signal);
   return new Promise((resolveOutput, reject) => {
     const child = spawnProcess(binary, args, {
@@ -140,6 +146,17 @@ export async function runProcess(binary, args, { signal, timeoutMs, spawnProcess
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
     const timer = setTimeout(() => kill(new MediaWorkerError("timeout")), timeoutMs);
+    const outputTimer = outputPath
+      ? setInterval(() => {
+          void lstat(outputPath).then(
+            (stat) => {
+              if (stat.size > maxBytes || !stat.isFile() || stat.isSymbolicLink())
+                kill(new MediaWorkerError("invalid_output"));
+            },
+            () => kill(new MediaWorkerError("invalid_output")),
+          );
+        }, 25)
+      : undefined;
     const collect = (chunk, stdout) => {
       bytes += chunk.length;
       if (bytes > PROCESS_OUTPUT_LIMIT) kill(new MediaWorkerError("process_output_limit"));
@@ -153,6 +170,7 @@ export async function runProcess(binary, args, { signal, timeoutMs, spawnProcess
     child.on("close", (code) => {
       closed = true;
       clearTimeout(timer);
+      clearInterval(outputTimer);
       signal.removeEventListener("abort", onAbort);
       if (failure) reject(failure);
       else if (code !== 0) reject(new MediaWorkerError("conversion_failed"));
@@ -307,7 +325,175 @@ async function convert(job, body, options, signal) {
   }
 }
 
-async function jsonBody(request, signal) {
+async function probeVideo(path, signal, spawnProcess, expected) {
+  const args = probeArgs(path, "mov");
+  args.splice(args.indexOf("-select_streams"), 2);
+  args[args.indexOf("-show_entries") + 1] = "format=duration:stream=codec_name,codec_type,duration";
+  let result;
+  try {
+    result = JSON.parse(
+      await runProcess("ffprobe", args, { signal, timeoutMs: 15_000, spawnProcess }),
+    );
+  } catch (error) {
+    if (error instanceof MediaWorkerError) throw error;
+    fail("invalid_video");
+  }
+  if (!Array.isArray(result.streams) || result.streams.length !== expected.length)
+    fail("invalid_video");
+  const streams = result.streams;
+  for (const [index, type] of expected.entries()) {
+    if (
+      streams[index]?.codec_type !== type ||
+      streams[index]?.codec_name !== (type === "video" ? "h264" : "aac")
+    )
+      fail("unsupported_codec");
+  }
+  const durations = streams.map((stream) => Number(stream.duration ?? result.format?.duration));
+  const duration = Number(result.format?.duration);
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0 ||
+    durations.some(
+      (value) => !Number.isFinite(value) || value <= 0 || Math.abs(value - duration) > 0.25,
+    )
+  )
+    fail("duration_limit");
+  return { duration, durations };
+}
+
+async function muxVideo(job, body, options, signal) {
+  const directory = join(options.jobDirectory, "video-downloads", job);
+  const video = join(directory, "video.mp4");
+  const audio = join(directory, "audio.m4a");
+  const output = join(directory, "output.mp4");
+  let outputCreated = false;
+  try {
+    checkAbort(signal);
+    await safeDirectory(directory);
+    const directoryStat = await lstat(directory);
+    const videoStat = await readVerifiedInput(video, body.videoSha256, signal, directoryStat.uid);
+    const audioStat = await readVerifiedInput(audio, body.audioSha256, signal, directoryStat.uid);
+    if (videoStat.size + audioStat.size > INPUT_LIMIT) fail("invalid_input");
+    const sourceVideo = await probeVideo(video, signal, options.spawnProcess, ["video"]);
+    const sourceAudio = await probeVideo(audio, signal, options.spawnProcess, ["audio"]);
+    if (
+      sourceVideo.duration > body.maxDurationSeconds ||
+      sourceAudio.duration > body.maxDurationSeconds ||
+      Math.abs(sourceVideo.duration - sourceAudio.duration) > 0.25
+    )
+      fail("duration_limit");
+    checkAbort(signal);
+    const handle = await open(
+      output,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    outputCreated = true;
+    await handle.close();
+    await runProcess(
+      "ffmpeg",
+      [
+        "-hide_banner",
+        "-v",
+        "error",
+        "-nostdin",
+        "-y",
+        "-threads",
+        "1",
+        "-protocol_whitelist",
+        "file",
+        "-enable_drefs",
+        "0",
+        "-use_absolute_path",
+        "0",
+        "-f",
+        "mov",
+        "-i",
+        video,
+        "-protocol_whitelist",
+        "file",
+        "-enable_drefs",
+        "0",
+        "-use_absolute_path",
+        "0",
+        "-f",
+        "mov",
+        "-i",
+        audio,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c",
+        "copy",
+        "-sn",
+        "-dn",
+        "-map_metadata",
+        "-1",
+        "-movflags",
+        "+faststart",
+        "-f",
+        "mp4",
+        output,
+      ],
+      {
+        signal,
+        timeoutMs: JOB_TIMEOUT,
+        spawnProcess: options.spawnProcess,
+        outputPath: output,
+        maxBytes: body.maxBytes,
+      },
+    );
+    checkAbort(signal);
+    const converted = await probeVideo(output, signal, options.spawnProcess, ["video", "audio"]);
+    if (
+      converted.duration > body.maxDurationSeconds ||
+      Math.abs(converted.durations[0] - sourceVideo.duration) > 0.25 ||
+      Math.abs(converted.durations[1] - sourceAudio.duration) > 0.25
+    )
+      fail("duration_limit");
+    // Verify the same input identities after probing/muxing to reject substitutions or mutations.
+    for (const [path, digest, original] of [
+      [video, body.videoSha256, videoStat],
+      [audio, body.audioSha256, audioStat],
+    ]) {
+      const current = await readVerifiedInput(path, digest, signal, directoryStat.uid);
+      if (
+        current.ino !== original.ino ||
+        current.dev !== original.dev ||
+        current.mtimeMs !== original.mtimeMs ||
+        current.ctimeMs !== original.ctimeMs
+      )
+        fail("invalid_input");
+    }
+    const file = await open(
+      output,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    try {
+      const stat = await file.stat();
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1 ||
+        stat.size < 16 ||
+        stat.size > body.maxBytes ||
+        (process.getuid && stat.uid !== process.getuid())
+      )
+        fail("invalid_output");
+      const sha256 = await hashFile(file, stat, signal, "invalid_output");
+      return { ok: true, bytes: stat.size, sha256, durationSeconds: converted.duration };
+    } finally {
+      await file.close();
+    }
+  } catch (error) {
+    if (outputCreated) await unlink(output).catch(() => undefined);
+    checkAbort(signal);
+    if (error instanceof MediaWorkerError) throw error;
+    fail("invalid_job");
+  }
+}
+
+async function jsonBody(request, signal, video = false) {
   checkAbort(signal);
   const data = await new Promise((resolveBody, reject) => {
     const chunks = [];
@@ -355,17 +541,30 @@ async function jsonBody(request, signal) {
   } catch {
     fail("invalid_request");
   }
+  const keys = video
+    ? ["videoSha256", "audioSha256", "maxDurationSeconds", "maxBytes"]
+    : ["sha256", "maxDurationSeconds"];
   if (
     !body ||
     typeof body !== "object" ||
     Array.isArray(body) ||
-    Object.keys(body).some((key) => !["sha256", "maxDurationSeconds"].includes(key)) ||
-    typeof body.sha256 !== "string" ||
-    !SHA256.test(body.sha256) ||
+    Object.keys(body).some((key) => !keys.includes(key)) ||
     !Number.isSafeInteger(body.maxDurationSeconds) ||
     body.maxDurationSeconds < 1
   )
     fail("invalid_request");
+  if (video) {
+    if (
+      typeof body.videoSha256 !== "string" ||
+      !SHA256.test(body.videoSha256) ||
+      typeof body.audioSha256 !== "string" ||
+      !SHA256.test(body.audioSha256) ||
+      !Number.isSafeInteger(body.maxBytes) ||
+      body.maxBytes < 1 ||
+      body.maxBytes > 50_000_000
+    )
+      fail("invalid_request");
+  } else if (typeof body.sha256 !== "string" || !SHA256.test(body.sha256)) fail("invalid_request");
   return body;
 }
 
@@ -432,7 +631,7 @@ export function createWorker({
       send(response, stopped ? 503 : 200, { ok: !stopped });
       return;
     }
-    const match = /^\/jobs\/([^/]+)(\/convert)?$(?![\s\S])/.exec(path);
+    const match = /^\/jobs\/([^/]+)(\/(?:convert|mux-video))?$(?![\s\S])/.exec(path);
     if (!match || !UUID.test(match[1])) {
       send(response, 404, { ok: false, error: "not_found" });
       return;
@@ -474,9 +673,14 @@ export function createWorker({
     request.once("aborted", disconnect);
     response.once("close", disconnect);
     try {
-      const body = await jsonBody(request, controller.signal);
+      const video = match[2] === "/mux-video";
+      const body = await jsonBody(request, controller.signal, video);
       checkAbort(controller.signal);
-      send(response, 200, await convert(job, body, options, controller.signal));
+      send(
+        response,
+        200,
+        await (video ? muxVideo : convert)(job, body, options, controller.signal),
+      );
     } catch (error) {
       const code = error instanceof MediaWorkerError ? error.code : "conversion_failed";
       send(response, code === "cancelled" ? 409 : code === "timeout" ? 504 : 400, {

@@ -17,6 +17,7 @@ import type {
   PluginConfiguration,
   PluginManifest,
   MediaJobStatus,
+  VideoDownloadStatus,
   TranscriptDocument,
   AssetSafety,
   LarkWebhookConfig,
@@ -150,6 +151,47 @@ export const mediaTranscriptionJobs = pgTable(
     check(
       "media_transcription_jobs_limits_check",
       sql`${t.durationSeconds} > 0 and ${t.part} >= 1 and ${t.part} <= 1000 and ${t.progress} >= 0 and ${t.progress} <= 100 and ${t.attempt} >= 0 and ${t.attempt} <= 2`,
+    ),
+  ],
+);
+
+export const videoDownloadJobs = pgTable(
+  "video_download_jobs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    userId: bigint("user_id", { mode: "number" }).notNull(),
+    threadId: integer("thread_id"),
+    configRevision: integer("config_revision").notNull(),
+    installationRevision: integer("installation_revision").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    bvid: text("bvid").notNull(),
+    part: integer("part").notNull(),
+    title: text("title").notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    status: text("status").$type<VideoDownloadStatus>().notNull().default("queued"),
+    error: text("error"),
+    bytes: integer("bytes"),
+    messageId: integer("message_id"),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    cleanupPending: boolean("cleanup_pending").notNull().default(false),
+    cacheExpiresAt: timestamp("cache_expires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [
+    index("video_download_jobs_queue_idx").on(t.status, t.createdAt),
+    index("video_download_jobs_actor_idx").on(t.botId, t.userId, t.createdAt),
+    check(
+      "video_download_jobs_status_check",
+      sql`${t.status} in ('queued','downloading','merging','sending','completed','failed','cancelled','delivery_unknown')`,
+    ),
+    check(
+      "video_download_jobs_limits_check",
+      sql`${t.durationSeconds}>0 and ${t.part} between 1 and 1000 and (${t.bytes} is null or ${t.bytes} between 1 and 50000000)`,
     ),
   ],
 );

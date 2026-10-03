@@ -41,6 +41,8 @@ export interface MediaDocumentPolicy extends MediaHttpPolicy {
 export interface MediaDownloadPolicy extends MediaDocumentPolicy {
   /** Public platform referer only; callers cannot supply arbitrary request headers. */
   referer?: "https://www.bilibili.com/";
+  /** Cumulative bytes, awaited before writing each chunk so the host can enforce disk budgets. */
+  onProgress?: (bytes: number) => Promise<void>;
 }
 
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
@@ -343,7 +345,9 @@ export async function downloadMediaFile(
     !isAbsolute(filePath) ||
     (policy.referer !== undefined && policy.referer !== "https://www.bilibili.com/") ||
     !policy.mimeTypes.length ||
-    policy.mimeTypes.some((mime) => !["audio/mp4", "application/octet-stream"].includes(mime))
+    policy.mimeTypes.some(
+      (mime) => !["audio/mp4", "video/mp4", "application/octet-stream"].includes(mime),
+    )
   )
     throw new MediaHttpError("invalid_request");
   let file: FileHandle | undefined;
@@ -381,6 +385,8 @@ export async function downloadMediaFile(
               )
                 throw new MediaHttpError("invalid_content");
             }
+            await policy.onProgress?.(size);
+            signal.throwIfAborted();
             await file.writeFile(chunk);
             hash.update(chunk);
           }

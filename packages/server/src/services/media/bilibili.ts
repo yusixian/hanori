@@ -5,7 +5,12 @@ import { resolveBilibiliResource } from "./resource.js";
 
 export class BilibiliClientError extends Error {
   constructor(
-    readonly code: "invalid_response" | "api_rejected" | "invalid_reference" | "reference_limit",
+    readonly code:
+      | "invalid_response"
+      | "api_rejected"
+      | "invalid_reference"
+      | "reference_limit"
+      | "source_too_large",
   ) {
     super(`Bilibili request failed: ${code}`);
     this.name = "BilibiliClientError";
@@ -97,6 +102,32 @@ function subtitleUrl(value: unknown): string {
   } catch {
     return invalid();
   }
+}
+
+function mediaLocation(entry: Record<string, unknown>) {
+  const value = entry.baseUrl ?? entry.base_url;
+  if (typeof value !== "string" || !value || value.length > 4096 || /[\s\\]/u.test(value))
+    invalid();
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) invalid();
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return invalid();
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    url.hash ||
+    !/^[a-z0-9-]+\.(?:bilivideo\.com|bilivideo\.cn)$/.test(url.hostname)
+  )
+    invalid();
+  return { url: url.href, allowedHosts: [url.hostname] };
 }
 
 /** Compatibility adapter based on yt-dlp's Bilibili implementation, not an official API contract:
@@ -277,10 +308,11 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
   }
 
   /** Host-only audio-job operation. Signed CDN URLs must never enter model tools or logs. */
-  async function getAudio(
+  async function getPlayInfo(
     reference: string,
     signal?: AbortSignal,
     maxDurationSeconds = Number.MAX_SAFE_INTEGER,
+    quality = "16",
   ) {
     signal?.throwIfAborted();
     const video = videos.get(reference);
@@ -316,7 +348,7 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
       cid: String(video.cid),
       fnval: "16",
       fourk: "0",
-      qn: "16",
+      qn: quality,
       wts: String(Math.round(Date.now() / 1000)),
     };
     const query = new URLSearchParams(
@@ -327,6 +359,12 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
       .digest("hex");
     const data = await api("/x/player/wbi/playurl", parameters, signal);
     if (
+      (data.aid !== undefined && data.aid !== video.aid) ||
+      (data.cid !== undefined && data.cid !== video.cid) ||
+      (data.bvid !== undefined && data.bvid !== video.bvid)
+    )
+      invalid();
+    if (
       data.is_preview ||
       data.is_drm ||
       (data.drm_tech_type !== undefined && data.drm_tech_type !== 0)
@@ -335,6 +373,15 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
     const duration = integer(data.timelength, 1, Number.MAX_SAFE_INTEGER) / 1000;
     if (duration > maxDurationSeconds || Math.abs(duration - video.duration) > 2)
       throw new BilibiliClientError("api_rejected");
+    return { data, duration };
+  }
+
+  async function getAudio(
+    reference: string,
+    signal?: AbortSignal,
+    maxDurationSeconds = Number.MAX_SAFE_INTEGER,
+  ) {
+    const { data, duration } = await getPlayInfo(reference, signal, maxDurationSeconds);
     const dash = object(data.dash);
     if (!Array.isArray(dash.audio) || !dash.audio.length || dash.audio.length > 20) invalid();
     const audio = dash.audio
@@ -349,26 +396,85 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
       .map((entry) => ({ entry, bandwidth: integer(entry.bandwidth, 1, 1_000_000) }))
       .sort((left, right) => left.bandwidth - right.bandwidth)[0];
     if (!audio) throw new BilibiliClientError("api_rejected");
-    const value = audio.entry.baseUrl ?? audio.entry.base_url;
-    if (typeof value !== "string" || value.length > 4096 || /[\s\\]/u.test(value)) invalid();
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      return invalid();
-    }
-    if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.port ||
-      url.hash ||
-      !/^[a-z0-9-]+\.(?:bilivideo\.com|bilivideo\.cn)$/.test(url.hostname)
-    )
-      invalid();
     signal?.throwIfAborted();
-    return { url: url.href, allowedHosts: [url.hostname], durationSeconds: duration };
+    return { ...mediaLocation(audio.entry), durationSeconds: duration };
   }
 
-  return { getVideo, listSubtitles, readSubtitle, getAudio };
+  async function getVideoMedia(
+    reference: string,
+    signal: AbortSignal | undefined,
+    limits: { maxDurationSeconds: number; maxBytes: number },
+  ) {
+    signal?.throwIfAborted();
+    if (
+      !Number.isSafeInteger(limits.maxBytes) ||
+      limits.maxBytes < 1 ||
+      limits.maxBytes > 50_000_000
+    )
+      throw new BilibiliClientError("api_rejected");
+    const { data, duration } = await getPlayInfo(
+      reference,
+      signal,
+      limits.maxDurationSeconds,
+      "80",
+    );
+    if (data.is_live || data.live_status) throw new BilibiliClientError("api_rejected");
+    const dash = object(data.dash);
+    if (
+      !Array.isArray(dash.video) ||
+      !dash.video.length ||
+      dash.video.length > 100 ||
+      !Array.isArray(dash.audio) ||
+      !dash.audio.length ||
+      dash.audio.length > 20
+    )
+      invalid();
+    const streams = (raw: unknown[], mime: string, codec: RegExp, maxBandwidth: number) =>
+      raw
+        .map(object)
+        .filter(
+          (entry) =>
+            (entry.mimeType ?? entry.mime_type) === mime &&
+            typeof entry.codecs === "string" &&
+            codec.test(entry.codecs) &&
+            !entry.drm_tech_type &&
+            !entry.is_drm,
+        )
+        .map((entry) => {
+          const bandwidth = integer(entry.bandwidth, 1, maxBandwidth);
+          const estimate = Math.ceil((bandwidth * duration) / 8);
+          const size =
+            entry.size === undefined ? estimate : Math.max(integer(entry.size), estimate);
+          return { entry, size, bandwidth, location: mediaLocation(entry) };
+        });
+    const audios = streams(dash.audio, "audio/mp4", /^mp4a\.[0-9.]+$/, 1_000_000).sort(
+      (a, b) => a.bandwidth - b.bandwidth,
+    );
+    const videoStreams = streams(dash.video, "video/mp4", /^avc1\.[a-fA-F0-9]{6}$/, 100_000_000)
+      .map((stream) => ({
+        ...stream,
+        width: integer(stream.entry.width, 1, 7680),
+        height: integer(stream.entry.height, 1, 4320),
+      }))
+      .sort((a, b) => b.width * b.height - a.width * a.height || b.bandwidth - a.bandwidth);
+    const audio = audios[0];
+    if (!audio || !videoStreams.length) throw new BilibiliClientError("api_rejected");
+    for (const video of videoStreams) {
+      // DASH bandwidth is approximate; reserve mux overhead and a margin before downloading.
+      const estimatedBytes = Math.ceil((video.size + audio.size) * 1.1) + 65_536;
+      if (estimatedBytes > limits.maxBytes) continue;
+      signal?.throwIfAborted();
+      return {
+        video: video.location,
+        audio: audio.location,
+        durationSeconds: duration,
+        estimatedBytes,
+        width: video.width,
+        height: video.height,
+      };
+    }
+    throw new BilibiliClientError("source_too_large");
+  }
+
+  return { getVideo, listSubtitles, readSubtitle, getAudio, getVideoMedia };
 }

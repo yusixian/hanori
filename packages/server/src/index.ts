@@ -3,7 +3,7 @@ import { GitPluginArtifacts } from "./services/plugins/git-artifacts.js";
 import { createBuiltinMediaPlugins } from "./services/plugins/builtin-media.js";
 import type { MediaTranscriptionPort } from "@cos-tool-bot/shared";
 import { MediaJobService } from "./services/media-jobs/service.js";
-import { MediaJobExecutor } from "./services/media-jobs/executor.js";
+import { MediaJobExecutor, requireStoppedWorker } from "./services/media-jobs/executor.js";
 import { loadMediaJobConfiguration } from "./services/media-jobs/configuration.js";
 import { IsolatedAudioConverter } from "./services/media/isolated-converter.js";
 import { createDb, runMigrations } from "@cos-tool-bot/database";
@@ -28,6 +28,11 @@ import { BotRunCleaner } from "./services/bot-run-cleaner.js";
 import { MemoryGC } from "./services/memory-gc.js";
 import { MemoryConsolidator } from "./services/memory-consolidator.js";
 import { McpClientManager } from "./services/mcp-client-manager.js";
+import { VideoDownloadService } from "./services/video-downloads/service.js";
+import { VideoDownloadExecutor } from "./services/video-downloads/executor.js";
+import { VideoDownloadCache } from "./services/video-downloads/cache.js";
+import { loadVideoDownloadConfiguration } from "./services/video-downloads/configuration.js";
+import type { VideoDownloadPort } from "@cos-tool-bot/shared";
 import { CodingWorkerClient } from "./services/coding-worker-client.js";
 import { CodingJobStager } from "./services/coding-job-stager.js";
 import { GitWorkspaceService } from "./services/git-workspace-service.js";
@@ -166,6 +171,14 @@ const mediaConverter = env.MEDIA_WORKER_SECRET
   ? new IsolatedAudioConverter(env.MEDIA_WORKER_SOCKET, env.MEDIA_WORKER_SECRET)
   : undefined;
 let mediaJobService: MediaJobService;
+let videoDownloadService: VideoDownloadService;
+const videoDownloads: VideoDownloadPort | undefined = mediaConverter
+  ? {
+      create: (actor, input, signal) => videoDownloadService.create(actor, input, signal),
+      get: (actor, id) => videoDownloadService.get(actor, id),
+      cancel: (actor, id) => videoDownloadService.cancel(actor, id),
+    }
+  : undefined;
 // Built-ins bind this port lazily; sessions only open after all services are composed.
 const mediaTranscription: MediaTranscriptionPort | undefined = mediaConverter
   ? {
@@ -179,11 +192,50 @@ const pluginManager = new PluginManager(
   db,
   env.ENCRYPTION_KEY,
   new GitPluginArtifacts(path.resolve(env.PLUGIN_DIRECTORY)),
-  createBuiltinMediaPlugins({ transcription: mediaTranscription }),
+  createBuiltinMediaPlugins({ transcription: mediaTranscription, downloads: videoDownloads }),
 );
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+{
+  const executor = new VideoDownloadExecutor(
+    new VideoDownloadCache({
+      root: path.resolve(env.MEDIA_JOB_DIR, "video-downloads"),
+      beforeRemove: (id) =>
+        mediaConverter ? mediaConverter.cancel(id) : requireStoppedWorker(env.MEDIA_WORKER_SOCKET),
+    }),
+    mediaConverter,
+    env.MEDIA_WORKER_GID,
+    env.MEDIA_WORKER_SOCKET,
+  );
+  videoDownloadService = new VideoDownloadService(db, {
+    configuration: (botId) =>
+      mediaConverter ? loadVideoDownloadConfiguration(pluginManager, botId) : Promise.resolve(null),
+    inspect: (source, config, signal) => executor.inspect(source, config, signal),
+    download: (row, config, options) => executor.download(row, config, options),
+    cleanup: (id, retain) => executor.cleanup(id, retain),
+    sweep: () => executor.sweep(),
+    deliver: (row, file, signal) =>
+      botPool.sendVideoFile(row.botId, row.chatId, file.path, {
+        title: row.title,
+        durationSeconds: row.durationSeconds,
+        ...(row.threadId === null ? {} : { threadId: row.threadId }),
+        signal,
+      }),
+    notifyFailure: (row) =>
+      botPool.sendHtml(
+        row.botId,
+        row.chatId,
+        `视频下载 / Video download: <code>${row.id}</code>\n${row.status === "delivery_unknown" ? "发送结果待确认，请先检查聊天记录，未自动重发。 / Delivery uncertain; check the chat before requesting again." : row.status === "cancelled" ? "已取消 / Cancelled" : "未完成 / Failed"}\n${row.error ?? "download_failed"}`,
+        row.threadId ?? undefined,
+        AbortSignal.timeout(15_000),
+      ),
+    reportError: (code) => logger.warn({ code }, "Video download maintenance failed"),
+  });
+  pluginManager.onConfigurationChanged(async (pluginId, botId) => {
+    if (pluginId === "hanori.bilibili") await videoDownloadService.cancelForBot(botId);
+  });
+}
 const mediaConfiguration = (botId: string) =>
   mediaConverter ? loadMediaJobConfiguration(pluginManager, botId) : Promise.resolve(null);
 {
@@ -506,6 +558,8 @@ await usageGovernor.pruneExpiredDetails();
 await botPool.startAll();
 if (!mediaConverter) await mediaJobService.cancelForBot();
 await mediaJobService.start();
+if (!mediaConverter) await videoDownloadService.cancelForBot();
+await videoDownloadService.start();
 await imageGenerationService.recoverPending();
 
 const usageGovernanceCleanupTimer = setInterval(
@@ -552,6 +606,7 @@ const shutdown = async (signal: string) => {
   runtimeHealth.markStopping();
   await dbLogger.info(`[${signal}] Shutting down...`);
   await mediaJobService.close();
+  await videoDownloadService.close();
   await pluginManager.close();
   await mcpClientManager.destroyAll();
   await imageMcpConnectionService.close();

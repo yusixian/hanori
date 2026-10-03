@@ -11,6 +11,7 @@ import type { PluginLoginAttempt } from "./plugin-login.js";
 export interface PluginActor {
   botId: string;
   chatId: number;
+  threadId?: number;
   userId?: number;
   isAdmin: boolean;
   isPrivate: boolean;
