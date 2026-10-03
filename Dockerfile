@@ -57,6 +57,13 @@ ENV NODE_ENV=production
 RUN corepack disable 2>/dev/null; rm -rf /root/.cache /tmp/*
 RUN apk add --no-cache ffmpeg git postgresql17-client && mkdir -p /data/backups /app/data /workspaces /git-metadata && chown node:node /workspaces /git-metadata
 
+# Pin yt-dlp separately from the application dependency graph.
+COPY infrastructure/bilibili-ytdlp/requirements.txt /opt/bilibili-ytdlp/requirements.txt
+RUN apk add --no-cache python3 py3-pip \
+  && python3 -m venv /opt/bilibili-ytdlp/venv \
+  && /opt/bilibili-ytdlp/venv/bin/pip install --no-cache-dir -r /opt/bilibili-ytdlp/requirements.txt
+ENV PATH="/opt/bilibili-ytdlp/venv/bin:${PATH}"
+
 COPY --from=app-runtime-deps /app/node_modules ./node_modules
 COPY --from=app-runtime-deps /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=app-runtime-deps /app/packages/bot/node_modules ./packages/bot/node_modules

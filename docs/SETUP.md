@@ -10,6 +10,7 @@
 - pnpm 10+
 - PostgreSQL 17，并启用 pgvector
 - ffmpeg 和 ffprobe（用于 Telegram WEBM 视频贴纸抽取首尾帧；Docker app 镜像已内置）
+- Python 3.10+ 与 `infrastructure/bilibili-ytdlp/requirements.txt` 中固定版本的 yt-dlp（Bilibili 字幕与视频流优先提取；Docker app 镜像已内置）。源码运行时可在独立虚拟环境安装，并将其 `bin` 加入服务器启动时的 `PATH`；未安装时回退现有接口。
 - 生产环境建议使用随机生成的加密密钥，不要使用示例值
 
 Bot 以兼容模式处理 Telegram 视频贴纸：下载受大小限制的本地临时 WEBM，使用

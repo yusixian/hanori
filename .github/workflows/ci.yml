@@ -23,6 +23,14 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Install pinned yt-dlp for extractor tests
+        run: |
+          # setup-python's macOS archives assume /Users/runner on hosted runners.
+          /opt/homebrew/bin/python3 -c 'import sys; assert sys.version_info >= (3, 10)'
+          /opt/homebrew/bin/python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
+          "$RUNNER_TEMP/bilibili-ytdlp/bin/pip" install -r infrastructure/bilibili-ytdlp/requirements.txt
+          echo "$RUNNER_TEMP/bilibili-ytdlp/bin" >> "$GITHUB_PATH"
+
       - name: Validate Dokploy Compose
         run: pnpm deploy:dokploy:check
 

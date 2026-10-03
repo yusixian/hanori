@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBilibiliClient } from "./bilibili.js";
 import { MediaHttpError, readMediaDocument } from "./http.js";
+import { extractWithYtdlp, YtdlpError } from "./yt-dlp.js";
+
+vi.mock("./yt-dlp.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./yt-dlp.js")>()),
+  extractWithYtdlp: vi.fn(),
+}));
 
 vi.mock("./http.js", () => ({
   readMediaDocument: vi.fn(),
@@ -42,7 +48,118 @@ function apiResult(data: unknown, code = 0) {
   );
 }
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(extractWithYtdlp).mockRejectedValue(new YtdlpError("unavailable"));
+});
+
+describe("yt-dlp subtitle priority", () => {
+  it("downloads and reads platform subtitles through yt-dlp before the legacy adapter", async () => {
+    apiResult(videoData());
+    const client = createBilibiliClient({ cookie: "SESSDATA=synthetic" });
+    const video = await client.getVideo("av42");
+    vi.mocked(extractWithYtdlp).mockResolvedValue({
+      status: "ok",
+      tracks: [
+        {
+          language: "ai-zh",
+          label: "自动字幕",
+          body: {
+            body: [{ from: 0, to: 1, content: "示例字幕" }],
+          },
+        },
+      ],
+    });
+    const listing = await client.listSubtitles(video.reference);
+    expect(listing.status).toBe("available");
+    if (listing.status !== "available") throw new Error("Expected subtitles");
+    expect(await client.readSubtitle(listing.tracks[0]!.reference)).toMatchObject({
+      source: "platform_auto",
+      cues: [{ text: "示例字幕" }],
+    });
+    expect(extractWithYtdlp).toHaveBeenCalledWith(
+      "subtitles",
+      expect.objectContaining({
+        bvid: "BV1z8411D7yS",
+        aid: 42,
+        cid: 101,
+      }),
+      expect.any(Function),
+      undefined,
+    );
+    expect(readMediaDocument).toHaveBeenCalledOnce();
+    expect(JSON.stringify(listing)).not.toMatch(/SESSDATA|signature|示例字幕/);
+  });
+
+  it("keeps cookies in the API origin and excludes them from subtitle CDN requests", async () => {
+    apiResult(videoData());
+    const client = createBilibiliClient({ cookie: "SESSDATA=synthetic" });
+    const video = await client.getVideo("av42");
+    apiResult({ subtitle: { subtitles: [] } });
+    vi.mocked(readMediaDocument).mockResolvedValueOnce(jsonResponse({ body: [] }));
+    vi.mocked(extractWithYtdlp).mockImplementationOnce(async (_operation, _video, read) => {
+      const signal = new AbortController().signal;
+      await read("https://api.bilibili.com/x/player/wbi/v2", { aid: 42, cid: 101 }, signal);
+      await read("//aisubtitle.hdslb.com/synthetic.json", {}, signal);
+      return { status: "login_required", tracks: [] };
+    });
+    await expect(client.listSubtitles(video.reference)).resolves.toEqual({
+      status: "login_required",
+    });
+    expect(vi.mocked(readMediaDocument).mock.calls[1]![1].credential).toEqual({
+      origin: "https://api.bilibili.com",
+      cookie: "SESSDATA=synthetic",
+    });
+    expect(vi.mocked(readMediaDocument).mock.calls[2]![1]).not.toHaveProperty("credential");
+  });
+
+  it.each([
+    "https://evil.example/subtitle.json",
+    "http://api.bilibili.com/x/player/wbi/v2",
+    "https://api.bilibili.com/arbitrary",
+  ])("rejects an unexpected extractor destination without fallback: %s", async (url) => {
+    apiResult(videoData());
+    const client = createBilibiliClient();
+    const video = await client.getVideo("av42");
+    vi.mocked(extractWithYtdlp).mockImplementationOnce(async (_operation, _video, read) =>
+      read(url, {}, new AbortController().signal),
+    );
+    await expect(client.listSubtitles(video.reference)).rejects.toMatchObject({
+      code: "invalid_response",
+    });
+    expect(readMediaDocument).toHaveBeenCalledOnce();
+  });
+
+  it("checks authentication instead of treating an empty yt-dlp result as no subtitles", async () => {
+    apiResult(videoData());
+    const client = createBilibiliClient();
+    const video = await client.getVideo("av42");
+    vi.mocked(extractWithYtdlp).mockResolvedValue({ status: "ok", tracks: [] });
+    apiResult({ subtitle: { subtitles: [] } });
+    await expect(client.listSubtitles(video.reference)).resolves.toEqual({
+      status: "authentication_unconfirmed",
+    });
+  });
+
+  it("does not fall back after cancellation or a content limit failure", async () => {
+    apiResult(videoData());
+    const client = createBilibiliClient();
+    const video = await client.getVideo("av42");
+    const controller = new AbortController();
+    vi.mocked(extractWithYtdlp).mockImplementationOnce(async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    });
+    await expect(client.listSubtitles(video.reference, controller.signal)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    vi.mocked(extractWithYtdlp).mockRejectedValueOnce(new YtdlpError("limit_exceeded"));
+    await expect(client.listSubtitles(video.reference)).rejects.toMatchObject({
+      code: "limit_exceeded",
+    });
+    expect(readMediaDocument).toHaveBeenCalledOnce();
+  });
+});
 
 describe("Bilibili metadata and scoped references", () => {
   it("reads only metadata and binds the selected part to its CID", async () => {
@@ -465,6 +582,36 @@ describe("Bilibili host-only video DASH selection", () => {
     expect(url.searchParams.get("qn")).toBe("80");
     expect(url.searchParams.get("cid")).toBe("102");
   });
+  it("prefers yt-dlp video streams and still applies the saved size limit", async () => {
+    const { client, video } = await setup();
+    vi.mocked(extractWithYtdlp).mockResolvedValue(play());
+    const media = await client.getVideoMedia(video.reference, undefined, {
+      maxDurationSeconds: 30,
+      maxBytes: 45_000_000,
+    });
+    expect(media.height).toBe(720);
+    expect(extractWithYtdlp).toHaveBeenCalledWith(
+      "video",
+      expect.objectContaining({ cid: 102 }),
+      expect.any(Function),
+      undefined,
+    );
+    expect(readMediaDocument).toHaveBeenCalledTimes(2);
+  });
+  it.each([{ is_drm: true }, { timelength: 25_000 }, { is_preview: true }])(
+    "rejects inaccessible yt-dlp media without falling back: %j",
+    async (extra) => {
+      const { client, video } = await setup();
+      vi.mocked(extractWithYtdlp).mockResolvedValue({ ...play(), ...extra });
+      await expect(
+        client.getVideoMedia(video.reference, undefined, {
+          maxDurationSeconds: 30,
+          maxBytes: 45_000_000,
+        }),
+      ).rejects.toMatchObject({ code: "api_rejected" });
+      expect(readMediaDocument).toHaveBeenCalledTimes(2);
+    },
+  );
   it("reports source_too_large when even the lowest resolution exceeds the limit", async () => {
     const { client, video } = await setup();
     await expect(
@@ -507,5 +654,6 @@ describe("Bilibili host-only video DASH selection", () => {
       }),
     ).rejects.toMatchObject({ code: "api_rejected" });
     expect(readMediaDocument).toHaveBeenCalledOnce();
+    expect(extractWithYtdlp).not.toHaveBeenCalled();
   });
 });
