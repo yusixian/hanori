@@ -51,7 +51,8 @@ function fixture() {
   const assertCurrent = vi.fn(async () => {});
   const opened = { attempt, commit, assertCurrent };
   const open = vi.fn<PluginLoginServiceOptions["open"]>(async () => opened);
-  const service = new PluginLoginService({ open });
+  const reportError = vi.fn<NonNullable<PluginLoginServiceOptions["reportError"]>>();
+  const service = new PluginLoginService({ open, reportError });
   services.push(service);
   const start = () => service.start(OWNER, PLUGIN, BOT, START);
   const poll = (id: string) => service.poll(OWNER, PLUGIN, BOT, id);
@@ -61,7 +62,19 @@ function fixture() {
     return poll(id);
   };
   const cancel = (id: string) => service.cancel(OWNER, PLUGIN, BOT, id);
-  return { service, attempt, commit, assertCurrent, opened, open, start, poll, settled, cancel };
+  return {
+    service,
+    attempt,
+    commit,
+    assertCurrent,
+    opened,
+    open,
+    reportError,
+    start,
+    poll,
+    settled,
+    cancel,
+  };
 }
 
 beforeEach(() => vi.useFakeTimers({ now: new Date("2030-01-01T00:00:00Z") }));
@@ -71,6 +84,59 @@ afterEach(async () => {
 });
 
 describe("isolated plugin QR login coordinator", () => {
+  it.each(["start", "poll", "save"] as const)(
+    "reports only a safe code and correlation fields for %s failures",
+    async (phase) => {
+      const f = fixture();
+      const error = Object.assign(new Error(TOKEN), {
+        code: "invalid_response",
+        url: `https://passport.example/?ticket=${TOKEN}`,
+        cookie: TOKEN,
+      });
+      let state;
+      if (phase === "start") {
+        f.open.mockRejectedValue(error);
+        state = await f.start();
+      } else {
+        state = await f.start();
+        if (phase === "poll") f.attempt.poll.mockRejectedValue(error);
+        else {
+          f.attempt.poll.mockResolvedValue(AUTHORIZED);
+          f.commit.mockRejectedValue(error);
+        }
+        state = await f.settled(state.id);
+      }
+      expect(state.status).toBe(phase === "save" ? "save_unknown" : "failed");
+      expect(f.reportError).toHaveBeenCalledExactlyOnceWith({
+        pluginId: PLUGIN,
+        botId: BOT,
+        sessionId: state.id,
+        phase,
+        code: "invalid_response",
+      });
+      expect(JSON.stringify(f.reportError.mock.calls)).not.toContain(TOKEN);
+      expect(JSON.stringify(state)).not.toContain(TOKEN);
+    },
+  );
+
+  it("redacts unrecognized error codes and tolerates diagnostic sink failures", async () => {
+    const f = fixture();
+    const state = await f.start();
+    f.attempt.poll.mockRejectedValue({ code: TOKEN, message: TOKEN });
+    f.reportError.mockImplementation(() => {
+      throw new Error("Synthetic log sink failure");
+    });
+    expect(await f.poll(state.id)).toMatchObject({ status: "failed" });
+    expect(f.reportError).toHaveBeenCalledExactlyOnceWith({
+      pluginId: PLUGIN,
+      botId: BOT,
+      sessionId: state.id,
+      phase: "poll",
+      code: "login_failed",
+    });
+    expect(JSON.stringify(f.reportError.mock.calls)).not.toContain(TOKEN);
+  });
+
   it("starts a waiting session without polling or modifying existing credentials", async () => {
     const f = fixture();
     const state = await f.start();

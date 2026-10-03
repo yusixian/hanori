@@ -17,7 +17,7 @@ import {
 } from "@cos-tool-bot/shared";
 import { and, eq, sql } from "drizzle-orm";
 import { PluginConfigStore, PluginConfigStoreError } from "./config-store.js";
-import { PluginLoginService } from "./login.js";
+import { PluginLoginService, type PluginLoginServiceOptions } from "./login.js";
 import { GitPluginArtifacts } from "./git-artifacts.js";
 import {
   bindPluginSession,
@@ -71,10 +71,12 @@ export class PluginManager implements PluginRuntimePort {
     private readonly encryptionKey: string,
     private readonly artifacts: GitPluginArtifacts,
     private readonly builtins: readonly BuiltinPlugin[],
+    reportLoginError?: PluginLoginServiceOptions["reportError"],
   ) {
     this.configs = new PluginConfigStore(db, encryptionKey);
     this.logins = new PluginLoginService({
       open: (id, botId, start, signal) => this.openLogin(id, botId, start, signal),
+      reportError: reportLoginError,
     });
   }
 

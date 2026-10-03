@@ -193,6 +193,7 @@ const pluginManager = new PluginManager(
   env.ENCRYPTION_KEY,
   new GitPluginArtifacts(path.resolve(env.PLUGIN_DIRECTORY)),
   createBuiltinMediaPlugins({ transcription: mediaTranscription, downloads: videoDownloads }),
+  (failure) => logger.warn(failure, "Plugin login failed"),
 );
 
 // Bot Pool
