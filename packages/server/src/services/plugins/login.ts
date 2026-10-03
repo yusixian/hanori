@@ -19,6 +19,13 @@ export interface PluginLoginServiceOptions {
     commit(secrets: Record<string, string>, signal: AbortSignal): Promise<PluginBotState>;
     assertCurrent(): Promise<void>;
   }>;
+  reportError?(failure: {
+    pluginId: string;
+    botId: string;
+    sessionId: string;
+    phase: "start" | "poll" | "save";
+    code: string;
+  }): void;
   now?(): number;
 }
 
@@ -55,6 +62,18 @@ const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const SECRET_KEY = /^[a-z][a-zA-Z0-9_]{0,63}$/;
 const RESERVED = new Set(Object.getOwnPropertyNames(Object.prototype));
 const ACTIVE = new Set<PluginLoginState["status"]>(["waiting", "scanned"]);
+const FAILURE_CODES = new Set([
+  "unavailable",
+  "invalid_response",
+  "cancelled",
+  "rate_limited",
+  "invalid_request",
+  "not_found",
+  "session_limit",
+  "login_closed",
+  "stale_revision",
+  "manifest_changed",
+]);
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -146,6 +165,27 @@ export class PluginLoginService {
 
   private now() {
     return (this.options.now ?? Date.now)();
+  }
+  private reportFailure(
+    session: LoginSession,
+    phase: "start" | "poll" | "save",
+    error: unknown,
+  ): void {
+    if (session.controller.signal.aborted) return;
+    try {
+      const candidate = record(error) ? error.code : undefined;
+      const code =
+        typeof candidate === "string" && FAILURE_CODES.has(candidate) ? candidate : "login_failed";
+      this.options.reportError?.({
+        pluginId: session.pluginId,
+        botId: session.botId,
+        sessionId: session.id,
+        phase,
+        code,
+      });
+    } catch {
+      // A diagnostic sink must not change login or credential-saving outcomes.
+    }
   }
   private active(session: LoginSession) {
     if (ACTIVE.has(session.status) && this.now() >= session.expiresAt)
@@ -325,6 +365,7 @@ export class PluginLoginService {
       await this.call(() => opened.assertCurrent(), session.controller.signal);
       this.active(session);
     } catch (error) {
+      this.reportFailure(session, "start", error);
       this.finish(session, conflict(error) ? "conflict" : "failed");
     }
     return this.state(session);
@@ -371,6 +412,7 @@ export class PluginLoginService {
           session.saving = this.save(session, opened, secrets, name);
         } else throw new PluginLoginError("invalid_request");
       } catch (error) {
+        this.reportFailure(session, "poll", error);
         this.finish(session, conflict(error) ? "conflict" : "failed");
       }
       return this.state(session);
@@ -397,6 +439,7 @@ export class PluginLoginService {
       session.account = { name };
       this.finish(session, "connected");
     } catch (error) {
+      this.reportFailure(session, "save", error);
       this.finish(session, conflict(error) ? "conflict" : "save_unknown");
     } finally {
       session.saving = undefined;

@@ -79,9 +79,11 @@ export async function startBilibiliLogin(signal: AbortSignal): Promise<PluginLog
           }
           if (data.code !== 0 || typeof data.url !== "string")
             throw new LoginProviderError("invalid_response");
-          // The current browser follows this URL. Credentials come from response cookies,
-          // never from legacy URL query parameters or a refresh_token presented as a Cookie.
-          await transport.follow(data.url, pollSignal);
+          // Some poll responses already set the Bilibili cookies and return a legacy
+          // game-site navigation URL. Only redeem a ticket when those cookies are absent;
+          // credentials always come from Set-Cookie and must pass the nav account check.
+          if (!/(?:^|;\s*)SESSDATA=[^;]+/.test(transport.cookieFor(COOKIE_ORIGIN)))
+            await transport.follow(data.url, pollSignal);
           const account = await verifiedAccount(transport, pollSignal);
           const cookie = transport.cookieFor(COOKIE_ORIGIN);
           terminal = true;

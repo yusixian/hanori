@@ -6,6 +6,7 @@ import type { RequestOptions } from "node:https";
 import { request } from "node:https";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PluginLoginService, type PluginLoginServiceOptions } from "../login.js";
 import { startBilibiliLogin, startNeteaseLogin } from "./index.js";
 import { encryptWeapi } from "./netease.js";
 import { LoginTransport } from "./transport.js";
@@ -105,6 +106,106 @@ afterEach(() => {
 });
 
 describe("Bilibili QR provider", () => {
+  it("authorizes a confirmed login from poll cookies without following the game-site navigation", async () => {
+    biliCreate();
+    response(
+      {
+        code: 0,
+        data: {
+          code: 0,
+          url:
+            "https://passport.biligame.com/crossDomain?DedeUserID=123" +
+            "&DedeUserID__ckMd5=synthetic&Expires=1893456000" +
+            "&SESSDATA=synthetic&bili_jct=synthetic" +
+            "&gourl=https%3A%2F%2Fpassport.bilibili.com",
+        },
+      },
+      {
+        "set-cookie": [
+          "SESSDATA=synthetic; Domain=.bilibili.com; Path=/; Secure; HttpOnly",
+          "bili_jct=synthetic; Domain=.bilibili.com; Path=/; Secure",
+          "DedeUserID=123; Domain=.bilibili.com; Path=/; Secure",
+        ],
+      },
+    );
+    response({ code: 0, data: { isLogin: true, mid: 123, uname: "Fixture user" } });
+    const attempt = await startBilibiliLogin(signal);
+    await expect(attempt.poll(signal)).resolves.toEqual({
+      status: "authorized",
+      secrets: { cookie: "SESSDATA=synthetic; bili_jct=synthetic; DedeUserID=123" },
+      account: { name: "Fixture user" },
+    });
+    expect(request).toHaveBeenCalledTimes(3);
+    expect(options(2).hostname).toBe("api.bilibili.com");
+  });
+
+  it("saves confirmed poll cookies through the login coordinator and exposes only connected account state", async () => {
+    biliCreate();
+    response(
+      {
+        code: 0,
+        data: {
+          code: 0,
+          url: "https://passport.biligame.com/crossDomain?SESSDATA=url-value-is-not-trusted",
+        },
+      },
+      {
+        "set-cookie": [
+          "SESSDATA=synthetic; Domain=.bilibili.com; Path=/; Secure; HttpOnly",
+          "DedeUserID=123; Domain=.bilibili.com; Path=/; Secure",
+        ],
+      },
+    );
+    response({ code: 0, data: { isLogin: true, mid: 123, uname: "Fixture user" } });
+    const start = { expectedRevision: 7, manifestHash: "a".repeat(64) };
+    const commit = vi.fn<Awaited<ReturnType<PluginLoginServiceOptions["open"]>>["commit"]>(
+      async () => ({
+        configuration: { values: {}, configuredSecrets: ["cookie"] },
+        revision: 8,
+        manifestHash: start.manifestHash,
+        configuredVersion: "1.2.0",
+        enabled: false,
+        needsReview: false,
+        updatedAt: "2030-01-01T00:00:00Z",
+        runtime: { status: "disabled", error: null },
+      }),
+    );
+    const service = new PluginLoginService({
+      open: async (_pluginId, _botId, _start, lifetime) => ({
+        attempt: await startBilibiliLogin(lifetime),
+        assertCurrent: async () => {},
+        commit,
+      }),
+    });
+    const owner = "synthetic-owner";
+    const plugin = "hanori.bilibili";
+    const bot = "00000000-0000-0000-0000-000000000001";
+    try {
+      const session = await service.start(owner, plugin, bot, start);
+      expect(session.status).toBe("waiting");
+      expect(await service.poll(owner, plugin, bot, session.id)).toMatchObject({
+        status: "saving",
+      });
+      let connected;
+      await vi.waitFor(async () => {
+        connected = await service.poll(owner, plugin, bot, session.id);
+        expect(connected).toMatchObject({
+          status: "connected",
+          account: { name: "Fixture user" },
+          botState: { revision: 8, configuration: { configuredSecrets: ["cookie"] } },
+        });
+      });
+      expect(commit).toHaveBeenCalledExactlyOnceWith(
+        { cookie: "SESSDATA=synthetic; DedeUserID=123" },
+        expect.any(AbortSignal),
+      );
+      expect(JSON.stringify(connected)).not.toContain("SESSDATA");
+      expect(request).toHaveBeenCalledTimes(3);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("maps official waiting/scanned/expired states without exposing a key separately", async () => {
     biliCreate();
     response({ code: 0, data: { code: 86101 } });
