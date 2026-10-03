@@ -23,6 +23,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned yt-dlp for extractor tests
+        run: |
+          python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
+          "$RUNNER_TEMP/bilibili-ytdlp/bin/pip" install -r infrastructure/bilibili-ytdlp/requirements.txt
+          echo "$RUNNER_TEMP/bilibili-ytdlp/bin" >> "$GITHUB_PATH"
+
       - name: Validate Dokploy Compose
         run: pnpm deploy:dokploy:check
 

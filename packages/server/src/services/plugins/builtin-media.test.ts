@@ -10,6 +10,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MediaHttpError, readMediaDocument } from "../media/http.js";
 import { createBuiltinMediaPlugins } from "./builtin-media.js";
 import { validatePluginSession } from "./runtime.js";
+import { extractWithYtdlp, YtdlpError } from "../media/yt-dlp.js";
+
+vi.mock("../media/yt-dlp.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../media/yt-dlp.js")>()),
+  extractWithYtdlp: vi.fn(),
+}));
 
 vi.mock("../media/http.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../media/http.js")>()),
@@ -112,7 +118,10 @@ function body(count: number, text = (index: number) => `Synthetic cue ${index}`)
   };
 }
 
-beforeEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  vi.resetAllMocks();
+  vi.mocked(extractWithYtdlp).mockRejectedValue(new YtdlpError("unavailable"));
+});
 
 describe("built-in media plugins", () => {
   it("publishes valid manifests, optional secret Cookies and read-only tools", async () => {

@@ -46,6 +46,8 @@ docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.ym
 
 不要使用 `docker compose down -v`，它会删除数据库存储卷。更新前先阅读[备份与升级](/docs/self-hosting/backup-upgrade)。
 
+app 镜像已内置 Python 和固定版本的 yt-dlp，供 Bilibili 字幕及视频流提取使用，不需要额外启用 profile。源码运行时，建议在独立 Python 虚拟环境执行 `pip install -r infrastructure/bilibili-ytdlp/requirements.txt`，并将该虚拟环境的 `bin` 放入启动服务器的 `PATH`；没有 yt-dlp 时会使用现有 B 站接口。提取器通过服务器的受限媒体传输访问 B 站，子进程不接收 Cookie、ASR API Key 或应用环境秘密。音视频合并仍需下文的 `media` 服务。
+
 如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。请显式设置 `TRAEFIK_DOCKER_NETWORK` 为自己的共享网络；默认值只是部署模板，不保证网络实际存在。当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。使用 Dokploy 的 Domains 页面管理域名时，保留 Compose 中 `labels` 的列表形式，让平台追加域名路由标签。容器自身的健康检查通过不代表公网路由可用。
 
 Dokploy 的 **Advanced → Enable Isolated Deployment** 应关闭，保留仓库为各服务定义的网络边界。该选项会给所有服务追加网络，与 `media-worker` 的 `network_mode: none` 冲突，也会让编码 worker 多出一条网络连接。使用 Dokploy 的默认 Domains 配置时，设置 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只给 `app` 配置域名。部署前刷新仓库来源并检查 **Preview Compose**：`app` 保留 `default`、`harness-bridge` 并加入代理网络，`media-worker` 没有 `networks` 字段，编码 worker 仅加入 `coding-sandbox`。已有实例更改这个开关时，保持 Compose 项目名和存储卷配置不变，不要删除数据卷。

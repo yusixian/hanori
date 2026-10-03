@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { parseBilibiliSubtitle, type TranscriptDocument } from "@cos-tool-bot/shared";
-import { readMediaDocument } from "./http.js";
+import { MediaHttpError, readMediaDocument } from "./http.js";
 import { resolveBilibiliResource } from "./resource.js";
+import { extractWithYtdlp, YtdlpError, type YtdlpVideo } from "./yt-dlp.js";
 
 export class BilibiliClientError extends Error {
   constructor(
@@ -142,8 +143,88 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
   >();
   const tracks = new Map<
     string,
-    { url: string; language: string; source: BilibiliSubtitleTrack["source"] }
+    | { url: string; language: string; source: BilibiliSubtitleTrack["source"] }
+    | { document: TranscriptDocument }
   >();
+
+  async function ytdlp(
+    operation: "subtitles" | "video",
+    video: YtdlpVideo,
+    signal?: AbortSignal,
+  ): Promise<unknown | null> {
+    try {
+      return await extractWithYtdlp(
+        operation,
+        video,
+        async (value, query, requestSignal) => {
+          let url: URL;
+          try {
+            url = new URL(value.startsWith("//") ? `https:${value}` : value);
+          } catch {
+            return invalid();
+          }
+          if (url.hostname === "api.bilibili.com") {
+            if (
+              url.origin !== API_ORIGIN ||
+              url.username ||
+              url.password ||
+              url.search ||
+              url.hash ||
+              !["/x/player/wbi/v2", "/x/web-interface/nav", "/x/player/wbi/playurl"].includes(
+                url.pathname,
+              )
+            )
+              invalid();
+            const parameters: Record<string, string> = {};
+            for (const [key, item] of Object.entries(query)) {
+              if (
+                !/^[a-z_]{1,32}$/.test(key) ||
+                !(
+                  typeof item === "string" ||
+                  (typeof item === "number" && Number.isFinite(item))
+                ) ||
+                String(item).length > 4096
+              )
+                invalid();
+              parameters[key] = String(item);
+            }
+            if (
+              url.pathname !== "/x/web-interface/nav" &&
+              (parameters.cid !== String(video.cid) ||
+                (parameters.aid !== undefined && parameters.aid !== String(video.aid)) ||
+                (parameters.bvid !== undefined && parameters.bvid !== video.bvid))
+            )
+              invalid();
+            return { code: 0, data: await api(url.pathname, parameters, requestSignal) };
+          }
+          if (operation !== "subtitles" || Object.keys(query).length) invalid();
+          const response = await readMediaDocument(subtitleUrl(value), {
+            allowedHosts: SUBTITLE_HOSTS,
+            mimeTypes: ["application/json", "text/plain"],
+            maxBytes: 2 * 1024 * 1024,
+            signal: requestSignal,
+          });
+          return json(response.bytes);
+        },
+        signal,
+      );
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (
+        error instanceof YtdlpError &&
+        ["unavailable", "extractor_failed", "timeout"].includes(error.code)
+      )
+        return null;
+      // Transport failures may use the existing adapter, with the same cookie and access checks.
+      if (error instanceof BilibiliClientError && error.code === "api_rejected") return null;
+      if (
+        error instanceof MediaHttpError &&
+        ["unavailable", "upstream_error", "timeout"].includes(error.code)
+      )
+        return null;
+      throw error;
+    }
+  }
 
   async function api(path: string, parameters: Record<string, string>, signal?: AbortSignal) {
     signal?.throwIfAborted();
@@ -237,6 +318,49 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
     signal?.throwIfAborted();
     const video = videos.get(reference);
     if (!video) throw new BilibiliClientError("invalid_reference");
+    const extracted = await ytdlp("subtitles", video, signal);
+    if (extracted !== null) {
+      const result = object(extracted);
+      if (result.status === "login_required") return { status: "login_required" };
+      if (result.status !== "ok" || !Array.isArray(result.tracks) || result.tracks.length > 100)
+        invalid();
+      if (result.tracks.length) {
+        const pending = result.tracks.map((raw) => {
+          const item = object(raw);
+          if (
+            typeof item.language !== "string" ||
+            !/^[a-zA-Z0-9-]{1,64}$/.test(item.language) ||
+            item.language === "danmaku"
+          )
+            invalid();
+          const language = item.language;
+          const source: BilibiliSubtitleTrack["source"] = language.startsWith("ai-")
+            ? "platform_auto"
+            : "platform_cc";
+          let document: TranscriptDocument;
+          try {
+            document = parseBilibiliSubtitle(item.body, { source, language });
+          } catch {
+            return invalid();
+          }
+          return {
+            reference: randomUUID(),
+            language,
+            label: text(item.label, 256),
+            source,
+            document,
+          };
+        });
+        signal?.throwIfAborted();
+        if (tracks.size + pending.length > 100) throw new BilibiliClientError("reference_limit");
+        for (const track of pending) tracks.set(track.reference, { document: track.document });
+        return {
+          status: "available",
+          tracks: pending.map(({ document: _document, ...track }) => track),
+        };
+      }
+      // An empty extractor result alone cannot prove authenticated absence of subtitles.
+    }
     const data = await api(
       "/x/player/wbi/v2",
       { aid: String(video.aid), cid: String(video.cid) },
@@ -290,6 +414,7 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
     signal?.throwIfAborted();
     const track = tracks.get(reference);
     if (!track) throw new BilibiliClientError("invalid_reference");
+    if ("document" in track) return track.document;
     const response = await readMediaDocument(track.url, {
       allowedHosts: SUBTITLE_HOSTS,
       mimeTypes: ["application/json", "text/plain"],
@@ -357,7 +482,11 @@ export function createBilibiliClient(config: { cookie?: string } = {}) {
     parameters.w_rid = createHash("md5")
       .update(query + mixin)
       .digest("hex");
-    const data = await api("/x/player/wbi/playurl", parameters, signal);
+    const extracted = quality === "80" ? await ytdlp("video", video, signal) : null;
+    const data =
+      extracted === null
+        ? await api("/x/player/wbi/playurl", parameters, signal)
+        : object(extracted);
     if (
       (data.aid !== undefined && data.aid !== video.aid) ||
       (data.cid !== undefined && data.cid !== video.cid) ||
