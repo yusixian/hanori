@@ -876,3 +876,4 @@ export {
   type RecoverPixAIGenerationOptions,
 } from "./tools/pixai.js";
 export type { McpToolEntry, McpToolsOptions } from "./tools/mcp.js";
+export { sendLocalVideoFile } from "./services/video-download-delivery.js";

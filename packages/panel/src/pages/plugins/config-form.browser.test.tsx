@@ -110,6 +110,96 @@ test("saves owner-selected numeric limits when the plugin declares no maximum", 
   await expect.element(page.getByRole("status")).toHaveTextContent("Configuration saved.");
 });
 
+test.each([1024, 390])(
+  "video download settings remain opt-in and editable at %ipx",
+  async (width) => {
+    await page.viewport(width, 844);
+    const input = props({
+      manifest: {
+        ...manifest,
+        id: "hanori.bilibili",
+        version: "1.2.0",
+        config: [
+          {
+            key: "downloadEnabled",
+            label: "启用视频下载 / Enable video download",
+            type: "boolean",
+            default: false,
+          },
+          {
+            key: "downloadMaxSeconds",
+            label: "单视频秒数 / Video seconds",
+            type: "integer",
+            default: 600,
+            min: 1,
+          },
+          {
+            key: "downloadMaxMb",
+            label: "视频大小（MB） / Video size (MB)",
+            type: "integer",
+            default: 45,
+            min: 1,
+          },
+          {
+            key: "downloadCacheMinutes",
+            label: "缓存分钟数 / Cache minutes",
+            type: "integer",
+            default: 30,
+            min: 1,
+          },
+          {
+            key: "downloadCacheMb",
+            label: "缓存预算（MB） / Cache budget (MB)",
+            type: "integer",
+            default: 512,
+            min: 1,
+          },
+          {
+            key: "downloadMinFreeMb",
+            label: "空闲磁盘（MB） / Free disk (MB)",
+            type: "integer",
+            default: 1024,
+            min: 0,
+          },
+          {
+            key: "downloadDailyJobs",
+            label: "每日下载数 / Daily downloads",
+            type: "integer",
+            default: 5,
+            min: 1,
+          },
+        ],
+      },
+    });
+    render(<PluginConfigForm {...input} />);
+    await expect
+      .element(page.getByRole("checkbox", { name: "启用视频下载 / Enable video download" }))
+      .not.toBeChecked();
+    await expect.element(page.getByLabelText("单视频秒数 / Video seconds")).toHaveValue("600");
+    await page.getByRole("checkbox", { name: "启用视频下载 / Enable video download" }).click();
+    await page.getByLabelText("单视频秒数 / Video seconds").fill("3600");
+    await page.getByLabelText("视频大小（MB） / Video size (MB)").fill("100");
+    await page.getByLabelText("缓存分钟数 / Cache minutes").fill("50000");
+    await page.getByLabelText("缓存预算（MB） / Cache budget (MB)").fill("2048");
+    await page.getByLabelText("空闲磁盘（MB） / Free disk (MB)").fill("0");
+    await page.getByLabelText("每日下载数 / Daily downloads").fill("20");
+    await page.getByRole("button", { name: "Save configuration" }).click();
+    expect(input.onSave).toHaveBeenCalledWith({
+      values: {
+        downloadEnabled: true,
+        downloadMaxSeconds: 3600,
+        downloadMaxMb: 100,
+        downloadCacheMinutes: 50000,
+        downloadCacheMb: 2048,
+        downloadMinFreeMb: 0,
+        downloadDailyJobs: 20,
+      },
+    });
+    await expect.element(page.getByRole("status")).toHaveTextContent("Configuration saved.");
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
+  },
+);
+
 test("explicit clearing can be canceled, replaced or saved without leaking the secret", async () => {
   const input = props({ configuration: { values: {}, configuredSecrets: ["cookie"] } });
   render(<PluginConfigForm {...input} />);

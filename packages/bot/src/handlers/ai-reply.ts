@@ -2397,6 +2397,7 @@ export function createAiReplyHandler(
         }
 
         const toolset = await createTurnToolset({
+          threadId: msg.message_thread_id,
           signal: AbortSignal.any([
             executionContext.signal,
             ...(manualAbort ? [manualAbort.signal] : []),

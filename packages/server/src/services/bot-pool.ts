@@ -271,13 +271,21 @@ export class BotPool {
     return this.services.summaryConfigService;
   }
 
-  async sendHtml(botId: string, chatId: number, html: string): Promise<void> {
+  async sendHtml(
+    botId: string,
+    chatId: number,
+    html: string,
+    threadId?: number,
+    signal?: AbortSignal,
+  ): Promise<void> {
     const manager = this.managers.get(botId);
     if (!manager) {
       this.logger.warn({ botId, chatId }, "sendHtml: no manager for bot");
       return;
     }
-    await manager.sendHtml(chatId, html);
+    if ((threadId !== undefined || signal !== undefined) && manager instanceof BotManager)
+      await manager.sendHtml(chatId, html, threadId, signal);
+    else await manager.sendHtml(chatId, html);
   }
 
   async sendImageFiles(
@@ -295,6 +303,22 @@ export class BotPool {
     if (!manager) throw new Error(`Bot ${botId} is not running`);
     if (!(manager instanceof BotManager)) throw new Error(`Bot ${botId} does not support images`);
     return manager.sendImageFiles(chatId, files, input);
+  }
+
+  async sendVideoFile(
+    botId: string,
+    chatId: number,
+    path: string,
+    input: {
+      title: string;
+      durationSeconds: number;
+      threadId?: number;
+      signal: AbortSignal;
+    },
+  ): Promise<number> {
+    const manager = this.managers.get(botId);
+    if (!(manager instanceof BotManager)) throw new Error("video_delivery_unavailable");
+    return manager.sendVideoFile(chatId, path, input);
   }
 
   private async isDelegatedGroupAdmin(

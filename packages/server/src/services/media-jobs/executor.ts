@@ -26,7 +26,7 @@ export class MediaExecutorError extends Error {
 }
 
 /** Disabled deployments may clean abandoned files only after the fixed worker socket is offline. */
-async function requireStoppedWorker(socketPath: string) {
+export async function requireStoppedWorker(socketPath: string) {
   if (!isAbsolute(socketPath)) throw new MediaExecutorError("worker_unavailable");
   await new Promise<void>((resolveStopped, reject) => {
     const socket = createConnection(socketPath);

@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -109,6 +109,37 @@ describe("bounded media file downloads", () => {
     };
     expect(options.headers).not.toHaveProperty("Cookie");
     expect(options.headers).not.toHaveProperty("Authorization");
+  });
+
+  it("downloads video/mp4 with awaited cumulative progress and a dynamic byte limit", async () => {
+    const path = join(directory, "video.mp4");
+    response(200, { "content-type": "video/mp4" }, [mp4.subarray(0, 12), mp4.subarray(12)]);
+    const onProgress = vi.fn(async (_bytes: number) => undefined);
+    expect(
+      await downloadMediaFile(
+        "https://cdn.example.com/video",
+        { ...audioPolicy, mimeTypes: ["video/mp4"], maxBytes: 24, onProgress },
+        path,
+      ),
+    ).toMatchObject({ bytes: 24, mimeType: "video/mp4" });
+    expect(onProgress.mock.calls.at(-1)).toEqual([24]);
+    expect(await readFile(path)).toEqual(mp4);
+  });
+
+  it("awaits budget rejection before writing the chunk and removes its file", async () => {
+    const path = join(directory, "video.mp4");
+    response(200, { "content-type": "video/mp4" }, [mp4]);
+    const onProgress = vi.fn(async () => {
+      throw new MediaHttpError("too_large");
+    });
+    await expect(
+      downloadMediaFile(
+        "https://cdn.example.com/video",
+        { ...audioPolicy, mimeTypes: ["video/mp4"], onProgress },
+        path,
+      ),
+    ).rejects.toMatchObject({ code: "too_large" });
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("supports only the trusted Bilibili public Referer and does not add a Cookie", async () => {

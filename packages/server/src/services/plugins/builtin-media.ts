@@ -1,6 +1,8 @@
-import type { MediaTranscriptionPort } from "@cos-tool-bot/shared";
+import type { MediaTranscriptionPort, VideoDownloadPort } from "@cos-tool-bot/shared";
 import { ASR_CONFIG_FIELDS } from "../media-jobs/configuration.js";
+import { VIDEO_DOWNLOAD_CONFIG_FIELDS } from "../video-downloads/configuration.js";
 import { createMediaJobTools } from "./media-jobs.js";
+import { createVideoDownloadTools } from "./video-downloads.js";
 import {
   boundedTranscriptPage as transcriptPage,
   MediaLinkParseError,
@@ -234,6 +236,7 @@ function lookupProvider(
 function bilibiliSession(
   context: PluginContext,
   transcription?: MediaTranscriptionPort,
+  downloads?: VideoDownloadPort,
 ): PluginSession {
   const state = sessionState(context);
   const client = createBilibiliClient({
@@ -243,6 +246,9 @@ function bilibiliSession(
   const documents = documentCache<TranscriptDocument>();
   return {
     tools: [
+      ...(downloads && context.configuration.downloadEnabled === true
+        ? createVideoDownloadTools(context, downloads)
+        : []),
       ...(transcription &&
       context.configuration.asrEnabled === true &&
       context.configuration.asrTransferApproved === true
@@ -403,15 +409,16 @@ function neteaseSession(context: PluginContext): PluginSession {
 }
 
 export function createBuiltinMediaPlugins(
-  options: { transcription?: MediaTranscriptionPort } = {},
+  options: { transcription?: MediaTranscriptionPort; downloads?: VideoDownloadPort } = {},
 ): BuiltinPlugin[] {
   return [
     {
       id: "hanori.bilibili",
       name: "Bilibili",
       description:
-        "Read Bilibili metadata and subtitle pages. Optional administrator-only background audio ASR uses one configured provider and bounded budgets.",
-      createSession: (context: PluginContext) => bilibiliSession(context, options.transcription),
+        "Read Bilibili metadata and subtitle pages. Optional administrator-only video downloads deliver MP4 to Telegram; background audio ASR uses one configured provider and bounded budgets.",
+      createSession: (context: PluginContext) =>
+        bilibiliSession(context, options.transcription, options.downloads),
       startLogin: startBilibiliLogin,
     },
     {
@@ -427,7 +434,7 @@ export function createBuiltinMediaPlugins(
       apiVersion: 1,
       id,
       name,
-      version: "1.1.0",
+      version: id === "hanori.bilibili" ? "1.2.0" : "1.1.0",
       description,
       author: "Hanori",
       login: { type: "qr" },
@@ -442,7 +449,9 @@ export function createBuiltinMediaPlugins(
           required: false,
           max: 16_384,
         },
-        ...(id === "hanori.bilibili" ? ASR_CONFIG_FIELDS : []),
+        ...(id === "hanori.bilibili"
+          ? [...ASR_CONFIG_FIELDS, ...VIDEO_DOWNLOAD_CONFIG_FIELDS]
+          : []),
       ],
     },
     definition: { apiVersion: 1, createSession, startLogin },
