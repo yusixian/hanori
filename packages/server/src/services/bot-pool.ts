@@ -1,4 +1,4 @@
-import type { PluginRuntimePort } from "@cos-tool-bot/shared";
+import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
 import type { Database } from "@cos-tool-bot/database";
@@ -13,6 +13,7 @@ import type {
   IBotManager,
   ImageGenerationPort,
   ImageGenerationRequestSnapshot,
+  MediaJobView,
   PixAIConfig,
   PixAIGenerationRecord,
   TelegramRichMessageFormat,
@@ -208,6 +209,10 @@ export class BotPool {
     this.services.plugins = plugins;
   }
 
+  setMediaTranscriptionPort(port: MediaTranscriptionPort) {
+    this.services.mediaTranscriptionPort = port;
+  }
+
   setMcpClientManager(manager: McpClientManager) {
     this.services.mcpClientManager = manager;
   }
@@ -319,6 +324,27 @@ export class BotPool {
     const manager = this.managers.get(botId);
     if (!(manager instanceof BotManager)) throw new Error("video_delivery_unavailable");
     return manager.sendVideoFile(chatId, path, input);
+  }
+
+  async sendMediaConfirmation(
+    botId: string,
+    chatId: number,
+    job: MediaJobView,
+    threadId?: number,
+  ): Promise<void> {
+    const manager = this.managers.get(botId);
+    if (!(manager instanceof BotManager)) throw new Error("media_confirmation_unavailable");
+    await manager.sendMediaConfirmation(chatId, job, threadId);
+  }
+
+  async isMediaAdmin(botId: string, userId: number): Promise<boolean> {
+    if (!Number.isSafeInteger(userId) || userId < 1) return false;
+    const [bot] = await this.db
+      .select({ adminIds: bots.adminChatIds })
+      .from(bots)
+      .where(eq(bots.id, botId))
+      .limit(1);
+    return bot?.adminIds?.includes(userId) === true;
   }
 
   private async isDelegatedGroupAdmin(

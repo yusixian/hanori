@@ -133,7 +133,7 @@ describe("built-in media plugins", () => {
     for (const builtin of builtins) {
       expect(parsePluginManifest(builtin.manifest)).toMatchObject({
         apiVersion: 1,
-        version: builtin.manifest.id === "hanori.bilibili" ? "1.2.0" : "1.1.0",
+        version: builtin.manifest.id === "hanori.bilibili" ? "1.3.0" : "1.1.0",
         login: { type: "qr" },
       });
       expect(builtin.manifest.config).toContainEqual(
@@ -164,6 +164,7 @@ describe("built-in media plugins", () => {
   ])("does not inject ASR tools without both explicit approvals: %j", async (configuration) => {
     const transcription: MediaTranscriptionPort = {
       create: vi.fn(),
+      confirm: vi.fn(),
       get: vi.fn(),
       cancel: vi.fn(),
       read: vi.fn(),
@@ -191,6 +192,7 @@ describe("built-in media plugins", () => {
     expect(withoutPort.tools!.some(({ name }) => name === "transcribe_audio")).toBe(false);
     const transcription: MediaTranscriptionPort = {
       create: vi.fn(),
+      confirm: vi.fn(),
       get: vi.fn(),
       cancel: vi.fn(),
       read: vi.fn(),
@@ -248,6 +250,7 @@ describe("built-in media plugins", () => {
   it("injects host-bound ASR tools only for Bilibili and leaves platform subtitle tools available", async () => {
     const transcription: MediaTranscriptionPort = {
       create: vi.fn(),
+      confirm: vi.fn(),
       get: vi.fn(),
       cancel: vi.fn(),
       read: vi.fn(),

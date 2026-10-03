@@ -44,6 +44,15 @@ vi.mock("../media/asr.js", async () => ({
   ...(await vi.importActual<typeof import("../media/asr.js")>("../media/asr.js")),
   createAsrClient: mocks.asr,
 }));
+vi.mock("../media/asr-providers.js", () => ({
+  createMediaAsrClient: (configuration: MediaJobConfiguration["asr"]) => {
+    const client = mocks.asr(configuration);
+    return {
+      transcribeBytes: (bytes: Buffer, options?: { signal?: AbortSignal }) =>
+        client.transcribeBytes(bytes, options?.signal),
+    };
+  },
+}));
 
 const exec = promisify(execFile);
 const SECRET = "synthetic-worker-secret-with-32-characters";
@@ -83,6 +92,14 @@ function job(overrides: Partial<MediaJobRow> = {}): MediaJobRow {
     botId: randomUUID(),
     chatId: 1,
     userId: 2,
+    threadId: null,
+    confirmation: null,
+    confirmedAt: new Date(),
+    providerTaskId: null,
+    providerSubmittedAt: null,
+    providerAccount: "legacy",
+    providerRevision: 1,
+    forceAsr: false,
     pluginId: "hanori.bilibili",
     configRevision: 1,
     installationRevision: 2,
@@ -336,7 +353,10 @@ describe("media executor isolated conversion pipeline", () => {
       limits: { ...configuration.limits, maxDurationSeconds: 900 },
     };
     expect(
-      await executor.execute(job({ durationSeconds: 601 }), options, { signal: signal(), onStage }),
+      await executor.execute(job({ durationSeconds: 601, estimatedCost: 0.12 }), options, {
+        signal: signal(),
+        onStage,
+      }),
     ).toEqual(document);
     expect(mocks.getAudio).toHaveBeenCalledWith("synthetic-ref", expect.any(AbortSignal), 900);
     const bytes = mocks.transcribeBytes.mock.calls[0]![0] as Buffer;
@@ -510,6 +530,22 @@ describe("media executor isolated conversion pipeline", () => {
     });
     await expect(
       executor.execute(job(), configuration, { signal: signal(), onStage }),
+    ).rejects.toMatchObject({ code: "invalid_audio" });
+    expect(mocks.asr).not.toHaveBeenCalled();
+    expect(stages).toEqual(["downloading", "converting"]);
+  });
+
+  it("refuses billable audio that exceeds the confirmed cost reservation within the metadata duration tolerance", async () => {
+    fakeConverter(async (output) => {
+      const bytes = pcm(2);
+      await writeFile(output, bytes);
+      return metadata(bytes, 2);
+    });
+    await expect(
+      executor.execute(job({ estimatedCost: 0.0002 }), configuration, {
+        signal: signal(),
+        onStage,
+      }),
     ).rejects.toMatchObject({ code: "invalid_audio" });
     expect(mocks.asr).not.toHaveBeenCalled();
     expect(stages).toEqual(["downloading", "converting"]);

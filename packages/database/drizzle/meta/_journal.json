@@ -470,6 +470,13 @@
       "when": 1791005685401,
       "tag": "0066_large_thunderbolt_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1791042994401,
+      "tag": "0067_long_tyger_tiger",
+      "breakpoints": true
     }
   ]
 }

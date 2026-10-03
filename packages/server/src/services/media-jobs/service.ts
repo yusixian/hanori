@@ -9,7 +9,7 @@ import {
   type MediaTranscriptionPort,
   type TranscriptDocument,
 } from "@cos-tool-bot/shared";
-import { and, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import type { MediaJobConfiguration, MediaJobDependencies, MediaJobRow } from "./contracts.js";
 
 export class MediaJobError extends Error {
@@ -26,6 +26,7 @@ export class MediaJobError extends Error {
       | "invalid_source"
       | "interrupted"
       | "interrupted_transcription"
+      | "provider_cancellation_unavailable"
       | "expired",
   ) {
     super(code);
@@ -34,10 +35,11 @@ export class MediaJobError extends Error {
 }
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const running = ["downloading", "converting", "transcribing"] as const;
-const terminal = new Set(["completed", "failed", "cancelled"]);
+const terminal = new Set(["completed", "failed", "cancelled", "expired"]);
 const progress = { downloading: 10, converting: 40, transcribing: 70 } as const;
 const leaseMs = 90_000;
 const retentionMs = 24 * 60 * 60 * 1000;
+const confirmationMs = 15 * 60 * 1000;
 
 function authorize(actor: MediaJobActor) {
   if (
@@ -46,7 +48,8 @@ function authorize(actor: MediaJobActor) {
     !Number.isSafeInteger(actor.chatId) ||
     actor.chatId === 0 ||
     !Number.isSafeInteger(actor.userId) ||
-    actor.userId < 1
+    actor.userId < 1 ||
+    (actor.threadId !== undefined && (!Number.isSafeInteger(actor.threadId) || actor.threadId < 1))
   )
     throw new MediaJobError("forbidden");
 }
@@ -67,7 +70,9 @@ function validConfiguration(value: MediaJobConfiguration | null): value is Media
     value.asr.model.trim().length > 0 &&
     value.asr.model.length <= 200 &&
     typeof value.asr.apiKey === "string" &&
-    value.asr.apiKey.length > 0 &&
+    (value.asr.provider === "tencent"
+      ? Boolean(value.asr.secretId?.trim() && value.asr.secretKey?.trim())
+      : value.asr.apiKey.length > 0) &&
     typeof value.asr.baseUrl === "string" &&
     value.asr.baseUrl.length > 0 &&
     Number.isSafeInteger(limits.maxDurationSeconds) &&
@@ -77,16 +82,29 @@ function validConfiguration(value: MediaJobConfiguration | null): value is Media
     Number.isSafeInteger(limits.dailyMinutes) &&
     limits.dailyMinutes >= 1 &&
     Number.isFinite(limits.costPerMinute) &&
-    limits.costPerMinute > 0 &&
+    limits.costPerMinute >= 0 &&
+    (limits.costPerMinute > 0 || value.asr.provider === "groq") &&
     Number.isFinite(limits.maxDailyCost) &&
-    limits.maxDailyCost > 0
+    limits.maxDailyCost > 0 &&
+    [
+      limits.maxPerJobCost,
+      limits.maxMonthlyCost,
+      limits.botMaxMonthlyCost,
+      limits.accountDailyCost,
+      limits.accountMonthlyCost,
+    ].every((limit) => limit === undefined || (Number.isFinite(limit) && limit >= 0)) &&
+    [limits.monthlyMinutes, limits.botMonthlyMinutes, limits.accountMonthlyMinutes].every(
+      (limit) => limit === undefined || (Number.isSafeInteger(limit) && limit >= 1),
+    )
   );
 }
 function matches(row: MediaJobRow, config: MediaJobConfiguration) {
   return (
     row.configRevision === config.revision &&
     row.installationRevision === config.installationRevision &&
-    row.providerModel === config.asr.model
+    row.providerModel === config.asr.model &&
+    row.providerAccount === (config.providerAccount ?? "legacy") &&
+    row.providerRevision === (config.providerRevision ?? 1)
   );
 }
 function view(row: MediaJobRow): MediaJobView {
@@ -94,6 +112,9 @@ function view(row: MediaJobRow): MediaJobView {
     id: row.id,
     sourceUrl: row.sourceUrl,
     title: row.title,
+    ...(row.threadId === null ? {} : { threadId: row.threadId }),
+    ...(row.confirmation ? { confirmation: row.confirmation } : {}),
+    cancelRequested: row.cancelRequested,
     part: row.part,
     durationSeconds: row.durationSeconds,
     status: row.status,
@@ -161,15 +182,16 @@ export class MediaJobService implements MediaTranscriptionPort {
   private active: { row: MediaJobRow; controller: AbortController } | undefined;
   private started = false;
   private stopped = false;
+  private nextSweep = 0;
   constructor(
     private readonly db: Database,
     private readonly deps: MediaJobDependencies,
   ) {}
 
-  private async configuration(botId: string) {
+  private async configuration(botId: string, providerAccount?: string) {
     let config: MediaJobConfiguration | null;
     try {
-      config = await this.deps.configuration(botId);
+      config = await this.deps.configuration(botId, providerAccount);
     } catch {
       throw new MediaJobError("configuration_required");
     }
@@ -191,14 +213,58 @@ export class MediaJobService implements MediaTranscriptionPort {
         ),
       );
     if (!row) throw new MediaJobError("not_found");
+    if (row.threadId !== (actor.threadId ?? null)) throw new MediaJobError("not_found");
     return row;
+  }
+  private async authorizeAdmin(actor: MediaJobActor) {
+    authorize(actor);
+    if (this.deps.authorize && !(await this.deps.authorize(actor)))
+      throw new MediaJobError("forbidden");
+  }
+  private async preferredConfiguration(botId: string, durationSeconds = 0) {
+    if (!this.deps.configurations) return this.configuration(botId);
+    const candidates = (await this.deps.configurations(botId)).filter(validConfiguration);
+    if (!candidates.length) return this.configuration(botId);
+    const now = new Date();
+    for (const candidate of candidates) {
+      const allowance = candidate.freeAllowanceMinutes ?? 0;
+      if (allowance <= 0 || candidate.freeAllowancePeriod === "none") continue;
+      const since = new Date(
+        Date.UTC(
+          now.getUTCFullYear(),
+          now.getUTCMonth(),
+          candidate.freeAllowancePeriod === "day" ? now.getUTCDate() : 1,
+        ),
+      );
+      const [usage] = await this.db
+        .select({
+          seconds: sql<number>`coalesce(sum(${jobs.durationSeconds}),0)::double precision`,
+        })
+        .from(jobs)
+        .where(
+          and(
+            eq(jobs.providerAccount, candidate.providerAccount ?? "legacy"),
+            sql`coalesce(${jobs.confirmedAt},${jobs.createdAt}) >= ${since.toISOString()}::timestamp`,
+            inArray(jobs.status, [
+              "pending_confirmation",
+              "queued",
+              ...running,
+              "completed",
+              "failed",
+            ]),
+          ),
+        );
+      // This is only our ledger: the confirmation still discloses unknown external account usage.
+      if ((usage?.seconds ?? 0) + durationSeconds <= allowance * 60) return candidate;
+    }
+    return candidates[0]!;
   }
   async create(
     actor: MediaJobActor,
-    input: { sourceUrl: string },
+    input: { sourceUrl: string; forceAsr?: boolean },
     callerSignal?: AbortSignal,
   ): Promise<MediaJobView> {
-    authorize(actor);
+    await this.authorizeAdmin(actor);
     if (this.stopped) throw new MediaJobError("not_ready");
     const signal = callerSignal
       ? AbortSignal.any([callerSignal, this.shutdown.signal])
@@ -212,7 +278,7 @@ export class MediaJobService implements MediaTranscriptionPort {
     } catch {
       throw new MediaJobError("invalid_source");
     }
-    const config = await this.configuration(actor.botId);
+    let config = await this.preferredConfiguration(actor.botId);
     let resource;
     try {
       resource = await bounded(
@@ -241,30 +307,59 @@ export class MediaJobService implements MediaTranscriptionPort {
     } catch {
       throw new MediaJobError("invalid_source");
     }
-    if (resource.hasSubtitles) throw new MediaJobError("subtitles_available");
+    if (resource.hasSubtitles && input.forceAsr !== true)
+      throw new MediaJobError("subtitles_available");
     if (
       !Number.isSafeInteger(resource.durationSeconds) ||
       resource.durationSeconds < 1 ||
-      resource.durationSeconds > 2_147_483_647 || // PostgreSQL duration_seconds is an int4.
-      resource.durationSeconds > config.limits.maxDurationSeconds
+      resource.durationSeconds > 2_147_483_647 // PostgreSQL duration_seconds is an int4.
     )
+      throw new MediaJobError("duration_limit");
+    config = await this.preferredConfiguration(actor.botId, resource.durationSeconds);
+    if (resource.durationSeconds > config.limits.maxDurationSeconds)
       throw new MediaJobError("duration_limit");
     const now = new Date();
     const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const estimatedCost = (resource.durationSeconds / 60) * config.limits.costPerMinute;
+    const billedSeconds =
+      config.asr.provider === "groq"
+        ? Math.max(10, resource.durationSeconds)
+        : resource.durationSeconds;
+    const expectedCost = (billedSeconds / 60) * config.limits.costPerMinute;
+    // PCM may differ from platform metadata by two seconds. Reserve that tolerance before upload.
+    const maximumSeconds =
+      config.asr.provider === "groq"
+        ? Math.max(10, resource.durationSeconds + 2)
+        : resource.durationSeconds + 2;
+    const estimatedCost =
+      config.limits.maxPerJobCost === undefined
+        ? expectedCost
+        : (maximumSeconds / 60) * config.limits.costPerMinute * 1.1;
     // Each reservation must remain positive and representable in numeric(20,12).
     // This protects storage arithmetic without limiting the owner's configured budget.
-    if (!Number.isFinite(estimatedCost) || estimatedCost < 0.5e-12 || estimatedCost >= 1e8)
+    if (
+      !Number.isFinite(estimatedCost) ||
+      (config.limits.costPerMinute > 0 && estimatedCost <= 0) ||
+      (estimatedCost > 0 && estimatedCost < 0.5e-12) ||
+      estimatedCost >= 1e8
+    )
       throw new MediaJobError("configuration_required");
+    if (estimatedCost > (config.limits.maxPerJobCost ?? Infinity))
+      throw new MediaJobError("quota_exceeded");
     const reservation = await this.db.transaction(async (tx) => {
       await tx.execute(
         sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${actor.botId}:${actor.userId}:${day.toISOString()}`}, 0))`,
       );
-      const current = await this.configuration(actor.botId);
+      // One account's monthly budget is shared across all Bots and administrators.
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`asr:${config.providerAccount ?? actor.botId}`}, 0))`,
+      );
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('asr-accounts'))`);
+      const current = await this.configuration(actor.botId, config.providerAccount);
       if (
         current.revision !== config.revision ||
         current.installationRevision !== config.installationRevision ||
-        current.asr.model !== config.asr.model
+        current.asr.model !== config.asr.model ||
+        current.providerRevision !== config.providerRevision
       )
         throw new MediaJobError("configuration_required");
       assertActive();
@@ -276,13 +371,18 @@ export class MediaJobService implements MediaTranscriptionPort {
             eq(jobs.botId, actor.botId),
             eq(jobs.chatId, actor.chatId),
             eq(jobs.userId, actor.userId),
+            sql`${jobs.threadId} IS NOT DISTINCT FROM ${actor.threadId ?? null}`,
             eq(jobs.bvid, resource.bvid),
             eq(jobs.part, resource.part),
             eq(jobs.configRevision, config.revision),
             eq(jobs.installationRevision, config.installationRevision),
             eq(jobs.providerModel, config.asr.model),
-            inArray(jobs.status, ["queued", ...running, "completed"]),
+            eq(jobs.providerAccount, config.providerAccount ?? "legacy"),
+            eq(jobs.providerRevision, config.providerRevision ?? 1),
+            eq(jobs.forceAsr, input.forceAsr === true),
+            inArray(jobs.status, ["pending_confirmation", "queued", ...running, "completed"]),
             gt(jobs.expiresAt, now),
+            sql`(${jobs.status} <> 'pending_confirmation' OR (${jobs.confirmation}->>'expiresAt')::timestamptz > ${now.toISOString()}::timestamptz)`,
           ),
         )
         .limit(1);
@@ -292,11 +392,22 @@ export class MediaJobService implements MediaTranscriptionPort {
           count: sql<number>`count(*)::integer`,
           seconds: sql<number>`coalesce(sum(${jobs.durationSeconds}),0)::double precision`,
           // Aggregate decimal reservations before converting to a number at budget edges.
-          cost: sql<number>`coalesce(sum(${jobs.estimatedCost}::numeric),0)::double precision`,
+          cost: sql<number>`coalesce(sum(CASE WHEN coalesce(${jobs.confirmation}->>'currency','USD') = ${config.currency ?? "USD"} THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
         })
         .from(jobs)
         .where(
-          and(eq(jobs.botId, actor.botId), eq(jobs.userId, actor.userId), gte(jobs.createdAt, day)),
+          and(
+            eq(jobs.botId, actor.botId),
+            eq(jobs.userId, actor.userId),
+            sql`coalesce(${jobs.confirmedAt},${jobs.createdAt}) >= ${day.toISOString()}::timestamp`,
+            inArray(jobs.status, [
+              "pending_confirmation",
+              "queued",
+              ...running,
+              "completed",
+              "failed",
+            ]),
+          ),
         );
       if (
         !usage ||
@@ -315,6 +426,7 @@ export class MediaJobService implements MediaTranscriptionPort {
       // Preserve tolerance for numeric(20,12) reservation quantization at exact budget edges.
       if (!Number.isFinite(totalCost) || totalCost > config.limits.maxDailyCost + 1e-8)
         throw new MediaJobError("quota_exceeded");
+      await this.checkMonthlyBudget(tx, actor, config, resource.durationSeconds, estimatedCost);
       assertActive();
       const [saved] = await tx
         .insert(jobs)
@@ -322,6 +434,22 @@ export class MediaJobService implements MediaTranscriptionPort {
           botId: actor.botId,
           chatId: actor.chatId,
           userId: actor.userId,
+          threadId: actor.threadId ?? null,
+          providerAccount: config.providerAccount ?? "legacy",
+          providerRevision: config.providerRevision ?? 1,
+          forceAsr: input.forceAsr === true,
+          status: "pending_confirmation",
+          confirmation: {
+            provider: config.asr.provider ?? "openai",
+            model: config.asr.model,
+            currency: config.currency ?? "USD",
+            estimatedCost: expectedCost,
+            maxCost: estimatedCost,
+            freeQuota:
+              config.freeQuota ??
+              "免费额度未核实，账户剩余额度未知 / Free quota unverified; account balance unknown",
+            expiresAt: new Date(now.getTime() + confirmationMs).toISOString(),
+          },
           configRevision: config.revision,
           installationRevision: config.installationRevision,
           sourceUrl: resource.canonicalUrl,
@@ -342,7 +470,177 @@ export class MediaJobService implements MediaTranscriptionPort {
       if (reservation.created) await this.cancel(actor, reservation.row.id);
       throw new MediaJobError("interrupted");
     }
+    if (reservation.row.status === "pending_confirmation") {
+      try {
+        if (!this.deps.requestConfirmation) throw new Error("confirmation_unavailable");
+        await this.deps.requestConfirmation(view(reservation.row), actor);
+      } catch {
+        if (reservation.created) await this.cancel(actor, reservation.row.id);
+        throw new MediaJobError("not_ready");
+      }
+    }
     return view(reservation.row);
+  }
+  private async checkMonthlyBudget(
+    db: Pick<Database, "select">,
+    actor: MediaJobActor,
+    config: MediaJobConfiguration,
+    seconds: number,
+    cost: number,
+    excludeId?: string,
+  ) {
+    if (
+      [
+        config.limits.maxMonthlyCost,
+        config.limits.monthlyMinutes,
+        config.limits.botMonthlyMinutes,
+        config.limits.botMaxMonthlyCost,
+        config.limits.accountDailyCost,
+        config.limits.accountMonthlyCost,
+        config.limits.accountMonthlyMinutes,
+      ].every((value) => value === undefined)
+    )
+      return;
+    const now = new Date();
+    const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const currency = config.currency ?? "USD";
+    const account = config.providerAccount ?? "legacy";
+    const [usage] = await db
+      .select({
+        seconds: sql<number>`coalesce(sum(CASE WHEN ${jobs.providerAccount} = ${account} THEN ${jobs.durationSeconds} ELSE 0 END),0)::double precision`,
+        cost: sql<number>`coalesce(sum(CASE WHEN ${jobs.providerAccount} = ${account} AND coalesce(${jobs.confirmation}->>'currency','USD') = ${currency} THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
+        dailyCost: sql<number>`coalesce(sum(CASE WHEN ${jobs.providerAccount} = ${account} AND coalesce(${jobs.confirmation}->>'currency','USD') = ${currency} AND coalesce(${jobs.confirmedAt},${jobs.createdAt}) >= ${day.toISOString()}::timestamp THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
+        userSeconds: sql<number>`coalesce(sum(CASE WHEN ${jobs.botId} = ${actor.botId} AND ${jobs.userId} = ${actor.userId} THEN ${jobs.durationSeconds} ELSE 0 END),0)::double precision`,
+        userCost: sql<number>`coalesce(sum(CASE WHEN ${jobs.botId} = ${actor.botId} AND ${jobs.userId} = ${actor.userId} AND coalesce(${jobs.confirmation}->>'currency','USD') = ${currency} THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
+        botSeconds: sql<number>`coalesce(sum(CASE WHEN ${jobs.botId} = ${actor.botId} THEN ${jobs.durationSeconds} ELSE 0 END),0)::double precision`,
+        botCost: sql<number>`coalesce(sum(CASE WHEN ${jobs.botId} = ${actor.botId} AND coalesce(${jobs.confirmation}->>'currency','USD') = ${currency} THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
+      })
+      .from(jobs)
+      .where(
+        and(
+          sql`(${jobs.providerAccount} = ${account} OR ${jobs.botId} = ${actor.botId})`,
+          sql`coalesce(${jobs.confirmedAt},${jobs.createdAt}) >= ${month.toISOString()}::timestamp`,
+          inArray(jobs.status, [
+            "pending_confirmation",
+            "queued",
+            ...running,
+            "completed",
+            "failed",
+          ]),
+          excludeId ? sql`${jobs.id} <> ${excludeId}` : undefined,
+        ),
+      );
+    const limits = config.limits;
+    if (
+      !usage ||
+      Object.values(usage).some((value) => !Number.isFinite(value) || value < 0) ||
+      usage.cost + cost > (limits.accountMonthlyCost ?? Infinity) + 1e-8 ||
+      usage.dailyCost + cost > (limits.accountDailyCost ?? Infinity) + 1e-8 ||
+      usage.seconds + seconds > (limits.accountMonthlyMinutes ?? Infinity) * 60 ||
+      usage.userCost + cost > (limits.maxMonthlyCost ?? Infinity) + 1e-8 ||
+      usage.userSeconds + seconds > (limits.monthlyMinutes ?? Infinity) * 60 ||
+      usage.botSeconds + seconds > (limits.botMonthlyMinutes ?? Infinity) * 60 ||
+      usage.botCost + cost > (limits.botMaxMonthlyCost ?? Infinity) + 1e-8
+    )
+      throw new MediaJobError("quota_exceeded");
+  }
+  async confirm(actor: MediaJobActor, id: string): Promise<MediaJobView> {
+    await this.authorizeAdmin(actor);
+    if (this.stopped) throw new MediaJobError("not_ready");
+    const original = await this.owned(actor, id);
+    if (original.status !== "pending_confirmation") {
+      if (original.status === "expired") throw new MediaJobError("expired");
+      return view(original);
+    }
+    const deadline = Date.parse(original.confirmation?.expiresAt ?? "");
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) {
+      await this.db
+        .update(jobs)
+        .set({ status: "expired", updatedAt: new Date() })
+        .where(and(eq(jobs.id, id), eq(jobs.status, "pending_confirmation")));
+      throw new MediaJobError("expired");
+    }
+    const config = await this.configuration(actor.botId, original.providerAccount);
+    if (!matches(original, config)) throw new MediaJobError("configuration_required");
+    const resource = await bounded(
+      (signal) => this.deps.inspect(original.sourceUrl, config, signal),
+      this.shutdown.signal,
+      15_000,
+    );
+    if (resource.hasSubtitles && !original.forceAsr) throw new MediaJobError("subtitles_available");
+    if (
+      resource.canonicalUrl !== original.sourceUrl ||
+      resource.part !== original.part ||
+      resource.bvid !== original.bvid ||
+      resource.durationSeconds !== original.durationSeconds ||
+      resource.durationSeconds > config.limits.maxDurationSeconds
+    )
+      throw new MediaJobError("duration_limit");
+    const now = new Date();
+    const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${actor.botId}:${actor.userId}:${day.toISOString()}`}, 0))`,
+      );
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtextextended(${`asr:${config.providerAccount ?? actor.botId}`}, 0))`,
+      );
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('asr-accounts'))`);
+      const [row] = await tx.select().from(jobs).where(eq(jobs.id, id)).for("update");
+      if (!row) throw new MediaJobError("not_found");
+      if (row.status !== "pending_confirmation") {
+        if (row.status === "expired") throw new MediaJobError("expired");
+        return view(row);
+      }
+      if (Date.parse(row.confirmation?.expiresAt ?? "") <= Date.now())
+        throw new MediaJobError("expired");
+      const current = await this.configuration(actor.botId, row.providerAccount);
+      if (!matches(row, current)) throw new MediaJobError("configuration_required");
+      await this.authorizeAdmin(actor);
+      const [usage] = await tx
+        .select({
+          count: sql<number>`count(*)::integer`,
+          seconds: sql<number>`coalesce(sum(${jobs.durationSeconds}),0)::double precision`,
+          cost: sql<number>`coalesce(sum(CASE WHEN coalesce(${jobs.confirmation}->>'currency','USD') = ${config.currency ?? "USD"} THEN ${jobs.estimatedCost}::numeric ELSE 0 END),0)::double precision`,
+        })
+        .from(jobs)
+        .where(
+          and(
+            eq(jobs.botId, actor.botId),
+            eq(jobs.userId, actor.userId),
+            sql`coalesce(${jobs.confirmedAt},${jobs.createdAt}) >= ${day.toISOString()}::timestamp`,
+            sql`${jobs.id} <> ${id}`,
+            inArray(jobs.status, [
+              "pending_confirmation",
+              "queued",
+              ...running,
+              "completed",
+              "failed",
+            ]),
+          ),
+        );
+      if (
+        !usage ||
+        usage.count >= current.limits.dailyJobs ||
+        usage.seconds + row.durationSeconds > current.limits.dailyMinutes * 60 ||
+        usage.cost + row.estimatedCost > current.limits.maxDailyCost + 1e-8 ||
+        row.estimatedCost > (current.limits.maxPerJobCost ?? Infinity)
+      )
+        throw new MediaJobError("quota_exceeded");
+      await this.checkMonthlyBudget(tx, actor, current, row.durationSeconds, row.estimatedCost, id);
+      const [saved] = await tx
+        .update(jobs)
+        .set({
+          status: "queued",
+          confirmedAt: now,
+          expiresAt: new Date(now.getTime() + retentionMs),
+          updatedAt: now,
+        })
+        .where(and(eq(jobs.id, id), eq(jobs.status, "pending_confirmation")))
+        .returning();
+      return view(saved!);
+    });
   }
   async get(actor: MediaJobActor, id: string) {
     return view(await this.owned(actor, id));
@@ -353,7 +651,7 @@ export class MediaJobService implements MediaTranscriptionPort {
       throw new MediaJobError("job_failed");
     if (row.status !== "completed" || !row.result || row.expiresAt.getTime() <= Date.now())
       throw new MediaJobError("not_ready");
-    const config = await this.configuration(actor.botId);
+    const config = await this.configuration(actor.botId, row.providerAccount);
     if (!matches(row, config)) throw new MediaJobError("not_ready");
     return row.result;
   }
@@ -364,10 +662,13 @@ export class MediaJobService implements MediaTranscriptionPort {
       .update(jobs)
       .set({
         cancelRequested: true,
-        status: sql`CASE WHEN ${jobs.status}='queued' THEN 'cancelled' ELSE ${jobs.status} END`,
+        status: sql`CASE WHEN ${jobs.status}='queued' AND ${jobs.providerSubmittedAt} IS NOT NULL THEN 'failed' WHEN ${jobs.status} IN ('pending_confirmation','queued') THEN 'cancelled' ELSE ${jobs.status} END`,
+        error: sql`CASE WHEN ${jobs.status}='queued' AND ${jobs.providerSubmittedAt} IS NOT NULL THEN 'provider_cancellation_unavailable' ELSE ${jobs.error} END`,
         updatedAt: new Date(),
       })
-      .where(and(eq(jobs.id, id), inArray(jobs.status, ["queued", ...running])))
+      .where(
+        and(eq(jobs.id, id), inArray(jobs.status, ["pending_confirmation", "queued", ...running])),
+      )
       .returning();
     if (this.active?.row.id === id) this.active.controller.abort(new MediaJobError("interrupted"));
     return view(saved ?? (await this.owned(actor, id)));
@@ -375,11 +676,17 @@ export class MediaJobService implements MediaTranscriptionPort {
   private async ownerActor(botId: string, id: string): Promise<MediaJobActor> {
     if (!uuid.test(botId) || !uuid.test(id)) throw new MediaJobError("not_found");
     const [row] = await this.db
-      .select({ chatId: jobs.chatId, userId: jobs.userId })
+      .select({ chatId: jobs.chatId, userId: jobs.userId, threadId: jobs.threadId })
       .from(jobs)
       .where(and(eq(jobs.botId, botId), eq(jobs.id, id)));
     if (!row) throw new MediaJobError("not_found");
-    return { botId, chatId: row.chatId, userId: row.userId, isAdmin: true };
+    return {
+      botId,
+      chatId: row.chatId,
+      userId: row.userId,
+      isAdmin: true,
+      ...(row.threadId === null ? {} : { threadId: row.threadId }),
+    };
   }
   // These methods are exposed only by the server's owner/admin routes.
   async listForBot(botId: string): Promise<MediaJobView[]> {
@@ -405,11 +712,16 @@ export class MediaJobService implements MediaTranscriptionPort {
     if (botId !== undefined && !uuid.test(botId)) return;
     await this.db
       .update(jobs)
-      .set({ cancelRequested: true, updatedAt: new Date() })
+      .set({
+        cancelRequested: true,
+        updatedAt: new Date(),
+        status: sql`CASE WHEN ${jobs.status}='queued' AND ${jobs.providerSubmittedAt} IS NOT NULL THEN 'failed' WHEN ${jobs.status} IN ('pending_confirmation','queued') THEN 'cancelled' ELSE ${jobs.status} END`,
+        error: sql`CASE WHEN ${jobs.status}='queued' AND ${jobs.providerSubmittedAt} IS NOT NULL THEN 'provider_cancellation_unavailable' ELSE ${jobs.error} END`,
+      })
       .where(
         and(
           botId === undefined ? undefined : eq(jobs.botId, botId),
-          inArray(jobs.status, ["queued", ...running]),
+          inArray(jobs.status, ["pending_confirmation", "queued", ...running]),
         ),
       );
     if (this.active && (botId === undefined || this.active.row.botId === botId))
@@ -445,6 +757,19 @@ export class MediaJobService implements MediaTranscriptionPort {
   }
   private async recover(restarting = false) {
     const now = new Date();
+    if (now.getTime() >= this.nextSweep) {
+      await this.deps.sweep?.();
+      this.nextSweep = now.getTime() + 60_000;
+    }
+    await this.db
+      .update(jobs)
+      .set({ status: "expired", updatedAt: now })
+      .where(
+        and(
+          eq(jobs.status, "pending_confirmation"),
+          sql`(${jobs.confirmation} IS NULL OR (${jobs.confirmation}->>'expiresAt')::timestamptz <= ${now.toISOString()}::timestamptz)`,
+        ),
+      );
     if (restarting)
       await this.db
         .update(jobs)
@@ -471,9 +796,18 @@ export class MediaJobService implements MediaTranscriptionPort {
         if (!locked) return;
         // Keep the expired row unclaimable until its previous temporary files are gone.
         const cleaned = await this.performCleanup(row.id, locked.attempt);
+        const canResume =
+          locked.status === "transcribing" &&
+          locked.providerTaskId &&
+          locked.providerSubmittedAt &&
+          this.deps.resume &&
+          locked.expiresAt > now;
         const status = locked.cancelRequested
-          ? "cancelled"
-          : locked.status !== "transcribing" && locked.attempt < 2 && locked.expiresAt > now
+          ? locked.status === "transcribing"
+            ? "failed"
+            : "cancelled"
+          : (canResume || (locked.status !== "transcribing" && locked.attempt < 2)) &&
+              locked.expiresAt > now
             ? "queued"
             : "failed";
         if (status === "queued" && !cleaned) return;
@@ -484,11 +818,13 @@ export class MediaJobService implements MediaTranscriptionPort {
             cleanupPending: !cleaned,
             progress: status === "queued" ? 0 : locked.progress,
             error:
-              status === "failed"
-                ? locked.status === "transcribing"
-                  ? "interrupted_transcription"
-                  : "interrupted"
-                : null,
+              locked.cancelRequested && locked.status === "transcribing"
+                ? "provider_cancellation_unavailable"
+                : status === "failed"
+                  ? locked.status === "transcribing"
+                    ? "interrupted_transcription"
+                    : "interrupted"
+                  : null,
             leaseId: null,
             leaseExpiresAt: null,
             updatedAt: now,
@@ -498,7 +834,11 @@ export class MediaJobService implements MediaTranscriptionPort {
     }
     await this.db
       .update(jobs)
-      .set({ status: "cancelled", updatedAt: now })
+      .set({
+        status: sql`CASE WHEN ${jobs.providerSubmittedAt} IS NOT NULL THEN 'failed' ELSE 'cancelled' END`,
+        error: sql`CASE WHEN ${jobs.providerSubmittedAt} IS NOT NULL THEN 'provider_cancellation_unavailable' ELSE NULL END`,
+        updatedAt: now,
+      })
       .where(and(eq(jobs.status, "queued"), eq(jobs.cancelRequested, true)));
     const purged = await this.db
       .update(jobs)
@@ -516,7 +856,7 @@ export class MediaJobService implements MediaTranscriptionPort {
       .where(
         and(
           eq(jobs.cleanupPending, true),
-          inArray(jobs.status, ["queued", "completed", "failed", "cancelled"]),
+          inArray(jobs.status, ["queued", "completed", "failed", "cancelled", "expired"]),
         ),
       )
       .orderBy(jobs.updatedAt)
@@ -541,9 +881,10 @@ export class MediaJobService implements MediaTranscriptionPort {
         .where(
           and(
             eq(jobs.status, "queued"),
+            isNotNull(jobs.confirmedAt),
             eq(jobs.cancelRequested, false),
             gt(jobs.expiresAt, now),
-            lt(jobs.attempt, 2),
+            sql`(${jobs.attempt} < 2 OR ${jobs.providerTaskId} IS NOT NULL)`,
             eq(jobs.cleanupPending, false),
           ),
         )
@@ -554,12 +895,12 @@ export class MediaJobService implements MediaTranscriptionPort {
       const [claimed] = await tx
         .update(jobs)
         .set({
-          status: "downloading",
-          progress: 10,
+          status: row.providerTaskId ? "transcribing" : "downloading",
+          progress: row.providerTaskId ? 70 : 10,
           cleanupPending: true,
           leaseId: randomUUID(),
           leaseExpiresAt: new Date(now.getTime() + leaseMs),
-          attempt: row.attempt + 1,
+          attempt: Math.min(row.attempt + 1, 2),
           updatedAt: now,
         })
         .where(eq(jobs.id, row.id))
@@ -581,7 +922,7 @@ export class MediaJobService implements MediaTranscriptionPort {
       stored.leaseExpiresAt.getTime() <= Date.now()
     )
       throw new MediaJobError("interrupted");
-    const config = await this.configuration(row.botId);
+    const config = await this.configuration(row.botId, row.providerAccount);
     if (!matches(row, config)) throw new MediaJobError("configuration_required");
     return config;
   }
@@ -594,7 +935,9 @@ export class MediaJobService implements MediaTranscriptionPort {
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, this.shutdown.signal]);
     this.active = { row, controller };
-    const execution: { stage: MediaJobStage } = { stage: "downloading" };
+    const execution: { stage: MediaJobStage } = {
+      stage: row.providerTaskId ? "transcribing" : "downloading",
+    };
     let heartbeatTask = Promise.resolve();
     const heartbeat = setInterval(() => {
       heartbeatTask = heartbeatTask
@@ -611,30 +954,54 @@ export class MediaJobService implements MediaTranscriptionPort {
     heartbeat.unref();
     try {
       const config = await this.current(row);
-      const result = await this.deps.execute(row, config, {
-        signal,
-        onStage: async (next) => {
-          signal.throwIfAborted();
-          if (!Object.hasOwn(progress, next) || progress[next] < progress[execution.stage])
-            throw new MediaJobError("job_failed");
-          await this.current(row);
-          const [saved] = await this.db
-            .update(jobs)
-            .set({ status: next, progress: progress[next], updatedAt: new Date() })
-            .where(
-              and(
-                eq(jobs.id, row.id),
-                eq(jobs.leaseId, row.leaseId!),
-                eq(jobs.cancelRequested, false),
-                inArray(jobs.status, running),
-              ),
-            )
-            .returning({ id: jobs.id });
-          if (!saved) throw new MediaJobError("interrupted");
-          execution.stage = next;
-          signal.throwIfAborted();
-        },
-      });
+      const result =
+        row.providerTaskId && this.deps.resume
+          ? await this.deps.resume(row, config, signal)
+          : await this.deps.execute(row, config, {
+              signal,
+              onStage: async (next) => {
+                signal.throwIfAborted();
+                if (!Object.hasOwn(progress, next) || progress[next] < progress[execution.stage])
+                  throw new MediaJobError("job_failed");
+                await this.current(row);
+                const [saved] = await this.db
+                  .update(jobs)
+                  .set({
+                    status: next,
+                    progress: progress[next],
+                    updatedAt: new Date(),
+                    ...(next === "transcribing" ? { providerSubmittedAt: new Date() } : {}),
+                  })
+                  .where(
+                    and(
+                      eq(jobs.id, row.id),
+                      eq(jobs.leaseId, row.leaseId!),
+                      eq(jobs.cancelRequested, false),
+                      inArray(jobs.status, running),
+                    ),
+                  )
+                  .returning({ id: jobs.id });
+                if (!saved) throw new MediaJobError("interrupted");
+                execution.stage = next;
+                signal.throwIfAborted();
+              },
+              onProviderTask: async (taskId) => {
+                if (!taskId || taskId.length > 200 || !/^[a-zA-Z0-9_-]+$/.test(taskId))
+                  throw new MediaJobError("job_failed");
+                const [saved] = await this.db
+                  .update(jobs)
+                  .set({ providerTaskId: taskId, updatedAt: new Date() })
+                  .where(
+                    and(
+                      eq(jobs.id, row.id),
+                      eq(jobs.leaseId, row.leaseId!),
+                      eq(jobs.status, "transcribing"),
+                    ),
+                  )
+                  .returning({ id: jobs.id });
+                if (!saved) throw new MediaJobError("interrupted");
+              },
+            });
       signal.throwIfAborted();
       await this.current(row);
       if (execution.stage !== "transcribing") throw new MediaJobError("job_failed");
@@ -659,16 +1026,23 @@ export class MediaJobService implements MediaTranscriptionPort {
       const [stored] = await this.db.select().from(jobs).where(eq(jobs.id, row.id));
       const retry =
         this.stopped &&
-        execution.stage !== "transcribing" &&
-        row.attempt < 2 &&
+        ((execution.stage !== "transcribing" && row.attempt < 2) ||
+          Boolean(stored?.providerTaskId && this.deps.resume)) &&
         !stored?.cancelRequested;
       await this.db
         .update(jobs)
         .set({
-          status: stored?.cancelRequested ? "cancelled" : retry ? "queued" : "failed",
-          progress: retry ? 0 : progress[execution.stage],
+          status:
+            stored?.cancelRequested && execution.stage !== "transcribing"
+              ? "cancelled"
+              : retry
+                ? "queued"
+                : "failed",
+          progress: retry && !stored?.providerTaskId ? 0 : progress[execution.stage],
           error: stored?.cancelRequested
-            ? null
+            ? execution.stage === "transcribing"
+              ? "provider_cancellation_unavailable"
+              : null
             : execution.stage === "transcribing"
               ? "interrupted_transcription"
               : "job_failed",

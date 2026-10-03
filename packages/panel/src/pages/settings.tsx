@@ -1,4 +1,5 @@
 import "./settings.css";
+import { AsrSettingsPanel } from "./asr-settings-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -284,6 +285,13 @@ export function SettingsPage() {
             </div>
           </div>
           <nav className="settings-jump-links" aria-label={t("settings.sectionNavigation")}>
+            {canManageMembers && (
+              <a href="#asr-settings">
+                <ShieldCheck size={16} aria-hidden="true" />
+                {t("asr.title")}
+                <ArrowUpRight size={14} aria-hidden="true" />
+              </a>
+            )}
             <a href="#account-security">
               <KeyRound size={16} aria-hidden="true" />
               {t("settings.securityTitle")}
@@ -390,6 +398,7 @@ export function SettingsPage() {
             </form>
           </SettingsSection>
 
+          {canManageMembers && <AsrSettingsPanel />}
           {canManageMembers && (
             <SettingsSection
               id="workspace-members"

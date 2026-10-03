@@ -115,6 +115,8 @@ describe("production HTTP policy", () => {
     async (role) => {
       for (const [url, method] of [
         ["/api/plugins", "GET"],
+        ["/api/asr/settings", "GET"],
+        ["/api/asr/settings", "PUT"],
         ["/api/plugins/install", "POST"],
         [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}`, "GET"],
         [`/api/plugins/hanori.bilibili/bots/${TEST_BOT_ID}`, "PATCH"],
@@ -129,6 +131,19 @@ describe("production HTTP policy", () => {
       }
     },
   );
+
+  it("does not log signed audio bearer credentials", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const result = await createRoleApp("viewer").request(
+        `/api/asr-audio/${TEST_BOT_ID}?expires=1791080000&signature=synthetic-secret`,
+      );
+      expect(result.status).toBe(404);
+      expect(log.mock.calls.flat().join(" ")).not.toContain("synthetic-secret");
+    } finally {
+      log.mockRestore();
+    }
+  });
 
   it.each(["owner", "admin"])(
     "allows %s through plugin authorization and reports an unavailable host",

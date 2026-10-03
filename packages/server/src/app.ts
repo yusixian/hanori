@@ -1,4 +1,8 @@
 import { pluginRoutes } from "./routes/plugins.js";
+import { createAsrRoutes } from "./routes/asr.js";
+import { asrAudioRoutes } from "./routes/asr-audio.js";
+import { AsrSettingsService } from "./services/asr-settings.js";
+import type { MediaAudioStore } from "./services/media/audio-store.js";
 import type { PluginManager } from "./services/plugins/manager.js";
 import type { PluginMediaJobsOptions } from "./routes/plugin-media-jobs.js";
 import type { Database } from "@cos-tool-bot/database";
@@ -73,6 +77,8 @@ import { EngagementSampleService } from "./services/engagement-sample-service.js
 interface AppOptions {
   pluginManager?: PluginManager;
   mediaJobs?: PluginMediaJobsOptions;
+  asrSettings?: AsrSettingsService;
+  asrAudioStore?: MediaAudioStore;
   db: Database;
   auth: AppAuth;
   baseURL: string;
@@ -140,9 +146,12 @@ export function createApp(options: AppOptions) {
     providedEngagementSampleService ?? new EngagementSampleService(db);
   const allowedOrigins = resolveAllowedOrigins(baseURL);
   const miniAppBotTokenResolver = createMiniAppBotTokenResolver(db, encryptionKey);
+  const requestLogger = honoLogger();
 
   const app = new Hono()
-    .use("*", honoLogger())
+    .use("*", (c, next) =>
+      c.req.path.startsWith("/api/asr-audio/") ? next() : requestLogger(c, next),
+    )
     .route("/", publicDocsRoutes())
     .use("*", async (c, next) => {
       await next();
@@ -192,6 +201,12 @@ export function createApp(options: AppOptions) {
       }),
     )
     .route("/api/authz", authzRoutes(auth, db, baseURL))
+    .route("/api/asr-audio", asrAudioRoutes(options.asrAudioStore))
+    .use("/api/asr/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .route(
+      "/api/asr",
+      createAsrRoutes(options.asrSettings ?? new AsrSettingsService(db, encryptionKey)),
+    )
     .use("/api/harness/admin/*", requireAppAccess(auth, db))
     .use("/api/harness/admin/*", requireRoles(ownerOnly))
     .route("/api/harness/admin", harnessAdminRoutes(harnessAdmin))

@@ -5,6 +5,8 @@ import type { MediaTranscriptionPort } from "@cos-tool-bot/shared";
 import { MediaJobService } from "./services/media-jobs/service.js";
 import { MediaJobExecutor, requireStoppedWorker } from "./services/media-jobs/executor.js";
 import { loadMediaJobConfiguration } from "./services/media-jobs/configuration.js";
+import { AsrSettingsService } from "./services/asr-settings.js";
+import { MediaAudioStore } from "./services/media/audio-store.js";
 import { IsolatedAudioConverter } from "./services/media/isolated-converter.js";
 import { createDb, runMigrations } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
@@ -170,6 +172,12 @@ const mcpClientManager = new McpClientManager(db, logger, env.ENCRYPTION_KEY);
 const mediaConverter = env.MEDIA_WORKER_SECRET
   ? new IsolatedAudioConverter(env.MEDIA_WORKER_SOCKET, env.MEDIA_WORKER_SECRET)
   : undefined;
+const asrSettings = new AsrSettingsService(db, env.ENCRYPTION_KEY);
+const asrAudioStore = new MediaAudioStore(
+  env.MEDIA_JOB_DIR,
+  env.BETTER_AUTH_URL,
+  env.ENCRYPTION_KEY,
+);
 let mediaJobService: MediaJobService;
 let videoDownloadService: VideoDownloadService;
 const videoDownloads: VideoDownloadPort | undefined = mediaConverter
@@ -183,6 +191,7 @@ const videoDownloads: VideoDownloadPort | undefined = mediaConverter
 const mediaTranscription: MediaTranscriptionPort | undefined = mediaConverter
   ? {
       create: (actor, input, signal) => mediaJobService!.create(actor, input, signal),
+      confirm: (actor, id) => mediaJobService!.confirm(actor, id),
       get: (actor, id) => mediaJobService!.get(actor, id),
       cancel: (actor, id) => mediaJobService!.cancel(actor, id),
       read: (actor, id) => mediaJobService!.read(actor, id),
@@ -238,7 +247,9 @@ const botPool = new BotPool(db, logger, timerRegistry);
   });
 }
 const mediaConfiguration = (botId: string) =>
-  mediaConverter ? loadMediaJobConfiguration(pluginManager, botId) : Promise.resolve(null);
+  mediaConverter
+    ? loadMediaJobConfiguration(pluginManager, botId, asrSettings)
+    : Promise.resolve(null);
 {
   // Retention and abandoned-job cleanup continue after the media profile is disabled.
   const executor = new MediaJobExecutor(
@@ -246,23 +257,48 @@ const mediaConfiguration = (botId: string) =>
     mediaConverter,
     env.MEDIA_WORKER_GID,
     env.MEDIA_WORKER_SOCKET,
+    asrAudioStore,
   );
   mediaJobService = new MediaJobService(db, {
-    configuration: mediaConfiguration,
+    configuration: (botId, account) =>
+      mediaConverter
+        ? loadMediaJobConfiguration(
+            pluginManager,
+            botId,
+            asrSettings,
+            account as "tencent" | "aliyun" | "groq" | "openai" | "legacy" | undefined,
+          )
+        : Promise.resolve(null),
+    configurations: async (botId) => {
+      if (!mediaConverter) return [];
+      const candidates = await Promise.all(
+        (["tencent", "aliyun", "groq", "openai"] as const).map((provider) =>
+          loadMediaJobConfiguration(pluginManager, botId, asrSettings, provider),
+        ),
+      );
+      return candidates.filter((config) => config !== null);
+    },
+    authorize: (actor) => botPool.isMediaAdmin(actor.botId, actor.userId),
+    requestConfirmation: (job, actor) =>
+      botPool.sendMediaConfirmation(actor.botId, actor.chatId, job, actor.threadId),
     inspect: (source, config, signal) => executor.inspect(source, config, signal),
     execute: (job, config, options) => executor.execute(job, config, options),
+    resume: (job, config, signal) => executor.resume(job, config, signal),
     cleanup: (id, attempt) => executor.cleanup(id, attempt),
+    sweep: () => asrAudioStore.sweep(),
     notify: (job) =>
       botPool.sendHtml(
         job.botId,
         job.chatId,
         `音频转录任务 / Audio transcription: <code>${job.id}</code>\n${job.status === "completed" ? "已完成 / Completed" : job.status === "cancelled" ? "已取消 / Cancelled" : "未完成 / Failed"}`,
+        job.threadId ?? undefined,
       ),
   });
   pluginManager.onConfigurationChanged(async (pluginId, botId) => {
     if (pluginId === "hanori.bilibili") await mediaJobService!.cancelForBot(botId);
   });
 }
+if (mediaTranscription) botPool.setMediaTranscriptionPort(mediaTranscription);
 const engagementSampleService = new EngagementSampleService(db);
 const engagementSampleCleaner = new EngagementSampleCleaner(engagementSampleService, logger);
 engagementSampleCleaner.start();
@@ -517,6 +553,8 @@ const app = createApp({
   mcpClientManager,
   pluginManager,
   mediaJobs: { jobs: mediaJobService, configuration: mediaConfiguration },
+  asrSettings,
+  asrAudioStore,
   summaryService,
   summaryConfigService,
   githubAppService,

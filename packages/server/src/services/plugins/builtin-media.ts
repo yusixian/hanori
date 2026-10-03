@@ -434,7 +434,7 @@ export function createBuiltinMediaPlugins(
       apiVersion: 1,
       id,
       name,
-      version: id === "hanori.bilibili" ? "1.2.0" : "1.1.0",
+      version: id === "hanori.bilibili" ? "1.3.0" : "1.1.0",
       description,
       author: "Hanori",
       login: { type: "qr" },

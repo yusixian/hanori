@@ -4,6 +4,7 @@ import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { SettingsPage } from "./settings";
+import { defaultAsrAccounts } from "@cos-tool-bot/shared";
 
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/lib/client", () => ({ authFetch: mocks.fetch }));
@@ -43,6 +44,14 @@ beforeEach(async () => {
       return response({ data: { ...me, member: { ...me.member, role } } });
     if (path === "/api/authz/members") return response({ data: members });
     if (path === "/api/authz/invitations") return response({ data: [] });
+    if (path === "/api/asr/settings")
+      return response({
+        ok: true,
+        data: {
+          revision: 0,
+          accounts: defaultAsrAccounts().map((account) => ({ ...account, configuredSecrets: [] })),
+        },
+      });
     return response({ ok: true });
   });
 });

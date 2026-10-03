@@ -451,3 +451,59 @@ export async function sendMediaDocument(
     },
   );
 }
+
+/** Signed cloud ASR JSON requests. Host/DNS pinning and credentials never survive a redirect. */
+export async function sendMediaJsonDocument(
+  input: string,
+  policy: Omit<MediaDocumentPolicy, "maxRedirects">,
+  body: Buffer,
+  headers: Record<string, string> = {},
+) {
+  const maxBytes = boundedInteger(policy.maxBytes ?? 2 * 1024 * 1024, 1, 2 * 1024 * 1024);
+  const allowedHeaders: Record<string, RegExp> = {
+    "X-TC-Action": /^(?:CreateRecTask|DescribeTaskStatus)$/,
+    "X-TC-Version": /^2019-06-14$/,
+    "X-TC-Region": /^[a-z][a-z0-9-]{0,63}$/,
+    "X-TC-Timestamp": /^\d{1,12}$/,
+    "X-DashScope-Async": /^enable$/,
+  };
+  if (
+    policy.allowedHosts.length !== 1 ||
+    policy.mimeTypes.length !== 1 ||
+    policy.mimeTypes[0] !== "application/json" ||
+    policy.credential?.cookie ||
+    !Buffer.isBuffer(body) ||
+    !body.length ||
+    body.length > 7 * 1024 * 1024 ||
+    Object.entries(headers).some(
+      ([name, value]) =>
+        typeof value !== "string" ||
+        !Object.hasOwn(allowedHeaders, name) ||
+        !allowedHeaders[name]!.test(value),
+    )
+  )
+    throw new MediaHttpError("invalid_request");
+  const url = allowedUrl(input, new Set(policy.allowedHosts));
+  if (url.search || url.hash || /[?#]/.test(input)) throw new MediaHttpError("invalid_request");
+  return withResponse(
+    input,
+    { ...policy, maxRedirects: 0 },
+    policy.credential,
+    async (response, responseUrl, signal) => {
+      const mimeType = documentMime(response, policy.mimeTypes);
+      const bytes = await abortable(boundedBody(response, maxBytes), signal);
+      return { url: responseUrl.href, mimeType, bytes };
+    },
+    {
+      method: "POST",
+      body,
+      headers: {
+        ...headers,
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": String(body.length),
+      },
+      maxTimeoutMs: 120_000,
+      defaultTimeoutMs: 120_000,
+    },
+  );
+}

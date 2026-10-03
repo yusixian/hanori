@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { createDb } from "@cos-tool-bot/database";
 import {
@@ -72,16 +72,13 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     parsed.pathname = `/${databaseName}`;
     url = parsed.href;
     connection = createDb(url);
-    await connection.client.unsafe("CREATE TABLE public.bots (id uuid PRIMARY KEY)");
-    for (const filename of [
-      "0058_sloppy_jocasta.sql",
-      "0059_superb_lifeguard.sql",
-      "0060_gigantic_cargill.sql",
-      "0061_sour_meteorite.sql",
-      "0062_black_midnight.sql",
-      "0063_thin_power_pack.sql",
-      "0064_stale_annihilus.sql",
-    ]) {
+    await connection.client.unsafe(
+      "CREATE TABLE public.bots (id uuid PRIMARY KEY, admin_chat_ids json NOT NULL DEFAULT '[]')",
+    );
+    const migrations = await readdir(new URL("../../../../database/drizzle/", import.meta.url));
+    for (const filename of migrations
+      .filter((name) => /^\d{4}_.*\.sql$/.test(name) && Number(name.slice(0, 4)) >= 58)
+      .sort()) {
       const migration = await readFile(
         new URL(`../../../../database/drizzle/${filename}`, import.meta.url),
         "utf8",
@@ -92,13 +89,19 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
   }, 15_000);
   beforeEach(async () => {
     await connection.client.unsafe(
-      "TRUNCATE public.bots, bot_plugin_configs, media_transcription_jobs",
+      "TRUNCATE public.bots, bot_plugin_configs, media_transcription_jobs, video_download_jobs",
     );
-    actor = { botId: randomUUID(), chatId: -100, userId: 42, isAdmin: true };
+    actor = { botId: randomUUID(), chatId: -100, userId: 42, threadId: 9, isAdmin: true };
     otherBotId = randomUUID();
-    await connection.client`INSERT INTO public.bots (id) VALUES (${actor.botId}), (${otherBotId})`;
+    await connection.client`INSERT INTO public.bots (id,admin_chat_ids) VALUES (${actor.botId}, '[42,43]'::json), (${otherBotId}, '[42,43]'::json)`;
     configuration = fixtureConfig();
     deps = {
+      authorize: vi.fn(async (scope) => {
+        const [bot] =
+          await connection.client`SELECT admin_chat_ids FROM bots WHERE id=${scope.botId}`;
+        return Array.isArray(bot?.admin_chat_ids) && bot.admin_chat_ids.includes(scope.userId);
+      }),
+      requestConfirmation: vi.fn(async () => {}),
       configuration: vi.fn(async () => configuration),
       inspect: vi.fn(async (url) => {
         const parsed = parseBilibiliResource(url);
@@ -143,13 +146,549 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     services.push(instance);
     return instance;
   }
-  function create(part = 1, scope = actor) {
-    return service.create(scope, { sourceUrl: source(part) });
+  async function create(part = 1, scope = actor) {
+    const job = await service.create(scope, { sourceUrl: source(part) });
+    return service.confirm(scope, job.id);
   }
   async function stored(id: string) {
     const [row] = await connection.client`SELECT * FROM media_transcription_jobs WHERE id=${id}`;
     return row!;
   }
+
+  it("persists a proposal and cost disclosure without downloading or charging until confirmation", async () => {
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    expect(proposal).toMatchObject({
+      status: "pending_confirmation",
+      threadId: actor.threadId,
+      confirmation: {
+        provider: "openai",
+        model: "whisper-fixture",
+        currency: "USD",
+        estimatedCost: 0.01,
+        maxCost: 0.01,
+      },
+    });
+    expect(proposal.confirmation!.freeQuota).toContain("unknown");
+    expect(deps.requestConfirmation).toHaveBeenCalledExactlyOnceWith(proposal, actor);
+    expect(await stored(proposal.id)).toMatchObject({ confirmed_at: null, attempt: 0 });
+    await service.tick();
+    await makeService().tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.notify).not.toHaveBeenCalled();
+    expect(await service.get(actor, proposal.id)).toMatchObject({ status: "pending_confirmation" });
+    expect(await service.confirm(actor, proposal.id)).toMatchObject({ status: "queued" });
+    expect((await stored(proposal.id)).confirmed_at).not.toBeNull();
+    expect(deps.execute).not.toHaveBeenCalled();
+    await service.tick();
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(await service.get(actor, proposal.id)).toMatchObject({ status: "completed" });
+  });
+
+  it("binds confirmation to the requesting administrator, Bot, chat and topic and rechecks revocation", async () => {
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    for (const scope of [
+      { ...actor, botId: otherBotId },
+      { ...actor, chatId: -200 },
+      { ...actor, userId: 43 },
+      { ...actor, threadId: 10 },
+      { ...actor, threadId: undefined },
+    ])
+      await expect(service.confirm(scope, proposal.id)).rejects.toMatchObject({
+        code: "not_found",
+      });
+    await expect(service.confirm({ ...actor, isAdmin: false }, proposal.id)).rejects.toMatchObject({
+      code: "forbidden",
+    });
+    await connection.client`UPDATE bots SET admin_chat_ids='[43]'::json WHERE id=${actor.botId}`;
+    await expect(service.confirm(actor, proposal.id)).rejects.toMatchObject({ code: "forbidden" });
+    expect(await stored(proposal.id)).toMatchObject({
+      status: "pending_confirmation",
+      confirmed_at: null,
+    });
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("expires pending confirmation durably and releases its reservation for a new proposal", async () => {
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    const expiredConfirmation = {
+      ...proposal.confirmation!,
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    };
+    await connection.client`UPDATE media_transcription_jobs SET confirmation=${JSON.stringify(expiredConfirmation)}::json WHERE id=${proposal.id}`;
+    const restarted = makeService();
+    await expect(restarted.confirm(actor, proposal.id)).rejects.toMatchObject({ code: "expired" });
+    await restarted.tick();
+    expect(await stored(proposal.id)).toMatchObject({ status: "expired", confirmed_at: null });
+    expect(deps.execute).not.toHaveBeenCalled();
+    const fresh = await service.create(actor, { sourceUrl: source() });
+    expect(fresh.id).not.toBe(proposal.id);
+    expect(fresh.status).toBe("pending_confirmation");
+  });
+
+  it("deduplicates pending proposals and atomically confirms a repeated concurrent callback across instances", async () => {
+    const [proposal, duplicate] = await Promise.all([
+      service.create(actor, { sourceUrl: source() }),
+      makeService().create(actor, { sourceUrl: source() }),
+    ]);
+    expect(duplicate.id).toBe(proposal.id);
+    expect(proposal.status).toBe("pending_confirmation");
+    const other = makeService();
+    const confirmed = await Promise.all([
+      service.confirm(actor, proposal.id),
+      other.confirm(actor, proposal.id),
+    ]);
+    expect(confirmed.every((job) => job.status === "queued")).toBe(true);
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(1);
+    await Promise.all([service.tick(), other.tick()]);
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(await other.confirm(actor, proposal.id)).toMatchObject({ status: "completed" });
+    await other.tick();
+    expect(deps.execute).toHaveBeenCalledOnce();
+  });
+
+  it("requires a new proposal when its provider credential revision changes before confirmation", async () => {
+    configuration!.providerAccount = "account-fixture";
+    configuration!.providerRevision = 1;
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    configuration = { ...configuration!, providerRevision: 2 };
+    await expect(service.confirm(actor, proposal.id)).rejects.toMatchObject({
+      code: "configuration_required",
+    });
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    const fresh = await service.create(actor, { sourceUrl: source() });
+    expect(fresh.id).not.toBe(proposal.id);
+    expect(await stored(fresh.id)).toMatchObject({ provider_revision: 2 });
+    expect(await service.confirm(actor, fresh.id)).toMatchObject({ status: "queued" });
+  });
+
+  it("supports a zero-price Groq account but still waits for transfer confirmation", async () => {
+    configuration = {
+      ...fixtureConfig(),
+      asr: { ...fixtureConfig().asr, provider: "groq", model: "whisper-large-v3-turbo" },
+      providerAccount: "groq-free-fixture",
+      limits: { ...fixtureConfig().limits, costPerMinute: 0, maxPerJobCost: 0 },
+    };
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    expect(proposal).toMatchObject({
+      status: "pending_confirmation",
+      confirmation: { provider: "groq", estimatedCost: 0, maxCost: 0, currency: "USD" },
+    });
+    expect(Number((await stored(proposal.id)).estimated_cost)).toBe(0);
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(await service.confirm(actor, proposal.id)).toMatchObject({ status: "queued" });
+    await service.tick();
+    expect(deps.execute).toHaveBeenCalledOnce();
+  });
+
+  it("reserves Groq's minimum ten billed seconds for a short paid clip", async () => {
+    configuration = {
+      ...fixtureConfig(),
+      asr: { ...fixtureConfig().asr, provider: "groq", model: "whisper-large-v3-turbo" },
+      providerAccount: "groq-paid-fixture",
+      limits: { ...fixtureConfig().limits, costPerMinute: 0.06, maxPerJobCost: 0.005 },
+    };
+    vi.mocked(deps.inspect).mockResolvedValue({
+      canonicalUrl: source(),
+      bvid,
+      part: 1,
+      title: "Short fixture",
+      durationSeconds: 2,
+      hasSubtitles: false,
+    });
+    await expect(service.create(actor, { sourceUrl: source() })).rejects.toMatchObject({
+      code: "quota_exceeded",
+    });
+    expect(deps.requestConfirmation).not.toHaveBeenCalled();
+    configuration.limits.maxPerJobCost = 0.02;
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    expect(proposal.confirmation?.estimatedCost).toBeCloseTo(0.01);
+    expect(proposal.confirmation?.maxCost).toBeCloseTo(0.011);
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("prefers a configured free allowance and discloses a paid proposal when the remainder cannot cover the whole clip", async () => {
+    const paid: MediaJobConfiguration = {
+      ...fixtureConfig(),
+      providerAccount: "paid-account",
+      currency: "CNY",
+    };
+    const free: MediaJobConfiguration = {
+      ...fixtureConfig(),
+      providerAccount: "free-account",
+      currency: "USD",
+      asr: { ...fixtureConfig().asr, provider: "groq", model: "whisper-large-v3-turbo" },
+      freeAllowanceMinutes: 1.5,
+      freeAllowancePeriod: "month",
+      freeQuota: "Only this deployment's ledger is known; external balance unknown",
+      limits: { ...fixtureConfig().limits, costPerMinute: 0 },
+    };
+    deps.configurations = vi.fn(async () => [paid, free]);
+    deps.configuration = vi.fn(async (_botId, account) =>
+      account === free.providerAccount ? free : paid,
+    );
+    const first = await service.create(actor, { sourceUrl: source(1) });
+    expect(first.confirmation).toMatchObject({
+      provider: "groq",
+      estimatedCost: 0,
+      currency: "USD",
+    });
+    await service.confirm(actor, first.id);
+    const second = await service.create(actor, { sourceUrl: source(2) });
+    expect(second).toMatchObject({
+      status: "pending_confirmation",
+      confirmation: { provider: "openai", estimatedCost: 0.01, currency: "CNY" },
+    });
+    expect(await stored(second.id)).toMatchObject({
+      provider_account: "paid-account",
+      confirmed_at: null,
+    });
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it.each(["cost", "minutes"])(
+    "serializes one shared account's monthly %s across concurrent Bots",
+    async (limit) => {
+      configuration!.providerAccount = "shared-monthly-account";
+      if (limit === "cost") configuration!.limits.accountMonthlyCost = 0.015;
+      else configuration!.limits.accountMonthlyMinutes = 1;
+      const other = makeService();
+      const results = await Promise.allSettled([
+        service.create(actor, { sourceUrl: source(1) }),
+        other.create({ ...actor, botId: otherBotId }, { sourceUrl: source(2) }),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.find((result) => result.status === "rejected")).toMatchObject({
+        reason: { code: "quota_exceeded" },
+      });
+      const rows =
+        await connection.client`SELECT bot_id,estimated_cost FROM media_transcription_jobs`;
+      expect(rows).toHaveLength(1);
+      expect(Number(rows[0]!.estimated_cost)).toBe(0.01);
+      expect(deps.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { scope: "user", budget: "cost" },
+    { scope: "user", budget: "minutes" },
+    { scope: "bot", budget: "cost" },
+    { scope: "bot", budget: "minutes" },
+  ])(
+    "keeps monthly $scope $budget budgets within their declared scope",
+    async ({ scope, budget }) => {
+      configuration!.providerAccount = "scope-budget-account";
+      if (scope === "user") {
+        if (budget === "cost") configuration!.limits.maxMonthlyCost = 0.015;
+        else configuration!.limits.monthlyMinutes = 1;
+      } else {
+        if (budget === "cost") configuration!.limits.botMaxMonthlyCost = 0.015;
+        else configuration!.limits.botMonthlyMinutes = 1;
+      }
+      await create(1);
+      await expect(create(2)).rejects.toMatchObject({ code: "quota_exceeded" });
+      const anotherAdmin = { ...actor, userId: 43 };
+      if (scope === "user")
+        expect(await create(3, anotherAdmin)).toMatchObject({ status: "queued" });
+      else {
+        await expect(create(3, anotherAdmin)).rejects.toMatchObject({ code: "quota_exceeded" });
+        expect(await create(4, { ...anotherAdmin, botId: otherBotId })).toMatchObject({
+          status: "queued",
+        });
+      }
+    },
+  );
+
+  it("keeps CNY and USD cost ledgers separate at exact daily and monthly budget boundaries", async () => {
+    configuration!.providerAccount = "currency-account";
+    configuration!.currency = "USD";
+    configuration!.limits.maxDailyCost = 0.01;
+    configuration!.limits.maxMonthlyCost = 0.01;
+    configuration!.limits.accountDailyCost = 0.01;
+    configuration!.limits.accountMonthlyCost = 0.01;
+    const usd = await create(1);
+    await service.tick();
+    expect(await service.get(actor, usd.id)).toMatchObject({ status: "completed" });
+    configuration = { ...configuration!, providerRevision: 2, currency: "CNY" };
+    const cny = await create(2);
+    expect(usd.confirmation?.currency).toBe("USD");
+    expect(cny.confirmation?.currency).toBe("CNY");
+    await expect(create(3)).rejects.toMatchObject({ code: "quota_exceeded" });
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(2);
+  });
+
+  it.each([
+    { period: "day", before: "2026-10-02T23:59:59.000Z", after: "2026-10-03T00:00:02.000Z" },
+    { period: "month", before: "2026-09-30T23:59:59.000Z", after: "2026-10-01T00:00:02.000Z" },
+  ])(
+    "charges a proposal confirmed across a UTC $period boundary to its confirmation period",
+    async ({ period, before, after }) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(before));
+      configuration!.providerAccount = "rollover-account";
+      if (period === "day") configuration!.limits.accountDailyCost = 0.01;
+      else configuration!.limits.accountMonthlyCost = 0.01;
+      const proposal = await service.create(actor, { sourceUrl: source(1) });
+      vi.setSystemTime(new Date(after));
+      await service.confirm(actor, proposal.id);
+      const [confirmed] =
+        await connection.client`SELECT to_char(confirmed_at,'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS confirmed_iso FROM media_transcription_jobs WHERE id=${proposal.id}`;
+      expect(confirmed!.confirmed_iso).toBe(after);
+      await expect(
+        service.create({ ...actor, botId: otherBotId }, { sourceUrl: source(2) }),
+      ).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(deps.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it("serializes an account's daily cost budget across different Bots", async () => {
+    configuration!.providerAccount = "daily-shared-account";
+    configuration!.limits.accountDailyCost = 0.015;
+    const results = await Promise.allSettled([
+      service.create(actor, { sourceUrl: source(1) }),
+      makeService().create({ ...actor, botId: otherBotId }, { sourceUrl: source(2) }),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({
+      reason: { code: "quota_exceeded" },
+    });
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(1);
+  });
+
+  it.each(["actor", "bot"])(
+    "retains a submitted provider task's paid reservation when its queued recovery is cancelled through %s",
+    async (scope) => {
+      configuration!.limits.dailyJobs = 1;
+      const job = await create();
+      await connection.client`UPDATE media_transcription_jobs SET provider_task_id='fixture-recovery-task',provider_submitted_at=${new Date().toISOString()} WHERE id=${job.id}`;
+      deps.resume = vi.fn(async () => document);
+      if (scope === "actor")
+        expect(await service.cancel(actor, job.id)).toMatchObject({
+          status: "failed",
+          error: "provider_cancellation_unavailable",
+        });
+      else await service.cancelForBot(actor.botId);
+      await service.tick();
+      expect(await service.get(actor, job.id)).toMatchObject({
+        status: "failed",
+        error: "provider_cancellation_unavailable",
+        cancelRequested: true,
+      });
+      await expect(create(2)).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(deps.execute).not.toHaveBeenCalled();
+      expect(deps.resume).not.toHaveBeenCalled();
+    },
+  );
+
+  it("requires an explicit administrator forceAsr proposal and confirmation to override existing subtitles", async () => {
+    const inspect = deps.inspect;
+    deps.inspect = vi.fn(async (...args: Parameters<MediaJobDependencies["inspect"]>) => ({
+      ...(await inspect(...args)),
+      hasSubtitles: true,
+    }));
+    await expect(service.create(actor, { sourceUrl: source() })).rejects.toMatchObject({
+      code: "subtitles_available",
+    });
+    await expect(
+      service.create({ ...actor, isAdmin: false }, { sourceUrl: source(), forceAsr: true }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    const proposal = await service.create(actor, { sourceUrl: source(), forceAsr: true });
+    expect(proposal.status).toBe("pending_confirmation");
+    expect(await stored(proposal.id)).toMatchObject({ force_asr: true, confirmed_at: null });
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    await service.confirm(actor, proposal.id);
+    await service.tick();
+    expect(deps.execute).toHaveBeenCalledOnce();
+  });
+
+  it("checks for newly available platform subtitles again when a proposal is confirmed", async () => {
+    const proposal = await service.create(actor, { sourceUrl: source() });
+    const inspect = deps.inspect;
+    deps.inspect = vi.fn(async (...args: Parameters<MediaJobDependencies["inspect"]>) => ({
+      ...(await inspect(...args)),
+      hasSubtitles: true,
+    }));
+    await expect(service.confirm(actor, proposal.id)).rejects.toMatchObject({
+      code: "subtitles_available",
+    });
+    expect(await stored(proposal.id)).toMatchObject({
+      status: "pending_confirmation",
+      confirmed_at: null,
+    });
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("does not create or charge a job when subtitle inspection fails or its result is invalid", async () => {
+    vi.mocked(deps.inspect).mockRejectedValueOnce(new Error("private caption API credential"));
+    await expect(service.create(actor, { sourceUrl: source() })).rejects.toMatchObject({
+      code: "invalid_source",
+    });
+    vi.mocked(deps.inspect).mockResolvedValueOnce({
+      canonicalUrl: source(),
+      bvid,
+      part: 1,
+      title: "Fixture",
+      durationSeconds: 60,
+      hasSubtitles: undefined as unknown as boolean,
+    });
+    await expect(service.create(actor, { sourceUrl: source() })).rejects.toMatchObject({
+      code: "invalid_source",
+    });
+    expect(await connection.client`SELECT id FROM media_transcription_jobs`).toHaveLength(0);
+    expect(deps.requestConfirmation).not.toHaveBeenCalled();
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("resumes a known submitted provider task after restart without uploading or submitting it again", async () => {
+    const known = await create(1);
+    const unknown = await create(2);
+    const expiredLease = new Date(Date.now() - 1000).toISOString();
+    const submitted = new Date(Date.now() - 2000).toISOString();
+    await connection.client`UPDATE media_transcription_jobs SET status='transcribing',progress=70,attempt=2,provider_task_id='fixture-cloud-task',provider_submitted_at=${submitted},lease_id=${randomUUID()},lease_expires_at=${expiredLease} WHERE id=${known.id}`;
+    await connection.client`UPDATE media_transcription_jobs SET status='transcribing',progress=70,attempt=1,provider_submitted_at=${submitted},lease_id=${randomUUID()},lease_expires_at=${expiredLease} WHERE id=${unknown.id}`;
+    deps.resume = vi.fn(async (row) => {
+      expect(row.providerTaskId).toBe("fixture-cloud-task");
+      return document;
+    });
+    await service.close();
+    const restarted = makeService();
+    await restarted.tick();
+    expect(deps.resume).toHaveBeenCalledOnce();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(await restarted.get(actor, known.id)).toMatchObject({ status: "completed" });
+    expect(await restarted.get(actor, unknown.id)).toMatchObject({
+      status: "failed",
+      error: "interrupted_transcription",
+    });
+    await restarted.tick();
+    expect(deps.resume).toHaveBeenCalledOnce();
+    expect(deps.execute).not.toHaveBeenCalled();
+  });
+
+  it("marks provider cancellation unavailable after stopping local transcription waiting", async () => {
+    const entered = deferred<AbortSignal>();
+    deps.execute = vi.fn(async (_row, _config, options) => {
+      await options.onStage("transcribing");
+      await options.onProviderTask?.("fixture-billable-task");
+      entered.resolve(options.signal);
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      );
+      return document;
+    });
+    const job = await create();
+    const execution = service.tick();
+    const signal = await entered.promise;
+    await service.cancel(actor, job.id);
+    await execution;
+    expect(signal.aborted).toBe(true);
+    expect(await service.get(actor, job.id)).toMatchObject({
+      status: "failed",
+      error: "provider_cancellation_unavailable",
+      cancelRequested: true,
+    });
+    expect((await stored(job.id)).provider_task_id).toBe("fixture-billable-task");
+    expect(deps.notify).not.toHaveBeenCalled();
+    await makeService().tick();
+    expect(deps.execute).toHaveBeenCalledOnce();
+  });
+
+  it("resumes a known provider task after normal shutdown without a second paid submission", async () => {
+    const entered = deferred<void>();
+    deps.resume = vi.fn(async (row) => {
+      expect(row.providerTaskId).toBe("fixture-shutdown-task");
+      return document;
+    });
+    deps.execute = vi.fn(async (_row, _config, options) => {
+      await options.onStage("transcribing");
+      await options.onProviderTask?.("fixture-shutdown-task");
+      entered.resolve();
+      await new Promise((_resolve, reject) =>
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        }),
+      );
+      return document;
+    });
+    const job = await create();
+    const execution = service.tick();
+    await entered.promise;
+    await service.close();
+    await execution;
+    expect(await service.get(actor, job.id)).toMatchObject({ status: "queued" });
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(deps.resume).not.toHaveBeenCalled();
+    const restarted = makeService();
+    await restarted.tick();
+    expect(deps.resume).toHaveBeenCalledOnce();
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(await restarted.get(actor, job.id)).toMatchObject({ status: "completed" });
+  });
+
+  it("waits for the returned provider task ID to be persisted before finishing shutdown", async () => {
+    deps.resume = vi.fn(async () => document);
+    deps.execute = vi.fn(async (_row, _config, options) => {
+      await options.onStage("transcribing");
+      await options.onProviderTask?.("fixture-durable-shutdown-task");
+      options.signal.throwIfAborted();
+      return document;
+    });
+    const job = await create();
+    const blocker = createDb(url);
+    let execution: Promise<void> | undefined;
+    let closing: Promise<void> | undefined;
+    await connection.client
+      .unsafe(`CREATE FUNCTION hold_provider_task_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.provider_task_id IS DISTINCT FROM OLD.provider_task_id AND NEW.provider_task_id IS NOT NULL THEN PERFORM pg_advisory_xact_lock(134763785); END IF; RETURN NEW; END $$;
+      CREATE TRIGGER hold_provider_task_update BEFORE UPDATE ON media_transcription_jobs FOR EACH ROW EXECUTE FUNCTION hold_provider_task_update();`);
+    try {
+      await blocker.client.begin(async (tx) => {
+        await tx.unsafe("SELECT pg_advisory_xact_lock(134763785)");
+        execution = service.tick();
+        const deadline = Date.now() + 3000;
+        let updating = false;
+        while (Date.now() < deadline) {
+          const [waiting] =
+            await connection.client`SELECT count(*)::integer AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%provider_task_id%'`;
+          if (waiting!.count >= 1) {
+            updating = true;
+            break;
+          }
+          await delay(10);
+        }
+        expect(updating).toBe(true);
+        let closed = false;
+        closing = service.close().then(() => {
+          closed = true;
+        });
+        await delay(20);
+        expect(closed).toBe(false);
+      });
+      await closing;
+      await execution;
+      expect(await stored(job.id)).toMatchObject({
+        status: "queued",
+        provider_task_id: "fixture-durable-shutdown-task",
+      });
+      await makeService().tick();
+      expect(deps.resume).toHaveBeenCalledOnce();
+      expect(deps.execute).toHaveBeenCalledOnce();
+      expect(await service.get(actor, job.id)).toMatchObject({ status: "completed" });
+    } finally {
+      await closing;
+      await execution;
+      await blocker.client.end();
+      await connection.client.unsafe(
+        "DROP TRIGGER hold_provider_task_update ON media_transcription_jobs; DROP FUNCTION hold_provider_task_update()",
+      );
+    }
+  });
 
   it("durably queues, deduplicates a repeated actor/resource and exposes no stored secrets", async () => {
     const [first, duplicate] = await Promise.all([create(), create()]);
@@ -367,16 +906,16 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
   });
 
   it.each(["jobs", "minutes", "cost"])(
-    "retains %s reservations for cancelled and failed work",
+    "releases pre-submission cancellation and retains %s reservations for failed work",
     async (limit) => {
       if (limit === "jobs") configuration!.limits.dailyJobs = 1;
       if (limit === "minutes") configuration!.limits.dailyMinutes = 1;
       if (limit === "cost") configuration!.limits.maxDailyCost = 0.01;
       const first = await create();
       await service.cancel(actor, first.id);
-      await expect(create(2)).rejects.toMatchObject({ code: "quota_exceeded" });
+      expect(await create(2)).toMatchObject({ status: "queued" });
       await connection.client`UPDATE media_transcription_jobs SET status='failed' WHERE id=${first.id}`;
-      await expect(create(2)).rejects.toMatchObject({ code: "quota_exceeded" });
+      await expect(create(3)).rejects.toMatchObject({ code: "quota_exceeded" });
     },
   );
 

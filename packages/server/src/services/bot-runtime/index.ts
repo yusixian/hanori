@@ -91,6 +91,7 @@ export async function assembleBotRuntime(
       adminChatIds: bot.adminChatIds,
       logger: services.logger,
       aiReply: ai?.aiReply,
+      mediaTranscriptionPort: services.mediaTranscriptionPort,
       aiSelectionCallbacks: ai?.aiSelectionCallbacks,
       conversation: ai?.conversation,
       privacy,
