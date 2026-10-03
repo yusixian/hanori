@@ -58,7 +58,10 @@ export function validatePluginDefinition(value: unknown): PluginDefinition {
     value.apiVersion !== 1 ||
     !("createSession" in value) ||
     typeof value.createSession !== "function" ||
-    ("check" in value && value.check !== undefined && typeof value.check !== "function")
+    ("check" in value && value.check !== undefined && typeof value.check !== "function") ||
+    ("startLogin" in value &&
+      value.startLogin !== undefined &&
+      typeof value.startLogin !== "function")
   ) {
     throw new PluginRuntimeError("invalid_plugin");
   }

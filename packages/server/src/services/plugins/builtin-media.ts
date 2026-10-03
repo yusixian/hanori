@@ -26,6 +26,7 @@ import {
   type NeteaseSong,
 } from "../media/netease.js";
 import type { BuiltinPlugin } from "./manager.js";
+import { startBilibiliLogin, startNeteaseLogin } from "./login-providers/index.js";
 
 const lookupSchema = z.object({ input: z.string().trim().min(1).max(2048) }).strict();
 const reference = z.string().min(1).max(100);
@@ -411,6 +412,7 @@ export function createBuiltinMediaPlugins(
       description:
         "Read Bilibili metadata and subtitle pages. Optional administrator-only background audio ASR uses one configured provider and bounded budgets.",
       createSession: (context: PluginContext) => bilibiliSession(context, options.transcription),
+      startLogin: startBilibiliLogin,
     },
     {
       id: "hanori.netease",
@@ -418,21 +420,23 @@ export function createBuiltinMediaPlugins(
       description:
         "Read NetEase song, album and playlist metadata and lyric pages. Legacy compatibility APIs and collection pagination may be unavailable.",
       createSession: neteaseSession,
+      startLogin: startNeteaseLogin,
     },
-  ].map(({ id, name, description, createSession }) => ({
+  ].map(({ id, name, description, createSession, startLogin }) => ({
     manifest: {
       apiVersion: 1,
       id,
       name,
-      version: "1.0.0",
+      version: "1.1.0",
       description,
       author: "Hanori",
+      login: { type: "qr" },
       config: [
         {
           key: "cookie",
           label: "Cookie",
           description:
-            "Optional platform Cookie. Stored as a secret; sent only to the platform's trusted metadata API origin.",
+            "可扫码登录自动保存，或手动填写 Cookie。加密保存，不回显。 / Scan to sign in or enter a Cookie manually. Stored encrypted and never displayed.",
           type: "text",
           secret: true,
           required: false,
@@ -441,6 +445,6 @@ export function createBuiltinMediaPlugins(
         ...(id === "hanori.bilibili" ? ASR_CONFIG_FIELDS : []),
       ],
     },
-    definition: { apiVersion: 1, createSession },
+    definition: { apiVersion: 1, createSession, startLogin },
   }));
 }

@@ -4,10 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as nextTurn, setTimeout as delay } from "node:timers/promises";
 import { createDb } from "@cos-tool-bot/database";
+import { parsePluginManifest } from "@cos-tool-bot/shared";
 import type {
   PluginActor,
   PluginDefinition,
   PluginManifest,
+  PluginLoginResult,
   PluginSession,
 } from "@cos-tool-bot/shared";
 import {
@@ -36,6 +38,7 @@ const manifest: PluginManifest = {
   version: "1.0.0",
   description: "Synthetic manager integration fixture",
   author: "Test",
+  login: { type: "qr" },
   config: [
     { key: "cookie", label: "Cookie", type: "text", secret: true, required: true },
     { key: "limit", label: "Limit", type: "integer", min: 1, max: 20, default: 5 },
@@ -184,6 +187,42 @@ describe.skipIf(!baseUrl)("PluginManager PostgreSQL lifecycle", () => {
       await session.dispose();
     }
   }
+
+  async function startLogin(
+    poll = vi.fn(
+      async (): Promise<PluginLoginResult> => ({
+        status: "authorized",
+        secrets: { cookie: "synthetic-qr-cookie" },
+        account: { name: "QR account" },
+      }),
+    ),
+  ) {
+    const cleanup = vi.fn();
+    definition.startLogin = vi.fn(async () => ({
+      qrUrl: "https://example.com/login?code=synthetic",
+      poll,
+      dispose: cleanup,
+    }));
+    const current = await manager.getBot(manifest.id, botId);
+    const login = await manager.logins.start("web-session", manifest.id, botId, {
+      expectedRevision: current.revision,
+      manifestHash: current.manifestHash,
+    });
+    return { login, poll, cleanup };
+  }
+
+  async function finishLogin(id: string) {
+    let state = await manager.logins.poll("web-session", manifest.id, botId, id);
+    await vi.waitFor(
+      async () => {
+        if (state.status === "saving")
+          state = await manager.logins.poll("web-session", manifest.id, botId, id);
+        expect(state.status).not.toBe("saving");
+      },
+      { timeout: 4000, interval: 10 },
+    );
+    return state;
+  }
   async function gitFixtures(upgraded: PluginManifest) {
     const fixtures = new Map<string, { manifest: PluginManifest; directory: string }>();
     for (const [commit, metadata] of [
@@ -203,7 +242,10 @@ describe.skipIf(!baseUrl)("PluginManager PostgreSQL lifecycle", () => {
         }
       };`,
       );
-      fixtures.set(commit, { manifest: metadata, directory: artifactDirectory });
+      fixtures.set(commit, {
+        manifest: parsePluginManifest(metadata),
+        directory: artifactDirectory,
+      });
     }
     const stage = vi.spyOn(artifacts, "stage").mockImplementation(async (source) => {
       const artifact = fixtures.get(source.commit);
@@ -267,6 +309,212 @@ describe.skipIf(!baseUrl)("PluginManager PostgreSQL lifecycle", () => {
     expect(await readValue()).toEqual({ limit: 7, authenticated: true });
     expect(execute).toHaveBeenCalledOnce();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("saves verified QR credentials encrypted for a disabled Bot without enabling it", async () => {
+    await installBuiltin();
+    const { login, cleanup } = await startLogin();
+    expect(login.status).toBe("waiting");
+    const connected = await finishLogin(login.id);
+    expect(connected).toMatchObject({
+      status: "connected",
+      account: { name: "QR account" },
+      botState: {
+        enabled: false,
+        revision: 1,
+        configuration: { values: { limit: 5 }, configuredSecrets: ["cookie"] },
+      },
+    });
+    expect(JSON.stringify(connected)).not.toContain("synthetic-qr-cookie");
+    const [stored] =
+      await connection.client`SELECT * FROM bot_plugin_configs WHERE bot_id=${botId}`;
+    expect(JSON.stringify(stored)).not.toContain("synthetic-qr-cookie");
+    expect(stored!.encrypted_secrets.cookie).toEqual(expect.any(String));
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect((await manager.getBot(manifest.id, otherBotId)).configuration.configuredSecrets).toEqual(
+      [],
+    );
+  });
+
+  it("replaces only login secrets, preserves ordinary settings and stops the previous tool session", async () => {
+    await installBuiltin();
+    const saved = await enable();
+    const previous = await manager.createSession(actor());
+    const { login } = await startLogin();
+    expect(await finishLogin(login.id)).toMatchObject({
+      status: "connected",
+      botState: {
+        enabled: true,
+        revision: saved.revision + 1,
+        configuration: { values: { limit: 7 }, configuredSecrets: ["cookie"] },
+      },
+    });
+    expect(await manager.runtimeConfiguration(manifest.id, botId)).toMatchObject({
+      configuration: { cookie: "synthetic-qr-cookie", limit: 7 },
+    });
+    await expect(previous.tools[0]!.execute({}, new AbortController().signal)).rejects.toThrow();
+    await previous.dispose();
+  });
+
+  it("does not overwrite a configuration changed through another manager", async () => {
+    await installBuiltin();
+    const saved = await enable();
+    const { login, poll } = await startLogin();
+    const other = new PluginManager(connection.db, encryptionKey, artifacts, [
+      { manifest, definition },
+    ]);
+    try {
+      await other.saveBot(manifest.id, botId, {
+        expectedRevision: saved.revision,
+        manifestHash: saved.manifestHash,
+        configuration: { values: { limit: 9 } },
+      });
+      expect(await manager.logins.poll("web-session", manifest.id, botId, login.id)).toMatchObject({
+        status: "conflict",
+      });
+      expect(poll).not.toHaveBeenCalled();
+      expect(await manager.runtimeConfiguration(manifest.id, botId)).toMatchObject({
+        configuration: { cookie: "synthetic-cookie", limit: 9 },
+      });
+    } finally {
+      await other.close();
+    }
+  });
+
+  it("discards authorization arriving after cancellation and keeps existing credentials", async () => {
+    await installBuiltin();
+    const saved = await enable();
+    const result = deferred<PluginLoginResult>();
+    const began = deferred<void>();
+    const { login } = await startLogin(
+      vi.fn(async () => {
+        began.resolve();
+        return result.promise;
+      }),
+    );
+    const polling = manager.logins.poll("web-session", manifest.id, botId, login.id);
+    await began.promise;
+    await manager.logins.cancel("web-session", manifest.id, botId, login.id);
+    result.resolve({
+      status: "authorized",
+      secrets: { cookie: "late-cookie" },
+      account: { name: "Late" },
+    });
+    expect(await polling).toMatchObject({ status: "cancelled" });
+    expect((await manager.getBot(manifest.id, botId)).revision).toBe(saved.revision);
+    expect(await readValue()).toEqual({ limit: 7, authenticated: true });
+  });
+
+  it("rejects undeclared or ordinary fields returned as login secrets", async () => {
+    await installBuiltin();
+    const saved = await enable();
+    const { login } = await startLogin(
+      vi.fn(async () => ({
+        status: "authorized",
+        secrets: { limit: "untrusted" },
+        account: { name: "QR account" },
+      })),
+    );
+    expect(await finishLogin(login.id)).toMatchObject({
+      status: "save_unknown",
+    });
+    expect((await manager.getBot(manifest.id, botId)).revision).toBe(saved.revision);
+    expect(await readValue()).toEqual({ limit: 7, authenticated: true });
+  });
+
+  it("does not authorize a changed manifest merely by logging in", async () => {
+    await installBuiltin();
+    await enable();
+    const updated = new PluginManager(connection.db, encryptionKey, artifacts, [
+      {
+        manifest: { ...manifest, version: "1.1.0" },
+        definition,
+      },
+    ]);
+    try {
+      const current = await updated.getBot(manifest.id, botId);
+      expect(current.needsReview).toBe(true);
+      definition.startLogin = vi.fn();
+      expect(
+        await updated.logins.start("web-session", manifest.id, botId, {
+          expectedRevision: current.revision,
+          manifestHash: current.manifestHash,
+        }),
+      ).toMatchObject({ status: "conflict" });
+      expect(definition.startLogin).not.toHaveBeenCalled();
+      expect((await updated.getBot(manifest.id, botId)).needsReview).toBe(true);
+    } finally {
+      await updated.close();
+    }
+  });
+
+  it("does not report cancellation while PostgreSQL is committing verified credentials", async () => {
+    await installBuiltin();
+    await enable();
+    const { login } = await startLogin();
+    const blocker = createDb(url);
+    let pending: ReturnType<typeof manager.logins.poll> | undefined;
+    await connection.client.unsafe(`
+      CREATE FUNCTION hold_qr_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM pg_advisory_xact_lock(134763782);
+        RETURN NEW;
+      END $$;
+      CREATE CONSTRAINT TRIGGER hold_qr_commit AFTER INSERT OR UPDATE ON bot_plugin_configs
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION hold_qr_commit();
+    `);
+    try {
+      await blocker.client.begin(async (transaction) => {
+        await transaction.unsafe("SELECT pg_advisory_xact_lock(134763782)");
+        pending = manager.logins.poll("web-session", manifest.id, botId, login.id);
+        let blocked = false;
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline) {
+          const [waiting] = await connection.client`
+            SELECT count(*)::integer AS count FROM pg_stat_activity
+            WHERE datname=current_database() AND wait_event_type='Lock' AND lower(query)='commit'
+          `;
+          if (waiting!.count === 1) {
+            blocked = true;
+            break;
+          }
+          await delay(10);
+        }
+        expect(blocked).toBe(true);
+        expect(
+          await manager.logins.cancel("web-session", manifest.id, botId, login.id),
+        ).toMatchObject({ status: "saving" });
+        expect(
+          await manager.logins.poll("web-session", manifest.id, botId, login.id),
+        ).toMatchObject({ status: "saving" });
+      });
+      expect(await pending).toMatchObject({ status: "saving" });
+      expect(await finishLogin(login.id)).toMatchObject({ status: "connected" });
+      expect(await manager.runtimeConfiguration(manifest.id, botId)).toMatchObject({
+        configuration: { cookie: "synthetic-qr-cookie" },
+      });
+    } finally {
+      if (pending) await pending;
+      await blocker.client.end();
+      await connection.client.unsafe(
+        "DROP TRIGGER hold_qr_commit ON bot_plugin_configs; DROP FUNCTION hold_qr_commit();",
+      );
+    }
+  });
+
+  it("reports an uncertain result when a lifecycle callback fails after credentials commit", async () => {
+    await installBuiltin();
+    await enable();
+    manager.onConfigurationChanged(async () => {
+      throw new Error("synthetic callback failure");
+    });
+    const { login } = await startLogin();
+    expect(await finishLogin(login.id)).toMatchObject({
+      status: "save_unknown",
+    });
+    expect(await manager.runtimeConfiguration(manifest.id, botId)).toMatchObject({
+      configuration: { cookie: "synthetic-qr-cookie" },
+    });
   });
 
   it("disabling cancels an in-flight tool and invalidates surviving session references", async () => {

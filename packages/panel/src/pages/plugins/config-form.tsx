@@ -19,6 +19,7 @@ export interface PluginConfigFormProps {
   revision: string | number;
   onSave: (update: PluginConfigUpdate) => Promise<void>;
   disabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Draft = Record<string, string | boolean>;
@@ -44,7 +45,13 @@ export function PluginConfigForm(props: PluginConfigFormProps) {
   return <ConfigDraft key={key} {...props} />;
 }
 
-function ConfigDraft({ manifest, configuration, onSave, disabled }: PluginConfigFormProps) {
+function ConfigDraft({
+  manifest,
+  configuration,
+  onSave,
+  disabled,
+  onDirtyChange,
+}: PluginConfigFormProps) {
   const { t } = useTranslation("plugins");
   const id = useId();
   const [draft, setDraft] = useState(() => initialDraft(manifest, configuration));
@@ -63,6 +70,13 @@ function ConfigDraft({ manifest, configuration, onSave, disabled }: PluginConfig
     };
   }, []);
   const locked = disabled || saving;
+  const savedDraft = initialDraft(manifest, { values: savedValues, configuredSecrets });
+  const dirty =
+    clearedSecrets.length > 0 ||
+    manifest.config.some((field) => draft[field.key] !== savedDraft[field.key]);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
   function edit(key: string, value: string | boolean) {
     setDraft((current) => ({ ...current, [key]: value }));

@@ -23,6 +23,7 @@ export interface PluginManifest {
   description: string;
   author: string;
   homepage?: string;
+  login?: { type: "qr" };
   config: PluginConfigField[];
 }
 
@@ -121,6 +122,9 @@ export function parsePluginManifest(input: unknown): PluginManifest {
     }
   }
   const keys = new Set<string>();
+  if (input.login !== undefined && (!record(input.login) || input.login.type !== "qr")) {
+    throw new PluginConfigError("Invalid plugin login capability");
+  }
   const config: PluginConfigField[] = input.config.map((value: unknown) => {
     if (
       !record(value) ||
@@ -218,6 +222,7 @@ export function parsePluginManifest(input: unknown): PluginManifest {
     description: input.description,
     author: input.author,
     config,
+    ...(input.login === undefined ? {} : { login: { type: "qr" as const } }),
     ...(input.homepage === undefined ? {} : { homepage: String(input.homepage) }),
   };
 }

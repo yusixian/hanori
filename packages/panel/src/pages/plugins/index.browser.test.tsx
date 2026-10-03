@@ -56,6 +56,22 @@ function api(overrides: Partial<PluginsApi> = {}): PluginsApi {
     botState: vi.fn(async () => state()),
     saveBot: vi.fn(async () => state({ revision: 4 })),
     test: vi.fn(async () => ({ success: true })),
+    startLogin: vi.fn(async () => ({
+      id: "synthetic-session",
+      status: "waiting" as const,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      qrUrl: "https://example.test/login/synthetic",
+    })),
+    pollLogin: vi.fn(async () => ({
+      id: "synthetic-session",
+      status: "expired" as const,
+      expiresAt: new Date().toISOString(),
+    })),
+    cancelLogin: vi.fn(async () => ({
+      id: "synthetic-session",
+      status: "cancelled" as const,
+      expiresAt: new Date().toISOString(),
+    })),
     ...overrides,
   };
 }
@@ -66,6 +82,95 @@ async function configure() {
 beforeEach(async () => {
   await i18n.changeLanguage("en");
   await page.viewport(1024, 900);
+});
+
+test("QR login is capability-gated and blocks unsaved normal, secret, and clear-secret drafts", async () => {
+  const input = api({
+    catalog: vi.fn(async () => [
+      { ...plugin, manifest: { ...plugin.manifest, login: { type: "qr" as const } } },
+    ]),
+  });
+  render(<PluginMarketplace api={input} />);
+  await configure();
+  const login = page.getByRole("button", { name: "Sign in with QR code" });
+  await expect.element(login).toBeEnabled();
+  await page.getByLabelText("Region").fill("unsaved-region");
+  await expect.element(login).toBeDisabled();
+  await expect.element(page.getByText(/Save or undo your configuration/)).toBeVisible();
+  await page.getByLabelText("Region").fill("China");
+  await expect.element(login).toBeEnabled();
+  await page.getByLabelText("Cookie").fill("synthetic-unsaved-cookie");
+  await expect.element(login).toBeDisabled();
+  await page.getByLabelText("Cookie").fill("");
+  await page.getByRole("button", { name: "Clear saved secret" }).click();
+  await expect.element(login).toBeDisabled();
+  await page.getByRole("button", { name: "Cancel clearing" }).click();
+  await expect.element(login).toBeEnabled();
+  expect(input.startLogin).not.toHaveBeenCalled();
+});
+
+test("QR login locks editing, uses confirmed revision, refreshes saved state, and preserves disabled status", async () => {
+  const input = api({
+    catalog: vi.fn(async () => [
+      { ...plugin, manifest: { ...plugin.manifest, login: { type: "qr" as const } } },
+    ]),
+    pollLogin: vi.fn(async () => ({
+      id: "synthetic-session",
+      status: "connected" as const,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      account: { name: "Synthetic account" },
+      botState: state({
+        revision: 4,
+        configuration: { values: { region: "Server saved region" }, configuredSecrets: ["cookie"] },
+      }),
+    })),
+  });
+  render(<PluginMarketplace api={input} />);
+  await configure();
+  await page.getByRole("button", { name: "Sign in with QR code" }).click();
+  await expect.element(page.getByRole("dialog")).toBeVisible();
+  expect(input.startLogin).toHaveBeenCalledWith("test.search", "bot-1", {
+    expectedRevision: 3,
+    manifestHash: "reviewed-manifest-hash",
+  });
+  expect((page.getByLabelText("Region").element() as HTMLInputElement).disabled).toBe(true);
+  expect(
+    (page.getByRole("button", { name: "Enable", exact: true }).element() as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  await vi.waitFor(
+    () => expect(document.body.textContent).toContain("Credentials have been saved"),
+    { timeout: 4_000 },
+  );
+  expect(input.startLogin).toHaveBeenCalledTimes(1);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect.element(page.getByLabelText("Region")).toHaveValue("Server saved region");
+  await expect.element(page.getByLabelText("Cookie")).toHaveValue("");
+  await expect.element(page.getByRole("button", { name: "Enable", exact: true })).toBeEnabled();
+  expect(input.saveBot).not.toHaveBeenCalled();
+  expect(input.cancelLogin).not.toHaveBeenCalled();
+}, 8_000);
+
+test("plugins without login capability have no QR button and changed manifests require review first", async () => {
+  const view = await render(<PluginMarketplace api={api()} />);
+  await configure();
+  await expect
+    .element(page.getByRole("button", { name: "Sign in with QR code" }))
+    .not.toBeInTheDocument();
+  await view.unmount();
+  const input = api({
+    catalog: vi.fn(async () => [
+      { ...plugin, manifest: { ...plugin.manifest, login: { type: "qr" as const } } },
+    ]),
+    botState: vi.fn(async () =>
+      state({ needsReview: true, runtime: { status: "needs_review", error: null } }),
+    ),
+  });
+  render(<PluginMarketplace api={input} />);
+  await configure();
+  await expect.element(page.getByRole("button", { name: "Sign in with QR code" })).toBeDisabled();
+  await expect.element(page.getByText(/Review the plugin and save/)).toBeVisible();
+  expect(input.startLogin).not.toHaveBeenCalled();
 });
 
 test("installs a builtin only after explicit server access confirmation then opens Bot configuration", async () => {

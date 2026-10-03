@@ -27,6 +27,15 @@ describe("plugin configuration", () => {
     expect(parsePluginManifest({ ...manifest, html: "<script>test</script>" })).toEqual(manifest);
   });
 
+  it("supports a generic QR login capability without retaining executable metadata", () => {
+    expect(
+      parsePluginManifest({ ...manifest, login: { type: "qr", script: "untrusted" } }).login,
+    ).toEqual({ type: "qr" });
+    for (const login of [null, "qr", {}, { type: "script" }]) {
+      expect(() => parsePluginManifest({ ...manifest, login })).toThrow();
+    }
+  });
+
   it.each<PluginConfigUpdate>([
     { values: { cookie: "secret-in-plain-values" } },
     { values: { limit: 21 } },

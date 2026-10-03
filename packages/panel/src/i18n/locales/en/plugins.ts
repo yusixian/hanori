@@ -45,6 +45,32 @@ export const plugins = {
     "Plugins run with the server process permissions and can access its files, network, and secrets. Install only code you have reviewed and trust.",
   trustConfirm: "I have reviewed this code and trust it with server access.",
   cancel: "Cancel",
+  login: {
+    button: "Sign in with QR code",
+    title: "Sign in to the platform",
+    description:
+      "Scan with the platform’s phone app and confirm sign-in. The server automatically encrypts and saves the Cookie for the selected Bot. Closing this window cannot undo a save that has already started.",
+    draftHint:
+      "Save or undo your configuration changes before signing in. Configuration editing is locked while this dialog is open.",
+    qrAlt: "Platform sign-in QR code",
+    account: "Connected account: {{name}}",
+    retry: "Get a new QR code",
+    close: "Close",
+    status: {
+      starting: "Preparing QR code…",
+      waiting: "Waiting for you to scan and confirm…",
+      scanned: "Scanned. Confirm sign-in in the phone app…",
+      saving: "Saving sign-in details… Closing this window will not cancel the save.",
+      save_unknown:
+        "The save result could not be confirmed. Close this dialog and reload the saved configuration before trying again.",
+      connected: "Connected. Credentials have been saved for this Bot.",
+      expired: "This QR code has expired. Request a new one to continue.",
+      cancelled: "Sign-in cancelled.",
+      failed: "Sign-in could not be completed. Try again.",
+      conflict:
+        "Configuration changed during sign-in. Close this dialog and reload the saved configuration before trying again.",
+    },
+  },
   installing: "Installing…",
   installation: "Installation and versions",
   updateHint:
