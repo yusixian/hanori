@@ -70,6 +70,31 @@ beforeEach(async () => {
   vi.clearAllMocks();
 });
 
+test("shows pending consent and cloud cancellation honestly on mobile", async () => {
+  await page.viewport(390, 844);
+  const input = api({
+    list: vi.fn(async () => ({
+      data: [
+        job(firstId, { status: "pending_confirmation", progress: 0 }),
+        job(secondId, { status: "failed", error: "provider_cancellation_unavailable" }),
+      ],
+      available: true,
+      allowExport: false,
+    })),
+  });
+  render(<MediaJobsPanel botId="bot-1" api={input} />);
+  await expect
+    .element(page.getByText("Awaiting administrator confirmation", { exact: false }))
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByText("Local waiting stopped; the cloud task may continue and incur charges."),
+    )
+    .toBeVisible();
+  await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  expect(input.cancel).toHaveBeenCalledWith("bot-1", firstId);
+});
+
 test("loads transcript pages and literal keyword results without loading bodies into the job list", async () => {
   const input = api({
     transcript: vi.fn(async (_botId, _id, options) =>

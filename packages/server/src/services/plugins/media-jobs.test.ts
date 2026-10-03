@@ -20,7 +20,7 @@ const view: MediaJobView = {
   title: "Synthetic video",
   part: 1,
   durationSeconds: 60,
-  status: "queued",
+  status: "pending_confirmation",
   progress: 0,
   error: null,
   createdAt: new Date(0).toISOString(),
@@ -59,6 +59,7 @@ function context(): PluginContext {
       botId: randomUUID(),
       chatId: -123,
       userId: 456,
+      threadId: 9,
       isAdmin: true,
       isPrivate: false,
       readOnly: false,
@@ -80,13 +81,14 @@ describe("host-bound media job tools", () => {
     return tools().find((tool) => tool.name === name)!;
   }
   function actor() {
-    const { botId, chatId, userId, isAdmin } = ctx.actor;
-    return { botId, chatId, userId, isAdmin };
+    const { botId, chatId, userId, isAdmin, threadId } = ctx.actor;
+    return { botId, chatId, userId, isAdmin, threadId };
   }
   beforeEach(() => {
     ctx = context();
     port = {
       create: vi.fn().mockResolvedValue(view),
+      confirm: vi.fn().mockResolvedValue({ ...view, status: "queued" }),
       get: vi.fn().mockResolvedValue(view),
       cancel: vi.fn().mockResolvedValue(view),
       read: vi.fn().mockResolvedValue(document()),
@@ -101,7 +103,10 @@ describe("host-bound media job tools", () => {
 
   it("binds creation to the host actor and passes the caller's cancellation signal", async () => {
     const caller = new AbortController();
-    expect(await tool("transcribe_audio").execute({ sourceUrl: URL }, caller.signal)).toEqual(view);
+    expect(await tool("transcribe_audio").execute({ sourceUrl: URL }, caller.signal)).toEqual({
+      ...view,
+      pending_confirmation: true,
+    });
     expect(port.create).toHaveBeenCalledWith(actor(), { sourceUrl: URL }, expect.any(AbortSignal));
     const passed = vi.mocked(port.create).mock.calls[0]![2]!;
     expect(passed.aborted).toBe(false);
@@ -109,7 +114,7 @@ describe("host-bound media job tools", () => {
     expect(passed.aborted).toBe(true);
   });
 
-  it.each(["botId", "chatId", "userId", "isAdmin", "actor", "cookie", "asrApiKey"])(
+  it.each(["botId", "chatId", "userId", "threadId", "isAdmin", "actor", "cookie", "asrApiKey"])(
     "rejects model-supplied %s before it reaches the host service",
     async (field) => {
       expect(
@@ -118,6 +123,34 @@ describe("host-bound media job tools", () => {
       expect(port.create).not.toHaveBeenCalled();
     },
   );
+
+  it("allows an explicit subtitle override proposal but exposes no model confirmation tool", async () => {
+    expect(
+      await tool("transcribe_audio").execute({ sourceUrl: URL, forceAsr: true }, signal()),
+    ).toMatchObject({ status: "pending_confirmation", pending_confirmation: true });
+    expect(port.create).toHaveBeenCalledWith(
+      actor(),
+      { sourceUrl: URL, forceAsr: true },
+      expect.any(AbortSignal),
+    );
+    expect(tools().map(({ name }) => name)).toEqual([
+      "transcribe_audio",
+      "get_transcription",
+      "cancel_transcription",
+      "read_transcription",
+    ]);
+    expect(port.confirm).not.toHaveBeenCalled();
+    expect(tool("transcribe_audio").description).toContain("administrator explicitly asks");
+  });
+
+  it("reports an existing confirmed task without inventing another pending approval", async () => {
+    vi.mocked(port.create).mockResolvedValue({ ...view, status: "queued" });
+    expect(await tool("transcribe_audio").execute({ sourceUrl: URL }, signal())).toMatchObject({
+      status: "queued",
+      pending_confirmation: false,
+    });
+    expect(port.confirm).not.toHaveBeenCalled();
+  });
 
   it("keeps creation admin-only and both mutations out of read-only host sessions", () => {
     for (const [isAdmin, readOnly, expected] of [

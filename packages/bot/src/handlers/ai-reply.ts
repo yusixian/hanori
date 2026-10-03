@@ -31,6 +31,7 @@ import type {
   ImageGenerationPort,
   MemoryCallbacks,
   MemoryConfig,
+  MediaTranscriptionPort,
   MessageConfig,
   ModelEntry,
   GitHubCodingModelConfig,
@@ -215,6 +216,7 @@ export interface AiReplyConfig {
   webToolsConfig?: WebToolsConfig;
   unifiedSearchEnabled?: boolean;
   plugins?: PluginRuntimePort;
+  mediaTranscriptionPort?: MediaTranscriptionPort;
   imageGenerationPort?: ImageGenerationPort;
   generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];

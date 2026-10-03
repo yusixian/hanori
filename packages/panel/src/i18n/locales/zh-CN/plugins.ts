@@ -112,6 +112,8 @@ export const plugins = {
     exportDisabled: "此 Bot 的配置未允许下载转录。",
     status: {
       queued: "排队中",
+      pending_confirmation: "等待管理员确认",
+      expired: "确认已过期",
       downloading: "下载中",
       converting: "转换中",
       transcribing: "转录中",
@@ -119,6 +121,7 @@ export const plugins = {
       failed: "失败",
       cancelled: "已取消",
     },
+    cloudCancellation: "已停止本地等待；云端任务可能继续执行并产生费用。",
   },
   config: {
     empty: "此插件没有配置项。",

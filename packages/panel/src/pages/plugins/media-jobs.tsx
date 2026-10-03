@@ -13,7 +13,13 @@ import {
   type MediaTranscriptPage,
 } from "./media-jobs-api";
 
-const cancellable = new Set(["queued", "downloading", "converting", "transcribing"]);
+const cancellable = new Set([
+  "pending_confirmation",
+  "queued",
+  "downloading",
+  "converting",
+  "transcribing",
+]);
 function time(milliseconds: number | null) {
   if (milliseconds === null) return "—";
   const seconds = Math.floor(milliseconds / 1000);
@@ -130,7 +136,13 @@ function JobsContent({ botId, api }: { botId: string; api: MediaJobsApi }) {
                 {t(`jobs.status.${job.status}`)} · {job.progress}%
               </Badge>
               {job.status === "failed" ? (
-                <p className="text-destructive text-xs">{t("jobs.jobFailed")}</p>
+                <p className="text-destructive text-xs">
+                  {t(
+                    job.error === "provider_cancellation_unavailable"
+                      ? "jobs.cloudCancellation"
+                      : "jobs.jobFailed",
+                  )}
+                </p>
               ) : null}
             </div>
             <div className="flex flex-wrap gap-2">

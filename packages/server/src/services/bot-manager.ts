@@ -5,6 +5,7 @@ import {
   recoverPixAIGeneration,
   sendLocalImageFiles,
   sendLocalVideoFile,
+  sendMediaConfirmationMessage,
 } from "@cos-tool-bot/bot";
 import { run, type FetchOptions, type RunnerHandle } from "@grammyjs/runner";
 import type {
@@ -14,6 +15,7 @@ import type {
   ImageGenerationReceiptConfig,
   PixAIGenerationRecord,
   ImageGenerationRequestSnapshot,
+  MediaJobView,
   TelegramRichMessageFormat,
   TelegramRichMessageReceipt,
   TelegramRichMessageSender,
@@ -201,6 +203,10 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
     },
   ): Promise<number> {
     return sendLocalVideoFile(this.requireRunningBot().api, chatId, path, input);
+  }
+
+  async sendMediaConfirmation(chatId: number, job: MediaJobView, threadId?: number): Promise<void> {
+    await sendMediaConfirmationMessage(this.requireRunningBot().api, chatId, job, threadId);
   }
 
   async sendImageFiles(

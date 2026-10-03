@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { Database } from "@cos-tool-bot/database";
-import {
-  mergePluginConfig,
-  publicPluginConfig,
-  type PluginConfiguration,
-} from "@cos-tool-bot/shared";
+import { mergePluginConfig, type PluginConfiguration } from "@cos-tool-bot/shared";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createBuiltinMediaPlugins } from "../plugins/builtin-media.js";
 import type { PluginManager } from "../plugins/manager.js";
+import type { AsrRuntimeSettings } from "../asr-settings.js";
 import { ASR_CONFIG_FIELDS, loadMediaJobConfiguration } from "./configuration.js";
 import { MediaJobService } from "./service.js";
 
@@ -27,6 +24,8 @@ function enabled(overrides: PluginConfiguration = {}): PluginConfiguration {
     asrEnabled: true,
     asrTransferApproved: true,
     cookie: "SESSDATA=synthetic-cookie",
+    asrBaseUrl: "https://api.openai.com/v1",
+    asrModel: "whisper-1",
     asrApiKey: "synthetic-provider-secret",
     asrCostPerMinute: 0.01,
     ...overrides,
@@ -58,7 +57,7 @@ async function jobFixture(
       {
         ...row,
         id: randomUUID(),
-        status: "queued",
+        status: "pending_confirmation",
         progress: 0,
         error: null,
         result: null,
@@ -90,6 +89,7 @@ async function jobFixture(
     configuration: (botId) => loadMediaJobConfiguration(manager, botId),
     inspect,
     execute,
+    requestConfirmation: async () => {},
   });
   const create = () =>
     service.create({ botId: BOT, chatId: 123, userId: 456, isAdmin: true }, { sourceUrl });
@@ -109,7 +109,6 @@ describe("optional audio ASR configuration", () => {
       asrMaxSeconds: 1200,
       asrDailyJobs: 12,
       asrDailyMinutes: 120,
-      asrCostPerMinute: 101,
       asrDailyCost: 2000,
     };
     expect(mergePluginConfig(manifest, enabled(), { values: limits })).toMatchObject(limits);
@@ -121,11 +120,11 @@ describe("optional audio ASR configuration", () => {
       asrDailyMinutes: 10,
       asrDailyCost: 1,
     });
-    expect(ASR_CONFIG_FIELDS.find((field) => field.key === "asrApiKey")?.max).toBe(4096);
+    expect(ASR_CONFIG_FIELDS.find((field) => field.key === "asrApiKey")).toBeUndefined();
     const fixture = await jobFixture();
     try {
       await expect(fixture.create()).resolves.toMatchObject({
-        status: "queued",
+        status: "pending_confirmation",
         durationSeconds: 900,
       });
       expect(fixture.values).toHaveBeenCalledWith(expect.objectContaining({ estimatedCost: 1515 }));
@@ -177,7 +176,7 @@ describe("optional audio ASR configuration", () => {
   it("compares a large safe integer minute budget without Number multiplication overflow", async () => {
     const fixture = await jobFixture({ asrDailyMinutes: Number.MAX_SAFE_INTEGER });
     try {
-      await expect(fixture.create()).resolves.toMatchObject({ status: "queued" });
+      await expect(fixture.create()).resolves.toMatchObject({ status: "pending_confirmation" });
     } finally {
       await fixture.service.close();
     }
@@ -245,7 +244,7 @@ describe("optional audio ASR configuration", () => {
       cost: 0.083333333335,
     });
     try {
-      await expect(fixture.create()).resolves.toMatchObject({ status: "queued" });
+      await expect(fixture.create()).resolves.toMatchObject({ status: "pending_confirmation" });
     } finally {
       await fixture.service.close();
     }
@@ -270,7 +269,6 @@ describe("optional audio ASR configuration", () => {
       asrEnabled: false,
       asrTransferApproved: false,
       asrAllowExport: false,
-      asrCostPerMinute: 0,
     });
     runtimeConfiguration.mockResolvedValue(state(defaults));
     expect(await loadMediaJobConfiguration(manager, BOT)).toBeNull();
@@ -300,7 +298,7 @@ describe("optional audio ASR configuration", () => {
     runtimeConfiguration.mockResolvedValue(
       state(enabled({ asrLanguage: " en ", asrAllowExport: true })),
     );
-    expect(await loadMediaJobConfiguration(manager, BOT)).toEqual({
+    expect(await loadMediaJobConfiguration(manager, BOT)).toMatchObject({
       revision: 7,
       installationRevision: 11,
       cookie: "SESSDATA=synthetic-cookie",
@@ -328,6 +326,74 @@ describe("optional audio ASR configuration", () => {
     expect(config?.allowExport).toBe(false);
   });
 
+  it("uses shared Tencent credentials with separate administrator, Bot and account budgets", async () => {
+    runtimeConfiguration.mockResolvedValue(state(enabled()));
+    const runtime = vi.fn(
+      async (): Promise<AsrRuntimeSettings> => ({
+        asr: {
+          provider: "tencent",
+          baseUrl: "https://asr.tencentcloudapi.com",
+          apiKey: "",
+          secretId: "SyntheticTencentId",
+          secretKey: "synthetic-secret",
+          region: "ap-shanghai",
+          model: "16k_zh",
+        },
+        providerRevision: 4,
+        providerAccount: "tencent",
+        currency: "CNY",
+        freeOnly: false,
+        freeQuota: "账户剩余免费额度未知",
+        freeQuotaVerified: false,
+        freeQuotaExpiresAt: "",
+        freeAllowanceMinutes: 600,
+        freeAllowancePeriod: "month",
+        limits: {
+          costPerMinute: 0.03,
+          maxPerJobCost: 1,
+          dailyCost: 3,
+          monthlyCost: 10,
+          monthlyMinutes: 600,
+        },
+      }),
+    );
+    const configuration = await loadMediaJobConfiguration(manager, BOT, { runtime }, "tencent");
+    expect(runtime).toHaveBeenCalledWith("tencent");
+    expect(configuration).toMatchObject({
+      providerRevision: 4,
+      providerAccount: "tencent",
+      currency: "CNY",
+      asr: { provider: "tencent", model: "16k_zh" },
+      limits: {
+        costPerMinute: 0.03,
+        maxPerJobCost: 1,
+        maxDailyCost: 1,
+        monthlyMinutes: 120,
+        maxMonthlyCost: 10,
+        botMonthlyMinutes: 600,
+        botMaxMonthlyCost: 50,
+        accountDailyCost: 3,
+        accountMonthlyCost: 10,
+        accountMonthlyMinutes: 600,
+      },
+    });
+    expect(configuration?.asr.apiKey).toBe("");
+    expect(configuration?.asr).not.toHaveProperty("language");
+  });
+
+  it("never falls back to legacy OpenAI when an existing task requests a different provider", async () => {
+    runtimeConfiguration.mockResolvedValue(state(enabled()));
+    const runtime = vi.fn(async () => null);
+    expect(await loadMediaJobConfiguration(manager, BOT, { runtime }, "tencent")).toBeNull();
+    expect(await loadMediaJobConfiguration(manager, BOT, { runtime }, "aliyun")).toBeNull();
+    expect(await loadMediaJobConfiguration(manager, BOT, { runtime }, "groq")).toBeNull();
+    expect(await loadMediaJobConfiguration(manager, BOT, { runtime }, "openai")).toBeNull();
+    expect(await loadMediaJobConfiguration(manager, BOT, { runtime }, "legacy")).toMatchObject({
+      providerAccount: "legacy",
+      currency: "USD",
+    });
+  });
+
   it.each<PluginConfiguration>([
     { asrBaseUrl: "http://private.invalid/v1" },
     { asrBaseUrl: "https://provider.example/v1?key=private" },
@@ -341,22 +407,17 @@ describe("optional audio ASR configuration", () => {
     });
   });
 
-  it("marks the API key secret and removes both credentials from management serialization", () => {
-    const manifest = createBuiltinMediaPlugins().find(
-      (entry) => entry.manifest.id === "hanori.bilibili",
-    )!.manifest;
-    expect(ASR_CONFIG_FIELDS.find((field) => field.key === "asrApiKey")).toMatchObject({
-      secret: true,
-    });
-    expect(ASR_CONFIG_FIELDS.find((field) => field.key === "asrApiKey")).not.toHaveProperty(
-      "default",
-    );
-    const visible = publicPluginConfig(manifest, enabled());
-    expect(visible.configuredSecrets).toEqual(expect.arrayContaining(["cookie", "asrApiKey"]));
-    expect(visible.values).not.toHaveProperty("cookie");
-    expect(visible.values).not.toHaveProperty("asrApiKey");
-    expect(JSON.stringify(visible)).not.toContain("synthetic-cookie");
-    expect(JSON.stringify(visible)).not.toContain("synthetic-provider-secret");
+  it("keeps shared provider credentials out of the per-Bot plugin configuration", () => {
+    for (const key of [
+      "asrApiKey",
+      "asrBaseUrl",
+      "asrModel",
+      "asrCostPerMinute",
+      "asrSecretId",
+      "asrSecretKey",
+    ])
+      expect(ASR_CONFIG_FIELDS.some((field) => field.key === key)).toBe(false);
+    expect(defaults).toMatchObject({ asrMonthlyMinutes: 120, asrBotMonthlyMinutes: 600 });
   });
 
   it.each<PluginConfiguration>([

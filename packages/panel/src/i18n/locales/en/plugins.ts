@@ -123,6 +123,8 @@ export const plugins = {
     exportDisabled: "Transcript downloads are disabled in this Bot’s configuration.",
     status: {
       queued: "Queued",
+      pending_confirmation: "Awaiting administrator confirmation",
+      expired: "Confirmation expired",
       downloading: "Downloading",
       converting: "Converting",
       transcribing: "Transcribing",
@@ -130,6 +132,7 @@ export const plugins = {
       failed: "Failed",
       cancelled: "Cancelled",
     },
+    cloudCancellation: "Local waiting stopped; the cloud task may continue and incur charges.",
   },
   config: {
     empty: "This plugin has no configuration fields.",

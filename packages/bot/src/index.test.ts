@@ -1,6 +1,7 @@
 import {
   TELEGRAM_COMMAND_CATALOG,
   type MemoryCallbacks,
+  type MediaTranscriptionPort,
   type PeopleProfileObservation,
 } from "@cos-tool-bot/shared";
 import { GrammyError } from "grammy";
@@ -194,6 +195,66 @@ function privateMessage(content: Record<string, unknown>, senderId = userId) {
 }
 
 describe("createBot command registry", () => {
+  it("handles persisted ASR confirmation in the original topic even when AI is disabled", async () => {
+    const port: MediaTranscriptionPort = {
+      create: vi.fn(),
+      confirm: vi.fn().mockResolvedValue({ status: "queued" }),
+      get: vi.fn(),
+      cancel: vi.fn(),
+      read: vi.fn(),
+    };
+    const bot = createBot({
+      token: "test-token",
+      botId: "bot-media-confirmation",
+      adminChatIds: [userId],
+      mediaTranscriptionPort: port,
+      logger: { warn: vi.fn(), error: vi.fn() } as never,
+    });
+    bot.botInfo = {
+      id: 999,
+      is_bot: true,
+      first_name: "Test Bot",
+      username: "test_bot",
+      can_join_groups: true,
+      can_read_all_group_messages: true,
+      supports_inline_queries: false,
+      can_connect_to_business: false,
+      has_main_web_app: false,
+      has_topics_enabled: true,
+      allows_users_to_create_topics: false,
+      can_manage_bots: false,
+      supports_join_request_queries: false,
+    };
+    const id = "00000000-0000-4000-8000-000000000166";
+    try {
+      await bot.handleUpdate({
+        update_id: 166,
+        callback_query: {
+          id: "asr-callback",
+          chat_instance: "chat-instance",
+          data: `cos:asr:${id}:yes`,
+          from: { id: userId, is_bot: false, first_name: "Admin" },
+          message: {
+            message_id: 22,
+            date: 1_700_000_000,
+            chat: { id: chatId, type: "supergroup", title: "Test Group" },
+            message_thread_id: 9,
+            is_topic_message: true,
+            text: "待确认",
+          },
+        },
+      });
+      expect(port.confirm).toHaveBeenCalledExactlyOnceWith(
+        { botId: "bot-media-confirmation", chatId, userId, threadId: 9, isAdmin: true },
+        id,
+      );
+      expect(telegramApi.calls).toContain("answerCallbackQuery");
+      expect(telegramApi.calls).toContain("editMessageText");
+    } finally {
+      await disposeBot(bot);
+    }
+  });
+
   it("publishes only commands that were actually registered", async () => {
     const bot = createCommandTestBot();
     const activeCommands = getActiveBotCommands(bot);

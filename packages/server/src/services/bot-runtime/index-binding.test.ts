@@ -3,6 +3,7 @@ import type {
   EngagementSample,
   GitHubCodingModelConfig,
   ImageGenerationPort,
+  MediaTranscriptionPort,
   UsageGovernancePort,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
@@ -77,6 +78,23 @@ function gitWorkspace() {
 }
 
 describe("Bot runtime service binding", () => {
+  it("keeps persistent media confirmation callbacks wired when AI replies are disabled", async () => {
+    const port: MediaTranscriptionPort = {
+      create: vi.fn(),
+      confirm: vi.fn(),
+      get: vi.fn(),
+      cancel: vi.fn(),
+      read: vi.fn(),
+    };
+    const services = runtimeServices({}, logger(), { mediaTranscriptionPort: port });
+    const disabled = await assemble(services, { aiConfig: aiConfig({ enabled: false }) });
+    expect(disabled.config.aiReply).toBeUndefined();
+    expect(disabled.config.mediaTranscriptionPort).toBe(port);
+    const enabled = await assemble(services);
+    expect(enabled.config.mediaTranscriptionPort).toBe(port);
+    expect(enabled.config.aiReply?.mediaTranscriptionPort).toBe(port);
+  });
+
   it("quota calls the usage governor attached now", async () => {
     const assembled = usageGovernor();
     const services = runtimeServices({}, logger(), {

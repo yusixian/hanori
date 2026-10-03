@@ -8,7 +8,9 @@ import { createConnection } from "node:net";
 import type { MediaJobStage } from "@cos-tool-bot/shared";
 import { createBilibiliClient } from "../media/bilibili.js";
 import { downloadMediaFile } from "../media/http.js";
-import { createAsrClient, readAsrWav } from "../media/asr.js";
+import { readAsrWav } from "../media/asr.js";
+import { createMediaAsrClient } from "../media/asr-providers.js";
+import type { MediaAudioStore } from "../media/audio-store.js";
 import { IsolatedAudioConverter } from "../media/isolated-converter.js";
 import type { InspectedMediaResource, MediaJobConfiguration, MediaJobRow } from "./contracts.js";
 
@@ -51,6 +53,7 @@ export class MediaJobExecutor {
     private readonly converter?: IsolatedAudioConverter,
     private readonly workerGid = process.getgid?.() ?? 1000,
     private readonly workerSocket = "",
+    private readonly audioStore?: MediaAudioStore,
   ) {
     this.directory = resolve(directory);
   }
@@ -104,7 +107,11 @@ export class MediaJobExecutor {
   async execute(
     job: MediaJobRow,
     configuration: MediaJobConfiguration,
-    options: { signal: AbortSignal; onStage(stage: MediaJobStage): Promise<void> },
+    options: {
+      signal: AbortSignal;
+      onStage(stage: MediaJobStage): Promise<void>;
+      onProviderTask?(id: string): Promise<void>;
+    },
   ) {
     if (!this.converter) throw new MediaExecutorError("worker_unavailable");
     const { signal, onStage } = options;
@@ -187,9 +194,39 @@ export class MediaJobExecutor {
       createHash("sha256").update(bytes).digest("hex") !== converted.sha256
     )
       throw new MediaExecutorError("invalid_audio");
+    const billedSeconds =
+      configuration.asr.provider === "groq"
+        ? Math.max(10, Math.ceil(verified.durationSeconds))
+        : Math.ceil(verified.durationSeconds);
+    if ((billedSeconds / 60) * configuration.limits.costPerMinute > job.estimatedCost + 1e-12)
+      throw new MediaExecutorError("invalid_audio");
     signal.throwIfAborted();
     // Persist this stage before issuing a billable request; recovery never blindly resubmits it.
     await onStage("transcribing");
-    return createAsrClient(configuration.asr).transcribeBytes(bytes, signal);
+    const needsUrl =
+      configuration.asr.provider === "aliyun" ||
+      (configuration.asr.provider === "tencent" && bytes.length > 5 * 1024 * 1024);
+    const audioUrl = needsUrl ? await this.audioStore?.stage(job.id, bytes, signal) : undefined;
+    if (needsUrl && !audioUrl) throw new MediaExecutorError("worker_unavailable");
+    const result = await createMediaAsrClient(configuration.asr).transcribeBytes(bytes, {
+      signal,
+      ...(audioUrl ? { audioUrl } : {}),
+      onProviderTask: options.onProviderTask,
+    });
+    if (audioUrl) await this.audioStore?.remove(job.id);
+    return result;
+  }
+  async resume(job: MediaJobRow, configuration: MediaJobConfiguration, signal: AbortSignal) {
+    const client = createMediaAsrClient(configuration.asr);
+    if (!client.resume || !job.providerTaskId || !job.providerSubmittedAt)
+      throw new MediaExecutorError("invalid_audio");
+    const result = await client.resume(
+      job.providerTaskId,
+      job.providerSubmittedAt,
+      signal,
+      job.durationSeconds,
+    );
+    await this.audioStore?.remove(job.id);
+    return result;
   }
 }

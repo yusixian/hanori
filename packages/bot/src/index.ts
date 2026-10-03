@@ -4,6 +4,7 @@ import type {
   ConversationCallbacks,
   ImageGenerationReceiptConfig,
   ImageGenerationRequestSnapshot,
+  MediaTranscriptionPort,
   TokenUsageRecord,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
@@ -66,7 +67,10 @@ import {
 } from "./middleware/telegram-observation.js";
 import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
+import { createMediaConfirmationCallbackQueryHandler } from "./handlers/media-confirmation.js";
 import { formatImageGenerationCaption } from "./utils/image-generation-delivery.js";
+
+export { sendMediaConfirmationMessage } from "./handlers/media-confirmation.js";
 
 export type AiReplyBotConfig = Omit<
   AiReplyConfig,
@@ -123,6 +127,7 @@ export interface BotConfig {
   aiSelectionCallbacks?: AiSelectionCallbacks;
   mcpCallbacks?: McpCommandConfig;
   aiReply?: AiReplyBotConfig;
+  mediaTranscriptionPort?: MediaTranscriptionPort;
   conversation?: ConversationCallbacks;
   privacy?: UserPrivacyCallbacks;
   summary?: SummaryCallbacks;
@@ -288,6 +293,20 @@ export function createBot(config: BotConfig) {
         resolveAssistant: (chatId, userId) => resolveHarnessAssistant?.(chatId, userId),
       }),
     );
+  }
+
+  const mediaTranscriptionPort =
+    config.mediaTranscriptionPort ?? config.aiReply?.mediaTranscriptionPort;
+  if (mediaTranscriptionPort) {
+    const mediaConfirmationHandler = createMediaConfirmationCallbackQueryHandler({
+      api: bot.api,
+      botId: config.botId,
+      adminIds: adminChatIds,
+      port: mediaTranscriptionPort,
+    });
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await mediaConfirmationHandler(ctx))) await next();
+    });
   }
 
   // Build AI handler + runtime state (created before commands so state is available)

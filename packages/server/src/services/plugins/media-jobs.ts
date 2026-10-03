@@ -29,6 +29,7 @@ export function createMediaJobTools(
     chatId: context.actor.chatId,
     userId: context.actor.userId,
     isAdmin: context.actor.isAdmin,
+    ...(context.actor.threadId === undefined ? {} : { threadId: context.actor.threadId }),
   };
   function entry<T extends z.ZodType>(
     name: string,
@@ -68,11 +69,19 @@ export function createMediaJobTools(
   return [
     entry(
       "transcribe_audio",
-      "Create a background Bilibili audio-only ASR job only when the administrator asks for transcription and permits the configured external ASR service. Uses the configured provider and budget; available platform subtitles take priority. Returns a job ID immediately after validation. Never claim to have watched video frames. Do not repeatedly create jobs to retry errors.",
-      z.object({ sourceUrl: z.string().min(1).max(2048) }).strict(),
+      "Propose a Bilibili audio-only ASR job only when the administrator explicitly asks for transcription. The host sends an administrator confirmation card with the provider and estimated cost; paid work starts only after the requesting administrator clicks its confirmation button. A pending_confirmation result means approval is still required. Available platform subtitles take priority; set forceAsr only when the administrator explicitly asks to transcribe again despite existing subtitles. Never claim to have watched video frames, confirm on the administrator's behalf, or repeatedly create jobs to retry errors.",
+      z
+        .object({
+          sourceUrl: z.string().min(1).max(2048),
+          forceAsr: z.boolean().optional(),
+        })
+        .strict(),
       "mutating",
       "admin",
-      (input, signal) => port.create(actor, input, signal),
+      async (input, signal) => {
+        const job = await port.create(actor, input, signal);
+        return { ...job, pending_confirmation: job.status === "pending_confirmation" };
+      },
     ),
     entry(
       "get_transcription",
