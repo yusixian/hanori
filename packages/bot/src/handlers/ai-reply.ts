@@ -2593,14 +2593,17 @@ export function createAiReplyHandler(
         );
 
         modelSignal = perStepAbort.signal;
+        const providerAbort = new AbortController();
         failureStage = "model";
         // ─── streamText (ai v6 API) ───
         const modelEntry = currentSelection.modelEntry;
         let capturedStreamError: unknown;
+        let providerStreamError: unknown;
         diagnostic({ stage: "model", outcome: "started" });
         const result = streamText({
           onError: ({ error }) => {
             capturedStreamError ??= error;
+            providerStreamError ??= error;
             diagnostic({
               stage: "model",
               outcome:
@@ -2626,6 +2629,11 @@ export function createAiReplyHandler(
                 error,
               },
             });
+            // An SSE error part need not close its HTTP stream. Stop that failed request
+            // without cancelling the turn or confusing the failure with a timeout.
+            providerAbort.abort(error);
+            stopChatActionHeartbeat?.();
+            stopChatActionHeartbeat = undefined;
           },
           model: currentProviderFactory(currentModel),
           messages,
@@ -2633,7 +2641,7 @@ export function createAiReplyHandler(
           prepareStep: prepareFinalAnswerStep(maxSteps, toolset.prepareStep),
           stopWhen: stepCountIs(maxSteps),
           toolChoice,
-          abortSignal: perStepAbort.signal,
+          abortSignal: AbortSignal.any([perStepAbort.signal, providerAbort.signal]),
           temperature: modelEntry?.temperature,
           maxOutputTokens: modelEntry?.maxTokens,
           providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
@@ -2774,6 +2782,9 @@ export function createAiReplyHandler(
             }
             sentViaMultiMessage = deliveredMultiMessages.length > 0;
           }
+        } catch (streamError) {
+          throwCapturedStreamError(providerStreamError, false);
+          throw streamError;
         } finally {
           perStepAbort.cleanup();
         }
@@ -2790,6 +2801,7 @@ export function createAiReplyHandler(
           return;
         }
 
+        throwCapturedStreamError(providerStreamError, false);
         const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
         diagnostic({ stage: "model", outcome: "succeeded", code: "model_succeeded" });
         const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
