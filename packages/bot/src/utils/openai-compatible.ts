@@ -2,6 +2,7 @@ import {
   createOpenAICompatible,
   type OpenAICompatibleProviderSettings,
 } from "@ai-sdk/openai-compatible";
+import { createModelFetch } from "./model-fetch.js";
 
 const UNSUPPORTED_USAGE_STATUSES = new Set([400, 422]);
 const STREAMING_USAGE_FIELD_PATTERN = /stream_options|include_usage/i;
@@ -72,6 +73,6 @@ export function createUsageAwareOpenAICompatible(
   return createOpenAICompatible({
     ...settings,
     includeUsage: true,
-    fetch: createStreamingUsageCompatibleFetch(settings.fetch),
+    fetch: createStreamingUsageCompatibleFetch(createModelFetch(settings.fetch)),
   });
 }

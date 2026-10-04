@@ -1,5 +1,5 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createUsageAwareOpenAICompatible } from "@cos-tool-bot/bot";
+import { createModelFetch, createUsageAwareOpenAICompatible } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { botRunEvents, botRuns, bots } from "@cos-tool-bot/database";
 import type { ModelEntry } from "@cos-tool-bot/shared";
@@ -245,7 +245,11 @@ export class BotRunService {
       });
       const factory =
         provider.providerFormat === "gemini"
-          ? createGoogleGenerativeAI({ baseURL: provider.baseURL, apiKey })
+          ? createGoogleGenerativeAI({
+              baseURL: provider.baseURL,
+              apiKey,
+              fetch: createModelFetch(),
+            })
           : createUsageAwareOpenAICompatible({
               name: "custom",
               baseURL: provider.baseURL,

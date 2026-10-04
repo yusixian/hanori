@@ -127,6 +127,50 @@ function createDiagnostics(): NonNullable<AiReplyConfig["runtimeDiagnostics"]> {
 
 describe("AI reply streaming", () => {
   it.each([false, true])(
+    "classifies transport timeouts consistently (SDK callback: %s)",
+    async (notify) => {
+      const error = new TypeError("terminated", { cause: { code: "UND_ERR_BODY_TIMEOUT" } });
+      streamTextMock.mockImplementationOnce((options) => ({
+        textStream: (async function* () {
+          if (notify) options.onError({ error });
+          yield await Promise.reject(notify ? new DOMException("Aborted", "AbortError") : error);
+        })(),
+      }));
+      const onLog = vi.fn<(entry: BotLogEntry) => void>();
+      const runtimeDiagnostics = createDiagnostics();
+      const { ctx, replies } = createContext({ chatId: -100 });
+      const config = createConfig(onLog);
+      const runtime = createAiReplyHandler({
+        ...config,
+        runtimeDiagnostics,
+        triggerConfig: { ...config.triggerConfig, triggerWords: ["hello"] },
+      });
+      try {
+        await runtime.handler(ctx, vi.fn());
+        expect(replies).toContain("AI 回复时出错:\nAI 服务响应超时，请稍后重试。");
+        expect(runtimeDiagnostics.record).toHaveBeenCalledWith(
+          "test-trace",
+          expect.objectContaining({ stage: "model", outcome: "timed_out", code: "timed_out" }),
+        );
+        expect(runtimeDiagnostics.record).not.toHaveBeenCalledWith(
+          "test-trace",
+          expect.objectContaining({ stage: "model", outcome: "failed" }),
+        );
+        expect(onLog).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: "AI reply failed: terminated",
+            meta: expect.objectContaining({
+              error: expect.objectContaining({ cause: { code: "UND_ERR_BODY_TIMEOUT" } }),
+            }),
+          }),
+        );
+      } finally {
+        await runtime.destroy();
+      }
+    },
+  );
+
+  it.each([false, true])(
     "returns the original SSE error promptly without replaying a completed tool (closed: %s)",
     async (closeAfterError) => {
       const actualAi = await vi.importActual<typeof import("ai")>("ai");

@@ -9,6 +9,7 @@ export * from "./brand.js";
 export * from "./conversation.js";
 export * from "./data-transfer.js";
 export * from "./embedding.js";
+export { isTimeoutError } from "./errors.js";
 export * from "./github.js";
 export * from "./image-ocr.js";
 export * from "./image-receipt.js";

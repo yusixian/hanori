@@ -56,6 +56,7 @@ import {
   inferCapabilities,
   isRichMessageEnabled,
   isStreamReplyMode,
+  isTimeoutError,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
 import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
@@ -2604,18 +2605,19 @@ export function createAiReplyHandler(
           onError: ({ error }) => {
             capturedStreamError ??= error;
             providerStreamError ??= error;
+            const modelTimedOut = perStepAbort.signal.aborted || isTimeoutError(error);
             diagnostic({
               stage: "model",
               outcome:
                 executionContext.signal.aborted || manualAbort?.signal.aborted
                   ? "cancelled"
-                  : perStepAbort.signal.aborted
+                  : modelTimedOut
                     ? "timed_out"
                     : "failed",
               code:
                 executionContext.signal.aborted || manualAbort?.signal.aborted
                   ? "cancelled"
-                  : perStepAbort.signal.aborted
+                  : modelTimedOut
                     ? "timed_out"
                     : "model_failed",
             });
@@ -3142,15 +3144,16 @@ export function createAiReplyHandler(
           return;
         }
         executionFailure = err;
+        const modelTimedOut =
+          failureStage === "model" && (modelSignal?.aborted || isTimeoutError(err));
         diagnostic({
           stage: failureStage,
-          outcome: modelSignal?.aborted && failureStage === "model" ? "timed_out" : "failed",
-          code:
-            modelSignal?.aborted && failureStage === "model"
-              ? "timed_out"
-              : failureStage === "delivery"
-                ? "delivery_failed"
-                : "failed",
+          outcome: modelTimedOut ? "timed_out" : "failed",
+          code: modelTimedOut
+            ? "timed_out"
+            : failureStage === "delivery"
+              ? "delivery_failed"
+              : "failed",
         });
         const errMsg = err instanceof Error ? err.message : String(err);
         onLog?.({
@@ -3159,7 +3162,9 @@ export function createAiReplyHandler(
           meta: { chatId, userId, error: err },
         });
         diagnostic({ stage: "recovery", outcome: "started" });
-        const errorReply = `AI 回复时出错:\n${errMsg}`;
+        const errorReply = `AI 回复时出错:\n${
+          modelTimedOut && errMsg === "terminated" ? "AI 服务响应超时，请稍后重试。" : errMsg
+        }`;
         let recovered = false;
         try {
           recovered = (await ctx.resolveWait(errorReply)) !== undefined;

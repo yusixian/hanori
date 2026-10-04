@@ -32,6 +32,7 @@
     "marked": "^17.0.3",
     "pino": "^8.17.2",
     "sharp": "^0.34.5",
+    "undici": "8.5.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {

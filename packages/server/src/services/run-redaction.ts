@@ -1,3 +1,5 @@
+import { isTimeoutError } from "@cos-tool-bot/shared";
+
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const SENSITIVE_HEADER = /\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi;
 const SENSITIVE_LABEL =
@@ -145,7 +147,7 @@ export type FailureReason =
 export function classifyProviderError(error: unknown, streamStarted: boolean): FailureReason {
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : String(error);
-  if (name === "TimeoutError" || /timeout|timed out/i.test(message)) return "timed_out";
+  if (isTimeoutError(error)) return "timed_out";
   if (name === "AbortError" || /aborted|cancelled/i.test(message)) return "cancelled";
   return streamStarted ? "provider_stream_failed" : "provider_request_failed";
 }

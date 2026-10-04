@@ -105,6 +105,12 @@ describe("classifyProviderError", () => {
     [new Error("connect failed"), false, "provider_request_failed"],
     [new Error("stream reset"), true, "provider_stream_failed"],
     [new Error("request timed out"), true, "timed_out"],
+    [new TypeError("terminated", { cause: { code: "UND_ERR_BODY_TIMEOUT" } }), true, "timed_out"],
+    [
+      new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET" } }),
+      true,
+      "provider_stream_failed",
+    ],
     [
       new DOMException("The operation was aborted due to timeout", "TimeoutError"),
       true,
