@@ -1,5 +1,10 @@
 import { request } from "node:http";
 import { isAbsolute } from "node:path";
+import {
+  ASR_CONVERSION_TIMEOUT_MS,
+  MAX_ASR_DURATION_SECONDS,
+  MAX_ASR_WAV_BYTES,
+} from "./long-audio.js";
 
 export class MediaConversionError extends Error {
   constructor(
@@ -63,11 +68,12 @@ export class IsolatedAudioConverter {
 
   private runJob(id: string, action: string, body: unknown, signal: AbortSignal) {
     return this.withSlot(signal, async () => {
-      const waitDeadline = Date.now() + 150_000;
+      const timeout = action === "convert" ? ASR_CONVERSION_TIMEOUT_MS + 10_000 : 130_000;
+      const waitDeadline = Date.now() + ASR_CONVERSION_TIMEOUT_MS + 30_000;
       for (;;) {
         if (signal.aborted) throw new MediaConversionError("conversion_cancelled");
         try {
-          return await this.call("POST", `/jobs/${id}/${action}`, body, signal, 130_000);
+          return await this.call("POST", `/jobs/${id}/${action}`, body, signal, timeout);
         } catch (error) {
           if (!(error instanceof WorkerBusyError)) {
             // A disconnected request can leave FFmpeg alive briefly; wait for worker cleanup
@@ -197,7 +203,8 @@ export class IsolatedAudioConverter {
     if (
       !/^[a-f0-9]{64}$(?![\s\S])/.test(sha256) ||
       !Number.isSafeInteger(maxDurationSeconds) ||
-      maxDurationSeconds < 1
+      maxDurationSeconds < 1 ||
+      maxDurationSeconds > MAX_ASR_DURATION_SECONDS
     )
       throw new MediaConversionError("conversion_failed");
     const result = await this.runJob(id, "convert", { sha256, maxDurationSeconds }, signal);
@@ -206,7 +213,7 @@ export class IsolatedAudioConverter {
       typeof value.bytes !== "number" ||
       !Number.isSafeInteger(value.bytes) ||
       value.bytes <= 0 ||
-      value.bytes > 20 * 1024 * 1024 ||
+      value.bytes > Math.min(MAX_ASR_WAV_BYTES, maxDurationSeconds * 32_000 + 65_536) ||
       typeof value.sha256 !== "string" ||
       !/^[a-f0-9]{64}$(?![\s\S])/.test(value.sha256) ||
       typeof value.durationSeconds !== "number" ||

@@ -105,6 +105,48 @@ afterEach(() => {
 });
 
 describe("Tencent recorded ASR", () => {
+  it("submits a two-hour verified file URL without buffering audio and restores its long duration", async () => {
+    reply({ Response: { Data: { TaskId: 42 } } });
+    reply(
+      tcComplete({
+        AudioDuration: 7200,
+        ResultDetail: [{ StartMs: 7_199_000, EndMs: 7_200_000, FinalSentence: "Last sentence" }],
+      }),
+    );
+    const onProviderTask = vi.fn(async () => {});
+    const result = await createMediaAsrClient(tencent).transcribeUrl!(signedAudio, 7200, {
+      onProviderTask,
+    });
+    const input = JSON.parse(vi.mocked(sendMediaJsonDocument).mock.calls[0]![2].toString());
+    expect(input).toMatchObject({ SourceType: 0, Url: signedAudio });
+    expect(input).not.toHaveProperty("Data");
+    expect(onProviderTask).toHaveBeenCalledExactlyOnceWith("42");
+    expect(result.cues[0]?.endMs).toBe(7_200_000);
+    vi.clearAllMocks();
+    reply(
+      tcComplete({
+        AudioDuration: 7200,
+        ResultDetail: [{ StartMs: 7_199_000, EndMs: 7_200_000, FinalSentence: "Restored" }],
+      }),
+    );
+    expect(
+      (await createMediaAsrClient(tencent).resume!("42", now, undefined, 7200)).cues[0]?.text,
+    ).toBe("Restored");
+    expect(vi.mocked(sendMediaJsonDocument).mock.calls[0]![3]).toMatchObject({
+      "X-TC-Action": "DescribeTaskStatus",
+    });
+  });
+
+  it.each([0, -1, NaN, Infinity, 18_001])(
+    "rejects invalid URL audio duration %s before a billable submit",
+    async (seconds) => {
+      await expect(
+        createMediaAsrClient(tencent).transcribeUrl!(signedAudio, seconds),
+      ).rejects.toBeInstanceOf(AsrClientError);
+      expect(sendMediaJsonDocument).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(["cancel", "timeout"])(
     "drains a known task persistence before rejecting on %s",
     async (reason) => {
@@ -127,7 +169,7 @@ describe("Tencent recorded ASR", () => {
         });
       await vi.waitFor(() => expect(onProviderTask).toHaveBeenCalledWith("42"));
       if (reason === "cancel") controller.abort();
-      else await vi.advanceTimersByTimeAsync(30 * 60_000 + 1);
+      else await vi.advanceTimersByTimeAsync(24 * 60 * 60_000 + 1);
       await vi.advanceTimersByTimeAsync(1);
       expect(settled).toBe(false);
       release();
@@ -297,24 +339,31 @@ describe("Tencent recorded ASR", () => {
     expect(vi.mocked(sendMediaJsonDocument).mock.calls[1]![2].toString()).toBe(`{"TaskId":${id}}`);
   });
 
-  it("rejects expired or cross-date tasks before querying", async () => {
-    expect(() =>
-      createMediaAsrClient(tencent).resume!("42", new Date("2026-10-02T23:00:00Z")),
-    ).toThrow(AsrClientError);
+  it("rejects expired tasks before querying without resubmitting", async () => {
+    await expect(
+      createMediaAsrClient(tencent).resume!("42", new Date(now.getTime() - 24 * 60 * 60_000)),
+    ).rejects.toMatchObject({ code: "unavailable" });
     expect(() => createMediaAsrClient(tencent).resume!("42", new Date("invalid"))).toThrow(
       AsrClientError,
     );
     expect(sendMediaJsonDocument).not.toHaveBeenCalled();
   });
 
-  it("stops an active task before querying across the UTC date boundary", async () => {
+  it("continues querying a known task across the UTC date boundary without resubmitting", async () => {
     vi.setSystemTime(new Date("2026-10-03T23:59:59Z"));
     reply({ Response: { Data: { TaskId: 42, Status: 0 } } });
-    const operation = createMediaAsrClient(tencent).resume!("42", new Date());
-    const assertion = expect(operation).rejects.toMatchObject({ code: "unavailable" });
+    reply(tcComplete());
+    const submittedAt = new Date();
+    const operation = createMediaAsrClient(tencent).resume!("42", submittedAt).catch(
+      (error: unknown) => error,
+    );
     await vi.advanceTimersByTimeAsync(3000);
-    await assertion;
-    expect(sendMediaJsonDocument).toHaveBeenCalledOnce();
+    expect(await operation).toMatchObject({ cues: [{ text: "测试识别。" }] });
+    reply(tcComplete());
+    await createMediaAsrClient(tencent).resume!("42", submittedAt);
+    expect(sendMediaJsonDocument).toHaveBeenCalledTimes(3);
+    for (const call of vi.mocked(sendMediaJsonDocument).mock.calls)
+      expect(call[3]?.["X-TC-Action"]).toBe("DescribeTaskStatus");
   });
 
   it("stops local polling on cancellation without claiming to cancel the cloud task", async () => {
@@ -328,7 +377,7 @@ describe("Tencent recorded ASR", () => {
     expect(sendMediaJsonDocument).toHaveBeenCalledOnce();
   });
 
-  it("bounds total waiting to thirty minutes", async () => {
+  it("stops querying at the submitted task's remaining twenty-four-hour lifetime", async () => {
     vi.mocked(sendMediaJsonDocument).mockImplementation(async () => ({
       bytes: Buffer.from(
         JSON.stringify({
@@ -338,15 +387,99 @@ describe("Tencent recorded ASR", () => {
       url: "",
       mimeType: "application/json",
     }));
-    const operation = createMediaAsrClient(tencent).resume!("42", now);
+    const submittedAt = new Date(now.getTime() - 24 * 60 * 60_000 + 60_000);
+    const operation = createMediaAsrClient(tencent).resume!("42", submittedAt);
     const assertion = expect(operation).rejects.toEqual(new AsrClientError("timeout"));
-    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await assertion;
-    expect(vi.mocked(sendMediaJsonDocument).mock.calls.length).toBeLessThanOrEqual(600);
+    const queried = vi.mocked(sendMediaJsonDocument).mock.calls.length;
+    expect(queried).toBeLessThanOrEqual(20);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sendMediaJsonDocument).toHaveBeenCalledTimes(queried);
   });
 });
 
+it.each(["tencent", "aliyun"] as const)(
+  "continues %s polling beyond thirty minutes without resubmitting audio",
+  async (provider) => {
+    const config = provider === "tencent" ? tencent : aliyun;
+    const submittedAt = new Date();
+    const completeAt = submittedAt.getTime() + 31 * 60_000;
+    if (provider === "tencent")
+      vi.mocked(sendMediaJsonDocument).mockImplementation(async () => ({
+        bytes: Buffer.from(
+          JSON.stringify(
+            Date.now() >= completeAt
+              ? tcComplete()
+              : { Response: { Data: { TaskId: 42, Status: 1 } } },
+          ),
+        ),
+        url: "",
+        mimeType: "application/json",
+      }));
+    else
+      vi.mocked(readMediaDocument).mockImplementation(async (url) => ({
+        bytes: Buffer.from(
+          JSON.stringify(
+            url.includes("/tasks/")
+              ? Date.now() >= completeAt
+                ? aliComplete()
+                : { output: { task_id: "task-42", task_status: "RUNNING" } }
+              : {
+                  transcripts: [
+                    {
+                      channel_id: 0,
+                      sentences: [{ begin_time: 0, end_time: 1000, text: "测试。" }],
+                    },
+                  ],
+                },
+          ),
+        ),
+        url,
+        mimeType: "application/json",
+      }));
+    const operation = createMediaAsrClient(config).resume!(
+      provider === "tencent" ? "42" : "task-42",
+      submittedAt,
+      undefined,
+      3,
+    ).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(31 * 60_000);
+    expect(await operation).toMatchObject({ source: "asr" });
+    for (const call of vi.mocked(sendMediaJsonDocument).mock.calls)
+      expect(call[3]?.["X-TC-Action"]).toBe("DescribeTaskStatus");
+  },
+);
+
 describe("Aliyun Paraformer and compatible providers", () => {
+  it("transcribes a two-hour verified file URL with preserved ending timestamps", async () => {
+    reply({ output: { task_id: "task-42", task_status: "PENDING" } });
+    reply(aliComplete(), false);
+    reply(
+      {
+        transcripts: [
+          {
+            channel_id: 0,
+            sentences: [{ begin_time: 7_199_000, end_time: 7_200_000, text: "Final sentence" }],
+          },
+        ],
+      },
+      false,
+    );
+    const result = await createMediaAsrClient(aliyun).transcribeUrl!(signedAudio, 7200);
+    expect(result.cues[0]?.endMs).toBe(7_200_000);
+    const input = JSON.parse(vi.mocked(sendMediaJsonDocument).mock.calls[0]![2].toString());
+    expect(input.input.file_urls).toEqual([signedAudio]);
+  });
+
+  it("rejects a task at its twenty-four-hour host deadline without querying or submitting", async () => {
+    await expect(
+      createMediaAsrClient(aliyun).resume!("task-42", new Date(now.getTime() - 24 * 60 * 60_000)),
+    ).rejects.toMatchObject({ code: "unavailable" });
+    expect(readMediaDocument).not.toHaveBeenCalled();
+    expect(sendMediaJsonDocument).not.toHaveBeenCalled();
+  });
+
   it("submits the explicit model/URL, persists its task and downloads bounded results without credentials", async () => {
     reply({ output: { task_id: "task-42", task_status: "PENDING" } });
     reply(aliComplete(), false);

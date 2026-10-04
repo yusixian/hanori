@@ -8,9 +8,13 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const INPUT_LIMIT = 64 * 1024 * 1024;
-const OUTPUT_LIMIT = 20 * 1024 * 1024;
+// Match the host's long-audio bounds; video muxing retains its own existing limits.
+const ASR_INPUT_LIMIT = 512 * 1024 * 1024;
+const ASR_DURATION_LIMIT = 5 * 60 * 60;
+const OUTPUT_LIMIT = ASR_DURATION_LIMIT * 32_000 + 65_536;
 const PROCESS_OUTPUT_LIMIT = 65_536;
 const JOB_TIMEOUT = 120_000;
+const ASR_JOB_TIMEOUT = 30 * 60 * 1000;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$(?![\s\S])/;
 const SHA256 = /^[a-f0-9]{64}$(?![\s\S])/;
 
@@ -82,11 +86,11 @@ async function hashFile(file, stat, signal, errorCode) {
   return hash.digest("hex");
 }
 
-async function readVerifiedInput(path, digest, signal, owner) {
+async function readVerifiedInput(path, digest, signal, owner, maxBytes = INPUT_LIMIT) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const stat = await file.stat();
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size < 16 || stat.size > INPUT_LIMIT)
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size < 16 || stat.size > maxBytes)
       fail("invalid_input");
     if (owner !== undefined && (stat.uid !== owner || stat.mode & 0o022)) fail("invalid_input");
     const header = Buffer.alloc(16);
@@ -234,10 +238,11 @@ async function convert(job, body, options, signal) {
   try {
     checkAbort(signal);
     await safeDirectory(directory);
-    await readVerifiedInput(input, body.sha256, signal);
+    await readVerifiedInput(input, body.sha256, signal, undefined, ASR_INPUT_LIMIT);
     const metadata = await probe(input, "mov", signal, options.spawnProcess);
     if (!["aac", "opus"].includes(metadata.stream.codec_name)) fail("unsupported_codec");
-    if (metadata.duration > body.maxDurationSeconds) fail("duration_limit");
+    if (metadata.duration > body.maxDurationSeconds || metadata.duration > ASR_DURATION_LIMIT)
+      fail("duration_limit");
     // Reject a known oversized PCM result before -fs could truncate it near the timing tolerance.
     if (Math.ceil(metadata.duration * 32_000) + 44 > OUTPUT_LIMIT) fail("invalid_output");
     checkAbort(signal);
@@ -289,7 +294,13 @@ async function convert(job, body, options, signal) {
         "wav",
         output,
       ],
-      { signal, timeoutMs: JOB_TIMEOUT, spawnProcess: options.spawnProcess },
+      {
+        signal,
+        timeoutMs: ASR_JOB_TIMEOUT,
+        spawnProcess: options.spawnProcess,
+        outputPath: output,
+        maxBytes: OUTPUT_LIMIT,
+      },
     );
     checkAbort(signal);
     const converted = await probe(output, "wav", signal, options.spawnProcess);
@@ -564,7 +575,12 @@ async function jsonBody(request, signal, video = false) {
       body.maxBytes > 50_000_000
     )
       fail("invalid_request");
-  } else if (typeof body.sha256 !== "string" || !SHA256.test(body.sha256)) fail("invalid_request");
+  } else if (
+    typeof body.sha256 !== "string" ||
+    !SHA256.test(body.sha256) ||
+    body.maxDurationSeconds > ASR_DURATION_LIMIT
+  )
+    fail("invalid_request");
   return body;
 }
 
@@ -666,14 +682,17 @@ export function createWorker({
     });
     const current = { job, controller, done };
     active = current;
-    const timer = setTimeout(() => controller.abort(new MediaWorkerError("timeout")), JOB_TIMEOUT);
+    const video = match[2] === "/mux-video";
+    const timer = setTimeout(
+      () => controller.abort(new MediaWorkerError("timeout")),
+      video ? JOB_TIMEOUT : ASR_JOB_TIMEOUT,
+    );
     const disconnect = () => {
       if (!response.writableEnded) controller.abort(new MediaWorkerError("cancelled"));
     };
     request.once("aborted", disconnect);
     response.once("close", disconnect);
     try {
-      const video = match[2] === "/mux-video";
       const body = await jsonBody(request, controller.signal, video);
       checkAbort(controller.signal);
       send(
@@ -695,7 +714,7 @@ export function createWorker({
       finished();
     }
   });
-  server.requestTimeout = JOB_TIMEOUT + 5000;
+  server.requestTimeout = ASR_JOB_TIMEOUT + 5000;
   server.headersTimeout = 10_000;
   server.keepAliveTimeout = 1000;
   return {

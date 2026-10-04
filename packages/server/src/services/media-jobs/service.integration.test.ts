@@ -155,6 +155,34 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     return row!;
   }
 
+  it("keeps a confirmed background transcription alive after the proposing chat signal aborts", async () => {
+    const chat = new AbortController();
+    const started = deferred<AbortSignal>();
+    const release = deferred<void>();
+    deps.execute = vi.fn(async (_row, _config, options) => {
+      await options.onStage("transcribing");
+      started.resolve(options.signal);
+      await release.promise;
+      options.signal.throwIfAborted();
+      return document;
+    });
+    const proposal = await service.create(actor, { sourceUrl: source() }, chat.signal);
+    await service.confirm(actor, proposal.id);
+    const finishing = service.tick();
+    try {
+      const backgroundSignal = await started.promise;
+      chat.abort(new Error("Chat reply deadline elapsed"));
+      expect(backgroundSignal.aborted).toBe(false);
+    } finally {
+      release.resolve();
+      await finishing;
+    }
+    expect(await service.get(actor, proposal.id)).toMatchObject({ status: "completed" });
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: proposal.id, status: "completed" }),
+    );
+  });
+
   it("persists a proposal and cost disclosure without downloading or charging until confirmation", async () => {
     const proposal = await service.create(actor, { sourceUrl: source() });
     expect(proposal).toMatchObject({
@@ -595,7 +623,14 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
       cancelRequested: true,
     });
     expect((await stored(job.id)).provider_task_id).toBe("fixture-billable-task");
-    expect(deps.notify).not.toHaveBeenCalled();
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: job.id,
+        status: "failed",
+        error: "provider_cancellation_unavailable",
+        result: null,
+      }),
+    );
     await makeService().tick();
     expect(deps.execute).toHaveBeenCalledOnce();
   });
@@ -1142,7 +1177,9 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     expect(signal.aborted).toBe(true);
     expect(await service.get(actor, job.id)).toMatchObject({ status: "cancelled" });
     expect(deps.cleanup).toHaveBeenCalledOnce();
-    expect(deps.notify).not.toHaveBeenCalled();
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: job.id, status: "cancelled", result: null }),
+    );
   });
 
   it.each(["converting", "transcribing"] as const)(
@@ -1274,6 +1311,77 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     expect(await service.read(actor, job.id)).toEqual(document);
   });
 
+  it.each(["failed", "cancelled"] as const)(
+    "notifies a %s job once in its original Bot/chat/topic across concurrent instances",
+    async (status) => {
+      deps.execute = vi.fn(async () => {
+        throw new Error("private-provider-credential");
+      });
+      const release = deferred<void>();
+      deps.notify = vi.fn(async () => release.promise);
+      const job = await create();
+      if (status === "cancelled") await service.cancel(actor, job.id);
+      const finishing = service.tick();
+      try {
+        await vi.waitFor(() => expect(deps.notify).toHaveBeenCalledOnce());
+        expect(deps.notify).toHaveBeenCalledWith(
+          expect.objectContaining({
+            id: job.id,
+            botId: actor.botId,
+            chatId: actor.chatId,
+            threadId: actor.threadId,
+            status,
+            result: null,
+          }),
+        );
+        expect(JSON.stringify(vi.mocked(deps.notify!).mock.calls)).not.toContain(
+          "private-provider-credential",
+        );
+        await makeService().tick();
+        expect(deps.notify).toHaveBeenCalledOnce();
+        expect((await service.get(actor, job.id)).notification).toBe("delivering");
+      } finally {
+        release.resolve();
+        await finishing;
+      }
+      await makeService().tick();
+      expect((await service.get(actor, job.id)).notification).toBe("sent");
+      expect(deps.notify).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("notifies an expired queued task failure even after its transcript retention deadline", async () => {
+    const job = await create();
+    await connection.client`UPDATE media_transcription_jobs SET expires_at=${new Date(Date.now() - 1).toISOString()} WHERE id=${job.id}`;
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: job.id, status: "failed", error: "expired", result: null }),
+    );
+    expect((await service.get(actor, job.id)).notification).toBe("sent");
+    await service.tick();
+    expect(deps.notify).toHaveBeenCalledOnce();
+  });
+
+  it("does not backfill terminal notices older than twenty-four hours", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = new Date("2026-10-04T06:00:00Z");
+    vi.setSystemTime(now);
+    const old = await create(1);
+    const boundary = await create(2);
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    await connection.client`UPDATE media_transcription_jobs SET status='failed',error='job_failed',updated_at=${new Date(cutoff.getTime() - 1).toISOString()} WHERE id=${old.id}`;
+    await connection.client`UPDATE media_transcription_jobs SET status='failed',error='job_failed',updated_at=${cutoff.toISOString()} WHERE id=${boundary.id}`;
+    await service.tick();
+    expect(deps.execute).not.toHaveBeenCalled();
+    expect(deps.notify).toHaveBeenCalledOnce();
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: boundary.id, status: "failed", result: null }),
+    );
+    expect((await service.get(actor, old.id)).notification).toBe("pending");
+    expect((await service.get(actor, boundary.id)).notification).toBe("sent");
+  });
+
   it("does not retry a failed notification and expires transcript contents with cleanup", async () => {
     deps.notify = vi.fn(async () => {
       throw new Error("private-notification-url");
@@ -1383,7 +1491,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
       await options.onStage("transcribing");
       return {
         ...document,
-        cues: Array.from({ length: 40 }, (_, index) => ({
+        cues: Array.from({ length: 150 }, (_, index) => ({
           startMs: index * 1000,
           endMs: index * 1000 + 500,
           text: "x".repeat(14000),
@@ -1394,5 +1502,29 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     await service.tick();
     expect((await stored(oversized.id)).result).toBeNull();
     expect((await service.get(actor, oversized.id)).status).toBe("failed");
+  });
+
+  it("stores and reads a long transcript beyond the former 500,000-character limit without notifying its text", async () => {
+    const longTranscript: TranscriptDocument = {
+      ...document,
+      cues: Array.from({ length: 6000 }, (_, index) => ({
+        startMs: index * 1000,
+        endMs: index * 1000 + 900,
+        text: `Synthetic cue ${index}: ${"x".repeat(100)}`,
+      })),
+    };
+    expect(JSON.stringify(longTranscript).length).toBeGreaterThan(500_000);
+    deps.execute = vi.fn(async (_row, _config, options) => {
+      await options.onStage("transcribing");
+      return longTranscript;
+    });
+    const job = await create();
+    await service.tick();
+    expect((await service.get(actor, job.id)).status).toBe("completed");
+    expect(await service.read(actor, job.id)).toEqual(longTranscript);
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ id: job.id, status: "completed", result: null }),
+    );
+    expect(JSON.stringify(vi.mocked(deps.notify!).mock.calls)).not.toContain("Synthetic cue");
   });
 });

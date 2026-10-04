@@ -79,7 +79,7 @@ export interface MediaJobDependencies {
     configuration: MediaJobConfiguration,
     signal: AbortSignal,
   ): Promise<TranscriptDocument>;
-  /** Only sends a completion notice with job ID; do not deliver transcript contents here. */
+  /** At-most-once terminal status notice in the original chat/topic. Never deliver transcript or provider errors here. */
   notify?(job: MediaJobRow): Promise<void>;
   cleanup?(jobId: string, attempt: number): Promise<void>;
   sweep?(): Promise<void>;

@@ -36,6 +36,7 @@ import {
 } from "@cos-tool-bot/shared";
 import type { JSONValue, LanguageModel, Tool } from "ai";
 import { stepCountIs, streamText } from "ai";
+import { prepareFinalAnswerStep } from "../utils/final-answer-step.js";
 import type { Api } from "grammy";
 import type { MoodInfo, RssToolsOptions } from "../tools/index.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
@@ -620,7 +621,10 @@ async function doContinueChat(
           successfulToolEffectCount += 1;
         },
       }),
-      prepareStep: toolset.prepareStep,
+      prepareStep: prepareFinalAnswerStep(
+        config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps,
+        toolset.prepareStep,
+      ),
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
       abortSignal: perStepAbort.signal,

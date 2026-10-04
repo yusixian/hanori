@@ -3,6 +3,7 @@ import { GitPluginArtifacts } from "./services/plugins/git-artifacts.js";
 import { createBuiltinMediaPlugins } from "./services/plugins/builtin-media.js";
 import type { MediaTranscriptionPort } from "@cos-tool-bot/shared";
 import { MediaJobService } from "./services/media-jobs/service.js";
+import { formatMediaJobNotice } from "./services/media-jobs/notification.js";
 import { MediaJobExecutor, requireStoppedWorker } from "./services/media-jobs/executor.js";
 import { loadMediaJobConfiguration } from "./services/media-jobs/configuration.js";
 import { AsrSettingsService } from "./services/asr-settings.js";
@@ -287,12 +288,7 @@ const mediaConfiguration = (botId: string) =>
     cleanup: (id, attempt) => executor.cleanup(id, attempt),
     sweep: () => asrAudioStore.sweep(),
     notify: (job) =>
-      botPool.sendHtml(
-        job.botId,
-        job.chatId,
-        `音频转录任务 / Audio transcription: <code>${job.id}</code>\n${job.status === "completed" ? "已完成 / Completed" : job.status === "cancelled" ? "已取消 / Cancelled" : "未完成 / Failed"}`,
-        job.threadId ?? undefined,
-      ),
+      botPool.sendHtml(job.botId, job.chatId, formatMediaJobNotice(job), job.threadId ?? undefined),
   });
   pluginManager.onConfigurationChanged(async (pluginId, botId) => {
     if (pluginId === "hanori.bilibili") await mediaJobService!.cancelForBot(botId);

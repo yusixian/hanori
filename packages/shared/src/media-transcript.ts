@@ -36,6 +36,14 @@ export const TRANSCRIPT_BOUNDS: Readonly<TranscriptBounds> = Object.freeze({
   maxTimeMs: 86_400_000,
 });
 
+/** Long recording ASR remains bounded while platform subtitle parsers keep their existing limits. */
+export const ASR_TRANSCRIPT_BOUNDS: Readonly<TranscriptBounds> = Object.freeze({
+  ...TRANSCRIPT_BOUNDS,
+  maxInputChars: 8 * 1024 * 1024,
+  maxCues: 50_000,
+  maxTextChars: 2_000_000,
+});
+
 export interface TranscriptParseOptions {
   language?: string;
   track?: TranscriptTrack;
@@ -137,7 +145,10 @@ function validateCues(cues: TranscriptCue[], bounds: TranscriptBounds) {
 function validateDocument(document: TranscriptDocument) {
   if (!record(document)) throw new TranscriptError("Invalid transcript document");
   metadata({ language: document.language ?? undefined, track: document.track }, document.source);
-  validateCues(document.cues, TRANSCRIPT_BOUNDS);
+  validateCues(
+    document.cues,
+    document.source === "asr" ? ASR_TRANSCRIPT_BOUNDS : TRANSCRIPT_BOUNDS,
+  );
 }
 
 function lrcTime(tag: string, bounds: TranscriptBounds): number {
@@ -254,13 +265,13 @@ export function parseBilibiliSubtitle(
   return { ...metadata(options, options.source), cues };
 }
 
-function pageOptions(options: TranscriptPageOptions) {
+function pageOptions(options: TranscriptPageOptions, maxCues: number) {
   const offset = options.offset ?? 0;
   const limit = options.limit ?? 50;
   if (
     !Number.isSafeInteger(offset) ||
     offset < 0 ||
-    offset > TRANSCRIPT_BOUNDS.maxCues ||
+    offset > maxCues ||
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
     limit > 100
@@ -269,8 +280,12 @@ function pageOptions(options: TranscriptPageOptions) {
   return { offset, limit };
 }
 
-function pageItems<T>(items: T[], options: TranscriptPageOptions): TranscriptPage<T> {
-  const { offset, limit } = pageOptions(options);
+function pageItems<T>(
+  items: T[],
+  options: TranscriptPageOptions,
+  maxCues: number,
+): TranscriptPage<T> {
+  const { offset, limit } = pageOptions(options, maxCues);
   return {
     items: items.slice(offset, offset + limit),
     offset,
@@ -284,7 +299,11 @@ export function pageTranscript(
   options: TranscriptPageOptions = {},
 ): TranscriptPage<TranscriptCue> {
   validateDocument(document);
-  return pageItems(document.cues, options);
+  return pageItems(
+    document.cues,
+    options,
+    document.source === "asr" ? ASR_TRANSCRIPT_BOUNDS.maxCues : TRANSCRIPT_BOUNDS.maxCues,
+  );
 }
 
 /** Literal case-insensitive search, one location per matching cue, in stable cue order. */
@@ -301,7 +320,11 @@ export function findTranscript(
   for (const [cueIndex, cue] of document.cues.entries()) {
     if (cue.text.normalize("NFC").toLowerCase().includes(needle)) matches.push({ cueIndex, cue });
   }
-  return pageItems(matches, options);
+  return pageItems(
+    matches,
+    options,
+    document.source === "asr" ? ASR_TRANSCRIPT_BOUNDS.maxCues : TRANSCRIPT_BOUNDS.maxCues,
+  );
 }
 
 function timestamp(ms: number, separator: "." | ",") {

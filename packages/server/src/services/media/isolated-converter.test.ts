@@ -226,7 +226,7 @@ describe("isolated converter Unix protocol", () => {
 
   it("bounds cross-process busy waiting without cancelling the active job", async () => {
     const now = vi.spyOn(Date, "now");
-    now.mockReturnValueOnce(0).mockReturnValue(150_000);
+    now.mockReturnValueOnce(0).mockReturnValue(1_830_000);
     respond = (_request, response) => {
       response.statusCode = 409;
       response.end(JSON.stringify({ ok: false, error: "busy" }));
@@ -280,6 +280,7 @@ describe("isolated converter Unix protocol", () => {
     [SHA, 0],
     [SHA, Number.MAX_SAFE_INTEGER + 1],
     [SHA, 1.5],
+    [SHA, 18001],
   ] as const)(
     "rejects invalid checksum/duration before contacting the worker",
     async (sha, duration) => {
@@ -305,6 +306,19 @@ describe("isolated converter Unix protocol", () => {
     ).rejects.toMatchObject({
       code: "conversion_failed",
     });
+  });
+
+  it("accepts a two-hour ASR file and uses a separate thirty-minute conversion deadline", async () => {
+    const deadlines = vi.spyOn(AbortSignal, "timeout");
+    respond = (_request, response) =>
+      response.end(JSON.stringify({ ...result, bytes: 44 + 7200 * 32000, durationSeconds: 7200 }));
+    await expect(
+      converter.convert(ID, SHA, 18000, new AbortController().signal),
+    ).resolves.toMatchObject({
+      bytes: 230400044,
+      durationSeconds: 7200,
+    });
+    expect(deadlines).toHaveBeenCalledWith(1810000);
   });
 
   it("bounds the worker response before parsing", async () => {
@@ -370,6 +384,6 @@ describe("isolated converter Unix protocol", () => {
     ).rejects.toMatchObject({
       code: "conversion_failed",
     });
-    expect(timeout).toHaveBeenCalledWith(130_000);
+    expect(timeout).toHaveBeenCalledWith(1_810_000);
   });
 });

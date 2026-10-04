@@ -71,11 +71,21 @@ function conversion(extra = {}) {
 }
 
 function mockSpawn(binary, args, _options) {
+  let filesystemSettled = false;
+  let killed = false;
+  let closed = false;
+  const close = (code) => {
+    if (closed) return;
+    closed = true;
+    child.emit("close", code);
+  };
   const child = Object.assign(new EventEmitter(), {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     kill: vi.fn(() => {
-      queueMicrotask(() => child.emit("close", null));
+      killed = true;
+      // The real child cannot keep writing after close; wait for mocked filesystem work too.
+      if (filesystemSettled) queueMicrotask(() => close(null));
       return true;
     }),
   });
@@ -86,12 +96,20 @@ function mockSpawn(binary, args, _options) {
         if (outputFifo) {
           await rm(args.at(-1));
           await exec("mkfifo", [args.at(-1)]);
-        } else await writeFile(args.at(-1), Buffer.alloc(outputSize));
+        } else {
+          await writeFile(args.at(-1), Buffer.alloc(0));
+          await truncate(args.at(-1), outputSize);
+        }
+      }
+      filesystemSettled = true;
+      if (killed) {
+        close(null);
+        return;
       }
       if (binary === stalled) return;
       if (binary === failed) {
         child.stderr.write("provider Authorization: secret-cookie /private/provider-url");
-        child.emit("close", 1);
+        close(1);
         return;
       }
       if (binary === overflow) child.stderr.write(Buffer.alloc(65_537));
@@ -112,9 +130,13 @@ function mockSpawn(binary, args, _options) {
           }),
         );
       }
-      child.emit("close", 0);
+      close(killed ? null : 0);
     })
-    .catch((error) => child.emit("error", error));
+    .catch((error) => {
+      filesystemSettled = true;
+      child.emit("error", error);
+      close(killed ? null : 1);
+    });
   return child;
 }
 
@@ -245,7 +267,7 @@ describe("isolated media worker protocol", () => {
         "-c:a",
         "pcm_s16le",
         "-fs",
-        "20971520",
+        String(18000 * 32000 + 65536),
         "-t",
         "2",
       ]),
@@ -338,7 +360,7 @@ describe("isolated media worker protocol", () => {
   });
 
   it("bounds input size before hashing or probing", async () => {
-    await truncate(input, 64 * 1024 * 1024 + 1);
+    await truncate(input, 512 * 1024 * 1024 + 1);
     expect((await conversion()).body.error).toBe("invalid_input");
     expect(spawnProcess).not.toHaveBeenCalled();
   });
@@ -361,7 +383,16 @@ describe("isolated media worker protocol", () => {
     });
     const args = spawnProcess.mock.calls.find(([binary]) => binary === "ffmpeg")[1];
     expect(args[args.indexOf("-t") + 1]).toBe("602");
-    expect(args[args.indexOf("-fs") + 1]).toBe("20971520");
+    expect(args[args.indexOf("-fs") + 1]).toBe(String(18000 * 32000 + 65536));
+  });
+
+  it("converts a two-hour file without the former 20MiB PCM ceiling", async () => {
+    inputDuration = outputDuration = 7200;
+    outputSize = 44 + 7200 * 32000;
+    expect(await conversion({ maxDurationSeconds: 18000 })).toMatchObject({
+      status: 200,
+      body: { ok: true, bytes: outputSize, durationSeconds: 7200 },
+    });
   });
 
   it("still rejects601s exceeding the requested600s before conversion", async () => {
@@ -370,10 +401,10 @@ describe("isolated media worker protocol", () => {
     expect(spawnProcess.mock.calls.map(([binary]) => binary)).toEqual(["ffprobe"]);
   });
 
-  it("rejects audio whose full PCM exceeds20MiB instead of truncating near the duration tolerance", async () => {
-    inputDuration = 655.5;
-    outputDuration = 655.35;
-    expect((await conversion({ maxDurationSeconds: 900 })).body.error).toBe("invalid_output");
+  it("rejects audio exceeding the five-hour provider limit before conversion", async () => {
+    inputDuration = 18000.5;
+    outputDuration = 18000;
+    expect((await conversion({ maxDurationSeconds: 18000 })).body.error).toBe("duration_limit");
     expect(spawnProcess.mock.calls.map(([binary]) => binary)).toEqual(["ffprobe"]);
     await expect(lstat(join(root, "jobs", job, "output.wav"))).rejects.toMatchObject({
       code: "ENOENT",
@@ -408,7 +439,7 @@ describe("isolated media worker protocol", () => {
   );
 
   it("rejects oversized output and removes partial output", async () => {
-    outputSize = 20 * 1024 * 1024 + 1;
+    outputSize = 18000 * 32000 + 65536 + 1;
     expect((await conversion()).body.error).toBe("invalid_output");
     await expect(lstat(join(root, "jobs", job, "output.wav"))).rejects.toMatchObject({
       code: "ENOENT",
@@ -536,7 +567,7 @@ describe("isolated media worker protocol", () => {
     expect(latestChild.kill).toHaveBeenCalledWith("SIGKILL");
   });
 
-  it("enforces the shared 120-second job deadline independently of child deadlines", async () => {
+  it("enforces the independent thirty-minute ASR job deadline", async () => {
     const timers = vi.spyOn(globalThis, "setTimeout");
     stalled = "ffmpeg";
     const pending = conversion();
@@ -544,7 +575,7 @@ describe("isolated media worker protocol", () => {
       expect(spawnProcess.mock.calls.some(([binary]) => binary === "ffmpeg")).toBe(true),
     );
     expect(timers.mock.calls.some(([, milliseconds]) => milliseconds === 15_000)).toBe(true);
-    const expireJob = timers.mock.calls.find(([, milliseconds]) => milliseconds === 120_000)[0];
+    const expireJob = timers.mock.calls.find(([, milliseconds]) => milliseconds === 1_800_000)[0];
     expireJob();
     expect(await pending).toEqual({ status: 504, body: { ok: false, error: "timeout" } });
     expect(latestChild.kill).toHaveBeenCalledWith("SIGKILL");

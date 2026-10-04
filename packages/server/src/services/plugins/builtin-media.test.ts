@@ -133,7 +133,7 @@ describe("built-in media plugins", () => {
     for (const builtin of builtins) {
       expect(parsePluginManifest(builtin.manifest)).toMatchObject({
         apiVersion: 1,
-        version: builtin.manifest.id === "hanori.bilibili" ? "1.3.0" : "1.1.0",
+        version: builtin.manifest.id === "hanori.bilibili" ? "1.3.1" : "1.1.0",
         login: { type: "qr" },
       });
       expect(builtin.manifest.config).toContainEqual(

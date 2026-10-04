@@ -9,6 +9,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
   realpath,
@@ -22,7 +23,8 @@ import { promisify } from "node:util";
 import type { TranscriptDocument } from "@cos-tool-bot/shared";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { IsolatedAudioConverter } from "../media/isolated-converter.js";
-import { inspectConvertedWav } from "../media/wav.js";
+import { inspectConvertedWav, inspectConvertedWavFile } from "../media/wav.js";
+import { MediaAudioStore } from "../media/audio-store.js";
 import type { MediaJobConfiguration, MediaJobRow } from "./contracts.js";
 import { MediaJobExecutor } from "./executor.js";
 
@@ -32,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   getAudio: vi.fn(),
   download: vi.fn(),
   transcribeBytes: vi.fn(),
+  transcribeUrl: vi.fn(),
   bilibili: vi.fn(),
   asr: vi.fn(),
 }));
@@ -50,6 +53,7 @@ vi.mock("../media/asr-providers.js", () => ({
     return {
       transcribeBytes: (bytes: Buffer, options?: { signal?: AbortSignal }) =>
         client.transcribeBytes(bytes, options?.signal),
+      transcribeUrl: mocks.transcribeUrl,
     };
   },
 }));
@@ -365,6 +369,66 @@ describe("media executor isolated conversion pipeline", () => {
     expect(stages).toEqual(["downloading", "converting", "transcribing"]);
   }, 15_000);
 
+  it("passes a one-hour verified file URL to Tencent without reading the full WAV into a Buffer", async () => {
+    const seconds = 3600;
+    const audioStore = new MediaAudioStore(root, "https://audio.example.com", SECRET);
+    const stage = vi.spyOn(audioStore, "stageFile");
+    const executor = new MediaJobExecutor(jobs, converter, process.getgid!(), socket, audioStore);
+    mocks.getVideo.mockResolvedValue({
+      ...video(),
+      parts: [{ part: 1, durationSeconds: seconds }],
+    });
+    fakeConverter(async (output) => {
+      const header = pcm().subarray(0, 44);
+      const size = 44 + seconds * 32_000;
+      header.writeUInt32LE(size - 8, 4);
+      header.writeUInt32LE(size - 44, 40);
+      const file = await open(output, "wx");
+      try {
+        await file.write(header);
+        await file.truncate(size);
+      } finally {
+        await file.close();
+      }
+      return inspectConvertedWavFile(output, seconds);
+    });
+    mocks.transcribeUrl.mockResolvedValue(document);
+    const inputJob = job({ durationSeconds: seconds, estimatedCost: 1 });
+    const config = {
+      ...configuration,
+      asr: { ...configuration.asr, provider: "tencent" as const },
+      limits: { ...configuration.limits, maxDurationSeconds: seconds },
+    };
+    const onProviderTask = vi.fn(async () => {});
+    expect(
+      await executor.execute(inputJob, config, { signal: signal(), onStage, onProviderTask }),
+    ).toEqual(document);
+    expect(stage).toHaveBeenCalledWith(
+      inputJob.id,
+      expect.stringContaining("output.wav"),
+      expect.objectContaining({ expectedBytes: 115_200_044, maxDurationSeconds: seconds }),
+      expect.any(AbortSignal),
+    );
+    expect(mocks.transcribeBytes).not.toHaveBeenCalled();
+    expect(mocks.transcribeUrl).toHaveBeenCalledWith(
+      expect.stringContaining("https://audio.example.com/api/asr-audio/"),
+      seconds,
+      expect.objectContaining({ onProviderTask, signal: expect.any(AbortSignal) }),
+    );
+    expect(mocks.download.mock.calls[0]![1]).toMatchObject({
+      maxBytes: 512 * 1024 * 1024,
+      timeoutMs: 30 * 60_000,
+    });
+    const url = new URL(mocks.transcribeUrl.mock.calls[0]![0]);
+    expect(
+      await audioStore.openStream(
+        inputJob.id,
+        url.searchParams.get("expires")!,
+        url.searchParams.get("signature")!,
+      ),
+    ).toBeNull();
+  });
+
   it("returns the subtitle flag without fetching or downloading audio during inspection", async () => {
     fakeConverter(async () => metadata(pcm()));
     expect(await executor.inspect(sourceUrl, configuration, signal())).toMatchObject({
@@ -517,7 +581,7 @@ describe("media executor isolated conversion pipeline", () => {
     });
     await expect(
       executor.execute(job(), configuration, { signal: signal(), onStage }),
-    ).rejects.toMatchObject({ code: "invalid_file" });
+    ).rejects.toMatchObject({ code: "invalid_audio" });
     expect(mocks.asr).not.toHaveBeenCalled();
     expect(await readFile(outside)).toEqual(pcm());
   });

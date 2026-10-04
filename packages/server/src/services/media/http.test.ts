@@ -244,18 +244,18 @@ describe("bounded media file downloads", () => {
     },
   );
 
-  it("rejects file limits above 64MiB and deadlines above120s before requesting", async () => {
+  it("rejects file limits above 512MiB and deadlines above30min before requesting", async () => {
     await expect(
       downloadMediaFile(
         "https://cdn.example.com/audio",
-        { ...audioPolicy, maxBytes: 64 * 1024 * 1024 + 1 },
+        { ...audioPolicy, maxBytes: 512 * 1024 * 1024 + 1 },
         join(directory, "a"),
       ),
     ).rejects.toMatchObject({ code: "invalid_request" });
     await expect(
       downloadMediaFile(
         "https://cdn.example.com/audio",
-        { ...audioPolicy, timeoutMs: 120_001 },
+        { ...audioPolicy, timeoutMs: 30 * 60_000 + 1 },
         join(directory, "a"),
       ),
     ).rejects.toMatchObject({ code: "invalid_request" });

@@ -1,10 +1,15 @@
 import { constants } from "node:fs";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { lstat, mkdir, open, readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { inspectConvertedWav } from "./wav.js";
+import {
+  inspectConvertedWav,
+  inspectConvertedWavFile,
+  type WavFileInspectionOptions,
+} from "./wav.js";
+import { MAX_ASR_DURATION_SECONDS, MAX_ASR_WAV_BYTES } from "./long-audio.js";
 
-const ttlSeconds = 60 * 60;
+const ttlSeconds = 24 * 60 * 60;
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const filePattern = /^([a-f0-9-]{36})\.(\d{10})\.wav$/;
 
@@ -71,12 +76,88 @@ export class MediaAudioStore {
     } finally {
       await handle.close();
     }
+    return this.url(id, expires);
+  }
+  private url(id: string, expires: string) {
     const url = new URL(`/api/asr-audio/${id}`, this.origin);
     url.searchParams.set("expires", expires);
     url.searchParams.set("signature", this.signature(id, expires));
     return url.href;
   }
-  async read(id: string, expires: string, signature: string): Promise<Buffer | null> {
+  async stageFile(
+    id: string,
+    sourcePath: string,
+    options: Omit<WavFileInspectionOptions, "signal"> & { maxDurationSeconds?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<string> {
+    if (!uuid.test(id) || !this.origin) throw new Error("audio_url_unavailable");
+    signal?.throwIfAborted();
+    const source = await open(
+      sourcePath,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+    let target;
+    let path: string | undefined;
+    try {
+      const verified = await inspectConvertedWavFile(
+        source,
+        options.maxDurationSeconds ?? MAX_ASR_DURATION_SECONDS,
+        { ...options, signal },
+      );
+      const before = await source.stat();
+      await this.root();
+      const expires = String(Math.floor(Date.now() / 1000) + ttlSeconds);
+      path = join(this.directory, `${id}.${expires}.wav`);
+      target = await open(
+        path,
+        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+        0o600,
+      );
+      const hash = createHash("sha256");
+      const buffer = Buffer.alloc(65_536);
+      for (let position = 0; position < verified.bytes; ) {
+        signal?.throwIfAborted();
+        const { bytesRead } = await source.read(
+          buffer,
+          0,
+          Math.min(buffer.length, verified.bytes - position),
+          position,
+        );
+        if (!bytesRead) throw new Error("invalid_converted_audio");
+        hash.update(buffer.subarray(0, bytesRead));
+        for (let offset = 0; offset < bytesRead; ) {
+          signal?.throwIfAborted();
+          const { bytesWritten } = await target.write(
+            buffer,
+            offset,
+            bytesRead - offset,
+            position + offset,
+          );
+          if (!bytesWritten) throw new Error("invalid_converted_audio");
+          offset += bytesWritten;
+        }
+        position += bytesRead;
+      }
+      signal?.throwIfAborted();
+      const after = await source.stat();
+      if (
+        after.size !== before.size ||
+        after.nlink !== 1 ||
+        after.mtimeMs !== before.mtimeMs ||
+        after.ctimeMs !== before.ctimeMs ||
+        hash.digest("hex") !== verified.sha256
+      )
+        throw new Error("invalid_converted_audio");
+      return this.url(id, expires);
+    } catch (error) {
+      if (target && path) await unlink(path).catch(() => undefined);
+      throw error;
+    } finally {
+      await target?.close();
+      await source.close();
+    }
+  }
+  private authorized(id: string, expires: string, signature: string) {
     const now = Math.floor(Date.now() / 1000);
     if (
       !uuid.test(id) ||
@@ -89,7 +170,48 @@ export class MediaAudioStore {
         Buffer.from(this.signature(id, expires), "hex"),
       )
     )
+      return false;
+    return true;
+  }
+  async openStream(id: string, expires: string, signature: string, signal?: AbortSignal) {
+    if (!this.authorized(id, expires, signature)) return null;
+    let handle;
+    try {
+      signal?.throwIfAborted();
+      await this.root();
+      handle = await open(
+        join(this.directory, `${id}.${expires}.wav`),
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      const stat = await handle.stat();
+      if (
+        !stat.isFile() ||
+        stat.nlink !== 1 ||
+        stat.uid !== process.getuid?.() ||
+        (stat.mode & 0o077) !== 0 ||
+        stat.size > MAX_ASR_WAV_BYTES ||
+        stat.size < 44
+      )
+        throw new Error("invalid_audio_store");
+      await inspectConvertedWavFile(handle, MAX_ASR_DURATION_SECONDS, { signal });
+      signal?.throwIfAborted();
+      const stream = handle.createReadStream({
+        start: 0,
+        end: stat.size - 1,
+        autoClose: true,
+        highWaterMark: 65_536,
+        signal,
+      });
+      handle = undefined;
+      return { stream, size: stat.size };
+    } catch {
       return null;
+    } finally {
+      await handle?.close();
+    }
+  }
+  async read(id: string, expires: string, signature: string): Promise<Buffer | null> {
+    if (!this.authorized(id, expires, signature)) return null;
     let handle;
     try {
       await this.root();

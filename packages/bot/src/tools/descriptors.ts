@@ -215,6 +215,7 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
 ];
 
 const DESCRIPTOR_BY_NAME = new Map<string, ToolDescriptor>();
+const INSTANCE_EFFECTS = new WeakMap<object, ToolEffectClass>();
 for (const descriptor of TOOL_DESCRIPTORS) {
   if (DESCRIPTOR_BY_NAME.has(descriptor.name)) {
     throw new Error(`Duplicate tool descriptor: ${descriptor.name}`);
@@ -230,8 +231,18 @@ export function getToolStatusLabel(name: string): string | undefined {
   return DESCRIPTOR_BY_NAME.get(name)?.statusLabel;
 }
 
-export function isReadOnlyTool(name: string): boolean {
-  return DESCRIPTOR_BY_NAME.get(name)?.effect === "read_only";
+/** Plugin names are dynamic; bind their declared effect to this session's tool instance. */
+export function withToolEffect<T extends object>(tool: T, effect: ToolEffectClass): T {
+  INSTANCE_EFFECTS.set(tool, effect);
+  return tool;
+}
+
+export function isReadOnlyTool(name: string, tool?: object): boolean {
+  return (
+    (tool && INSTANCE_EFFECTS.has(tool)
+      ? INSTANCE_EFFECTS.get(tool)
+      : DESCRIPTOR_BY_NAME.get(name)?.effect) === "read_only"
+  );
 }
 
 export function hasVisibleToolEffect(name: string): boolean {
