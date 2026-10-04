@@ -203,7 +203,7 @@ describe("host-bound media job tools", () => {
 
   it.each([
     { offset: -1 },
-    { offset: 10_001 },
+    { offset: 50_001 },
     { limit: 0 },
     { limit: 41 },
     { limit: 1.5 },
@@ -257,6 +257,30 @@ describe("host-bound media job tools", () => {
       offset: 0,
       limit: 2,
     });
+  });
+
+  it("reads a bounded long-transcript page beyond cue 10,000 in the host actor scope", async () => {
+    vi.mocked(port.read).mockResolvedValue(document(10_050));
+    const result = (await tool("read_transcription").execute(
+      { id: ID, offset: 10_001, limit: 40 },
+      signal(),
+    )) as ReturnType<typeof boundedTranscriptPage>;
+    expect(result).toMatchObject({
+      source: "asr",
+      total: 10_050,
+      nextOffset: 10_041,
+      hasMore: true,
+    });
+    expect(result.cues).toHaveLength(40);
+    expect(result.cues[0]).toMatchObject({ cueIndex: 10_001, text: "Synthetic cue 10001" });
+    expect(result.cues.at(-1)?.cueIndex).toBe(10_040);
+    expect(result.cues.reduce((sum, cue) => sum + cue.text.length, 0)).toBeLessThanOrEqual(4000);
+    expect(port.read).toHaveBeenCalledWith(actor(), ID);
+    vi.mocked(port.read).mockRejectedValueOnce(new MediaJobError("forbidden"));
+    expect(await tool("read_transcription").execute({ id: ID, offset: 10_001 }, signal())).toEqual({
+      error: "forbidden",
+    });
+    expect(page).toHaveBeenCalledOnce();
   });
 
   it("preserves the 4000-character read budget and deferred cue offset", async () => {

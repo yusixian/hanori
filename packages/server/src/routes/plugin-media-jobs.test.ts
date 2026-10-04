@@ -126,6 +126,34 @@ describe("plugin media job web routes", () => {
     expect((await app().request(`${base}/${jobId}/transcript?limit=41`)).status).toBe(400);
     expect((await app().request(`${base}/${jobId}/transcript?offset=-1`)).status).toBe(400);
   });
+  it("reads a bounded page beyond cue 10,000 while retaining owner scope checks", async () => {
+    jobs.readForOwner.mockResolvedValue({
+      ...document,
+      cues: Array.from({ length: 10_050 }, (_, index) => ({
+        startMs: index * 1000,
+        endMs: (index + 1) * 1000,
+        text: `Synthetic long cue ${index}`,
+      })),
+    });
+    const response = await app().request(`${base}/${jobId}/transcript?offset=10001&limit=40`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { data: ReturnType<typeof boundedTranscriptPage> };
+    expect(body.data).toMatchObject({ source: "asr", total: 10_050, nextOffset: 10_041 });
+    expect(body.data.cues).toHaveLength(40);
+    expect(body.data.cues[0]).toMatchObject({
+      cueIndex: 10_001,
+      text: "Synthetic long cue 10001",
+    });
+    expect(body.data.cues.at(-1)?.cueIndex).toBe(10_040);
+    expect(body.data.cues.reduce((sum, cue) => sum + cue.text.length, 0)).toBeLessThanOrEqual(4000);
+    expect(jobs.readForOwner).toHaveBeenCalledWith(botId, jobId);
+    jobs.readForOwner.mockClear();
+    expect((await app().request(`${base}/${jobId}/transcript?offset=50001`)).status).toBe(400);
+    expect(jobs.readForOwner).not.toHaveBeenCalled();
+    jobs.readForOwner.mockRejectedValueOnce(new MediaJobError("forbidden"));
+    expect((await app().request(`${base}/${jobId}/transcript?offset=10001`)).status).toBe(403);
+    expect(jobs.readForOwner).toHaveBeenCalledWith(botId, jobId);
+  });
   it.each([
     {},
     { format: "srt" },

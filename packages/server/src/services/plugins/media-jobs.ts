@@ -1,16 +1,17 @@
-import type {
-  MediaJobActor,
-  MediaTranscriptionPort,
-  PluginContext,
-  PluginTool,
-  TranscriptDocument,
+import {
+  ASR_TRANSCRIPT_BOUNDS,
+  type MediaJobActor,
+  type MediaTranscriptionPort,
+  type PluginContext,
+  type PluginTool,
+  type TranscriptDocument,
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
 import { MediaJobError } from "../media-jobs/service.js";
 
 const jobSchema = z.object({ id: z.uuid() }).strict();
 const readSchema = jobSchema.extend({
-  offset: z.number().int().min(0).max(10_000).default(0),
+  offset: z.number().int().min(0).max(ASR_TRANSCRIPT_BOUNDS.maxCues).default(0),
   limit: z.number().int().min(1).max(40).default(20),
   query: z.string().trim().min(1).max(200).optional(),
 });
