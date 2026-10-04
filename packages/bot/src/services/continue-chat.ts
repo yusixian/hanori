@@ -58,6 +58,7 @@ import type { PendingActionRegistry } from "./pending-actions.js";
 import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
 import { KeyedIngressLock } from "./ai-ingress-lock.js";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
+import { throwCapturedStreamError } from "../utils/stream-error.js";
 
 /**
  * Serialises continuations for callers that supply no `runWithExecution`, keyed by
@@ -605,6 +606,7 @@ async function doContinueChat(
       config.timeoutConfig?.perStepMs ?? DEFAULT_TIMEOUT_CONFIG.perStepMs,
       AbortSignal.any(abortSignals),
     );
+    const providerAbort = new AbortController();
 
     await api.sendChatAction(chatId, "typing").catch(() => {});
     stopChatActionHeartbeat = startChatActionHeartbeat(() => api.sendChatAction(chatId, "typing"));
@@ -627,7 +629,7 @@ async function doContinueChat(
       ),
       stopWhen: stepCountIs(config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps),
       toolChoice: "auto",
-      abortSignal: perStepAbort.signal,
+      abortSignal: AbortSignal.any([perStepAbort.signal, providerAbort.signal]),
       temperature: selection.temperature,
       maxOutputTokens: selection.maxTokens,
       providerOptions: selection.providerOptions,
@@ -648,6 +650,9 @@ async function doContinueChat(
             error,
           },
         });
+        providerAbort.abort(error);
+        stopChatActionHeartbeat?.();
+        stopChatActionHeartbeat = undefined;
       },
     });
 
@@ -720,6 +725,7 @@ async function doContinueChat(
       return successfulToolEffectCount > 0 || visibleDeliveryCount > 0;
     }
 
+    throwCapturedStreamError(providerStreamError, false);
     const rawResponseText = (await result.text).trim();
     const afterThink = stripThinkingContent(rawResponseText, ({ pattern, strippedLength }) => {
       config.onLog?.({
@@ -918,7 +924,8 @@ async function doContinueChat(
       },
     });
     return visibleDeliveryCount > 0 || successfulToolEffectCount > 0;
-  } catch (err) {
+  } catch (caughtError) {
+    const err = providerStreamError ?? caughtError;
     config.onLog?.({
       level: "error",
       message: `continueChat failed: ${err instanceof Error ? err.message : String(err)}`,

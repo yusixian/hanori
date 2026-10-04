@@ -3,11 +3,13 @@ import type {
   ImageGenerationPort,
   ImageRouteCapabilities,
 } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import type { Api } from "grammy";
 import type { Message } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiExecutionCoordinator } from "./ai-execution-coordinator.js";
+import { createOfflineProviderStream } from "../utils/provider-stream-test-helpers.js";
 import {
   ContinuationNotDeliveredError,
   continueChat,
@@ -322,6 +324,147 @@ describe("choice continuation tools", () => {
     });
   });
 
+  it.each([false, true])(
+    "returns the original SSE error promptly without replaying a completed tool (closed: %s)",
+    async (closeAfterError) => {
+      const coordinator = createCoordinator();
+      const actualAi = await vi.importActual<typeof import("ai")>("ai");
+      const providerError = "Internal error during token generation";
+      const offline = createOfflineProviderStream({
+        error: providerError,
+        closeAfterError,
+        completedTool: { name: "get_chat_info", input: {} },
+      });
+      const toolExecute = vi.fn();
+      streamTextMock.mockImplementationOnce((options) => {
+        const execute = options.tools.get_chat_info.execute;
+        options.tools.get_chat_info.execute = (...args: unknown[]) => {
+          toolExecute();
+          return execute(...args);
+        };
+        return actualAi.streamText({ ...options, model: offline.model });
+      });
+      const onLog = vi.fn();
+      const { api, sendMessage } = createApi();
+      api.getChat = vi.fn().mockResolvedValue({ id: CHAT_ID, type: "supergroup", title: "Test" });
+      api.getChatMemberCount = vi.fn().mockResolvedValue(3);
+      const run = continueChat(
+        api,
+        createConfig(coordinator, {
+          onLog,
+          timeoutConfig: { ...DEFAULT_TIMEOUT_CONFIG, aiReplyMs: 10_000, perStepMs: 10_000 },
+        }),
+        {
+          chatId: CHAT_ID,
+          userId: USER_ID,
+          eventDescription: "provider failure event",
+          requireDelivery: true,
+        },
+      ).then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+      try {
+        await vi.waitFor(
+          () =>
+            expect(onLog).toHaveBeenCalledWith(
+              expect.objectContaining({ message: `continueChat failed: ${providerError}` }),
+            ),
+          { timeout: 500 },
+        );
+        expect(await run).toBe(providerError);
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(offline.fetch).toHaveBeenCalledTimes(2);
+        expect(toolExecute).toHaveBeenCalledOnce();
+        if (!closeAfterError) expect(offline.onAbort).toHaveBeenCalledOnce();
+      } finally {
+        await coordinator.cancelChat(CHAT_ID);
+        await run;
+      }
+    },
+  );
+
+  it.each(["overall", "step"])("preserves a genuine %s timeout cause", async (kind) => {
+    const coordinator = createCoordinator();
+    const actualAi = await vi.importActual<typeof import("ai")>("ai");
+    const offline = createOfflineProviderStream({ error: null });
+    streamTextMock.mockImplementationOnce((options) =>
+      actualAi.streamText({ ...options, model: offline.model }),
+    );
+    const { api, sendMessage } = createApi();
+    await expect(
+      continueChat(
+        api,
+        createConfig(coordinator, {
+          timeoutConfig: {
+            ...DEFAULT_TIMEOUT_CONFIG,
+            aiReplyMs: kind === "overall" ? 30 : 10_000,
+            perStepMs: kind === "step" ? 30 : 10_000,
+          },
+        }),
+        {
+          chatId: CHAT_ID,
+          userId: USER_ID,
+          eventDescription: "timeout event",
+          requireDelivery: true,
+        },
+      ),
+    ).rejects.toMatchObject({
+      message:
+        kind === "overall"
+          ? "The operation was aborted due to timeout"
+          : "Per-step timeout: 30ms exceeded",
+    });
+    expect(offline.onAbort).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("preserves active SDK cancellation without emitting a failure notice", async () => {
+    const coordinator = createCoordinator();
+    const actualAi = await vi.importActual<typeof import("ai")>("ai");
+    const offline = createOfflineProviderStream({ error: null });
+    streamTextMock.mockImplementationOnce((options) =>
+      actualAi.streamText({ ...options, model: offline.model }),
+    );
+    const { api, sendMessage } = createApi();
+    const run = continueChat(api, createConfig(coordinator), {
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      eventDescription: "cancel event",
+      requireDelivery: true,
+      failureMessage: FAILURE_MESSAGE,
+    }).catch((error: unknown) => error);
+    await vi.waitFor(() => expect(offline.fetch).toHaveBeenCalledOnce());
+    await coordinator.cancelChat(CHAT_ID);
+    expect(await run).toMatchObject({ reason: "execution_cancelled" });
+    expect(offline.onAbort).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalledWith(CHAT_ID, FAILURE_MESSAGE);
+  });
+
+  it("reports a provider error after partial text without delivering the partial summary as complete", async () => {
+    const coordinator = createCoordinator();
+    const actualAi = await vi.importActual<typeof import("ai")>("ai");
+    const providerError = "Internal error during token generation";
+    const offline = createOfflineProviderStream({
+      error: providerError,
+      textBeforeError: "部分总结",
+    });
+    streamTextMock.mockImplementationOnce((options) =>
+      actualAi.streamText({ ...options, model: offline.model }),
+    );
+    const { api, sendMessage } = createApi();
+    await expect(
+      continueChat(api, createConfig(coordinator), {
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        eventDescription: "partial event",
+        requireDelivery: true,
+      }),
+    ).rejects.toBe(providerError);
+    expect(offline.onAbort).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("keeps the original provider error when the stream ends as NoOutputGenerated", async () => {
     const coordinator = createCoordinator();
     const onLog = vi.fn();
@@ -357,7 +500,7 @@ describe("choice continuation tools", () => {
         eventDescription: "provider failure event",
         requireDelivery: true,
       }),
-    ).rejects.toBe(finalError);
+    ).rejects.toBe(providerError);
 
     const entries = onLog.mock.calls.map(([entry]) => entry);
     const providerFailure = entries.find(
@@ -382,7 +525,7 @@ describe("choice continuation tools", () => {
     expect(providerFailure?.meta?.error).toHaveProperty("stack");
     expect(finalFailure?.meta).toMatchObject({
       correlationId: providerFailure?.meta?.correlationId,
-      error: { name: "AI_NoOutputGeneratedError", message: "No output generated" },
+      error: { message: "upstream rejected request", statusCode: 429 },
       providerError: {
         message: "upstream rejected request",
         statusCode: 429,

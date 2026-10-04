@@ -1,10 +1,11 @@
-import type { BotLogEntry } from "@cos-tool-bot/shared";
+import { DEFAULT_TIMEOUT_CONFIG, type BotLogEntry } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { Tool } from "ai";
 import type { Message } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
 import type { BotContext } from "../context.js";
 import { createAiReplyHandler, type AiReplyConfig, wrapToolsWithStatus } from "./ai-reply.js";
+import { createOfflineProviderStream } from "../utils/provider-stream-test-helpers.js";
 
 const { generateTextMock, streamTextMock } = vi.hoisted(() => ({
   generateTextMock: vi.fn(),
@@ -115,7 +116,185 @@ function createRssCallbacks(): NonNullable<AiReplyConfig["rssCallbacks"]> {
   };
 }
 
+function createDiagnostics(): NonNullable<AiReplyConfig["runtimeDiagnostics"]> {
+  return {
+    startTrace: vi.fn().mockReturnValue("test-trace"),
+    record: vi.fn(),
+    bindRuntime: vi.fn(),
+    query: vi.fn(),
+  };
+}
+
 describe("AI reply streaming", () => {
+  it.each([false, true])(
+    "returns the original SSE error promptly without replaying a completed tool (closed: %s)",
+    async (closeAfterError) => {
+      const actualAi = await vi.importActual<typeof import("ai")>("ai");
+      const providerError = "Internal error during token generation";
+      const offline = createOfflineProviderStream({
+        error: providerError,
+        closeAfterError,
+        completedTool: { name: "get_chat_info", input: {} },
+      });
+      const toolExecute = vi.fn();
+      streamTextMock.mockImplementationOnce((options) => {
+        const execute = options.tools.get_chat_info.execute;
+        options.tools.get_chat_info.execute = (...args: unknown[]) => {
+          toolExecute();
+          return execute(...args);
+        };
+        return actualAi.streamText({ ...options, model: offline.model });
+      });
+      const onLog = vi.fn<(entry: BotLogEntry) => void>();
+      const runtimeDiagnostics = createDiagnostics();
+      const { ctx, replies } = createContext();
+      const runtime = createAiReplyHandler({
+        ...createConfig(onLog),
+        runtimeDiagnostics,
+        timeoutConfig: { ...DEFAULT_TIMEOUT_CONFIG, aiReplyMs: 10_000, perStepMs: 10_000 },
+      });
+      const run = Promise.resolve(runtime.handler(ctx, vi.fn())).catch(() => {});
+      try {
+        await vi.waitFor(
+          () =>
+            expect(onLog).toHaveBeenCalledWith(
+              expect.objectContaining({ message: `AI reply failed: ${providerError}` }),
+            ),
+          { timeout: 500 },
+        );
+        await run;
+        expect(replies).toContain(`AI 回复时出错:\n${providerError}`);
+        expect(replies).not.toContain("✅ 操作完成");
+        expect(replies).not.toContain("(AI 未生成回复内容)");
+        expect(offline.fetch).toHaveBeenCalledTimes(2);
+        expect(toolExecute).toHaveBeenCalledOnce();
+        if (!closeAfterError) expect(offline.onAbort).toHaveBeenCalledOnce();
+        expect(runtimeDiagnostics.record).toHaveBeenCalledWith(
+          "test-trace",
+          expect.objectContaining({ stage: "model", outcome: "failed", code: "model_failed" }),
+        );
+        expect(runtimeDiagnostics.record).not.toHaveBeenCalledWith(
+          "test-trace",
+          expect.objectContaining({ outcome: "timed_out" }),
+        );
+      } finally {
+        await runtime.destroy();
+        await run;
+      }
+    },
+  );
+
+  it.each(["overall", "step"])(
+    "keeps a genuine %s timeout classified as timed out",
+    async (kind) => {
+      const actualAi = await vi.importActual<typeof import("ai")>("ai");
+      const offline = createOfflineProviderStream({ error: null });
+      streamTextMock.mockImplementationOnce((options) =>
+        actualAi.streamText({ ...options, model: offline.model }),
+      );
+      const onLog = vi.fn<(entry: BotLogEntry) => void>();
+      const runtimeDiagnostics = createDiagnostics();
+      const { ctx, replies } = createContext();
+      const config = createConfig(onLog);
+      const runtime = createAiReplyHandler({
+        ...config,
+        messageConfig: { ...config.messageConfig!, replyMode: "segment" },
+        runtimeDiagnostics,
+        timeoutConfig: {
+          ...DEFAULT_TIMEOUT_CONFIG,
+          aiReplyMs: kind === "overall" ? 30 : 10_000,
+          perStepMs: kind === "step" ? 30 : 10_000,
+        },
+      });
+      try {
+        await runtime.handler(ctx, vi.fn());
+        expect(offline.onAbort).toHaveBeenCalledOnce();
+        expect(replies).toContain(
+          kind === "overall"
+            ? "AI 回复时出错:\nThe operation was aborted due to timeout"
+            : "AI 回复时出错:\nPer-step timeout: 30ms exceeded",
+        );
+        expect(runtimeDiagnostics.record).toHaveBeenCalledWith(
+          "test-trace",
+          expect.objectContaining({ stage: "model", outcome: "timed_out", code: "timed_out" }),
+        );
+      } finally {
+        await runtime.destroy();
+      }
+    },
+  );
+
+  it("preserves active cancellation without sending a provider failure notice", async () => {
+    const actualAi = await vi.importActual<typeof import("ai")>("ai");
+    const offline = createOfflineProviderStream({ error: null });
+    streamTextMock.mockImplementationOnce((options) =>
+      actualAi.streamText({ ...options, model: offline.model }),
+    );
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx, replies } = createContext();
+    const runtime = createAiReplyHandler(createConfig(onLog));
+    const run = Promise.resolve(runtime.handler(ctx, vi.fn())).catch(() => {});
+    try {
+      await vi.waitFor(() => expect(offline.fetch).toHaveBeenCalledOnce());
+      runtime.setAiEnabled(false);
+      await run;
+      expect(offline.onAbort).toHaveBeenCalledOnce();
+      expect(replies.every((text) => !text.startsWith("AI 回复时出错"))).toBe(true);
+    } finally {
+      await runtime.destroy();
+    }
+  });
+
+  it("ends and reports a provider error after partial text without sending an empty success", async () => {
+    const actualAi = await vi.importActual<typeof import("ai")>("ai");
+    const providerError = "Internal error during token generation";
+    const offline = createOfflineProviderStream({
+      error: providerError,
+      textBeforeError: "部分总结",
+    });
+    streamTextMock.mockImplementationOnce((options) =>
+      actualAi.streamText({ ...options, model: offline.model }),
+    );
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx, replies } = createContext();
+    const runtime = createAiReplyHandler(createConfig(onLog));
+    try {
+      await runtime.handler(ctx, vi.fn());
+      expect(offline.onAbort).toHaveBeenCalledOnce();
+      expect(replies).toContain(`AI 回复时出错:\n${providerError}`);
+      expect(replies).not.toContain("(AI 未生成回复内容)");
+      expect(onLog).not.toHaveBeenCalledWith(expect.objectContaining({ message: "AI reply sent" }));
+    } finally {
+      await runtime.destroy();
+    }
+  });
+
+  it("keeps the provider failure when draining a segment stream throws AbortError", async () => {
+    const providerError = new Error("Internal error during token generation");
+    streamTextMock.mockImplementationOnce((options) => ({
+      textStream: (async function* () {
+        options.onError({ error: providerError });
+        yield await Promise.reject(new DOMException("Aborted", "AbortError"));
+      })(),
+    }));
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx, replies } = createContext();
+    const config = createConfig(onLog);
+    const runtime = createAiReplyHandler({
+      ...config,
+      messageConfig: { ...config.messageConfig!, replyMode: "segment" },
+    });
+    try {
+      await runtime.handler(ctx, vi.fn());
+      expect(replies).toContain(`AI 回复时出错:\n${providerError.message}`);
+      expect(onLog).toHaveBeenCalledWith(
+        expect.objectContaining({ message: `AI reply failed: ${providerError.message}` }),
+      );
+    } finally {
+      await runtime.destroy();
+    }
+  });
+
   it.each([1000, undefined])(
     "records whole-turn usage and preserves unknown cache usage (last-step cache: %s)",
     async (cachedTokens) => {
