@@ -10,6 +10,7 @@ import { AsrSettingsService } from "./services/asr-settings.js";
 import { MediaAudioStore } from "./services/media/audio-store.js";
 import { IsolatedAudioConverter } from "./services/media/isolated-converter.js";
 import { createDb, runMigrations } from "@cos-tool-bot/database";
+import { NsfwChecker } from "@cos-tool-bot/bot";
 import { bots } from "@cos-tool-bot/database";
 import path from "node:path";
 import { getDataDir } from "@cos-tool-bot/shared";
@@ -208,6 +209,13 @@ const pluginManager = new PluginManager(
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const nsfwChecker = env.NSFW_API_URL
+  ? new NsfwChecker({
+      apiUrl: env.NSFW_API_URL,
+      logger: (level, message, meta) => logger[level](meta ?? {}, message),
+    })
+  : undefined;
+if (nsfwChecker) botPool.setNsfwChecker(nsfwChecker);
 {
   const executor = new VideoDownloadExecutor(
     new VideoDownloadCache({
@@ -310,6 +318,7 @@ const imageMcpConnectionService = new ImageMcpConnectionService({
 });
 const imageGenerationService = new ImageGenerationService({
   db,
+  nsfwChecker,
   generationLibrary: botPool.getGenerationLibraryService(),
   usageGovernor,
   pixai: imageMcpConnectionService.adapter,

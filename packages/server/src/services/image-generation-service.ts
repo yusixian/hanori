@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Database } from "@cos-tool-bot/database";
+import type { NsfwChecker } from "@cos-tool-bot/bot";
 import {
   imageGenerationConfigs,
   imageGenerationEvents,
@@ -82,6 +83,7 @@ export interface ImageGenerationDelivery {
 }
 
 export interface ImageGenerationServiceOptions {
+  nsfwChecker?: NsfwChecker;
   generationLibrary?: GenerationLibraryPort;
   db: Database;
   usageGovernor: UsageGovernor;
@@ -114,6 +116,7 @@ export const DEFAULT_IMAGE_GOVERNANCE_CONFIG: ImageGovernanceConfig = {
 };
 
 export class ImageGenerationService implements ImageGenerationPort {
+  private readonly nsfwChecker?: NsfwChecker;
   private readonly db: Database;
   private readonly usageGovernor: UsageGovernor;
   private readonly pixai: PixaiMcpAdapter;
@@ -127,6 +130,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private readonly generationLibrary?: GenerationLibraryPort;
 
   constructor(options: ImageGenerationServiceOptions) {
+    this.nsfwChecker = options.nsfwChecker;
     this.db = options.db;
     this.generationLibrary = options.generationLibrary;
     this.usageGovernor = options.usageGovernor;
@@ -853,6 +857,9 @@ export class ImageGenerationService implements ImageGenerationPort {
           filename,
           byteSize: artifact.bytes.byteLength,
           sha256,
+          nsfw: this.nsfwChecker
+            ? await this.nsfwChecker.checkImageBytes(artifact.bytes)
+            : { status: "unavailable", isNsfw: true, scores: null },
         });
       }
       const completedAt = new Date();
@@ -904,7 +911,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         resource: "image",
       });
     }
-    await this.deliverCompleted({ ...row, localFiles, state: "succeeded" });
+    await this.deliverCompleted({ ...row, artifacts, localFiles, state: "succeeded" });
   }
 
   private async deliverCompleted(row: GenerationRow): Promise<void> {
@@ -937,6 +944,34 @@ export class ImageGenerationService implements ImageGenerationPort {
     await this.recordEvent(row.botId, row.id, "delivery_started", "succeeded");
     let messageIds: number[];
     try {
+      // Older pending deliveries have no safety metadata. Check only their saved files,
+      // without creating another provider task or rewriting delivered history.
+      if (
+        this.nsfwChecker &&
+        row.artifacts.some((artifact) => artifact.nsfw?.status !== "checked")
+      ) {
+        const artifacts = await Promise.all(
+          row.artifacts.map(async (artifact) => ({
+            ...artifact,
+            nsfw:
+              artifact.nsfw?.status === "checked"
+                ? artifact.nsfw
+                : await this.nsfwChecker!.checkImageBytes(
+                    await readFile(
+                      path.join(
+                        getDataDir(row.botId),
+                        "generations",
+                        row.localFiles[artifact.ordinal]!,
+                      ),
+                    ),
+                  ),
+          })),
+        );
+        await this.db
+          .update(imageGenerations)
+          .set({ artifacts })
+          .where(eq(imageGenerations.id, row.id));
+      }
       messageIds = await this.delivery.deliver({
         generationId: row.id,
         botId: row.botId,

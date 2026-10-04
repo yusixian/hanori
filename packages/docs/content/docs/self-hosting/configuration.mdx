@@ -38,15 +38,15 @@ Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini Ap
 
 ## AI、媒体和清理
 
-| 变量                         | 用途                                                                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。                                                                                          |
-| `PIXAI_MCP_URL`              | 可选的图片 MCP 完整 HTTPS 地址，例如 `https://mcp.example.com/mcp/pixai`。留空关闭该集成；开发环境允许本机 HTTP。更换地址后需要 owner 重新授权。 |
-| `NSFW_API_URL`               | 可选的图片内容安全服务地址。                                                                                                                     |
-| `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                                                                                                               |
-| `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                               |
-| `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                   |
-| `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                               |
+| 变量                         | 用途                                                                                                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。                                                                                                |
+| `PIXAI_MCP_URL`              | 可选的图片 MCP 完整 HTTPS 地址，例如 `https://mcp.example.com/mcp/pixai`。留空关闭该集成；开发环境允许本机 HTTP。更换地址后需要 owner 重新授权。       |
+| `NSFW_API_URL`               | 图片内容安全服务地址，接口须支持 `POST /classify` 和 multipart `image`。未配置或检测失败时，Bot 保守遮罩照片。Docker 默认使用 `http://nsfw-api:3000`。 |
+| `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                                                                                                                     |
+| `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                                     |
+| `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                         |
+| `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                                     |
 
 Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
 

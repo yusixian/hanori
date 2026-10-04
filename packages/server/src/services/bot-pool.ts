@@ -221,6 +221,10 @@ export class BotPool {
     this.services.imageGenerationPort = port;
   }
 
+  setNsfwChecker(checker: NonNullable<BotRuntimeServices["nsfwChecker"]>) {
+    this.services.nsfwChecker = checker;
+  }
+
   setUsageGovernance(port: UsageGovernancePort) {
     this.services.usageGovernance = port;
   }

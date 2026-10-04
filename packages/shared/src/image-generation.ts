@@ -2,6 +2,7 @@ import type {
   GenerationMaterialSelection,
   GenerationMaterialSnapshot,
 } from "./generation-library.js";
+import type { NsfwScores } from "./pixai.js";
 
 export type ImagePurpose = "anime_illustration" | "general_image";
 
@@ -87,6 +88,13 @@ export interface ImageArtifact {
   filename?: string;
   byteSize?: number;
   sha256?: string;
+  nsfw?: ImageSafetyResult;
+}
+
+export interface ImageSafetyResult {
+  status: "checked" | "failed" | "unavailable";
+  isNsfw: boolean;
+  scores: NsfwScores | null;
 }
 
 /** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
