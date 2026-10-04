@@ -1,9 +1,10 @@
 import { createHash, createHmac } from "node:crypto";
-import type { TranscriptDocument } from "@cos-tool-bot/shared";
+import { ASR_TRANSCRIPT_BOUNDS, type TranscriptDocument } from "@cos-tool-bot/shared";
 import type { MediaJobConfiguration } from "../media-jobs/contracts.js";
 import { AsrClientError, createAsrClient, type AsrFailure } from "./asr.js";
 import { MediaHttpError, readMediaDocument, sendMediaJsonDocument } from "./http.js";
 import { inspectConvertedWav } from "./wav.js";
+import { MAX_ASR_DURATION_SECONDS } from "./long-audio.js";
 
 export interface MediaAsrOptions {
   signal?: AbortSignal;
@@ -13,6 +14,12 @@ export interface MediaAsrOptions {
 }
 export interface MediaAsrClient {
   transcribeBytes(bytes: Buffer, options?: MediaAsrOptions): Promise<TranscriptDocument>;
+  /** Duration comes from the host-validated PCM file, not video metadata or model input. */
+  transcribeUrl?(
+    url: string,
+    durationSeconds: number,
+    options?: MediaAsrOptions,
+  ): Promise<TranscriptDocument>;
   resume?(
     taskId: string,
     submittedAt: Date,
@@ -23,8 +30,8 @@ export interface MediaAsrClient {
 
 const TENCENT_HOST = "asr.tencentcloudapi.com";
 const ALIYUN_HOST = "dashscope.aliyuncs.com";
-const MAX_AUDIO_SECONDS = (20 * 1024 * 1024 - 44) / 32_000;
-const MAX_WAIT_MS = 30 * 60_000;
+const MAX_AUDIO_SECONDS = MAX_ASR_DURATION_SECONDS;
+const MAX_WAIT_MS = 24 * 60 * 60_000;
 const TASK_VALID_MS = 24 * 60 * 60_000;
 const TENCENT_MODELS = new Set([
   "16k_zh",
@@ -46,7 +53,7 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 function parse(bytes: Buffer, preserveIntegerIds = false): Record<string, unknown> {
-  if (bytes.length > 2 * 1024 * 1024) invalid("too_large");
+  if (bytes.length > ASR_TRANSCRIPT_BOUNDS.maxInputChars) invalid("too_large");
   try {
     const input = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     // JSON.parse rounds uint64 task IDs. Match whole JSON strings first so their text is untouched.
@@ -111,7 +118,7 @@ function inputDuration(bytes: Buffer) {
 }
 function document(segments: unknown, audioSeconds: number, language?: string): TranscriptDocument {
   if (!Array.isArray(segments)) invalid("timing_unavailable");
-  if (segments.length > 10_000) invalid();
+  if (segments.length > ASR_TRANSCRIPT_BOUNDS.maxCues) invalid();
   let previousStart = -1;
   let previousEnd = -1;
   let chars = 0;
@@ -132,7 +139,7 @@ function document(segments: unknown, audioSeconds: number, language?: string): T
     previousStart = cue.startMs as number;
     previousEnd = cue.endMs as number;
     chars += cue.text.length;
-    if (chars > 500_000) invalid();
+    if (chars > ASR_TRANSCRIPT_BOUNDS.maxTextChars) invalid();
     // These providers expose no recognition confidence; speaker/energy fields are not confidence.
     return { startMs: previousStart, endMs: previousEnd, text: cue.text };
   });
@@ -267,6 +274,7 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
       {
         allowedHosts: [TENCENT_HOST],
         mimeTypes: ["application/json"],
+        maxBytes: ASR_TRANSCRIPT_BOUNDS.maxInputChars,
         signal,
         credential: {
           origin: `https://${TENCENT_HOST}`,
@@ -289,10 +297,10 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
     taskId: string,
     audioSeconds: number,
     signal: AbortSignal,
-    submittedDate = new Date().toISOString().slice(0, 10),
+    submittedAt = new Date(),
   ) {
     return poll(async () => {
-      if (new Date().toISOString().slice(0, 10) !== submittedDate) invalid("unavailable");
+      if (Date.now() - submittedAt.getTime() >= TASK_VALID_MS) invalid("unavailable");
       const data = await request("DescribeTaskStatus", { TaskId: taskId }, signal);
       if (tencentTask(data.TaskId) !== taskId) invalid();
       if (data.Status === 0 || data.Status === 1) return null;
@@ -327,47 +335,57 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
       return document(segments, audioSeconds, language);
     }, signal);
   }
+  function transcribe(
+    input: { SourceType: 0; Url: string } | { SourceType: 1; Data: string; DataLen: number },
+    audioSeconds: number,
+    options: MediaAsrOptions,
+  ) {
+    const persistence: { pending?: Promise<void> } = {};
+    return bounded(
+      async (signal) => {
+        const submittedAt = new Date();
+        const data = await request(
+          "CreateRecTask",
+          {
+            EngineModelType: model,
+            ChannelNum: 1,
+            ResTextFormat: 3,
+            ...input,
+          },
+          signal,
+        );
+        const taskId = tencentTask(data.TaskId);
+        persistence.pending = Promise.resolve().then(() => options.onProviderTask?.(taskId));
+        await persistence.pending;
+        signal.throwIfAborted();
+        return wait(taskId, audioSeconds, signal, submittedAt);
+      },
+      options.signal,
+      undefined,
+      persistence,
+    );
+  }
   return {
-    transcribeBytes(bytes, options = {}) {
-      const persistence: { pending?: Promise<void> } = {};
-      return bounded(
-        async (signal) => {
-          const audioSeconds = inputDuration(bytes);
-          const input =
-            bytes.length <= 5 * 1024 * 1024
-              ? { SourceType: 1, Data: bytes.toString("base64"), DataLen: bytes.length }
-              : { SourceType: 0, Url: audioUrl(options.audioUrl) };
-          const submittedDate = new Date().toISOString().slice(0, 10);
-          const data = await request(
-            "CreateRecTask",
-            {
-              EngineModelType: model,
-              ChannelNum: 1,
-              ResTextFormat: 3,
-              ...input,
-            },
-            signal,
-          );
-          const taskId = tencentTask(data.TaskId);
-          persistence.pending = Promise.resolve().then(() => options.onProviderTask?.(taskId));
-          await persistence.pending;
-          signal.throwIfAborted();
-          return wait(taskId, audioSeconds, signal, submittedDate);
-        },
-        options.signal,
-        undefined,
-        persistence,
+    async transcribeBytes(bytes, options = {}) {
+      const seconds = inputDuration(bytes);
+      return transcribe(
+        bytes.length <= 5 * 1024 * 1024
+          ? { SourceType: 1, Data: bytes.toString("base64"), DataLen: bytes.length }
+          : { SourceType: 0, Url: audioUrl(options.audioUrl) },
+        seconds,
+        options,
       );
+    },
+    async transcribeUrl(url, seconds, options = {}) {
+      return transcribe({ SourceType: 0, Url: audioUrl(url) }, duration(seconds), options);
     },
     resume(taskId, submittedAt, signal, audioSeconds = MAX_AUDIO_SECONDS) {
       tencentTask(taskId);
       if (!(submittedAt instanceof Date) || !Number.isFinite(submittedAt.getTime()))
         invalid("unavailable");
-      // The API has no creation timestamp and warns that IDs can repeat on different dates.
-      if (submittedAt.toISOString().slice(0, 10) !== new Date().toISOString().slice(0, 10))
-        invalid("unavailable");
+      // Task IDs are queryable for 24h, including across midnight; the host UUID remains the job ID.
       return bounded(
-        (callSignal) => wait(taskId, duration(audioSeconds), callSignal),
+        (callSignal) => wait(taskId, duration(audioSeconds), callSignal, submittedAt),
         signal,
         submittedAt,
       );
@@ -397,7 +415,7 @@ function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
         allowedHosts: [ALIYUN_HOST],
         mimeTypes: ["application/json"],
         maxRedirects: 0,
-        maxBytes: 2 * 1024 * 1024,
+        maxBytes: ASR_TRANSCRIPT_BOUNDS.maxInputChars,
         signal,
         credential: authorization,
       });
@@ -434,7 +452,7 @@ function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
         allowedHosts: [url.hostname],
         mimeTypes: ["application/json"],
         maxRedirects: 0,
-        maxBytes: 2 * 1024 * 1024,
+        maxBytes: ASR_TRANSCRIPT_BOUNDS.maxInputChars,
         signal,
       });
       const transcriptions = parse(transcript.bytes).transcripts;
@@ -458,47 +476,52 @@ function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
       return document(segments, audioSeconds, language);
     }, signal);
   }
+  function transcribe(url: string, audioSeconds: number, options: MediaAsrOptions) {
+    const persistence: { pending?: Promise<void> } = {};
+    return bounded(
+      async (signal) => {
+        const response = await sendMediaJsonDocument(
+          `https://${ALIYUN_HOST}/api/v1/services/audio/asr/transcription`,
+          {
+            allowedHosts: [ALIYUN_HOST],
+            mimeTypes: ["application/json"],
+            signal,
+            credential: authorization,
+          },
+          Buffer.from(
+            JSON.stringify({
+              model,
+              input: { file_urls: [url] },
+              parameters: {
+                channel_id: [0],
+                disfluency_removal_enabled: false,
+                ...(language ? { language_hints: [language] } : {}),
+              },
+            }),
+          ),
+          { "X-DashScope-Async": "enable" },
+        );
+        const value = parse(response.bytes);
+        if (value.code) invalid(value.code === "InvalidApiKey" ? "forbidden" : "upstream_error");
+        const output = record(value.output);
+        if (output.task_status !== "PENDING" && output.task_status !== "RUNNING") invalid();
+        const id = taskId(output.task_id);
+        persistence.pending = Promise.resolve().then(() => options.onProviderTask?.(id));
+        await persistence.pending;
+        signal.throwIfAborted();
+        return wait(id, audioSeconds, signal);
+      },
+      options.signal,
+      undefined,
+      persistence,
+    );
+  }
   return {
-    transcribeBytes(bytes, options = {}) {
-      const persistence: { pending?: Promise<void> } = {};
-      return bounded(
-        async (signal) => {
-          const audioSeconds = inputDuration(bytes);
-          const response = await sendMediaJsonDocument(
-            `https://${ALIYUN_HOST}/api/v1/services/audio/asr/transcription`,
-            {
-              allowedHosts: [ALIYUN_HOST],
-              mimeTypes: ["application/json"],
-              signal,
-              credential: authorization,
-            },
-            Buffer.from(
-              JSON.stringify({
-                model,
-                input: { file_urls: [audioUrl(options.audioUrl)] },
-                parameters: {
-                  channel_id: [0],
-                  disfluency_removal_enabled: false,
-                  ...(language ? { language_hints: [language] } : {}),
-                },
-              }),
-            ),
-            { "X-DashScope-Async": "enable" },
-          );
-          const value = parse(response.bytes);
-          if (value.code) invalid(value.code === "InvalidApiKey" ? "forbidden" : "upstream_error");
-          const output = record(value.output);
-          if (output.task_status !== "PENDING" && output.task_status !== "RUNNING") invalid();
-          const id = taskId(output.task_id);
-          persistence.pending = Promise.resolve().then(() => options.onProviderTask?.(id));
-          await persistence.pending;
-          signal.throwIfAborted();
-          return wait(id, audioSeconds, signal);
-        },
-        options.signal,
-        undefined,
-        persistence,
-      );
+    async transcribeBytes(bytes, options = {}) {
+      return transcribe(audioUrl(options.audioUrl), inputDuration(bytes), options);
+    },
+    async transcribeUrl(url, seconds, options = {}) {
+      return transcribe(audioUrl(url), duration(seconds), options);
     },
     resume(id, submittedAt, signal, audioSeconds = MAX_AUDIO_SECONDS) {
       return bounded(

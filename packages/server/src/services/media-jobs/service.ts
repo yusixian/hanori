@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mediaTranscriptionJobs as jobs, type Database } from "@cos-tool-bot/database";
 import {
+  ASR_TRANSCRIPT_BOUNDS,
   parseBilibiliResource,
   pageTranscript,
   type MediaJobActor,
@@ -9,7 +10,7 @@ import {
   type MediaTranscriptionPort,
   type TranscriptDocument,
 } from "@cos-tool-bot/shared";
-import { and, desc, eq, gt, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNotNull, lt, or, sql } from "drizzle-orm";
 import type { MediaJobConfiguration, MediaJobDependencies, MediaJobRow } from "./contracts.js";
 
 export class MediaJobError extends Error {
@@ -144,7 +145,8 @@ function normalizedResult(value: TranscriptDocument): TranscriptDocument {
         ...(cue.timingInferred === undefined ? {} : { timingInferred: cue.timingInferred }),
       })),
     };
-    if (JSON.stringify(result).length > 500_000) throw new MediaJobError("job_failed");
+    if (Buffer.byteLength(JSON.stringify(result)) > ASR_TRANSCRIPT_BOUNDS.maxInputChars)
+      throw new MediaJobError("job_failed");
     return result;
   } catch {
     throw new MediaJobError("job_failed");
@@ -1076,20 +1078,26 @@ export class MediaJobService implements MediaTranscriptionPort {
     }
   }
   private async deliverPending() {
+    const now = new Date();
     const pending = await this.db
       .select()
       .from(jobs)
       .where(
         and(
-          eq(jobs.status, "completed"),
           eq(jobs.notification, "pending"),
-          gt(jobs.expiresAt, new Date()),
+          or(
+            and(eq(jobs.status, "completed"), gt(jobs.expiresAt, now)),
+            and(
+              inArray(jobs.status, ["failed", "cancelled", "expired"]),
+              gte(jobs.updatedAt, new Date(now.getTime() - retentionMs)),
+            ),
+          ),
         ),
       );
     for (const row of pending) {
       const [claimed] = await this.db
         .update(jobs)
-        .set({ notification: "delivering", updatedAt: new Date() })
+        .set({ notification: "delivering", updatedAt: now })
         .where(and(eq(jobs.id, row.id), eq(jobs.notification, "pending")))
         .returning();
       if (!claimed) continue;

@@ -404,6 +404,69 @@ describe("AI reply streaming", () => {
     );
   });
 
+  it("does not report a completed summary after read-only plugin tools return an empty final response", async () => {
+    const onLog = vi.fn<(entry: BotLogEntry) => void>();
+    const { ctx, replies } = createContext();
+    const execute = vi.fn(async () => ({
+      status: "available",
+      cues: [{ startMs: 0, endMs: 1000, text: "fixture subtitle" }],
+      hasMore: false,
+    }));
+    streamTextMock.mockImplementation((options: any) => {
+      async function* toolOnlyStream() {
+        await options.tools.plg_fixture_read_transcript.execute(
+          {},
+          { toolCallId: "read", messages: [] },
+        );
+        yield* [] as string[];
+      }
+      return {
+        textStream: toolOnlyStream(),
+        text: Promise.resolve(""),
+        steps: Promise.resolve(
+          Array.from({ length: 10 }, () => ({
+            toolCalls: [{ toolName: "plg_fixture_read_transcript" }],
+            toolResults: [{ toolName: "plg_fixture_read_transcript" }],
+          })),
+        ),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+        finishReason: Promise.resolve("tool-calls"),
+      };
+    });
+    const result = createAiReplyHandler({
+      ...createConfig(onLog),
+      plugins: {
+        createSession: vi.fn(async () => ({
+          tools: [
+            {
+              name: "plg_fixture_read_transcript",
+              description: "Read fixture subtitle",
+              inputSchema: { type: "object" },
+              effect: "read_only" as const,
+              access: "all" as const,
+              execute,
+            },
+          ],
+          searchProviders: [],
+          dispose: vi.fn(async () => {}),
+        })),
+      },
+    });
+    try {
+      await result.handler(ctx, vi.fn());
+      expect(execute).toHaveBeenCalledOnce();
+      expect(replies).not.toContain("✅ 操作完成");
+      expect(replies).toContain("(AI 未生成回复内容)");
+      expect(onLog).toHaveBeenCalledWith(
+        expect.objectContaining({ level: "warn", message: "Empty AI reply fallback sent" }),
+      );
+      expect(onLog).not.toHaveBeenCalledWith(expect.objectContaining({ message: "AI reply sent" }));
+    } finally {
+      await result.destroy();
+    }
+  });
+
   it.each([
     ["mark_rss_read", { collection_id: 7 }, "onMarkDigested"],
     [

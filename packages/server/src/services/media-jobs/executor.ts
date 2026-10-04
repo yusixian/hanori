@@ -1,5 +1,6 @@
 import { constants } from "node:fs";
-import { inspectConvertedWav } from "../media/wav.js";
+import { inspectConvertedWavFile } from "../media/wav.js";
+import { ASR_CONVERSION_TIMEOUT_MS, MAX_ASR_SOURCE_BYTES } from "../media/long-audio.js";
 import { createHash } from "node:crypto";
 import { chmod, chown, lstat, mkdir, open, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -153,8 +154,8 @@ export class MediaJobExecutor {
         referer: "https://www.bilibili.com/",
         maxRedirects: 0,
         mimeTypes: ["audio/mp4", "application/octet-stream"],
-        maxBytes: 64 * 1024 * 1024,
-        timeoutMs: 120_000,
+        maxBytes: MAX_ASR_SOURCE_BYTES,
+        timeoutMs: ASR_CONVERSION_TIMEOUT_MS,
         signal,
       },
       join(directory, "input.m4a"),
@@ -185,13 +186,17 @@ export class MediaJobExecutor {
     const parent = await lstat(directory);
     if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== process.getuid?.())
       throw new MediaExecutorError("invalid_audio");
-    const bytes = await readAsrWav(outputPath, signal);
-    const verified = inspectConvertedWav(bytes, configuration.limits.maxDurationSeconds);
+    const verified = await inspectConvertedWavFile(
+      outputPath,
+      configuration.limits.maxDurationSeconds,
+      { signal, expectedBytes: converted.bytes, expectedSha256: converted.sha256 },
+    ).catch(() => {
+      signal.throwIfAborted();
+      throw new MediaExecutorError("invalid_audio");
+    });
     if (
-      bytes.length !== converted.bytes ||
       Math.abs(verified.durationSeconds - job.durationSeconds) > 2 ||
-      Math.abs(verified.durationSeconds - converted.durationSeconds) > 0.1 ||
-      createHash("sha256").update(bytes).digest("hex") !== converted.sha256
+      Math.abs(verified.durationSeconds - converted.durationSeconds) > 0.1
     )
       throw new MediaExecutorError("invalid_audio");
     const billedSeconds =
@@ -201,18 +206,50 @@ export class MediaJobExecutor {
     if ((billedSeconds / 60) * configuration.limits.costPerMinute > job.estimatedCost + 1e-12)
       throw new MediaExecutorError("invalid_audio");
     signal.throwIfAborted();
-    // Persist this stage before issuing a billable request; recovery never blindly resubmits it.
-    await onStage("transcribing");
     const needsUrl =
       configuration.asr.provider === "aliyun" ||
-      (configuration.asr.provider === "tencent" && bytes.length > 5 * 1024 * 1024);
-    const audioUrl = needsUrl ? await this.audioStore?.stage(job.id, bytes, signal) : undefined;
+      (configuration.asr.provider === "tencent" && verified.bytes > 5 * 1024 * 1024);
+    const audioUrl = needsUrl
+      ? await this.audioStore?.stageFile(
+          job.id,
+          outputPath,
+          {
+            maxDurationSeconds: configuration.limits.maxDurationSeconds,
+            expectedBytes: verified.bytes,
+            expectedSha256: verified.sha256,
+          },
+          signal,
+        )
+      : undefined;
     if (needsUrl && !audioUrl) throw new MediaExecutorError("worker_unavailable");
-    const result = await createMediaAsrClient(configuration.asr).transcribeBytes(bytes, {
+    const bytes = audioUrl ? undefined : await readAsrWav(outputPath, signal);
+    if (
+      bytes &&
+      (bytes.length !== verified.bytes ||
+        createHash("sha256").update(bytes).digest("hex") !== verified.sha256)
+    )
+      throw new MediaExecutorError("invalid_audio");
+    // Freeze the validated bytes/file copy before persisting the billable stage.
+    try {
+      await onStage("transcribing");
+    } catch (error) {
+      if (audioUrl) await this.audioStore?.remove(job.id);
+      throw error;
+    }
+    const asr = createMediaAsrClient(configuration.asr);
+    const asrOptions = {
       signal,
-      ...(audioUrl ? { audioUrl } : {}),
       onProviderTask: options.onProviderTask,
-    });
+    };
+    let result;
+    if (audioUrl) {
+      if (!asr.transcribeUrl) throw new MediaExecutorError("worker_unavailable");
+      result = await asr.transcribeUrl(audioUrl, verified.durationSeconds, asrOptions);
+    } else if (bytes) {
+      result = await asr.transcribeBytes(bytes, asrOptions);
+    } else {
+      throw new MediaExecutorError("invalid_audio");
+    }
     if (audioUrl) await this.audioStore?.remove(job.id);
     return result;
   }

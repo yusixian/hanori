@@ -1,4 +1,9 @@
-import { boundedTranscriptPage, serializeSrt, serializeVtt } from "@cos-tool-bot/shared";
+import {
+  ASR_TRANSCRIPT_BOUNDS,
+  boundedTranscriptPage,
+  serializeSrt,
+  serializeVtt,
+} from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -12,7 +17,7 @@ export interface PluginMediaJobsOptions {
 const botParam = z.object({ id: z.literal("hanori.bilibili"), botId: z.uuid() });
 const jobParam = botParam.extend({ jobId: z.uuid() });
 const pageQuery = z.object({
-  offset: z.coerce.number().int().min(0).max(10_000).default(0),
+  offset: z.coerce.number().int().min(0).max(ASR_TRANSCRIPT_BOUNDS.maxCues).default(0),
   limit: z.coerce.number().int().min(1).max(40).default(20),
   query: z.string().trim().min(1).max(200).optional(),
 });

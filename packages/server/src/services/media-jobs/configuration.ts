@@ -26,7 +26,7 @@ export const ASR_CONFIG_FIELDS: PluginConfigField[] = [
     key: "asrMaxSeconds",
     label: "单视频秒数上限 / Maximum seconds per video",
     description:
-      "超过此时长会拒绝。单次 WAV 仍限 20 MiB（约 10 分 55 秒），暂不自动分段。 / Reject longer videos. A single WAV remains limited to 20 MiB (about 10m 55s); automatic splitting is not supported.",
+      "超过此时长会拒绝。腾讯云和百炼支持单段最长 5 小时；Groq / OpenAI 兼容上传仍限 20 MiB（约 10 分 55 秒）。 / Reject longer videos. Tencent/Alibaba URL transcription supports up to 5 hours; Groq/OpenAI-compatible uploads remain limited to 20 MiB (about 10m 55s).",
     type: "integer",
     default: 300,
     min: 1,

@@ -1,10 +1,11 @@
-import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, open, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { asrAudioRoutes } from "../../routes/asr-audio.js";
 import { MediaAudioStore } from "./audio-store.js";
+import { inspectConvertedWavFile } from "./wav.js";
 
 const key = "synthetic-audio-signing-secret";
 let directory: string;
@@ -36,6 +37,81 @@ beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "asr-audio-test-"));
   store = new MediaAudioStore(directory, "https://bot.example.com", key);
 });
+
+it("stages and streams a two-hour recording without expanding the short Buffer API", async () => {
+  const path = join(directory, "long.wav");
+  const file = await open(path, "wx", 0o600);
+  const header = pcm().subarray(0, 44);
+  header.writeUInt32LE(36 + 7200 * 32000, 4);
+  header.writeUInt32LE(7200 * 32000, 40);
+  await file.write(header);
+  await file.truncate(44 + 7200 * 32000);
+  await file.close();
+  const verified = await inspectConvertedWavFile(path, 18000);
+  const id = randomUUID();
+  const beforeStage = Math.floor(Date.now() / 1000);
+  const url = new URL(
+    await store.stageFile(id, path, {
+      maxDurationSeconds: 18000,
+      expectedBytes: verified.bytes,
+      expectedSha256: verified.sha256,
+    }),
+  );
+  expect(Number(url.searchParams.get("expires"))).toBeGreaterThanOrEqual(beforeStage + 86400);
+  expect(Number(url.searchParams.get("expires"))).toBeLessThanOrEqual(
+    Math.floor(Date.now() / 1000) + 86400,
+  );
+  expect(await read(url)).toBeNull();
+  const restarted = new MediaAudioStore(directory, "https://bot.example.com", key);
+  const opened = vi.spyOn(restarted, "openStream");
+  const response = await asrAudioRoutes(restarted).request(`/${id}${url.search}`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("Content-Length")).toBe(String(verified.bytes));
+  const staged = await opened.mock.results[0]!.value;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(staged!.stream.bytesRead).toBeLessThanOrEqual(3 * 65536);
+  expect(staged!.stream.readableLength).toBeLessThanOrEqual(65536);
+  const reader = response.body!.getReader();
+  const hash = createHash("sha256");
+  let bytes = 0;
+  let largestChunk = 0;
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    bytes += result.value.byteLength;
+    largestChunk = Math.max(largestChunk, result.value.byteLength);
+    hash.update(result.value);
+  }
+  expect(bytes).toBe(verified.bytes);
+  expect(largestChunk).toBeLessThanOrEqual(65536);
+  expect(hash.digest("hex")).toBe(verified.sha256);
+  await store.remove(id);
+  expect(await readdir(join(directory, "asr-audio"))).toEqual([]);
+}, 15000);
+
+it("does not publish forged or cancelled file staging", async () => {
+  const path = join(directory, "short.wav");
+  await writeFile(path, pcm());
+  await expect(
+    store.stageFile(randomUUID(), path, { expectedSha256: "0".repeat(64) }),
+  ).rejects.toThrow("invalid_converted_audio");
+  const controller = new AbortController();
+  controller.abort(new Error("test_cancelled"));
+  await expect(store.stageFile(randomUUID(), path, {}, controller.signal)).rejects.toThrow(
+    "test_cancelled",
+  );
+  expect(await readdir(directory)).toEqual(["short.wav"]);
+});
+
+it("closes the audio file when the HTTP consumer cancels the response", async () => {
+  const id = randomUUID();
+  const url = new URL(await store.stage(id, pcm()));
+  const opened = vi.spyOn(store, "openStream");
+  const response = await asrAudioRoutes(store).request(`/${id}${url.search}`);
+  const audio = await opened.mock.results[0]!.value;
+  await response.body!.cancel();
+  await vi.waitFor(() => expect(audio!.stream.closed).toBe(true));
+});
 afterEach(async () => {
   vi.useRealTimers();
   await rm(directory, { recursive: true, force: true });
@@ -66,6 +142,10 @@ it("rejects expired, forged, cross-job and malformed bearer links without reveal
   expect(await read(other)).toBeNull();
   expect(await store.read("../secrets", "1791060000", "0".repeat(64))).toBeNull();
   vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date((Number(url.searchParams.get("expires")) - 3600) * 1000));
+  expect(await read(url, new MediaAudioStore(directory, "https://bot.example.com", key))).toEqual(
+    pcm(),
+  );
   vi.setSystemTime(new Date((Number(url.searchParams.get("expires")) + 1) * 1000));
   expect(await read(url)).toBeNull();
   await store.sweep();

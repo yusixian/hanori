@@ -340,7 +340,7 @@ export async function downloadMediaFile(
   policy: MediaDownloadPolicy,
   filePath: string,
 ): Promise<{ bytes: number; sha256: string; mimeType: string }> {
-  const maxBytes = boundedInteger(policy.maxBytes ?? 64 * 1024 * 1024, 12, 64 * 1024 * 1024);
+  const maxBytes = boundedInteger(policy.maxBytes ?? 64 * 1024 * 1024, 12, 512 * 1024 * 1024);
   if (
     !isAbsolute(filePath) ||
     (policy.referer !== undefined && policy.referer !== "https://www.bilibili.com/") ||
@@ -401,7 +401,7 @@ export async function downloadMediaFile(
         }
       },
       {
-        maxTimeoutMs: 120_000,
+        maxTimeoutMs: 30 * 60_000,
         defaultTimeoutMs: 120_000,
         ...(policy.referer ? { headers: { Referer: "https://www.bilibili.com/" } } : {}),
       },
@@ -459,7 +459,7 @@ export async function sendMediaJsonDocument(
   body: Buffer,
   headers: Record<string, string> = {},
 ) {
-  const maxBytes = boundedInteger(policy.maxBytes ?? 2 * 1024 * 1024, 1, 2 * 1024 * 1024);
+  const maxBytes = boundedInteger(policy.maxBytes ?? 2 * 1024 * 1024, 1, MAX_DOCUMENT_BYTES);
   const allowedHeaders: Record<string, RegExp> = {
     "X-TC-Action": /^(?:CreateRecTask|DescribeTaskStatus)$/,
     "X-TC-Version": /^2019-06-14$/,

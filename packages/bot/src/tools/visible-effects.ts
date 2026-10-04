@@ -30,7 +30,7 @@ export function trackSuccessfulToolEffects(
       ...tool,
       execute: async (args: unknown, options: unknown) => {
         const output = await execute(args, options);
-        if (succeeded(output) && !isReadOnlyTool(name)) onEffect(name);
+        if (succeeded(output) && !isReadOnlyTool(name, tool)) onEffect(name);
         return output;
       },
     } as Tool;

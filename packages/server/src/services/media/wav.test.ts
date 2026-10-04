@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { inspectConvertedWav } from "./wav.js";
+import { mkdtemp, open, rm, symlink, link } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { inspectConvertedWav, inspectConvertedWavFile } from "./wav.js";
 
 function pcm(seconds = 1) {
   const data = Buffer.alloc(44 + seconds * 32_000);
@@ -50,5 +53,76 @@ describe("isolated converter output verification", () => {
     const duplicate = Buffer.concat([pcm(), pcm().subarray(36)]);
     duplicate.writeUInt32LE(duplicate.length - 8, 4);
     expect(() => inspectConvertedWav(duplicate, 10)).toThrow();
+  });
+});
+
+describe("file-backed long PCM verification", () => {
+  async function sparsePcm(path: string, seconds: number) {
+    const file = await open(path, "wx+", 0o600);
+    const header = pcm().subarray(0, 44);
+    header.writeUInt32LE(36 + seconds * 32_000, 4);
+    header.writeUInt32LE(seconds * 32_000, 40);
+    await file.write(header);
+    await file.truncate(44 + seconds * 32_000);
+    return file;
+  }
+  it("validates and hashes two hours with reads bounded to 64KiB and no readFile", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "wav-long-test-"));
+    const file = await sparsePcm(join(directory, "two-hours.wav"), 7200);
+    const reads = vi.spyOn(file, "read");
+    const readFile = vi.spyOn(file, "readFile");
+    try {
+      expect(await inspectConvertedWavFile(file, 18000)).toEqual({
+        durationSeconds: 7200,
+        bytes: 230400044,
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      });
+      expect(readFile).not.toHaveBeenCalled();
+      expect(
+        reads.mock.calls.every((args) => Number((args as readonly unknown[])[2]) <= 65_536),
+      ).toBe(true);
+    } finally {
+      await file.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  it("rejects more than five hours even with an unbounded requested duration", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "wav-long-test-"));
+    const file = await sparsePcm(join(directory, "too-long.wav"), 18001);
+    try {
+      await expect(inspectConvertedWavFile(file, Number.MAX_SAFE_INTEGER)).rejects.toThrow(
+        "invalid_converted_audio",
+      );
+    } finally {
+      await file.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+  it("rejects substitutions, forged checksums, wrong sizes, and cancellation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "wav-long-test-"));
+    const path = join(directory, "audio.wav");
+    const file = await sparsePcm(path, 1);
+    await file.close();
+    try {
+      await expect(
+        inspectConvertedWavFile(path, 10, { expectedSha256: "0".repeat(64) }),
+      ).rejects.toThrow("invalid_converted_audio");
+      await expect(inspectConvertedWavFile(path, 10, { expectedBytes: 44 })).rejects.toThrow(
+        "invalid_converted_audio",
+      );
+      const controller = new AbortController();
+      controller.abort(new Error("test_cancelled"));
+      await expect(
+        inspectConvertedWavFile(path, 10, { signal: controller.signal }),
+      ).rejects.toThrow("test_cancelled");
+      await symlink(path, join(directory, "symlink.wav"));
+      await expect(inspectConvertedWavFile(join(directory, "symlink.wav"), 10)).rejects.toThrow(
+        "invalid_converted_audio",
+      );
+      await link(path, join(directory, "hardlink.wav"));
+      await expect(inspectConvertedWavFile(path, 10)).rejects.toThrow("invalid_converted_audio");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

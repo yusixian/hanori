@@ -8,6 +8,7 @@ import {
   serializeVtt,
   TranscriptError,
   TRANSCRIPT_BOUNDS,
+  ASR_TRANSCRIPT_BOUNDS,
   type TranscriptDocument,
 } from "./media-transcript.js";
 
@@ -150,6 +151,37 @@ describe("Bilibili subtitle subset", () => {
 });
 
 describe("bounded input", () => {
+  it("pages and searches long ASR results past 10,000 cues while preserving platform limits", () => {
+    const document: TranscriptDocument = {
+      language: "en",
+      source: "asr",
+      track: "original",
+      cues: Array.from({ length: 10_002 }, (_, i) => ({
+        startMs: i * 1000,
+        endMs: i * 1000 + 900,
+        text: "Synthetic transcript ".repeat(3),
+      })),
+    };
+    expect(pageTranscript(document, { offset: 10_000, limit: 2 })).toMatchObject({
+      total: 10_002,
+      nextOffset: null,
+    });
+    expect(findTranscript(document, "Synthetic", { offset: 10_001 })).toMatchObject({
+      total: 10_002,
+      items: [{ cueIndex: 10_001 }],
+    });
+    expect(serializeSrt(document)).toContain("02:46:41,000");
+    expect(() => pageTranscript({ ...document, source: "platform_auto" })).toThrow("cue limit");
+    expect(() => pageTranscript(document, { offset: ASR_TRANSCRIPT_BOUNDS.maxCues + 1 })).toThrow(
+      "page",
+    );
+    expect(() =>
+      pageTranscript({
+        ...document,
+        cues: Array.from({ length: ASR_TRANSCRIPT_BOUNDS.maxCues + 1 }, () => document.cues[0]!),
+      }),
+    ).toThrow("cue limit");
+  });
   it("enforces raw length, expanded cue count and repeated text totals", () => {
     expect(() =>
       parseLrc("[ti:" + "x".repeat(20) + "]", { bounds: { maxInputChars: 10 } }),

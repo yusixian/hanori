@@ -1,12 +1,37 @@
 import type { Tool } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { trackSuccessfulToolEffects } from "./visible-effects.js";
+import { createPluginTools } from "./plugins.js";
 
 function executable(output: unknown): Tool {
   return { execute: vi.fn(async () => output) } as unknown as Tool;
 }
 
 describe("trackSuccessfulToolEffects", () => {
+  it("uses each plugin session's declared effect without leaking by dynamic tool name", async () => {
+    const onEffect = vi.fn();
+    for (const effect of ["read_only", "mutating", "read_only"] as const) {
+      const tools = trackSuccessfulToolEffects(
+        createPluginTools({
+          tools: [
+            {
+              name: "plg_fixture_tool",
+              description: "Fixture",
+              inputSchema: { type: "object" },
+              effect,
+              access: "all",
+              execute: async () => ({ ok: true }),
+            },
+          ],
+          searchProviders: [],
+          dispose: async () => {},
+        }),
+        onEffect,
+      );
+      await tools.plg_fixture_tool!.execute!({}, { toolCallId: "fixture", messages: [] });
+    }
+    expect(onEffect.mock.calls).toEqual([["plg_fixture_tool"]]);
+  });
   it("tracks successful side effects but not failures or known read-only tools", async () => {
     const onVisibleEffect = vi.fn();
     const tools = trackSuccessfulToolEffects(

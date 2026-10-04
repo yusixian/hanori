@@ -60,6 +60,7 @@ import {
 } from "@cos-tool-bot/shared";
 import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
+import { prepareFinalAnswerStep } from "../utils/final-answer-step.js";
 import type { Api, MiddlewareFn } from "grammy";
 import type { Message, User } from "grammy/types";
 import type { BotContext, WrapperContext } from "../context.js";
@@ -2629,7 +2630,7 @@ export function createAiReplyHandler(
           model: currentProviderFactory(currentModel),
           messages,
           tools: wrappedTools,
-          prepareStep: toolset.prepareStep,
+          prepareStep: prepareFinalAnswerStep(maxSteps, toolset.prepareStep),
           stopWhen: stepCountIs(maxSteps),
           toolChoice,
           abortSignal: perStepAbort.signal,
@@ -3103,8 +3104,12 @@ export function createAiReplyHandler(
         });
         if (!delivered) executionFailure = new Error("Telegram reply delivery failed");
         onLog?.({
-          level: "info",
-          message: "AI reply sent",
+          level: emptyResponse && successfulToolEffectCount === 0 ? "warn" : "info",
+          message: emptyResponse
+            ? successfulToolEffectCount > 0
+              ? "Tool completion status sent without AI reply"
+              : "Empty AI reply fallback sent"
+            : "AI reply sent",
           meta: {
             chatId,
             userId,
