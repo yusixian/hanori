@@ -12,7 +12,12 @@ export interface McpToolEntry {
 
 export interface McpToolsOptions {
   getTools: () => McpToolEntry[];
-  callTool: (serverId: number, toolName: string, args: unknown) => Promise<unknown>;
+  callTool: (
+    serverId: number,
+    toolName: string,
+    args: unknown,
+    signal?: AbortSignal,
+  ) => Promise<unknown>;
 }
 
 export function createMcpTools(
@@ -34,9 +39,9 @@ export function createMcpTools(
     result[toolKey] = tool({
       description: t.description || t.name,
       inputSchema: schema,
-      execute: async (args) => {
+      execute: async (args, { abortSignal }) => {
         try {
-          return await options.callTool(t.serverId, t.name, args);
+          return await options.callTool(t.serverId, t.name, args, abortSignal);
         } catch (err) {
           return { error: err instanceof Error ? err.message : String(err) };
         }

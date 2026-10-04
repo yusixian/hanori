@@ -148,9 +148,10 @@ describe("assembleBotRuntime", () => {
 
     expect(attached.config.mcpCallbacks).toBeDefined();
     attached.config.aiReply?.mcpTools?.getTools();
-    await attached.config.aiReply?.mcpTools?.callTool(3, "search", { q: "tea" });
+    const signal = new AbortController().signal;
+    await attached.config.aiReply?.mcpTools?.callTool(3, "search", { q: "tea" }, signal);
     expect(mcpClientManager.getToolsForServers).toHaveBeenCalledWith([3]);
-    expect(mcpClientManager.callTool).toHaveBeenCalledWith(3, "search", { q: "tea" });
+    expect(mcpClientManager.callTool).toHaveBeenCalledWith(3, "search", { q: "tea" }, signal);
     expect(detached.config.mcpCallbacks).toBeUndefined();
     expect(detached.config.aiReply?.mcpTools).toBeUndefined();
   });

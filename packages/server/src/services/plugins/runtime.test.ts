@@ -146,4 +146,68 @@ describe("trusted plugin invocation boundary", () => {
       runPluginCall(async () => new Promise(() => {}), controller().signal, 10),
     ).rejects.toThrow("plugin_timeout");
   });
+
+  it.each(["tool", "search"] as const)(
+    "allows a %s call to finish beyond the previous one-minute limit",
+    async (kind) => {
+      vi.useFakeTimers();
+      vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+        const timeout = controller();
+        setTimeout(() => timeout.abort(), ms);
+        return timeout.signal;
+      });
+      try {
+        const session = fixture();
+        session.tools![0]!.execute = async () =>
+          new Promise((resolve) => setTimeout(() => resolve({ value: 1 }), 120_000));
+        session.searchProviders![0]!.search = async () =>
+          new Promise((resolve) =>
+            setTimeout(() => resolve({ status: "empty", items: [], hasMore: false }), 120_000),
+          );
+        const bound = bind(session);
+        const pending =
+          kind === "tool"
+            ? bound.tools[0]!.execute({}, controller().signal)
+            : bound.searchProviders[0]!.search(
+                { scope: "fixture", query: "slow source", page: 1, limit: 10 },
+                controller().signal,
+              );
+        const completed = expect(pending).resolves.toEqual(
+          kind === "tool" ? { value: 1 } : { status: "empty", items: [], hasMore: false },
+        );
+        await vi.advanceTimersByTimeAsync(120_000);
+        await completed;
+      } finally {
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("stops a non-cooperative plugin after ten minutes and aborts its call signal", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const timeout = controller();
+      setTimeout(() => timeout.abort(), ms);
+      return timeout.signal;
+    });
+    try {
+      let callSignal: AbortSignal | undefined;
+      const session = fixture();
+      session.tools![0]!.execute = async (_input, signal) => {
+        callSignal = signal;
+        return new Promise(() => {});
+      };
+      const pending = bind(session).tools[0]!.execute({}, controller().signal);
+      const rejected = expect(pending).rejects.toThrow("plugin_timeout");
+      await vi.advanceTimersByTimeAsync(599_999);
+      expect(callSignal?.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await rejected;
+      expect(callSignal?.aborted).toBe(true);
+    } finally {
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    }
+  });
 });
