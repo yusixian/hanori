@@ -68,6 +68,8 @@ import {
 import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
 import { createMediaConfirmationCallbackQueryHandler } from "./handlers/media-confirmation.js";
+import { createOutgoingImageSafety } from "./services/outgoing-image-safety.js";
+import type { NsfwChecker } from "./services/nsfw-checker.js";
 import { formatImageGenerationCaption } from "./utils/image-generation-delivery.js";
 
 export { sendMediaConfirmationMessage } from "./handlers/media-confirmation.js";
@@ -114,6 +116,8 @@ export interface TimerCallbacks {
 }
 
 export interface BotConfig {
+  nsfwChecker?: NsfwChecker;
+  nsfwThreshold?: number;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
   token: string;
   botId: string;
@@ -213,6 +217,15 @@ export function createBot(config: BotConfig) {
     ) => BotContext,
   });
   bot.api.config.use(autoRetry());
+  bot.api.config.use(
+    createOutgoingImageSafety({
+      api: bot.api,
+      token,
+      checker: config.nsfwChecker,
+      threshold: config.nsfwThreshold,
+      logger: (level, message, meta) => logger[level](meta ?? {}, message),
+    }),
+  );
   const commandRegistry = new ActiveCommandRegistry(bot);
 
   const authGuard = createAuthGuard(adminChatIds);

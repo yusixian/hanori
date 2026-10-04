@@ -233,7 +233,9 @@ function mapCurrentListItem(row: typeof imageGenerations.$inferSelect) {
     errorMessage: row.errorMessage,
     createdAt: row.createdAt.toISOString(),
     completedAt: toIso(row.completedAt),
-    nsfwScores: null,
+    nsfwScores: row.artifacts.some((artifact) => artifact.nsfw?.scores)
+      ? row.artifacts.flatMap((artifact) => (artifact.nsfw?.scores ? [artifact.nsfw.scores] : []))
+      : null,
   };
 }
 

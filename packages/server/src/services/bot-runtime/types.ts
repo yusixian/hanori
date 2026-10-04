@@ -1,5 +1,9 @@
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
-import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
+import type {
+  BotTimerHandlers,
+  TelegramObservationCallbacks,
+  NsfwChecker,
+} from "@cos-tool-bot/bot";
 import type { Database, bots } from "@cos-tool-bot/database";
 import type { ImageGenerationPort, TimerRecord, UsageGovernancePort } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
@@ -55,6 +59,7 @@ export interface BotRuntimeInput {
 export interface BotRuntimeServices {
   plugins?: PluginRuntimePort;
   mediaTranscriptionPort?: MediaTranscriptionPort;
+  nsfwChecker?: NsfwChecker;
   db: Database;
   logger: Logger;
   timerRegistry: TimerRegistry;
