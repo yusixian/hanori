@@ -7,6 +7,8 @@ import type {
   SearchProvider,
 } from "@cos-tool-bot/shared";
 
+const PLUGIN_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
+
 export class PluginRuntimeError extends Error {
   constructor(
     readonly code:
@@ -137,14 +139,18 @@ export function bindPluginSession(options: {
     callSignal: AbortSignal,
   ): Promise<T> => {
     const combined = AbortSignal.any([signal, callSignal]);
-    return runPluginCall(async (boundedSignal) => {
-      await authorize();
-      boundedSignal.throwIfAborted();
-      const result = await operation(boundedSignal);
-      boundedSignal.throwIfAborted();
-      await authorize();
-      return result;
-    }, combined);
+    return runPluginCall(
+      async (boundedSignal) => {
+        await authorize();
+        boundedSignal.throwIfAborted();
+        const result = await operation(boundedSignal);
+        boundedSignal.throwIfAborted();
+        await authorize();
+        return result;
+      },
+      combined,
+      PLUGIN_TOOL_TIMEOUT_MS,
+    );
   };
   return {
     tools: (session.tools ?? [])

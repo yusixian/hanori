@@ -76,7 +76,7 @@ export function createMcpToolsConfig(
 
   return {
     getTools: () => mcpClientManager.getToolsForServers(mcpServerIds),
-    callTool: (serverId: number, toolName: string, args: unknown) =>
-      mcpClientManager.callTool(serverId, toolName, args),
+    callTool: (serverId: number, toolName: string, args: unknown, signal?: AbortSignal) =>
+      mcpClientManager.callTool(serverId, toolName, args, signal),
   };
 }

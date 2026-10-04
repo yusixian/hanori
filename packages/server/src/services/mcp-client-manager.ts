@@ -23,7 +23,7 @@ interface McpClientEntry {
 }
 
 const MAX_RETRIES = 10;
-const CALL_TOOL_TIMEOUT_MS = 5 * 60 * 1000;
+const CALL_TOOL_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * GitHub MCP servers act with the credentials in their configured headers, so only Bot admins get
@@ -210,25 +210,42 @@ export class McpClientManager {
     return result;
   }
 
-  async callTool(serverId: number, toolName: string, args: unknown): Promise<unknown> {
+  async callTool(
+    serverId: number,
+    toolName: string,
+    args: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     const entry = this.clients.get(serverId);
     if (!entry?.connected) {
       throw new Error(`MCP server ${serverId} is not connected`);
     }
 
+    const controller = new AbortController();
+    const callSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    callSignal.throwIfAborted();
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const result = await Promise.race([
-        entry.client.callTool({
-          name: toolName,
-          arguments: args as Record<string, unknown>,
-        }),
         new Promise<never>((_, reject) => {
-          timer = setTimeout(
-            () => reject(new Error("MCP tool call timed out")),
-            CALL_TOOL_TIMEOUT_MS,
-          );
+          timer = setTimeout(() => {
+            const error = new Error("MCP tool call timed out");
+            controller.abort(error);
+            reject(error);
+          }, CALL_TOOL_TIMEOUT_MS);
         }),
+        entry.client.callTool(
+          {
+            name: toolName,
+            arguments: args as Record<string, unknown>,
+          },
+          undefined,
+          {
+            signal: callSignal,
+            timeout: CALL_TOOL_TIMEOUT_MS,
+            maxTotalTimeout: CALL_TOOL_TIMEOUT_MS,
+          },
+        ),
       ]);
 
       // Extract text content from MCP response
@@ -241,6 +258,9 @@ export class McpClientManager {
       }
 
       return result.content;
+    } catch (error) {
+      callSignal.throwIfAborted();
+      throw error;
     } finally {
       clearTimeout(timer);
     }
