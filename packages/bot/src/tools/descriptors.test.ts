@@ -67,7 +67,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
 ]);
 
 describe("tool descriptors", () => {
-  it("classifies preparation as read-only and delivery retry as a visible effect", () => {
+  it("derives the expected effect sets from tool descriptors", () => {
     expect(VISIBLE_EFFECT_TOOL_NAMES).toEqual(EXPECTED_VISIBLE_EFFECT_TOOL_NAMES);
     expect(READ_ONLY_TOOL_NAMES).toEqual(EXPECTED_READ_ONLY_TOOL_NAMES);
   });
