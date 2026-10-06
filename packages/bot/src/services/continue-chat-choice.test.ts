@@ -179,100 +179,124 @@ describe("choice continuation tools", () => {
     },
   );
 
-  it("keeps configured image generation tools bound to the selecting user's identity", async () => {
-    const coordinator = createCoordinator();
-    const onLog = vi.fn();
-    const create = vi.fn().mockResolvedValue({
+  it.each([
+    {
+      state: "queued",
       accepted: true,
-      generation: {
-        id: "generation-1",
-        purpose: "anime_illustration",
-        provider: "mcp_pixai",
-        state: "queued",
-        approval: "not_required",
-        artifacts: [],
-        createdAt: "2026-09-17T00:00:00.000Z",
-        updatedAt: "2026-09-17T00:00:00.000Z",
-      },
-    });
-    const imageGenerationPort = {
-      listRoutes: vi.fn().mockResolvedValue([route()]),
-      create,
-    } as unknown as ImageGenerationPort;
-    let executeImage!: Promise<unknown>;
-    streamTextMock.mockImplementationOnce((options: { tools: Record<string, Tool> }) => {
-      const createImage = options.tools.create_image;
-      expect(createImage?.execute).toBeTypeOf("function");
-      executeImage = createImage!.execute!(
-        {
-          purpose: "anime_illustration",
-          routingIntent: "semantic",
-          prompt: "侧脸少年，冷感插画风",
-        },
-        { abortSignal: new AbortController().signal } as never,
+      deliveryState: undefined,
+      expected: "图片请求已提交，排队中（任务 generation-1）",
+    },
+    {
+      state: "succeeded",
+      accepted: true,
+      deliveryState: "unknown",
+      expected: "图片投递结果未知，请核对回执；不会自动重发（任务 generation-1）",
+    },
+    {
+      state: "queued",
+      accepted: false,
+      deliveryState: undefined,
+      expected: "图片生成请求未提交成功，请查看工具错误后再处理",
+    },
+  ])(
+    "keeps selecting identity and reports image state ($state, accepted=$accepted)",
+    async ({ state, accepted, deliveryState, expected }) => {
+      const coordinator = createCoordinator();
+      const onLog = vi.fn();
+      const create = vi.fn().mockResolvedValue(
+        accepted
+          ? {
+              accepted: true,
+              generation: {
+                id: "generation-1",
+                purpose: "anime_illustration",
+                provider: "mcp_pixai",
+                state,
+                deliveryState,
+                approval: "not_required",
+                artifacts: [],
+                createdAt: "2026-09-17T00:00:00.000Z",
+                updatedAt: "2026-09-17T00:00:00.000Z",
+              },
+            }
+          : { accepted: false, reason: "provider_unavailable" },
       );
-      async function* textStream() {
-        await executeImage;
-        yield "";
-      }
-      return {
-        textStream: textStream(),
-        text: Promise.resolve(""),
-        steps: Promise.resolve([]),
-        totalUsage: Promise.reject(new Error("usage metadata failed after tool delivery")),
-      };
-    });
-    const { api, sendMessage } = createApi();
-    const config = createConfig(coordinator, {
-      imageGenerationPort,
-      isDelegatedGroupAdmin: vi.fn().mockResolvedValue(true),
-      onLog,
-    });
+      const imageGenerationPort = {
+        listRoutes: vi.fn().mockResolvedValue([route()]),
+        create,
+      } as unknown as ImageGenerationPort;
+      let executeImage!: Promise<unknown>;
+      streamTextMock.mockImplementationOnce((options: { tools: Record<string, Tool> }) => {
+        const createImage = options.tools.create_image;
+        expect(createImage?.execute).toBeTypeOf("function");
+        executeImage = createImage!.execute!(
+          {
+            purpose: "anime_illustration",
+            routingIntent: "semantic",
+            prompt: "侧脸少年，冷感插画风",
+          },
+          { abortSignal: new AbortController().signal } as never,
+        );
+        async function* textStream() {
+          await executeImage;
+          yield "";
+        }
+        return {
+          textStream: textStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          totalUsage: Promise.reject(new Error("usage metadata failed after tool delivery")),
+        };
+      });
+      const { api, sendMessage } = createApi();
+      const config = createConfig(coordinator, {
+        imageGenerationPort,
+        isDelegatedGroupAdmin: vi.fn().mockResolvedValue(true),
+        onLog,
+      });
 
-    await expect(
-      continueChat(api, config, {
+      await expect(
+        continueChat(api, config, {
+          chatId: CHAT_ID,
+          userId: USER_ID,
+          userName: "Krau",
+          eventDescription: "用户 Krau 选择了: 侧脸少年（冷感插画风）",
+          requireDelivery: true,
+          failureMessage: FAILURE_MESSAGE,
+        }),
+      ).resolves.toBe(true);
+
+      const actor: ImageGenerationActor = {
+        botId: "bot-1",
         chatId: CHAT_ID,
         userId: USER_ID,
-        userName: "Krau",
-        eventDescription: "用户 Krau 选择了: 侧脸少年（冷感插画风）",
-        requireDelivery: true,
-        failureMessage: FAILURE_MESSAGE,
-      }),
-    ).resolves.toBe(true);
-
-    const actor: ImageGenerationActor = {
-      botId: "bot-1",
-      chatId: CHAT_ID,
-      userId: USER_ID,
-      chatType: "supergroup",
-      isBotAdmin: false,
-      isDelegatedGroupAdmin: true,
-    };
-    expect(imageGenerationPort.listRoutes).toHaveBeenCalledWith(actor, { includePresets: false });
-    expect(create).toHaveBeenCalledWith(actor, {
-      purpose: "anime_illustration",
-      routingIntent: "semantic",
-      prompt: "侧脸少年，冷感插画风",
-    });
-    expect(sendMessage).toHaveBeenCalledWith(
-      CHAT_ID,
-      "(事件已处理，但 AI 未生成回复内容)",
-      undefined,
-    );
-    expect(sendMessage).not.toHaveBeenCalledWith(CHAT_ID, FAILURE_MESSAGE);
-    expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).toContain("侧脸少年");
-    const requestLog = onLog.mock.calls.find(
-      ([entry]) => entry.message === "AI continuation request",
-    )?.[0];
-    const toolLog = onLog.mock.calls.find(([entry]) => entry.message === "AI tool call")?.[0];
-    expect(toolLog?.meta).toMatchObject({
-      correlationId: requestLog?.meta?.correlationId,
-      chatId: CHAT_ID,
-      userId: USER_ID,
-      eventType: "continuation",
-      toolName: "create_image",
-    });
-  });
+        chatType: "supergroup",
+        isBotAdmin: false,
+        isDelegatedGroupAdmin: true,
+        requestContext: { threadId: undefined, traceId: undefined },
+      };
+      expect(imageGenerationPort.listRoutes).toHaveBeenCalledWith(actor, { includePresets: false });
+      expect(create).toHaveBeenCalledWith(actor, {
+        purpose: "anime_illustration",
+        routingIntent: "semantic",
+        prompt: "侧脸少年，冷感插画风",
+      });
+      expect(sendMessage).toHaveBeenCalledWith(CHAT_ID, expected, undefined);
+      expect(sendMessage).not.toHaveBeenCalledWith(CHAT_ID, FAILURE_MESSAGE);
+      expect(JSON.stringify(streamTextMock.mock.calls[0]?.[0]?.messages)).toContain("侧脸少年");
+      const requestLog = onLog.mock.calls.find(
+        ([entry]) => entry.message === "AI continuation request",
+      )?.[0];
+      const toolLog = onLog.mock.calls.find(([entry]) => entry.message === "AI tool call")?.[0];
+      expect(toolLog?.meta).toMatchObject({
+        correlationId: requestLog?.meta?.correlationId,
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        eventType: "continuation",
+        toolName: "create_image",
+      });
+    },
+  );
 
   it("logs bounded continuation request and response content in one diagnostic scope", async () => {
     const coordinator = createCoordinator();
