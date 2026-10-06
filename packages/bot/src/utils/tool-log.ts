@@ -140,6 +140,26 @@ function loggedToolOutput(name: string, output: unknown): unknown {
   if (!mode) return toToolLogValue(output);
   if (typeof output !== "object" || output === null) return { privateOutput: true };
   const value = output as Record<string, unknown>;
+  if (mode === "github_proposal_metadata") {
+    return toToolLogValue({
+      ...Object.fromEntries(
+        [
+          "pending_confirmation",
+          "action_id",
+          "proposal_id",
+          "status",
+          "hash",
+          "expires_at",
+          "cards_sent",
+        ]
+          .filter((key) => Object.hasOwn(value, key))
+          .map((key) => [key, value[key]]),
+      ),
+      ...(Array.isArray(value.proposals) ? { proposalCount: value.proposals.length } : {}),
+      failed: !!value.error,
+      privateOutput: true,
+    });
+  }
   if (mode === "search_metadata")
     return toToolLogValue({
       ...Object.fromEntries(
@@ -171,6 +191,15 @@ function loggedToolOutput(name: string, output: unknown): unknown {
 }
 
 function loggedToolInput(name: string, input: unknown): unknown {
+  if (name === "github_create_issue") {
+    const value =
+      typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
+    return {
+      titleLength: typeof value.title === "string" ? value.title.length : 0,
+      bodyLength: typeof value.body === "string" ? value.body.length : 0,
+      privateInput: true,
+    };
+  }
   if (
     name !== "search" ||
     typeof input !== "object" ||
@@ -288,7 +317,10 @@ export function wrapToolsWithLogging(
               toolName: name,
               success: false,
               durationMs: Date.now() - startedAt,
-              error: toToolLogValue(error),
+              error:
+                getToolDescriptor(name)?.outputLog === "github_proposal_metadata"
+                  ? { failed: true, privateOutput: true }
+                  : toToolLogValue(error),
               toolCallId,
             },
           });

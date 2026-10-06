@@ -193,6 +193,22 @@ describe("GitHub tools permissions", () => {
       chatId: -100,
       api,
       pendingActions: registry,
+      issueProposals: {
+        propose: vi.fn(async (input) => ({
+          ...input,
+          id: "a".repeat(24),
+          botId: "bot",
+          initiator: input.userId,
+          body: input.body ?? "",
+          threadId: input.threadId ?? null,
+          hash: "b".repeat(64),
+          createdAt: Date.now(),
+          expiresAt: null,
+          status: "pending" as const,
+        })),
+        list: vi.fn(),
+        decide: vi.fn(),
+      },
       fetch: fetchMock,
     });
 
@@ -730,7 +746,6 @@ describe("GitHub tools permissions", () => {
   });
 
   it.each([
-    ["create", "github_create_issue", { repository: "owner/repo", title: "Abort safely" }],
     [
       "update",
       "github_update_issue",
@@ -927,4 +942,85 @@ describe("GitHub tools permissions", () => {
     expect(runTask).toHaveBeenCalledWith(expect.any(Object), expect.any(Object), controller.signal);
     registry.destroy();
   });
+});
+
+describe("Issue policy preserves high-risk confirmations", () => {
+  it("still expires Issue updates after 10 minutes with a never-expiring create policy", async () => {
+    vi.useFakeTimers();
+    const registry = new PendingGitHubActionRegistry();
+    try {
+      const api = createApi();
+      const tools = createGitHubTools({
+        config: { ...adminConfig(), createIssueConfirmationTtlMinutes: null },
+        isAdmin: true,
+        userId: 7,
+        chatId: -100,
+        api,
+        pendingActions: registry,
+      });
+      const proposal = (await execute(tools.github_update_issue, {
+        repository: "owner/repo",
+        issue_number: 42,
+        state: "closed",
+      })) as { action_id: string };
+      expect(api.sendMessage).toHaveBeenCalledWith(
+        -100,
+        expect.stringContaining("10 分钟后过期"),
+        expect.any(Object),
+      );
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(registry.get(proposal.action_id)).toBeUndefined();
+    } finally {
+      registry.destroy();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("returns only proposal metadata to history while sending the private preview to its initiating chat", async () => {
+  const api = createApi();
+  const registry = new PendingGitHubActionRegistry();
+  try {
+    const proposal = {
+      id: "a".repeat(24),
+      botId: "bot",
+      chatId: -100,
+      threadId: null,
+      initiator: 7,
+      repository: "owner/repo",
+      title: "Title",
+      body: "private proposal body",
+      hash: "b".repeat(64),
+      createdAt: 1,
+      expiresAt: null,
+      status: "pending" as const,
+      executionOwner: "private runtime diagnostic",
+    };
+    const port = { propose: vi.fn(), list: vi.fn().mockResolvedValue([proposal]), decide: vi.fn() };
+    const tools = createGitHubTools({
+      config: adminConfig(),
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api,
+      pendingActions: registry,
+      issueProposals: port,
+    });
+    const result = await execute(tools.github_pending_issue_proposals, {});
+    expect(JSON.stringify(result)).not.toMatch(
+      /private proposal body|private runtime diagnostic|executionOwner/,
+    );
+    expect(result).toMatchObject({
+      proposals: [{ id: proposal.id, title: "Title", status: "pending", hash: proposal.hash }],
+      cards_sent: 1,
+    });
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      -100,
+      expect.stringContaining("private proposal body"),
+      expect.any(Object),
+    );
+    expect(port.list).toHaveBeenCalledWith({ chatId: -100, threadId: undefined, userId: 7 });
+  } finally {
+    registry.destroy();
+  }
 });

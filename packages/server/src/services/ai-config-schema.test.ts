@@ -74,3 +74,30 @@ describe("admin AI settings bounds", () => {
     expect(parse(overrides).success).toBe(false);
   });
 });
+
+describe("Issue creation confirmation TTL", () => {
+  const githubToolsConfig = {
+    enabled: true,
+    publicReadEnabled: true,
+    codingAgentEnabled: false,
+    authorName: "Bot",
+    authorEmail: "bot@example.test",
+    repositories: ["owner/repo"],
+  };
+  it.each([null, 1, 60, 5_256_001, Number.MAX_SAFE_INTEGER])(
+    "accepts never expiry or positive safe integer %s",
+    (ttl) => {
+      const result = parse({
+        githubToolsConfig: { ...githubToolsConfig, createIssueConfirmationTtlMinutes: ttl },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.githubToolsConfig?.createIssueConfirmationTtlMinutes).toBe(ttl);
+    },
+  );
+  it.each([0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, "60"])("rejects invalid TTL %s", (ttl) => {
+    expect(
+      parse({ githubToolsConfig: { ...githubToolsConfig, createIssueConfirmationTtlMinutes: ttl } })
+        .success,
+    ).toBe(false);
+  });
+});

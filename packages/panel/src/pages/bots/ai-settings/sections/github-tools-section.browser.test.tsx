@@ -7,11 +7,28 @@ import { GitHubToolsSection } from "./github-tools-section";
 
 beforeEach(async () => {
   await i18n.changeLanguage("en");
+  await page.viewport(1440, 900);
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
+
+function stubUnavailableGitHubApp() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            data: { available: false, connected: false, legacyPat: false },
+          }),
+          { status: 200 },
+        ),
+    ),
+  );
+}
 
 test("hides credential operations from editors and viewers", async () => {
   const fetchMock = vi.fn();
@@ -32,6 +49,134 @@ test("hides credential operations from editors and viewers", async () => {
   expect(document.body.textContent).not.toContain("Connect GitHub");
   expect(document.body.textContent).not.toContain("GitHub App authorization");
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+test("lets administrators make Create Issue confirmations non-expiring", async () => {
+  stubUnavailableGitHubApp();
+  const onUpdate = vi.fn();
+
+  render(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{
+        ...DEFAULT_GITHUB_TOOLS,
+        enabled: true,
+        createIssueConfirmationTtlMinutes: 15,
+      }}
+      onUpdate={onUpdate}
+    />,
+  );
+
+  await page.getByRole("switch", { name: "Create Issue confirmations never expire" }).click();
+  expect(onUpdate).toHaveBeenLastCalledWith({ createIssueConfirmationTtlMinutes: null });
+});
+
+test("switches to a finite confirmation period and saves its minute value", async () => {
+  stubUnavailableGitHubApp();
+  const onUpdate = vi.fn();
+  const view = await render(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{
+        ...DEFAULT_GITHUB_TOOLS,
+        enabled: true,
+      }}
+      onUpdate={onUpdate}
+    />,
+  );
+
+  await page.getByRole("switch", { name: "Create Issue confirmations never expire" }).click();
+  expect(onUpdate).toHaveBeenLastCalledWith({ createIssueConfirmationTtlMinutes: 10 });
+
+  await view.rerender(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{
+        ...DEFAULT_GITHUB_TOOLS,
+        enabled: true,
+        createIssueConfirmationTtlMinutes: 10,
+      }}
+      onUpdate={onUpdate}
+    />,
+  );
+  const minutes = page.getByRole("spinbutton", { name: "Confirmation validity (minutes)" });
+  await minutes.fill("25");
+  expect(onUpdate).toHaveBeenLastCalledWith({ createIssueConfirmationTtlMinutes: 25 });
+  await minutes.fill("5256001");
+  expect(onUpdate).toHaveBeenLastCalledWith({ createIssueConfirmationTtlMinutes: 5_256_001 });
+});
+
+test("does not save invalid confirmation minute values", async () => {
+  stubUnavailableGitHubApp();
+  const onUpdate = vi.fn();
+  render(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{ ...DEFAULT_GITHUB_TOOLS, enabled: true, createIssueConfirmationTtlMinutes: 10 }}
+      onUpdate={onUpdate}
+    />,
+  );
+  const minutes = page.getByRole("spinbutton", { name: "Confirmation validity (minutes)" });
+  for (const value of ["0", "1.5", "9007199254740992"]) {
+    await minutes.fill(value);
+    expect(onUpdate).not.toHaveBeenCalled();
+  }
+});
+
+test("restricts the confirmation policy to credential managers and disables it with GitHub tools", async () => {
+  stubUnavailableGitHubApp();
+  const onUpdate = vi.fn();
+  const view = await render(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials={false}
+      authorizationBlocked={false}
+      providers={[]}
+      config={{
+        ...DEFAULT_GITHUB_TOOLS,
+        enabled: true,
+        createIssueConfirmationTtlMinutes: 10,
+      }}
+      onUpdate={onUpdate}
+    />,
+  );
+
+  expect(document.body.textContent).not.toContain("Create Issue confirmations never expire");
+
+  await view.rerender(
+    <GitHubToolsSection
+      botId="test-id"
+      canManageCredentials
+      authorizationBlocked={false}
+      providers={[]}
+      config={{
+        ...DEFAULT_GITHUB_TOOLS,
+        enabled: false,
+        createIssueConfirmationTtlMinutes: 10,
+      }}
+      onUpdate={onUpdate}
+    />,
+  );
+
+  await expect
+    .element(page.getByRole("switch", { name: "Create Issue confirmations never expire" }))
+    .toBeDisabled();
+  await expect
+    .element(page.getByRole("spinbutton", { name: "Confirmation validity (minutes)" }))
+    .toBeDisabled();
+  expect(onUpdate).not.toHaveBeenCalled();
 });
 
 test("lets administrators select a dedicated coding provider and model", async () => {
@@ -314,3 +459,45 @@ test("ignores a stale status response after switching bots", async () => {
   expect(document.body.textContent).not.toContain("first-account");
   await expect.element(page.getByText("second-account", { exact: true })).toBeVisible();
 });
+
+test.each([1440, 390])(
+  "shows the Issue confirmation controls in a %s px viewport",
+  async (width) => {
+    await page.viewport(width, width === 390 ? 844 : 900);
+    stubUnavailableGitHubApp();
+    const view = await render(
+      <GitHubToolsSection
+        botId="test-id"
+        canManageCredentials
+        authorizationBlocked={false}
+        providers={[]}
+        config={{ ...DEFAULT_GITHUB_TOOLS, enabled: true, createIssueConfirmationTtlMinutes: 60 }}
+        onUpdate={vi.fn()}
+      />,
+    );
+    await expect
+      .element(page.getByRole("switch", { name: "Create Issue confirmations never expire" }))
+      .toBeVisible();
+    await expect
+      .element(page.getByRole("spinbutton", { name: "Confirmation validity (minutes)" }))
+      .toBeVisible();
+    const input = document.querySelector<HTMLInputElement>(
+      "#githubCreateIssueConfirmationMinutes",
+    )!;
+    const bounds = input.getBoundingClientRect();
+    expect(bounds.left).toBeGreaterThanOrEqual(0);
+    expect(bounds.right).toBeLessThanOrEqual(width);
+    await i18n.changeLanguage("zh-CN");
+    await view.rerender(
+      <GitHubToolsSection
+        botId="test-id"
+        canManageCredentials
+        authorizationBlocked={false}
+        providers={[]}
+        config={{ ...DEFAULT_GITHUB_TOOLS, enabled: true }}
+        onUpdate={vi.fn()}
+      />,
+    );
+    await expect.element(page.getByRole("switch", { name: "创建 Issue 确认不过期" })).toBeVisible();
+  },
+);

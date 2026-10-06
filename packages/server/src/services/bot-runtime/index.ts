@@ -93,6 +93,7 @@ export async function assembleBotRuntime(
       adminChatIds: bot.adminChatIds,
       logger: services.logger,
       aiReply: ai?.aiReply,
+      githubIssueProposals: services.githubIssueProposalService?.forBot(botId),
       mediaTranscriptionPort: services.mediaTranscriptionPort,
       aiSelectionCallbacks: ai?.aiSelectionCallbacks,
       conversation: ai?.conversation,

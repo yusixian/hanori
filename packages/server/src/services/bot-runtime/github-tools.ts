@@ -25,6 +25,8 @@ export function resolveGitHubToolsConfig(
         enabled: storedGitHubConfig.enabled,
         publicReadEnabled: storedGitHubConfig.publicReadEnabled,
         codingAgentEnabled: storedGitHubConfig.codingAgentEnabled ?? false,
+        createIssueConfirmationTtlMinutes:
+          storedGitHubConfig.createIssueConfirmationTtlMinutes ?? null,
         codingProviderId: storedGitHubConfig.codingProviderId,
         codingModelId: storedGitHubConfig.codingModelId,
         githubAppInstallation: installation,

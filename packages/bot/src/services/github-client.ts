@@ -234,6 +234,25 @@ export class GitHubClient {
     });
   }
 
+  /** Bounded read-only reconciliation, including closed Issues and excluding PRs. */
+  async findIssueByProposal(repository: string, title: string, body: string) {
+    const signal = AbortSignal.timeout(30_000);
+    for (let page = 1; page <= 10; page++) {
+      const issues = await this.request<GitHubIssue[]>(
+        `/repos/${encodePath(repository)}/issues?state=all&sort=created&direction=desc&per_page=100&page=${page}`,
+        { signal },
+      );
+      if (!Array.isArray(issues)) throw new GitHubApiError(502, "Unexpected GitHub Issue list");
+      const matches = issues.filter(
+        (issue) => !issue.pull_request && issue.title === title && issue.body === body,
+      );
+      if (matches.length > 1) throw new GitHubApiError(502, "Multiple Issues match the proposal");
+      if (matches[0]) return matches[0];
+      if (issues.length < 100) return undefined;
+    }
+    return undefined;
+  }
+
   async updateIssue(
     repository: string,
     issueNumber: number,

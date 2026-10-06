@@ -12,6 +12,7 @@ import type { HarnessService } from "../../harness/service.js";
 import type { ChatSummaryService } from "../chat-summary-service.js";
 import type { DbLogger } from "../db-logger.js";
 import type { EngagementSampleService } from "../engagement-sample-service.js";
+import type { GitHubIssueProposalService } from "../github-issue-proposals.js";
 import type { GitWorkspaceService } from "../git-workspace-service.js";
 import type { RssFeedService } from "../rss-feed-service.js";
 import type { SummaryConfigService } from "../summary-config-service.js";
@@ -168,6 +169,23 @@ describe("Bot runtime service binding", () => {
     expect(persist).toHaveBeenCalledExactlyOnceWith(BOT_ID, { ...sample, context: [] }, [
       "chat-key",
     ]);
+  });
+
+  it("binds durable Issue proposals to the bot and keeps callback access when AI replies are disabled", async () => {
+    const port = { propose: vi.fn(), list: vi.fn(), decide: vi.fn() };
+    const forBot = vi.fn(() => port);
+    const services = runtimeServices({}, logger(), {
+      githubIssueProposalService: { forBot } as unknown as GitHubIssueProposalService,
+    });
+    const enabled = await assemble(services, {
+      aiConfig: aiConfig({ githubToolsConfig: githubToolsConfig() }),
+    });
+    expect(enabled.config.githubIssueProposals).toBe(port);
+    expect(enabled.config.aiReply?.githubIssueProposals).toBe(port);
+    expect(forBot).toHaveBeenCalledWith(BOT_ID);
+    const disabled = await assemble(services, { aiConfig: aiConfig({ enabled: false }) });
+    expect(disabled.config.aiReply).toBeUndefined();
+    expect(disabled.config.githubIssueProposals).toBe(port);
   });
 
   it("GitHub code callbacks call the workspace service attached now", async () => {
