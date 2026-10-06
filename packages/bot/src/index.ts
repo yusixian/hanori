@@ -161,19 +161,36 @@ export async function sendLocalImageFiles(
   if (files.length === 0) throw new ImageDeliveryError("not_sent", "NO_IMAGE_FILES");
   // Keep safety inspection, but never inherit the bot's ambiguous-failure autoRetry.
   const deliveryApi = new Api(api.token, api.options);
-  deliveryApi.config.use(
-    createOutgoingImageSafety({
-      api: deliveryApi,
-      token: api.token,
-      checker: input.nsfwChecker,
-      threshold: input.nsfwThreshold,
-    }),
-  );
+  const safety = createOutgoingImageSafety({
+    api: deliveryApi,
+    token: api.token,
+    checker: input.nsfwChecker,
+    threshold: input.nsfwThreshold,
+  });
+  deliveryApi.config.use(async (prev, method, payload, signal) => {
+    let transportStarted = false;
+    try {
+      return await safety(
+        (...args) => {
+          transportStarted = true;
+          return prev(...args);
+        },
+        method,
+        payload,
+        signal,
+      );
+    } catch (error) {
+      // Local safety preparation has not dispatched any Telegram send.
+      if (!transportStarted) throw new ImageDeliveryError("not_sent", "IMAGE_PREPARATION_FAILED");
+      throw error;
+    }
+  });
   const topic = input.threadId === undefined ? {} : { message_thread_id: input.threadId };
   const send = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {
       return await operation();
     } catch (error) {
+      if (error instanceof ImageDeliveryError) throw error;
       if (error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500) {
         throw new ImageDeliveryError(
           "not_sent",

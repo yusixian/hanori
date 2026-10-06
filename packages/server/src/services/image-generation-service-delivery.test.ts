@@ -6,7 +6,10 @@ import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ImageGenerationService } from "./image-generation-service.js";
+import {
+  DEFAULT_IMAGE_GOVERNANCE_CONFIG,
+  ImageGenerationService,
+} from "./image-generation-service.js";
 import {
   applyGenerationMutation,
   ACTOR,
@@ -437,6 +440,9 @@ describe("image delivery provenance and safe recovery", () => {
 
   it("deduplicates the same host request after restart without reserving or submitting again", async () => {
     const { row, service, deps } = setup({ state: "queued" });
+    vi.spyOn(service, "getConfig").mockResolvedValue(
+      structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG),
+    );
     await expect(
       service.create(
         { ...ACTOR, requestContext: { messageId: 7, threadId: 73 } },
@@ -457,6 +463,9 @@ describe("image delivery provenance and safe recovery", () => {
   });
   it("deduplicates identical requests across different tool call ids without equating distinct prompts", async () => {
     const { row, service, db, deps } = setup({ state: "attention_required" });
+    vi.spyOn(service, "getConfig").mockResolvedValue(
+      structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG),
+    );
     const actor = { ...ACTOR, requestContext: { messageId: 7 } };
     for (const [toolCallId, prompt] of [
       ["call-1", "cat"],

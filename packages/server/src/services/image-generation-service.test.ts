@@ -1,5 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import { describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
+import type { SQL } from "drizzle-orm";
 import {
   DEFAULT_IMAGE_GOVERNANCE_CONFIG,
   extractImageGenerationRequestSnapshot,
@@ -144,6 +146,70 @@ describe("generation library admission", () => {
       }),
     );
     expect(deps.pixai.startGeneration).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates resolved defaults and materials while retaining distinct provider inputs", async () => {
+    const deps = createDependencies();
+    deps.pixai.listPresets.mockResolvedValue([
+      { key: "anime-default", label: "Anime", approvalRequired: false },
+      { key: "alternate", label: "Other", approvalRequired: false },
+    ]);
+    const rows = new Map<string, ReturnType<typeof generationRow>>();
+    const values = vi.fn(async (value: Record<string, unknown>) => {
+      const row = generationRow({ ...value, state: "queued" });
+      rows.set(String(value.idempotencyKey), row);
+      throw new Error("lost insertion receipt");
+    });
+    const db = {
+      select: () => {
+        const builder = query([] as ReturnType<typeof generationRow>[]);
+        builder.where.mockImplementation((condition) => {
+          const key = new PgDialect().sqlToQuery(condition as SQL).params[1];
+          builder.limit.mockResolvedValue(rows.has(String(key)) ? [rows.get(String(key))!] : []);
+          return builder;
+        });
+        return builder;
+      },
+      insert: () => ({ values }),
+    } as unknown as Database;
+    const resolveMaterials = vi.fn(async (_actor, prompt: string) => ({
+      prompt: `${prompt} watercolor`,
+      snapshot: { originalPrompt: prompt, safetyMode: "safe", characters: [], assets: [] },
+    }));
+    const service = new ImageGenerationService({
+      db,
+      ...deps,
+      generationLibrary: { resolveMaterials },
+    } as unknown as ConstructorParameters<typeof ImageGenerationService>[0]);
+    const actor = { ...ACTOR, requestContext: { messageId: 7 } };
+    const request = { purpose: "anime_illustration" as const, prompt: " draw a cat " };
+    const first = await service.create(actor, { ...request, toolCallId: "call-1" });
+    const repeated = await service.create(actor, {
+      ...request,
+      presetKey: "anime-default",
+      negativePrompt: "",
+      materials: {},
+      toolCallId: "call-2",
+    });
+    expect(first).toMatchObject({ accepted: true });
+    expect(repeated).toEqual(first);
+    expect(values).toHaveBeenCalledTimes(1);
+    expect(values.mock.calls[0]![0]).toMatchObject({
+      prompt: "draw a cat watercolor",
+      presetKey: "anime-default",
+    });
+    for (const change of [
+      { prompt: "draw a dog" },
+      { presetKey: "alternate" },
+      { negativePrompt: "blurry" },
+      { seed: 0 },
+    ]) {
+      await service.create(actor, { ...request, ...change });
+    }
+    expect(values).toHaveBeenCalledTimes(5);
+    expect(rows.size).toBe(5);
+    expect(deps.pixai.startGeneration).not.toHaveBeenCalled();
+    expect(deps.usageGovernor.reserve).not.toHaveBeenCalled();
   });
 
   it("stores the compiled prompt and immutable material snapshot before provider submission", async () => {

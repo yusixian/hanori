@@ -222,52 +222,6 @@ export class ImageGenerationService implements ImageGenerationPort {
       ...actor.requestContext,
       ...(request.toolCallId ? { toolCallId: safeCorrelationId(request.toolCallId) } : {}),
     };
-    // A model may repeat create_image with a new tool call id in the same message.
-    // Deduplicate the logical request rather than allowing a second paid operation.
-    const requestKey =
-      requestContext.messageId !== undefined
-        ? `cos-tool-bot:${actor.botId}:${createHash("sha256")
-            .update(
-              JSON.stringify([
-                actor.chatId,
-                actor.userId,
-                requestContext.messageId,
-                request.purpose,
-                request.prompt.trim(),
-                request.routingIntent ?? "semantic",
-                request.presetKey ?? null,
-                request.negativePrompt ?? null,
-                request.seed ?? null,
-                request.materials
-                  ? {
-                      characterIds: request.materials.characterIds,
-                      personTelegramId: request.materials.personTelegramId,
-                      assetIds: request.materials.assetIds,
-                      excludedAssetIds: request.materials.excludedAssetIds,
-                      skipPinned: request.materials.skipPinned,
-                      skipDefaultOutfit: request.materials.skipDefaultOutfit,
-                      safetyMode: request.materials.safetyMode,
-                      skipLibrary: request.materials.skipLibrary,
-                    }
-                  : null,
-              ]),
-            )
-            .digest("hex")}`
-        : undefined;
-    if (requestKey) {
-      const [existing] = await this.db
-        .select()
-        .from(imageGenerations)
-        .where(
-          and(
-            eq(imageGenerations.botId, actor.botId),
-            eq(imageGenerations.idempotencyKey, requestKey),
-          ),
-        )
-        .limit(1);
-      if (existing && canAccess(actor, existing))
-        return { accepted: true, generation: toView(existing) };
-    }
     const config = await this.getConfig(actor.botId);
     if (!(await this.canCreate(actor, config))) return { accepted: false, reason: "not_allowed" };
     const route = config.routes.find((candidate) => candidate.purpose === request.purpose);
@@ -326,6 +280,40 @@ export class ImageGenerationService implements ImageGenerationPort {
     const presetKey = request.presetKey ?? route.defaultPresetKey ?? presets[0]?.key;
     if (!presetKey || !presets.some((preset) => preset.key === presetKey)) {
       return { accepted: false, reason: "invalid_request", message: "Select an allowed preset" };
+    }
+
+    // A model may repeat create_image with a new tool call id or spell out a default.
+    // Deduplicate the resolved provider inputs, including the compiled material prompt.
+    const requestKey =
+      requestContext.messageId !== undefined
+        ? `cos-tool-bot:${actor.botId}:${createHash("sha256")
+            .update(
+              JSON.stringify([
+                actor.chatId,
+                actor.userId,
+                requestContext.messageId,
+                request.purpose,
+                prompt,
+                presetKey,
+                request.negativePrompt || null,
+                request.seed ?? null,
+              ]),
+            )
+            .digest("hex")}`
+        : undefined;
+    if (requestKey) {
+      const [existing] = await this.db
+        .select()
+        .from(imageGenerations)
+        .where(
+          and(
+            eq(imageGenerations.botId, actor.botId),
+            eq(imageGenerations.idempotencyKey, requestKey),
+          ),
+        )
+        .limit(1);
+      if (existing && canAccess(actor, existing))
+        return { accepted: true, generation: toView(existing) };
     }
 
     let usageReservationId: string | undefined;

@@ -185,6 +185,54 @@ describe("one-shot image transport", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+  it.each([1, 2])(
+    "keeps a %i-image safety preparation failure retryable until files recover",
+    async (count) => {
+      const directory = await mkdtemp("/private/tmp/image-delivery-preparation-");
+      const files = Array.from({ length: count }, (_, index) => join(directory, `${index}.png`));
+      const checker = new NsfwChecker({ apiUrl: "" });
+      vi.spyOn(checker, "checkImageBytes").mockResolvedValue({
+        status: "checked",
+        isNsfw: false,
+        scores: { porn: 0, sexy: 0, hentai: 0, neutral: 1, drawing: 0 },
+      });
+      type Fetch = NonNullable<ApiClientOptions["fetch"]>;
+      const fetch = vi.fn<Fetch>(async (_url: Parameters<Fetch>[0], init: Parameters<Fetch>[1]) => {
+        for await (const _chunk of init!.body as AsyncIterable<Uint8Array>) {
+          /* drain upload */
+        }
+        return {
+          json: async () => ({
+            ok: true,
+            result: count === 1 ? { message_id: 20 } : [{ message_id: 20 }, { message_id: 21 }],
+          }),
+        } as Awaited<ReturnType<Fetch>>;
+      });
+      const api = new Api("synthetic:token", { apiRoot: "http://unused.invalid", fetch });
+      const input = {
+        prompt: "cat",
+        detailUrl: "https://example.com/task",
+        nsfwChecker: checker,
+        receiptConfig: { albumNoticeEnabled: false },
+      };
+      try {
+        if (count === 2) await writeFile(files[0]!, Buffer.from([1, 2, 3]));
+        await expect(sendLocalImageFiles(api, 42, files, input)).rejects.toMatchObject({
+          outcome: "not_sent",
+          code: "IMAGE_PREPARATION_FAILED",
+        });
+        expect(fetch).not.toHaveBeenCalled();
+        for (const file of files) await writeFile(file, Buffer.from([1, 2, 3]));
+        await expect(sendLocalImageFiles(api, 42, files, input)).resolves.toEqual(
+          count === 1 ? [20] : [20, 21],
+        );
+        expect(fetch).toHaveBeenCalledOnce();
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("classifies explicit Telegram rejection as unsent", async () => {
     const fetch = vi.fn(async () => ({
       json: async () => ({
