@@ -6,7 +6,11 @@ import type { Database } from "@cos-tool-bot/database";
 import { getDataDir, type ImageArtifact } from "@cos-tool-bot/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageGenerationService } from "./image-generation-service.js";
-import { createDependencies, generationRow } from "./image-generation-service-test-fakes.js";
+import {
+  applyGenerationMutation,
+  createDependencies,
+  generationRow,
+} from "./image-generation-service-test-fakes.js";
 
 type TestGenerationRow = Omit<ReturnType<typeof generationRow>, "artifacts"> & {
   artifacts: ImageArtifact[];
@@ -32,7 +36,7 @@ function setup() {
     update: vi.fn(() => ({
       set: (value: Record<string, unknown>) => {
         writes.push(value);
-        Object.assign(row, value);
+        applyGenerationMutation(row, value);
         const result = Promise.resolve() as Promise<void> & { returning: () => Promise<unknown[]> };
         result.returning = async () => [{ id: row.id }];
         return { where: () => result };

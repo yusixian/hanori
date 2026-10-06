@@ -3,7 +3,7 @@ import type { UsageSnapshot } from "@cos-tool-bot/shared";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRuntimeDiagnostics } from "./diagnostics.js";
+import { createRuntimeDiagnostics, diagnosticRetentionMs } from "./diagnostics.js";
 import type { BotRuntimeServices } from "./types.js";
 
 const botId = "00000000-0000-4000-8000-000000000148";
@@ -148,4 +148,20 @@ describe("runtime diagnostics assembly", () => {
     }
     expect(execute.mock.calls.length).toBeLessThanOrEqual(8);
   });
+});
+
+it("bounds configurable retention and marks empty history as current-process evidence", async () => {
+  expect(diagnosticRetentionMs("7200000")).toBe(7_200_000);
+  for (const invalid of [undefined, "", "NaN", "0", "86400001"])
+    expect(diagnosticRetentionMs(invalid)).toBe(3_600_000);
+  vi.stubEnv("RUNTIME_DIAGNOSTIC_RETENTION_MS", "7200000");
+  const { diagnostics } = setup();
+  await expect(diagnostics.query(actor, { operation: "get_request_trace" })).resolves.toMatchObject(
+    {
+      ok: false,
+      code: "not_found",
+      retentionMs: 7_200_000,
+      historyScope: "current_process",
+    },
+  );
 });

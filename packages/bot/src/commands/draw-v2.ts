@@ -46,6 +46,10 @@ export function createDrawV2Command(cfg: DrawV2CommandConfig): CommandMiddleware
       return;
     }
     const actor = await cfg.getActor(ctx);
+    actor.requestContext = {
+      messageId: ctx.message?.message_id,
+      threadId: ctx.message?.message_thread_id,
+    };
     const result = await cfg.port.create(actor, {
       purpose,
       prompt,

@@ -289,7 +289,14 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     config.imageGenerationPort && imageActor
       ? await createImageGenerationTools({
           port: config.imageGenerationPort,
-          getActor: () => imageActor,
+          getActor: () => ({
+            ...imageActor,
+            requestContext: {
+              ...(entry.kind === "reply" ? { messageId: entry.message.id } : {}),
+              threadId: input.threadId,
+              traceId: input.currentTraceId,
+            },
+          }),
           replyMessageId: entry.kind === "reply" ? entry.message.replyToMessageId : undefined,
         })
       : {};

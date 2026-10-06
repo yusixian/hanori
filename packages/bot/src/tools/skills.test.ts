@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveBuiltInSkills } from "../skills/catalog.js";
+import { resolveBuiltInSkills, resolveBotSkills } from "../skills/catalog.js";
 import { createSkillTools } from "./skills.js";
 
 async function executeLoadSkill(
@@ -79,3 +79,61 @@ it("supplies bounded host search mappings for both Skill instructions and resour
     runtime: { retrieval: expect.stringContaining("These old names are not callable") },
   });
 });
+
+it("keeps unrelated custom Skill errors and instructions free of image submission claims", async () => {
+  const tools = createSkillTools({
+    skills: resolveBotSkills({
+      enabledBuiltInIds: [],
+      customSkills: [
+        {
+          id: "custom-rss",
+          name: "rss-reader",
+          displayName: "RSS",
+          description: "Read feeds",
+          instructions: "Read the requested RSS feed",
+          resources: {},
+          enabled: true,
+        },
+      ],
+    }),
+    hasImageGeneration: true,
+    hasWebSearch: true,
+  });
+  const loaded = await executeLoadSkill(tools, { skill: "rss-reader" });
+  expect(loaded).toMatchObject({ ok: true, imagePreparation: false });
+  expect(loaded).not.toHaveProperty("runtime.imageGeneration");
+  const missing = await executeLoadSkill(tools, { skill: "rss-reader", resource: "missing.md" });
+  expect(missing).toMatchObject({ error: "resource_not_found", imagePreparation: false });
+  expect(JSON.stringify(missing)).not.toContain("no image has been submitted");
+});
+
+it.each(["rss", "github"])(
+  "keeps %s Skill guidance independent of available image tools",
+  async (name) => {
+    const tools = createSkillTools({
+      skills: resolveBotSkills({
+        enabledBuiltInIds: [],
+        customSkills: [
+          {
+            id: `custom-${name}`,
+            name,
+            displayName: name,
+            description: "Read the requested feed or repository",
+            instructions: "Follow the requested workflow",
+            resources: {},
+            enabled: true,
+          },
+        ],
+      }),
+      hasImageGeneration: true,
+      hasWebSearch: true,
+    });
+    const main = await executeLoadSkill(tools, { skill: name });
+    expect(main).toMatchObject({ ok: true, skill: name });
+    expect(main).not.toHaveProperty("runtime.imageGeneration");
+    const missing = await executeLoadSkill(tools, { skill: name, resource: "missing.md" });
+    expect(missing).toMatchObject({ ok: false, error: "resource_not_found", skill: name });
+    expect(missing).toHaveProperty("imagePreparation", false);
+    expect(missing).toHaveProperty("guidance", expect.not.stringMatching(/image|create_image/));
+  },
+);

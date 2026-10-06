@@ -87,6 +87,7 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     "query_sanitized_logs",
     "get_recent_errors",
   ].map((name): ToolDescriptor => ({ name, effect: "read_only", callLimit: 2 })),
+  { name: "load_skill", effect: "read_only" },
   // Memory tools
   { name: "get_profile_avatar", statusLabel: "🖼️ 查看头像...", effect: "read_only", callLimit: 3 },
   { name: "get_profile", statusLabel: "🔍 看看你是谁...", effect: "read_only" },
@@ -207,6 +208,7 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   { name: "send_sticker", effect: "visible" },
   { name: "set_mood", effect: "visible" },
   { name: "create_image", effect: "visible" },
+  { name: "retry_image_delivery", effect: "visible" },
   { name: "cancel_image_generation", effect: "visible" },
   { name: "check_rss", effect: "read_only" },
   { name: "list_rss_feeds", effect: "read_only" },

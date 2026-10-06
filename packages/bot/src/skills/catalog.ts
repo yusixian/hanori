@@ -68,6 +68,21 @@ const catalog = Object.freeze(
 
 const byId = new Map(catalog.map((skill) => [skill.id, skill]));
 
+const imagePromptSkillIds = new Set([
+  "guide-image-prompts",
+  "prompt-atelier",
+  "tsubaki-prompt-expander",
+]);
+
+export function isImagePromptSkill(skill: BotSkillDefinition): boolean {
+  const bundled = byId.get(skill.id);
+  return (
+    imagePromptSkillIds.has(skill.id) &&
+    bundled?.name === skill.name &&
+    bundled.source === skill.source
+  );
+}
+
 export const DEFAULT_BOT_SKILL_IDS = Object.freeze(catalog.map((skill) => skill.id));
 
 /** Missing configuration means the bundled defaults; an explicit empty array disables all Skills. */

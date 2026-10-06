@@ -27,11 +27,13 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "pin_message",
   "set_mood",
   "send_artwork",
+  "retry_image_delivery",
   "create_image",
   "cancel_image_generation",
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
+  "load_skill",
   "search",
   "read_reference",
   "get_runtime_status",
@@ -65,7 +67,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
 ]);
 
 describe("tool descriptors", () => {
-  it("derives the former literal effect sets unchanged", () => {
+  it("classifies preparation as read-only and delivery retry as a visible effect", () => {
     expect(VISIBLE_EFFECT_TOOL_NAMES).toEqual(EXPECTED_VISIBLE_EFFECT_TOOL_NAMES);
     expect(READ_ONLY_TOOL_NAMES).toEqual(EXPECTED_READ_ONLY_TOOL_NAMES);
   });

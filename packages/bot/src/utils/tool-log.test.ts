@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { toToolLogValue } from "./tool-log.js";
+import type { Tool } from "ai";
+import { describe, expect, it, vi } from "vitest";
+import { toToolLogValue, wrapToolsWithLogging } from "./tool-log.js";
 
 describe("toToolLogValue", () => {
   it("summarizes inline media while preserving ordinary data fields", () => {
@@ -164,4 +165,39 @@ describe("unified search log privacy", () => {
     );
     expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "failed" }));
   });
+});
+
+it("marks denied image admissions as failed and correlates accepted tasks without exposing the prompt in diagnostics", async () => {
+  const onDiagnostic = vi.fn();
+  const tools = wrapToolsWithLogging(
+    {
+      create_image: {
+        execute: vi
+          .fn()
+          .mockResolvedValueOnce({ accepted: false, reason: "provider_unavailable" })
+          .mockResolvedValueOnce({
+            accepted: true,
+            generation: {
+              id: "generation-1",
+              providerOperationId: "operation-1",
+              deliveryState: "pending",
+              prompt: "PRIVATE",
+            },
+          }),
+      } as unknown as Tool,
+    },
+    { onDiagnostic },
+  );
+  await tools.create_image!.execute!({ prompt: "PRIVATE" }, { toolCallId: "call-1", messages: [] });
+  expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "failed" }));
+  await tools.create_image!.execute!({ prompt: "PRIVATE" }, { toolCallId: "call-2", messages: [] });
+  expect(onDiagnostic).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      outcome: "succeeded",
+      generationId: "generation-1",
+      providerOperationId: "operation-1",
+      deliveryState: "pending",
+    }),
+  );
+  expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain("PRIVATE");
 });

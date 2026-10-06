@@ -162,6 +162,13 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
           ? event.parentTraceId
           : undefined,
       toolCallId: this.safeIdentifier(event.toolCallId),
+      generationId: this.safeIdentifier(event.generationId),
+      providerOperationId: this.safeIdentifier(event.providerOperationId),
+      deliveryState: ["pending", "sending", "failed", "unknown", "delivered"].includes(
+        String(event.deliveryState),
+      )
+        ? event.deliveryState
+        : undefined,
       updateId: this.number(event.updateId),
       toolName: this.safeIdentifier(event.toolName),
       durationMs: this.number(event.durationMs),
@@ -256,6 +263,7 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
     this.sweep();
     let response: RuntimeDiagnosticResponse = {
       ok: true,
+      historyScope: "current_process",
       retentionMs: this.retentionMs,
       processStartedAt: this.processStartedAt,
       truncated: this.evicted,

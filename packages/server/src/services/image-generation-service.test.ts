@@ -8,6 +8,7 @@ import {
   projectPixaiPreset,
 } from "./image-generation-service.js";
 import {
+  applyGenerationMutation,
   ACTOR,
   BOT_ID,
   createDependencies,
@@ -119,6 +120,32 @@ describe("generation library admission", () => {
     );
   });
 
+  it("persists host request and topic correlation before attempting the provider", async () => {
+    const deps = createDependencies();
+    const values = vi.fn().mockRejectedValue(new Error("stop after persistence attempt"));
+    const service = new ImageGenerationService({
+      db: { select: () => query([]), insert: () => ({ values }) } as unknown as Database,
+      ...deps,
+    } as unknown as ConstructorParameters<typeof ImageGenerationService>[0]);
+    await service.create(
+      { ...ACTOR, requestContext: { messageId: 7, threadId: 73, traceId: "trace-1" } },
+      {
+        purpose: "anime_illustration",
+        prompt: "draw",
+        toolCallId: "call-1",
+      },
+    );
+    expect(values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestSnapshot: expect.objectContaining({
+          requestContext: { messageId: 7, threadId: 73, traceId: "trace-1", toolCallId: "call-1" },
+        }),
+        idempotencyKey: expect.stringMatching(/^cos-tool-bot:[a-z0-9-]+:[a-f0-9]{64}$/),
+      }),
+    );
+    expect(deps.pixai.startGeneration).not.toHaveBeenCalled();
+  });
+
   it("stores the compiled prompt and immutable material snapshot before provider submission", async () => {
     const deps = createDependencies();
     const values = vi.fn().mockRejectedValue(new Error("stop after admission"));
@@ -145,7 +172,7 @@ describe("generation library admission", () => {
 });
 
 function mutation(row: Record<string, unknown>, values: Record<string, unknown>) {
-  Object.assign(row, values);
+  applyGenerationMutation(row, values);
   const mutationPromise = Promise.resolve() as Promise<void> & {
     returning: ReturnType<typeof vi.fn>;
   };
@@ -501,7 +528,7 @@ describe("ImageGenerationService failure accounting", () => {
     });
   });
 
-  it("stops a general-backend wait locally and refunds its reservation", async () => {
+  it("keeps a general-backend task tracked when provider cancellation is unavailable", async () => {
     const dependencies = createDependencies();
     const row = generationRow({
       provider: "general_backend",
@@ -526,14 +553,10 @@ describe("ImageGenerationService failure accounting", () => {
     });
 
     await expect(service.cancel(ACTOR, row.id)).resolves.toMatchObject({
-      ok: true,
-      generation: { state: "waiting_stopped" },
+      ok: false,
+      generation: { state: "running", cancellationState: "rejected" },
     });
-    expect(dependencies.usageGovernor.refund).toHaveBeenCalledWith({
-      reservationId: row.usageReservationId,
-      botId: BOT_ID,
-      resource: "image",
-    });
+    expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
   it("recovers a prepared MCP operation with the original idempotency key", async () => {
@@ -575,7 +598,7 @@ describe("ImageGenerationService failure accounting", () => {
     expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
-  it("fails and refunds an interrupted general-backend request during restart recovery", async () => {
+  it("marks interrupted general-backend results unknown without resubmission or refund", async () => {
     const dependencies = createDependencies();
     const row = generationRow({
       provider: "general_backend",
@@ -603,12 +626,11 @@ describe("ImageGenerationService failure accounting", () => {
 
     await service.recoverPending();
 
-    expect(row).toMatchObject({ state: "failed", errorCode: "GENERAL_BACKEND_INTERRUPTED" });
-    expect(dependencies.usageGovernor.refund).toHaveBeenCalledWith({
-      reservationId: row.usageReservationId,
-      botId: BOT_ID,
-      resource: "image",
+    expect(row).toMatchObject({
+      state: "attention_required",
+      errorCode: "GENERAL_BACKEND_INTERRUPTED",
     });
+    expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
   it("keeps a durable cancel intent when an accepted MCP start has not been persisted yet", async () => {
@@ -640,7 +662,11 @@ describe("ImageGenerationService failure accounting", () => {
       generation: { state: "cancel_requested" },
     });
 
-    expect(row.providerMetadata).toMatchObject({ planId: "plan-1", cancelRequested: true });
+    expect(row.providerMetadata).toMatchObject({
+      planId: "plan-1",
+      cancelRequested: true,
+      cancelAttempted: false,
+    });
     expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
@@ -657,7 +683,7 @@ describe("ImageGenerationService failure accounting", () => {
         set: vi.fn((values: Record<string, unknown>) => ({
           where: vi.fn((condition: unknown) => {
             if (row.state === "cancel_requested" && deepContains(condition, "cancel_requested")) {
-              Object.assign(row, values);
+              applyGenerationMutation(row, values);
             }
             return Promise.resolve();
           }),
@@ -678,15 +704,12 @@ describe("ImageGenerationService failure accounting", () => {
           id: string,
           planId: string,
           operation: { operationId: string; state: string },
-          metadata: Record<string, unknown>,
         ) => Promise<void>;
       }
-    ).persistStartedOperation(
-      row.id,
-      "plan-1",
-      { operationId: "operation-after-cancel", state: "queued" },
-      metadata,
-    );
+    ).persistStartedOperation(row.id, "plan-1", {
+      operationId: "operation-after-cancel",
+      state: "queued",
+    });
 
     expect(row).toMatchObject({
       state: "cancel_requested",

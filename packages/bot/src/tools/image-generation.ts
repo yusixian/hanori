@@ -24,7 +24,8 @@ export async function createImageGenerationTools({
 }: ImageGenerationToolOptions): Promise<Record<string, Tool>> {
   const tools: Record<string, Tool> = {
     get_image_generation: tool({
-      description: "查询当前用户有权查看的图片生成任务状态。",
+      description:
+        "查询当前用户有权查看的图片任务。分别报告生成状态、deliveryState 和取消结果；只有 delivered 且有 Telegram message IDs 才表示已交付，unknown 不可自动重发。",
       inputSchema: zodToAiSchema(
         z.object({ generationId: z.string().min(1).max(128).describe("图片生成任务 id") }),
       ),
@@ -43,6 +44,15 @@ export async function createImageGenerationTools({
     }),
   };
 
+  if (port.retryDelivery) {
+    tools.retry_image_delivery = tool({
+      description:
+        "仅在已生成且确定未发送（deliveryState=failed）时重试原图片投递；不重新生图。unknown、正在投递及已交付任务禁止重发。",
+      inputSchema: zodToAiSchema(z.object({ generationId: z.string().min(1).max(128) })),
+      execute: async ({ generationId }) => port.retryDelivery!(getActor(), generationId),
+    });
+  }
+
   const routes = (await port.listRoutes(getActor(), { includePresets: false })).filter(
     (route) => route.enabled,
   );
@@ -53,8 +63,10 @@ export async function createImageGenerationTools({
       create_image: tool({
         description: [
           description ?? "创建一项异步图片生成，Bot 会在后台恢复并投递结果。",
+          "加载 Skill、列预设和准备提示词不等于提交。accepted 仅表示本地已接收请求；排队、待审批和生成中都不能声称已交付。只有真实 Telegram 回执才表示已交付。",
           "只能从当前可用路由中选择；未列出的路由不可用。不要在失败后自动切换供应商。",
           "只有 anime_illustration 可用时，生图请求使用该路由；不要因照片或写实风格选择未启用的后端。",
+          "用户要求画指定虚构角色或作品角色时，不得自动绑定请求者本人或其默认代表形象。personTelegramId 仅在本次明确要求本人/某位群友时填写；“帮我画”“给我画”只表示请求者，不表示画本人。",
           "用户明确指定已保存角色、群友形象或提示词资产时，通过 materials 传递已检索确认的 id；不要把群友身份或 NSFW 模式当作模型可自行推断的默认值。",
           "服务端会重新校验 Bot 隔离、角色可见性、安全设置和 pinned 注入；明确选择的素材优先，冲突的 pinned 资产应通过 excludedAssetIds 排除。",
           ...routes.map((route) => `${route.purpose}: ${route.label}。${route.useWhen}`),
@@ -105,16 +117,12 @@ export async function createImageGenerationTools({
               .describe("角色与提示词资产选择；服务端会按当前 Bot、权限和安全设置重新校验"),
           }),
         ),
-        execute: async ({
-          purpose,
-          routingIntent,
-          prompt,
-          presetKey,
-          negativePrompt,
-          seed,
-          materials,
-        }) =>
+        execute: async (
+          { purpose, routingIntent, prompt, presetKey, negativePrompt, seed, materials },
+          executionOptions,
+        ) =>
           port.create(getActor(), {
+            ...(executionOptions.toolCallId ? { toolCallId: executionOptions.toolCallId } : {}),
             purpose: purpose as ImagePurpose,
             routingIntent,
             prompt,

@@ -1,3 +1,4 @@
+import { imageToolCompletion } from "../utils/image-generation-status.js";
 import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import type { RuntimeDiagnosticsPort, RuntimeDiagnosticEvent } from "@cos-tool-bot/shared";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
@@ -619,10 +620,11 @@ async function handleEmptyText(
   chatId: number,
   userId: number,
   finishReason: string,
+  imageCompletion?: string,
 ): Promise<boolean> {
-  if (successfulToolEffectCount > 0) {
+  if (imageCompletion || successfulToolEffectCount > 0) {
     try {
-      return (await ctx.resolveWait("✅ 操作完成")) !== undefined;
+      return (await ctx.resolveWait(imageCompletion ?? "✅ 操作完成")) !== undefined;
     } catch {
       await ctx.deleteWaiting().catch(() => {});
       return false;
@@ -2569,6 +2571,7 @@ export function createAiReplyHandler(
         diagnostic({ stage: "context", outcome: "succeeded", code: "context_loaded" });
         let stepCounter = 0;
         let successfulToolEffectCount = 0;
+        let imageCompletion: string | undefined;
         const requestCache = createRequestCache();
         const wrappedTools = composeTurnTools(toolset.tools, {
           requestCache,
@@ -2576,6 +2579,22 @@ export function createAiReplyHandler(
           getStep: () => stepCounter + 1,
           onEffect: () => {
             successfulToolEffectCount += 1;
+          },
+          onResult: (name, output) => {
+            const completion = imageToolCompletion(name, output);
+            if (completion) imageCompletion = completion;
+            else if (
+              !imageCompletion &&
+              (name === "list_image_presets" ||
+                (name === "load_skill" &&
+                  toolset.tools.create_image &&
+                  output !== null &&
+                  typeof output === "object" &&
+                  "imagePreparation" in output &&
+                  output.imagePreparation === true))
+            ) {
+              imageCompletion = "图片生成请求尚未提交（仅完成准备或查询，请检查工具结果）";
+            }
           },
           statusContext: ctx,
           onDiagnostic: diagnostic,
@@ -2864,6 +2883,7 @@ export function createAiReplyHandler(
               chatId,
               userId,
               finishReason,
+              imageCompletion,
             );
             capturedStreamError = undefined;
           }
@@ -2890,6 +2910,7 @@ export function createAiReplyHandler(
               chatId,
               userId,
               finishReason,
+              imageCompletion,
             );
           }
         }

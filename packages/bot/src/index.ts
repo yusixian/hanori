@@ -12,11 +12,12 @@ import {
   DEFAULT_CONVERSATION_CONFIG,
   DEFAULT_MEMORY_CONFIG,
   resolveImageGenerationReceiptConfig,
+  ImageDeliveryError,
 } from "@cos-tool-bot/shared";
 import { autoRetry } from "@grammyjs/auto-retry";
 import { sequentialize } from "@grammyjs/runner";
 import { stream } from "@grammyjs/stream";
-import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, type Api } from "grammy";
+import { Bot, GrammyError, HttpError, InlineKeyboard, InputFile, Api } from "grammy";
 import type { InputMediaPhoto } from "grammy/types";
 import type { Logger } from "pino";
 import { type BackupResult, createBackupCommand } from "./commands/backup.js";
@@ -152,9 +153,37 @@ export async function sendLocalImageFiles(
     presetKey?: string;
     requestSnapshot?: ImageGenerationRequestSnapshot;
     receiptConfig?: ImageGenerationReceiptConfig;
+    threadId?: number;
+    nsfwChecker?: NsfwChecker;
+    nsfwThreshold?: number;
   },
 ): Promise<number[]> {
-  if (files.length === 0) return [];
+  if (files.length === 0) throw new ImageDeliveryError("not_sent", "NO_IMAGE_FILES");
+  // Keep safety inspection, but never inherit the bot's ambiguous-failure autoRetry.
+  const deliveryApi = new Api(api.token, api.options);
+  deliveryApi.config.use(
+    createOutgoingImageSafety({
+      api: deliveryApi,
+      token: api.token,
+      checker: input.nsfwChecker,
+      threshold: input.nsfwThreshold,
+    }),
+  );
+  const topic = input.threadId === undefined ? {} : { message_thread_id: input.threadId };
+  const send = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof GrammyError && error.error_code >= 400 && error.error_code < 500) {
+        throw new ImageDeliveryError(
+          "not_sent",
+          `TELEGRAM_${error.error_code}`,
+          error.error_code === 429 ? error.parameters.retry_after : undefined,
+        );
+      }
+      throw new ImageDeliveryError("unknown", "TELEGRAM_RESULT_UNKNOWN");
+    }
+  };
   const receiptConfig = resolveImageGenerationReceiptConfig(input.receiptConfig);
   const caption = formatImageGenerationCaption({
     prompt: input.prompt,
@@ -167,11 +196,14 @@ export async function sendLocalImageFiles(
   }).html;
   const detailButton = new InlineKeyboard().url("查看任务详情", input.detailUrl);
   if (files.length === 1) {
-    const message = await api.sendPhoto(chatId, new InputFile(files[0]!), {
-      caption,
-      parse_mode: "HTML",
-      reply_markup: detailButton,
-    });
+    const message = await send(() =>
+      deliveryApi.sendPhoto(chatId, new InputFile(files[0]!), {
+        ...topic,
+        caption,
+        parse_mode: "HTML",
+        reply_markup: detailButton,
+      }),
+    );
     return [message.message_id];
   }
   const media: InputMediaPhoto[] = files.map((file, index) => ({
@@ -179,19 +211,22 @@ export async function sendLocalImageFiles(
     media: new InputFile(file),
     ...(index === 0 ? { caption, parse_mode: "HTML" as const } : {}),
   }));
-  const messages = await api.sendMediaGroup(chatId, media);
+  const messages = await send(() => deliveryApi.sendMediaGroup(chatId, media, topic));
   if (receiptConfig.albumNoticeEnabled) {
-    await api.sendMessage(chatId, receiptConfig.albumNoticeText, {
-      reply_markup: detailButton,
-      ...(messages[0]
-        ? {
-            reply_parameters: {
-              message_id: messages[0].message_id,
-              allow_sending_without_reply: true,
-            },
-          }
-        : {}),
-    });
+    await deliveryApi
+      .sendMessage(chatId, receiptConfig.albumNoticeText, {
+        ...topic,
+        reply_markup: detailButton,
+        ...(messages[0]
+          ? {
+              reply_parameters: {
+                message_id: messages[0].message_id,
+                allow_sending_without_reply: true,
+              },
+            }
+          : {}),
+      })
+      .catch(() => {});
   }
   return messages.map((message) => message.message_id);
 }
@@ -692,6 +727,13 @@ export function createBot(config: BotConfig) {
             await buildImageActor(input.chatId, input.userId, input.chatType),
             input.generationId,
           ),
+        retryDelivery: imagePort.retryDelivery
+          ? async (input) =>
+              imagePort.retryDelivery!(
+                await buildImageActor(input.chatId, input.userId, input.chatType),
+                input.generationId,
+              )
+          : undefined,
         cancelGeneration: async (input) => {
           const result = await imagePort.cancel(
             await buildImageActor(input.chatId, input.userId, input.chatType),

@@ -1,7 +1,7 @@
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
-import type { BotSkillDefinition } from "../skills/catalog.js";
+import { isImagePromptSkill, type BotSkillDefinition } from "../skills/catalog.js";
 import { zodToAiSchema } from "./utils.js";
 
 export interface SkillToolsOptions {
@@ -37,19 +37,25 @@ export function createSkillTools(options: SkillToolsOptions): Record<string, Too
         if (!skill) {
           return { ok: false, error: "skill_not_enabled", availableSkills: [...byName.keys()] };
         }
+        const imagePreparation = isImagePromptSkill(skill);
         if (resource) {
           if (!Object.hasOwn(skill.resources, resource)) {
             return {
               ok: false,
               error: "resource_not_found",
               skill: skill.name,
+              imagePreparation,
               availableResources: Object.keys(skill.resources),
+              guidance: imagePreparation
+                ? "This is preparation only; no image has been submitted. Use a listed resource or the main Skill, then call create_image if generation is requested. Never claim completion after this error."
+                : "Use a listed resource or load the main Skill. Never claim completion after this error.",
             };
           }
           const content = skill.resources[resource];
           return {
             ok: true,
             skill: skill.name,
+            imagePreparation,
             resource,
             content,
             ...(options.unifiedSearchEnabled === true
@@ -60,13 +66,18 @@ export function createSkillTools(options: SkillToolsOptions): Record<string, Too
         return {
           ok: true,
           skill: skill.name,
+          imagePreparation,
           instructions: skill.instructions,
           availableResources: Object.keys(skill.resources),
           runtime: {
             siblingSkills: "Use load_skill again with the sibling Skill name.",
-            imageGeneration: options.hasImageGeneration
-              ? "In this bot, requests such as draw, generate, make me an image, or /draw mean actual image generation. Follow the skill to finish the prompt, then call create_image. Only return prompt text without generating when the user explicitly asks for a prompt. Treat image-tool names from other hosts, including pixai-image, as create_image."
-              : "No image-generation tool is available in this turn; provide the prompt without claiming an image was created.",
+            ...(imagePreparation
+              ? {
+                  imageGeneration: options.hasImageGeneration
+                    ? "In this bot, requests such as draw, generate, make me an image, or /draw mean actual image generation. Follow the skill to finish the prompt, then call create_image. Loading skills or presets is preparation only; accepted means the request was submitted, not delivered. Only a persisted Telegram receipt confirms delivery. Never infer personTelegramId from the requester or from 'draw for me'; use it only when explicitly asked to depict that person. Only return prompt text without generating when the user explicitly asks for a prompt. Treat image-tool names from other hosts, including pixai-image, as create_image."
+                    : "No image-generation tool is available in this turn; provide the prompt without claiming an image was created.",
+                }
+              : {}),
             webSearch: options.hasWebSearch
               ? options.unifiedSearchEnabled === true
                 ? "Use search with scope=web and the available web provider when the Skill requires current or official references. Read returned references with read_reference; fetch_webpage remains available when offered."

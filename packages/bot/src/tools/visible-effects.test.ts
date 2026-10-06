@@ -40,6 +40,8 @@ describe("trackSuccessfulToolEffects", () => {
         set_timer: executable({ success: true, timer_id: "timer-1" }),
         send_document: executable({ error: "failed" }),
         send_poll: executable({ success: true, message_id: 2 }),
+        load_skill: executable({ ok: true, instructions: "prepare" }),
+        list_image_presets: executable({ presets: [] }),
         get_chat_info: executable({ id: -100, title: "read only" }),
         web_search: executable({ result: "read only" }),
         list_rss_feeds: executable({ feeds: [] }),
@@ -58,6 +60,8 @@ describe("trackSuccessfulToolEffects", () => {
     await tools.set_timer!.execute!({}, {} as never);
     await tools.send_document!.execute!({}, {} as never);
     await tools.send_poll!.execute!({}, {} as never);
+    await tools.load_skill!.execute!({}, {} as never);
+    await tools.list_image_presets!.execute!({}, {} as never);
     await tools.get_chat_info!.execute!({}, {} as never);
     await tools.web_search!.execute!({}, {} as never);
     await tools.list_rss_feeds!.execute!({}, {} as never);

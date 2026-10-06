@@ -64,6 +64,7 @@ export function createRuntimeDiagnostics(
 
   return new RuntimeDiagnostics({
     adminIds: bot.adminChatIds,
+    retentionMs: diagnosticRetentionMs(process.env.RUNTIME_DIAGNOSTIC_RETENTION_MS),
     secrets: [
       token,
       ...(aiRuntime?.providers ?? []).map((provider) => provider.apiKey),
@@ -229,4 +230,10 @@ function collectDiagnosticSecrets(value: unknown): string[] {
     else if (entry && typeof entry === "object") values.push(...collectDiagnosticSecrets(entry));
   }
   return values;
+}
+
+/** Bounded independently from persistent owner logs and image task provenance. */
+export function diagnosticRetentionMs(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 86_400_000 ? parsed : 3_600_000;
 }
