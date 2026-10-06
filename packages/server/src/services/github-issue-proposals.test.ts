@@ -243,6 +243,65 @@ describe("durable GitHub Issue confirmation", () => {
     expect(s.fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each(["cancel", "confirm"] as const)(
+    "a failed concurrent %s claim cannot retire another confirmation",
+    async (decision) => {
+      const s = setup();
+      const proposal = await s.port.propose(input);
+      let claimEntered!: () => void;
+      let failClaim!: () => void;
+      const claimReady = new Promise<void>((resolve) => {
+        claimEntered = resolve;
+      });
+      const claimFailure = new Promise<void>((resolve) => {
+        failClaim = resolve;
+      });
+      const cas = s.store.compareExchange.bind(s.store);
+      vi.spyOn(s.store, "compareExchange")
+        .mockImplementationOnce(async () => {
+          claimEntered();
+          await claimFailure;
+          throw new Error("transient database failure");
+        })
+        .mockImplementation(cas);
+      const losing = s.port.decide(proposal.id, actor, decision);
+      await claimReady;
+
+      let winnerEntered!: () => void;
+      let finishWinner!: () => void;
+      const winnerReady = new Promise<void>((resolve) => {
+        winnerEntered = resolve;
+      });
+      const winnerRelease = new Promise<void>((resolve) => {
+        finishWinner = resolve;
+      });
+      if (decision === "cancel") {
+        const fetch = s.fetchMock.getMockImplementation()!;
+        s.fetchMock.mockImplementation(async (...args) => {
+          winnerEntered();
+          await winnerRelease;
+          return fetch(...args);
+        });
+      } else {
+        s.authorize.mockResolvedValueOnce({ config: s.current.config, token: s.current.token });
+        s.authorize.mockImplementationOnce(async () => {
+          winnerEntered();
+          await winnerRelease;
+          return { config: s.current.config, token: s.current.token };
+        });
+      }
+      const winning = s.port.decide(proposal.id, actor, "confirm");
+      await winnerReady;
+      failClaim();
+      expect((await losing).status).toBe("executing");
+      expect((await stored(s.store, proposal)).status).toBe("executing");
+      finishWinner();
+      expect((await winning).status).toBe("completed");
+      expect((await stored(s.store, proposal)).status).toBe("completed");
+      expect(s.fetchMock).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each(["title", "body", "repository", "initiator", "expiresAt"])(
     "refuses a changed immutable %s even with the original ID",
     async (field) => {

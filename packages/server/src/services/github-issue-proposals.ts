@@ -141,8 +141,6 @@ export function createGitHubIssueProposalAuthorizer(
 const activeExecutions = new Map<string, number>();
 
 export class GitHubIssueProposalService {
-  private readonly executionOwner = randomUUID();
-
   constructor(
     private readonly store: GitHubIssueProposalStore,
     private readonly authorize: AuthorizeGitHubIssueProposal,
@@ -268,15 +266,14 @@ export class GitHubIssueProposalService {
       return this.verify(proposal, value, client);
     }
     if (proposal.status !== "pending" || decision === "verify") return proposal;
+    const executionOwner = randomUUID();
     const claimed: StoredProposal = {
       ...proposal,
       status: decision === "cancel" ? "cancelled" : "executing",
-      ...(decision === "confirm"
-        ? { executionOwner: this.executionOwner, executionPhase: "authorizing" as const }
-        : {}),
+      ...(decision === "confirm" ? { executionOwner, executionPhase: "authorizing" as const } : {}),
     };
     const claimedValue = JSON.stringify(claimed);
-    const executionKey = `${this.executionOwner}:${botId}:${id}`;
+    const executionKey = `${executionOwner}:${botId}:${id}`;
     if (decision === "confirm")
       activeExecutions.set(executionKey, (activeExecutions.get(executionKey) ?? 0) + 1);
     let requestStarted = false;
@@ -316,13 +313,11 @@ export class GitHubIssueProposalService {
       return completed;
     } catch {
       if (!requestStarted) {
-        const currentValue = await this.store.get(botId, id);
-        if (currentValue !== undefined) {
-          const current = decode(currentValue);
-          if (current.status === "executing" && current.executionOwner === this.executionOwner) {
-            const notExecuted: StoredProposal = { ...current, status: "not_executed" };
-            await this.store.compareExchange(botId, id, currentValue, JSON.stringify(notExecuted));
-          }
+        // Only this invocation's pre-POST claim can be retired. A failed concurrent
+        // cancellation or confirmation must not overwrite another invocation's progress.
+        if (decision === "confirm") {
+          const notExecuted: StoredProposal = { ...claimed, status: "not_executed" };
+          await this.store.compareExchange(botId, id, claimedValue, JSON.stringify(notExecuted));
         }
         return (await this.refresh(botId, id)).proposal;
       }
