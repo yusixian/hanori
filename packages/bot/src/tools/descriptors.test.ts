@@ -29,6 +29,7 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "send_artwork",
   "create_image",
   "cancel_image_generation",
+  "github_pending_issue_proposals",
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
@@ -65,7 +66,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
 ]);
 
 describe("tool descriptors", () => {
-  it("derives the former literal effect sets unchanged", () => {
+  it("derives the expected effect sets from tool descriptors", () => {
     expect(VISIBLE_EFFECT_TOOL_NAMES).toEqual(EXPECTED_VISIBLE_EFFECT_TOOL_NAMES);
     expect(READ_ONLY_TOOL_NAMES).toEqual(EXPECTED_READ_ONLY_TOOL_NAMES);
   });

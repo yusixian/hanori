@@ -25,6 +25,7 @@ import type {
   EngagementPolicy,
   EngagementSample,
   GitHubToolsRuntimeConfig,
+  GitHubIssueProposalPort,
   GenerationLibraryActor,
   GenerationLibraryPort,
   ImageOcrConfig,
@@ -226,6 +227,7 @@ export interface AiReplyConfig {
   usageGovernance?: UsageGovernancePort;
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsRuntimeConfig;
+  githubIssueProposals?: GitHubIssueProposalPort;
   githubCodeCallbacks?: GitHubCodeCallbacks;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
@@ -2421,6 +2423,7 @@ export function createAiReplyHandler(
             github: config.githubToolsConfig
               ? {
                   config: config.githubToolsConfig,
+                  issueProposals: config.githubIssueProposals,
                   codeCallbacks: config.githubCodeCallbacks,
                   codingModel: resolveGitHubCodingModelConfig(
                     config.githubToolsConfig,

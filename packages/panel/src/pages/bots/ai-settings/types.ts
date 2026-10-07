@@ -39,6 +39,7 @@ export const DEFAULT_GITHUB_TOOLS: GitHubToolsConfigPublic = {
   enabled: false,
   publicReadEnabled: true,
   codingAgentEnabled: false,
+  createIssueConfirmationTtlMinutes: null,
   hasToken: false,
   authorName: "Ai-chan",
   authorEmail: "ai-chan@users.noreply.github.com",

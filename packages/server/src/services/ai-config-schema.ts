@@ -251,6 +251,7 @@ export const aiConfigSchema = z
         enabled: z.boolean(),
         publicReadEnabled: z.boolean(),
         codingAgentEnabled: z.boolean().default(false),
+        createIssueConfirmationTtlMinutes: z.number().int().positive().safe().nullable().optional(),
         codingProviderId: z.string().trim().min(1).max(100).optional(),
         codingModelId: z.string().trim().min(1).max(200).optional(),
         token: z.string().max(512).optional(),

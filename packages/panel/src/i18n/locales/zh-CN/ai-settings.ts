@@ -599,6 +599,10 @@ export const aiSettings = {
     permissionsUnavailable: "服务端未返回权限详情。",
     callbackSuccess: "GitHub App 已连接",
     callbackError: "GitHub 授权失败，请重试",
+    createIssueConfirmationNeverExpires: "创建 Issue 确认不过期",
+    createIssueConfirmationDescription:
+      "此设置仅适用于创建 Issue。执行仍需由发起请求的管理员确认；其他确认均在 10 分钟后过期。",
+    createIssueConfirmationMinutes: "确认有效期（分钟）",
     publicRead: "允许普通成员读取公开仓库",
     publicReadDescription:
       "普通成员请求永远不携带助手的 Token，也不能创建分支、提交、推送或修改 Issue。",

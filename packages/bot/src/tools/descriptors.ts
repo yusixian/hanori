@@ -18,7 +18,7 @@ export interface ToolDescriptor {
    */
   cacheKey?: (args: Record<string, unknown>) => string;
   /** Body-bearing references are logged only as an allowlisted metadata projection. */
-  outputLog?: "reference_metadata" | "search_metadata";
+  outputLog?: "reference_metadata" | "search_metadata" | "github_proposal_metadata";
 }
 
 const TWITTER_HOSTS = new Set([
@@ -179,7 +179,24 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     statusLabel: "🔐 准备 Pull Request 创建确认...",
     effect: "mutating",
   },
-  { name: "github_create_issue", statusLabel: "🔐 准备 Issue 创建确认...", effect: "mutating" },
+  {
+    name: "github_create_issue",
+    statusLabel: "🔐 准备 Issue 创建确认...",
+    effect: "mutating",
+    outputLog: "github_proposal_metadata",
+  },
+  {
+    name: "github_pending_issue_proposals",
+    statusLabel: "🔐 查看待确认 Issue 提案...",
+    effect: "visible",
+    outputLog: "github_proposal_metadata",
+  },
+  {
+    name: "github_cancel_issue_proposal",
+    statusLabel: "🔐 撤销 Issue 提案...",
+    effect: "mutating",
+    outputLog: "github_proposal_metadata",
+  },
   { name: "github_update_issue", statusLabel: "🔐 准备 Issue 更新确认...", effect: "mutating" },
   // Agent tools
   { name: "delegate_task", statusLabel: "🤖 找帮手...", effect: "read_only", callLimit: 64 },

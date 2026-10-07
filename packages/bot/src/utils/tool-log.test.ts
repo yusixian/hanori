@@ -165,3 +165,58 @@ describe("unified search log privacy", () => {
     expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ outcome: "failed" }));
   });
 });
+
+describe("durable GitHub proposal log privacy", () => {
+  it("logs bounded metadata while leaving private tool inputs/results available to the authorized call", async () => {
+    const { vi } = await import("vitest");
+    const { wrapToolsWithLogging } = await import("./tool-log.js");
+    const onLog = vi.fn();
+    const output = {
+      proposals: [
+        {
+          id: "a".repeat(24),
+          title: "private title",
+          body: "private body",
+          diagnostic: "private diagnostic",
+        },
+      ],
+      cards_sent: 1,
+    };
+    const tools = wrapToolsWithLogging(
+      {
+        github_create_issue: {
+          execute: async () => ({
+            pending_confirmation: true,
+            action_id: "a".repeat(24),
+            description: "private title",
+            error: "private diagnostic",
+          }),
+        },
+        github_pending_issue_proposals: { execute: async () => output },
+        github_cancel_issue_proposal: {
+          execute: async () => {
+            throw new Error("private diagnostic and private body");
+          },
+        },
+      } as unknown as Record<string, import("ai").Tool>,
+      { onLog },
+    );
+    const options = { toolCallId: "call", messages: [] };
+    await tools.github_create_issue!.execute!(
+      { title: "private title", body: "private body" } as never,
+      options,
+    );
+    expect(await tools.github_pending_issue_proposals!.execute!({} as never, options)).toBe(output);
+    await expect(
+      tools.github_cancel_issue_proposal!.execute!(
+        { proposal_id: "a".repeat(24) } as never,
+        options,
+      ),
+    ).rejects.toThrow("private diagnostic");
+    const logs = JSON.stringify(onLog.mock.calls);
+    expect(logs).not.toMatch(/private title|private body|private diagnostic/);
+    expect(logs).toContain('"bodyLength":12');
+    expect(logs).toContain('"proposalCount":1');
+    expect(logs).toContain('"privateOutput":true');
+  });
+});

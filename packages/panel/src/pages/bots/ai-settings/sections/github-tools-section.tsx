@@ -192,6 +192,9 @@ export function GitHubToolsSection({
   const [statusLoading, setStatusLoading] = useState(canManageCredentials);
   const [operation, setOperation] = useState<"authorize" | "disconnect" | null>(null);
   const [connectionError, setConnectionError] = useState("");
+  const [createIssueConfirmationMinutesDraft, setCreateIssueConfirmationMinutesDraft] = useState(
+    () => String(config.createIssueConfirmationTtlMinutes ?? 10),
+  );
   const statusRequestSequence = useRef(0);
   const codingProvider = providers.find((provider) => provider.id === config.codingProviderId);
   const providerHasApiKey = (provider: AiProviderEntryPublic) =>
@@ -249,6 +252,10 @@ export function GitHubToolsSection({
       statusRequestSequence.current += 1;
     };
   }, [loadAppStatus]);
+
+  useEffect(() => {
+    setCreateIssueConfirmationMinutesDraft(String(config.createIssueConfirmationTtlMinutes ?? 10));
+  }, [config.createIssueConfirmationTtlMinutes]);
 
   const authorize = async () => {
     setOperation("authorize");
@@ -388,6 +395,66 @@ export function GitHubToolsSection({
             >
               <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <span>{visibleConnectionError}</span>
+            </div>
+          )}
+        </section>
+      )}
+
+      {canManageCredentials && (
+        <section aria-labelledby="github-create-issue-confirmation-title" className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="githubCreateIssueConfirmationNeverExpires"
+              disabled={!config.enabled}
+              checked={config.createIssueConfirmationTtlMinutes == null}
+              onCheckedChange={(neverExpires) =>
+                onUpdate({
+                  createIssueConfirmationTtlMinutes: neverExpires
+                    ? null
+                    : (config.createIssueConfirmationTtlMinutes ?? 10),
+                })
+              }
+            />
+            <label
+              id="github-create-issue-confirmation-title"
+              htmlFor="githubCreateIssueConfirmationNeverExpires"
+              className="text-sm font-medium"
+            >
+              {t("githubTools.createIssueConfirmationNeverExpires")}
+            </label>
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {t("githubTools.createIssueConfirmationDescription")}
+          </p>
+          {config.createIssueConfirmationTtlMinutes != null && (
+            <div className="max-w-xs space-y-1.5">
+              <label htmlFor="githubCreateIssueConfirmationMinutes" className="text-sm font-medium">
+                {t("githubTools.createIssueConfirmationMinutes")}
+              </label>
+              <Input
+                id="githubCreateIssueConfirmationMinutes"
+                type="number"
+                min={1}
+                step={1}
+                disabled={!config.enabled}
+                value={createIssueConfirmationMinutesDraft}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  const minutes = event.currentTarget.valueAsNumber;
+                  setCreateIssueConfirmationMinutesDraft(value);
+                  if (Number.isSafeInteger(minutes) && minutes >= 1) {
+                    onUpdate({ createIssueConfirmationTtlMinutes: minutes });
+                  }
+                }}
+                onBlur={() => {
+                  const minutes = Number(createIssueConfirmationMinutesDraft);
+                  if (!Number.isSafeInteger(minutes) || minutes < 1) {
+                    setCreateIssueConfirmationMinutesDraft(
+                      String(config.createIssueConfirmationTtlMinutes ?? 10),
+                    );
+                  }
+                }}
+              />
             </div>
           )}
         </section>

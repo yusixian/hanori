@@ -45,6 +45,7 @@ export function toGitHubToolsConfigPublic(
     enabled: stored.enabled,
     publicReadEnabled: stored.publicReadEnabled,
     codingAgentEnabled: stored.codingAgentEnabled ?? false,
+    createIssueConfirmationTtlMinutes: stored.createIssueConfirmationTtlMinutes ?? null,
     codingProviderId: stored.codingProviderId,
     codingModelId: stored.codingModelId,
     hasToken: !!stored.encryptedToken,

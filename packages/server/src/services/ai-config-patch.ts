@@ -1,3 +1,5 @@
+import { HTTPException } from "hono/http-exception";
+import { ownerOrAdmin } from "../middleware/better-auth.js";
 import { randomUUID } from "node:crypto";
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
 import {
@@ -150,6 +152,19 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
 
   let githubToolsConfig = current?.githubToolsConfig;
   if (patch.githubToolsConfig) {
+    const createIssueConfirmationTtlMinutes =
+      patch.githubToolsConfig.createIssueConfirmationTtlMinutes === undefined
+        ? (githubToolsConfig?.createIssueConfirmationTtlMinutes ?? null)
+        : patch.githubToolsConfig.createIssueConfirmationTtlMinutes;
+    if (
+      createIssueConfirmationTtlMinutes !==
+        (githubToolsConfig?.createIssueConfirmationTtlMinutes ?? null) &&
+      !ownerOrAdmin.has(actorRole)
+    ) {
+      throw new HTTPException(403, {
+        message: "只有 owner 或 admin 可以修改 GitHub Issue 确认策略",
+      });
+    }
     const requestedCodingProviderId = patch.githubToolsConfig.codingProviderId
       ? (providerIdMap.get(patch.githubToolsConfig.codingProviderId) ??
         patch.githubToolsConfig.codingProviderId)
@@ -168,6 +183,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       enabled: patch.githubToolsConfig.enabled,
       publicReadEnabled: patch.githubToolsConfig.publicReadEnabled,
       codingAgentEnabled: patch.githubToolsConfig.codingAgentEnabled,
+      createIssueConfirmationTtlMinutes,
       codingProviderId: requestedCodingProviderId,
       codingModelId: patch.githubToolsConfig.codingModelId,
       encryptedToken,
