@@ -275,12 +275,26 @@ export function wrapToolsWithLogging(
             (("error" in output && !!output.error) ||
               ("success" in output && output.success === false) ||
               ("ok" in output && output.ok === false) ||
+              ("accepted" in output && output.accepted === false) ||
               ((name === "search" || name === "read_reference") &&
                 "status" in output &&
                 !["ok", "empty"].includes(String(output.status))));
+          const generation =
+            output && typeof output === "object" && "generation" in output
+              ? (output.generation as
+                  | {
+                      id?: string;
+                      providerOperationId?: string;
+                      deliveryState?: RuntimeDiagnosticEvent["deliveryState"];
+                    }
+                  | undefined)
+              : undefined;
           options.onDiagnostic?.({
             stage: "tool",
             outcome: failed ? "failed" : "succeeded",
+            generationId: generation?.id,
+            providerOperationId: generation?.providerOperationId,
+            deliveryState: generation?.deliveryState,
             toolName: name,
             toolCallId,
             durationMs: Date.now() - startedAt,

@@ -365,3 +365,38 @@ describe("RuntimeDiagnostics", () => {
     expect(audit).toHaveBeenCalledTimes(61);
   });
 });
+
+it("retains only safe image correlation identifiers and delivery observations", async () => {
+  const { service } = setup();
+  const id = service.startTrace({
+    chatId: actor.chatId,
+    userId: actor.userId,
+    messageId: actor.messageId,
+  });
+  service.record(id, {
+    stage: "tool",
+    outcome: "succeeded",
+    toolName: "create_image",
+    toolCallId: "call-1",
+    generationId: "generation-1",
+    providerOperationId: "operation-1",
+    deliveryState: "pending",
+  });
+  service.record(id, {
+    stage: "tool",
+    outcome: "failed",
+    generationId: "live-secret",
+    providerOperationId: "https://private.invalid/token",
+    deliveryState: "unknown",
+  });
+  const response = await service.query(actor, { operation: "get_request_trace", traceId: id });
+  expect(response.historyScope).toBe("current_process");
+  expect(response.traces![0]!.events[0]).toMatchObject({
+    generationId: "generation-1",
+    providerOperationId: "operation-1",
+    deliveryState: "pending",
+  });
+  expect(response.traces![0]!.events[1]!.generationId).toBeUndefined();
+  expect(response.traces![0]!.events[1]!.providerOperationId).toBeUndefined();
+  expect(JSON.stringify(response)).not.toContain("live-secret");
+});

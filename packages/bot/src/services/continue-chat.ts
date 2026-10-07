@@ -1,3 +1,4 @@
+import { imageToolCompletion } from "../utils/image-generation-status.js";
 import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import {
   createTurnToolset,
@@ -405,6 +406,7 @@ async function doContinueChat(
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
 
   let successfulToolEffectCount = 0;
+  let imageCompletion: string | undefined;
   let visibleDeliveryCount = 0;
   let providerStreamError: unknown;
   let selectedProviderId: string | undefined;
@@ -622,6 +624,10 @@ async function doContinueChat(
         onEffect: () => {
           successfulToolEffectCount += 1;
         },
+        onResult: (name, output) => {
+          const completion = imageToolCompletion(name, output);
+          if (completion) imageCompletion = completion;
+        },
       }),
       prepareStep: prepareFinalAnswerStep(
         config.memoryConfig?.maxSteps ?? DEFAULT_MEMORY_CONFIG.maxSteps,
@@ -823,7 +829,7 @@ async function doContinueChat(
         const { message } = await sendMarkdownWithFallback(
           api,
           chatId,
-          "(事件已处理，但 AI 未生成回复内容)",
+          imageCompletion ?? "(事件已处理，但 AI 未生成回复内容)",
           isRichMessageEnabled(config.messageConfig),
         );
         chatBotMsgIds.push(message.message_id);

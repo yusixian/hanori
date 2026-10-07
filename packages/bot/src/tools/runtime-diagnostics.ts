@@ -13,7 +13,7 @@ const DESCRIPTIONS = {
   get_request_trace:
     "管理员只读诊断：查看当前聊天上一条用户消息的处理链路，定位入站等待、模型超时、工具失败或 Telegram 投递失败。默认排除当前诊断请求；可按 traceId 或 messageId 查询。",
   query_sanitized_logs:
-    "管理员只读诊断：按时间窗口和分页查询当前聊天的安全结构化诊断事件。可按 traceId、messageId 或 toolCallId 过滤，不返回原始消息或日志。",
+    "管理员只读诊断：按时间窗口和分页查询当前聊天的安全结构化诊断事件。可按 traceId、messageId 或 toolCallId 过滤，不返回原始消息或日志。记录仅限当前进程和保留窗口；空结果不证明过去没有错误。",
   get_recent_errors:
     "管理员只读诊断：查询当前聊天近期的结构化失败与超时事件，可按时间窗口和分页缩小范围。",
 } as const;

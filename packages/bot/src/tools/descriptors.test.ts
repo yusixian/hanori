@@ -27,12 +27,14 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "pin_message",
   "set_mood",
   "send_artwork",
+  "retry_image_delivery",
   "create_image",
   "cancel_image_generation",
   "github_pending_issue_proposals",
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
+  "load_skill",
   "search",
   "read_reference",
   "get_runtime_status",

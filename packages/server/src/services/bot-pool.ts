@@ -1,3 +1,4 @@
+import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
 import { escapeHtml } from "@cos-tool-bot/bot/utils/format";
@@ -319,11 +320,13 @@ export class BotPool {
       detailUrl: string;
       presetKey?: string;
       requestSnapshot?: ImageGenerationRequestSnapshot;
+      threadId?: number;
     },
   ): Promise<number[]> {
     const manager = this.managers.get(botId);
-    if (!manager) throw new Error(`Bot ${botId} is not running`);
-    if (!(manager instanceof BotManager)) throw new Error(`Bot ${botId} does not support images`);
+    if (!manager) throw new ImageDeliveryError("not_sent", "BOT_NOT_RUNNING", 15);
+    if (!(manager instanceof BotManager))
+      throw new ImageDeliveryError("not_sent", "IMAGES_UNSUPPORTED");
     return manager.sendImageFiles(chatId, files, input);
   }
 

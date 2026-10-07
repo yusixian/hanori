@@ -18,6 +18,7 @@ function succeeded(output: unknown): boolean {
 export function trackSuccessfulToolEffects(
   tools: Record<string, Tool>,
   onEffect: (toolName: string) => void,
+  onResult?: (toolName: string, output: unknown) => void,
 ): Record<string, Tool> {
   const tracked: Record<string, Tool> = {};
   for (const [name, tool] of Object.entries(tools)) {
@@ -29,7 +30,14 @@ export function trackSuccessfulToolEffects(
     tracked[name] = {
       ...tool,
       execute: async (args: unknown, options: unknown) => {
-        const output = await execute(args, options);
+        let output: unknown;
+        try {
+          output = await execute(args, options);
+        } catch (error) {
+          onResult?.(name, { ok: false });
+          throw error;
+        }
+        onResult?.(name, output);
         if (succeeded(output) && !isReadOnlyTool(name, tool)) onEffect(name);
         return output;
       },

@@ -1,4 +1,4 @@
-import type { ImageGenerationState } from "./image-generation.js";
+import type { ImageDeliveryState, ImageGenerationState } from "./image-generation.js";
 import type { UsageResource, UsageWindow } from "./usage-governance.js";
 
 export const RUNTIME_DIAGNOSTIC_CODES = [
@@ -54,6 +54,9 @@ export interface RuntimeDiagnosticActor extends RuntimeDiagnosticScope {
   currentTraceId?: string;
 }
 export interface RuntimeDiagnosticEvent {
+  generationId?: string;
+  providerOperationId?: string;
+  deliveryState?: ImageDeliveryState;
   stage:
     | "received"
     | "trigger"
@@ -135,6 +138,8 @@ export interface RuntimeDiagnosticTrace {
 export interface RuntimeDiagnosticResponse {
   ok: boolean;
   code?: "forbidden" | "rate_limited" | "invalid_request" | "not_found" | "unavailable";
+  /** Records are limited to the current process; empty history does not establish absence of errors. */
+  historyScope?: "current_process";
   retentionMs: number;
   processStartedAt: number;
   truncated: boolean;

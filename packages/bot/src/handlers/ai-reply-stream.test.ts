@@ -1,3 +1,4 @@
+import { resolveBuiltInSkills, resolveBotSkills } from "../skills/catalog.js";
 import { DEFAULT_TIMEOUT_CONFIG, type BotLogEntry } from "@cos-tool-bot/shared";
 import type { Api } from "grammy";
 import type { Tool } from "ai";
@@ -1076,4 +1077,192 @@ describe("AI reply streaming", () => {
     expect(ctx.waiting_message).toBeUndefined();
     expect(ctx.deleteWaiting).toHaveBeenCalled();
   });
+});
+
+describe("image tool completion fallback", () => {
+  it.each([
+    ["unrelated", "AI 未生成回复内容"],
+    ["prepare", "尚未提交"],
+    ["create", "排队中"],
+    ["cancel", "取消未确认"],
+  ] as const)(
+    "reports %s from actual tool outcomes with no model steps",
+    async (mode, expected) => {
+      const { ctx, replies } = createContext();
+      ctx.message!.text = "帮我画指定的作品角色";
+      ctx.message!.message_thread_id = 73;
+      const create = vi.fn().mockResolvedValue({
+        accepted: true,
+        generation: { id: "generation-1", state: "queued", deliveryState: "pending" },
+      });
+      const cancel = vi.fn().mockResolvedValue({
+        ok: false,
+        reason: "provider_rejected",
+        generation: { id: "generation-1", state: "running" },
+      });
+      const config = createConfig(vi.fn());
+      config.skills = [
+        ...resolveBuiltInSkills(["prompt-atelier"]),
+        {
+          id: "custom-rss",
+          name: "rss-reader",
+          displayName: "RSS",
+          description: "Read feeds",
+          summary: "Read feeds",
+          instructions: "Read the requested RSS feed",
+          resources: {},
+          source: "custom",
+          digest: "rss",
+        },
+      ];
+      config.imageGenerationPort = {
+        listRoutes: vi.fn().mockResolvedValue([
+          {
+            purpose: "anime_illustration",
+            enabled: true,
+            label: "Anime",
+            useWhen: "Illustration",
+            presets: [],
+          },
+        ]),
+        listPresets: vi.fn().mockResolvedValue([]),
+        create,
+        cancel,
+        get: vi.fn(),
+        findByDeliveryMessage: vi.fn(),
+      };
+      streamTextMock.mockImplementation((options: any) => {
+        async function* toolOnlyStream() {
+          await options.tools.load_skill.execute(
+            { skill: mode === "unrelated" ? "rss-reader" : "prompt-atelier" },
+            { toolCallId: "skill-main" },
+          );
+          if (mode === "prepare") {
+            await options.tools.load_skill.execute(
+              { skill: "prompt-atelier", resource: "references/missing.md" },
+              { toolCallId: "skill-resource" },
+            );
+            await options.tools.list_image_presets.execute({}, { toolCallId: "presets" });
+          } else if (mode === "unrelated") {
+            await options.tools.load_skill.execute(
+              { skill: "rss-reader", resource: "missing.md" },
+              { toolCallId: "rss-resource" },
+            );
+          } else if (mode === "create") {
+            await options.tools.create_image.execute(
+              {
+                purpose: "anime_illustration",
+                prompt: "fictional character",
+                materials: { characterIds: [12] },
+              },
+              { toolCallId: "image-call" },
+            );
+          } else {
+            await options.tools.cancel_image_generation.execute(
+              { generationId: "generation-1" },
+              { toolCallId: "cancel-call" },
+            );
+          }
+          yield* [] as string[];
+        }
+        return {
+          textStream: toolOnlyStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          finishReason: Promise.resolve("tool-calls"),
+        };
+      });
+      const runtime = createAiReplyHandler(config);
+      try {
+        await runtime.handler(ctx, vi.fn());
+        expect(replies.at(-1)).toContain(expected);
+        expect(replies).not.toContain("✅ 操作完成");
+        if (mode === "create") {
+          expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+              requestContext: expect.objectContaining({ messageId: 7, threadId: 73 }),
+            }),
+            expect.objectContaining({
+              toolCallId: "image-call",
+              materials: { characterIds: [12] },
+            }),
+          );
+          expect(create.mock.calls[0]![1].materials).not.toHaveProperty("personTelegramId");
+        } else expect(create).not.toHaveBeenCalled();
+      } finally {
+        await runtime.destroy();
+      }
+    },
+  );
+});
+
+describe("ordinary Skill completion fallback", () => {
+  it.each(["rss", "github"])(
+    "does not report image preparation for %s with image tools available",
+    async (name) => {
+      const { ctx, replies } = createContext();
+      ctx.message!.text = "Read the requested feed or repository";
+      const config = createConfig(vi.fn());
+      config.skills = resolveBotSkills({
+        enabledBuiltInIds: ["prompt-atelier"],
+        customSkills: [
+          {
+            id: `custom-${name}`,
+            name,
+            displayName: name,
+            description: "Read the requested feed or repository",
+            instructions: "Follow the requested workflow",
+            resources: {},
+            enabled: true,
+          },
+        ],
+      });
+      config.imageGenerationPort = {
+        listRoutes: vi.fn().mockResolvedValue([
+          {
+            purpose: "anime_illustration",
+            enabled: true,
+            label: "Anime",
+            useWhen: "Illustration",
+            presets: [],
+          },
+        ]),
+        listPresets: vi.fn(),
+        create: vi.fn(),
+        cancel: vi.fn(),
+        get: vi.fn(),
+        findByDeliveryMessage: vi.fn(),
+      };
+      streamTextMock.mockImplementation((options: any) => {
+        async function* toolOnlyStream() {
+          expect(options.tools.create_image).toBeDefined();
+          await options.tools.load_skill.execute({ skill: name }, { toolCallId: "main" });
+          await options.tools.load_skill.execute(
+            { skill: name, resource: "missing.md" },
+            { toolCallId: "resource" },
+          );
+          yield* [] as string[];
+        }
+        return {
+          textStream: toolOnlyStream(),
+          text: Promise.resolve(""),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 0, totalTokens: 1 }),
+          finishReason: Promise.resolve("tool-calls"),
+        };
+      });
+      const runtime = createAiReplyHandler(config);
+      try {
+        await runtime.handler(ctx, vi.fn());
+        expect(replies.at(-1)).toBe("(AI 未生成回复内容)");
+        expect(replies.join("\n")).not.toContain("图片生成请求");
+        expect(replies).not.toContain("✅ 操作完成");
+      } finally {
+        await runtime.destroy();
+      }
+    },
+  );
 });

@@ -330,7 +330,16 @@ const imageGenerationService = new ImageGenerationService({
     return row?.aiConfig?.groupOverrides?.[String(chatId)]?.imageGenerationEnabled === true;
   },
   delivery: {
-    deliver: ({ generationId, botId, chatId, prompt, presetKey, requestSnapshot, localFiles }) =>
+    deliver: ({
+      generationId,
+      botId,
+      chatId,
+      threadId,
+      prompt,
+      presetKey,
+      requestSnapshot,
+      localFiles,
+    }) =>
       botPool.sendImageFiles(
         botId,
         chatId,
@@ -339,6 +348,7 @@ const imageGenerationService = new ImageGenerationService({
           prompt,
           presetKey,
           requestSnapshot,
+          threadId,
           detailUrl: new URL(
             `/bots/${encodeURIComponent(botId)}/generations/unified/${encodeURIComponent(generationId)}`,
             env.BETTER_AUTH_URL,

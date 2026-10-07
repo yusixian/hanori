@@ -1,3 +1,4 @@
+import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import type { BotConfig } from "@cos-tool-bot/bot";
 import {
   createBot,
@@ -217,12 +218,15 @@ export class BotManager implements IBotManager, TelegramRichMessageSender {
       detailUrl: string;
       presetKey?: string;
       requestSnapshot?: ImageGenerationRequestSnapshot;
+      threadId?: number;
     },
   ): Promise<number[]> {
-    if (!this.bot) throw new Error(`Bot ${this.botId} is not running`);
+    if (!this.bot) throw new ImageDeliveryError("not_sent", "BOT_NOT_RUNNING", 15);
     return sendLocalImageFiles(this.bot.api, chatId, files, {
       ...input,
       receiptConfig: this.imageGenerationReceiptConfig,
+      nsfwChecker: this.botConfig.nsfwChecker,
+      nsfwThreshold: this.botConfig.nsfwThreshold,
     });
   }
 

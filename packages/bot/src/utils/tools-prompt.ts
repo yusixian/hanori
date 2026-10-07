@@ -84,7 +84,18 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push(
       "- create_image（可用时）: 仅从工具参数枚举中的可用路由选择；anime_illustration 可用时为默认，且不得自动跨供应商降级",
     );
-    lines.push("- get_image_generation / cancel_image_generation: 查询或请求取消任务");
+    lines.push(
+      "- get_image_generation / cancel_image_generation: 分开核对生成、投递和取消状态；取消被拒绝后原任务仍会继续，cancel_requested 不等于已取消。",
+    );
+    lines.push(
+      "- load_skill / list_image_presets / 提示词准备不算提交；Skill 参考资料不存在时只使用实际列出的资料，无法继续应说明尚未提交。create_image 接收仅称已提交请求，只有 deliveryState=delivered 且真实 Telegram 回执存在才称已交付；unknown 不自动重发。",
+    );
+    lines.push(
+      "- 指定虚构/作品角色时只用该角色素材，不自动绑定用户本人。personTelegramId 仅用于本次明确要求画本人/某位群友；‘帮我画’和‘给我画’不表示画本人。",
+    );
+    lines.push(
+      "- retry_image_delivery（可用时）: 仅重试确定未发送的原图片；unknown 禁止重发，不创建新生成。",
+    );
     if (opts.capabilities.has("bot-memory")) {
       lines.push("- 画用户本人时，先检索相关长期记忆，再据此编写提示词");
     }

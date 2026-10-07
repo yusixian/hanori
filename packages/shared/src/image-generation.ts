@@ -25,7 +25,29 @@ export type ImageGenerationState =
 
 export type ImageApprovalState = "not_required" | "required" | "approved" | "rejected";
 
+export type ImageDeliveryState = "pending" | "sending" | "failed" | "unknown" | "delivered";
+
+/** Only a positively rejected send may be retried. Transport failures are ambiguous. */
+export class ImageDeliveryError extends Error {
+  constructor(
+    readonly outcome: "not_sent" | "unknown",
+    readonly code: string,
+    readonly retryAfterSeconds?: number,
+  ) {
+    super(code);
+    this.name = "ImageDeliveryError";
+  }
+}
+
+export interface ImageGenerationRequestContext {
+  messageId?: number;
+  threadId?: number;
+  traceId?: string;
+  toolCallId?: string;
+}
+
 export interface ImageGenerationActor {
+  requestContext?: ImageGenerationRequestContext;
   botId: string;
   chatId: number;
   userId: number;
@@ -73,6 +95,8 @@ export interface ImageGovernanceConfig {
 }
 
 export interface CreateImageRequest {
+  /** Host-supplied correlation, never a model input. */
+  toolCallId?: string;
   materials?: GenerationMaterialSelection;
   purpose: ImagePurpose;
   prompt: string;
@@ -99,6 +123,7 @@ export interface ImageSafetyResult {
 
 /** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
 export interface ImageGenerationRequestSnapshot {
+  requestContext?: ImageGenerationRequestContext;
   materials?: GenerationMaterialSnapshot;
   presetKey?: string;
   modelId?: string;
@@ -133,6 +158,13 @@ export interface ImageGenerationView {
   presetKey?: string;
   state: ImageGenerationState;
   providerState?: string;
+  providerOperationId?: string;
+  requestContext?: ImageGenerationRequestContext;
+  deliveryState?: ImageDeliveryState;
+  deliveryTarget?: { chatId: number; threadId?: number };
+  deliveryMessageIds?: number[];
+  deliveryErrorCode?: string;
+  cancellationState?: "requested" | "rejected" | "confirmed" | "unknown";
   approval: ImageApprovalState;
   artifacts: ImageArtifact[];
   createdAt: string;
@@ -170,6 +202,8 @@ export type ImageGenerationAdmission =
         | "invalid_request";
       retryAfterSeconds?: number;
       message?: string;
+      /** Local task retained even when provider preparation or submission was rejected. */
+      generation?: ImageGenerationView;
     };
 
 export type ImageCancellationResult =
@@ -181,7 +215,19 @@ export type ImageCancellationResult =
       message?: string;
     };
 
+export type ImageDeliveryRetryResult =
+  | { ok: true; generation: ImageGenerationView }
+  | {
+      ok: false;
+      reason: "not_found" | "not_ready" | "delivery_unknown" | "already_delivered";
+      generation?: ImageGenerationView;
+    };
+
 export interface ImageGenerationPort {
+  retryDelivery?(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageDeliveryRetryResult>;
   listRoutes(
     actor: ImageGenerationActor,
     options?: { includePresets?: boolean },

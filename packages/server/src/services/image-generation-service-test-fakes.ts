@@ -1,3 +1,5 @@
+import { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import type { ImageGenerationActor } from "@cos-tool-bot/shared";
 import { vi, type Mock } from "vitest";
 
@@ -91,4 +93,20 @@ export function generationRow(overrides: Record<string, unknown> = {}) {
     deliveredAt: null,
     ...overrides,
   };
+}
+
+/** Models the SQL JSON merge used to avoid losing concurrent task metadata. */
+export function applyGenerationMutation(
+  row: Record<string, unknown>,
+  values: Record<string, unknown>,
+): void {
+  const updates = { ...values };
+  if (updates.providerMetadata instanceof SQL) {
+    const parameters = new PgDialect().sqlToQuery(updates.providerMetadata).params;
+    updates.providerMetadata = {
+      ...(row.providerMetadata as Record<string, unknown> | null),
+      ...JSON.parse(parameters[0] as string),
+    };
+  }
+  Object.assign(row, updates);
 }

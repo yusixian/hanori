@@ -40,6 +40,7 @@ export interface TurnToolPipelineOptions {
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
   getStep: () => number;
   onEffect: (toolName: string) => void;
+  onResult?: (toolName: string, output: unknown) => void;
   /** Present only on the message path; enables the Telegram status decorator. */
   statusContext?: WrapperContext;
 }
@@ -54,7 +55,10 @@ export function composeTurnTools(
   options: TurnToolPipelineOptions,
 ): Record<string, Tool> {
   const composed = wrapToolsWithLogging(
-    wrapToolsWithCache(trackSuccessfulToolEffects(tools, options.onEffect), options.requestCache),
+    wrapToolsWithCache(
+      trackSuccessfulToolEffects(tools, options.onEffect, options.onResult),
+      options.requestCache,
+    ),
     { onLog: options.onLog, getStep: options.getStep, onDiagnostic: options.onDiagnostic },
   );
   return options.statusContext ? wrapToolsWithStatus(composed, options.statusContext) : composed;

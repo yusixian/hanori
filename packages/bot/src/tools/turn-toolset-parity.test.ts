@@ -301,7 +301,9 @@ async function legacyContinueTools(input: Turn<ContinueTurn>): Promise<Record<st
 }
 
 function recordingInput(overrides: InputOverrides) {
-  const listRoutes = vi.fn(async () => [IMAGE_ROUTE]);
+  const listRoutes = vi.fn(async (..._args: Parameters<ImageGenerationPort["listRoutes"]>) => [
+    IMAGE_ROUTE,
+  ]);
   const delegation = vi.fn((actor?: GenerationLibraryActor) =>
     createAgentTools({
       provider: () => ({}) as never,
@@ -325,6 +327,7 @@ const CASES: Array<[string, ReplyTurn | ContinueTurn, InputOverrides]> = [
   ["reply by a group admin", reply(), {}],
   ["reply to a delegated group member", reply(), member],
   ["reply in a private chat", reply(), { chatId: ADMIN_ID }],
+  ["reply with topic and diagnostics", reply(), { threadId: 73, currentTraceId: "reply-trace" }],
   ["reply with personalization off", reply(), { privacyMode: "off" }],
   ["reply in stream mode", reply(), { config: createToolsetConfig(streamMode) }],
   ["reply to a forget request", reply({ text: FORGET_REQUEST }), {}],
@@ -333,6 +336,11 @@ const CASES: Array<[string, ReplyTurn | ContinueTurn, InputOverrides]> = [
   ["continuation for a group admin", continuation(), {}],
   ["continuation for a delegated group member", continuation(), member],
   ["continuation in a private chat", continuation(), { chatId: ADMIN_ID }],
+  [
+    "continuation with topic and diagnostics",
+    continuation(),
+    { threadId: 73, currentTraceId: "continue-trace" },
+  ],
   ["ownerless continuation", continuation(), { userId: undefined }],
   ["continuation in stream mode", continuation(), { config: createToolsetConfig(streamMode) }],
   ["second timer continuation", continuation({ timerDepth: 2 }), {}],
@@ -351,7 +359,22 @@ describe("turn toolset parity with the per-caller assembly it replaced", () => {
 
     expect(Object.keys(tools)).toEqual(Object.keys(legacy).sort((a, b) => a.localeCompare(b)));
     expect(createToolSchemaHash(tools)).toBe(createToolSchemaHash(legacy));
-    expect(listRoutes.mock.calls[0]).toEqual(listRoutes.mock.calls[1]);
+    const legacyCall = listRoutes.mock.calls[1];
+    if (legacyCall) {
+      expect(listRoutes.mock.calls[0]).toEqual([
+        {
+          ...legacyCall[0],
+          requestContext: {
+            ...(entry.kind === "reply" ? { messageId: entry.message.id } : {}),
+            threadId: input.threadId,
+            traceId: input.currentTraceId,
+          },
+        },
+        legacyCall[1],
+      ]);
+    } else {
+      expect(listRoutes.mock.calls[0]).toBeUndefined();
+    }
     expect(delegation.mock.calls[0]).toEqual([...delegation.mock.calls[1]!, undefined]);
     await expect(run(tools, "load_skill", { skill: "prompt-atelier" })).resolves.toEqual(
       await run(legacy, "load_skill", { skill: "prompt-atelier" }),
