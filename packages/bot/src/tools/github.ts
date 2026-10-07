@@ -1,4 +1,5 @@
 import type {
+  GitHubIssueProposalPort,
   GitHubCodeTaskInput,
   GitHubCodeTaskResult,
   GitHubCodingModelConfig,
@@ -17,6 +18,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { GitHubApiError, GitHubClient, type GitHubPullRequest } from "../services/github-client.js";
 import type { PendingGitHubActionRegistry } from "../services/pending-github-actions.js";
+import { sendGitHubIssueProposal } from "../services/github-issue-confirmation.js";
 import { zodToAiSchema } from "./utils.js";
 
 const repositorySchema = z
@@ -34,6 +36,8 @@ export interface GitHubToolsOptions {
   isAdmin: boolean;
   userId: number;
   chatId: number;
+  threadId?: number;
+  issueProposals?: GitHubIssueProposalPort;
   api: Api;
   pendingActions: PendingGitHubActionRegistry;
   fetch?: typeof fetch;
@@ -589,29 +593,84 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
       ),
       execute: async ({ repository, title, body }) => {
         try {
-          const client = writeClient(repository);
-          return await proposeAction(
-            `在 ${repository} 创建 Issue\n标题：${title}${describeBody(body)}`,
-            async (signal) => {
-              try {
-                const issue = await client.createIssue(repository, { title, body }, signal);
-                return {
-                  summary: `已创建 ${repository}#${issue.number}：${issue.title}`,
-                  url: issue.html_url,
-                };
-              } catch (error) {
-                if (isRequestInterruption(error, signal)) {
-                  throw ambiguousRemoteMutation("Issue creation");
-                }
-                throw error;
-              }
-            },
-          );
+          writeClient(repository);
+          if (!options.issueProposals)
+            throw new Error("Durable GitHub Issue confirmation is unavailable");
+          const proposal = await options.issueProposals.propose({
+            repository,
+            title,
+            body,
+            chatId: options.chatId,
+            threadId: options.threadId,
+            userId: options.userId,
+          });
+          await sendGitHubIssueProposal(options.api, proposal);
+          return {
+            pending_confirmation: true,
+            action_id: proposal.id,
+            description: `在 ${proposal.repository} 创建 Issue：${proposal.title}`,
+            hash: proposal.hash,
+            expires_at: proposal.expiresAt,
+          };
         } catch (error) {
           return formatError(error);
         }
       },
     });
+
+    if (options.issueProposals) {
+      tools.github_pending_issue_proposals = tool({
+        description:
+          "查看自己在当前会话的待确认 GitHub Issue 提案，并重新发送可确认/撤销/核实的卡片。",
+        inputSchema: zodToAiSchema(z.object({})),
+        execute: async () => {
+          try {
+            const proposals = await options.issueProposals!.list({
+              chatId: options.chatId,
+              threadId: options.threadId,
+              userId: options.userId,
+            });
+            for (const proposal of proposals.slice(0, 10))
+              await sendGitHubIssueProposal(options.api, proposal);
+            return {
+              proposals: proposals.map((proposal) => ({
+                id: proposal.id,
+                repository: proposal.repository,
+                title: proposal.title,
+                hash: proposal.hash,
+                created_at: proposal.createdAt,
+                expires_at: proposal.expiresAt,
+                status: proposal.status,
+              })),
+              cards_sent: Math.min(proposals.length, 10),
+            };
+          } catch (error) {
+            return formatError(error);
+          }
+        },
+      });
+      tools.github_cancel_issue_proposal = tool({
+        description:
+          "按明确的提案 ID 撤销自己的待确认 Issue 创建请求；不会按仓库或标题取消其它意图。",
+        inputSchema: zodToAiSchema(z.object({ proposal_id: z.string().regex(/^[\da-f]{24}$/) })),
+        execute: async ({ proposal_id }) => {
+          try {
+            const proposal = await options.issueProposals!.decide(
+              proposal_id,
+              {
+                chatId: options.chatId,
+                threadId: options.threadId,
+                userId: options.userId,
+              },
+              "cancel",
+            );
+            return { proposal_id: proposal.id, status: proposal.status };
+          } catch (error) {
+            return formatError(error);
+          }
+        },
+      });
+    }
 
     tools.github_update_issue = tool({
       description:

@@ -79,3 +79,28 @@ test("defaults unified search to enabled and retains an explicit false in the sa
   input.config = { ...input.config, unifiedSearchEnabled: true };
   expect(buildAiConfigSaveBody(input).unifiedSearchEnabled).toBe(true);
 });
+
+test("sends never-expiring and finite Issue confirmation policies in the save request", () => {
+  const input = fixture();
+  const github = {
+    enabled: true,
+    publicReadEnabled: true,
+    codingAgentEnabled: false,
+    hasToken: false,
+    authorName: "Bot",
+    authorEmail: "bot@example.test",
+    repositories: ["owner/repo"],
+  };
+  input.config.githubToolsConfig = github;
+  expect(
+    buildAiConfigSaveBody(input).githubToolsConfig?.createIssueConfirmationTtlMinutes,
+  ).toBeNull();
+  input.config.githubToolsConfig = { ...github, createIssueConfirmationTtlMinutes: 60 };
+  expect(buildAiConfigSaveBody(input).githubToolsConfig?.createIssueConfirmationTtlMinutes).toBe(
+    60,
+  );
+  input.config.githubToolsConfig = { ...github, createIssueConfirmationTtlMinutes: null };
+  expect(
+    buildAiConfigSaveBody(input).githubToolsConfig?.createIssueConfirmationTtlMinutes,
+  ).toBeNull();
+});

@@ -62,6 +62,11 @@ import type { SummaryConfigService } from "./summary-config-service.js";
 import type { GitWorkspaceService } from "./git-workspace-service.js";
 import type { GitHubAppCredentialService } from "./github-app-credentials.js";
 import type { HarnessService } from "../harness/service.js";
+import {
+  GitHubIssueProposalService,
+  createGitHubIssueProposalAuthorizer,
+} from "./github-issue-proposals.js";
+import { SettingsGitHubIssueProposalStore } from "./github-issue-proposal-store.js";
 import { GitHubCredentialGenerationGate } from "./github-credential-policy.js";
 import {
   BotNotRunningError,
@@ -188,6 +193,14 @@ export class BotPool {
       githubCredentialGenerations: this.githubCredentialGenerations,
       generationInsertFallbacks: this.generationInsertFallbacks,
     };
+    this.services.githubIssueProposalService = new GitHubIssueProposalService(
+      new SettingsGitHubIssueProposalStore(db),
+      createGitHubIssueProposalAuthorizer(
+        db,
+        env.ENCRYPTION_KEY,
+        () => this.services.githubAppCredentialService,
+      ),
+    );
   }
 
   setChatAiSelectionService(

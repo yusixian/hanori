@@ -537,3 +537,94 @@ describe("absorbAiConfigPatch preserved sections", () => {
     expect(result.groupOverrides["-100"]?.engagement).toBeUndefined();
   });
 });
+
+describe("durable Issue confirmation policy persistence", () => {
+  it("defaults omitted/null to no expiry and round-trips a finite TTL", () => {
+    const github = {
+      enabled: true,
+      publicReadEnabled: true,
+      codingAgentEnabled: false,
+      authorName: "Bot",
+      authorEmail: "bot@example.test",
+      repositories: ["owner/repo"],
+    };
+    const initial = absorb(null, buildPatch({ enabled: false, githubToolsConfig: github }));
+    expect(initial.githubToolsConfig?.createIssueConfirmationTtlMinutes).toBeNull();
+    const finite = absorb(
+      initial,
+      buildPatch({
+        enabled: false,
+        githubToolsConfig: { ...github, createIssueConfirmationTtlMinutes: 60 },
+      }),
+    );
+    expect(toAiConfigPublic(finite).githubToolsConfig?.createIssueConfirmationTtlMinutes).toBe(60);
+    const oldClient = absorb(finite, buildPatch({ enabled: false, githubToolsConfig: github }));
+    expect(oldClient.githubToolsConfig?.createIssueConfirmationTtlMinutes).toBe(60);
+    const never = absorb(
+      finite,
+      buildPatch({
+        enabled: false,
+        githubToolsConfig: { ...github, createIssueConfirmationTtlMinutes: null },
+      }),
+    );
+    expect(toAiConfigPublic(never).githubToolsConfig?.createIssueConfirmationTtlMinutes).toBeNull();
+  });
+});
+
+it("enforces the hidden Issue confirmation policy control on the server", () => {
+  const github = {
+    enabled: true,
+    publicReadEnabled: true,
+    codingAgentEnabled: false,
+    authorName: "Bot",
+    authorEmail: "bot@example.test",
+    repositories: ["owner/repo"],
+    createIssueConfirmationTtlMinutes: 60,
+  };
+  const current = absorb(null, buildPatch({ enabled: false, githubToolsConfig: github }));
+  expect(() =>
+    absorbAiConfigPatch({
+      current,
+      patch: buildPatch({
+        enabled: false,
+        githubToolsConfig: { ...github, createIssueConfirmationTtlMinutes: null },
+      }),
+      actorRole: "editor",
+      encryptionKey: ENCRYPTION_KEY,
+    }),
+  ).toThrow("只有 owner 或 admin");
+  expect(
+    absorbAiConfigPatch({
+      current,
+      patch: buildPatch({ enabled: false, githubToolsConfig: github }),
+      actorRole: "editor",
+      encryptionKey: ENCRYPTION_KEY,
+    }).githubToolsConfig?.createIssueConfirmationTtlMinutes,
+  ).toBe(60);
+});
+
+it("does not let an editor reset a finite Issue policy by omitting the field", () => {
+  const github = {
+    enabled: true,
+    publicReadEnabled: true,
+    codingAgentEnabled: false,
+    authorName: "Bot",
+    authorEmail: "bot@example.test",
+    repositories: ["owner/repo"],
+  };
+  const current = absorb(
+    null,
+    buildPatch({
+      enabled: false,
+      githubToolsConfig: { ...github, createIssueConfirmationTtlMinutes: 60 },
+    }),
+  );
+  expect(
+    absorbAiConfigPatch({
+      current,
+      patch: buildPatch({ enabled: false, githubToolsConfig: github }),
+      actorRole: "editor",
+      encryptionKey: ENCRYPTION_KEY,
+    }).githubToolsConfig?.createIssueConfirmationTtlMinutes,
+  ).toBe(60);
+});

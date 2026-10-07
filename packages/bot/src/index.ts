@@ -58,6 +58,7 @@ import {
   createCallbackQueryHandler,
   createAdminActionCallbackQueryHandler,
 } from "./handlers/event-handlers.js";
+import { createGitHubIssueProposalCallbackHandler } from "./services/github-issue-confirmation.js";
 import { createHarnessMiddleware, type HarnessMiddlewareOptions } from "./harness/middleware.js";
 import { createHarnessTelegram } from "./harness/telegram.js";
 import type { HarnessBotPort } from "./harness/types.js";
@@ -131,6 +132,7 @@ export interface BotConfig {
   timerCallbacks?: TimerCallbacks;
   aiSelectionCallbacks?: AiSelectionCallbacks;
   mcpCallbacks?: McpCommandConfig;
+  githubIssueProposals?: import("@cos-tool-bot/shared").GitHubIssueProposalPort;
   aiReply?: AiReplyBotConfig;
   mediaTranscriptionPort?: MediaTranscriptionPort;
   conversation?: ConversationCallbacks;
@@ -789,6 +791,16 @@ export function createBot(config: BotConfig) {
     commandRegistry.register("summary", createSummaryCommand(config.summary));
   }
 
+  if (config.githubIssueProposals) {
+    const issueProposalHandler = createGitHubIssueProposalCallbackHandler(
+      bot.api,
+      config.githubIssueProposals,
+    );
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await issueProposalHandler(ctx))) await next();
+    });
+  }
+
   if (aiHandler && aiState) {
     // Register event handlers for interactive tools (polls, choices)
     const pendingActions = aiState.getPendingActions();
@@ -969,3 +981,4 @@ export {
 } from "./tools/pixai.js";
 export type { McpToolEntry, McpToolsOptions } from "./tools/mcp.js";
 export { sendLocalVideoFile } from "./services/video-download-delivery.js";
+export { GitHubClient, type GitHubIssue } from "./services/github-client.js";

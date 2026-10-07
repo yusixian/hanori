@@ -22,6 +22,7 @@ import type { EngagementSampleService } from "../engagement-sample-service.js";
 import type { GenerationLibraryService } from "../generation-library-service.js";
 import type { PendingGenerationInsertFallbackTracker } from "../generation-recovery.js";
 import type { GitWorkspaceService } from "../git-workspace-service.js";
+import type { GitHubIssueProposalService } from "../github-issue-proposals.js";
 import type { GitHubAppCredentialService } from "../github-app-credentials.js";
 import type { GitHubCredentialGenerationGate } from "../github-credential-policy.js";
 import type { McpClientManager } from "../mcp-client-manager.js";
@@ -82,6 +83,7 @@ export interface BotRuntimeServices {
   summaryConfigService?: SummaryConfigService;
   gitWorkspaceService?: GitWorkspaceService;
   githubAppCredentialService?: GitHubAppCredentialService;
+  githubIssueProposalService?: GitHubIssueProposalService;
   harnessService?: HarnessService;
   engagementSampleService?: Pick<EngagementSampleService, "persist">;
   telegramObservation?: TelegramObservationCallbacks;

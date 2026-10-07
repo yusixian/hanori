@@ -102,7 +102,7 @@ export interface ReplyTurn {
   preserveQueuedMessage: boolean;
   stickerCache: Map<string, string[]>;
   mcp?: McpToolsOptions;
-  github?: Pick<GitHubToolsOptions, "config" | "codeCallbacks" | "codingModel">;
+  github?: Pick<GitHubToolsOptions, "config" | "codeCallbacks" | "codingModel" | "issueProposals">;
 }
 
 export interface ContinueTurn {
@@ -208,6 +208,7 @@ function createReplyGitHubTools(
     userId: input.userId,
     chatId: input.chatId,
     api: input.api,
+    threadId: input.threadId,
     pendingActions: input.config.pendingAdminActions,
   });
 }

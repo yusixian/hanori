@@ -76,3 +76,45 @@ describe("GitHubClient dynamic credentials", () => {
     expect(tokenProvider).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("Issue proposal reconciliation", () => {
+  it("reads later pages with current authentication and never selects a matching PR", async () => {
+    const issue = { number: 42, title: "Title", body: "Exact immutable body" };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify(Array.from({ length: 100 }, () => ({ ...issue, pull_request: {} }))),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([issue])));
+    const client = new GitHubClient({ token: "current", fetch: fetchMock });
+    expect(await client.findIssueByProposal("owner/repo", issue.title, issue.body)).toEqual(issue);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toContain("page=2");
+    expect(new Headers(fetchMock.mock.calls[1]?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer current",
+    );
+    expect(fetchMock.mock.calls.every(([, init]) => !init?.method)).toBe(true);
+  });
+  it("bounds recovery scanning and refuses ambiguous matches", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify(Array.from({ length: 100 }, () => ({ title: "unrelated" })))),
+    );
+    const client = new GitHubClient({ token: "current", fetch: fetchMock });
+    expect(await client.findIssueByProposal("owner/repo", "Title", "Body")).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify([
+          { title: "Title", body: "Body" },
+          { title: "Title", body: "Body" },
+        ]),
+      ),
+    );
+    await expect(client.findIssueByProposal("owner/repo", "Title", "Body")).rejects.toThrow(
+      "Multiple Issues",
+    );
+  });
+});

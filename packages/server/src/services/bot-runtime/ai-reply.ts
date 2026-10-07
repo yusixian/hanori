@@ -176,6 +176,7 @@ export async function assembleAiReply(
     usageGovernance: services.usageGovernance,
     agentToolsConfig: aiConfig.agentToolsConfig,
     githubToolsConfig,
+    githubIssueProposals: services.githubIssueProposalService?.forBot(botId),
     githubCodeCallbacks: createGitHubCodeCallbacks(botId, githubToolsConfig, services),
     artworkToolsConfig: aiConfig.artworkToolsConfig,
     botMemoryConfig: botMemoryCfg,

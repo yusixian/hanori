@@ -16,6 +16,8 @@ export interface GitHubToolsConfigStored {
   enabled: boolean;
   publicReadEnabled: boolean;
   codingAgentEnabled: boolean;
+  /** Only Issue creation: omitted/null never expires; a positive integer is minutes. */
+  createIssueConfirmationTtlMinutes?: number | null;
   /** Optional dedicated provider for coding tasks. Omitted to follow the active chat provider. */
   codingProviderId?: string;
   /** Optional dedicated model within codingProviderId. Omitted to use that provider's default. */
@@ -106,4 +108,53 @@ export interface GitHubWorkspaceDiscardResult {
   clean: boolean;
   remainingFiles: string[];
   summary: string;
+}
+
+export type GitHubIssueProposalStatus =
+  | "pending"
+  | "executing"
+  | "completed"
+  | "cancelled"
+  | "expired"
+  | "superseded"
+  | "result_unknown"
+  | "not_executed";
+
+export interface GitHubIssueProposal {
+  id: string;
+  botId: string;
+  chatId: number;
+  threadId: number | null;
+  initiator: number;
+  repository: string;
+  title: string;
+  body: string;
+  hash: string;
+  createdAt: number;
+  expiresAt: number | null;
+  status: GitHubIssueProposalStatus;
+  result?: { summary: string; url: string };
+}
+
+export interface GitHubIssueProposalActor {
+  chatId: number;
+  threadId?: number;
+  userId: number;
+}
+
+/** Tenant-bound server port. No credential or executable closure is persisted. */
+export interface GitHubIssueProposalPort {
+  propose(
+    input: GitHubIssueProposalActor & {
+      repository: string;
+      title: string;
+      body?: string;
+    },
+  ): Promise<GitHubIssueProposal>;
+  list(actor: GitHubIssueProposalActor): Promise<GitHubIssueProposal[]>;
+  decide(
+    id: string,
+    actor: GitHubIssueProposalActor,
+    decision: "confirm" | "cancel" | "verify",
+  ): Promise<GitHubIssueProposal>;
 }

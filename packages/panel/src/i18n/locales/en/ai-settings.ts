@@ -644,6 +644,10 @@ export const aiSettings = {
     permissionsUnavailable: "The server did not return permission details.",
     callbackSuccess: "GitHub App connected",
     callbackError: "GitHub authorization failed. Please try again.",
+    createIssueConfirmationNeverExpires: "Create Issue confirmations never expire",
+    createIssueConfirmationDescription:
+      "This applies only to creating an Issue. The administrator who started the request must still confirm execution; all other confirmations expire after 10 minutes.",
+    createIssueConfirmationMinutes: "Confirmation validity (minutes)",
     publicRead: "Allow members to read public repositories",
     publicReadDescription:
       "Member requests never include Ai-chan's token and cannot create branches, commit, push, or change issues.",

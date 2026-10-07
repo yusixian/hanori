@@ -30,6 +30,7 @@ const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
   "retry_image_delivery",
   "create_image",
   "cancel_image_generation",
+  "github_pending_issue_proposals",
 ]);
 
 const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([

@@ -87,6 +87,8 @@ export function buildAiConfigSaveBody(input: AiConfigSaveInput): AiConfigSaveBod
           enabled: config.githubToolsConfig.enabled,
           publicReadEnabled: config.githubToolsConfig.publicReadEnabled,
           codingAgentEnabled: config.githubToolsConfig.codingAgentEnabled,
+          createIssueConfirmationTtlMinutes:
+            config.githubToolsConfig.createIssueConfirmationTtlMinutes ?? null,
           codingProviderId: config.githubToolsConfig.codingProviderId,
           codingModelId: config.githubToolsConfig.codingModelId,
           authorName: config.githubToolsConfig.authorName,
