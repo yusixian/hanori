@@ -9,8 +9,6 @@ import {
   type PixaiMcpOAuthUpdate,
 } from "./pixai-mcp-oauth-provider.js";
 
-const CONNECTION_ID = "default";
-
 export class PixaiMcpOAuthStateCorruptError extends Error {
   constructor() {
     super("PixAI MCP OAuth state cannot be decrypted");
@@ -23,24 +21,29 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
   constructor(
     private readonly db: Database,
     private readonly encryptionKey: string,
+    private readonly connectionId = "default",
   ) {}
 
   async read(): Promise<Readonly<PixaiMcpOAuthState> | undefined> {
     const [row] = await this.db
       .select({ encryptedState: pixaiMcpConnections.encryptedState })
       .from(pixaiMcpConnections)
-      .where(sql`${pixaiMcpConnections.id} = ${CONNECTION_ID}`)
+      .where(sql`${pixaiMcpConnections.id} = ${this.connectionId}`)
       .limit(1);
     return this.decode(row?.encryptedState ?? null);
   }
 
   async patch(endpoint: string | undefined, update: PixaiMcpOAuthUpdate): Promise<void> {
     await this.db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`);
+      await tx.execute(
+        this.connectionId === "default"
+          ? sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`
+          : sql`select pg_advisory_xact_lock(hashtext(${`image-mcp-oauth:${this.connectionId}`}))`,
+      );
       const [row] = await tx
         .select({ encryptedState: pixaiMcpConnections.encryptedState })
         .from(pixaiMcpConnections)
-        .where(sql`${pixaiMcpConnections.id} = ${CONNECTION_ID}`)
+        .where(sql`${pixaiMcpConnections.id} = ${this.connectionId}`)
         .limit(1);
       const current = this.decode(row?.encryptedState ?? null);
       const next: PixaiMcpOAuthState =
@@ -57,7 +60,7 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
         Object.keys(next).length === 0 ? null : encrypt(JSON.stringify(next), this.encryptionKey);
       await tx
         .insert(pixaiMcpConnections)
-        .values({ id: CONNECTION_ID, encryptedState })
+        .values({ id: this.connectionId, encryptedState })
         .onConflictDoUpdate({
           target: pixaiMcpConnections.id,
           set: { encryptedState, updatedAt: new Date() },
@@ -67,11 +70,15 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
 
   async consumeAuthorizationState(endpoint: string, receivedState: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`);
+      await tx.execute(
+        this.connectionId === "default"
+          ? sql`select pg_advisory_xact_lock(hashtext('pixai-mcp-oauth'))`
+          : sql`select pg_advisory_xact_lock(hashtext(${`image-mcp-oauth:${this.connectionId}`}))`,
+      );
       const [row] = await tx
         .select({ encryptedState: pixaiMcpConnections.encryptedState })
         .from(pixaiMcpConnections)
-        .where(sql`${pixaiMcpConnections.id} = ${CONNECTION_ID}`)
+        .where(sql`${pixaiMcpConnections.id} = ${this.connectionId}`)
         .limit(1);
       const current = this.decode(row?.encryptedState ?? null) ?? {};
       const expected = current.authorizationState;
@@ -83,7 +90,7 @@ export class PixaiMcpOAuthDbStore implements PixaiMcpOAuthStore {
         Object.keys(next).length === 0 ? null : encrypt(JSON.stringify(next), this.encryptionKey);
       await tx
         .insert(pixaiMcpConnections)
-        .values({ id: CONNECTION_ID, encryptedState })
+        .values({ id: this.connectionId, encryptedState })
         .onConflictDoUpdate({
           target: pixaiMcpConnections.id,
           set: { encryptedState, updatedAt: new Date() },

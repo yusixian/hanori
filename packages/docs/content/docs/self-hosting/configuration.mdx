@@ -47,6 +47,8 @@ Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini Ap
 | `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                                     |
 | `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                         |
 | `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                                     |
+| `OPENAI_IMAGE_MCP_URL`       | GPT 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/openai-image`。独立于 PixAI 授权，留空关闭。                                                  |
+| `GEMINI_IMAGE_MCP_URL`       | Gemini 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/gemini-image`。独立授权，留空关闭。                                                        |
 
 Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
 
@@ -78,3 +80,13 @@ CODING_WORKER_SECRET=生成的独立随机值
 ## 轮换规则
 
 轮换前先确认备份和回滚路径。认证 secret、Mini App secret、加密 key、Bot Token、GitHub 私钥、MCP/API Key 和邮箱应用密码的失效范围不同；每次只轮换一类，重启后检查健康接口、面板登录、Bot 连通和对应集成。
+
+## 生图供应商与默认预设
+
+先在 MCP Platform 的预设页面保存 OpenAI / Gemini API key 并创建预设，再配置上面的对应 MCP 地址。在 Bot 的 **用量与生图治理** 中分别连接 GPT 和 Gemini；三个供应商可以同时连接。
+
+动漫插画默认使用 PixAI，通用图的新配置默认使用 GPT。每个用途都能单独修改默认供应商，并为 PixAI、GPT、Gemini 分别填写默认预设 key 和允许的预设。明确说“用 GPT”或“用 Gemini”只覆盖当前请求，不改动持久默认值；关闭或未连接的供应商不会被自动替代。通用图仍需要启用路由与对应模式。
+
+已有的通用图片后端配置继续使用旧路径，直到 owner 明确选择新的供应商。已经创建的 MCP 任务保存原供应商与连接地址；修改默认供应商不会改变旧任务，更换端点时需要先恢复原连接才能恢复任务。
+
+当前 GPT / Gemini 接入支持文生图；不接收参考图片、负面提示词或 seed。供应商已收到请求后的取消能力有限，排查时以平台任务状态为准。费用未知时由平台审批或有次数上限与有效期的可信预设控制；Bot 的日用量额度继续生效。

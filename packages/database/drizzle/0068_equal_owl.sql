@@ -1,0 +1,2 @@
+ALTER TABLE "image_generations" DROP CONSTRAINT "image_generations_provider_check";--> statement-breakpoint
+ALTER TABLE "image_generations" ADD CONSTRAINT "image_generations_provider_check" CHECK ("image_generations"."provider" in ('mcp_pixai', 'mcp_openai', 'mcp_gemini', 'general_backend'));

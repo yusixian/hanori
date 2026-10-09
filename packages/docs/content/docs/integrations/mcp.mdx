@@ -44,7 +44,7 @@ PIXAI_MCP_URL=https://mcp.example.com/mcp/pixai
 
 owner 授权期间，已有任务的后台结果查询可能暂时提示未连接，但不会取消当前授权。真正的回调失败仍会报告错误；授权成功后连接状态恢复为已连接。
 
-连接图片 MCP 后，仍需配置图片路由、preset、用量和内容安全检查。请按[图片、贴纸与媒体](/docs/guides/media)的流程先在测试聊天验证。
+连接图片 MCP 后，仍需配置图片路由、用量和内容安全检查；GPT / Gemini 的 preset 可选。请按[图片、贴纸与媒体](/docs/guides/media)的流程先在测试聊天验证。
 
 ## 排错
 
@@ -54,3 +54,9 @@ owner 授权期间，已有任务的后台结果查询可能暂时提示未连�
 4. 结果包含秘密：立即停止在公开群使用该工具，审查服务器返回值与日志脱敏，再决定是否继续。
 
 MCP 服务器的协议细节属于外部服务的一部分。本文只描述 Hanori 的集成边界，实际工具名、输入和费用以服务器能力列表为准。
+
+### GPT / Gemini 的动态生图参数
+
+在 MCP Platform 为 GPT、Gemini 分别保存供应商连接（协议、Base URL、API key、默认模型），再在 Hanori 授权对应 MCP。GPT / Gemini 不要求创建预设；`create_image` 的可选 `parameters` 中，GPT 可传 `model`、`size`、`quality`；Gemini 可传 `model`、`size`、`aspectRatio` 和 `imageSize`。省略的参数使用平台连接默认值。AI 可读取路由 `backendCapabilities` 中的默认值和供应商参数说明；支持范围以供应商为准。预设仍可作为快捷配置，显式覆盖参数时遵循平台审批策略。PixAI 保留已有预设流程。
+
+两个用途可以分别选择默认供应商，动漫默认 PixAI。用户明确要求 GPT / Gemini 时，本次请求可选择对应的已启用供应商，另一家的连接继续可用；失败不会自动切换供应商。默认 preset key 留空即可使用连接默认值。

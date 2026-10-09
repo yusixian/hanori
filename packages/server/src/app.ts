@@ -102,6 +102,7 @@ interface AppOptions {
   botSettingsService: BotSettingsService;
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
+  imageMcpConnections?: Partial<Record<"mcp_openai" | "mcp_gemini", ImageMcpConnectionService>>;
   usageGovernor: UsageGovernor;
   memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
@@ -136,6 +137,7 @@ export function createApp(options: AppOptions) {
     botSettingsService,
     imageGenerationService,
     imageMcpConnectionService,
+    imageMcpConnections,
     memoryConsolidationPreview,
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
@@ -218,6 +220,20 @@ export function createApp(options: AppOptions) {
     .use("/api/image-mcp", requireAppAccess(auth, db))
     .use("/api/image-mcp", requireRoles(ownerOnly))
     .route("/api/image-mcp", imageMcpRoutes(imageMcpConnectionService, baseURL))
+    .use("/api/image-mcp-openai/status", requireAppAccess(auth, db))
+    .use("/api/image-mcp-openai/status", requireRoles(ownerOrAdmin))
+    .use("/api/image-mcp-openai/oauth/start", requireAppAccess(auth, db))
+    .use("/api/image-mcp-openai/oauth/start", requireRoles(ownerOnly))
+    .use("/api/image-mcp-openai", requireAppAccess(auth, db))
+    .use("/api/image-mcp-openai", requireRoles(ownerOnly))
+    .route("/api/image-mcp-openai", imageMcpRoutes(imageMcpConnections?.mcp_openai, baseURL))
+    .use("/api/image-mcp-gemini/status", requireAppAccess(auth, db))
+    .use("/api/image-mcp-gemini/status", requireRoles(ownerOrAdmin))
+    .use("/api/image-mcp-gemini/oauth/start", requireAppAccess(auth, db))
+    .use("/api/image-mcp-gemini/oauth/start", requireRoles(ownerOnly))
+    .use("/api/image-mcp-gemini", requireAppAccess(auth, db))
+    .use("/api/image-mcp-gemini", requireRoles(ownerOnly))
+    .route("/api/image-mcp-gemini", imageMcpRoutes(imageMcpConnections?.mcp_gemini, baseURL))
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
@@ -239,7 +255,10 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/engagement-samples/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/files-raw/generations/*", requireRoles(ownerOrAdmin))
     .use("/api/bots/:botId/memories/consolidation-preview", requireRoles(ownerOrAdmin))
-    .route("/api/bots", governanceRoutes(db, imageGenerationService, imageMcpConnectionService))
+    .route(
+      "/api/bots",
+      governanceRoutes(db, imageGenerationService, imageMcpConnectionService, imageMcpConnections),
+    )
     .route(
       "/api/bots",
       botsRoutes(

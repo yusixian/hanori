@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,7 +24,22 @@ interface ConnectionView {
   scopes: string[];
   lastError?: string;
 }
+type BackendId = "mcp_pixai" | "mcp_openai" | "mcp_gemini" | "general_backend";
+const backendLabels: Record<BackendId, string> = {
+  mcp_pixai: "PixAI",
+  mcp_openai: "GPT Image",
+  mcp_gemini: "Gemini Image",
+  general_backend: "Legacy",
+};
+interface BackendDraft {
+  backendId: BackendId;
+  enabled: boolean;
+  defaultPresetKey?: string;
+  allowedPresetKeys: string[];
+}
 interface RouteDraft {
+  defaultBackendId?: BackendId;
+  backends?: BackendDraft[];
   purpose: "anime_illustration" | "general_image";
   enabled: boolean;
   label: string;
@@ -34,6 +49,21 @@ interface RouteDraft {
   defaultPresetKey?: string;
   allowedPresetKeys: string[];
 }
+function routeBindings(route: RouteDraft): BackendDraft[] {
+  const defaultId =
+    route.defaultBackendId ??
+    (route.purpose === "anime_illustration" ? "mcp_pixai" : "general_backend");
+  return (["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"] as const).map(
+    (backendId) =>
+      route.backends?.find((binding) => binding.backendId === backendId) ?? {
+        backendId,
+        enabled: backendId !== "general_backend" || route.purpose === "general_image",
+        defaultPresetKey: backendId === defaultId ? route.defaultPresetKey : undefined,
+        allowedPresetKeys: backendId === defaultId ? route.allowedPresetKeys : [],
+      },
+  );
+}
+
 interface LimitDraft {
   key: string;
   label: string;
@@ -62,6 +92,7 @@ interface SubjectSearchResult {
 interface GovernanceDraft {
   timezone: string;
   connection: ConnectionView;
+  connections?: Partial<Record<BackendId, ConnectionView>>;
   generalRouteMode: GeneralRouteMode;
   privateChatUserIds: Array<number | "">;
   routes: RouteDraft[];
@@ -97,12 +128,14 @@ const DEFAULT_DRAFT: GovernanceDraft = {
   routes: [
     {
       purpose: "anime_illustration",
+      defaultBackendId: "mcp_pixai",
       enabled: true,
       ...DEFAULT_IMAGE_ROUTE_COPY.anime_illustration,
       allowedPresetKeys: [],
     },
     {
       purpose: "general_image",
+      defaultBackendId: "mcp_openai",
       enabled: false,
       ...DEFAULT_IMAGE_ROUTE_COPY.general_image,
       allowedPresetKeys: [],
@@ -323,8 +356,14 @@ export function BotGovernancePage() {
     }
   };
 
-  const beginOAuth = async () => {
-    const response = await authFetch("/api/image-mcp/oauth/start", { method: "POST" });
+  const beginOAuth = async (backendId: BackendId = "mcp_pixai") => {
+    const prefix =
+      backendId === "mcp_openai"
+        ? "/api/image-mcp-openai"
+        : backendId === "mcp_gemini"
+          ? "/api/image-mcp-gemini"
+          : "/api/image-mcp";
+    const response = await authFetch(`${prefix}/oauth/start`, { method: "POST" });
     const body = (await response.json()) as { ok?: boolean; authorizationUrl?: string };
     if (response.ok && body.ok && body.authorizationUrl)
       window.location.assign(body.authorizationUrl);
@@ -359,7 +398,10 @@ export function BotGovernancePage() {
             variant="outline"
             onClick={() => {
               setDirectoryRevision((revision) => revision + 1);
-              setDraft((current) => createDefaultDraft(current.connection));
+              setDraft((current) => ({
+                ...createDefaultDraft(current.connection),
+                connections: current.connections,
+              }));
               setMessage(t("governance.resetReady"));
             }}
           >
@@ -379,6 +421,29 @@ export function BotGovernancePage() {
         </p>
       )}
 
+      {(["mcp_openai", "mcp_gemini"] as const).map((backendId) => (
+        <Card key={backendId}>
+          <CardHeader>
+            <CardTitle>{backendLabels[backendId]}</CardTitle>
+            <CardDescription>{t("governance.connection.independent")}</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Badge
+              variant={statusVariant(draft.connections?.[backendId]?.status ?? "disconnected")}
+            >
+              {t(
+                `governance.connection.status.${draft.connections?.[backendId]?.status ?? "disconnected"}`,
+              )}
+            </Badge>
+            {draft.connections?.[backendId]?.lastError && (
+              <p className="text-destructive text-sm">{draft.connections[backendId]?.lastError}</p>
+            )}
+            <Button type="button" onClick={() => void beginOAuth(backendId)}>
+              {t("governance.connection.connect")}
+            </Button>
+          </CardContent>
+        </Card>
+      ))}
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-4">
           <div>
@@ -542,6 +607,98 @@ export function BotGovernancePage() {
                   </label>
                 </div>
                 <div className="grid gap-3">
+                  <Label htmlFor={`provider-${route.purpose}`}>
+                    {t("governance.routing.defaultProvider")}
+                  </Label>
+                  <select
+                    id={`provider-${route.purpose}`}
+                    className="bg-background w-full min-w-0 rounded border px-3 py-2"
+                    value={
+                      route.defaultBackendId ??
+                      (route.purpose === "anime_illustration" ? "mcp_pixai" : "general_backend")
+                    }
+                    onChange={(event) =>
+                      setDraft((current) => ({
+                        ...current,
+                        routes: current.routes.map((item, index) =>
+                          index === routeIndex
+                            ? {
+                                ...item,
+                                backends: routeBindings(item),
+                                defaultBackendId: event.target.value as BackendId,
+                              }
+                            : item,
+                        ),
+                      }))
+                    }
+                  >
+                    {Object.entries(backendLabels).map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  {(["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"] as const).map(
+                    (backendId) => {
+                      const binding = routeBindings(route).find(
+                        (binding) => binding.backendId === backendId,
+                      )!;
+                      const update = (patch: Partial<BackendDraft>) =>
+                        setDraft((current) => ({
+                          ...current,
+                          routes: current.routes.map((item, index) =>
+                            index === routeIndex
+                              ? {
+                                  ...item,
+                                  backends: routeBindings(item).map((binding) =>
+                                    binding.backendId === backendId
+                                      ? { ...binding, ...patch }
+                                      : binding,
+                                  ),
+                                }
+                              : item,
+                          ),
+                        }));
+                      return (
+                        <fieldset className="min-w-0 space-y-3 rounded border p-3" key={backendId}>
+                          <legend>{backendLabels[backendId]}</legend>
+                          <label className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={binding.enabled}
+                              onChange={(event) => update({ enabled: event.target.checked })}
+                            />
+                            {t("governance.routing.enabled")}
+                          </label>
+                          <Label htmlFor={`preset-${route.purpose}-${backendId}`}>
+                            {t("governance.routing.defaultPreset")}
+                          </Label>
+                          <Input
+                            id={`preset-${route.purpose}-${backendId}`}
+                            value={binding.defaultPresetKey ?? ""}
+                            onChange={(event) =>
+                              update({ defaultPresetKey: event.target.value || undefined })
+                            }
+                          />
+                          <Label htmlFor={`allowed-${route.purpose}-${backendId}`}>
+                            {t("governance.routing.allowedPresets")}
+                          </Label>
+                          <Input
+                            id={`allowed-${route.purpose}-${backendId}`}
+                            value={binding.allowedPresetKeys.join(", ")}
+                            onChange={(event) =>
+                              update({
+                                allowedPresetKeys: event.target.value
+                                  .split(",")
+                                  .map((value) => value.trim())
+                                  .filter(Boolean),
+                              })
+                            }
+                          />
+                        </fieldset>
+                      );
+                    },
+                  )}
                   <Label htmlFor={`label-${route.purpose}`}>{t("governance.routing.label")}</Label>
                   <Input
                     id={`label-${route.purpose}`}
@@ -599,47 +756,6 @@ export function BotGovernancePage() {
                                 ...item,
                                 examples: event.target.value
                                   .split("\n")
-                                  .map((value) => value.trim())
-                                  .filter(Boolean),
-                              }
-                            : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <Label htmlFor={`preset-${route.purpose}`}>
-                    {t("governance.routing.defaultPreset")}
-                  </Label>
-                  <Input
-                    id={`preset-${route.purpose}`}
-                    value={route.defaultPresetKey ?? ""}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        routes: current.routes.map((item, index) =>
-                          index === routeIndex
-                            ? { ...item, defaultPresetKey: event.target.value || undefined }
-                            : item,
-                        ),
-                      }))
-                    }
-                  />
-                  <Label htmlFor={`allowed-presets-${route.purpose}`}>
-                    {t("governance.routing.allowedPresets")}
-                  </Label>
-                  <Input
-                    id={`allowed-presets-${route.purpose}`}
-                    value={route.allowedPresetKeys.join(", ")}
-                    placeholder={t("governance.routing.allowedPresetsPlaceholder")}
-                    onChange={(event) =>
-                      setDraft((current) => ({
-                        ...current,
-                        routes: current.routes.map((item, index) =>
-                          index === routeIndex
-                            ? {
-                                ...item,
-                                allowedPresetKeys: event.target.value
-                                  .split(",")
                                   .map((value) => value.trim())
                                   .filter(Boolean),
                               }

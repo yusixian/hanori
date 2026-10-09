@@ -46,6 +46,8 @@ export const env = {
   BACKUP_DIR: optional("BACKUP_DIR", "./backups"),
   GENERATION_RETENTION_DAYS: optionalInt("GENERATION_RETENTION_DAYS", 30),
   NSFW_API_URL: optional("NSFW_API_URL"),
+  OPENAI_IMAGE_MCP_URL: optional("OPENAI_IMAGE_MCP_URL"),
+  GEMINI_IMAGE_MCP_URL: optional("GEMINI_IMAGE_MCP_URL"),
   PIXAI_MCP_URL: optional("PIXAI_MCP_URL"),
   PLUGIN_DIRECTORY: optional("PLUGIN_DIRECTORY", "./data/plugins"),
   MEDIA_WORKER_SOCKET: optional("MEDIA_WORKER_SOCKET"),

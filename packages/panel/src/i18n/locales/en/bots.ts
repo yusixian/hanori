@@ -564,6 +564,8 @@ export const bots = {
     resetReady: "Defaults restored. Save to apply them.",
     save: "Save",
     connection: {
+      independent:
+        "Each provider has its own authorization; connecting one does not disconnect the others.",
       title: "PixAI MCP connection",
       description: "One Owner-managed OAuth connection is shared by this installation.",
       scopes: "Granted scopes:",
@@ -579,6 +581,7 @@ export const bots = {
       },
     },
     routing: {
+      defaultProvider: "Default provider",
       title: "Image routing contract",
       generalMode: "General image backend",
       ambiguous:

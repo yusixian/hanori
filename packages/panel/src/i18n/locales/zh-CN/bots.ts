@@ -536,6 +536,7 @@ export const bots = {
     resetReady: "已恢复为默认值，点击保存后生效。",
     save: "保存",
     connection: {
+      independent: "各供应商独立授权，连接其中一个不影响其他连接。",
       title: "PixAI MCP 连接",
       description: "整个实例共享一份由 Owner 管理的 OAuth 授权。",
       scopes: "已授权 scope：",
@@ -551,6 +552,7 @@ export const bots = {
       },
     },
     routing: {
+      defaultProvider: "默认供应商",
       title: "生图路由契约",
       generalMode: "通用图片后端",
       ambiguous: "含糊的生图请求始终走动漫插画路由；任何供应商都不会自动降级切换。",

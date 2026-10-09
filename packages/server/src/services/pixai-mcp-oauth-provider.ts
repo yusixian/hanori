@@ -50,6 +50,7 @@ export interface PixaiMcpOAuthProviderOptions {
   onAuthorizationUrl: (url: URL) => void | Promise<void>;
   clientName?: string;
   clientUri?: string;
+  scopes?: readonly string[];
 }
 
 export class PixaiMcpOAuthPersistenceError extends Error {
@@ -64,12 +65,14 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   readonly redirectUrl: URL;
   readonly clientMetadata: OAuthClientMetadata;
 
+  private readonly scopes: readonly string[];
   private readonly store: PixaiMcpOAuthStore;
   private readonly endpoint: string | undefined;
   private readonly onAuthorizationUrl: (url: URL) => void | Promise<void>;
 
   constructor(options: PixaiMcpOAuthProviderOptions) {
     this.store = options.store;
+    this.scopes = options.scopes ?? PIXAI_MCP_OAUTH_SCOPES;
     this.endpoint = options.endpoint ? new URL(options.endpoint).href : undefined;
     this.redirectUrl = new URL(options.redirectUrl);
     this.onAuthorizationUrl = options.onAuthorizationUrl;
@@ -80,7 +83,7 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
       response_types: ["code"],
       client_name: options.clientName ?? "Hanori",
       client_uri: options.clientUri,
-      scope: PIXAI_MCP_OAUTH_SCOPES.join(" "),
+      scope: this.scopes.join(" "),
     };
   }
 
@@ -117,7 +120,7 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
     const requestedScopes = new Set(
       (ownerAuthorizationUrl.searchParams.get("scope") ?? "").split(/\s+/).filter(Boolean),
     );
-    for (const scope of PIXAI_MCP_OAUTH_SCOPES) requestedScopes.add(scope);
+    for (const scope of this.scopes) requestedScopes.add(scope);
     ownerAuthorizationUrl.searchParams.set("scope", [...requestedScopes].join(" "));
     await this.onAuthorizationUrl(ownerAuthorizationUrl);
   }

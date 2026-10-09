@@ -251,6 +251,7 @@ function generalImageConfig() {
   config.generalRouteMode = "semantic_auto";
   const route = config.routes.find((candidate) => candidate.purpose === "general_image")!;
   route.enabled = true;
+  delete route.defaultBackendId;
   return config;
 }
 
@@ -477,8 +478,8 @@ describe("ImageGenerationService failure accounting", () => {
 
     expect(dependencies.usageGovernor.reserve).not.toHaveBeenCalled();
     expect(dependencies.logger.warn).toHaveBeenCalledWith(
-      { code: "AUTHORIZATION_REQUIRED" },
-      "PixAI MCP preset discovery failed",
+      { code: "AUTHORIZATION_REQUIRED", provider: "mcp_pixai" },
+      "Image MCP preset discovery failed",
     );
   });
 

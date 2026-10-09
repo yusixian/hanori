@@ -37,7 +37,24 @@ const LIMIT_KEYS = [
   "proactive_bot",
 ] as const;
 
+const backendIdSchema = z.enum(["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"]);
 const routeSchema = z.object({
+  defaultBackendId: backendIdSchema.optional(),
+  backends: z
+    .array(
+      z.object({
+        backendId: backendIdSchema,
+        enabled: z.boolean(),
+        defaultPresetKey: z.string().min(1).max(128).optional(),
+        allowedPresetKeys: z.array(z.string().min(1).max(128)).max(200),
+      }),
+    )
+    .max(4)
+    .refine(
+      (rows) => new Set(rows.map((row) => row.backendId)).size === rows.length,
+      "Duplicate image backend",
+    )
+    .optional(),
   purpose: z.enum(["anime_illustration", "general_image"]),
   enabled: z.boolean(),
   label: z.string().min(1).max(120),
@@ -162,6 +179,7 @@ export function governanceRoutes(
   db: Database,
   imageService: ImageGenerationService,
   connectionService: ImageMcpConnectionService,
+  connections?: Partial<Record<"mcp_openai" | "mcp_gemini", ImageMcpConnectionService>>,
 ) {
   return new Hono<{ Variables: AuthVariables }>()
     .get("/:botId/governance", async (c) => {
@@ -186,6 +204,10 @@ export function governanceRoutes(
         data: {
           ...config,
           connection,
+          connections: {
+            mcp_openai: await connections?.mcp_openai?.getStatus(),
+            mcp_gemini: await connections?.mcp_gemini?.getStatus(),
+          },
           limits: Object.entries(LIMIT_MAPPINGS).map(([key, mapping]) => {
             const configured = policies.find(
               (policy) =>
@@ -341,6 +363,10 @@ export function governanceRoutes(
           data: {
             ...config,
             connection: await connectionService.getStatus(),
+            connections: {
+              mcp_openai: await connections?.mcp_openai?.getStatus(),
+              mcp_gemini: await connections?.mcp_gemini?.getStatus(),
+            },
             limits: body.limits,
             overrides: body.overrides,
           },

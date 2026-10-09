@@ -24,7 +24,19 @@ describe("create_image routing contract", () => {
     const create = vi.fn().mockResolvedValue({ accepted: false, reason: "disabled" });
     const port = {
       create,
-      listRoutes: vi.fn().mockResolvedValue([route("general_image", true)]),
+      listRoutes: vi.fn().mockResolvedValue([
+        {
+          ...route("general_image", true),
+          backendCapabilities: [
+            {
+              backendId: "mcp_openai",
+              presetsRequired: false,
+              dynamicParameters: ["model", "size", "quality"],
+              connection: { defaultModel: "vendor-image", parameterNotes: "支持 2048x1152" },
+            },
+          ],
+        },
+      ]),
       listPresets: vi.fn(),
       get: vi.fn(),
       findByDeliveryMessage: vi.fn(),
@@ -32,12 +44,16 @@ describe("create_image routing contract", () => {
     } as unknown as ImageGenerationPort;
     const tools = await createImageGenerationTools({ port, getActor: () => actor });
 
+    expect(tools.create_image?.description).toContain("vendor-image");
+    expect(tools.create_image?.description).toContain("支持 2048x1152");
+    expect(tools.create_image?.description).toContain("预设可选");
     await (tools.create_image as Tool as unknown as ExecutableTool).execute(
       {
         purpose: "general_image",
         routingIntent: "explicit",
         prompt: "a realistic product photograph",
         presetKey: "general-default",
+        parameters: { model: "vendor-image", size: "2048x1152", quality: "high" },
         seed: 7,
         materials: {
           characterIds: [12],
@@ -66,6 +82,7 @@ describe("create_image routing contract", () => {
         safetyMode: "safe",
       },
       presetKey: "general-default",
+      parameters: { model: "vendor-image", size: "2048x1152", quality: "high" },
       seed: 7,
     });
   });

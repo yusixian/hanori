@@ -24,6 +24,8 @@ function createService(
   const dependencies = createDependencies();
   const config = structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG);
   config.generalRouteMode = mode;
+  // Historical configurations retain the direct general backend until an owner selects MCP.
+  delete config.routes.find((route) => route.purpose === "general_image")!.defaultBackendId;
   config.routes.find((route) => route.purpose === "general_image")!.enabled = routeEnabled;
   const generation = generationRow({
     provider: "general_backend",

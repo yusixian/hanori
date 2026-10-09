@@ -1,3 +1,4 @@
+import "@/style.css";
 import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 import { StrictMode } from "react";
@@ -400,3 +401,60 @@ test("blocks duplicate resource and target overrides before sending the update",
     .toHaveTextContent("already has an override for this target");
   expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PUT")).toBe(false);
 });
+
+for (const [width, height] of [
+  [1440, 900],
+  [390, 844],
+]) {
+  test(`keeps provider presets independent when changing the default at ${width}px`, async () => {
+    await page.viewport(width!, height!);
+    const data = {
+      ...loadedDraft,
+      routes: loadedDraft.routes.map((route) => ({ ...route, enabled: true })),
+    };
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            ok: true,
+            data:
+              init?.method === "PUT"
+                ? { ...JSON.parse(String(init.body)), connection: data.connection }
+                : data,
+          }),
+          { status: 200 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <MemoryRouter initialEntries={["/bots/test-id/governance"]}>
+        <Routes>
+          <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await expect.element(page.getByLabelText("Default provider").nth(0)).toHaveValue("mcp_pixai");
+    await page.getByLabelText("Default provider").nth(0).selectOptions("mcp_gemini");
+    const geminiPreset = document.getElementById(
+      "preset-anime_illustration-mcp_gemini",
+    ) as HTMLInputElement;
+    expect(geminiPreset.value).toBe("");
+    expect(
+      (document.getElementById("preset-anime_illustration-mcp_pixai") as HTMLInputElement).value,
+    ).toBe("custom-preset");
+    await page.getByLabelText("Default preset key").nth(2).fill("gemini-portrait");
+    await page.getByLabelText("Default provider").nth(1).selectOptions("mcp_openai");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    const request = fetchMock.mock.calls.find((call) => call[1]?.method === "PUT")?.[1];
+    const saved = JSON.parse(String(request?.body));
+    expect(saved.routes[0]).toMatchObject({
+      defaultBackendId: "mcp_gemini",
+      backends: expect.arrayContaining([
+        expect.objectContaining({ backendId: "mcp_pixai", defaultPresetKey: "custom-preset" }),
+        expect.objectContaining({ backendId: "mcp_gemini", defaultPresetKey: "gemini-portrait" }),
+      ]),
+    });
+    expect(saved.routes[1].defaultBackendId).toBe("mcp_openai");
+    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width!);
+  });
+}

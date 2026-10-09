@@ -1,13 +1,25 @@
+import { IMAGE_DYNAMIC_PARAMETER_PATTERNS } from "@cos-tool-bot/shared";
 import type {
   GenerationMaterialSelection,
   ImageGenerationActor,
   ImageGenerationPort,
   ImagePurpose,
+  ImageProviderRoute,
 } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
+
+const imageDynamicParametersSchema = z
+  .object({
+    model: z.string().trim().min(1).max(100).optional(),
+    size: z.string().regex(IMAGE_DYNAMIC_PARAMETER_PATTERNS.size).optional(),
+    quality: z.enum(["auto", "low", "medium", "high"]).optional(),
+    aspectRatio: z.string().regex(IMAGE_DYNAMIC_PARAMETER_PATTERNS.aspectRatio).optional(),
+    imageSize: z.string().regex(IMAGE_DYNAMIC_PARAMETER_PATTERNS.imageSize).optional(),
+  })
+  .strict();
 
 export interface ImageGenerationToolOptions {
   port: ImageGenerationPort;
@@ -69,11 +81,26 @@ export async function createImageGenerationTools({
           "用户要求画指定虚构角色或作品角色时，不得自动绑定请求者本人或其默认代表形象。personTelegramId 仅在本次明确要求本人/某位群友时填写；“帮我画”“给我画”只表示请求者，不表示画本人。",
           "用户明确指定已保存角色、群友形象或提示词资产时，通过 materials 传递已检索确认的 id；不要把群友身份或 NSFW 模式当作模型可自行推断的默认值。",
           "服务端会重新校验 Bot 隔离、角色可见性、安全设置和 pinned 注入；明确选择的素材优先，冲突的 pinned 资产应通过 excludedAssetIds 排除。",
-          ...routes.map((route) => `${route.purpose}: ${route.label}。${route.useWhen}`),
+          ...routes.map(
+            (route) =>
+              `${route.purpose}: ${route.label}。${route.useWhen}。默认供应商 ${route.defaultBackendId ?? route.provider}；可用供应商 ${(route.availableBackends ?? [route.provider]).join(", ")}`,
+          ),
+          ...routes.flatMap((route) =>
+            (route.backendCapabilities ?? []).map(
+              (capabilities) =>
+                `${route.purpose}/${capabilities.backendId}: 预设${capabilities.presetsRequired ? "必选" : "可选"}；动态参数 ${(capabilities.dynamicParameters ?? []).join(", ")}；连接默认值和供应商参数说明 ${JSON.stringify(capabilities.connection ?? {})}`,
+            ),
+          ),
         ].join("\n"),
         inputSchema: zodToAiSchema(
           z.object({
             purpose: purposeSchema,
+            backendId: z
+              .enum(["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"])
+              .optional()
+              .describe(
+                "用户明确指定 PixAI/GPT/Gemini 时分别选 mcp_pixai/mcp_openai/mcp_gemini；省略使用该用途的默认供应商。只能选择路由列出的 availableBackends。",
+              ),
             routingIntent: z
               .enum(["explicit", "semantic"])
               .default("semantic")
@@ -81,6 +108,11 @@ export async function createImageGenerationTools({
                 "只有用户明确要求通用图片后端时才使用 explicit；模型自行判断时使用 semantic",
               ),
             prompt: z.string().min(1).max(8_000).describe("图片提示词"),
+            parameters: imageDynamicParametersSchema
+              .optional()
+              .describe(
+                "GPT/Gemini 可动态指定模型、尺寸和质量，或 Gemini 的 aspectRatio/imageSize；省略走连接默认值，不必选择预设。以路由的 backendCapabilities 参数说明为准。PixAI/legacy 后端不支持此字段。",
+              ),
             presetKey: z.string().min(1).max(128).optional().describe("已列出的预设 key"),
             negativePrompt: z
               .string()
@@ -118,25 +150,49 @@ export async function createImageGenerationTools({
           }),
         ),
         execute: async (
-          { purpose, routingIntent, prompt, presetKey, negativePrompt, seed, materials },
+          {
+            purpose,
+            backendId,
+            routingIntent,
+            prompt,
+            presetKey,
+            parameters,
+            negativePrompt,
+            seed,
+            materials,
+          },
           executionOptions,
         ) =>
           port.create(getActor(), {
             ...(executionOptions.toolCallId ? { toolCallId: executionOptions.toolCallId } : {}),
             purpose: purpose as ImagePurpose,
+            ...(backendId ? { backendId: backendId as ImageProviderRoute } : {}),
             routingIntent,
             prompt,
             ...(materials ? { materials: materials as GenerationMaterialSelection } : {}),
             ...(presetKey ? { presetKey } : {}),
+            ...(parameters ? { parameters } : {}),
             ...(negativePrompt ? { negativePrompt } : {}),
             ...(seed !== undefined ? { seed } : {}),
           }),
       }),
       list_image_presets: tool({
-        description: "列出当前用户在当前会话可用的图片预设。创建图片前优先调用。",
-        inputSchema: zodToAiSchema(z.object({ purpose: purposeSchema.optional() })),
-        execute: async ({ purpose }) => ({
-          presets: await port.listPresets(getActor(), purpose as ImagePurpose | undefined),
+        description:
+          "列出当前用户在当前会话可用的图片预设。PixAI 创建前优先调用；GPT/Gemini 预设可选。",
+        inputSchema: zodToAiSchema(
+          z.object({
+            purpose: purposeSchema.optional(),
+            backendId: z
+              .enum(["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"])
+              .optional(),
+          }),
+        ),
+        execute: async ({ purpose, backendId }) => ({
+          presets: await port.listPresets(
+            getActor(),
+            purpose as ImagePurpose | undefined,
+            backendId as ImageProviderRoute | undefined,
+          ),
         }),
       }),
     });

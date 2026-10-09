@@ -1019,7 +1019,7 @@ export const imageGenerations = pgTable(
     index("image_generations_recovery_idx").on(t.state, t.updatedAt),
     check(
       "image_generations_provider_check",
-      sql`${t.provider} in ('mcp_pixai', 'general_backend')`,
+      sql`${t.provider} in ('mcp_pixai', 'mcp_openai', 'mcp_gemini', 'general_backend')`,
     ),
     check(
       "image_generations_purpose_check",

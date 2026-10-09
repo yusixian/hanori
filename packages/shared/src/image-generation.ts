@@ -6,7 +6,7 @@ import type { NsfwScores } from "./pixai.js";
 
 export type ImagePurpose = "anime_illustration" | "general_image";
 
-export type ImageProviderRoute = "mcp_pixai" | "general_backend";
+export type ImageProviderRoute = "mcp_pixai" | "mcp_openai" | "mcp_gemini" | "general_backend";
 
 export type GeneralImageRouteMode = "off" | "explicit_only" | "semantic_auto";
 
@@ -64,7 +64,22 @@ export interface ImagePreset {
   autoApproved: boolean;
 }
 
+export interface ImageBackendConfig {
+  backendId: ImageProviderRoute;
+  enabled: boolean;
+  defaultPresetKey?: string;
+  allowedPresetKeys: string[];
+}
+
 export interface ImageRouteCapabilities {
+  backendCapabilities?: Array<{
+    backendId: ImageProviderRoute;
+    presetsRequired: boolean;
+    connection?: Record<string, unknown>;
+    dynamicParameters?: string[];
+  }>;
+  availableBackends?: ImageProviderRoute[];
+  defaultBackendId?: ImageProviderRoute;
   purpose: ImagePurpose;
   provider: ImageProviderRoute;
   enabled: boolean;
@@ -77,6 +92,8 @@ export interface ImageRouteCapabilities {
 }
 
 export interface ImageRouteConfig {
+  defaultBackendId?: ImageProviderRoute;
+  backends?: ImageBackendConfig[];
   purpose: ImagePurpose;
   enabled: boolean;
   label: string;
@@ -94,9 +111,46 @@ export interface ImageGovernanceConfig {
   routes: ImageRouteConfig[];
 }
 
+export interface ImageDynamicParameters {
+  model?: string;
+  size?: string;
+  quality?: "auto" | "low" | "medium" | "high";
+  aspectRatio?: string;
+  imageSize?: string;
+}
+export const IMAGE_DYNAMIC_PARAMETER_PATTERNS = {
+  size: /^(auto|[1-9]\d{0,4}x[1-9]\d{0,4})$/,
+  aspectRatio: /^[1-9]\d{0,3}:[1-9]\d{0,3}$/,
+  imageSize: /^[1-9]\d?K$/,
+};
+export function parseImageDynamicParameters(value: unknown): ImageDynamicParameters {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid image parameters");
+  const result: Record<string, string> = {};
+  for (const [key, field] of Object.entries(value)) {
+    if (field === undefined) continue;
+    if (typeof field !== "string") throw new Error("Invalid image parameters");
+    const text = key === "model" ? field.trim() : field;
+    const valid =
+      key === "model"
+        ? text.length > 0 && text.length <= 100
+        : key === "quality"
+          ? ["auto", "low", "medium", "high"].includes(text)
+          : Object.hasOwn(IMAGE_DYNAMIC_PARAMETER_PATTERNS, key) &&
+            IMAGE_DYNAMIC_PARAMETER_PATTERNS[
+              key as keyof typeof IMAGE_DYNAMIC_PARAMETER_PATTERNS
+            ].test(text);
+    if (!valid) throw new Error("Invalid image parameters");
+    result[key] = text;
+  }
+  return result as ImageDynamicParameters;
+}
+
 export interface CreateImageRequest {
   /** Host-supplied correlation, never a model input. */
   toolCallId?: string;
+  parameters?: ImageDynamicParameters;
+  backendId?: ImageProviderRoute;
   materials?: GenerationMaterialSelection;
   purpose: ImagePurpose;
   prompt: string;
@@ -124,6 +178,9 @@ export interface ImageSafetyResult {
 /** Stable, provider-neutral parameters kept locally for task inspection and reproduction. */
 export interface ImageGenerationRequestSnapshot {
   requestContext?: ImageGenerationRequestContext;
+  imageSize?: string;
+  size?: string;
+  quality?: string;
   materials?: GenerationMaterialSnapshot;
   presetKey?: string;
   modelId?: string;
@@ -241,7 +298,11 @@ export interface ImageGenerationPort {
     actor: ImageGenerationActor,
     telegramMessageId: number,
   ): Promise<ImageGenerationReplyContext | null>;
-  listPresets(actor: ImageGenerationActor, purpose?: ImagePurpose): Promise<ImagePreset[]>;
+  listPresets(
+    actor: ImageGenerationActor,
+    purpose?: ImagePurpose,
+    backendId?: ImageProviderRoute,
+  ): Promise<ImagePreset[]>;
   cancel(actor: ImageGenerationActor, generationId: string): Promise<ImageCancellationResult>;
 }
 

@@ -477,6 +477,13 @@
       "when": 1791042994401,
       "tag": "0067_long_tyger_tiger",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1791529672292,
+      "tag": "0068_equal_owl",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,7 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import type { PixaiMcpInlineImage, PixaiMcpResourceLink } from "./pixai-mcp-client.js";
 
 const ARTIFACT_PATH =
-  /^\/api\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  /^\/api\/(?:artifacts|image-artifacts\/(?:openai-image|gemini-image))\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DEFAULT_ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export type PixaiMcpArtifactErrorCode =

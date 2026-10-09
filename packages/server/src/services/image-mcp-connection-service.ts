@@ -25,9 +25,15 @@ export interface ImageMcpConnectionServiceOptions {
   logger: Logger;
   environment: "production" | "non-production";
   endpointOverride?: string;
+  connectionId?: string;
+  scopes?: readonly string[];
+  routePrefix?: string;
 }
 
 export class ImageMcpConnectionService {
+  readonly endpoint: string | undefined;
+  private readonly connectionId: string;
+  private readonly scopes: readonly string[];
   readonly adapter: PixaiMcpAdapter;
   readonly artifacts: PixaiMcpArtifactReader;
 
@@ -39,19 +45,26 @@ export class ImageMcpConnectionService {
 
   constructor(options: ImageMcpConnectionServiceOptions) {
     this.db = options.db;
+    this.connectionId = options.connectionId ?? "default";
+    this.scopes = options.scopes ?? PIXAI_MCP_OAUTH_SCOPES;
     this.logger = options.logger;
     const endpoint = resolvePixaiMcpEndpoint({
       environment: options.environment,
       endpointOverride: options.endpointOverride,
     });
+    this.endpoint = endpoint?.href;
     this.provider = new PixaiMcpOAuthProvider({
       endpoint,
-      store: new PixaiMcpOAuthDbStore(options.db, options.encryptionKey),
-      redirectUrl: new URL("/api/image-mcp/oauth/callback", options.baseURL),
+      store: new PixaiMcpOAuthDbStore(options.db, options.encryptionKey, this.connectionId),
+      redirectUrl: new URL(
+        `${options.routePrefix ?? "/api/image-mcp"}/oauth/callback`,
+        options.baseURL,
+      ),
       onAuthorizationUrl: (url) => {
         this.authorizationUrl = new URL(url);
       },
       clientUri: options.baseURL,
+      scopes: this.scopes,
     });
     this.client = new PixaiMcpClient({
       authProvider: this.provider,
@@ -72,7 +85,11 @@ export class ImageMcpConnectionService {
       },
     });
     this.adapter = new PixaiMcpAdapter(this.client);
-    this.artifacts = new PixaiMcpArtifactReader({ endpoint, authProvider: this.provider });
+    this.artifacts = new PixaiMcpArtifactReader({
+      endpoint,
+      authProvider: this.provider,
+      maxBytes: this.connectionId === "default" ? 5 * 1024 * 1024 : 20 * 1024 * 1024,
+    });
   }
 
   async initialize(): Promise<void> {
@@ -101,7 +118,7 @@ export class ImageMcpConnectionService {
     await this.db
       .insert(pixaiMcpConnections)
       .values({
-        id: "default",
+        id: this.connectionId,
         status: "authorizing",
         ownerUserId,
         authorizationExpiresAt,
@@ -138,7 +155,7 @@ export class ImageMcpConnectionService {
         expiresAt: pixaiMcpConnections.authorizationExpiresAt,
       })
       .from(pixaiMcpConnections)
-      .where(eq(pixaiMcpConnections.id, "default"))
+      .where(eq(pixaiMcpConnections.id, this.connectionId))
       .limit(1);
     if (pending?.status !== "authorizing" || !pending.expiresAt) {
       throw new Error("PixAI MCP OAuth state is invalid or expired");
@@ -169,7 +186,7 @@ export class ImageMcpConnectionService {
     await this.provider.invalidateCredentials("all");
     await this.db
       .insert(pixaiMcpConnections)
-      .values({ id: "default", status: "disconnected", grantedScopes: [] })
+      .values({ id: this.connectionId, status: "disconnected", grantedScopes: [] })
       .onConflictDoUpdate({
         target: pixaiMcpConnections.id,
         set: {
@@ -195,7 +212,7 @@ export class ImageMcpConnectionService {
         lastErrorCode: pixaiMcpConnections.lastErrorCode,
       })
       .from(pixaiMcpConnections)
-      .where(eq(pixaiMcpConnections.id, "default"))
+      .where(eq(pixaiMcpConnections.id, this.connectionId))
       .limit(1);
     if (row?.status === "connected" && !(await this.provider.tokens())) {
       return { status: "disconnected", scopes: [], lastError: "AUTHORIZATION_REQUIRED" };
@@ -213,11 +230,11 @@ export class ImageMcpConnectionService {
 
   private async recordConnected(): Promise<void> {
     const tokens = await this.provider.tokens();
-    const scopes = tokens?.scope?.split(/\s+/).filter(Boolean) ?? [...PIXAI_MCP_OAUTH_SCOPES];
+    const scopes = tokens?.scope?.split(/\s+/).filter(Boolean) ?? [...this.scopes];
     await this.db
       .insert(pixaiMcpConnections)
       .values({
-        id: "default",
+        id: this.connectionId,
         status: "connected",
         grantedScopes: scopes,
         connectedAt: new Date(),
@@ -242,7 +259,7 @@ export class ImageMcpConnectionService {
     this.logger.warn({ code }, "PixAI MCP connection needs attention");
     await this.db
       .insert(pixaiMcpConnections)
-      .values({ id: "default", status: "error", lastErrorCode: code })
+      .values({ id: this.connectionId, status: "error", lastErrorCode: code })
       .onConflictDoUpdate({
         target: pixaiMcpConnections.id,
         set: { status: "error", lastErrorCode: code, updatedAt: new Date() },

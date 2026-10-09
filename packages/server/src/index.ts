@@ -316,6 +316,44 @@ const imageMcpConnectionService = new ImageMcpConnectionService({
   environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
   endpointOverride: env.PIXAI_MCP_URL || undefined,
 });
+const imageMcpConnections = {
+  mcp_openai: new ImageMcpConnectionService({
+    db,
+    encryptionKey: env.ENCRYPTION_KEY,
+    baseURL: env.BETTER_AUTH_URL,
+    logger,
+    environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
+    endpointOverride: env.OPENAI_IMAGE_MCP_URL || undefined,
+    connectionId: "openai-image",
+    routePrefix: "/api/image-mcp-openai",
+    scopes: [
+      "openid",
+      "profile",
+      "offline_access",
+      "mcp:openai-image:read",
+      "mcp:openai-image:generate",
+      "mcp:openai-image:cancel",
+    ],
+  }),
+  mcp_gemini: new ImageMcpConnectionService({
+    db,
+    encryptionKey: env.ENCRYPTION_KEY,
+    baseURL: env.BETTER_AUTH_URL,
+    logger,
+    environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
+    endpointOverride: env.GEMINI_IMAGE_MCP_URL || undefined,
+    connectionId: "gemini-image",
+    routePrefix: "/api/image-mcp-gemini",
+    scopes: [
+      "openid",
+      "profile",
+      "offline_access",
+      "mcp:gemini-image:read",
+      "mcp:gemini-image:generate",
+      "mcp:gemini-image:cancel",
+    ],
+  }),
+};
 const imageGenerationService = new ImageGenerationService({
   db,
   nsfwChecker,
@@ -323,6 +361,19 @@ const imageGenerationService = new ImageGenerationService({
   usageGovernor,
   pixai: imageMcpConnectionService.adapter,
   artifacts: imageMcpConnectionService.artifacts,
+  backends: {
+    mcp_pixai: {
+      adapter: imageMcpConnectionService.adapter,
+      artifacts: imageMcpConnectionService.artifacts,
+      endpoint: imageMcpConnectionService.endpoint,
+    },
+    ...Object.fromEntries(
+      Object.entries(imageMcpConnections).map(([id, service]) => [
+        id,
+        { adapter: service.adapter, artifacts: service.artifacts, endpoint: service.endpoint },
+      ]),
+    ),
+  },
   generalBackend: new BotConfiguredGeneralImageBackend(db),
   logger,
   isGroupEnabled: async (botId, chatId) => {
@@ -583,6 +634,7 @@ const app = createApp({
   botSettingsService,
   imageGenerationService,
   imageMcpConnectionService,
+  imageMcpConnections,
   usageGovernor,
   memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
@@ -605,6 +657,7 @@ serve(
 // Connect MCP servers before bots so tools are available at bot startup
 await mcpClientManager.connectAll();
 await imageMcpConnectionService.initialize();
+await Promise.all(Object.values(imageMcpConnections).map((service) => service.initialize()));
 await usageGovernor.reclaimExpiredReservations();
 await usageGovernor.pruneExpiredDetails();
 
@@ -664,6 +717,7 @@ const shutdown = async (signal: string) => {
   await pluginManager.close();
   await mcpClientManager.destroyAll();
   await imageMcpConnectionService.close();
+  await Promise.all(Object.values(imageMcpConnections).map((service) => service.close()));
   clearInterval(usageGovernanceCleanupTimer);
   clearInterval(usageGovernanceReclaimTimer);
   rssFeedService.stop();

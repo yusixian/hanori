@@ -26,7 +26,9 @@ import {
   type ImageGovernanceConfig,
   type ImagePreset,
   type ImageProviderRoute,
+  parseImageDynamicParameters,
   type ImageRouteCapabilities,
+  type ImageRouteConfig,
   type GenerationLibraryPort,
   type GenerationMaterialSnapshot,
 } from "@cos-tool-bot/shared";
@@ -92,6 +94,12 @@ export interface ImageGenerationServiceOptions {
   db: Database;
   usageGovernor: UsageGovernor;
   pixai: PixaiMcpAdapter;
+  backends?: Partial<
+    Record<
+      ImageProviderRoute,
+      { adapter: PixaiMcpAdapter; artifacts: PixaiMcpArtifactReader; endpoint?: string }
+    >
+  >;
   artifacts: PixaiMcpArtifactReader;
   logger: Logger;
   delivery?: ImageGenerationDelivery;
@@ -106,12 +114,14 @@ export const DEFAULT_IMAGE_GOVERNANCE_CONFIG: ImageGovernanceConfig = {
   routes: [
     {
       purpose: "anime_illustration",
+      defaultBackendId: "mcp_pixai",
       enabled: true,
       ...DEFAULT_IMAGE_ROUTE_COPY.anime_illustration,
       allowedPresetKeys: [],
     },
     {
       purpose: "general_image",
+      defaultBackendId: "mcp_openai",
       enabled: false,
       ...DEFAULT_IMAGE_ROUTE_COPY.general_image,
       allowedPresetKeys: [],
@@ -123,6 +133,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private readonly nsfwChecker?: NsfwChecker;
   private readonly db: Database;
   private readonly usageGovernor: UsageGovernor;
+  private readonly backends: NonNullable<ImageGenerationServiceOptions["backends"]>;
   private readonly pixai: PixaiMcpAdapter;
   private readonly artifacts: PixaiMcpArtifactReader;
   private readonly logger: Logger;
@@ -143,6 +154,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     this.generationLibrary = options.generationLibrary;
     this.usageGovernor = options.usageGovernor;
     this.pixai = options.pixai;
+    this.backends = options.backends ?? {};
     this.artifacts = options.artifacts;
     this.logger = options.logger;
     this.delivery = options.delivery;
@@ -155,61 +167,174 @@ export class ImageGenerationService implements ImageGenerationPort {
     options?: { includePresets?: boolean },
   ): Promise<ImageRouteCapabilities[]> {
     const config = await this.getConfig(actor.botId);
-    const generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
-    const presets =
-      options?.includePresets === false
-        ? []
-        : await this.listPresetsForConfig(config, generalImageAvailable);
-    return config.routes.map((route) => ({
-      ...route,
-      provider: providerForPurpose(route.purpose),
-      enabled: route.enabled && (route.purpose !== "general_image" || generalImageAvailable),
-      presets: presets.filter((preset) => preset.provider === providerForPurpose(route.purpose)),
-    }));
+    const general = await this.generalRouteAvailability(actor.botId, config);
+    const result: ImageRouteCapabilities[] = [];
+    for (const route of config.routes) {
+      const availableBackends = this.routeBackends(route)
+        .filter((binding) => binding.enabled && this.isMcpBackendAvailable(binding.backendId))
+        .map((binding) => binding.backendId);
+      if (
+        route.enabled &&
+        route.purpose === "general_image" &&
+        general.legacyAvailable &&
+        this.routeBackends(route).some(
+          (binding) => binding.backendId === "general_backend" && binding.enabled,
+        )
+      )
+        availableBackends.push("general_backend");
+      const presets =
+        options?.includePresets === false
+          ? []
+          : await this.listPresetsForConfig(
+              config,
+              general.available,
+              route.purpose,
+              undefined,
+              general.legacyAvailable,
+            );
+      const backendCapabilities = await Promise.all(
+        availableBackends
+          .filter((backendId) => backendId === "mcp_openai" || backendId === "mcp_gemini")
+          .map(async (backendId) => {
+            const adapter = this.backend(backendId).adapter;
+            const capabilities = await Promise.resolve()
+              .then(() => adapter.getCapabilities?.())
+              .catch(() => null);
+            return {
+              backendId,
+              presetsRequired: capabilities?.["presetsRequired"] !== false,
+              ...(capabilities?.["connection"] && typeof capabilities["connection"] === "object"
+                ? { connection: capabilities["connection"] as Record<string, unknown> }
+                : {}),
+              ...(Array.isArray(capabilities?.["dynamicParameters"])
+                ? { dynamicParameters: capabilities["dynamicParameters"] as string[] }
+                : {}),
+            };
+          }),
+      );
+      result.push({
+        ...route,
+        backendCapabilities,
+        provider: route.defaultBackendId ?? providerForPurpose(route.purpose),
+        availableBackends,
+        enabled:
+          route.enabled &&
+          availableBackends.length > 0 &&
+          (route.purpose !== "general_image" || config.generalRouteMode !== "off"),
+        presets,
+      });
+    }
+    return result;
+  }
+
+  private routeBackends(route: ImageRouteConfig) {
+    return (
+      route.backends ??
+      (route.purpose === "general_image" && !route.defaultBackendId
+        ? ["general_backend"]
+        : ["mcp_pixai", "mcp_openai", "mcp_gemini", "general_backend"]
+      ).map((backendId) => ({
+        backendId: backendId as ImageProviderRoute,
+        enabled: backendId !== "general_backend" || route.purpose === "general_image",
+        allowedPresetKeys:
+          backendId === (route.defaultBackendId ?? providerForPurpose(route.purpose))
+            ? route.allowedPresetKeys
+            : [],
+        defaultPresetKey:
+          backendId === (route.defaultBackendId ?? providerForPurpose(route.purpose))
+            ? route.defaultPresetKey
+            : undefined,
+      }))
+    );
+  }
+
+  private isMcpBackendAvailable(provider: ImageProviderRoute) {
+    return provider === "mcp_pixai" || Boolean(this.backends[provider]?.endpoint);
+  }
+
+  private backend(provider: string, metadata?: Record<string, unknown> | null) {
+    const selected =
+      provider === "mcp_pixai"
+        ? {
+            adapter: this.pixai,
+            artifacts: this.artifacts,
+            endpoint: this.backends.mcp_pixai?.endpoint,
+          }
+        : this.backends[provider as ImageProviderRoute];
+    if (
+      !selected ||
+      (typeof metadata?.endpoint === "string" && metadata.endpoint !== selected.endpoint)
+    )
+      throw new Error("Original image provider connection is unavailable");
+    return selected;
   }
 
   async listPresets(
     actor: ImageGenerationActor,
     purpose?: "anime_illustration" | "general_image",
+    backendId?: ImageProviderRoute,
   ): Promise<ImagePreset[]> {
     const config = await this.getConfig(actor.botId);
-    const generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
-    return this.listPresetsForConfig(config, generalImageAvailable, purpose);
+    const general =
+      !purpose || purpose === "general_image"
+        ? await this.generalRouteAvailability(actor.botId, config)
+        : { available: false, legacyAvailable: false };
+    return this.listPresetsForConfig(
+      config,
+      general.available,
+      purpose,
+      backendId,
+      general.legacyAvailable,
+    );
   }
 
   private async listPresetsForConfig(
     config: ImageGovernanceConfig,
     generalImageAvailable: boolean,
     purpose?: "anime_illustration" | "general_image",
+    backendId?: ImageProviderRoute,
+    legacyAvailable = false,
   ): Promise<ImagePreset[]> {
     const result: ImagePreset[] = [];
-    if (!purpose || purpose === "anime_illustration") {
-      const route = config.routes.find((candidate) => candidate.purpose === "anime_illustration");
-      if (route?.enabled) {
-        const raw = await this.pixai.listPresets().catch((error: unknown) => {
-          this.logger.warn(
-            { code: sanitizedProviderErrorCode(error) },
-            "PixAI MCP preset discovery failed",
-          );
-          return [];
-        });
+    for (const route of config.routes) {
+      if (
+        !route.enabled ||
+        (purpose && purpose !== route.purpose) ||
+        (route.purpose === "general_image" && !generalImageAvailable)
+      )
+        continue;
+      for (const binding of this.routeBackends(route)) {
+        if (!binding.enabled || (backendId && binding.backendId !== backendId)) continue;
+        if (binding.backendId === "general_backend") {
+          if (legacyAvailable && route.purpose === "general_image")
+            result.push({
+              key: "general-default",
+              label: "General image",
+              provider: "general_backend",
+              autoApproved: true,
+            });
+          continue;
+        }
+        if (!this.isMcpBackendAvailable(binding.backendId)) continue;
+        const raw = await this.backend(binding.backendId)
+          .adapter.listPresets()
+          .catch((error: unknown) => {
+            this.logger.warn(
+              { code: sanitizedProviderErrorCode(error), provider: binding.backendId },
+              "Image MCP preset discovery failed",
+            );
+            return [];
+          });
         for (const item of raw) {
           const preset = projectPixaiPreset(item);
-          if (!preset) continue;
-          if (route.allowedPresetKeys.length > 0 && !route.allowedPresetKeys.includes(preset.key)) {
+          if (
+            !preset ||
+            (binding.allowedPresetKeys.length && !binding.allowedPresetKeys.includes(preset.key))
+          )
             continue;
-          }
-          result.push(preset);
+          result.push({ ...preset, provider: binding.backendId });
         }
       }
-    }
-    if ((!purpose || purpose === "general_image") && generalImageAvailable) {
-      result.push({
-        key: "general-default",
-        label: "General image",
-        provider: "general_backend",
-        autoApproved: true,
-      });
     }
     return result;
   }
@@ -226,9 +351,51 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!(await this.canCreate(actor, config))) return { accepted: false, reason: "not_allowed" };
     const route = config.routes.find((candidate) => candidate.purpose === request.purpose);
     if (!route?.enabled) return { accepted: false, reason: "disabled" };
+    const provider =
+      request.backendId ?? route.defaultBackendId ?? providerForPurpose(request.purpose);
+    const binding = this.routeBackends(route).find(
+      (item) => item.backendId === provider && item.enabled,
+    );
+    if (!binding) return { accepted: false, reason: "provider_unavailable" };
+    if (provider !== "general_backend" && !this.isMcpBackendAvailable(provider))
+      return { accepted: false, reason: "provider_unavailable" };
+    const nativeImages = provider === "mcp_openai" || provider === "mcp_gemini";
+    const dynamic = (() => {
+      try {
+        return {
+          success: true as const,
+          data: parseImageDynamicParameters(request.parameters ?? {}),
+        };
+      } catch {
+        return { success: false as const, data: undefined };
+      }
+    })();
+    if (
+      !dynamic.success ||
+      (!nativeImages && request.parameters && Object.keys(request.parameters).length) ||
+      (provider === "mcp_openai" && (dynamic.data?.aspectRatio || dynamic.data?.imageSize)) ||
+      (provider === "mcp_gemini" && dynamic.data?.quality && dynamic.data.quality !== "auto")
+    )
+      return {
+        accepted: false,
+        reason: "invalid_request",
+        message: "Unsupported dynamic image parameters",
+      };
+    if (
+      (provider === "mcp_openai" || provider === "mcp_gemini") &&
+      (request.negativePrompt || request.seed !== undefined)
+    )
+      return {
+        accepted: false,
+        reason: "invalid_request",
+        message: "GPT and Gemini do not support negativePrompt or seed",
+      };
     let generalImageAvailable = false;
+    let legacyAvailable = false;
     if (request.purpose === "general_image") {
-      generalImageAvailable = await this.isGeneralImageAvailable(actor.botId, config);
+      const general = await this.generalRouteAvailability(actor.botId, config);
+      generalImageAvailable = general.available;
+      legacyAvailable = general.legacyAvailable;
       if (!generalImageAvailable) {
         return { accepted: false, reason: "disabled" };
       }
@@ -273,12 +440,27 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
     if (!prompt || prompt.length > 8_000) return { accepted: false, reason: "invalid_request" };
 
-    const presets = await this.listPresetsForConfig(config, generalImageAvailable, request.purpose);
-    if (request.purpose === "anime_illustration" && presets.length === 0) {
+    const presets = await this.listPresetsForConfig(
+      config,
+      generalImageAvailable,
+      request.purpose,
+      provider,
+      legacyAvailable,
+    );
+    if (!nativeImages && presets.length === 0) {
       return { accepted: false, reason: "provider_unavailable" };
     }
-    const presetKey = request.presetKey ?? route.defaultPresetKey ?? presets[0]?.key;
-    if (!presetKey || !presets.some((preset) => preset.key === presetKey)) {
+    const presetKey =
+      request.presetKey ??
+      binding.defaultPresetKey ??
+      (provider === (route.defaultBackendId ?? providerForPurpose(request.purpose))
+        ? route.defaultPresetKey
+        : undefined) ??
+      (nativeImages ? undefined : presets[0]?.key);
+    if (
+      (presetKey && !presets.some((preset) => preset.key === presetKey)) ||
+      (!nativeImages && !presetKey)
+    ) {
       return { accepted: false, reason: "invalid_request", message: "Select an allowed preset" };
     }
 
@@ -293,6 +475,14 @@ export class ImageGenerationService implements ImageGenerationPort {
                 actor.userId,
                 requestContext.messageId,
                 request.purpose,
+                provider,
+                [
+                  dynamic.data.model,
+                  dynamic.data.size,
+                  dynamic.data.quality,
+                  dynamic.data.aspectRatio,
+                  dynamic.data.imageSize,
+                ],
                 prompt,
                 presetKey,
                 request.negativePrompt || null,
@@ -340,10 +530,11 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
 
     const id = randomUUID();
-    const provider = providerForPurpose(request.purpose);
     const idempotencyKey = requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
     const initialSnapshot: ImageGenerationRequestSnapshot = {
-      presetKey,
+      ...(presetKey ? { presetKey } : {}),
+      ...dynamic.data,
+      ...(dynamic.data.model ? { modelId: dynamic.data.model } : {}),
       ...(Object.keys(requestContext).length ? { requestContext } : {}),
       ...(materialSnapshot ? { materials: materialSnapshot } : {}),
     };
@@ -361,6 +552,12 @@ export class ImageGenerationService implements ImageGenerationPort {
         negativePrompt: request.negativePrompt,
         seed: request.seed,
         requestSnapshot: initialSnapshot,
+        providerMetadata: {
+          backendId: provider,
+          ...(this.backends[provider]?.endpoint
+            ? { endpoint: this.backends[provider]!.endpoint }
+            : {}),
+        },
         usageReservationId,
       });
     } catch {
@@ -393,8 +590,9 @@ export class ImageGenerationService implements ImageGenerationPort {
 
     let prepared;
     try {
-      prepared = await this.pixai.prepareGeneration({
-        presetKey,
+      prepared = await this.backend(provider).adapter.prepareGeneration({
+        ...(presetKey ? { presetKey } : {}),
+        ...dynamic.data,
         prompt,
         ...(request.negativePrompt ? { negativePrompt: request.negativePrompt } : {}),
         ...(request.seed !== undefined ? { seed: request.seed } : {}),
@@ -451,7 +649,10 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
 
     try {
-      const operation = await this.pixai.startGeneration(prepared.planId, idempotencyKey);
+      const operation = await this.backend(provider).adapter.startGeneration(
+        prepared.planId,
+        idempotencyKey,
+      );
       await this.persistStartedOperation(id, prepared.planId, operation, actor.botId);
       void this.advance(id);
       return { accepted: true, generation: (await this.getOwned(actor, id))! };
@@ -511,9 +712,13 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!row) return null;
 
     let providerDetails: Record<string, unknown> | undefined;
-    if (row.provider === "mcp_pixai" && row.providerOperationId) {
-      providerDetails = await this.pixai
-        .getGenerationDetails(row.providerOperationId)
+    if (row.provider !== "general_backend" && row.providerOperationId) {
+      providerDetails = await Promise.resolve()
+        .then(() =>
+          this.backend(row.provider, row.providerMetadata).adapter.getGenerationDetails(
+            row.providerOperationId!,
+          ),
+        )
         .catch((error: unknown) => {
           this.logger.warn(
             { code: sanitizedProviderErrorCode(error), generationId: row.id },
@@ -548,11 +753,15 @@ export class ImageGenerationService implements ImageGenerationPort {
     const row = await this.getRow(generationId);
     if (!row || row.botId !== botId) return undefined;
     if (hasUsefulRequestSnapshot(row.requestSnapshot)) return row.requestSnapshot ?? undefined;
-    if (row.provider !== "mcp_pixai" || !row.providerOperationId) {
+    if (row.provider === "general_backend" || !row.providerOperationId) {
       return row.requestSnapshot ?? undefined;
     }
     const details = await Promise.resolve()
-      .then(() => this.pixai.getGenerationDetails(row.providerOperationId!))
+      .then(() =>
+        this.backend(row.provider, row.providerMetadata).adapter.getGenerationDetails(
+          row.providerOperationId!,
+        ),
+      )
       .catch(() => null);
     if (!details) return row.requestSnapshot ?? undefined;
     const snapshot = extractImageGenerationRequestSnapshot(details, row.requestSnapshot ?? {});
@@ -642,7 +851,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         return { ok: true, generation: (await this.getOwned(actor, generationId))! };
       }
     }
-    if (row.provider !== "mcp_pixai" || !row.providerOperationId) {
+    if (row.provider === "general_backend" || !row.providerOperationId) {
       // Without a provider cancellation handle, aborting the local HTTP request
       // cannot prove cancellation and would lose a result still being generated.
       await this.db
@@ -701,7 +910,10 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
     await this.recordEvent(row.botId, generationId, "cancel_requested", "cancel_requested");
     try {
-      const operation = await this.pixai.cancelGeneration(row.providerOperationId);
+      const operation = await this.backend(
+        row.provider,
+        row.providerMetadata,
+      ).adapter.cancelGeneration(row.providerOperationId);
       const state = stateAfterCancellation(operation, row);
       const [claimed] = await this.db
         .update(imageGenerations)
@@ -832,6 +1044,20 @@ export class ImageGenerationService implements ImageGenerationPort {
       }
       return;
     }
+    try {
+      this.backend(row.provider, row.providerMetadata);
+    } catch {
+      await this.db
+        .update(imageGenerations)
+        .set({
+          state: "attention_required",
+          errorCode: "ORIGINAL_CONNECTION_UNAVAILABLE",
+          errorMessage: "Restore the original image provider endpoint before recovering this task",
+          updatedAt: new Date(),
+        })
+        .where(eq(imageGenerations.id, id));
+      return;
+    }
     if (!row.providerOperationId) {
       const planId = getPersistedPlanId(row.providerMetadata);
       if (!planId) {
@@ -844,7 +1070,10 @@ export class ImageGenerationService implements ImageGenerationPort {
         return;
       }
       try {
-        const operation = await this.pixai.startGeneration(planId, row.idempotencyKey);
+        const operation = await this.backend(
+          row.provider,
+          row.providerMetadata,
+        ).adapter.startGeneration(planId, row.idempotencyKey);
         await this.persistStartedOperation(id, planId, operation, row.botId);
         this.scheduleAdvance(id, 0);
       } catch {
@@ -908,7 +1137,10 @@ export class ImageGenerationService implements ImageGenerationPort {
         return;
       }
       try {
-        const operation = await this.pixai.cancelGeneration(row.providerOperationId);
+        const operation = await this.backend(
+          row.provider,
+          row.providerMetadata,
+        ).adapter.cancelGeneration(row.providerOperationId);
         const state = stateAfterCancellation(operation, row);
         const [claimed] = await this.db
           .update(imageGenerations)
@@ -955,7 +1187,10 @@ export class ImageGenerationService implements ImageGenerationPort {
       return;
     }
     try {
-      const operation = await this.pixai.waitForGeneration(row.providerOperationId, 10_000);
+      const operation = await this.backend(
+        row.provider,
+        row.providerMetadata,
+      ).adapter.waitForGeneration(row.providerOperationId, 10_000);
       const state = normalizeImageOperationState(operation);
       const persistedState = state === "succeeded" ? "running" : state;
       const [observed] = await this.db
@@ -995,11 +1230,15 @@ export class ImageGenerationService implements ImageGenerationPort {
         this.scheduleAdvance(id, state === "awaiting_approval" ? 30_000 : 5_000);
         return;
       }
-      const result = await this.pixai.getGenerationResult(row.providerOperationId);
+      const result = await this.backend(
+        row.provider,
+        row.providerMetadata,
+      ).adapter.getGenerationResult(row.providerOperationId);
       const data: PixaiMcpArtifactData[] = result.images.map((image) =>
-        this.artifacts.readInline(image),
+        this.backend(row.provider, row.providerMetadata).artifacts.readInline(image),
       );
-      for (const link of result.resourceLinks) data.push(await this.artifacts.download(link));
+      for (const link of result.resourceLinks)
+        data.push(await this.backend(row.provider, row.providerMetadata).artifacts.download(link));
       await this.completeWithArtifacts(row, dedupeArtifacts(data));
     } catch {
       this.logger.warn({ generationId: id }, "Image operation recovery deferred");
@@ -1359,15 +1598,27 @@ export class ImageGenerationService implements ImageGenerationPort {
     return this.isGroupEnabled(actor.botId, actor.chatId);
   }
 
-  private async isGeneralImageAvailable(
+  private async generalRouteAvailability(
     botId: string,
     config: ImageGovernanceConfig,
-  ): Promise<boolean> {
-    return (
-      config.routes.some((route) => route.purpose === "general_image" && route.enabled) &&
-      config.generalRouteMode !== "off" &&
-      (await this.isGeneralBackendConfigured(botId))
-    );
+  ): Promise<{ available: boolean; legacyAvailable: boolean }> {
+    const route = config.routes.find((route) => route.purpose === "general_image");
+    if (!route?.enabled || config.generalRouteMode === "off")
+      return { available: false, legacyAvailable: false };
+    const bindings = this.routeBackends(route).filter((binding) => binding.enabled);
+    const legacyAvailable =
+      bindings.some((binding) => binding.backendId === "general_backend") &&
+      (await this.isGeneralBackendConfigured(botId));
+    return {
+      available:
+        legacyAvailable ||
+        bindings.some(
+          (binding) =>
+            binding.backendId !== "general_backend" &&
+            this.isMcpBackendAvailable(binding.backendId),
+        ),
+      legacyAvailable,
+    };
   }
 
   private async isGeneralBackendConfigured(botId: string): Promise<boolean> {
@@ -1506,12 +1757,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     id: string,
     operationId: string,
   ): Promise<void> {
-    const details = await Promise.resolve()
-      .then(() => this.pixai.getGenerationDetails(operationId))
-      .catch(() => null);
-    if (!details) return;
     const row = await this.getRow(id);
     if (!row || row.botId !== botId) return;
+    const details = await Promise.resolve()
+      .then(() =>
+        this.backend(row.provider, row.providerMetadata).adapter.getGenerationDetails(operationId),
+      )
+      .catch(() => null);
+    if (!details) return;
     const snapshot = extractImageGenerationRequestSnapshot(details, row.requestSnapshot ?? {});
     await this.db
       .update(imageGenerations)
@@ -1578,7 +1831,7 @@ export function extractImageGenerationRequestSnapshot(
   return compactSnapshot({
     ...fallback,
     presetKey: firstString("presetKey", "preset_key") ?? fallback.presetKey,
-    modelId: firstString("modelId", "model_id") ?? fallback.modelId,
+    modelId: firstString("modelId", "model_id", "model") ?? fallback.modelId,
     modelVersionId:
       firstString("modelVersionId", "model_version_id", "modelVersion") ?? fallback.modelVersionId,
     width: firstNumber("width") ?? fallback.width,
