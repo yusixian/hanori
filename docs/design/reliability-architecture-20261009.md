@@ -1547,3 +1547,11 @@ Astra有界审查建议的共享tick时间、默认窗口、退群/迁移排除�
 完整两worker356文件4,497通过、17文件211按配置跳过（163.84秒），/tmp/cos-global-summary-full.log；18项PG单独验证不混入通过数。最终类型、lint（0警告/错误）、全仓格式、全包构建通过，/tmp/cos-global-summary-{types3,lint,fmt2,build}.log。i18n原tsx CLI因沙箱IPC拒绝未执行成功，改用node --import tsx运行同一检查脚本后2,876键/9命名空间通过，/tmp/cos-global-summary-i18n2.log。文档桌面/手机30项通过（34秒），/tmp/cos-global-summary-docs.log，包含匿名访问、深链接及搜索。保留既有panel chunk大小提示。无panel运行或翻译键改动，不重复panel浏览器。
 
 全局总结及0069尚未重新做整套Docker升级/恢复，公开说明将第138轮容器结果明确标为此前候选；本轮真实PG执行新迁移，不等于生产迁移或真实Telegram/模型验证。未提交、推送、发布或部署。历史备份与Lody回调按最新用户决定暂缓，HTTP预算仍待定，不将这些问题重新作为本次总结功能的前置条件。
+
+## 上线准备：用户授权部署
+
+用户要求“该上线上线”，本次授权推进候选提交、PR/CI与生产部署；未额外创建语义版本tag或GitHub Release。独立工作区225文件已提交为42455cbadc9c544685d38d6f14d3d501e1ea9594，并推送专用分支，PR #176已创建。原工作区未修改，main仍9230b4886fab79f2cbec47208b13e0bb2023a578。
+
+从该main基线到42455cb的隔离升级与独立恢复通过，日志/tmp/cos-live-upgrade-smoke.log；包含0069迁移、原账号、合成凭据、数据/文件及错缺key，两个项目deployment-smoke-cd8dd74b8d929c7cc14ad732和deployment-smoke-b899251ec4822fe9b57d9365已由脚本清理。最初在相同HEAD加dirty内容下尝试被脚本拒绝“Upgrade requires two different commits”，完成真实候选提交后才重跑，未绕过保护。
+
+通过Lody运维记录找到现有生产入口，现场公开ready仍返回9230b48且正常；SSH经配置的1Password agent签名失败，尚未获得生产会话，未执行生产修改。已请用户恢复本机agent认证。CI已启动并在运行，部署和CI均未宣称成功。
