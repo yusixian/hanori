@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createDb, type Database } from "@cos-tool-bot/database";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_CONVERSATION_CONFIG } from "@cos-tool-bot/shared";
+import pino from "pino";
+import { createConversationRuntime } from "./bot-runtime/conversation.js";
+import { DbLogger } from "./db-logger.js";
+import { EmbeddingService } from "./embedding-service.js";
 import { ConversationStore } from "./conversation-store.js";
 
 const url = process.env.CONVERSATION_SEARCH_TEST_DATABASE_URL;
@@ -9,6 +14,7 @@ const url = process.env.CONVERSATION_SEARCH_TEST_DATABASE_URL;
 describe.skipIf(!url)("conversation list search PostgreSQL integration", () => {
   let client: ReturnType<typeof createDb>["client"];
   let store: ConversationStore;
+  let db: Database;
   const namespace = `conversation_search_test_${randomUUID().replaceAll("-", "")}`;
 
   beforeAll(async () => {
@@ -22,7 +28,8 @@ describe.skipIf(!url)("conversation list search PostgreSQL integration", () => {
     parsed.searchParams.set("search_path", namespace);
     const connection = createDb(parsed.toString());
     client = connection.client;
-    store = new ConversationStore(connection.db as Database);
+    db = connection.db;
+    store = new ConversationStore(db);
     await client.unsafe(`CREATE SCHEMA "${namespace}"`);
     await client.unsafe(`
       CREATE TABLE conversation_messages (
@@ -36,7 +43,9 @@ describe.skipIf(!url)("conversation list search PostgreSQL integration", () => {
         user_name text,
         source_key text,
         meta json,
-        created_at timestamp DEFAULT now() NOT NULL
+        embedding text,
+        created_at timestamp DEFAULT now() NOT NULL,
+        UNIQUE (bot_id, chat_id, source_key)
       );
       CREATE TABLE conversation_summaries (
         id serial PRIMARY KEY,
@@ -56,6 +65,8 @@ describe.skipIf(!url)("conversation list search PostgreSQL integration", () => {
     await client.unsafe(`DROP SCHEMA IF EXISTS "${namespace}" CASCADE`);
     await client.end();
   });
+
+  afterEach(() => vi.restoreAllMocks());
 
   beforeEach(async () => {
     await client.unsafe("TRUNCATE conversation_summaries, conversation_messages RESTART IDENTITY");
@@ -184,5 +195,121 @@ describe.skipIf(!url)("conversation list search PostgreSQL integration", () => {
     const blank = await store.getConversationList(botId, 1, 100, "   ");
     const omitted = await store.getConversationList(botId, 1, 100);
     expect(blank).toEqual(omitted);
+  });
+
+  it("clears an existing vector when a sourced message changes but preserves it for identical content", async () => {
+    const botId = randomUUID();
+    const input = { botId, chatId: 1, sourceKey: "telegram:1", content: "Original" };
+    const first = await store.upsertUserMessage(input);
+    await client`UPDATE conversation_messages SET embedding = '[1]' WHERE id = ${first!.id}`;
+    await store.upsertUserMessage(input);
+    let rows =
+      await client`SELECT content, embedding FROM conversation_messages WHERE id = ${first!.id}`;
+    expect(rows[0]).toMatchObject({ content: "Original", embedding: "[1]" });
+    const updated = await store.upsertUserMessage({ ...input, content: "Updated" });
+    expect(updated!.id).toBe(first!.id);
+    rows =
+      await client`SELECT content, embedding FROM conversation_messages WHERE id = ${first!.id}`;
+    expect(rows[0]).toMatchObject({ content: "Updated", embedding: null });
+  });
+
+  function runtime(botId: string, embeddingService: EmbeddingService) {
+    const logger = pino({ enabled: false });
+    return createConversationRuntime({
+      botId,
+      conversationCfg: DEFAULT_CONVERSATION_CONFIG,
+      compressionProvider: {
+        id: "fixture",
+        label: "Fixture",
+        apiKey: "synthetic",
+        baseURL: "https://example.invalid",
+        providerFormat: "openai",
+        defaultModel: "fixture",
+      },
+      embeddingService,
+      auxiliaryTimeoutMs: 10_000,
+      store,
+      dbLogger: new DbLogger(db, logger),
+      logger,
+      host: { triggerConversationCleanup: vi.fn() },
+    }).conversation;
+  }
+  function embedder() {
+    return new EmbeddingService({
+      apiKey: "synthetic",
+      baseURL: "https://example.invalid",
+      model: "fixture",
+      dimensions: 1,
+    });
+  }
+
+  it.each(["success", "failure"])(
+    "rejects the old runtime vector after enriched content and new generation %s",
+    async (outcome) => {
+      const botId = randomUUID();
+      const service = embedder();
+      let finishOld!: (value: number[]) => void;
+      const oldResult = new Promise<number[]>((resolve) => {
+        finishOld = resolve;
+      });
+      vi.spyOn(service, "generateEmbedding")
+        .mockReturnValueOnce(oldResult)
+        .mockResolvedValueOnce(outcome === "success" ? [2] : null);
+      const writes = vi.spyOn(store, "updateEmbeddingIfContentMatches");
+      const conversation = runtime(botId, service);
+      const message = { chatId: 1, userId: 1, sourceKey: "telegram:enriched", content: "Original" };
+      try {
+        const first = await conversation.upsertUserMessage!(message);
+        const updated = await conversation.upsertUserMessage!({
+          ...message,
+          content: "Original with OCR",
+        });
+        expect(updated!.id).toBe(first!.id);
+        if (outcome === "success") {
+          await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+          await writes.mock.results[0]!.value;
+        }
+        finishOld([1]);
+        await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(outcome === "success" ? 2 : 1));
+        await Promise.all(writes.mock.results.map((result) => result.value));
+        const rows =
+          await client`SELECT content, embedding FROM conversation_messages WHERE id = ${first!.id}`;
+        expect(rows[0]).toMatchObject({
+          content: "Original with OCR",
+          embedding: outcome === "success" ? "[2]" : null,
+        });
+      } finally {
+        finishOld([1]);
+        await oldResult;
+        await Promise.all(writes.mock.results.map((result) => result.value));
+      }
+    },
+  );
+
+  it("guards batch runtime vectors with the persisted content", async () => {
+    const botId = randomUUID();
+    const service = embedder();
+    const message = { chatId: 1, sourceKey: "batch:1", content: "Original", role: "user" as const };
+    vi.spyOn(service, "generateEmbeddings").mockImplementationOnce(async () => {
+      await store.upsertUserMessage({ botId, ...message, content: "Changed during generation" });
+      return [[1]];
+    });
+    await runtime(botId, service).addMessages!([message]);
+    const rows =
+      await client`SELECT content, embedding FROM conversation_messages WHERE bot_id = ${botId}`;
+    expect(rows[0]).toMatchObject({ content: "Changed during generation", embedding: null });
+  });
+
+  it("does not write a vector for another owner, deleted row, or changed content beyond the embedding prefix", async () => {
+    const botId = randomUUID();
+    const content = `${"x".repeat(8000)}original`;
+    const row = await store.upsertUserMessage({ botId, chatId: 1, sourceKey: "guard:1", content });
+    expect(await store.updateEmbeddingIfContentMatches(randomUUID(), row!.id, content, [1])).toBe(
+      false,
+    );
+    await client`UPDATE conversation_messages SET content = ${`${"x".repeat(8000)}changed`} WHERE id = ${row!.id}`;
+    expect(await store.updateEmbeddingIfContentMatches(botId, row!.id, content, [1])).toBe(false);
+    await client`DELETE FROM conversation_messages WHERE id = ${row!.id}`;
+    expect(await store.updateEmbeddingIfContentMatches(botId, row!.id, content, [1])).toBe(false);
   });
 });

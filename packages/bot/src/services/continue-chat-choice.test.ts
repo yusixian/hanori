@@ -787,3 +787,45 @@ describe("choice continuation tools", () => {
     expect(sendMessage).not.toHaveBeenCalledWith(CHAT_ID, FAILURE_MESSAGE);
   });
 });
+
+it("redacts continuation credentials before request and tool diagnostics are truncated", async () => {
+  const secret = "private-continuation-key";
+  const text = "x".repeat(16_380) + secret;
+  const onLog = vi.fn();
+  streamTextMock.mockImplementationOnce(({ tools }) => {
+    async function* textStream() {
+      await tools.inspect.execute({ text }, { toolCallId: "inspect-1", messages: [] });
+      yield "done";
+    }
+    return {
+      textStream: textStream(),
+      text: Promise.resolve("done"),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 3, totalTokens: 5 }),
+    };
+  });
+  const { api } = createApi();
+  await expect(
+    continueChat(
+      api,
+      createConfig(createCoordinator(), {
+        onLog,
+        diagnosticSecrets: [secret],
+        webTools: { inspect: { execute: async () => ({ text }) } as unknown as Tool },
+      }),
+      {
+        chatId: CHAT_ID,
+        userId: USER_ID,
+        eventDescription: text,
+        requireDelivery: true,
+      },
+    ),
+  ).resolves.toBe(true);
+  const entries = onLog.mock.calls.map(([entry]) => entry);
+  for (const message of ["AI continuation request", "AI tool call", "AI tool result"]) {
+    const entry = entries.find((item) => item.message === message);
+    expect(entry).toBeDefined();
+    expect(JSON.stringify(entry)).not.toContain("priv");
+    expect(JSON.stringify(entry)).toContain("truncated");
+  }
+});

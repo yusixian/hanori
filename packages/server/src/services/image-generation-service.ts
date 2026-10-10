@@ -1,3 +1,4 @@
+import { InFlightTasks } from "../utils/in-flight-tasks.js";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,7 +12,6 @@ import {
 import {
   DEFAULT_IMAGE_ROUTE_COPY,
   ImageDeliveryError,
-  getDataDir,
   type CreateImageRequest,
   type ImageArtifact,
   type ImageCancellationResult,
@@ -32,6 +32,7 @@ import {
   type GenerationLibraryPort,
   type GenerationMaterialSnapshot,
 } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { Logger } from "pino";
 import type { PixaiMcpAdapter, PixaiGenerationOperation } from "./pixai-mcp-adapter.js";
@@ -140,6 +141,9 @@ export class ImageGenerationService implements ImageGenerationPort {
   private readonly delivery?: ImageGenerationDelivery;
   private readonly generalBackend?: GeneralImageBackend;
   private readonly isGroupEnabled: (botId: string, chatId: number) => Promise<boolean>;
+  private closing = false;
+  private closeTask?: Promise<void>;
+  private readonly tasks = new InFlightTasks();
   private readonly generalRuns = new Map<string, AbortController>();
   private readonly advancing = new Set<string>();
   private readonly scheduled = new Map<
@@ -162,7 +166,34 @@ export class ImageGenerationService implements ImageGenerationPort {
     this.isGroupEnabled = options.isGroupEnabled ?? (async () => false);
   }
 
-  async listRoutes(
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    for (const { timer } of this.scheduled.values()) clearTimeout(timer);
+    this.scheduled.clear();
+    this.closeTask = this.tasks.drain();
+    return this.closeTask;
+  }
+
+  private execute<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new Error("Image generation service is closing"));
+    return this.tasks.track(operation());
+  }
+
+  private background(generationId: string, task: string, operation: () => Promise<void>): void {
+    void this.tasks.track(operation()).catch(() => {
+      this.logger.warn({ generationId, task }, "Image background task failed");
+    });
+  }
+
+  listRoutes(
+    actor: ImageGenerationActor,
+    options?: { includePresets?: boolean },
+  ): Promise<ImageRouteCapabilities[]> {
+    return this.execute(() => this.listRoutesImpl(actor, options));
+  }
+
+  private async listRoutesImpl(
     actor: ImageGenerationActor,
     options?: { includePresets?: boolean },
   ): Promise<ImageRouteCapabilities[]> {
@@ -269,7 +300,15 @@ export class ImageGenerationService implements ImageGenerationPort {
     return selected;
   }
 
-  async listPresets(
+  listPresets(
+    actor: ImageGenerationActor,
+    purpose?: "anime_illustration" | "general_image",
+    backendId?: ImageProviderRoute,
+  ): Promise<ImagePreset[]> {
+    return this.execute(() => this.listPresetsImpl(actor, purpose, backendId));
+  }
+
+  private async listPresetsImpl(
     actor: ImageGenerationActor,
     purpose?: "anime_illustration" | "general_image",
     backendId?: ImageProviderRoute,
@@ -339,7 +378,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     return result;
   }
 
-  async create(
+  create(
+    actor: ImageGenerationActor,
+    request: CreateImageRequest,
+  ): Promise<ImageGenerationAdmission> {
+    return this.execute(() => this.createImpl(actor, request));
+  }
+
+  private async createImpl(
     actor: ImageGenerationActor,
     request: CreateImageRequest,
   ): Promise<ImageGenerationAdmission> {
@@ -584,7 +630,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     });
 
     if (provider === "general_backend") {
-      void this.runGeneral(id);
+      this.background(id, "general", () => this.runGeneral(id));
       return { accepted: true, generation: (await this.getOwned(actor, id))! };
     }
 
@@ -654,7 +700,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         idempotencyKey,
       );
       await this.persistStartedOperation(id, prepared.planId, operation, actor.botId);
-      void this.advance(id);
+      this.background(id, "advance", () => this.advance(id));
       return { accepted: true, generation: (await this.getOwned(actor, id))! };
     } catch {
       // The provider may have accepted the idempotent start before the connection or
@@ -671,7 +717,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     return this.getOwned(actor, generationId);
   }
 
-  async retryDelivery(
+  retryDelivery(
+    actor: ImageGenerationActor,
+    generationId: string,
+  ): Promise<ImageDeliveryRetryResult> {
+    return this.execute(() => this.retryDeliveryImpl(actor, generationId));
+  }
+
+  private async retryDeliveryImpl(
     actor: ImageGenerationActor,
     generationId: string,
   ): Promise<ImageDeliveryRetryResult> {
@@ -693,7 +746,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     return { ok: true, generation };
   }
 
-  async findByDeliveryMessage(
+  findByDeliveryMessage(
+    actor: ImageGenerationActor,
+    telegramMessageId: number,
+  ): Promise<ImageGenerationReplyContext | null> {
+    return this.execute(() => this.findByDeliveryMessageImpl(actor, telegramMessageId));
+  }
+
+  private async findByDeliveryMessageImpl(
     actor: ImageGenerationActor,
     telegramMessageId: number,
   ): Promise<ImageGenerationReplyContext | null> {
@@ -746,7 +806,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     };
   }
 
-  async getAdminRequestSnapshot(
+  getAdminRequestSnapshot(
+    botId: string,
+    generationId: string,
+  ): Promise<ImageGenerationRequestSnapshot | undefined> {
+    return this.execute(() => this.getAdminRequestSnapshotImpl(botId, generationId));
+  }
+
+  private async getAdminRequestSnapshotImpl(
     botId: string,
     generationId: string,
   ): Promise<ImageGenerationRequestSnapshot | undefined> {
@@ -772,7 +839,14 @@ export class ImageGenerationService implements ImageGenerationPort {
     return snapshot;
   }
 
-  async deleteAdminGeneration(
+  deleteAdminGeneration(
+    botId: string,
+    generationId: string,
+  ): Promise<"deleted" | "not_found" | "not_terminal"> {
+    return this.execute(() => this.deleteAdminGenerationImpl(botId, generationId));
+  }
+
+  private async deleteAdminGenerationImpl(
     botId: string,
     generationId: string,
   ): Promise<"deleted" | "not_found" | "not_terminal"> {
@@ -793,7 +867,11 @@ export class ImageGenerationService implements ImageGenerationPort {
     return "deleted";
   }
 
-  async cancel(
+  cancel(actor: ImageGenerationActor, generationId: string): Promise<ImageCancellationResult> {
+    return this.execute(() => this.cancelImpl(actor, generationId));
+  }
+
+  private async cancelImpl(
     actor: ImageGenerationActor,
     generationId: string,
   ): Promise<ImageCancellationResult> {
@@ -847,7 +925,7 @@ export class ImageGenerationService implements ImageGenerationPort {
             : { ok: false, reason: "not_found" };
         }
         await this.recordEvent(row.botId, generationId, "cancel_requested", "cancel_requested");
-        void this.advance(generationId);
+        this.background(generationId, "advance", () => this.advance(generationId));
         return { ok: true, generation: (await this.getOwned(actor, generationId))! };
       }
     }
@@ -978,7 +1056,11 @@ export class ImageGenerationService implements ImageGenerationPort {
     }
   }
 
-  async recoverPending(): Promise<void> {
+  recoverPending(): Promise<void> {
+    return this.execute(() => this.recoverPendingImpl());
+  }
+
+  private async recoverPendingImpl(): Promise<void> {
     const rows = await this.db
       .select({ id: imageGenerations.id })
       .from(imageGenerations)
@@ -1247,13 +1329,15 @@ export class ImageGenerationService implements ImageGenerationPort {
   }
 
   private scheduleAdvance(id: string, delayMs: number): void {
+    if (this.closing) return;
     const at = Date.now() + delayMs;
     const existing = this.scheduled.get(id);
     if (existing && existing.at <= at) return;
     if (existing) clearTimeout(existing.timer);
     const timer = setTimeout(() => {
       this.scheduled.delete(id);
-      void this.advance(id);
+      if (this.closing) return;
+      this.background(id, "advance", () => this.advance(id));
     }, delayMs);
     timer.unref?.();
     this.scheduled.set(id, { timer, at });
@@ -1748,7 +1832,9 @@ export class ImageGenerationService implements ImageGenerationPort {
       await this.recordEvent(botId, id, "submitted", normalState, operation.state, {
         providerOperationId: safeCorrelationId(operation.operationId),
       });
-      void this.refreshRequestSnapshot(botId, id, operation.operationId);
+      this.background(id, "snapshot", () =>
+        this.refreshRequestSnapshot(botId, id, operation.operationId),
+      );
     }
   }
 

@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import { type ChildProcess, spawn } from "node:child_process";
 import { type ExecFileLike, defaultExec } from "./lody.js";
 
@@ -122,6 +123,10 @@ export function startTurn(
   lifetime.unref();
 
   const onLine = (raw: string) => {
+    if (raw.length > MAX_LINE) {
+      if (kind === "chat" && raw.startsWith('{"type":"update"')) accept();
+      return;
+    }
     const line = raw.replace(ANSI, "").trim();
     if (!line) return;
     if (kind === "create") {
@@ -155,10 +160,11 @@ export function startTurn(
     }
   };
 
+  const decoder = new StringDecoder("utf8");
   let pending = "";
   let overflow = false;
   child.stdout?.on("data", (chunk: Buffer) => {
-    let text = pending + chunk.toString("utf8");
+    let text = pending + decoder.write(chunk);
     let newline: number;
     while ((newline = text.indexOf("\n")) !== -1) {
       const line = text.slice(0, newline);
@@ -181,6 +187,7 @@ export function startTurn(
     if (finished) return;
     finished = true;
     clearTimeout(lifetime);
+    pending += decoder.end();
     if (pending && !overflow) onLine(pending);
     pending = "";
     if (!accepted && exitCode === 0 && kind === "chat") accept();

@@ -1,3 +1,4 @@
+import { readBoundedImage as readImage } from "../utils/read-bounded-image.js";
 import { createHash } from "node:crypto";
 import {
   DEFAULT_NSFW_THRESHOLD,
@@ -35,32 +36,11 @@ export function needsImageSpoiler(
     !result.scores || result.scores.porn + result.scores.hentai + result.scores.sexy >= threshold
   );
 }
-export async function readBoundedImage(
+export function readBoundedImage(
   response: Response,
   maxBytes = MAX_NSFW_IMAGE_BYTES,
 ): Promise<Uint8Array> {
-  if (!response.ok) throw new Error(`Image download failed: HTTP ${response.status}`);
-  if (Number(response.headers.get("content-length")) > maxBytes) {
-    await response.body?.cancel();
-    throw new Error("NSFW response exceeds size limit");
-  }
-  if (!response.body) throw new Error("Image response has no body");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) throw new Error("NSFW response exceeds size limit");
-      chunks.push(value);
-    }
-  } finally {
-    await reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks, size);
+  return readImage(response, maxBytes, "NSFW response exceeds size limit");
 }
 
 export class NsfwChecker {

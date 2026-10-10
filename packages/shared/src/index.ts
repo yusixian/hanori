@@ -65,10 +65,7 @@ export {
   BINARY_EXTENSIONS,
   IMAGE_EXTENSIONS,
   CONTENT_TYPE_MAP,
-  resolveAndValidate,
-  resolveAndValidateDir,
-  getDataDir,
-} from "./file-validation.js";
+} from "./file-types.js";
 
 export * from "./engagement.js";
 export * from "./generation-library.js";

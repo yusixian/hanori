@@ -3,50 +3,71 @@ import { stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import type { StorageProvider } from "./types.js";
 
+async function releaseResponse(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => {});
+}
+
 export class WebDAVProvider implements StorageProvider {
   private baseUrl: string;
   private authHeader: string;
 
   constructor(url: string, username: string, password: string) {
-    this.baseUrl = url.replace(/\/+$/, "");
+    const baseUrl = new URL(url);
+    baseUrl.pathname = baseUrl.pathname.replace(/\/+$/, "");
+    this.baseUrl = baseUrl.href;
     this.authHeader = "Basic " + Buffer.from(`${username}:${password}`).toString("base64");
+  }
+
+  private remoteUrl(remoteName: string): string {
+    const url = new URL(this.baseUrl);
+    url.pathname = `${url.pathname.replace(/\/+$/, "")}/${encodeURIComponent(remoteName)}`;
+    return url.href;
   }
 
   async upload(localPath: string, remoteName: string): Promise<string> {
     const fileStats = await stat(localPath);
     const nodeStream = createReadStream(localPath);
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-    const remoteUrl = `${this.baseUrl}/${remoteName}`;
-
-    const res = await fetch(remoteUrl, {
-      method: "PUT",
-      headers: {
-        Authorization: this.authHeader,
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(fileStats.size),
-      },
-      body: webStream,
-      duplex: "half",
-    } as RequestInit);
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`WebDAV upload failed (${res.status}): ${text}`);
+    try {
+      const webStream = Readable.toWeb(nodeStream) as ReadableStream;
+      const remoteUrl = this.remoteUrl(remoteName);
+      const res = await fetch(remoteUrl, {
+        method: "PUT",
+        headers: {
+          Authorization: this.authHeader,
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(fileStats.size),
+        },
+        body: webStream,
+        duplex: "half",
+      } as RequestInit);
+      try {
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText);
+          throw new Error(`WebDAV upload failed (${res.status}): ${text}`);
+        }
+        return remoteUrl;
+      } finally {
+        await releaseResponse(res);
+      }
+    } finally {
+      nodeStream.destroy();
     }
-
-    return remoteUrl;
   }
 
   async delete(remoteName: string): Promise<void> {
-    const remoteUrl = `${this.baseUrl}/${remoteName}`;
+    const remoteUrl = this.remoteUrl(remoteName);
     const res = await fetch(remoteUrl, {
       method: "DELETE",
       headers: { Authorization: this.authHeader },
     });
-    // 404 is fine — already deleted
-    if (!res.ok && res.status !== 404) {
-      const text = await res.text().catch(() => res.statusText);
-      throw new Error(`WebDAV delete failed (${res.status}): ${text}`);
+    try {
+      // 404 is fine — already deleted
+      if (!res.ok && res.status !== 404) {
+        const text = await res.text().catch(() => res.statusText);
+        throw new Error(`WebDAV delete failed (${res.status}): ${text}`);
+      }
+    } finally {
+      await releaseResponse(res);
     }
   }
 
@@ -59,10 +80,14 @@ export class WebDAVProvider implements StorageProvider {
           Depth: "0",
         },
       });
-      if (res.ok || res.status === 207) {
-        return { ok: true };
+      try {
+        if (res.ok || res.status === 207) {
+          return { ok: true };
+        }
+        return { ok: false, error: `HTTP ${res.status}: ${res.statusText}` };
+      } finally {
+        await releaseResponse(res);
       }
-      return { ok: false, error: `HTTP ${res.status}: ${res.statusText}` };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

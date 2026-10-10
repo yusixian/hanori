@@ -54,3 +54,12 @@ export interface BackupRecord {
   error: string | null;
   createdAt: string;
 }
+
+/** Backup prefixes are filename components, never directory paths. */
+export function isValidBackupFilePrefix(value: string): boolean {
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (char === "/" || char === "\\" || code < 32 || code === 127) return false;
+  }
+  return true;
+}

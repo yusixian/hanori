@@ -407,6 +407,64 @@ describe("GitHubAppCredentialService installation token cache", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ["token", "old-first"],
+    ["token", "new-first"],
+    ["health", "old-first"],
+    ["health", "new-first"],
+  ] as const)("isolates %s refreshes across invalidation (%s)", async (kind, order) => {
+    const now = Date.parse("2026-07-21T00:00:00Z");
+    const pending: Array<(response: Response) => void> = [];
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    const service = new GitHubAppCredentialService({
+      config,
+      stateSecret: "state-secret",
+      fetch: fetchMock,
+      now: () => now,
+    });
+    const get = () =>
+      kind === "token"
+        ? service.getInstallationToken(77)
+        : service.getInstallationConnectionError(77);
+    const answer = (index: number) =>
+      jsonResponse(
+        kind === "token"
+          ? {
+              token: `token-${index}`,
+              expires_at: new Date(now + 3600000).toISOString(),
+            }
+          : { app_id: 12345, suspended_at: index === 0 ? "2026-07-21T00:00:00Z" : null },
+      );
+    const currentValue = kind === "token" ? "token-1" : undefined;
+    const old = get();
+    service.clearInstallationToken(77);
+    const current = get();
+    try {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      if (order === "old-first") {
+        pending[0]!(answer(0));
+        await old;
+        const joined = get();
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        pending[1]!(answer(1));
+        await expect(joined).resolves.toBe(currentValue);
+      } else {
+        pending[1]!(answer(1));
+        await expect(current).resolves.toBe(currentValue);
+        pending[0]!(answer(0));
+        await old;
+      }
+      await expect(current).resolves.toBe(currentValue);
+      await expect(get()).resolves.toBe(currentValue);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      pending.forEach((resolve, index) => resolve(answer(index)));
+      await Promise.allSettled([old, current]);
+    }
+  });
+
   it("caches suspended and revoked installation health without rewriting metadata", async () => {
     let now = Date.parse("2026-07-21T00:00:00Z");
     const fetchMock = vi

@@ -42,7 +42,11 @@ describe("MCP tool execution", () => {
     vi.useRealTimers();
   });
 
-  async function connectTool(durationMs: number, content = [{ type: "text", text: "done" }]) {
+  async function connectTool(
+    durationMs: number,
+    content = [{ type: "text", text: "done" }],
+    ignoreCancellation = false,
+  ) {
     vi.useFakeTimers();
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     server = new Server({ name: "slow-tools", version: "1.0.0" }, { capabilities: { tools: {} } });
@@ -50,13 +54,16 @@ describe("MCP tool execution", () => {
       tools: [{ name: "slow", inputSchema: { type: "object" } }],
     }));
     let remoteSignal: AbortSignal | undefined;
+    const effects = vi.fn();
     server.setRequestHandler(CallToolRequestSchema, async (_request, { signal }) => {
       remoteSignal = signal;
+      effects();
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => resolve({ content }), durationMs);
         signal.addEventListener(
           "abort",
           () => {
+            if (ignoreCancellation) return;
             clearTimeout(timer);
             reject(signal.reason);
           },
@@ -95,7 +102,7 @@ describe("MCP tool execution", () => {
     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
     manager = new McpClientManager(db, logger, "unused-test-key");
     await manager.connect(1);
-    return { manager, callTool, getRemoteSignal: () => remoteSignal };
+    return { manager, callTool, effects, getRemoteSignal: () => remoteSignal };
   }
 
   it("allows a real SDK request to finish after both the old SDK and host limits", async () => {
@@ -122,13 +129,16 @@ describe("MCP tool execution", () => {
     });
   });
 
-  it("keeps the host timeout error and cancels the underlying SDK request", async () => {
+  it("reports an unknown outcome and cancels the underlying SDK request on timeout", async () => {
     const { manager, callTool, getRemoteSignal } = await connectTool(11 * 60 * 1000);
     const pending = manager.callTool(1, "slow", {}).catch((error: unknown) => error);
 
     await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
 
-    await expect(pending).resolves.toEqual(new Error("MCP tool call timed out"));
+    await expect(pending).resolves.toMatchObject({
+      outcome: "unknown",
+      requestId: expect.any(String),
+    });
     expect(callTool.mock.calls[0]?.[2]?.signal?.aborted).toBe(true);
     expect(getRemoteSignal()?.aborted).toBe(true);
   });
@@ -145,7 +155,7 @@ describe("MCP tool execution", () => {
     controller.abort(reason);
     await vi.advanceTimersByTimeAsync(0);
 
-    await expect(pending).resolves.toBe(reason);
+    await expect(pending).resolves.toMatchObject({ outcome: "unknown" });
     expect(getRemoteSignal()?.aborted).toBe(true);
   });
 
@@ -153,8 +163,52 @@ describe("MCP tool execution", () => {
     const { manager, callTool } = await connectTool(1000);
     const reason = new Error("already cancelled");
 
-    await expect(manager.callTool(1, "slow", {}, AbortSignal.abort(reason))).rejects.toBe(reason);
+    await expect(manager.callTool(1, "slow", {}, AbortSignal.abort(reason))).rejects.toMatchObject({
+      outcome: "cancelled",
+    });
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("does not cancel another request on the shared connection", async () => {
+    const { manager, effects } = await connectTool(1000);
+    const controller = new AbortController();
+    const first = manager
+      .callTool(1, "slow", {}, controller.signal)
+      .catch((error: unknown) => error);
+    const second = manager.callTool(1, "slow", {});
+    await vi.advanceTimersByTimeAsync(100);
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(900);
+    await expect(first).resolves.toMatchObject({ outcome: "unknown" });
+    await expect(second).resolves.toBe("done");
+    expect(effects).toHaveBeenCalledTimes(2);
+    expect(manager.getStatus(1)[0]?.connected).toBe(true);
+  });
+
+  it("keeps a lost write receipt unknown even if the remote ignores cancellation and finishes", async () => {
+    const { manager, effects } = await connectTool(11 * 60 * 1000, undefined, true);
+    const settled = vi.fn();
+    const pending = manager.callTool(1, "slow", {}).catch((error: unknown) => {
+      settled();
+      return error;
+    });
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await expect(pending).resolves.toMatchObject({ outcome: "unknown" });
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(effects).toHaveBeenCalledOnce();
+    expect(settled).toHaveBeenCalledOnce();
+  });
+
+  it("classifies explicit remote errors separately from lost receipts", async () => {
+    const { manager, callTool } = await connectTool(1000);
+    callTool.mockResolvedValueOnce({
+      isError: true,
+      content: [{ type: "text", text: "Missing field title; Authorization: Bearer private-token" }],
+    });
+    const failure = await manager.callTool(1, "slow", {}).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ outcome: "failed" });
+    expect((failure as Error).message).toContain("Missing field title");
+    expect((failure as Error).message).not.toContain("private-token");
   });
 
   it("preserves extraction of multiple text results", async () => {

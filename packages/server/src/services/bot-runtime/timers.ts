@@ -23,10 +23,10 @@ export function createTimerCallbacks(
           host.fireRecoveredTimer(timerId, ownerBotId, chatId, meta, delayed),
       });
     },
-    onTimerCancel: (timerId) => {
-      registry.cancel(timerId).catch((err) => {
-        logger.error(err, `Failed to cancel timer ${timerId} in registry`);
-      });
+    onTimerCancel: async (timerId) => {
+      if (!(await host.cancelTimerForBot(botId, timerId))) {
+        throw new Error("Timer not found or already expired");
+      }
     },
     onTimerFired: async (timerId) => {
       await registry.markFired(timerId).catch((err) => {

@@ -1,6 +1,6 @@
 import type { Database } from "@cos-tool-bot/database";
 import { botMemories } from "@cos-tool-bot/database";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 
 export const MEMORY_DUPLICATE_BATCH_MAX = 50;
 
@@ -31,16 +31,15 @@ function sameDate(first: Date | null, second: Date | null): boolean {
   return (first?.getTime() ?? null) === (second?.getTime() ?? null);
 }
 
-function preferredSurvivor(
-  candidate: typeof botMemories.$inferSelect,
-  survivor: typeof botMemories.$inferSelect,
-): boolean {
+type LockedMemory = typeof botMemories.$inferSelect & { createdAtMicros: bigint };
+
+function preferredSurvivor(candidate: LockedMemory, survivor: LockedMemory): boolean {
   if ((candidate.embedding !== null) !== (survivor.embedding !== null)) {
     return survivor.embedding !== null;
   }
   return (
-    candidate.createdAt < survivor.createdAt ||
-    (candidate.createdAt.getTime() === survivor.createdAt.getTime() && candidate.id < survivor.id)
+    candidate.createdAtMicros < survivor.createdAtMicros ||
+    (candidate.createdAtMicros === survivor.createdAtMicros && candidate.id < survivor.id)
   );
 }
 
@@ -126,7 +125,12 @@ export class MemoryLegacyCleanup {
         ...new Set(candidates.flatMap(({ candidateId, survivorId }) => [candidateId, survivorId])),
       ].sort((a, b) => a - b);
       const rows = await tx
-        .select()
+        .select({
+          ...getTableColumns(botMemories),
+          // Date loses microseconds; use the same full precision as the preview ordering.
+          createdAtMicros:
+            sql`(extract(epoch from ${botMemories.createdAt}) * 1000000)::bigint`.mapWith(BigInt),
+        })
         .from(botMemories)
         .where(and(eq(botMemories.botId, botId), inArray(botMemories.id, ids)))
         .orderBy(botMemories.id)

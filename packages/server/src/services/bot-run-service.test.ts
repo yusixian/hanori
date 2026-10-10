@@ -457,9 +457,11 @@ describe("BotRunService", () => {
       createdAt: new Date(),
     };
     state.runs.push(run);
+    state.selectedTables.length = 0;
 
     await expect(service.cancel(botId, run.id)).resolves.toBe(true);
 
+    expect(state.selectedTables).toEqual([botRuns]);
     expect(run).toMatchObject({ status: "failed", failureReason: "cancelled" });
     expect(run["completedAt" as keyof typeof run]).toBeInstanceOf(Date);
   });
@@ -612,3 +614,59 @@ describe("BotRunService", () => {
     expect(state.runs[0]?.["failureReason"]).toBe("provider_request_failed");
   });
 });
+
+it.each(["events", "finish", "logger"] as const)(
+  "contains background persistence failure at %s without leaking credentials",
+  async (stage) => {
+    const { db, state } = fakeDb();
+    const logger = {
+      error: vi.fn((_detail: unknown, _message?: string) => {
+        if (stage === "logger") throw new Error("synthetic logger failure");
+      }),
+    };
+    const stream = vi.fn(() => fakeResult([], "ok"));
+    const service = new BotRunService(db, encryptionKey, stream as never, logger);
+    const botId = String(state.bots[0]!["id"]);
+    await service.list(botId);
+    const failure = Object.assign(
+      new Error("database rejected test-secret token=synthetic-token", {
+        cause: new Error("upstream test-secret Authorization: Bearer nested-token"),
+      }),
+      { params: ["test-secret", { apiKey: "parameter-key" }], code: "08006" },
+    );
+    const persist = vi.fn(async () => {
+      await Promise.resolve();
+      throw failure;
+    });
+    if (stage === "finish") {
+      vi.spyOn(db, "update").mockReturnValue({
+        set: () => ({ where: persist }),
+      } as unknown as ReturnType<typeof db.update>);
+    } else {
+      const insert = db.insert.bind(db);
+      vi.spyOn(db, "insert").mockImplementation(((table: unknown) => {
+        if (table === botRunEvents) return { values: persist };
+        return insert(table as typeof botRuns);
+      }) as typeof db.insert);
+    }
+    const run = await service.start(botId, { text: "hello" });
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledOnce());
+    const [detail, message] = logger.error.mock.calls[0]!;
+    expect(message).toBe("Bot Run background execution failed");
+    expect(detail).toMatchObject({
+      runId: run.id,
+      error: {
+        message: "database rejected [REDACTED] token=[REDACTED]",
+        cause: { message: "upstream [REDACTED] Authorization: [REDACTED]" },
+        params: ["[REDACTED]", { apiKey: "[REDACTED]" }],
+        code: "08006",
+      },
+    });
+    expect(JSON.stringify(detail)).not.toContain("test-secret");
+    expect(JSON.stringify(detail)).not.toContain("synthetic-token");
+    expect(JSON.stringify(detail)).not.toContain("nested-token");
+    expect(JSON.stringify(detail)).not.toContain("parameter-key");
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(stream).toHaveBeenCalledTimes(stage === "finish" ? 1 : 0);
+  },
+);

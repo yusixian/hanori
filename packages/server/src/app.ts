@@ -6,9 +6,10 @@ import type { MediaAudioStore } from "./services/media/audio-store.js";
 import type { PluginManager } from "./services/plugins/manager.js";
 import type { PluginMediaJobsOptions } from "./routes/plugin-media-jobs.js";
 import type { Database } from "@cos-tool-bot/database";
+import type { Logger } from "pino";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { publicDocsRoutes } from "./routes/public-docs.js";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { logger as honoLogger } from "hono/logger";
@@ -75,6 +76,7 @@ import type { RuntimeHealthReader } from "./runtime-health.js";
 import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
+  logger?: Pick<Logger, "error">;
   pluginManager?: PluginManager;
   mediaJobs?: PluginMediaJobsOptions;
   asrSettings?: AsrSettingsService;
@@ -150,7 +152,16 @@ export function createApp(options: AppOptions) {
   const miniAppBotTokenResolver = createMiniAppBotTokenResolver(db, encryptionKey);
   const requestLogger = honoLogger();
 
+  // The Node adapter's lazy abort signal must exist before asynchronous authentication.
+  const initializeStreamingCancellation: MiddlewareHandler = (c, next) => {
+    void c.req.raw.signal;
+    return next();
+  };
   const app = new Hono()
+    .use("/api/bots/:botId/files-zip", initializeStreamingCancellation)
+    .use("/api/backup/:id/download", initializeStreamingCancellation)
+    .use("/api/logs/stream", initializeStreamingCancellation)
+    .use("/api/bots/:botId/runs/:runId/stream", initializeStreamingCancellation)
     .use("*", (c, next) =>
       c.req.path.startsWith("/api/asr-audio/") ? next() : requestLogger(c, next),
     )
@@ -279,7 +290,10 @@ export function createApp(options: AppOptions) {
     .route("/api/bots", engagementSampleRoutes(engagementSampleService))
     .route("/api/bots", rssRoutes(rssFeedService))
     .route("/api/bots", summaryRoutes(db, summaryService, summaryConfigService))
-    .route("/api/bots", botRunRoutes(new BotRunService(db, encryptionKey)))
+    .route(
+      "/api/bots",
+      botRunRoutes(new BotRunService(db, encryptionKey, undefined, options.logger)),
+    )
     .route("/api/bots", botDebugRoutes(botPool))
     .use("/api/github-app/*", requireAppAccess(auth, db))
     .use("/api/github-app/*", requireRoles(ownerOrAdmin))

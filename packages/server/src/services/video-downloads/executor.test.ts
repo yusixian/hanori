@@ -136,7 +136,6 @@ describe("video download executor", () => {
     );
   });
   afterEach(async () => {
-    cache.stopSweep();
     await rm(temporary, { recursive: true, force: true });
   });
 

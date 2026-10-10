@@ -218,3 +218,118 @@ describe("PixaiMcpOAuthProvider", () => {
     );
   });
 });
+
+it("revokes a connection before late token persistence and old reads complete", async () => {
+  const memory = memoryStore();
+  const provider = new PixaiMcpOAuthProvider({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    store: memory.store,
+    redirectUrl: "https://bot.example/callback",
+    onAuthorizationUrl: vi.fn(),
+  });
+  const session = provider.forConnection();
+  await session.revokeAndDrain();
+  await expect(
+    session.provider.saveTokens!({ access_token: "late", token_type: "Bearer" }),
+  ).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+  expect(memory.current().tokens).toBeUndefined();
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it("rejects a stale read and never writes a refresh that was still reading at revoke", async () => {
+  const memory = memoryStore();
+  const read = deferred<PixaiMcpOAuthState>();
+  const started = deferred<void>();
+  vi.mocked(memory.store.read).mockImplementation(async () => {
+    started.resolve();
+    return read.promise;
+  });
+  const provider = new PixaiMcpOAuthProvider({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    store: memory.store,
+    redirectUrl: "https://bot.example/callback",
+    onAuthorizationUrl: vi.fn(),
+  });
+  const session = provider.forConnection();
+  const saving = session.provider.saveTokens!({ access_token: "late", token_type: "Bearer" });
+  const rejection = expect(saving).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+  await started.promise;
+  const drained = session.revokeAndDrain();
+  read.resolve({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    tokens: { access_token: "old", refresh_token: "refresh", token_type: "Bearer" },
+  });
+  await drained;
+  await rejection;
+  expect(memory.store.patch).not.toHaveBeenCalled();
+});
+
+it("drains an already started write before root invalidation and rejects queued session effects", async () => {
+  const memory = memoryStore();
+  const write = deferred<void>();
+  const started = deferred<void>();
+  const patch = memory.store.patch;
+  vi.mocked(memory.store.patch).mockImplementationOnce(async (endpoint, update) => {
+    started.resolve();
+    await write.promise;
+    await patch(endpoint, update);
+  });
+  const redirect = vi.fn();
+  const provider = new PixaiMcpOAuthProvider({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    store: memory.store,
+    redirectUrl: "https://bot.example/callback",
+    onAuthorizationUrl: redirect,
+  });
+  const session = provider.forConnection();
+  const saving = session.provider.saveCodeVerifier("late");
+  const rejection = expect(saving).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+  await started.promise;
+  let didDrain = false;
+  const drained = session.revokeAndDrain().then(() => {
+    didDrain = true;
+  });
+  const clearing = provider.invalidateCredentials("all");
+  await Promise.resolve();
+  expect(didDrain).toBe(false);
+  write.resolve();
+  await Promise.all([drained, clearing, rejection]);
+  expect(memory.current().codeVerifier).toBeUndefined();
+  await expect(
+    session.provider.redirectToAuthorization(new URL("https://auth.example")),
+  ).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+  expect(redirect).not.toHaveBeenCalled();
+});
+
+it("does not return credentials from a read that finishes after session revocation", async () => {
+  const memory = memoryStore();
+  const read = deferred<PixaiMcpOAuthState>();
+  const started = deferred<void>();
+  vi.mocked(memory.store.read).mockImplementation(async () => {
+    started.resolve();
+    return read.promise;
+  });
+  const root = new PixaiMcpOAuthProvider({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    store: memory.store,
+    redirectUrl: "https://bot.example/callback",
+    onAuthorizationUrl: vi.fn(),
+  });
+  const session = root.forConnection();
+  const tokens = session.provider.tokens();
+  const rejected = expect(tokens).rejects.toBeInstanceOf(PixaiMcpOAuthPersistenceError);
+  await started.promise;
+  const drained = session.revokeAndDrain();
+  read.resolve({
+    endpoint: "https://mcp.example.com/mcp/pixai",
+    tokens: { access_token: "old", token_type: "Bearer" },
+  });
+  await Promise.all([drained, rejected]);
+});

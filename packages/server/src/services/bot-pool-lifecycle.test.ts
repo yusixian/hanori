@@ -7,7 +7,7 @@ import {
   type UsageGovernancePort,
 } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TimerRegistry } from "./timer-registry.js";
 
 interface FakeManager extends IBotManager {
@@ -109,6 +109,7 @@ function createPool(resumeBot = vi.fn(async () => 0), row: ReturnType<typeof bot
     .mockResolvedValue(0);
   return {
     pool,
+    where,
     recoverPendingTurns,
     internals: pool as unknown as {
       managers: Map<string, IBotManager>;
@@ -434,5 +435,139 @@ describe("BotPool service binding", () => {
 
     expect(replacement.getSnapshot).toHaveBeenCalledOnce();
     expect(assembled.getSnapshot).not.toHaveBeenCalled();
+  });
+});
+
+describe("runtime-scoped MCP restarts", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function addRunningManager() {
+    managerMocks.factories.push((options) =>
+      fakeManager(options, (manager) => {
+        manager.start.mockImplementation(async () => {
+          manager.status = "running";
+        });
+        manager.stop.mockImplementation(async () => {
+          manager.status = "stopped";
+        });
+      }),
+    );
+  }
+  function capture(pool: BotPool) {
+    return (
+      pool as unknown as { runtimeHost: import("./bot-runtime/types.js").BotRuntimeHost }
+    ).runtimeHost.createDeferredRestart(BOT_ID);
+  }
+
+  it("coalesces successful changes and preserves the two-second delay", async () => {
+    const { pool } = createPool();
+    addRunningManager();
+    addRunningManager();
+    await pool.startBot(BOT_ID);
+    const request = capture(pool);
+    request();
+    request();
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(managerMocks.created).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(managerMocks.created).toHaveLength(2);
+    expect(managerMocks.created[0]!.stop).toHaveBeenCalledOnce();
+    await pool.stopAll();
+  });
+
+  it.each(["stop", "stopAll"])(
+    "invalidates pending and late callback requests on %s",
+    async (stop) => {
+      const { pool } = createPool();
+      addRunningManager();
+      await pool.startBot(BOT_ID);
+      const request = capture(pool);
+      request();
+      if (stop === "stop") await pool.stopBot(BOT_ID);
+      else await pool.stopAll();
+      request();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(pool.getManager(BOT_ID)).toBeUndefined();
+      expect(managerMocks.created).toHaveLength(1);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it("does not let the old runtime restart its explicit replacement", async () => {
+    const { pool } = createPool();
+    addRunningManager();
+    addRunningManager();
+    await pool.startBot(BOT_ID);
+    const oldRequest = capture(pool);
+    oldRequest();
+    await pool.restartBot(BOT_ID);
+    oldRequest();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(managerMocks.created).toHaveLength(2);
+    expect(managerMocks.created[1]!.stop).not.toHaveBeenCalled();
+    await pool.stopAll();
+  });
+  it.each(["queued", "reading"])("honors stop after a deferred restart is %s", async (phase) => {
+    const { pool, where } = createPool();
+    addRunningManager();
+    addRunningManager();
+    await pool.startBot(BOT_ID);
+    const request = capture(pool);
+    let release!: (rows: ReturnType<typeof botRow>[]) => void;
+    const pending = new Promise<ReturnType<typeof botRow>[]>((resolve) => {
+      release = resolve;
+    });
+    where.mockImplementationOnce(() => pending);
+    const blocker = phase === "queued" ? pool.startBot(BOT_ID) : undefined;
+    request();
+    await vi.advanceTimersByTimeAsync(2000);
+    const stopped = pool.stopBot(BOT_ID);
+    release([botRow()]);
+    await blocker;
+    await stopped;
+    expect(managerMocks.created).toHaveLength(1);
+    expect(pool.getManager(BOT_ID)).toBeUndefined();
+  });
+  it("drains a deferred rebuild that temporarily has no manager", async () => {
+    const { pool, where } = createPool();
+    addRunningManager();
+    addRunningManager();
+    await pool.startBot(BOT_ID);
+    let release!: (rows: ReturnType<typeof botRow>[]) => void;
+    const pending = new Promise<ReturnType<typeof botRow>[]>((resolve) => {
+      release = resolve;
+    });
+    where.mockResolvedValueOnce([botRow()]).mockImplementationOnce(() => pending);
+    capture(pool)();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(pool.getManager(BOT_ID)).toBeUndefined();
+    let finished = false;
+    const stopped = pool.stopAll().then(() => {
+      finished = true;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(finished).toBe(false);
+    release([botRow()]);
+    await stopped;
+    expect(pool.getManager(BOT_ID)).toBeUndefined();
+    expect(managerMocks.created[1]!.stop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps future configuration refreshes working after an explicit restart fails", async () => {
+    const { pool, where } = createPool();
+    addRunningManager();
+    addRunningManager();
+    await pool.startBot(BOT_ID);
+    const request = capture(pool);
+    request();
+    where.mockRejectedValueOnce(new Error("database unavailable"));
+    await expect(pool.restartBot(BOT_ID)).rejects.toThrow("database unavailable");
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(managerMocks.created).toHaveLength(1);
+    request();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(managerMocks.created).toHaveLength(2);
+    await pool.stopAll();
   });
 });

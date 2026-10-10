@@ -64,6 +64,34 @@ function pendingConnection(status = "authorizing") {
 }
 
 describe("ImageMcpConnectionService", () => {
+  it.each([false, true])(
+    "keeps a completed disconnect authoritative when an old callback fails=%s",
+    async (fails) => {
+      const { service, row, finish } = pendingConnection();
+      vi.spyOn(PixaiMcpOAuthProvider.prototype, "invalidateCredentials").mockResolvedValue();
+      let complete!: () => void;
+      finish.mockImplementation(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            complete = () => (fails ? reject(new Error("late exchange")) : resolve());
+          }),
+      );
+      const callback = service.finishAuthorization("synthetic-code", "synthetic-state");
+      const rejected = expect(callback).rejects.toThrow(/authorization/);
+      await vi.waitFor(() => expect(finish).toHaveBeenCalledOnce());
+      await service.disconnect();
+      expect(row.status).toBe("disconnected");
+      complete();
+      await rejected;
+      expect(await service.getStatus()).toEqual({
+        status: "disconnected",
+        scopes: [],
+        lastError: undefined,
+      });
+      await service.close();
+    },
+  );
+
   it("accepts the owner callback after background result polling fails during authorization", async () => {
     const { service, row, finish, conditions } = pendingConnection();
 

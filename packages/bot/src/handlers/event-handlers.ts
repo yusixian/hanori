@@ -107,8 +107,7 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     if (parts.length !== 4) return;
 
     const choiceId = parts[2]!;
-    const optionIndex = Number.parseInt(parts[3]!, 10);
-    if (Number.isNaN(optionIndex)) return;
+    const optionIndex = Number(parts[3]);
 
     const callbackMeta = {
       chatId: ctx.callbackQuery.message?.chat.id,
@@ -123,7 +122,16 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
     });
 
     const choice = pendingActions.getChoice(choiceId);
-    if (!choice || choice.resolved) {
+    if (
+      !choice ||
+      choice.resolved ||
+      choice.chatId !== ctx.callbackQuery.message?.chat.id ||
+      choice.messageId !== ctx.callbackQuery.message?.message_id ||
+      !/^\d+$/.test(parts[3]!) ||
+      !Number.isSafeInteger(optionIndex) ||
+      optionIndex < 0 ||
+      optionIndex >= choice.options.length
+    ) {
       onLog?.({
         level: "info",
         message: "send_choice callback expired",
@@ -153,7 +161,7 @@ export function createCallbackQueryHandler(options: CallbackQueryHandlerOptions)
 
     const continuationConfig = getContinueChatConfig(choice.chatId);
     choice.resolved = true;
-    const selectedOption = choice.options[optionIndex] ?? `选项${optionIndex}`;
+    const selectedOption = choice.options[optionIndex]!;
 
     // Telegram acknowledgement is best-effort. The choice has already been claimed, so a stale
     // callback query must not prevent the durable continuation from running.

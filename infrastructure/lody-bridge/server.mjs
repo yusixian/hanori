@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 // Dependency-free HTTP bridge that lets the harness run allowlisted `lody` commands in a
 // glibc sidecar with a local Lody daemon. Logs carry only the subcommand, exit status, and
 // duration: never argv values, stdin (prompts), tokens, or stdout.
@@ -70,6 +71,7 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
   return new Promise((resolve) => {
     const [file, ...prefix] = typeof command === "function" ? command() : command;
     let stdout = "";
+    const decoder = new StringDecoder("utf8");
     let bytes = 0;
     let timedOut = false;
     let truncated = false;
@@ -99,11 +101,17 @@ export function runLody(command, args, { stdin, timeoutMs, maxOutputBytes }) {
         kill();
         return;
       }
-      stdout += chunk.toString("utf8");
+      stdout += decoder.write(chunk);
     });
     child.on("error", (error) => finish({ spawnError: error.code ?? "ESPAWN" }));
     child.on("close", (exitCode, signal) =>
-      finish({ exitCode, signal, timedOut, truncated, stdout: truncated ? "" : stdout }),
+      finish({
+        exitCode,
+        signal,
+        timedOut,
+        truncated,
+        stdout: truncated ? "" : stdout + decoder.end(),
+      }),
     );
     child.stdin.on("error", () => {});
     child.stdin.end(stdin ?? "");
@@ -116,7 +124,10 @@ function runQuiet(command, args, timeoutMs) {
     const [file, ...prefix] = typeof command === "function" ? command() : command;
     const child = spawn(file, [...prefix, ...args], { stdio: "ignore", env: childEnv() });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.on("error", () => resolve(null));
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
     child.on("exit", (code) => {
       clearTimeout(timer);
       resolve(code);

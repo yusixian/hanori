@@ -50,6 +50,7 @@ import {
 } from "./generation-recovery.js";
 import { LarkBotManager } from "./lark-bot-manager.js";
 import { LarkWebhookClient } from "./lark-webhook-client.js";
+import { ConversationRetention } from "./conversation-retention.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore } from "./people-profile-store.js";
 import { PeopleProfileAvatarService } from "./people-profile-avatar-service.js";
@@ -77,7 +78,6 @@ import { GenerationLibraryService } from "./generation-library-service.js";
 import type { EngagementSampleService } from "./engagement-sample-service.js";
 import type { ChatAiSelectionRuntimeRegistry } from "./chat-ai-selection-runtime-registry.js";
 
-const CONVERSATION_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const GENERATION_RECOVERY_CONCURRENCY = 3;
 const GENERATION_RECOVERY_BATCH_SIZE = GENERATION_RECOVERY_CONCURRENCY;
 const GENERATION_RECOVERY_SWEEP_INTERVAL_MS = 60_000;
@@ -110,13 +110,10 @@ function supportsTelegramRichMessages(
 export class BotPool {
   private managers = new Map<string, IBotManager>();
   // Serializes start/stop/restart per botId to avoid concurrent double-start races.
-  private opLocks = new Map<string, Promise<unknown>>();
+  private lifecycleLocks = new KeyedAsyncLock();
   private aiConfigLocks = new KeyedAsyncLock();
   private botTimerHandlers = new Map<string, BotTimerHandlers>();
-  private conversationCleanupAt = new Map<string, number>();
-  private conversationCleanupInFlight = new Map<string, Promise<void>>();
-  private conversationCleanupSweep?: Promise<void>;
-  private conversationCleanupTimer?: ReturnType<typeof setInterval>;
+  private readonly conversationRetention: ConversationRetention;
   private generationRecoveries = new Map<string, GenerationRecoveryEntry>();
   private generationRecoveryLimiter = new AsyncTaskLimiter(GENERATION_RECOVERY_CONCURRENCY);
   private generationRecoveryConfigs = new Map<string, GenerationRecoveryConfig>();
@@ -136,12 +133,18 @@ export class BotPool {
   private readonly timerRegistry: TimerRegistry;
   private readonly githubCredentialGenerations = new GitHubCredentialGenerationGate();
   private readonly services: BotPoolServices;
+  private readonly deferredRestarts = new Map<
+    string,
+    { generation: number; timer?: ReturnType<typeof setTimeout> }
+  >();
+  private readonly deferredRestartTasks = new Map<string, Promise<void>>();
   private readonly runtimeHost: BotRuntimeHost = {
     getRuntimeStatus: (botId) => {
       const manager = this.managers.get(botId);
       return manager ? { status: manager.status, uptime: manager.uptime } : undefined;
     },
     restartBot: (botId) => this.restartBot(botId),
+    createDeferredRestart: (botId) => this.createDeferredRestart(botId),
     withAiConfigLock: (botId, operation) => this.withAiConfigLock(botId, operation),
     isDelegatedGroupAdmin: (botId, chatId, userId) =>
       this.isDelegatedGroupAdmin(botId, chatId, userId),
@@ -167,6 +170,22 @@ export class BotPool {
   ) {
     this.timerRegistry = timerRegistry;
     this.conversationStore = new ConversationStore(db);
+    this.conversationRetention = new ConversationRetention({
+      cleanup: (botId, days) => this.conversationStore.cleanup(botId, days),
+      listActiveBots: async () => {
+        const rows = await db
+          .select({ id: bots.id, aiConfig: bots.aiConfig })
+          .from(bots)
+          .where(eq(bots.isActive, true));
+        return rows.map((bot) => ({
+          id: bot.id,
+          retentionDays:
+            bot.aiConfig?.conversationConfig?.retentionDays ??
+            DEFAULT_CONVERSATION_CONFIG.retentionDays,
+        }));
+      },
+      warn: (error, message) => logger.warn(error, message),
+    });
     this.profileStore = new PeopleProfileStore(db);
     this.userPrivacyService = new UserPrivacyService(db);
     this.profileAvatarService = new PeopleProfileAvatarService(
@@ -445,92 +464,8 @@ export class BotPool {
     });
   }
 
-  private runConversationCleanup(
-    botId: string,
-    retentionDays: number,
-    force = false,
-  ): Promise<void> {
-    if (retentionDays <= 0) return Promise.resolve();
-
-    const existing = this.conversationCleanupInFlight.get(botId);
-    if (existing) return existing;
-
-    const now = Date.now();
-    const lastCleanupAt = this.conversationCleanupAt.get(botId) ?? 0;
-    if (!force && now - lastCleanupAt < CONVERSATION_CLEANUP_INTERVAL_MS) {
-      return Promise.resolve();
-    }
-
-    this.conversationCleanupAt.set(botId, now);
-    const cleanup = this.conversationStore
-      .cleanup(botId, retentionDays)
-      .catch((err) => {
-        if (this.conversationCleanupAt.get(botId) === now) {
-          this.conversationCleanupAt.delete(botId);
-        }
-        this.logger.warn(err, `Conversation retention cleanup failed for bot=${botId}`);
-      })
-      .finally(() => {
-        if (this.conversationCleanupInFlight.get(botId) === cleanup) {
-          this.conversationCleanupInFlight.delete(botId);
-        }
-      });
-    this.conversationCleanupInFlight.set(botId, cleanup);
-    return cleanup;
-  }
-
   private triggerConversationCleanup(botId: string, retentionDays: number) {
-    void this.runConversationCleanup(botId, retentionDays);
-  }
-
-  private runConversationCleanupSweep(
-    activeBots?: Array<Pick<typeof bots.$inferSelect, "id" | "aiConfig">>,
-    force = false,
-  ): Promise<void> {
-    if (this.conversationCleanupSweep) return this.conversationCleanupSweep;
-
-    const sweep = (async () => {
-      const currentBots =
-        activeBots ??
-        (await this.db
-          .select({ id: bots.id, aiConfig: bots.aiConfig })
-          .from(bots)
-          .where(eq(bots.isActive, true)));
-
-      await Promise.all(
-        currentBots.map((bot) =>
-          this.runConversationCleanup(
-            bot.id,
-            bot.aiConfig?.conversationConfig?.retentionDays ??
-              DEFAULT_CONVERSATION_CONFIG.retentionDays,
-            force,
-          ),
-        ),
-      );
-    })().finally(() => {
-      if (this.conversationCleanupSweep === sweep) {
-        this.conversationCleanupSweep = undefined;
-      }
-    });
-    this.conversationCleanupSweep = sweep;
-    return sweep;
-  }
-
-  private startConversationCleanupScheduler() {
-    if (this.conversationCleanupTimer) return;
-
-    this.conversationCleanupTimer = setInterval(() => {
-      void this.runConversationCleanupSweep().catch((err) => {
-        this.logger.warn(err, "Conversation retention sweep failed");
-      });
-    }, CONVERSATION_CLEANUP_INTERVAL_MS);
-    this.conversationCleanupTimer.unref();
-  }
-
-  private stopConversationCleanupScheduler() {
-    if (!this.conversationCleanupTimer) return;
-    clearInterval(this.conversationCleanupTimer);
-    this.conversationCleanupTimer = undefined;
+    void this.conversationRetention.trigger(botId, retentionDays);
   }
 
   private runGenerationRecoverySweep(): Promise<void> {
@@ -588,10 +523,14 @@ export class BotPool {
       return;
     }
 
-    this.startConversationCleanupScheduler();
-    void this.runConversationCleanupSweep(activeBots, true).catch((err) => {
-      this.logger.warn(err, "Conversation retention startup sweep failed");
-    });
+    this.conversationRetention.start(
+      activeBots.map((bot) => ({
+        id: bot.id,
+        retentionDays:
+          bot.aiConfig?.conversationConfig?.retentionDays ??
+          DEFAULT_CONVERSATION_CONFIG.retentionDays,
+      })),
+    );
 
     if (activeBots.length === 0) return;
     this.logger.info(`Starting ${activeBots.length} active bot(s)...`);
@@ -606,15 +545,13 @@ export class BotPool {
   }
 
   async stopAll() {
-    this.stopConversationCleanupScheduler();
+    for (const botId of this.deferredRestarts.keys()) this.cancelDeferredRestart(botId);
+    const retentionStopped = this.conversationRetention.stop();
     this.generationRecoveryConfigs.clear();
     this.stopGenerationRecoverySchedulerIfIdle();
-    if (this.conversationCleanupSweep) {
-      await Promise.allSettled([this.conversationCleanupSweep]);
-    }
-    await Promise.allSettled(this.conversationCleanupInFlight.values());
+    await retentionStopped;
 
-    const ids = [...this.managers.keys()];
+    const ids = [...new Set([...this.managers.keys(), ...this.deferredRestartTasks.keys()])];
     for (const id of ids) {
       try {
         await this.stopBot(id);
@@ -628,26 +565,12 @@ export class BotPool {
     }
   }
 
-  private enqueue<T>(botId: string, fn: () => Promise<T>): Promise<T> {
-    const prev = this.opLocks.get(botId) ?? Promise.resolve();
-    const result = prev.then(fn, fn);
-    const done = result.then(
-      () => {},
-      () => {},
-    );
-    this.opLocks.set(botId, done);
-    void done.then(() => {
-      if (this.opLocks.get(botId) === done) this.opLocks.delete(botId);
-    });
-    return result;
-  }
-
   withAiConfigLock<T>(botId: string, operation: () => Promise<T>): Promise<T> {
     return this.aiConfigLocks.run(botId, operation);
   }
 
   async startBot(botId: string) {
-    return this.enqueue(botId, () => this.startBotImpl(botId));
+    return this.lifecycleLocks.run(botId, () => this.startBotImpl(botId));
   }
 
   private async startBotImpl(botId: string) {
@@ -697,6 +620,7 @@ export class BotPool {
       }
       miniAppUrl = new URL(`/mini-app/${botId}/help`, configuredBaseUrl).toString();
     }
+    this.deferredRestarts.set(botId, { generation: 0 });
     const runtime = await assembleBotRuntime(
       {
         bot,
@@ -707,7 +631,11 @@ export class BotPool {
       },
       this.services,
       this.runtimeHost,
-    );
+    ).catch((error: unknown) => {
+      this.cancelDeferredRestart(botId);
+      this.deferredRestarts.delete(botId);
+      throw error;
+    });
     const manager = new BotManager(runtime.config, runtime.managerOptions);
 
     this.managers.set(botId, manager);
@@ -816,10 +744,12 @@ export class BotPool {
   }
 
   async stopBot(botId: string) {
-    return this.enqueue(botId, () => this.stopBotImpl(botId));
+    this.cancelDeferredRestart(botId);
+    return this.lifecycleLocks.run(botId, () => this.stopBotImpl(botId));
   }
 
   private async stopBotImpl(botId: string) {
+    this.cancelDeferredRestart(botId);
     this.generationRecoveryConfigs.delete(botId);
     this.stopGenerationRecoverySchedulerIfIdle();
     await this.cancelGenerationRecoveries(botId, `Bot ${botId} stopped`);
@@ -833,6 +763,8 @@ export class BotPool {
       }
     } finally {
       if (stopped) {
+        this.cancelDeferredRestart(botId);
+        this.deferredRestarts.delete(botId);
         this.managers.delete(botId);
         this.memoryEmbeddingServices.delete(botId);
         this.botTimerHandlers.delete(botId);
@@ -843,19 +775,64 @@ export class BotPool {
   }
 
   async restartBot(botId: string) {
-    return this.enqueue(botId, async () => {
-      const [bot] = await this.db
-        .select({ isActive: bots.isActive })
-        .from(bots)
-        .where(eq(bots.id, botId));
-      if (!bot) throw new Error(`Bot ${botId} not found`);
-      if (!bot.isActive) {
-        await this.stopBotImpl(botId);
-        throw new Error(`Bot ${botId} is disabled`);
-      }
+    this.cancelDeferredRestart(botId);
+    return this.lifecycleLocks.run(botId, () => this.restartBotImpl(botId));
+  }
+
+  private async restartBotImpl(botId: string, isCurrent?: () => boolean) {
+    const [bot] = await this.db
+      .select({ isActive: bots.isActive })
+      .from(bots)
+      .where(eq(bots.id, botId));
+    // Stop can invalidate a deferred request while this database read is awaiting.
+    if (isCurrent && !isCurrent()) return;
+    if (!bot) throw new Error(`Bot ${botId} not found`);
+    if (!bot.isActive) {
       await this.stopBotImpl(botId);
-      await this.startBotImpl(botId);
-    });
+      throw new Error(`Bot ${botId} is disabled`);
+    }
+    await this.stopBotImpl(botId);
+    await this.startBotImpl(botId);
+  }
+
+  private cancelDeferredRestart(botId: string): void {
+    const scope = this.deferredRestarts.get(botId);
+    if (scope?.timer) clearTimeout(scope.timer);
+    if (scope) {
+      scope.timer = undefined;
+      scope.generation++;
+    }
+  }
+
+  private createDeferredRestart(botId: string): () => void {
+    const scope = this.deferredRestarts.get(botId);
+    return () => {
+      if (!scope || this.deferredRestarts.get(botId) !== scope) return;
+      const manager = this.managers.get(botId);
+      if (manager?.status !== "running") return;
+      if (scope.timer) clearTimeout(scope.timer);
+      const generation = ++scope.generation;
+      scope.timer = setTimeout(() => {
+        scope.timer = undefined;
+        const isCurrent = () =>
+          this.deferredRestarts.get(botId) === scope &&
+          scope.generation === generation &&
+          this.managers.get(botId) === manager;
+        const task = this.lifecycleLocks
+          .run(botId, async () => {
+            if (isCurrent()) await this.restartBotImpl(botId, isCurrent);
+          })
+          .catch((err) => {
+            this.logger.warn({ err, botId }, "Deferred MCP restart failed");
+          })
+          .finally(() => {
+            if (this.deferredRestartTasks.get(botId) === task)
+              this.deferredRestartTasks.delete(botId);
+          });
+        this.deferredRestartTasks.set(botId, task);
+      }, 2000);
+      scope.timer.unref();
+    };
   }
 
   getManager(botId: string): IBotManager | undefined {
@@ -1067,10 +1044,11 @@ export class BotPool {
   /** Cancel a timer, clearing both the registry and the bot's PendingActionRegistry. */
   async cancelTimer(timerId: string): Promise<boolean> {
     const timer = this.timerRegistry.get(timerId);
-    if (timer?.botId) {
+    const cancelled = await this.timerRegistry.cancel(timerId);
+    if (cancelled && timer?.botId) {
       this.botTimerHandlers.get(timer.botId)?.cancelPendingTimer(timerId);
     }
-    return this.timerRegistry.cancel(timerId);
+    return cancelled;
   }
 
   getActiveTimersForBot(botId: string) {
@@ -1081,8 +1059,9 @@ export class BotPool {
   async cancelTimerForBot(botId: string, timerId: string): Promise<boolean> {
     const timer = this.timerRegistry.get(timerId);
     if (!timer || timer.botId !== botId) return false;
-    this.botTimerHandlers.get(botId)?.cancelPendingTimer(timerId);
-    return this.timerRegistry.cancel(timerId);
+    const cancelled = await this.timerRegistry.cancel(timerId);
+    if (cancelled) this.botTimerHandlers.get(botId)?.cancelPendingTimer(timerId);
+    return cancelled;
   }
 
   /** Fire RSS digest via bot's continueChat. Returns true if handler existed and was invoked. */

@@ -404,9 +404,18 @@ export class GitHubAppCredentialService {
     }
     const inFlight = this.tokenRequests.get(installationId);
     if (inFlight) return inFlight;
-    const request = this.refreshInstallationToken(installationId).finally(() => {
-      this.tokenRequests.delete(installationId);
-    });
+    const request = this.refreshInstallationToken(installationId)
+      .then((result) => {
+        if (this.tokenRequests.get(installationId) === request) {
+          this.tokenCache.set(installationId, result);
+        }
+        return result.token;
+      })
+      .finally(() => {
+        if (this.tokenRequests.get(installationId) === request) {
+          this.tokenRequests.delete(installationId);
+        }
+      });
     this.tokenRequests.set(installationId, request);
     return request;
   }
@@ -414,6 +423,8 @@ export class GitHubAppCredentialService {
   clearInstallationToken(installationId: number): void {
     this.tokenCache.delete(installationId);
     this.healthCache.delete(installationId);
+    this.tokenRequests.delete(installationId);
+    this.healthRequests.delete(installationId);
   }
 
   async getInstallationConnectionError(installationId: number): Promise<string | undefined> {
@@ -422,9 +433,18 @@ export class GitHubAppCredentialService {
     if (cached && cached.expiresAt > this.now()) return cached.connectionError;
     const inFlight = this.healthRequests.get(installationId);
     if (inFlight) return inFlight;
-    const request = this.refreshInstallationHealth(installationId).finally(() => {
-      this.healthRequests.delete(installationId);
-    });
+    const request = this.refreshInstallationHealth(installationId)
+      .then((result) => {
+        if (this.healthRequests.get(installationId) === request) {
+          this.healthCache.set(installationId, result);
+        }
+        return result.connectionError;
+      })
+      .finally(() => {
+        if (this.healthRequests.get(installationId) === request) {
+          this.healthRequests.delete(installationId);
+        }
+      });
     this.healthRequests.set(installationId, request);
     return request;
   }
@@ -469,7 +489,7 @@ export class GitHubAppCredentialService {
     return installations;
   }
 
-  private async refreshInstallationToken(installationId: number): Promise<string> {
+  private async refreshInstallationToken(installationId: number): Promise<CachedToken> {
     const result = await this.request<InstallationTokenResponse>(
       `/app/installations/${installationId}/access_tokens`,
       this.createAppJwt(),
@@ -482,11 +502,12 @@ export class GitHubAppCredentialService {
     if (!result.token || !Number.isFinite(expiresAt)) {
       throw new Error("GitHub 返回了无效的 installation token");
     }
-    this.tokenCache.set(installationId, { token: result.token, expiresAt });
-    return result.token;
+    return { token: result.token, expiresAt };
   }
 
-  private async refreshInstallationHealth(installationId: number): Promise<string | undefined> {
+  private async refreshInstallationHealth(
+    installationId: number,
+  ): Promise<CachedInstallationHealth> {
     let connectionError: string | undefined;
     try {
       const installation = await this.request<InstallationResponse>(
@@ -508,11 +529,10 @@ export class GitHubAppCredentialService {
           ? "GitHub App installation 已被撤销或不存在"
           : "暂时无法验证 GitHub App installation 状态";
     }
-    this.healthCache.set(installationId, {
+    return {
       connectionError,
       expiresAt: this.now() + INSTALLATION_HEALTH_TTL_MS,
-    });
-    return connectionError;
+    };
   }
 
   private async listUserInstallationRepositories(

@@ -75,13 +75,10 @@ export function logRoutes(db: Database) {
       },
     )
     .get("/stream", (c) => {
+      if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
       const botId = c.req.query("botId");
       return streamSSE(c, async (stream) => {
         let lastId = 0;
-        let aborted = false;
-        stream.onAbort(() => {
-          aborted = true;
-        });
 
         const baseConditions: SQL[] = [];
         if (botId) baseConditions.push(eq(botLogs.botId, botId));
@@ -97,7 +94,7 @@ export function logRoutes(db: Database) {
           lastId = latest[0].id;
         }
 
-        while (!aborted) {
+        while (!stream.aborted) {
           const conditions = [...baseConditions];
           if (lastId > 0) conditions.push(gt(botLogs.id, lastId));
           const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -109,7 +106,9 @@ export function logRoutes(db: Database) {
             .orderBy(botLogs.id)
             .limit(20);
 
+          if (stream.aborted) return;
           for (const log of newLogs) {
+            if (stream.aborted) return;
             await stream.writeSSE({
               data: JSON.stringify(log),
               event: "log",
@@ -118,6 +117,7 @@ export function logRoutes(db: Database) {
             lastId = log.id;
           }
 
+          if (stream.aborted) return;
           await stream.sleep(2000);
         }
       });

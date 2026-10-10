@@ -21,7 +21,7 @@ beforeAll(async () => {
   ({ createApp } = await import("./app.js"));
 }, 30_000);
 
-function createRoleApp(role: string) {
+function createRoleApp(role: string, onSession?: () => void) {
   let selectCalls = 0;
   const db = {
     select: vi.fn(() => {
@@ -66,10 +66,10 @@ function createRoleApp(role: string) {
     db: db as never,
     auth: {
       api: {
-        getSession: vi.fn(async () => ({
-          user: { id: "user-1" },
-          session: { id: "session-1" },
-        })),
+        getSession: vi.fn(async () => {
+          onSession?.();
+          return { user: { id: "user-1" }, session: { id: "session-1" } };
+        }),
       },
       handler: vi.fn(),
     } as never,
@@ -324,4 +324,31 @@ describe("production HTTP policy", () => {
       version: TEST_SHA,
     });
   });
+});
+
+it.each([
+  `/api/bots/${TEST_BOT_ID}/files-zip`,
+  "/api/backup/1/download",
+  "/api/logs/stream",
+  `/api/bots/${TEST_BOT_ID}/runs/run-1/stream`,
+])("initializes streaming cancellation before authentication for %s", async (path) => {
+  const controller = new AbortController();
+  const request = new Request(`http://localhost${path}`, { signal: controller.signal });
+  const signal = request.signal;
+  let initialized = false;
+  Object.defineProperty(request, "signal", {
+    get: () => {
+      initialized = true;
+      return signal;
+    },
+  });
+  let authenticated = false;
+  const app = createRoleApp("guest", () => {
+    authenticated = true;
+    expect(initialized).toBe(true);
+    controller.abort();
+  });
+  const response = await app.fetch(request);
+  expect(authenticated).toBe(true);
+  expect(response.status).toBe(path === "/api/logs/stream" ? 499 : 403);
 });

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createDb, type Database } from "@cos-tool-bot/database";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { BotMemoryStore } from "./bot-memory-store.js";
 import { MemoryLegacyCleanup } from "./memory-legacy-cleanup.js";
 
@@ -136,4 +136,69 @@ describe.skipIf(!url)("legacy memory cleanup PostgreSQL integration", () => {
     );
     expect(racing.filter((result) => result !== null)).toHaveLength(1);
   });
+  it("keeps dedup touches monotonic when the application clock would revive an old edit token", async () => {
+    const memoryBotId = randomUUID();
+    const [created] = await client`
+      INSERT INTO bot_memories (bot_id, content, embedding, created_at, updated_at)
+      VALUES (${memoryBotId}, 'Original', '[0.2]', '2026-09-20 00:00:00.123456', '2026-09-20 00:00:00.123456')
+      RETURNING id
+    `;
+    const id = Number(created!.id);
+    const store = new BotMemoryStore(db);
+    const before = await store.getMemory(memoryBotId, id);
+    const edited = await store.updateMemory(memoryBotId, id, {
+      category: "corrected",
+      expectedUpdatedAt: before!.updatedAt,
+    });
+    expect(edited).not.toBeNull();
+    // Mock only Date, leaving database I/O timers real.
+    vi.setSystemTime(new Date(before!.updatedAt));
+    try {
+      await store.touchMemory(id);
+      const touched = await store.getMemory(memoryBotId, id);
+      expect(
+        await store.updateMemory(memoryBotId, id, {
+          category: "stale",
+          expectedUpdatedAt: before!.updatedAt,
+        }),
+      ).toBeNull();
+      expect(Date.parse(touched!.updatedAt)).toBeGreaterThan(Date.parse(edited!.updatedAt));
+      await store.touchMemory(id);
+      const touchedAgain = await store.getMemory(memoryBotId, id);
+      expect(Date.parse(touchedAgain!.updatedAt)).toBeGreaterThan(Date.parse(touched!.updatedAt));
+      expect(touchedAgain).toMatchObject({
+        content: "Original",
+        category: "corrected",
+        isActive: true,
+      });
+      const [row] = await client`SELECT embedding FROM bot_memories WHERE id = ${id}`;
+      expect(row!.embedding).toBe("[0.2]");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it.each([
+    ["microsecond order", "2026-09-20 00:00:00.123900", "2026-09-20 00:00:00.123100", 0],
+    ["exact timestamp tie", "2026-09-20 00:00:00.123900", "2026-09-20 00:00:00.123900", 1],
+  ] as const)(
+    "executes its own preview for %s",
+    async (_label, firstTime, secondTime, survivorIndex) => {
+      const owner = randomUUID();
+      const rows = [];
+      for (const time of [firstTime, secondTime]) {
+        const [row] = await client`
+        INSERT INTO bot_memories (bot_id, content, created_at, updated_at)
+        VALUES (${owner}, 'Exact duplicate', ${time}, ${time}) RETURNING id
+      `;
+        rows.push(Number(row!.id));
+      }
+      const preview = await service.preview(owner);
+      expect(preview.data).toHaveLength(1);
+      expect(preview.data[0]!.survivorId).toBe(rows[survivorIndex]);
+      expect(await service.retireBatch(owner, preview.data)).toEqual({ retiredCount: 1 });
+      const remaining =
+        await client`SELECT id FROM bot_memories WHERE bot_id = ${owner} AND is_active = true`;
+      expect(remaining.map((row) => Number(row.id))).toEqual([rows[survivorIndex]]);
+    },
+  );
 });

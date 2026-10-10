@@ -347,7 +347,9 @@ function privacyExcludesSource(
 
 export class MemoryConsolidator {
   private timer: ReturnType<typeof setInterval> | null = null;
-  private running = false;
+  private currentTick: Promise<void> | null = null;
+  private closing = false;
+  private closeTask?: Promise<void>;
 
   constructor(
     private readonly db: Database,
@@ -363,10 +365,23 @@ export class MemoryConsolidator {
   ) {}
 
   start(): void {
-    if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), INTERVAL_MS);
+    if (this.closing || this.timer) return;
+    const run = () => {
+      void this.tick().catch((error) => {
+        this.logger.error({ error }, "Memory consolidation tick failed");
+      });
+    };
+    this.timer = setInterval(run, INTERVAL_MS);
     this.timer.unref();
-    void this.tick();
+    run();
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    this.stop();
+    this.closeTask = this.currentTick ?? Promise.resolve();
+    return this.closeTask;
   }
 
   stop(): void {
@@ -381,26 +396,30 @@ export class MemoryConsolidator {
     return INTERVAL_MS;
   }
 
-  async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      const active = await this.db
-        .select({ id: bots.id })
-        .from(bots)
-        .leftJoin(memoryConsolidationState, eq(memoryConsolidationState.botId, bots.id))
-        .where(eq(bots.isActive, true))
-        .orderBy(sql`coalesce(${memoryConsolidationState.updatedAt}, timestamp 'epoch')`)
-        .limit(MAX_BOTS_PER_TICK);
-      for (const bot of active) {
-        try {
-          await this.processBot(bot.id);
-        } catch (error) {
-          this.logger.error({ error, botId: bot.id }, "Memory consolidation failed");
-        }
+  tick(): Promise<void> {
+    if (this.closing || this.currentTick) return Promise.resolve();
+    const task = this.runTick().finally(() => {
+      if (this.currentTick === task) this.currentTick = null;
+    });
+    this.currentTick = task;
+    return task;
+  }
+
+  private async runTick(): Promise<void> {
+    const active = await this.db
+      .select({ id: bots.id })
+      .from(bots)
+      .leftJoin(memoryConsolidationState, eq(memoryConsolidationState.botId, bots.id))
+      .where(eq(bots.isActive, true))
+      .orderBy(sql`coalesce(${memoryConsolidationState.updatedAt}, timestamp 'epoch')`)
+      .limit(MAX_BOTS_PER_TICK);
+    for (const bot of active) {
+      if (this.closing) break;
+      try {
+        await this.processBot(bot.id);
+      } catch (error) {
+        this.logger.error({ error, botId: bot.id }, "Memory consolidation failed");
       }
-    } finally {
-      this.running = false;
     }
   }
 

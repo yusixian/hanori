@@ -1,7 +1,10 @@
+import Parser from "rss-parser";
 import type { Database } from "@cos-tool-bot/database";
 import type { Logger } from "pino";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RssFeedService } from "./rss-feed-service.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 const COLLECTION = {
   id: 7,
@@ -92,8 +95,8 @@ describe("RssFeedService Bot lifecycle", () => {
     const insert = vi.fn();
     const db = { insert } as unknown as Database;
     const service = new RssFeedService(db, logger);
-    let releaseParse!: (value: { title: string }) => void;
-    const parseResult = new Promise<{ title: string }>((resolve) => {
+    let releaseParse!: (value: { title: string; items: [] }) => void;
+    const parseResult = new Promise<{ title: string; items: [] }>((resolve) => {
       releaseParse = resolve;
     });
     let parsingStarted!: () => void;
@@ -104,7 +107,7 @@ describe("RssFeedService Bot lifecycle", () => {
       parsingStarted();
       return parseResult;
     });
-    (service as unknown as { parser: { parseURL: typeof parseURL } }).parser = { parseURL };
+    vi.spyOn(Parser.prototype, "parseURL").mockImplementation(parseURL);
     const controller = new AbortController();
 
     const add = service.addFeed(
@@ -117,9 +120,59 @@ describe("RssFeedService Bot lifecycle", () => {
     const addResult = expect(add).rejects.toThrow("RSS add cancelled");
     await didStartParsing;
     controller.abort(new Error("RSS add cancelled"));
-    releaseParse({ title: "Example feed" });
+    releaseParse({ title: "Example feed", items: [] });
 
     await addResult;
     expect(insert).not.toHaveBeenCalled();
   });
+});
+
+it("waits for an accepted digest and both checkpoints during close", async () => {
+  const { db, updates } = database();
+  const service = new RssFeedService(db, logger);
+  let accept!: (accepted: boolean) => void;
+  const trigger = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        accept = resolve;
+      }),
+  );
+  service.setDigestTrigger(trigger);
+  const digest = service.triggerDigest(COLLECTION.id);
+  await vi.waitFor(() => expect(trigger).toHaveBeenCalledOnce());
+  let closed = false;
+  const close = service.close();
+  expect(service.close()).toBe(close);
+  void close.then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  accept(true);
+  await expect(digest).resolves.toBe(true);
+  await close;
+  expect(updates).toEqual([{ lastDigestAt: expect.any(Date) }, { digestedAt: expect.any(Date) }]);
+  await expect(service.triggerDigest(COLLECTION.id)).rejects.toThrow("RSS service is closing");
+  expect(trigger).toHaveBeenCalledOnce();
+});
+
+it("drains a failed digest without consuming its checkpoints", async () => {
+  const { db, updates } = database();
+  const service = new RssFeedService(db, logger);
+  let fail!: (error: Error) => void;
+  const trigger = vi.fn(
+    () =>
+      new Promise<boolean>((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  service.setDigestTrigger(trigger);
+  const digest = service.triggerDigest(COLLECTION.id);
+  const rejected = expect(digest).rejects.toThrow("delivery admission failed");
+  await vi.waitFor(() => expect(trigger).toHaveBeenCalledOnce());
+  const close = service.close();
+  fail(new Error("delivery admission failed"));
+  await rejected;
+  await expect(close).resolves.toBeUndefined();
+  expect(updates).toEqual([]);
 });

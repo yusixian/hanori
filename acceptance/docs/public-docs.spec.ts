@@ -105,17 +105,21 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
   await expect(page.getByRole("link", { name: "版本更新说明", exact: true })).toHaveCount(0);
 });
 
-for (const { version, theme } of [
+for (const { version, theme, pending = false } of [
   { version: "v0.18.0", theme: "更新 Lody CLI 与模型列表" },
   { version: "v0.19.0", theme: "自动发现模型与显式配置" },
   { version: "v0.19.1", theme: "授权期间保留 MCP 连接状态" },
   { version: "v0.20.0", theme: "插件市场、统一检索与 Bot 运行诊断" },
+  { version: "v0.20.1", theme: "运行可靠性与架构维护（待发布）", pending: true },
 ]) {
   test(`${version} supports anonymous deep links, navigation and search`, async ({
     page,
   }, info) => {
     await page.goto("/docs/changelog/");
-    await page.getByRole("link", { name: `${version}：${theme}`, exact: true }).click();
+    const label = pending
+      ? `${version}（待发布）：${theme.replace("（待发布）", "")}`
+      : `${version}：${theme}`;
+    await page.getByRole("link", { name: label, exact: true }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(version);
     await expect(page.getByText(theme, { exact: true })).toBeVisible();
     await page.reload();

@@ -4,11 +4,11 @@ import type { PhotoSize, User } from "grammy/types";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { removeProfileAvatarFile } from "./profile-avatar-files.js";
+import { readBoundedImage } from "../utils/read-bounded-image.js";
+import { MAX_PROFILE_AVATAR_BYTES, removeProfileAvatarFile } from "./profile-avatar-files.js";
 
 const DEFAULT_REFRESH_MS = 24 * 60 * 60 * 1000;
 const RETRY_REFRESH_MS = 5 * 60 * 1000;
-const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 
 interface ProfilePhotoApi {
   getUserProfilePhotos: Api["getUserProfilePhotos"];
@@ -144,10 +144,8 @@ export class TelegramProfileObserver {
     const now = this.now();
     const throttle = this.nextRefreshAt.get(observation.telegramId);
     if (!created && throttle?.profileId === profileId && throttle.nextAt > now) return;
-    this.nextRefreshAt.set(observation.telegramId, {
-      profileId,
-      nextAt: now + this.refreshMs,
-    });
+    const refreshThrottle = { profileId, nextAt: now + this.refreshMs };
+    this.nextRefreshAt.set(observation.telegramId, refreshThrottle);
 
     const task = (async () => {
       const refreshVersion = await this.options.memory.beginProfileAvatarRefresh({
@@ -157,10 +155,9 @@ export class TelegramProfileObserver {
       if (refreshVersion === null) return;
       await this.refreshAvatar(api, observation, profileId, refreshVersion);
     })().catch((error) => {
-      this.nextRefreshAt.set(observation.telegramId, {
-        profileId,
-        nextAt: this.now() + RETRY_REFRESH_MS,
-      });
+      if (this.nextRefreshAt.get(observation.telegramId) === refreshThrottle) {
+        refreshThrottle.nextAt = this.now() + RETRY_REFRESH_MS;
+      }
       this.reportError(error);
     });
     let pending = this.pendingRefreshes.get(observation.telegramId);
@@ -217,12 +214,15 @@ export class TelegramProfileObserver {
       `https://api.telegram.org/file/bot${this.options.token}/${file.file_path}`,
       { signal: AbortSignal.timeout(15_000) },
     );
-    if (!response.ok) throw new Error(`Telegram profile photo download failed: ${response.status}`);
-    const declaredSize = Number(response.headers.get("content-length") ?? 0);
-    if (declaredSize > MAX_AVATAR_BYTES) throw new Error("Telegram profile photo is too large");
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (buffer.byteLength > MAX_AVATAR_BYTES)
-      throw new Error("Telegram profile photo is too large");
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      throw new Error(`Telegram profile photo download failed: ${response.status}`);
+    }
+    const buffer = await readBoundedImage(
+      response,
+      MAX_PROFILE_AVATAR_BYTES,
+      "Telegram profile photo is too large",
+    );
 
     const version = Buffer.from(photo.file_unique_id).toString("base64url");
     const relativePath = path.posix.join(

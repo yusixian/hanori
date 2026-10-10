@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ExecFileLike } from "./lody.js";
 import type { HarnessAdminRuntime, HarnessAdminRuntimeUpdate } from "@cos-tool-bot/shared";
 
@@ -7,14 +8,15 @@ const RESPONSE_GRACE_MS = 5_000;
 const RUNTIME_UPDATE_TIMEOUT_MS = 600_000;
 const UNREACHABLE = new Set(["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "EHOSTUNREACH"]);
 
-interface BridgeResult {
-  exitCode?: number | null;
-  signal?: string | null;
-  timedOut?: boolean;
-  truncated?: boolean;
-  stdout?: string;
-  spawnError?: string;
-}
+const bridgeResultSchema = z.object({
+  exitCode: z.number().int().nullable().optional(),
+  signal: z.string().nullable().optional(),
+  timedOut: z.boolean().optional(),
+  truncated: z.boolean().optional(),
+  stdout: z.string().optional(),
+  spawnError: z.string().optional(),
+});
+type BridgeResult = z.infer<typeof bridgeResultSchema>;
 
 function execError(fields: Record<string, unknown>, message = "lody-bridge"): Error {
   return Object.assign(new Error(message), fields);
@@ -73,6 +75,9 @@ export function createBridgeExec(
       }
       throw execError({ killed: true, code });
     }
+    if (response.status === 401 || response.status === 429) {
+      await response.body?.cancel().catch(() => {});
+    }
     if (response.status === 401) throw rejected("lody-bridge 拒绝了认证，请检查共享密钥");
     // Pool full, or a bridge that predates `--wait`: the command never ran, so it may run plain.
     if (response.status === 429) throw execError({ code: "EWAIT_REFUSED" });
@@ -85,8 +90,11 @@ export function createBridgeExec(
     }
     let result: BridgeResult;
     try {
-      if (!response.ok) throw new Error(String(response.status));
-      result = (await response.json()) as BridgeResult;
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(String(response.status));
+      }
+      result = bridgeResultSchema.parse(await response.json());
     } catch {
       throw execError({ killed: true });
     }
@@ -96,7 +104,7 @@ export function createBridgeExec(
       throw execError({ killed: true, signal: result.signal ?? "SIGKILL", stdout });
     }
     if (result.exitCode !== 0) throw execError({ code: result.exitCode ?? "exit", stdout });
-    if (stdout.length > options.maxBuffer) throw execError({ killed: true });
+    if (Buffer.byteLength(stdout, "utf8") > options.maxBuffer) throw execError({ killed: true });
     return { stdout };
   };
 }

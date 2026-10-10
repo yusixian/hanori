@@ -1,3 +1,7 @@
+import { registerFatalErrorHandlers } from "./fatal-errors.js";
+import { UsageMaintenanceService } from "./services/usage-maintenance.js";
+import { redactDiagnostic } from "./services/run-redaction.js";
+import { createShutdownHandler, ShutdownSteps } from "./utils/shutdown.js";
 import { PluginManager } from "./services/plugins/manager.js";
 import { GitPluginArtifacts } from "./services/plugins/git-artifacts.js";
 import { createBuiltinMediaPlugins } from "./services/plugins/builtin-media.js";
@@ -13,7 +17,7 @@ import { createDb, runMigrations } from "@cos-tool-bot/database";
 import { NsfwChecker } from "@cos-tool-bot/bot";
 import { bots } from "@cos-tool-bot/database";
 import path from "node:path";
-import { getDataDir } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import { serve } from "@hono/node-server";
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -83,15 +87,7 @@ const runtimeHealth = new RuntimeHealth(
   resolveDeploymentVersion({ environmentValue: env.APP_VERSION }),
 );
 
-// Uncaught exception / unhandled rejection — log and exit, let Docker restart
-process.on("uncaughtException", (err) => {
-  logger.fatal(err, "Uncaught exception — exiting");
-  process.exit(1);
-});
-process.on("unhandledRejection", (reason) => {
-  logger.fatal({ reason }, "Unhandled rejection — exiting");
-  process.exit(1);
-});
+registerFatalErrorHandlers(logger);
 
 // Database
 await runMigrations(env.DATABASE_URL);
@@ -294,6 +290,7 @@ const mediaConfiguration = (botId: string) =>
     execute: (job, config, options) => executor.execute(job, config, options),
     resume: (job, config, signal) => executor.resume(job, config, signal),
     cleanup: (id, attempt) => executor.cleanup(id, attempt),
+    cleanupCompleted: (id) => asrAudioStore.remove(id),
     sweep: () => asrAudioStore.sweep(),
     notify: (job) =>
       botPool.sendHtml(job.botId, job.chatId, formatMediaJobNotice(job), job.threadId ?? undefined),
@@ -597,6 +594,7 @@ const summaryService = new ChatSummaryService(
       enabled: sc.enabled,
       globalScheduleHour: sc.globalScheduleHour,
       globalScheduleMinute: sc.globalScheduleMinute,
+      roleFilter: sc.roleFilter,
       timezone: sc.timezone,
     };
   },
@@ -607,6 +605,7 @@ botPool.setSummaryConfigService(summaryConfigService);
 
 // Hono App
 const app = createApp({
+  logger,
   db,
   auth,
   baseURL: env.BETTER_AUTH_URL,
@@ -669,16 +668,8 @@ if (!mediaConverter) await videoDownloadService.cancelForBot();
 await videoDownloadService.start();
 await imageGenerationService.recoverPending();
 
-const usageGovernanceCleanupTimer = setInterval(
-  () => void usageGovernor.pruneExpiredDetails().catch((error) => logger.error(error)),
-  24 * 60 * 60 * 1000,
-);
-usageGovernanceCleanupTimer.unref();
-const usageGovernanceReclaimTimer = setInterval(
-  () => void usageGovernor.reclaimExpiredReservations().catch((error) => logger.error(error)),
-  60_000,
-);
-usageGovernanceReclaimTimer.unref();
+const usageMaintenance = new UsageMaintenanceService(usageGovernor, logger);
+usageMaintenance.start();
 
 // Start RSS feed service (after bots so digest triggers have handlers)
 rssFeedService.start();
@@ -709,31 +700,46 @@ runtimeHealth.markReady();
 logger.info({ version: runtimeHealth.snapshot().version }, "Application ready");
 
 // Graceful shutdown
-const shutdown = async (signal: string) => {
+const shutdown = createShutdownHandler(async (signal) => {
+  const steps = new ShutdownSteps();
   runtimeHealth.markStopping();
-  await dbLogger.info(`[${signal}] Shutting down...`);
-  await mediaJobService.close();
-  await videoDownloadService.close();
-  await pluginManager.close();
-  await mcpClientManager.destroyAll();
-  await imageMcpConnectionService.close();
-  await Promise.all(Object.values(imageMcpConnections).map((service) => service.close()));
-  clearInterval(usageGovernanceCleanupTimer);
-  clearInterval(usageGovernanceReclaimTimer);
-  rssFeedService.stop();
-  summaryService.stop();
-  timerRegistry.destroy();
-  harnessService?.stop();
-  modelCapabilityService.stop();
-  logCleaner.stop();
-  memoryGC.stop();
-  memoryConsolidator.stop();
-  generationCleaner.stop();
-  engagementSampleCleaner.stop();
-  await botPool.stopAll();
-  await dbClient.end();
-  process.exit(0);
-};
+  const harnessStopped = steps.run("harness-scheduler", () => harnessService?.close());
+  const timersStopped = steps.run("timerRegistry", () => timerRegistry.close());
+  const usageStopped = steps.run("usage-maintenance", () => usageMaintenance.close());
+  const rssStopped = steps.run("rss", () => rssFeedService.close());
+  const summariesStopped = steps.run("summaries", () => summaryService.close());
+  const memoriesStopped = steps.run("memory-consolidation", () => memoryConsolidator.close());
+  await steps.run("shutdown-log", () => dbLogger.info(`[${signal}] Shutting down...`));
+  // Digests, summaries and reminders use Bot AI tools through delivery and persistence.
+  await Promise.all([rssStopped, summariesStopped, timersStopped]);
+  const imagesStopped = steps.run("images", () => imageGenerationService.close());
+  await steps.run("media-jobs", () => mediaJobService.close());
+  await steps.run("video-downloads", () => videoDownloadService.close());
+  await steps.run("plugins", () => pluginManager.close());
+  await imagesStopped;
+  await steps.run("mcp", () => mcpClientManager.destroyAll());
+  await steps.run("image-mcp", () => imageMcpConnectionService.close());
+  await Promise.all(
+    Object.entries(imageMcpConnections).map(([name, service]) =>
+      steps.run(`image-mcp:${name}`, () => service.close()),
+    ),
+  );
+  await usageStopped;
+  await harnessStopped;
+  await steps.run("modelCapabilityService", () => modelCapabilityService.stop());
+  await steps.run("logCleaner", () => logCleaner.close());
+  await steps.run("botRunCleaner", () => botRunCleaner.close());
+  await steps.run("memoryGC", () => memoryGC.close());
+  await memoriesStopped;
+  await steps.run("generationCleaner", () => generationCleaner.close());
+  await steps.run("engagementSampleCleaner", () => engagementSampleCleaner.close());
+  await steps.run("bots", () => botPool.stopAll());
+  await steps.run("database", () => dbClient.end());
+  for (const { step, error } of steps.failures) {
+    logger.error({ step, err: redactDiagnostic(error) }, "Shutdown step failed");
+  }
+  process.exit(steps.failures.length > 0 ? 1 : 0);
+});
 
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));

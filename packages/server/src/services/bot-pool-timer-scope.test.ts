@@ -158,3 +158,16 @@ describe("BotPool timer tenant scope", () => {
     expect(disposeSelectionRuntime).toHaveBeenCalledOnce();
   });
 });
+
+it.each([false, true])(
+  "retains pending timer state when durable cancellation fails (scoped=%s)",
+  async (scoped) => {
+    const { pool, cancel, cancelPendingTimerA } = createPool();
+    const failure = new Error("database unavailable");
+    cancel.mockRejectedValueOnce(failure);
+    await expect(
+      scoped ? pool.cancelTimerForBot(BOT_A, "timer-a") : pool.cancelTimer("timer-a"),
+    ).rejects.toBe(failure);
+    expect(cancelPendingTimerA).not.toHaveBeenCalled();
+  },
+);

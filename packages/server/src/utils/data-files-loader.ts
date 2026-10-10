@@ -50,16 +50,26 @@ export async function createDataFilesLoader(
         });
         const results: Array<{ name: string; content: string }> = [];
         let totalSize = 0;
+        let hadReadFailure = false;
         for (const name of mdFiles) {
-          const content = await fs.readFile(path.join(dataDir, name), "utf-8");
+          let content: string;
+          try {
+            content = await fs.readFile(path.join(dataDir, name), "utf-8");
+          } catch {
+            hadReadFailure = true;
+            continue;
+          }
           if (!content.trim()) continue;
           const size = Buffer.byteLength(content, "utf-8");
           if (totalSize + size > maxTotalSize) break;
           totalSize += size;
           results.push({ name, content });
         }
-        cachedFiles = results;
-        cacheTime = now;
+        // Do not cache a partial read: a repaired file should be retried on the next load.
+        if (!hadReadFailure) {
+          cachedFiles = results;
+          cacheTime = now;
+        }
         return results;
       } catch {
         return [];

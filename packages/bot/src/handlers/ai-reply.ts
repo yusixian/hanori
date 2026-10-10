@@ -259,7 +259,7 @@ export interface AiReplyConfig {
     userId: number;
     handle: ReturnType<typeof setTimeout>;
   }) => void | Promise<void>;
-  onTimerCancel?: (timerId: string) => void;
+  onTimerCancel?: (timerId: string) => void | Promise<void>;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   rssCallbacks?: Omit<
     RssToolsOptions,
@@ -1297,6 +1297,12 @@ export function createAiReplyHandler(
 
   function buildContinueChatConfig(): ContinueChatConfig {
     return {
+      diagnosticSecrets: [
+        config.apiKey,
+        config.token,
+        config.engagement?.apiKey ?? "",
+        ...(config.providers ?? []).map((provider) => provider.apiKey),
+      ],
       botId: config.botId,
       resolveSelection: (selectionChatId) => {
         const selection = selectionRuntime.resolve(selectionChatId);
@@ -1592,6 +1598,12 @@ export function createAiReplyHandler(
       return next();
     }
 
+    const diagnosticSecrets = [
+      config.apiKey,
+      config.token,
+      config.engagement?.apiKey ?? "",
+      ...(config.providers ?? []).map((provider) => provider.apiKey),
+    ];
     const onLog = createAiTurnLogger(
       config.onLog,
       {
@@ -1602,12 +1614,7 @@ export function createAiReplyHandler(
         updateId: ctx.update?.update_id,
         threadId: msg.message_thread_id,
       },
-      [
-        config.apiKey,
-        config.token,
-        config.engagement?.apiKey ?? "",
-        ...(config.providers ?? []).map((provider) => provider.apiKey),
-      ],
+      diagnosticSecrets,
       traceId,
     );
     const isAdmin = config.adminChatIds.includes(userId);
@@ -2577,6 +2584,7 @@ export function createAiReplyHandler(
         let imageCompletion: string | undefined;
         const requestCache = createRequestCache();
         const wrappedTools = composeTurnTools(toolset.tools, {
+          secrets: diagnosticSecrets,
           requestCache,
           onLog: onLog,
           getStep: () => stepCounter + 1,

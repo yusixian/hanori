@@ -504,11 +504,22 @@ export class EngagementSampleCleaner {
     private readonly intervalMs = 60 * 60 * 1_000,
   ) {}
 
+  private closing = false;
+  private closeTask?: Promise<void>;
+
   start(): void {
-    if (this.timer) return;
+    if (this.closing || this.timer) return;
     void this.cleanup();
     this.timer = setInterval(() => void this.cleanup(), this.intervalMs);
     this.timer.unref();
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    this.stop();
+    this.closeTask = this.cleanupInFlight ?? Promise.resolve();
+    return this.closeTask;
   }
 
   stop(): void {
@@ -526,6 +537,7 @@ export class EngagementSampleCleaner {
   }
 
   async cleanup(): Promise<void> {
+    if (this.closing) return;
     if (this.cleanupInFlight) return this.cleanupInFlight;
     const cleanup = this.service
       .cleanupExpiredContext()

@@ -35,6 +35,7 @@ export function wrapToolsWithStatus(
 }
 
 export interface TurnToolPipelineOptions {
+  secrets?: readonly string[];
   onDiagnostic?: (event: RuntimeDiagnosticEvent) => void;
   requestCache: RequestCache;
   onLog?: (entry: BotLogEntry) => void | Promise<void>;
@@ -59,7 +60,12 @@ export function composeTurnTools(
       trackSuccessfulToolEffects(tools, options.onEffect, options.onResult),
       options.requestCache,
     ),
-    { onLog: options.onLog, getStep: options.getStep, onDiagnostic: options.onDiagnostic },
+    {
+      onLog: options.onLog,
+      getStep: options.getStep,
+      onDiagnostic: options.onDiagnostic,
+      secrets: options.secrets,
+    },
   );
   return options.statusContext ? wrapToolsWithStatus(composed, options.statusContext) : composed;
 }

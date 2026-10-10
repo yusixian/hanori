@@ -1,6 +1,8 @@
 import type { Database } from "@cos-tool-bot/database";
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
 import type { Logger } from "pino";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatSummaryService } from "./chat-summary-service.js";
 import type { SummaryRunner } from "./summary-runner.js";
 
@@ -52,6 +54,7 @@ function createService(row: typeof configRow | null) {
     },
   }));
   const db = {
+    execute: vi.fn().mockResolvedValue([]),
     select: () => ({ from: () => ({ where: async () => (row ? [row] : []) }) }),
     update,
   } as unknown as Database;
@@ -127,5 +130,290 @@ describe("ChatSummaryService manual cooldown", () => {
     expect(values).toContain("bot-a");
     expect(values).toContain(-1001);
     expect(values).toContain(7);
+  });
+});
+
+it.each(["config", "claim", "runner"])(
+  "continues scheduled chats after one %s failure",
+  async (failureStage) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const failure = new Error("temporary failure");
+    const rows = [
+      { ...configRow, scheduleHour: 0, scheduleMinute: 1 },
+      { ...configRow, id: 8, botId: "bot-b", chatId: -1002, scheduleHour: 0, scheduleMinute: 1 },
+    ];
+    const claim = vi.fn().mockResolvedValue([{ id: 8 }]);
+    if (failureStage === "claim") claim.mockRejectedValueOnce(failure);
+    const db = {
+      execute: vi.fn().mockResolvedValue([]),
+      select: () => ({ from: () => ({ where: async () => rows }) }),
+      update: () => ({ set: () => ({ where: () => ({ returning: claim }) }) }),
+    } as unknown as Database;
+    const run = vi.fn().mockResolvedValue({ ok: true, contentHtml: "summary" });
+    if (failureStage === "runner") run.mockRejectedValueOnce(failure);
+    const getConfig = vi.fn().mockResolvedValue({ enabled: true, timezone: "UTC" });
+    if (failureStage === "config") getConfig.mockRejectedValueOnce(failure);
+    const send = vi.fn().mockResolvedValue(undefined);
+    const logger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() };
+    const service = new ChatSummaryService(
+      db,
+      logger as unknown as Logger,
+      { run } as unknown as SummaryRunner,
+      send,
+      () => true,
+      getConfig,
+    );
+    try {
+      service.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(send).toHaveBeenCalledExactlyOnceWith("bot-b", -1002, "summary");
+      expect(logger.error).toHaveBeenCalledWith(
+        { err: failure, botId: "bot-a", chatId: -1001 },
+        "Scheduled summary failed",
+      );
+      if (failureStage === "runner") expect(claim).toHaveBeenCalledTimes(2);
+    } finally {
+      service.stop();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("does not start a second summary when overlapping schedulers lose the database claim", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  const row = { ...configRow, scheduleHour: 0, scheduleMinute: 1 };
+  let resolveSelected!: (rows: (typeof row)[]) => void;
+  const selected = new Promise<(typeof row)[]>((resolve) => {
+    resolveSelected = resolve;
+  });
+  let resolveCompleted!: (result: { ok: true; contentHtml: string }) => void;
+  const completed = new Promise<{ ok: true; contentHtml: string }>((resolve) => {
+    resolveCompleted = resolve;
+  });
+  let reads = 0;
+  let claimed = false;
+  const conditions: unknown[] = [];
+  const claim = vi.fn(async () => {
+    if (claimed) return [];
+    claimed = true;
+    return [{ id: row.id }];
+  });
+  const db = {
+    execute: vi.fn().mockResolvedValue([]),
+    select: () => ({
+      from: () => ({
+        where: () => {
+          if (++reads === 2) resolveSelected([row]);
+          return selected;
+        },
+      }),
+    }),
+    update: () => ({
+      set: () => ({
+        where: (condition: unknown) => {
+          conditions.push(condition);
+          return { returning: claim };
+        },
+      }),
+    }),
+  } as unknown as Database;
+  const run = vi.fn(() => completed);
+  const send = vi.fn().mockResolvedValue(undefined);
+  const services = [0, 1].map(
+    () =>
+      new ChatSummaryService(
+        db,
+        { warn: vi.fn(), info: vi.fn(), error: vi.fn() } as unknown as Logger,
+        { run } as unknown as SummaryRunner,
+        send,
+        () => true,
+        async () => ({ enabled: true, timezone: "UTC" }),
+      ),
+  );
+  try {
+    services.forEach((service) => service.start());
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(claim).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledOnce();
+    expect(send).not.toHaveBeenCalled();
+    for (const condition of conditions) {
+      const query = new PgDialect().sqlToQuery(condition as SQL);
+      expect(query.sql).toContain('"summary_configs"."id" = $1');
+      expect(query.sql).toContain('"summary_configs"."last_scheduled_at" is null');
+      expect(query.sql).toContain('"summary_configs"."last_scheduled_at" < $2');
+      expect(query.params).toEqual([row.id, "2025-12-31T01:01:00.000Z"]);
+    }
+    resolveCompleted({ ok: true, contentHtml: "summary" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(send).toHaveBeenCalledExactlyOnceWith(row.botId, row.chatId, "summary");
+  } finally {
+    resolveCompleted({ ok: true, contentHtml: "summary" });
+    services.forEach((service) => service.stop());
+    vi.useRealTimers();
+  }
+});
+
+describe("ChatSummaryService close", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  function lifecycleFixture() {
+    const rows = [
+      { ...configRow, scheduleHour: 0, scheduleMinute: 1 },
+      { ...configRow, id: 8, botId: "bot-b", chatId: -1002, scheduleHour: 0, scheduleMinute: 1 },
+    ];
+    const query = vi.fn().mockResolvedValue(rows);
+    const claim = vi.fn().mockResolvedValue([{ id: 7 }]);
+    const getConfig = vi.fn().mockResolvedValue({ enabled: true, timezone: "UTC" });
+    const run = vi.fn().mockResolvedValue({ ok: true, summaryId: 1, contentHtml: "summary" });
+    const send = vi.fn().mockResolvedValue(undefined);
+    const logger = { warn: vi.fn(), info: vi.fn(), error: vi.fn() };
+    const db = {
+      execute: vi.fn().mockResolvedValue([]),
+      select: () => ({ from: () => ({ where: query }) }),
+      update: () => ({ set: () => ({ where: () => ({ returning: claim }) }) }),
+    } as unknown as Database;
+    const service = new ChatSummaryService(
+      db,
+      logger as unknown as Logger,
+      { run } as unknown as SummaryRunner,
+      send,
+      () => true,
+      getConfig,
+    );
+    return { service, query, claim, getConfig, run, send, logger };
+  }
+
+  it.each(["config", "claim", "runner", "send"])(
+    "drains the current scheduled %s and skips subsequent chats",
+    async (phase) => {
+      const { service, claim, getConfig, run, send } = lifecycleFixture();
+      let release!: (value: unknown) => void;
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const pending =
+        phase === "config"
+          ? getConfig
+          : phase === "claim"
+            ? claim
+            : phase === "runner"
+              ? run
+              : send;
+      pending.mockReturnValueOnce(gate);
+      service.start();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(pending).toHaveBeenCalledOnce();
+      let closed = false;
+      const close = service.close();
+      expect(service.close()).toBe(close);
+      void close.then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      release(
+        phase === "config"
+          ? { enabled: true, timezone: "UTC" }
+          : phase === "claim"
+            ? [{ id: 7 }]
+            : phase === "runner"
+              ? { ok: true, contentHtml: "summary" }
+              : undefined,
+      );
+      await close;
+      expect(claim).toHaveBeenCalledTimes(phase === "config" ? 0 : 1);
+      expect(run).toHaveBeenCalledTimes(phase === "config" ? 0 : 1);
+      expect(send).toHaveBeenCalledTimes(phase === "config" ? 0 : 1);
+      service.start();
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it.each([false, true])(
+    "waits for manual send while retaining its existing failure result (fails: %s)",
+    async (fails) => {
+      const { service, send, run, logger } = lifecycleFixture();
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      send.mockImplementationOnce(async () => {
+        await pending;
+        if (fails) throw new Error("send failed");
+      });
+      const manual = service.triggerManual({ ...manualOptions, skipSend: false });
+      await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+      let closed = false;
+      const close = service.close().then(() => {
+        closed = true;
+      });
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      await expect(service.triggerManual(manualOptions)).resolves.toEqual({
+        ok: false,
+        reason: "disabled",
+      });
+      release();
+      await expect(manual).resolves.toMatchObject({
+        ok: true,
+        summaryId: 1,
+        contentHtml: "summary",
+      });
+      await close;
+      expect(run).toHaveBeenCalledOnce();
+      expect(logger.warn).toHaveBeenCalledTimes(fails ? 1 : 0);
+    },
+  );
+
+  it("preserves stop/start scheduling until terminal close", async () => {
+    const { service, query } = lifecycleFixture();
+    query.mockResolvedValue([]);
+    service.start();
+    service.stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(query).not.toHaveBeenCalled();
+    service.start();
+    service.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(query).toHaveBeenCalledOnce();
+    await service.close();
+    service.start();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(query).toHaveBeenCalledOnce();
+  });
+  it.each([false, true])("waits for caller-owned Telegram delivery (fails: %s)", async (fails) => {
+    const { service, send } = lifecycleFixture();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deliver = vi.fn(async () => {
+      await gate;
+      if (fails) throw new Error("Telegram failed");
+    });
+    const manual = service.triggerManual({ ...manualOptions, deliver });
+    const result = fails
+      ? expect(manual).rejects.toThrow("Telegram failed")
+      : expect(manual).resolves.toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledExactlyOnceWith("summary"));
+    let closed = false;
+    const close = service.close().then(() => {
+      closed = true;
+    });
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    release();
+    await result;
+    await close;
+    expect(send).not.toHaveBeenCalled();
   });
 });

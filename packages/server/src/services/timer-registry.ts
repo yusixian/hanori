@@ -3,6 +3,7 @@ import { timers } from "@cos-tool-bot/database";
 import type { TimerRecord, TimerStatus, TimerType } from "@cos-tool-bot/shared";
 import { and, eq, lt, lte, or } from "drizzle-orm";
 import type { Logger } from "pino";
+import { InFlightTasks } from "../utils/in-flight-tasks.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
 export interface RegisteredTimer {
@@ -65,7 +66,12 @@ function toRecord(t: RegisteredTimer): TimerRecord {
 }
 
 export class TimerRegistry {
+  private closing = false;
+  private closeTask?: Promise<void>;
+  private readonly tasks = new InFlightTasks();
   private active = new Map<string, RegisteredTimer>();
+  private registrationHandles = new Set<ReturnType<typeof setTimeout>>();
+  private claimedPending = new Map<string, string>();
   private pausedBots = new Set<string>();
   private botLocks = new KeyedAsyncLock();
   private cleanupHandle: ReturnType<typeof setInterval>;
@@ -80,9 +86,11 @@ export class TimerRegistry {
 
     this.dbCleanupHandle = setInterval(
       () =>
-        this.cleanupCompleted().catch((err) => {
-          this.logger.error(err, "Unexpected timer DB cleanup error");
-        }),
+        this.tasks.track(
+          this.cleanupCompleted().catch((err) => {
+            this.logger.error(err, "Unexpected timer DB cleanup error");
+          }),
+        ),
       CLEANUP_INTERVAL_MS,
     );
     this.dbCleanupHandle.unref();
@@ -95,6 +103,10 @@ export class TimerRegistry {
     handle: ReturnType<typeof setInterval>;
   }): string {
     const id = `sys_${shortId()}`;
+    if (this.closing) {
+      clearInterval(opts.handle);
+      return id;
+    }
     const timer: RegisteredTimer = {
       id,
       botId: null,
@@ -124,6 +136,18 @@ export class TimerRegistry {
     handle?: ReturnType<typeof setTimeout>;
     onFire?: TimerFireCallback;
   }): Promise<string> {
+    if (this.closing && opts.handle) clearTimeout(opts.handle);
+    return this.run(() => {
+      if (opts.handle) this.registrationHandles.add(opts.handle);
+      return this.registerAiImpl(opts).finally(() => {
+        if (opts.handle) {
+          this.registrationHandles.delete(opts.handle);
+        }
+      });
+    });
+  }
+
+  private async registerAiImpl(opts: Parameters<TimerRegistry["registerAi"]>[0]): Promise<string> {
     return this.botLocks.run(opts.botId, async () => {
       const id = opts.timerId ?? `ai_${shortId()}`;
       const firesAt = new Date(Date.now() + opts.seconds * 1000);
@@ -158,8 +182,8 @@ export class TimerRegistry {
         if (opts.onFire) throw err;
       }
 
-      if ((paused || opts.onFire) && timer.handle) clearTimeout(timer.handle);
-      if (!paused) {
+      if ((this.closing || paused || opts.onFire) && timer.handle) clearTimeout(timer.handle);
+      if (!this.closing && !paused) {
         if (opts.onFire) {
           const delay = Math.max(0, firesAt.getTime() - Date.now());
           this.scheduleDelivery(opts.onFire, timer, delay, false, true);
@@ -174,6 +198,10 @@ export class TimerRegistry {
 
   /** Set the setTimeout handle for an AI timer (called after registerAi). */
   setHandle(timerId: string, handle: ReturnType<typeof setTimeout>): void {
+    if (this.closing) {
+      clearTimeout(handle);
+      return;
+    }
     const t = this.active.get(timerId);
     if (t) t.handle = handle;
   }
@@ -184,7 +212,11 @@ export class TimerRegistry {
   }
 
   /** Mark a timer as fired. */
-  async markFired(timerId: string): Promise<void> {
+  markFired(timerId: string): Promise<void> {
+    return this.run(() => this.markFiredImpl(timerId));
+  }
+
+  private async markFiredImpl(timerId: string): Promise<void> {
     const t = this.active.get(timerId);
     try {
       if (t) {
@@ -205,25 +237,34 @@ export class TimerRegistry {
   }
 
   /** Cancel a timer. */
-  async cancel(timerId: string): Promise<boolean> {
+  cancel(timerId: string): Promise<boolean> {
+    return this.run(() => this.cancelImpl(timerId));
+  }
+
+  private async cancelImpl(timerId: string): Promise<boolean> {
     const t = this.active.get(timerId);
     if (!t) return false;
 
-    if (t.handle) {
-      if (t.isInterval) clearInterval(t.handle);
-      else clearTimeout(t.handle);
-    }
-    t.status = "cancelled";
-    this.active.delete(timerId);
-
-    if (!timerId.startsWith("sys_")) {
-      try {
-        await this.db.update(timers).set({ status: "cancelled" }).where(eq(timers.id, timerId));
-      } catch (err) {
-        this.logger.error(err, `Failed to persist timer cancel ${timerId}`);
+    const cancel = async () => {
+      if (this.active.get(timerId) !== t) return false;
+      if (!timerId.startsWith("sys_")) {
+        try {
+          await this.db.update(timers).set({ status: "cancelled" }).where(eq(timers.id, timerId));
+        } catch (err) {
+          this.logger.error(err, `Failed to persist timer cancel ${timerId}`);
+          throw err;
+        }
       }
-    }
-    return true;
+      if (t.handle) {
+        if (t.isInterval) clearInterval(t.handle);
+        else clearTimeout(t.handle);
+      }
+      t.status = "cancelled";
+      this.active.delete(timerId);
+      this.claimedPending.delete(timerId);
+      return true;
+    };
+    return t.botId ? this.botLocks.run(t.botId, cancel) : cancel();
   }
 
   /** List all active timers, optionally filtered. */
@@ -244,7 +285,14 @@ export class TimerRegistry {
   }
 
   /** Rebuild one running Bot's schedules from durable active timers. */
-  async resumeBot(botId: string, onFire: TimerFireCallback): Promise<TimerResumeResult> {
+  resumeBot(botId: string, onFire: TimerFireCallback): Promise<TimerResumeResult> {
+    return this.run(() => this.resumeBotImpl(botId, onFire));
+  }
+
+  private async resumeBotImpl(
+    botId: string,
+    onFire: TimerFireCallback,
+  ): Promise<TimerResumeResult> {
     const rows = await this.botLocks.run(botId, async () => {
       this.pauseBotUnlocked(botId);
       this.pausedBots.delete(botId);
@@ -275,6 +323,7 @@ export class TimerRegistry {
       if (timer.botId !== botId) continue;
       if (timer.handle) clearTimeout(timer.handle);
       this.active.delete(id);
+      this.claimedPending.delete(id);
       paused++;
     }
     return paused;
@@ -291,6 +340,7 @@ export class TimerRegistry {
     const now = Date.now();
 
     for (const row of rows) {
+      if (this.closing) break;
       if (!row.firesAt || row.chatId == null) {
         if (await this.cancelActive(row.id, botId)) cancelled++;
         continue;
@@ -315,6 +365,10 @@ export class TimerRegistry {
       const delay = Math.max(row.firesAt.getTime() - now, leaseDelay);
       if (delay <= 0) {
         if (await this.claimForDelivery(row.id, botId)) {
+          if (this.closing) {
+            await this.rollbackClaim(row.id, botId);
+            break;
+          }
           immediate++;
           this.scheduleDelivery(onFire, timer, 0, true, true, true);
         }
@@ -353,9 +407,14 @@ export class TimerRegistry {
     retryAllowed: boolean,
     alreadyClaimed = false,
   ): void {
-    if (this.pausedBots.has(timer.botId!)) return;
+    if (this.closing || this.pausedBots.has(timer.botId!)) return;
+    if (alreadyClaimed) this.claimedPending.set(timer.id, timer.botId!);
     const handle = setTimeout(() => {
-      void this.beginDelivery(onFire, timer, delayed, retryAllowed, alreadyClaimed);
+      if (!this.closing) {
+        void this.tasks.track(
+          this.beginDelivery(onFire, timer, delayed, retryAllowed, alreadyClaimed),
+        );
+      }
     }, delay);
     handle.unref();
     timer.status = "active";
@@ -372,6 +431,7 @@ export class TimerRegistry {
   ): Promise<void> {
     try {
       const claimed = await this.botLocks.run(timer.botId!, async () => {
+        this.claimedPending.delete(timer.id);
         if (this.active.get(timer.id) !== timer || this.pausedBots.has(timer.botId!)) return false;
         this.active.delete(timer.id);
         return alreadyClaimed || this.claimForDelivery(timer.id, timer.botId!);
@@ -490,12 +550,28 @@ export class TimerRegistry {
         // Expiry alone cannot prove Telegram delivery. A rejected delivery intentionally
         // leaves the durable row active so the next Bot start can recover it.
         this.active.delete(id);
+        this.claimedPending.delete(id);
       }
     }
   }
 
-  /** Destroy all handles for graceful shutdown. */
+  private run<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new Error("Timer registry is closing"));
+    return this.tasks.track(operation());
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.destroy();
+    this.closeTask = this.tasks.drain();
+    return this.closeTask;
+  }
+
+  /** Stop scheduling synchronously; close also waits for admitted work. */
   destroy(): void {
+    this.closing = true;
+    for (const handle of this.registrationHandles) clearTimeout(handle);
+    this.registrationHandles.clear();
     clearInterval(this.cleanupHandle);
     clearInterval(this.dbCleanupHandle);
     for (const t of this.active.values()) {
@@ -505,6 +581,10 @@ export class TimerRegistry {
       }
     }
     this.active.clear();
+    for (const [timerId, botId] of this.claimedPending) {
+      void this.tasks.track(this.rollbackClaim(timerId, botId));
+    }
+    this.claimedPending.clear();
     this.pausedBots.clear();
   }
 }

@@ -3,6 +3,7 @@ import type { Tool } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import type { WrapperContext } from "../context.js";
 import { createRequestCache } from "../tools/utils.js";
+import { createAiTurnLogger } from "./ai-turn-log.js";
 import { composeTurnTools } from "./tool-pipeline.js";
 
 function fakeTool(execute: (args: unknown, options: unknown) => unknown): Tool {
@@ -92,3 +93,37 @@ describe("composeTurnTools", () => {
     expect(composed["provider_tool"]).toBe(provider);
   });
 });
+
+it.each(["result", "error"])(
+  "redacts input and %s before the tool pipeline truncates diagnostics",
+  async (outcome) => {
+    const secret = "private-provider-key";
+    const text = "x".repeat(16_380) + secret;
+    const sink = vi.fn<(entry: BotLogEntry) => void>();
+    const error = new Error(text);
+    const tools = composeTurnTools(
+      {
+        inspect: fakeTool(() => {
+          if (outcome === "error") throw error;
+          return { text };
+        }),
+      },
+      {
+        secrets: [secret],
+        onLog: createAiTurnLogger(sink, {}, [secret]),
+        requestCache: createRequestCache(),
+        getStep: () => 1,
+        onEffect: () => {},
+      },
+    );
+    const run = tools.inspect!.execute!({ text }, {} as never);
+    if (outcome === "error") await expect(run).rejects.toBe(error);
+    else await expect(run).resolves.toEqual({ text });
+    expect(sink).toHaveBeenCalledTimes(2);
+    for (const [entry] of sink.mock.calls) {
+      const serialized = JSON.stringify(entry);
+      expect(serialized).not.toContain("priv");
+      expect(serialized).toContain("truncated");
+    }
+  },
+);

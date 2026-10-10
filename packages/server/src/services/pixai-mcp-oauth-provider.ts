@@ -53,6 +53,11 @@ export interface PixaiMcpOAuthProviderOptions {
   scopes?: readonly string[];
 }
 
+export interface PixaiMcpAuthSession {
+  provider: OAuthClientProvider;
+  revokeAndDrain(): Promise<void>;
+}
+
 export class PixaiMcpOAuthPersistenceError extends Error {
   constructor() {
     super("PixAI MCP OAuth persistence failed");
@@ -70,7 +75,11 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   private readonly endpoint: string | undefined;
   private readonly onAuthorizationUrl: (url: URL) => void | Promise<void>;
 
-  constructor(options: PixaiMcpOAuthProviderOptions) {
+  // Root cleanup and connection grants share this queue; network requests never enter it.
+  private queue = { tail: Promise.resolve() };
+  private revoked = false;
+
+  constructor(private readonly options: PixaiMcpOAuthProviderOptions) {
     this.store = options.store;
     this.scopes = options.scopes ?? PIXAI_MCP_OAUTH_SCOPES;
     this.endpoint = options.endpoint ? new URL(options.endpoint).href : undefined;
@@ -85,6 +94,36 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
       client_uri: options.clientUri,
       scope: this.scopes.join(" "),
     };
+  }
+
+  forConnection(): PixaiMcpAuthSession {
+    const provider = new PixaiMcpOAuthProvider(this.options);
+    provider.queue = this.queue;
+    return {
+      provider,
+      revokeAndDrain: () => {
+        provider.revoked = true;
+        return provider.queue.tail;
+      },
+    };
+  }
+
+  private assertActive(): void {
+    if (this.revoked) throw new PixaiMcpOAuthPersistenceError();
+  }
+
+  private run<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.queue.tail.then(async () => {
+      this.assertActive();
+      const value = await operation();
+      this.assertActive();
+      return value;
+    });
+    this.queue.tail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   }
 
   async state(): Promise<string> {
@@ -106,12 +145,14 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    const current = (await this.read()).tokens;
-    await this.patch({
-      tokens:
-        tokens.refresh_token || !current?.refresh_token
-          ? tokens
-          : { ...tokens, refresh_token: current.refresh_token },
+    await this.run(async () => {
+      const current = (await this.readUnqueued()).tokens;
+      await this.patchUnqueued({
+        tokens:
+          tokens.refresh_token || !current?.refresh_token
+            ? tokens
+            : { ...tokens, refresh_token: current.refresh_token },
+      });
     });
   }
 
@@ -122,7 +163,9 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
     );
     for (const scope of this.scopes) requestedScopes.add(scope);
     ownerAuthorizationUrl.searchParams.set("scope", [...requestedScopes].join(" "));
-    await this.onAuthorizationUrl(ownerAuthorizationUrl);
+    await this.run(async () => {
+      await this.onAuthorizationUrl(ownerAuthorizationUrl);
+    });
   }
 
   async saveCodeVerifier(codeVerifier: string): Promise<void> {
@@ -159,17 +202,25 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
 
   /** Validate the OAuth callback state once, then invalidate it to prevent replay. */
   async consumeAuthorizationState(receivedState: string): Promise<boolean> {
-    try {
-      if (!this.endpoint) return false;
-      return await this.store.consumeAuthorizationState(this.endpoint, receivedState);
-    } catch {
-      throw new PixaiMcpOAuthPersistenceError();
-    }
+    return this.run(async () => {
+      try {
+        if (!this.endpoint) return false;
+        return await this.store.consumeAuthorizationState(this.endpoint, receivedState);
+      } catch {
+        throw new PixaiMcpOAuthPersistenceError();
+      }
+    });
   }
 
-  private async read(): Promise<Readonly<PixaiMcpOAuthState>> {
+  private read(): Promise<Readonly<PixaiMcpOAuthState>> {
+    return this.run(() => this.readUnqueued());
+  }
+
+  private async readUnqueued(): Promise<Readonly<PixaiMcpOAuthState>> {
     try {
+      this.assertActive();
       const state = (await this.store.read()) ?? {};
+      this.assertActive();
       // Legacy grants and grants for another endpoint require owner reauthorization.
       return this.endpoint && state.endpoint === this.endpoint ? state : {};
     } catch {
@@ -177,12 +228,18 @@ export class PixaiMcpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  private async patch(update: PixaiMcpOAuthUpdate): Promise<void> {
+  private patch(update: PixaiMcpOAuthUpdate): Promise<void> {
+    return this.run(() => this.patchUnqueued(update));
+  }
+
+  private async patchUnqueued(update: PixaiMcpOAuthUpdate): Promise<void> {
     try {
       if (!this.endpoint && Object.values(update).some((value) => value !== null)) {
         throw new PixaiMcpOAuthPersistenceError();
       }
+      this.assertActive();
       await this.store.patch(this.endpoint, update);
+      this.assertActive();
     } catch {
       throw new PixaiMcpOAuthPersistenceError();
     }

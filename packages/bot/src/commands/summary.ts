@@ -22,6 +22,7 @@ export interface SummaryCallbacks {
     mode: SummaryMode;
     bypassCooldown?: boolean;
     skipSend?: boolean;
+    deliver?: (html: string) => Promise<void>;
   }): Promise<{
     ok: boolean;
     reason?: SummaryReason;
@@ -111,6 +112,7 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
       reply_parameters: ctx.message ? { message_id: ctx.message.message_id } : undefined,
     });
 
+    let delivering = false;
     let result: Awaited<ReturnType<SummaryCallbacks["triggerManual"]>>;
     try {
       result = await deps.triggerManual({
@@ -120,8 +122,17 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
         mode: parsed.value,
         bypassCooldown: deps.adminChatIds.includes(userId),
         skipSend: true,
+        deliver: async (html) => {
+          delivering = true;
+          await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
+          await ctx.api.sendMessage(chatId, html, {
+            parse_mode: "HTML",
+            reply_parameters: ctx.message ? { message_id: ctx.message.message_id } : undefined,
+          });
+        },
       });
     } catch (err) {
+      if (delivering) throw err;
       await ctx.api
         .editMessageText(
           chatId,
@@ -138,11 +149,5 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
         .catch(() => {});
       return;
     }
-
-    await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
-    await ctx.api.sendMessage(chatId, result.contentHtml!, {
-      parse_mode: "HTML",
-      reply_parameters: ctx.message ? { message_id: ctx.message.message_id } : undefined,
-    });
   };
 }

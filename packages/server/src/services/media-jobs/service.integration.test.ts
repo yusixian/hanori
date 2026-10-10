@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { createDb } from "@cos-tool-bot/database";
 import {
@@ -75,10 +75,19 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     await connection.client.unsafe(
       "CREATE TABLE public.bots (id uuid PRIMARY KEY, admin_chat_ids json NOT NULL DEFAULT '[]')",
     );
-    const migrations = await readdir(new URL("../../../../database/drizzle/", import.meta.url));
-    for (const filename of migrations
-      .filter((name) => /^\d{4}_.*\.sql$/.test(name) && Number(name.slice(0, 4)) >= 58)
-      .sort()) {
+    // This fixture creates plugin/media/video tables, not the full application schema.
+    for (const filename of [
+      "0058_sloppy_jocasta.sql",
+      "0059_superb_lifeguard.sql",
+      "0060_gigantic_cargill.sql",
+      "0061_sour_meteorite.sql",
+      "0062_black_midnight.sql",
+      "0063_thin_power_pack.sql",
+      "0064_stale_annihilus.sql",
+      "0065_sturdy_mephisto.sql",
+      "0066_large_thunderbolt_ross.sql",
+      "0067_long_tyger_tiger.sql",
+    ]) {
       const migration = await readFile(
         new URL(`../../../../database/drizzle/${filename}`, import.meta.url),
         "utf8",
@@ -122,6 +131,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
         return document;
       }),
       cleanup: vi.fn(async () => {}),
+      cleanupCompleted: vi.fn(async () => {}),
       notify: vi.fn(async () => {}),
     };
     service = makeService();
@@ -660,11 +670,13 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     expect(await service.get(actor, job.id)).toMatchObject({ status: "queued" });
     expect(deps.execute).toHaveBeenCalledOnce();
     expect(deps.resume).not.toHaveBeenCalled();
+    expect(deps.cleanupCompleted).not.toHaveBeenCalled();
     const restarted = makeService();
     await restarted.tick();
     expect(deps.resume).toHaveBeenCalledOnce();
     expect(deps.execute).toHaveBeenCalledOnce();
     expect(await restarted.get(actor, job.id)).toMatchObject({ status: "completed" });
+    expect(deps.cleanupCompleted).toHaveBeenCalledExactlyOnceWith(job.id);
   });
 
   it("waits for the returned provider task ID to be persisted before finishing shutdown", async () => {
@@ -1416,6 +1428,52 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     expect(deps.notify).toHaveBeenCalledOnce();
   });
 
+  it("persists a successful result before audio cleanup and retries cleanup after restart", async () => {
+    deps.cleanupCompleted = vi.fn(async (id) => {
+      expect(await stored(id)).toMatchObject({ status: "completed", result: document });
+      throw new Error("synthetic audio cleanup failure");
+    });
+    const job = await create();
+    await service.tick();
+    expect(await stored(job.id)).toMatchObject({
+      status: "completed",
+      result: document,
+      cleanup_pending: true,
+      notification: "sent",
+    });
+    expect(deps.cleanupCompleted).toHaveBeenCalledWith(job.id);
+    vi.mocked(deps.cleanupCompleted).mockResolvedValue(undefined);
+    await makeService().tick();
+    expect(await stored(job.id)).toMatchObject({
+      status: "completed",
+      result: document,
+      cleanup_pending: false,
+    });
+    expect(deps.cleanupCompleted).toHaveBeenCalledTimes(2);
+    expect(deps.execute).toHaveBeenCalledOnce();
+    expect(deps.notify).toHaveBeenCalledOnce();
+  });
+
+  it("does not clean job audio when persisting completion fails", async () => {
+    await connection.client.unsafe(`CREATE FUNCTION reject_media_completion() RETURNS trigger AS $$
+      BEGIN IF NEW.status = 'completed' THEN RAISE EXCEPTION 'synthetic persistence failure'; END IF;
+      RETURN NEW; END; $$ LANGUAGE plpgsql`);
+    await connection.client
+      .unsafe(`CREATE TRIGGER reject_media_completion BEFORE UPDATE ON media_transcription_jobs
+      FOR EACH ROW EXECUTE FUNCTION reject_media_completion()`);
+    try {
+      const job = await create();
+      await service.tick();
+      expect(await stored(job.id)).toMatchObject({ status: "failed", result: null });
+      expect(deps.cleanupCompleted).not.toHaveBeenCalled();
+    } finally {
+      await connection.client.unsafe(
+        "DROP TRIGGER reject_media_completion ON media_transcription_jobs",
+      );
+      await connection.client.unsafe("DROP FUNCTION reject_media_completion()");
+    }
+  });
+
   it("holds an expired pre-charge lease until its previous attempt cleanup succeeds", async () => {
     const job = await create();
     await connection.client`UPDATE media_transcription_jobs SET status='downloading', progress=10, attempt=1, cleanup_pending=true, lease_id=${randomUUID()}, lease_expires_at=${new Date(Date.now() - 1000).toISOString()} WHERE id=${job.id}`;
@@ -1437,6 +1495,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     const releaseOld = deferred<void>();
     const cleanupStarted = deferred<void>();
     const releaseCleanup = deferred<void>();
+    const completedCleanup = vi.mocked(deps.cleanupCompleted!);
     deps.execute = vi.fn(async (row, _config, options) => {
       await options.onStage("converting");
       if (row.attempt === 1) {
@@ -1463,6 +1522,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
       await oldTick;
       expect((await stored(job.id)).attempt).toBe(2);
       expect((await stored(job.id)).cleanup_pending).toBe(true);
+      expect(completedCleanup).not.toHaveBeenCalled();
     } finally {
       releaseOld.resolve();
       releaseCleanup.resolve();
@@ -1472,6 +1532,7 @@ describe.skipIf(!baseUrl)("durable media transcription jobs", () => {
     expect((await stored(job.id)).cleanup_pending).toBe(false);
     expect(deps.cleanup).toHaveBeenCalledWith(job.id, 1);
     expect(deps.cleanup).toHaveBeenCalledWith(job.id, 2);
+    expect(completedCleanup).toHaveBeenCalledExactlyOnceWith(job.id);
   });
   it("stores only bounded validated ASR fields and rejects oversized transcript bodies", async () => {
     deps.execute = vi.fn(async (_row, _config, options) => {

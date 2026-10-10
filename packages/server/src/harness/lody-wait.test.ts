@@ -3,14 +3,14 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { type ExecFileLike, LodyCli } from "./lody.js";
-import { type SpawnLike, type TurnEnd, createLocalExec } from "./lody-wait.js";
+import { type SpawnLike, type TurnEnd, createLocalExec, startTurn } from "./lody-wait.js";
 
 const SESSION = "11111111-2222-4333-8444-555555555555";
 
 /** A scripted `lody` child: the test writes its stdout and decides when it exits. */
 function fakeSpawn() {
   const calls: Array<{ file: string; args: string[]; stdin: string }> = [];
-  const children: Array<{ print(text: string): void; exit(code: number): void }> = [];
+  const children: Array<{ print(text: string | Buffer): void; exit(code: number): void }> = [];
   const spawn: SpawnLike = (file, args) => {
     const child = new EventEmitter() as ChildProcess & EventEmitter;
     const stdout = new PassThrough();
@@ -172,4 +172,54 @@ describe("LodyCli turn waits", () => {
       "--json",
     ]);
   });
+});
+
+it("decodes split UTF-8 local waiter error output", async () => {
+  const fake = fakeSpawn();
+  const turn = startTurn(["fake"], ["session", "chat", SESSION, "--wait", "10"], {
+    spawn: fake.spawn,
+    acceptMs: 1000,
+    earlyTimeoutMs: 1000,
+  });
+  const error = "执行失败🙂";
+  for (const byte of Buffer.from(JSON.stringify({ type: "error", error }))) {
+    fake.children[0]!.print(Buffer.from([byte]));
+  }
+  fake.children[0]!.exit(1);
+  expect(JSON.parse((await turn.early).stdout!)).toEqual({ ok: false, error });
+  expect(await turn.ended).toBeNull();
+});
+
+it.each([false, true])(
+  "bounds local control lines regardless of chunking (split: %s)",
+  async (split) => {
+    const fake = fakeSpawn();
+    const turn = startTurn(["fake"], ["session", "chat", SESSION, "--wait", "10"], {
+      spawn: fake.spawn,
+      acceptMs: 1000,
+      earlyTimeoutMs: 1000,
+    });
+    const line = JSON.stringify({ type: "done", padding: "x".repeat(70_000) });
+    if (split) {
+      fake.children[0]!.print(line);
+      fake.children[0]!.print("\n");
+    } else fake.children[0]!.print(`${line}\n`);
+    fake.children[0]!.print('{"type":"error","error":"real failure"}\n');
+    fake.children[0]!.exit(1);
+    expect(JSON.parse((await turn.early).stdout!)).toEqual({ ok: false, error: "real failure" });
+    expect(await turn.ended).toBeNull();
+  },
+);
+
+it("still accepts an oversized local streaming update", async () => {
+  const fake = fakeSpawn();
+  const turn = startTurn(["fake"], ["session", "chat", SESSION, "--wait", "10"], {
+    spawn: fake.spawn,
+    acceptMs: 1000,
+    earlyTimeoutMs: 1000,
+  });
+  fake.children[0]!.print(`${JSON.stringify({ type: "update", text: "x".repeat(70_000) })}\n`);
+  expect(await turn.early).toMatchObject({ exitCode: 0 });
+  fake.children[0]!.exit(0);
+  await turn.ended;
 });

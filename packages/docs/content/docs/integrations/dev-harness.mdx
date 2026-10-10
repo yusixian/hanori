@@ -129,6 +129,22 @@ harness 发起的每个回合都会等待 Lody 报告结束（`executors.lody.tu
 
 执行层通过 `lody-bridge` sidecar 调用 Lody：在 Compose 中启用 `harness` profile，设置 `LODY_CLI_TOKEN`（Lody 桌面端 Settings → Account → CLI Token）、两边相同的 `HARNESS_LODY_BRIDGE_SECRET`（至少 32 个字符），并给 app 设置 `HARNESS_LODY_BRIDGE_URL=http://lody-bridge:43190`。bridge 只执行 harness 需要的少数 `lody` 子命令，不发布端口；回合结束时它用同一个密钥签名，回调 app 的 `/api/harness/lody/turn`（地址可用 `HARNESS_LODY_CALLBACK_URL` 修改，默认 `http://app:3000/api/harness/lody/turn`）。未配置时 `/bug` 仍会建 issue 并排队，卡片会说明执行层不可用；`/status` 会注明当前经 lody-bridge 还是本地 CLI。
 
+## Bridge 密钥更新
+
+Bridge 客户端会在读取到不同共享密钥时重建，包括配置改为另一个密钥环境变量的情况。已有请求不自动重发；新密钥缺失或不足 32 个字符时，新请求会在本地被拒绝。修改部署环境变量后仍需按部署流程让应用进程读取新环境，并同步更新 bridge 侧密钥。
+
+## Bridge 输出与故障处理
+
+本地 CLI 和 Bridge 都按连续 UTF-8 流解码输出，中文和 emoji 跨数据块时仍完整保留，包括等待模式的错误提示。输出上限按 UTF-8 字节计算；等待模式另有限制单行长度，超长控制行不会被当作完成通知，后续合法控制行继续处理。普通流式更新仍可确认命令已接纳。
+
+Bridge 返回的退出码、超时标记或输出等字段会经过类型校验；合法可选字段可省略，额外元数据不影响兼容。输出超限或响应格式异常都按未知执行结果处理，不自动重发命令。未能解释为明确拒绝的 HTTP 错误也按未知结果处理，并释放未使用的响应正文；认证拒绝和等待池拒绝也会释放未使用的响应正文，释放失败不覆盖原错误；认证拒绝、参数拒绝和等待模式回退继续沿用各自的处理规则。
+
+Bridge 会定期检查并尝试恢复 Lody 守护进程。检查或重启时 CLI 无法启动，会清理该次命令的超时定时器，后续检查仍按原周期继续。
+
+## 调度器关停
+
+服务正常关停时，Harness 停止接收新的调度轮次，并跳过尚未开始的步骤和排队请求。已经进入会话创建流程的请求会完成会话 ID 或未知结果状态的保存，再关闭 Bot 与数据库；不会因关停自动取消远端会话或重发创建请求。此等待覆盖调度器，独立的 turn-end 回调及 HTTP/Webhook 请求不属于这项保证。
+
 ## 发版
 
 在项目话题中发 `/release`，服务端用 GitHub App 读取默认分支，发一张发版卡片：

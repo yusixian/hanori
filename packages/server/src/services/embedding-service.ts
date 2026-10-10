@@ -1,6 +1,7 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
-import { embed, embedMany } from "ai";
+import { embed, embedMany, wrapEmbeddingModel } from "ai";
+import { z } from "zod";
 import type { Logger } from "pino";
 import type { AiConfigRuntime } from "./ai-config-runtime.js";
 
@@ -38,7 +39,47 @@ export class EmbeddingService {
   }
 
   private get model() {
-    return this.provider.embeddingModel(this.modelId);
+    return wrapEmbeddingModel({
+      model: this.provider.embeddingModel(this.modelId),
+      middleware: {
+        specificationVersion: "v3",
+        wrapEmbed: async ({ doEmbed, params }) => {
+          const result = await doEmbed();
+          // The compatible SDK drops response indices and concatenates chunks without checking
+          // their sizes. Validate each provider response before that positional information is lost.
+          const parsed = z
+            .object({
+              data: z
+                .array(
+                  z.object({
+                    index: z
+                      .number()
+                      .int()
+                      .min(0)
+                      .max(params.values.length - 1)
+                      .optional(),
+                    embedding: z.array(z.number().finite()).length(this._dimensions),
+                  }),
+                )
+                .length(params.values.length),
+            })
+            .safeParse(result.response?.body);
+          if (!parsed.success) throw new Error("Invalid embedding response");
+          const rows = parsed.data.data;
+          const indexed = rows.filter((row) => row.index !== undefined);
+          if (indexed.length > 0) {
+            if (
+              indexed.length !== rows.length ||
+              new Set(indexed.map((row) => row.index)).size !== rows.length
+            ) {
+              throw new Error("Invalid embedding response indices");
+            }
+            rows.sort((left, right) => left.index! - right.index!);
+          }
+          return { ...result, embeddings: rows.map((row) => row.embedding) };
+        },
+      },
+    });
   }
 
   private get embeddingProviderOptions() {

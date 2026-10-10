@@ -1,6 +1,10 @@
 import { constants } from "node:fs";
 import { inspectConvertedWavFile } from "../media/wav.js";
-import { ASR_CONVERSION_TIMEOUT_MS, MAX_ASR_SOURCE_BYTES } from "../media/long-audio.js";
+import {
+  ASR_CONVERSION_TIMEOUT_MS,
+  MAX_ASR_SOURCE_BYTES,
+  MAX_TENCENT_INLINE_BYTES,
+} from "../media/long-audio.js";
 import { createHash } from "node:crypto";
 import { chmod, chown, lstat, mkdir, open, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -208,7 +212,7 @@ export class MediaJobExecutor {
     signal.throwIfAborted();
     const needsUrl =
       configuration.asr.provider === "aliyun" ||
-      (configuration.asr.provider === "tencent" && verified.bytes > 5 * 1024 * 1024);
+      (configuration.asr.provider === "tencent" && verified.bytes > MAX_TENCENT_INLINE_BYTES);
     const audioUrl = needsUrl
       ? await this.audioStore?.stageFile(
           job.id,
@@ -243,19 +247,18 @@ export class MediaJobExecutor {
     };
     let result;
     if (audioUrl) {
-      if (!asr.transcribeUrl) throw new MediaExecutorError("worker_unavailable");
+      if (!("transcribeUrl" in asr)) throw new MediaExecutorError("worker_unavailable");
       result = await asr.transcribeUrl(audioUrl, verified.durationSeconds, asrOptions);
-    } else if (bytes) {
+    } else if (bytes && "transcribeBytes" in asr) {
       result = await asr.transcribeBytes(bytes, asrOptions);
     } else {
       throw new MediaExecutorError("invalid_audio");
     }
-    if (audioUrl) await this.audioStore?.remove(job.id);
     return result;
   }
   async resume(job: MediaJobRow, configuration: MediaJobConfiguration, signal: AbortSignal) {
     const client = createMediaAsrClient(configuration.asr);
-    if (!client.resume || !job.providerTaskId || !job.providerSubmittedAt)
+    if (!("resume" in client) || !job.providerTaskId || !job.providerSubmittedAt)
       throw new MediaExecutorError("invalid_audio");
     const result = await client.resume(
       job.providerTaskId,
@@ -263,7 +266,6 @@ export class MediaJobExecutor {
       signal,
       job.durationSeconds,
     );
-    await this.audioStore?.remove(job.id);
     return result;
   }
 }

@@ -86,6 +86,7 @@ export interface ContinueChatRunContext {
 }
 
 export interface ContinueChatConfig {
+  diagnosticSecrets?: readonly string[];
   botId: string;
   resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
   isAiDisabled?: () => boolean;
@@ -132,7 +133,7 @@ export interface ContinueChatConfig {
     userId: number;
     handle: ReturnType<typeof setTimeout>;
   }) => void | Promise<void>;
-  onTimerCancel?: (timerId: string) => void;
+  onTimerCancel?: (timerId: string) => void | Promise<void>;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   /** Longest set_timer duration, in seconds. Falls back to DEFAULT_TIMER_MAX_SECONDS. */
   timerMaxSeconds?: number;
@@ -272,12 +273,16 @@ export async function continueChat(
 ): Promise<boolean> {
   const config: ContinueChatConfig = {
     ...inputConfig,
-    onLog: createAiTurnLogger(inputConfig.onLog, {
-      botId: inputConfig.botId,
-      chatId: event.chatId,
-      userId: event.userId,
-      eventType: "continuation",
-    }),
+    onLog: createAiTurnLogger(
+      inputConfig.onLog,
+      {
+        botId: inputConfig.botId,
+        chatId: event.chatId,
+        userId: event.userId,
+        eventType: "continuation",
+      },
+      inputConfig.diagnosticSecrets,
+    ),
   };
   const executionConfig = event.memoryless
     ? {
@@ -618,6 +623,7 @@ async function doContinueChat(
       model: selection.model,
       messages,
       tools: composeTurnTools(toolset.tools, {
+        secrets: config.diagnosticSecrets,
         requestCache,
         onLog: config.onLog,
         getStep: () => stepCounter + 1,

@@ -272,3 +272,92 @@ describe("harness service transport selection", () => {
     });
   });
 });
+
+it.each([false, true])(
+  "releases an unused HTTP error body without changing unknown outcome (cancel fails: %s)",
+  async (cancelFails) => {
+    const cancel = vi.fn(() => {
+      if (cancelFails) throw new Error("cancel failed");
+    });
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(new ReadableStream({ cancel }), { status: 502 }),
+    );
+    const exec = createBridgeExec("http://bridge.invalid", SECRET, fetchImpl);
+    await expect(
+      exec("lody", ["session", "create"], { timeout: 1000, maxBuffer: 1024 }),
+    ).rejects.toMatchObject({ killed: true });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  },
+);
+
+it.each(["hello", "中文", "🙂"])("enforces stdout's UTF-8 byte limit for %s", async (stdout) => {
+  const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({ exitCode: 0, stdout }));
+  const exec = createBridgeExec("http://bridge.invalid", SECRET, fetchImpl);
+  const bytes = Buffer.byteLength(stdout, "utf8");
+  await expect(
+    exec("lody", ["machine", "list"], { timeout: 1000, maxBuffer: bytes }),
+  ).resolves.toEqual({ stdout });
+  await expect(
+    exec("lody", ["machine", "list"], { timeout: 1000, maxBuffer: bytes - 1 }),
+  ).rejects.toMatchObject({ killed: true });
+});
+
+it.each([
+  { exitCode: "3", stdout: '{"ok":false,"error":"rejected"}' },
+  { exitCode: 0, timedOut: 0, stdout: '{"sessionId":"unexpected"}' },
+  { exitCode: 0, truncated: "", stdout: '{"sessionId":"unexpected"}' },
+  null,
+])("treats malformed bridge results as unknown without retrying", async (body) => {
+  const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(body));
+  const lody = new LodyCli(
+    ["lody"],
+    1000,
+    createBridgeExec("http://bridge.invalid", SECRET, fetchImpl),
+  );
+  await expect(lody.createSession(CREATE)).resolves.toMatchObject({ ok: false, reason: "unknown" });
+  expect(fetchImpl).toHaveBeenCalledOnce();
+});
+
+it("accepts valid bridge results with omitted optional fields and future metadata", async () => {
+  const fetchImpl = vi.fn<typeof fetch>(async () =>
+    Response.json({
+      exitCode: 0,
+      stdout: '{"ok":true,"session":{"id":"s-9"}}',
+      futureMetadata: { version: 2 },
+    }),
+  );
+  const lody = new LodyCli(
+    ["lody"],
+    1000,
+    createBridgeExec("http://bridge.invalid", SECRET, fetchImpl),
+  );
+  await expect(lody.createSession(CREATE)).resolves.toEqual({
+    ok: true,
+    value: { sessionId: "s-9" },
+  });
+  expect(fetchImpl).toHaveBeenCalledOnce();
+});
+
+it.each([
+  { status: 401, code: 1, cancelFails: false },
+  { status: 401, code: 1, cancelFails: true },
+  { status: 429, code: "EWAIT_REFUSED", cancelFails: false },
+  { status: 429, code: "EWAIT_REFUSED", cancelFails: true },
+])(
+  "releases a rejected response while preserving $status classification (cancel fails: $cancelFails)",
+  async ({ status, code, cancelFails }) => {
+    const cancel = vi.fn(() => {
+      if (cancelFails) throw new Error("cancel failed");
+    });
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(new ReadableStream({ cancel }), { status }),
+    );
+    const exec = createBridgeExec("http://bridge.invalid", SECRET, fetchImpl);
+    await expect(
+      exec("lody", ["session", "create", "--wait"], { timeout: 1000, maxBuffer: 1024 }),
+    ).rejects.toMatchObject({ code });
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce();
+  },
+);

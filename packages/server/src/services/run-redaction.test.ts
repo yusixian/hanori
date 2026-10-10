@@ -2,6 +2,52 @@ import { describe, expect, it } from "vitest";
 import { classifyProviderError, redactDiagnostic } from "./run-redaction.js";
 
 describe("redactDiagnostic", () => {
+  it("redacts complete quoted assignments while preserving surrounding diagnostics", () => {
+    expect(redactDiagnostic('password: "alpha beta gamma"; status=403')).toBe(
+      'password: "[REDACTED]"; status=403',
+    );
+    expect(redactDiagnostic("api_key='alpha beta'; reason=forbidden")).toBe(
+      "api_key='[REDACTED]'; reason=forbidden",
+    );
+    const raw = JSON.stringify({ password: 'alpha"beta gamma', reason: "forbidden" });
+    expect(JSON.parse(redactDiagnostic(raw) as string)).toEqual({
+      password: "[REDACTED]",
+      reason: "forbidden",
+    });
+  });
+
+  it("keeps redacted headers stable across repeated logging", () => {
+    const raw = "Authorization: Bearer test-secret\nstatus=403";
+    const expected = "Authorization: [REDACTED]\nstatus=403";
+    expect(redactDiagnostic(raw)).toBe(expected);
+    expect(redactDiagnostic(expected)).toBe(expected);
+  });
+
+  it("redacts prefixed headers and unterminated quoted values", () => {
+    expect(redactDiagnostic("X-Api-Key: fake-provider-key\nstatus=403")).toBe(
+      "X-Api-Key: [REDACTED]\nstatus=403",
+    );
+    expect(redactDiagnostic("x-access-token=fake-token&status=403")).toBe(
+      "x-access-token=[REDACTED]&status=403",
+    );
+    expect(redactDiagnostic('password: "alpha beta gamma')).toBe('password: "[REDACTED]"');
+    expect(redactDiagnostic("password='alpha beta\\")).toBe("password='[REDACTED]'");
+  });
+
+  it.each(['alpha\\"beta gamma', "alpha\\\\beta gamma", "alpha\nbeta gamma"])(
+    "preserves JSON diagnostics while redacting escaped credential %j",
+    (password) => {
+      const raw = JSON.stringify({ password, reason: "forbidden", inputTokens: 12 });
+      const expected = JSON.stringify({
+        password: "[REDACTED]",
+        reason: "forbidden",
+        inputTokens: 12,
+      });
+      expect(redactDiagnostic(raw)).toBe(expected);
+      expect(redactDiagnostic(expected)).toBe(expected);
+    },
+  );
+
   it("redacts nested keys, bearer values, and known secrets before persistence", () => {
     expect(
       redactDiagnostic(
@@ -35,7 +81,7 @@ describe("redactDiagnostic", () => {
       maxTokens: 4_096,
       tokenUsage: { cached: 32 },
       accessToken: "[REDACTED]",
-      detail: "api_key=[REDACTED] token=[REDACTED] password: [REDACTED]",
+      detail: 'api_key=[REDACTED] token=[REDACTED] password: "[REDACTED]"',
     });
   });
 
@@ -74,6 +120,32 @@ describe("redactDiagnostic", () => {
       data: { authorization: "[REDACTED]", reason: "forbidden" },
       isRetryable: false,
     });
+  });
+
+  it("redacts and bounds error names like other diagnostic text", () => {
+    const error = new Error("request failed");
+    error.name = "Provider test-secret token=credential";
+    expect(redactDiagnostic(error, ["test-secret"])).toMatchObject({
+      name: "Provider [REDACTED] token=[REDACTED]",
+      message: "request failed",
+    });
+    error.name = "x".repeat(70_000);
+    const result = redactDiagnostic(error) as { name: string };
+    expect(result.name.length).toBeLessThan(66_000);
+    expect(result.name).toMatch(/\[truncated: diagnostic text limit\]$/);
+  });
+
+  it.each([
+    [Buffer.from("synthetic binary payload"), "Buffer", 24],
+    [new Uint16Array([1, 2, 3]), "Uint16Array", 6],
+    [new DataView(new ArrayBuffer(20), 4, 8), "DataView", 8],
+    [new ArrayBuffer(12), "ArrayBuffer", 12],
+  ])("summarizes %s without serializing its bytes", (bytes, type, byteLength) => {
+    expect(redactDiagnostic({ payload: bytes, statusCode: 200 })).toEqual({
+      payload: { type, byteLength },
+      statusCode: 200,
+    });
+    expect(redactDiagnostic({ apiKey: bytes })).toEqual({ apiKey: "[REDACTED]" });
   });
 
   it("marks oversized strings as truncated", () => {

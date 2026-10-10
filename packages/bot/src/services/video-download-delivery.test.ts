@@ -79,7 +79,8 @@ describe("one-shot streamed video delivery", () => {
           if (name) fields.set(name, Buffer.from(content, "latin1").toString("utf8"));
         }
       }
-      expect(uploaded).toEqual(bytes);
+      expect(uploaded?.byteLength).toBe(bytes.byteLength);
+      expect(uploaded?.equals(bytes)).toBe(true);
       expect(fields.get("chat_id")).toBe("42");
       expect(fields.get("caption")).toBe(input().title);
       expect(fields.get("duration")).toBe("2");

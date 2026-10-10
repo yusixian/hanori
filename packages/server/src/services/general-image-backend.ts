@@ -1,3 +1,4 @@
+import { abortable } from "../utils/abortable.js";
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 import type { IncomingMessage } from "node:http";
@@ -92,54 +93,55 @@ export class BotConfiguredGeneralImageBackend implements GeneralImageBackend {
 async function downloadPublicImage(value: string, signal: AbortSignal) {
   let url = new URL(value);
   for (let redirect = 0; redirect <= 3; redirect += 1) {
-    const address = await resolvePublicHttpsUrl(url);
+    const address = await resolvePublicHttpsUrl(url, signal);
     const response = await requestPinned(url, address, signal);
-    const status = response.statusCode ?? 500;
-    if (status >= 300 && status < 400) {
-      const location = response.headers.location;
-      response.resume();
-      if (!location) throw new Error("General image redirect is invalid");
-      url = new URL(location, url);
-      continue;
-    }
-    if (status < 200 || status >= 300) {
-      response.resume();
-      throw new Error(`General image download failed with HTTP ${status}`);
-    }
-    const mimeType = response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
-    if (!mimeType || !ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
-      response.resume();
-      throw new Error("General image artifact is not a supported image");
-    }
-    const contentLength = response.headers["content-length"];
-    if (contentLength !== undefined) {
-      const declaredLength = Number(contentLength);
-      if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) {
-        response.resume();
-        throw new Error("General image artifact has an invalid content length");
+    try {
+      const status = response.statusCode ?? 500;
+      if (status >= 300 && status < 400) {
+        const location = response.headers.location;
+        if (!location) throw new Error("General image redirect is invalid");
+        url = new URL(location, url);
+        continue;
       }
-      if (declaredLength > MAX_IMAGE_BYTES) {
-        response.resume();
-        throw new Error("General image artifact is too large");
+      if (status < 200 || status >= 300) {
+        throw new Error(`General image download failed with HTTP ${status}`);
       }
+      const mimeType = response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+      if (!mimeType || !ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+        throw new Error("General image artifact is not a supported image");
+      }
+      const contentLength = response.headers["content-length"];
+      if (contentLength !== undefined) {
+        const declaredLength = Number(contentLength);
+        if (!Number.isSafeInteger(declaredLength) || declaredLength < 0) {
+          throw new Error("General image artifact has an invalid content length");
+        }
+        if (declaredLength > MAX_IMAGE_BYTES) {
+          throw new Error("General image artifact is too large");
+        }
+      }
+      const bytes = await readBoundedResponse(response, MAX_IMAGE_BYTES);
+      if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) {
+        throw new Error("General image artifact has an invalid size");
+      }
+      if (detectMime(bytes) !== mimeType) {
+        throw new Error("General image artifact content does not match its MIME type");
+      }
+      return { bytes, mimeType, source: "resource_link" as const };
+    } finally {
+      response.destroy();
     }
-    const bytes = await readBoundedResponse(response, MAX_IMAGE_BYTES);
-    if (bytes.byteLength === 0 || bytes.byteLength > MAX_IMAGE_BYTES) {
-      throw new Error("General image artifact has an invalid size");
-    }
-    if (detectMime(bytes) !== mimeType) {
-      throw new Error("General image artifact content does not match its MIME type");
-    }
-    return { bytes, mimeType, source: "resource_link" as const };
   }
   throw new Error("General image redirected too many times");
 }
 
-async function resolvePublicHttpsUrl(url: URL): Promise<string> {
+async function resolvePublicHttpsUrl(url: URL, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted();
   if (url.protocol !== "https:" || url.username || url.password) {
     throw new Error("General image artifact URL is not allowed");
   }
-  const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+  const addresses = await abortable(lookup(url.hostname, { all: true, verbatim: true }), signal);
+  signal.throwIfAborted();
   if (addresses.length === 0 || addresses.some(({ address }) => isPrivateAddress(address))) {
     throw new Error("General image artifact URL resolves to a private address");
   }

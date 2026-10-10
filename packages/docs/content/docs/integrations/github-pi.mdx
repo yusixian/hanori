@@ -25,6 +25,8 @@ owner 或 admin 从对应 Bot 的 AI/GitHub 入口发起授权，跳转到 GitHu
 
 授权前先决定最小仓库范围。不要为了方便选择“所有仓库”，也不要让 Bot 访问不需要的私有项目。撤销 GitHub App installation 或面板连接后，应在下一次请求中阻止旧凭据继续使用。
 
+在面板断开连接会清理该 installation 的令牌与连接状态缓存；断开前尚未完成的刷新不能重新填入旧缓存。重新连接后的请求会重新获取状态，但断开连接不代表已经发出的 GitHub 操作已撤销。
+
 ## Issue 创建确认
 
 `github_create_issue` 先保存固定提案，再向发起管理员发送 Telegram 确认卡。默认**不过期**，保存后即使超过 10 分钟或服务重启，原卡仍可确认。配置字段 `githubToolsConfig.createIssueConfirmationTtlMinutes` 为 `null` 或未设置时不过期；设为正安全整数时按分钟设置有效期；生成提案时会校验到期时间是否在可表示的日期范围内。卡片显示“不过期”或实际到期时间，修改配置只影响新提案。
@@ -52,4 +54,5 @@ GitHub 写入、push、创建 PR 和最终确认属于受信任的服务端流�
 - 回调失败：检查公开 origin、HTTPS、Setup/Callback 地址和 GitHub App 设置是否逐字匹配。
 - 看不到仓库：重新检查 installation 选择、App 权限和当前 Bot 绑定。
 - worker 不在线：检查 Compose profile、worker secret、健康检查和出口代理，不要把 worker 直接暴露到公网。
+- worker 响应异常或中途断开：任务返回失败，不会自动重发。若 worker 已接受任务，后续任务仍须等待新的 worker 启动身份通过健康校验；连接失败不表示工作区没有变化，应先检查工作区状态。
 - 任务完成但 PR 不存在：把 worker 结果当作待确认状态，登录 GitHub 检查分支和 PR，再决定是否继续。

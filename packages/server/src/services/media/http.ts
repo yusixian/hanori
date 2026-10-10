@@ -1,3 +1,4 @@
+import { abortable } from "../../utils/abortable.js";
 import { lookup } from "node:dns/promises";
 import { createHash } from "node:crypto";
 import { open, unlink, type FileHandle } from "node:fs/promises";
@@ -116,15 +117,6 @@ function boundedInteger(value: number, min: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < min || value > max)
     throw new MediaHttpError("invalid_request");
   return value;
-}
-
-async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
-  });
 }
 
 async function resolveAddress(url: URL, signal: AbortSignal) {

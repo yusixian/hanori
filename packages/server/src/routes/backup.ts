@@ -4,12 +4,15 @@ import type {
   BackupConfigWebDAV,
   BackupStorageConfig,
 } from "@cos-tool-bot/shared";
+import { isValidBackupFilePrefix } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { BackupService } from "../services/backup.js";
+import { attachmentDisposition } from "../utils/content-disposition.js";
 import { decrypt, encrypt } from "../utils/crypto.js";
 
 const PASSWORD_PLACEHOLDER = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
@@ -50,7 +53,7 @@ const storageConfigSchema = z.discriminatedUnion("type", [
 
 const backupConfigSchema = z.object({
   storage: storageConfigSchema,
-  filePrefix: z.string().optional(),
+  filePrefix: z.string().refine(isValidBackupFilePrefix, "Invalid backup file prefix").optional(),
   retention: z
     .object({
       maxCount: z.number().int().min(0).optional(),
@@ -83,6 +86,7 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
       }
     })
     .get("/:id/download", async (c) => {
+      const signal = c.req.raw.signal;
       const id = Number(c.req.param("id"));
       if (Number.isNaN(id)) return c.json({ ok: false as const, error: "Invalid ID" }, 400);
 
@@ -93,18 +97,22 @@ export function backupRoutes(backupService: BackupService, encryptionKey: string
         return c.json({ ok: false as const, error: "Cannot download a failed backup" }, 400);
       }
 
-      const filePath = backupService.getBackupFilePath(record.filename);
       try {
+        signal.throwIfAborted();
+        const filePath = backupService.getBackupFilePath(record.filename);
         const fileStats = await stat(filePath);
-        const stream = createReadStream(filePath);
-        return new Response(stream as unknown as ReadableStream, {
+        signal.throwIfAborted();
+        const disposition = attachmentDisposition(record.filename);
+        const stream = createReadStream(filePath, { signal });
+        return new Response(Readable.toWeb(stream) as ReadableStream, {
           headers: {
             "Content-Type": "application/gzip",
-            "Content-Disposition": `attachment; filename="${record.filename}"`,
+            "Content-Disposition": disposition,
             "Content-Length": String(fileStats.size),
           },
         });
       } catch {
+        if (signal.aborted) return new Response(null, { status: 499 });
         return c.json({ ok: false as const, error: "Backup file not found on disk" }, 404);
       }
     })
