@@ -1,5 +1,5 @@
 import type { BotMemoryCallbacks, BotMemoryConfig, MemoryCallbacks } from "@cos-tool-bot/shared";
-import { getDataDir } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import { BotMemoryWriter } from "../bot-memory-writer.js";
 import type { EmbeddingService } from "../embedding-service.js";
 import { mapProfileToDto } from "../people-profile-store.js";

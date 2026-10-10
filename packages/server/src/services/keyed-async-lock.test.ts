@@ -30,3 +30,34 @@ describe("KeyedAsyncLock", () => {
     await first;
   });
 });
+
+test("preserves rejection, continues the queue and does not release a newer operation", async () => {
+  const lock = new KeyedAsyncLock();
+  const failure = new Error("first failed");
+  const next = deferred<void>();
+  const first = lock.run("a", async () => {
+    throw failure;
+  });
+  const second = lock.run("a", () => next.promise);
+  await expect(first).rejects.toBe(failure);
+  expect(lock.isLocked("a")).toBe(true);
+  const thirdOperation = vi.fn(async () => "third");
+  const third = lock.run("a", thirdOperation);
+  await Promise.resolve();
+  expect(thirdOperation).not.toHaveBeenCalled();
+  next.resolve();
+  await second;
+  await expect(third).resolves.toBe("third");
+  await Promise.resolve();
+  expect(lock.isLocked("a")).toBe(false);
+});
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}

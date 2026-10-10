@@ -96,8 +96,6 @@ export class VideoDownloadCache {
   private readonly active = new Map<string, ActiveReservation>();
   private readonly retained = new Map<string, ReadyMetadata>();
   private queue: Promise<unknown> = Promise.resolve();
-  private sweepTimer?: ReturnType<typeof setTimeout>;
-  private sweepGeneration = 0;
 
   constructor(options: VideoDownloadCacheOptions) {
     this.root = resolve(options.root);
@@ -244,33 +242,6 @@ export class VideoDownloadCache {
       await this.initialize();
       await this.sweepUnlocked();
     });
-  }
-
-  startSweep(intervalMs: number, onError: (error: unknown) => void): void {
-    if (!validBytes(intervalMs, true) || intervalMs > 2_147_483_647) {
-      throw new RangeError("Sweep interval is outside the Node timer range");
-    }
-    this.stopSweep();
-    const generation = this.sweepGeneration;
-    const schedule = () => {
-      this.sweepTimer = setTimeout(async () => {
-        try {
-          await this.sweep();
-        } catch (error) {
-          onError(error);
-        } finally {
-          if (generation === this.sweepGeneration) schedule();
-        }
-      }, intervalMs);
-      this.sweepTimer.unref();
-    };
-    schedule();
-  }
-
-  stopSweep(): void {
-    this.sweepGeneration++;
-    clearTimeout(this.sweepTimer);
-    this.sweepTimer = undefined;
   }
 
   private async checkDisk(extraBytes = 0, extraFloor = 0): Promise<void> {

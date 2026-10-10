@@ -33,9 +33,12 @@ function isSensitiveKey(key: string): boolean {
   );
 }
 
-function truncateString(value: string): string {
+function truncateString(value: string, secrets: readonly string[]): string {
   if (/^data:[^,]+;base64,/i.test(value)) return `[binary data URL: ${value.length} chars]`;
-  const redacted = value.replace(BEARER_VALUE, "Bearer [REDACTED]");
+  let redacted = value.replace(BEARER_VALUE, "Bearer [REDACTED]");
+  for (const secret of secrets) {
+    if (secret.length >= 4) redacted = redacted.split(secret).join("[REDACTED]");
+  }
   return redacted.length > MAX_STRING_CHARS
     ? `${redacted.slice(0, MAX_STRING_CHARS)}… [truncated ${redacted.length - MAX_STRING_CHARS} chars]`
     : redacted;
@@ -45,10 +48,11 @@ function normalizeToolLogValue(
   value: unknown,
   seen: WeakSet<object>,
   depth: number,
+  secrets: readonly string[],
   key?: string,
 ): unknown {
   if (key && isSensitiveKey(key)) return "[REDACTED]";
-  if (typeof value === "string") return truncateString(value);
+  if (typeof value === "string") return truncateString(value, secrets);
   if (typeof value === "bigint") return `${value}n`;
   if (typeof value === "number") return Number.isFinite(value) ? value : String(value);
   if (typeof value === "boolean" || value === null) return value;
@@ -57,7 +61,7 @@ function normalizeToolLogValue(
   if (typeof value === "symbol") return value.toString();
   if (depth >= MAX_DEPTH) return "[Max depth reached]";
 
-  if (value instanceof URL) return truncateString(value.toString());
+  if (value instanceof URL) return truncateString(value.toString(), secrets);
   if (value instanceof Date) return value.toISOString();
   if (ArrayBuffer.isView(value)) {
     return { type: value.constructor.name, byteLength: value.byteLength };
@@ -69,12 +73,12 @@ function normalizeToolLogValue(
       ...Object.fromEntries(
         Object.entries(value).map(([name, item]) => [
           name,
-          normalizeToolLogValue(item, seen, depth + 1, name),
+          normalizeToolLogValue(item, seen, depth + 1, secrets, name),
         ]),
       ),
-      message: truncateString(value.message),
-      stack: value.stack ? truncateString(value.stack) : undefined,
-      cause: normalizeToolLogValue(value.cause, seen, depth + 1),
+      message: truncateString(value.message, secrets),
+      stack: value.stack ? truncateString(value.stack, secrets) : undefined,
+      cause: normalizeToolLogValue(value.cause, seen, depth + 1, secrets),
     };
   }
   if (typeof value !== "object") return String(value);
@@ -82,18 +86,18 @@ function normalizeToolLogValue(
   seen.add(value);
 
   if (Array.isArray(value)) {
-    return value.map((item) => normalizeToolLogValue(item, seen, depth + 1));
+    return value.map((item) => normalizeToolLogValue(item, seen, depth + 1, secrets));
   }
   if (value instanceof Map) {
     return Object.fromEntries(
       [...value.entries()].map(([entryKey, item]) => [
         String(entryKey),
-        normalizeToolLogValue(item, seen, depth + 1, String(entryKey)),
+        normalizeToolLogValue(item, seen, depth + 1, secrets, String(entryKey)),
       ]),
     );
   }
   if (value instanceof Set) {
-    return [...value].map((item) => normalizeToolLogValue(item, seen, depth + 1));
+    return [...value].map((item) => normalizeToolLogValue(item, seen, depth + 1, secrets));
   }
 
   const inlineMedia =
@@ -104,14 +108,14 @@ function normalizeToolLogValue(
       name,
       inlineMedia && name === "data" && typeof item === "string"
         ? `[binary inline data: ${item.length} chars]`
-        : normalizeToolLogValue(item, seen, depth + 1, name),
+        : normalizeToolLogValue(item, seen, depth + 1, secrets, name),
     ]),
   );
 }
 
 /** Preserve useful tool diagnostics while keeping database JSON bounded and credential-safe. */
 export function toToolLogValue(value: unknown, secrets: readonly string[] = []): unknown {
-  const normalized = normalizeToolLogValue(value, new WeakSet(), 0);
+  const normalized = normalizeToolLogValue(value, new WeakSet(), 0, secrets);
   let serialized = JSON.stringify(normalized);
   if (!serialized) return normalized;
   for (const secret of secrets) {
@@ -135,62 +139,71 @@ function serializedLength(value: unknown): number {
   }
 }
 
-function loggedToolOutput(name: string, output: unknown): unknown {
+function loggedToolOutput(name: string, output: unknown, secrets: readonly string[]): unknown {
   const mode = getToolDescriptor(name)?.outputLog;
-  if (!mode) return toToolLogValue(output);
+  if (!mode) return toToolLogValue(output, secrets);
   if (typeof output !== "object" || output === null) return { privateOutput: true };
   const value = output as Record<string, unknown>;
   if (mode === "github_proposal_metadata") {
-    return toToolLogValue({
-      ...Object.fromEntries(
-        [
-          "pending_confirmation",
-          "action_id",
-          "proposal_id",
-          "status",
-          "hash",
-          "expires_at",
-          "cards_sent",
-        ]
-          .filter((key) => Object.hasOwn(value, key))
-          .map((key) => [key, value[key]]),
-      ),
-      ...(Array.isArray(value.proposals) ? { proposalCount: value.proposals.length } : {}),
-      failed: !!value.error,
-      privateOutput: true,
-    });
+    return toToolLogValue(
+      {
+        ...Object.fromEntries(
+          [
+            "pending_confirmation",
+            "action_id",
+            "proposal_id",
+            "status",
+            "hash",
+            "expires_at",
+            "cards_sent",
+          ]
+            .filter((key) => Object.hasOwn(value, key))
+            .map((key) => [key, value[key]]),
+        ),
+        ...(Array.isArray(value.proposals) ? { proposalCount: value.proposals.length } : {}),
+        failed: !!value.error,
+        privateOutput: true,
+      },
+      secrets,
+    );
   }
   if (mode === "search_metadata")
-    return toToolLogValue({
+    return toToolLogValue(
+      {
+        ...Object.fromEntries(
+          ["status", "page", "limit", "hasMore", "truncated"]
+            .filter((key) => Object.hasOwn(value, key))
+            .map((key) => [key, value[key]]),
+        ),
+        itemCount: Array.isArray(value.items) ? value.items.length : 0,
+        references: Array.isArray(value.items)
+          ? value.items
+              .slice(0, 20)
+              .map((item) =>
+                typeof item === "object" && item !== null && "reference" in item
+                  ? item.reference
+                  : undefined,
+              )
+          : [],
+        privateOutput: true,
+      },
+      secrets,
+    );
+  return toToolLogValue(
+    {
       ...Object.fromEntries(
-        ["status", "page", "limit", "hasMore", "truncated"]
+        ["status", "reference", "offset", "nextOffset", "hasMore", "truncated", "provider"]
           .filter((key) => Object.hasOwn(value, key))
           .map((key) => [key, value[key]]),
       ),
-      itemCount: Array.isArray(value.items) ? value.items.length : 0,
-      references: Array.isArray(value.items)
-        ? value.items
-            .slice(0, 20)
-            .map((item) =>
-              typeof item === "object" && item !== null && "reference" in item
-                ? item.reference
-                : undefined,
-            )
-        : [],
+      contentLength: typeof value.content === "string" ? value.content.length : 0,
       privateOutput: true,
-    });
-  return toToolLogValue({
-    ...Object.fromEntries(
-      ["status", "reference", "offset", "nextOffset", "hasMore", "truncated", "provider"]
-        .filter((key) => Object.hasOwn(value, key))
-        .map((key) => [key, value[key]]),
-    ),
-    contentLength: typeof value.content === "string" ? value.content.length : 0,
-    privateOutput: true,
-  });
+    },
+    secrets,
+  );
 }
 
-function loggedToolInput(name: string, input: unknown): unknown {
+function loggedToolInput(name: string, input: unknown, secrets: readonly string[]): unknown {
   if (name === "github_create_issue") {
     const value =
       typeof input === "object" && input !== null ? (input as Record<string, unknown>) : {};
@@ -207,23 +220,24 @@ function loggedToolInput(name: string, input: unknown): unknown {
     !("query" in input) ||
     typeof input.query !== "string"
   )
-    return toToolLogValue(input);
+    return toToolLogValue(input, secrets);
   try {
     const url = new URL(input.query);
-    if (!/^https?:$/.test(url.protocol)) return toToolLogValue(input);
+    if (!/^https?:$/.test(url.protocol)) return toToolLogValue(input, secrets);
     url.username = "";
     url.password = "";
     url.search = "";
     url.hash = "";
-    return toToolLogValue({ ...input, query: url.toString() });
+    return toToolLogValue({ ...input, query: url.toString() }, secrets);
   } catch {
-    return toToolLogValue(input);
+    return toToolLogValue(input, secrets);
   }
 }
 
 export function wrapToolsWithLogging(
   tools: Record<string, Tool>,
   options: {
+    secrets?: readonly string[];
     onLog?: (entry: BotLogEntry) => void | Promise<void>;
     getStep?: () => number;
     onDiagnostic?: (event: RuntimeDiagnosticEvent) => void;
@@ -262,7 +276,7 @@ export function wrapToolsWithLogging(
             step: options.getStep?.(),
             call,
             toolName: name,
-            input: loggedToolInput(name, input),
+            input: loggedToolInput(name, input, options.secrets ?? []),
             argsLength: serializedLength(input),
             toolCallId,
           },
@@ -308,7 +322,7 @@ export function wrapToolsWithLogging(
               toolName: name,
               success: !failed,
               durationMs: Date.now() - startedAt,
-              output: loggedToolOutput(name, output),
+              output: loggedToolOutput(name, output, options.secrets ?? []),
               resultLength: serializedLength(output),
               toolCallId,
             },
@@ -334,7 +348,7 @@ export function wrapToolsWithLogging(
               error:
                 getToolDescriptor(name)?.outputLog === "github_proposal_metadata"
                   ? { failed: true, privateOutput: true }
-                  : toToolLogValue(error),
+                  : toToolLogValue(error, options.secrets),
               toolCallId,
             },
           });

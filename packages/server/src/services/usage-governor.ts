@@ -1009,14 +1009,25 @@ export class UsageGovernor {
   async reclaimExpiredReservations(now = new Date()): Promise<number> {
     const expired = await this.repository.transaction((tx) => tx.listExpiredReservations(now));
     let reclaimed = 0;
+    const failures: Error[] = [];
     for (const reservation of expired) {
-      const status = await this.refund({
-        reservationId: reservation.id,
-        botId: reservation.botId,
-        resource: reservation.resource,
-        now,
-      });
-      if (status === "refunded") reclaimed += 1;
+      try {
+        const status = await this.refund({
+          reservationId: reservation.id,
+          botId: reservation.botId,
+          resource: reservation.resource,
+          now,
+        });
+        if (status === "refunded") reclaimed += 1;
+      } catch (cause) {
+        failures.push(new Error(`Failed to reclaim reservation ${reservation.id}`, { cause }));
+      }
+    }
+    if (failures.length) {
+      throw new AggregateError(
+        failures,
+        `Failed to reclaim ${failures.length} expired reservations`,
+      );
     }
     return reclaimed;
   }

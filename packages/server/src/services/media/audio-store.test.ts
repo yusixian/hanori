@@ -26,19 +26,32 @@ function pcm() {
   bytes.writeUInt32LE(32000, 40);
   return bytes;
 }
-function read(url: URL, service = store) {
-  return service.read(
+async function read(url: URL, service = store) {
+  const audio = await service.openStream(
     url.pathname.split("/").at(-1)!,
     url.searchParams.get("expires")!,
     url.searchParams.get("signature")!,
   );
+  if (!audio) return null;
+  const chunks: Buffer[] = [];
+  for await (const chunk of audio.stream) chunks.push(chunk);
+  return Buffer.concat(chunks);
+}
+async function stage(id: string, bytes = pcm(), service = store) {
+  const source = join(directory, `source-${id}.wav`);
+  await writeFile(source, bytes);
+  try {
+    return await service.stageFile(id, source);
+  } finally {
+    await rm(source, { force: true });
+  }
 }
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "asr-audio-test-"));
   store = new MediaAudioStore(directory, "https://bot.example.com", key);
 });
 
-it("stages and streams a two-hour recording without expanding the short Buffer API", async () => {
+it("stages and streams a two-hour recording with bounded buffers", async () => {
   const path = join(directory, "long.wav");
   const file = await open(path, "wx", 0o600);
   const header = pcm().subarray(0, 44);
@@ -61,7 +74,6 @@ it("stages and streams a two-hour recording without expanding the short Buffer A
   expect(Number(url.searchParams.get("expires"))).toBeLessThanOrEqual(
     Math.floor(Date.now() / 1000) + 86400,
   );
-  expect(await read(url)).toBeNull();
   const restarted = new MediaAudioStore(directory, "https://bot.example.com", key);
   const opened = vi.spyOn(restarted, "openStream");
   const response = await asrAudioRoutes(restarted).request(`/${id}${url.search}`);
@@ -105,7 +117,7 @@ it("does not publish forged or cancelled file staging", async () => {
 
 it("closes the audio file when the HTTP consumer cancels the response", async () => {
   const id = randomUUID();
-  const url = new URL(await store.stage(id, pcm()));
+  const url = new URL(await stage(id, pcm()));
   const opened = vi.spyOn(store, "openStream");
   const response = await asrAudioRoutes(store).request(`/${id}${url.search}`);
   const audio = await opened.mock.results[0]!.value;
@@ -119,7 +131,7 @@ afterEach(async () => {
 
 it("serves only the exact validated signed audio, survives restart, and removes completed artifacts", async () => {
   const id = randomUUID();
-  const url = new URL(await store.stage(id, pcm()));
+  const url = new URL(await stage(id, pcm()));
   expect(await read(url, new MediaAudioStore(directory, "https://bot.example.com", key))).toEqual(
     pcm(),
   );
@@ -133,14 +145,14 @@ it("serves only the exact validated signed audio, survives restart, and removes 
   expect(await read(url)).toBeNull();
 });
 it("rejects expired, forged, cross-job and malformed bearer links without revealing files", async () => {
-  const url = new URL(await store.stage(randomUUID(), pcm()));
+  const url = new URL(await stage(randomUUID(), pcm()));
   const forged = new URL(url);
   forged.searchParams.set("signature", "0".repeat(64));
   expect(await read(forged)).toBeNull();
   const other = new URL(url);
   other.pathname = `/api/asr-audio/${randomUUID()}`;
   expect(await read(other)).toBeNull();
-  expect(await store.read("../secrets", "1791060000", "0".repeat(64))).toBeNull();
+  expect(await store.openStream("../secrets", "1791060000", "0".repeat(64))).toBeNull();
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date((Number(url.searchParams.get("expires")) - 3600) * 1000));
   expect(await read(url, new MediaAudioStore(directory, "https://bot.example.com", key))).toEqual(
@@ -153,7 +165,7 @@ it("rejects expired, forged, cross-job and malformed bearer links without reveal
 });
 it("rejects symlinked and modified audio files and unavailable public HTTPS origins", async () => {
   const id = randomUUID();
-  const url = new URL(await store.stage(id, pcm()));
+  const url = new URL(await stage(id, pcm()));
   const filename = join(directory, "asr-audio", `${id}.${url.searchParams.get("expires")}.wav`);
   await writeFile(filename, "invalid-wave");
   expect(await read(url)).toBeNull();
@@ -162,9 +174,9 @@ it("rejects symlinked and modified audio files and unavailable public HTTPS orig
   expect(await read(url)).toBeNull();
   for (const origin of ["http://localhost:43100", "https://127.0.0.1", "https://bot.internal"])
     await expect(
-      new MediaAudioStore(directory, origin, key).stage(randomUUID(), pcm()),
+      stage(randomUUID(), pcm(), new MediaAudioStore(directory, origin, key)),
     ).rejects.toThrow("audio_url_unavailable");
-  await expect(store.stage(randomUUID(), Buffer.from("invalid"))).rejects.toThrow(
+  await expect(stage(randomUUID(), Buffer.from("invalid"))).rejects.toThrow(
     "invalid_converted_audio",
   );
 });

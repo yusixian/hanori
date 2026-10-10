@@ -44,11 +44,7 @@ import { startCommand } from "./commands/start.js";
 import { createStatusCommand } from "./commands/status.js";
 import { createStopCommand } from "./commands/stop.js";
 import { ActiveCommandRegistry } from "./commands/registry.js";
-import {
-  createTimersCommand,
-  isTimerCancelCallback,
-  parseTimerCancelId,
-} from "./commands/timers.js";
+import { createTimersCommand, createTimerCancelCallbackQueryHandler } from "./commands/timers.js";
 import { WrapperContext, type BotContext } from "./context.js";
 import { createAiSelectionGuard, createAuthGuard, privateChatOnlyGuard } from "./guards/auth.js";
 import { type AiReplyConfig, createAiReplyHandler } from "./handlers/ai-reply.js";
@@ -110,7 +106,7 @@ export interface TimerCallbacks {
     userId: number;
     handle: ReturnType<typeof setTimeout>;
   }) => void | Promise<void>;
-  onTimerCancel?: (timerId: string) => void;
+  onTimerCancel?: (timerId: string) => void | Promise<void>;
   onTimerFired?: (timerId: string) => Promise<void>;
   onGetTimers?: () => import("@cos-tool-bot/shared").TimerRecord[];
   onCancelTimer?: (timerId: string) => Promise<boolean>;
@@ -828,31 +824,14 @@ export function createBot(config: BotConfig) {
       await pollAnswerHandler(ctx.pollAnswer);
     });
 
+    const timerCancelCallbackQueryHandler = config.timerCallbacks?.onCancelTimer
+      ? createTimerCancelCallbackQueryHandler({
+          adminIds: adminChatIds,
+          onCancelTimer: config.timerCallbacks.onCancelTimer,
+        })
+      : undefined;
     bot.on("callback_query:data", async (ctx) => {
-      // Handle timer cancel callbacks
-      const data = ctx.callbackQuery.data;
-      if (isTimerCancelCallback(data) && config.timerCallbacks?.onCancelTimer) {
-        const timerId = parseTimerCancelId(data);
-        if (timerId) {
-          const cancelled = await config.timerCallbacks.onCancelTimer(timerId);
-          await ctx.api.raw.answerCallbackQuery({
-            callback_query_id: ctx.callbackQuery.id,
-            text: cancelled ? `定时器 ${timerId} 已取消` : "定时器未找到或已过期",
-          });
-          if (cancelled && ctx.callbackQuery.message) {
-            try {
-              await ctx.api.editMessageText(
-                ctx.callbackQuery.message.chat.id,
-                ctx.callbackQuery.message.message_id,
-                `${ctx.callbackQuery.message.text ?? ""}\n\n✅ 定时器 ${timerId} 已取消`,
-              );
-            } catch {
-              // ignore edit errors
-            }
-          }
-          return;
-        }
-      }
+      if (await timerCancelCallbackQueryHandler?.(ctx)) return;
       if (await adminActionCallbackQueryHandler(ctx)) return;
       await callbackQueryHandler(ctx);
     });

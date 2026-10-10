@@ -209,7 +209,12 @@ export class CodingWorkerClient {
         request.destroy(reason instanceof Error ? reason : undefined);
       };
       init.signal?.addEventListener("abort", onAbort, { once: true });
+      const onError = (error: Error) => {
+        init.signal?.removeEventListener("abort", onAbort);
+        reject(error);
+      };
       request.on("response", (incoming) => {
+        incoming.on("error", onError);
         const acceptedHeader = incoming.headers[ACCEPTED_BOOT_HEADER];
         const acceptedBootId = Array.isArray(acceptedHeader) ? acceptedHeader[0] : acceptedHeader;
         if (acceptedBootId) {
@@ -234,23 +239,21 @@ export class CodingWorkerClient {
         });
         incoming.on("end", () => {
           init.signal?.removeEventListener("abort", onAbort);
-          const responseHeaders = new Headers();
-          for (const [name, value] of Object.entries(incoming.headers)) {
-            if (Array.isArray(value)) responseHeaders.set(name, value.join(", "));
-            else if (value !== undefined) responseHeaders.set(name, value);
+          try {
+            const responseHeaders = new Headers();
+            for (const [name, value] of Object.entries(incoming.headers)) {
+              if (Array.isArray(value)) responseHeaders.set(name, value.join(", "));
+              else if (value !== undefined) responseHeaders.set(name, value);
+            }
+            const status = incoming.statusCode ?? 500;
+            const body = [204, 205, 304].includes(status) ? null : Buffer.concat(chunks);
+            resolve(new Response(body, { status, headers: responseHeaders }));
+          } catch (error) {
+            reject(error);
           }
-          resolve(
-            new Response(Buffer.concat(chunks), {
-              status: incoming.statusCode ?? 500,
-              headers: responseHeaders,
-            }),
-          );
         });
       });
-      request.on("error", (error) => {
-        init.signal?.removeEventListener("abort", onAbort);
-        reject(error);
-      });
+      request.on("error", onError);
       if (body) request.write(body);
       request.end();
     });

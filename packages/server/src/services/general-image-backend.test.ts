@@ -1,10 +1,17 @@
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import type { IncomingMessage } from "node:http";
 import type { Database } from "@cos-tool-bot/database";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BotConfiguredGeneralImageBackend } from "./general-image-backend.js";
 
-const { lookupMock } = vi.hoisted(() => ({ lookupMock: vi.fn() }));
+const { lookupMock, requestMock } = vi.hoisted(() => ({
+  lookupMock: vi.fn(),
+  requestMock: vi.fn(),
+}));
 
 vi.mock("node:dns/promises", () => ({ lookup: lookupMock }));
+vi.mock("node:https", () => ({ request: requestMock }));
 
 function imageConfigDb(imageGeneration: Record<string, unknown> | undefined) {
   const builder = {
@@ -37,6 +44,7 @@ describe("BotConfiguredGeneralImageBackend artifact safety", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     lookupMock.mockReset();
+    requestMock.mockReset();
   });
 
   it("reports whether the Bot has a non-PixAI general image backend", async () => {
@@ -113,4 +121,119 @@ describe("BotConfiguredGeneralImageBackend artifact safety", () => {
       }),
     ).rejects.toThrow("resolves to a private address");
   });
+});
+
+function artifactResponse(statusCode: number, headers: IncomingMessage["headers"]) {
+  return Object.assign(new PassThrough(), { statusCode, headers });
+}
+
+it.each([
+  [503, {}, "HTTP 503"],
+  [200, { "content-type": "text/html" }, "not a supported image"],
+  [200, { "content-type": "image/png", "content-length": "invalid" }, "invalid content length"],
+  [
+    200,
+    { "content-type": "image/png", "content-length": String(20 * 1024 * 1024 + 1) },
+    "too large",
+  ],
+  [302, {}, "redirect is invalid"],
+] as const)(
+  "closes rejected artifact response %s without draining its body",
+  async (status, headers, error) => {
+    const response = artifactResponse(status, headers);
+    lookupMock.mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
+    requestMock.mockImplementation((_options, callback) =>
+      Object.assign(new EventEmitter(), {
+        end: () => queueMicrotask(() => callback(response)),
+      }),
+    );
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({ data: [{ url: "https://cdn.example.test/image.png" }] }),
+    );
+    try {
+      await expect(
+        new BotConfiguredGeneralImageBackend(configuredDb()).create({
+          botId: "bot",
+          prompt: "image",
+        }),
+      ).rejects.toThrow(error);
+      expect(response.destroyed).toBe(true);
+    } finally {
+      response.destroy();
+      vi.restoreAllMocks();
+    }
+  },
+);
+
+it("closes redirect bodies before following and still validates the downloaded image", async () => {
+  const redirect = artifactResponse(302, { location: "/final.png" });
+  const image = artifactResponse(200, { "content-type": "image/png" });
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const responses = [redirect, image];
+  lookupMock.mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
+  requestMock.mockImplementation((_options, callback) => {
+    if (responses[0] === image) expect(redirect.destroyed).toBe(true);
+    return Object.assign(new EventEmitter(), {
+      end: () =>
+        queueMicrotask(() => {
+          const response = responses.shift();
+          callback(response);
+          if (response === image) image.end(png);
+        }),
+    });
+  });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ data: [{ url: "https://cdn.example.test/image.png" }] }),
+  );
+  try {
+    await expect(
+      new BotConfiguredGeneralImageBackend(configuredDb()).create({
+        botId: "bot",
+        prompt: "image",
+      }),
+    ).resolves.toEqual([{ bytes: png, mimeType: "image/png", source: "resource_link" }]);
+    expect(redirect.destroyed).toBe(true);
+    expect(image.destroyed).toBe(true);
+  } finally {
+    redirect.destroy();
+    image.destroy();
+    vi.restoreAllMocks();
+  }
+});
+
+it("cancels an artifact download while DNS is pending without issuing HTTPS", async () => {
+  const controller = new AbortController();
+  const reason = new Error("image task stopped");
+  let finishLookup!: (value: unknown[]) => void;
+  lookupMock.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishLookup = resolve;
+      }),
+  );
+  requestMock.mockClear();
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({ data: [{ url: "https://cdn.example.test/image.png" }] }),
+  );
+  const task = new BotConfiguredGeneralImageBackend(configuredDb())
+    .create({
+      botId: "bot",
+      prompt: "image",
+      signal: controller.signal,
+    })
+    .catch((error: unknown) => error);
+  try {
+    await vi.waitFor(() => expect(finishLookup).toBeTypeOf("function"));
+    controller.abort(reason);
+    const result = await Promise.race([
+      task,
+      new Promise((resolve) => setTimeout(() => resolve("still waiting for DNS"), 50)),
+    ]);
+    expect(result).toBe(reason);
+    expect(requestMock).not.toHaveBeenCalled();
+  } finally {
+    finishLookup([]);
+    await task;
+    vi.restoreAllMocks();
+  }
 });

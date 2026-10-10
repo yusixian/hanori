@@ -20,7 +20,7 @@ export const defaultCreateLody: CreateLody = (command, timeoutMs, exec, turnWait
  * bridge callback, or in-process through the local waiter pool, which outlives client rebuilds.
  */
 export class LodyClients {
-  private client: { key: string; cli: LodyCli } | null = null;
+  private client: { key: string; bridgeSecret: string | undefined; cli: LodyCli } | null = null;
   private readonly localExec: ExecFileLike;
 
   constructor(
@@ -34,18 +34,16 @@ export class LodyClients {
   get(lody: LodyExecutorConfig): LodyCli {
     const command = typeof lody.cli === "string" ? [lody.cli] : lody.cli;
     const bridgeUrl = this.readEnv(lody.bridge.urlEnv);
-    const bridgeSecret = this.readEnv(lody.bridge.secretEnv);
+    const bridgeSecret = bridgeUrl ? this.readEnv(lody.bridge.secretEnv) : undefined;
     const turnWait = lody.turnWait ? Math.round(durationMs(lody.turnWait) / 1000) : null;
-    const key = JSON.stringify([
-      command,
-      lody.timeout,
-      bridgeUrl ?? null,
-      Boolean(bridgeSecret),
-      turnWait,
-    ]);
-    if (this.client?.key !== key) {
+    const key = JSON.stringify([command, lody.timeout, bridgeUrl ?? null, turnWait]);
+    if (this.client?.key !== key || this.client.bridgeSecret !== bridgeSecret) {
       const exec = bridgeUrl ? createBridgeExec(bridgeUrl, bridgeSecret) : this.localExec;
-      this.client = { key, cli: this.create(command, durationMs(lody.timeout), exec, turnWait) };
+      this.client = {
+        key,
+        bridgeSecret,
+        cli: this.create(command, durationMs(lody.timeout), exec, turnWait),
+      };
     }
     return this.client.cli;
   }

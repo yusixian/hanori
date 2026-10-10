@@ -1,4 +1,6 @@
-import { MAX_FILE_SIZE, TEXT_EXTENSIONS, resolveAndValidate } from "@cos-tool-bot/shared";
+import { FileTooLargeError, readFileBounded } from "@cos-tool-bot/shared/file-reader";
+import { MAX_FILE_SIZE, TEXT_EXTENSIONS } from "@cos-tool-bot/shared";
+import { resolveAndValidate } from "@cos-tool-bot/shared/file-validation";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import * as fs from "node:fs/promises";
@@ -25,12 +27,12 @@ export function createFileTools(opts: {
         const resolved = resolveAndValidate(dataDir, filePath);
         if (!resolved) return { error: "Invalid path (only .md/.txt/.json allowed)" };
         try {
-          const stat = await fs.stat(resolved);
-          if (stat.size > MAX_FILE_SIZE) return { error: "File too large" };
-          const content = await fs.readFile(resolved, "utf-8");
-          return { ok: true, content };
-        } catch {
-          return { error: "File not found" };
+          const buffer = await readFileBounded(resolved, MAX_FILE_SIZE);
+          return { ok: true, content: buffer.toString("utf-8") };
+        } catch (error) {
+          return {
+            error: error instanceof FileTooLargeError ? "File too large" : "File not found",
+          };
         }
       },
     }),
@@ -72,25 +74,31 @@ export function createFileTools(opts: {
         const resolved = resolveAndValidate(dataDir, filePath);
         if (!resolved) return { error: "Invalid path" };
         // Prevent deletion of files marked as injectable (system prompt files)
-        const baseName = path.basename(filePath);
-        if (protectedFiles?.has(baseName)) {
+        if (
+          protectedFiles &&
+          [...protectedFiles].some((file) => resolveAndValidate(dataDir, file) === resolved)
+        ) {
           return { error: "This file is protected (injectable) and cannot be deleted" };
         }
         try {
           await fs.unlink(resolved);
-          // Recursively clean up empty parent directories (up to dataDir)
-          let dir = path.dirname(resolved);
-          while (dir !== dataDir && dir.startsWith(dataDir)) {
-            const entries = await fs.readdir(dir);
-            if (entries.length > 0) break;
-            await fs.rmdir(dir);
-            dir = path.dirname(dir);
-          }
-          return { ok: true };
         } catch (err: unknown) {
           const code = (err as NodeJS.ErrnoException).code;
           return { error: code === "ENOENT" ? "File not found" : "Failed to delete file" };
         }
+        // Parent cleanup is best effort; it must not turn a completed deletion into failure.
+        let dir = path.dirname(resolved);
+        while (dir !== dataDir && dir.startsWith(dataDir)) {
+          try {
+            const entries = await fs.readdir(dir);
+            if (entries.length > 0) break;
+            await fs.rmdir(dir);
+          } catch {
+            break;
+          }
+          dir = path.dirname(dir);
+        }
+        return { ok: true };
       },
     }),
   };

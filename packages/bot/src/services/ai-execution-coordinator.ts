@@ -1,3 +1,4 @@
+import { drainTasks } from "./drain-tasks.js";
 import {
   AiReplyQueueFullError,
   AiReplyScheduler,
@@ -261,22 +262,10 @@ interface AiRunWaitResult {
 }
 
 async function waitForRuns(runs: RunRecord[], waitMs: number): Promise<AiRunWaitResult> {
-  if (runs.length === 0) return Object.freeze({ settled: true, timedOut: false });
-  let settled = false;
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  const allSettled = Promise.all(runs.map((run) => run.settled)).then(() => {
-    settled = true;
-  });
-  await Promise.race([
-    allSettled,
-    new Promise<void>((resolve) => {
-      timeout = setTimeout(resolve, waitMs);
-      timeout.unref?.();
-    }),
-  ]).finally(() => {
-    if (timeout) clearTimeout(timeout);
-  });
-  return Object.freeze({ settled, timedOut: !settled });
+  return drainTasks(
+    runs.map((run) => run.settled),
+    waitMs,
+  );
 }
 
 function createDrainResult(cancelled: number, wait: AiRunWaitResult): AiRunDrainResult {

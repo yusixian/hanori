@@ -46,6 +46,23 @@ describe("PendingAdminActionRegistry", () => {
     registry.destroy();
   });
 
+  it("does not start an admitted action if the registry is destroyed before execution", async () => {
+    const registry = new PendingAdminActionRegistry();
+    const execute = vi.fn(async () => ({ summary: "done" }));
+    const action = registry.register({
+      chatId: -100,
+      userId: 7,
+      description: "pending action",
+      execute,
+    });
+    const run = registry.run(action);
+    const checked = expect(run).rejects.toThrow("Admin action registry was destroyed");
+    registry.destroy();
+    await checked;
+    expect(execute).not.toHaveBeenCalled();
+    await expect(registry.drain()).resolves.toEqual({ settled: true, timedOut: false });
+  });
+
   it("aborts active actions and drains their tracked promises", async () => {
     const registry = new PendingAdminActionRegistry();
     let release!: () => void;

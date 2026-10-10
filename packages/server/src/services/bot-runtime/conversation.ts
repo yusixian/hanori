@@ -5,7 +5,7 @@ import type {
   ConversationConfig,
   UserPrivacyCallbacks,
 } from "@cos-tool-bot/shared";
-import { getDataDir } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import type { Logger } from "pino";
 import { compressConversation } from "../conversation-compressor.js";
 import { ConversationHistoryGovernor } from "../conversation-history-governor.js";
@@ -171,7 +171,12 @@ export function createConversationRuntime({
             for (let i = 0; i < embeddings.length; i++) {
               const emb = embeddings[i];
               if (emb) {
-                await store.updateEmbedding(toEmbed[i]!.id, emb);
+                await store.updateEmbeddingIfContentMatches(
+                  botId,
+                  toEmbed[i]!.id,
+                  toEmbed[i]!.content,
+                  emb,
+                );
               }
             }
           } catch (err) {
@@ -186,7 +191,13 @@ export function createConversationRuntime({
         embeddingService
           .generateEmbedding(persisted.content, AbortSignal.timeout(auxiliaryTimeoutMs))
           .then((embedding) => {
-            if (embedding) return store.updateEmbedding(persisted.id, embedding);
+            if (embedding)
+              return store.updateEmbeddingIfContentMatches(
+                botId,
+                persisted.id,
+                persisted.content,
+                embedding,
+              );
           })
           .catch((err) => {
             logger.warn(err, "Group message embedding generation failed");

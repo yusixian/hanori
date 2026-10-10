@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 // Runs a `session create|chat --wait` child so the caller gets an answer as soon as Lody accepted
 // the turn, while the child keeps waiting for the turn to finish. Only the session id, the event
 // type, and short CLI error lines are read from stdout; transcript text is discarded unread.
@@ -96,6 +97,10 @@ export function startTurn(command, args, options) {
   lifetime.unref();
 
   const onLine = (raw) => {
+    if (raw.length > MAX_LINE) {
+      if (kind === "chat" && raw.startsWith('{"type":"update"')) accept();
+      return;
+    }
     const line = raw.replace(ANSI, "").trim();
     if (!line) return;
     if (kind === "create") {
@@ -132,10 +137,11 @@ export function startTurn(command, args, options) {
     }
   };
 
+  const decoder = new StringDecoder("utf8");
   let pending = "";
   let overflow = false;
   child.stdout.on("data", (chunk) => {
-    let text = pending + chunk.toString("utf8");
+    let text = pending + decoder.write(chunk);
     let newline;
     while ((newline = text.indexOf("\n")) !== -1) {
       const line = text.slice(0, newline);
@@ -158,6 +164,7 @@ export function startTurn(command, args, options) {
     if (finished) return;
     finished = true;
     clearTimeout(lifetime);
+    pending += decoder.end();
     if (pending && !overflow) onLine(pending);
     pending = "";
     if (!accepted && exitCode === 0 && kind === "chat") accept();

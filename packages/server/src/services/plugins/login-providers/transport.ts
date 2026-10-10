@@ -1,3 +1,4 @@
+import { abortable } from "../../../utils/abortable.js";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import type { IncomingMessage } from "node:http";
@@ -80,15 +81,6 @@ function allowedUrl(value: string, platform: "bilibili" | "netease", redirect: b
   } catch {
     throw new LoginProviderError("invalid_response");
   }
-}
-
-async function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const aborted = () => reject(new LoginProviderError("cancelled"));
-    signal.addEventListener("abort", aborted, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", aborted));
-  });
 }
 
 async function pinnedRequest(

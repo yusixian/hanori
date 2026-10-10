@@ -471,6 +471,7 @@ export class ConversationStore {
           conversationMessages.sourceKey,
         ],
         set: {
+          embedding: sql`CASE WHEN ${conversationMessages.content} = ${normalized.content} THEN ${conversationMessages.embedding} ELSE NULL END`,
           content: normalized.content,
           userAuthoredContent: normalized.userAuthoredContent ?? null,
           userId: normalized.userId,
@@ -1578,11 +1579,24 @@ export class ConversationStore {
     };
   }
 
-  async updateEmbedding(messageId: number, embedding: number[]): Promise<void> {
-    await this.db
+  async updateEmbeddingIfContentMatches(
+    botId: string,
+    messageId: number,
+    content: string,
+    embedding: number[],
+  ): Promise<boolean> {
+    const updated = await this.db
       .update(conversationMessages)
       .set({ embedding })
-      .where(eq(conversationMessages.id, messageId));
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.id, messageId),
+          eq(conversationMessages.content, content),
+        ),
+      )
+      .returning({ id: conversationMessages.id });
+    return updated.length > 0;
   }
 
   async searchMessages(

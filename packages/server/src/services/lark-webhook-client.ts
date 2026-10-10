@@ -60,9 +60,29 @@ export class LarkWebhookClient {
       return { ok: false, error: `Lark webhook HTTP ${res.status}: ${res.statusText}` };
     }
 
-    const result = (await res.json()) as { code?: number; msg?: string };
+    let result: unknown;
+    try {
+      result = await res.json();
+    } catch {
+      return { ok: false, error: "Lark webhook returned an invalid JSON response" };
+    }
+    if (
+      !result ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      !("code" in result) ||
+      typeof result.code !== "number"
+    ) {
+      return { ok: false, error: "Lark webhook returned an invalid API response" };
+    }
     if (result.code !== 0) {
-      return { ok: false, error: result.msg ?? `Lark API error code: ${result.code}` };
+      return {
+        ok: false,
+        error:
+          "msg" in result && typeof result.msg === "string"
+            ? result.msg
+            : `Lark API error code: ${result.code}`,
+      };
     }
     return { ok: true };
   }

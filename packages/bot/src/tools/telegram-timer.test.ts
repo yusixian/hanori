@@ -238,3 +238,63 @@ describe("telegram timer scheduling", () => {
     pendingActions.destroy();
   });
 });
+
+it("keeps the pending timer when its durable cancellation fails, then allows retry", async () => {
+  const pendingActions = new PendingActionRegistry();
+  const onTimerCancel = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("database unavailable"))
+    .mockResolvedValue(undefined);
+  const tools = createTelegramTools({
+    api: {} as Api,
+    chatId: 42,
+    recentBotMessageIds: [],
+    pendingActions,
+    onTimerCancel,
+  });
+  const timer = pendingActions.registerTimer(
+    42,
+    "test",
+    setTimeout(() => {}, 60_000),
+  );
+  const cancel = tools.cancel_timer as unknown as ExecutableTool;
+  try {
+    await expect(
+      cancel.execute({ timer_id: timer.timerId }, { abortSignal: new AbortController().signal }),
+    ).resolves.toEqual({ error: "Error: database unavailable" });
+    expect(pendingActions.getTimer(timer.timerId)).toBe(timer);
+    await expect(
+      cancel.execute({ timer_id: timer.timerId }, { abortSignal: new AbortController().signal }),
+    ).resolves.toEqual({ success: true, cancelled_timer_id: timer.timerId });
+    expect(pendingActions.getTimer(timer.timerId)).toBeUndefined();
+  } finally {
+    pendingActions.destroy();
+  }
+});
+
+it("does not cancel another chat's timer even when its ID is known", async () => {
+  const pendingActions = new PendingActionRegistry();
+  const onTimerCancel = vi.fn(async () => {});
+  const timer = pendingActions.registerTimer(
+    -1002,
+    "other chat",
+    setTimeout(() => {}, 60_000),
+  );
+  const tools = createTelegramTools({
+    api: {} as Api,
+    chatId: -1001,
+    recentBotMessageIds: [],
+    pendingActions,
+    onTimerCancel,
+  });
+  try {
+    const cancel = tools.cancel_timer as unknown as ExecutableTool;
+    await expect(
+      cancel.execute({ timer_id: timer.timerId }, { abortSignal: new AbortController().signal }),
+    ).resolves.toEqual({ error: "Timer not found or already expired" });
+    expect(onTimerCancel).not.toHaveBeenCalled();
+    expect(pendingActions.getTimer(timer.timerId)).toBe(timer);
+  } finally {
+    pendingActions.destroy();
+  }
+});

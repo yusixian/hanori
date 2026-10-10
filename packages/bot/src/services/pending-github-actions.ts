@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { drainTasks } from "./drain-tasks.js";
 
 export interface AdminActionResult {
   summary: string;
@@ -89,7 +90,10 @@ export class PendingAdminActionRegistry {
     if (this.destroyed) throw new Error("Admin action registry was destroyed");
     if (this.active.has(action.id)) throw new Error("Admin action is already running");
     const controller = new AbortController();
-    const execution = Promise.resolve().then(() => action.execute(controller.signal));
+    const execution = Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return action.execute(controller.signal);
+    });
     const active: ActiveAdminAction = {
       controller,
       settled: execution
@@ -116,23 +120,10 @@ export class PendingAdminActionRegistry {
   }
 
   async drain(waitMs = DEFAULT_DRAIN_WAIT_MS): Promise<AdminActionDrainResult> {
-    const actions = [...this.active.values()];
-    if (actions.length === 0) return Object.freeze({ settled: true, timedOut: false });
-    let settled = false;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const allSettled = Promise.all(actions.map((action) => action.settled)).then(() => {
-      settled = true;
-    });
-    await Promise.race([
-      allSettled,
-      new Promise<void>((resolve) => {
-        timeout = setTimeout(resolve, waitMs);
-        timeout.unref?.();
-      }),
-    ]).finally(() => {
-      if (timeout) clearTimeout(timeout);
-    });
-    return Object.freeze({ settled, timedOut: !settled });
+    return drainTasks(
+      [...this.active.values()].map((action) => action.settled),
+      waitMs,
+    );
   }
 
   async destroyAndDrain(waitMs = DEFAULT_DRAIN_WAIT_MS): Promise<AdminActionDrainResult> {

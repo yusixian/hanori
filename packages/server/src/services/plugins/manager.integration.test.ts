@@ -907,4 +907,38 @@ describe.skipIf(!baseUrl)("PluginManager PostgreSQL lifecycle", () => {
       "synthetic-private-cookie",
     );
   });
+
+  it("close waits for an admitted configuration mutation to return its persisted result", async () => {
+    await installBuiltin();
+    const saved = await enable();
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    manager.onConfigurationChanged(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const saving = manager.saveBot(manifest.id, botId, {
+      expectedRevision: saved.revision,
+      manifestHash: saved.manifestHash,
+      enabled: false,
+    });
+    await entered.promise;
+    let closed = false;
+    const closing = manager.close().then(() => {
+      closed = true;
+    });
+    try {
+      await nextTurn();
+      expect(closed).toBe(false);
+      release.resolve();
+      const result = await saving;
+      expect(result.enabled).toBe(false);
+      expect(result.revision).toBe(saved.revision + 1);
+      await closing;
+      expect(closed).toBe(true);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([saving, closing]);
+    }
+  });
 });

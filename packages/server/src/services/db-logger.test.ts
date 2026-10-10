@@ -19,24 +19,26 @@ describe("DbLogger", () => {
     const pino = pinoMock();
     const error = Object.assign(new Error("Bearer live.secret"), {
       statusCode: 401,
+      name: "Provider token=synthetic-token",
       apiKey: "live-key",
     });
 
     await new DbLogger(db, pino, "00000000-0000-4000-8000-000000000001").error(
       "request token=live-token failed",
-      { error, inputTokens: 42 },
+      { error, inputTokens: 42, payload: Buffer.from("binary") },
     );
 
     const expectedMessage = "request token=[REDACTED] failed";
     const expectedMeta = {
       error: expect.objectContaining({
-        name: "Error",
+        name: "Provider token=[REDACTED]",
         message: "Bearer [REDACTED]",
         stack: expect.stringContaining("Bearer [REDACTED]"),
         statusCode: 401,
         apiKey: "[REDACTED]",
       }),
       inputTokens: 42,
+      payload: { type: "Buffer", byteLength: 6 },
     };
     expect(pino.error).toHaveBeenCalledWith(expectedMeta, expectedMessage);
     expect(values).toHaveBeenCalledWith({

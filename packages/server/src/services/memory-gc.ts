@@ -1,3 +1,4 @@
+import { InFlightTasks } from "../utils/in-flight-tasks.js";
 import type { Database } from "@cos-tool-bot/database";
 import { botMemories } from "@cos-tool-bot/database";
 import { and, eq, lt } from "drizzle-orm";
@@ -32,7 +33,12 @@ export class MemoryGC {
     this.intervalHours = options.intervalHours;
   }
 
+  private closing = false;
+  private closeTask?: Promise<void>;
+  private readonly tasks = new InFlightTasks();
+
   start() {
+    if (this.closing || this.timer) return;
     this.logger.info(
       {
         inactiveRetentionDays: this.inactiveRetentionDays,
@@ -46,6 +52,14 @@ export class MemoryGC {
     const intervalMs = Math.max(this.intervalHours, 1) * 60 * 60 * 1000;
     this.timer = setInterval(() => this.cleanup(), intervalMs);
     this.timer.unref();
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    this.stop();
+    this.closeTask = this.tasks.drain();
+    return this.closeTask;
   }
 
   stop() {
@@ -63,7 +77,12 @@ export class MemoryGC {
     return Math.max(this.intervalHours, 1) * 60 * 60 * 1000;
   }
 
-  private async cleanup() {
+  private cleanup(): Promise<void> {
+    if (this.closing) return Promise.resolve();
+    return this.tasks.track(this.cleanupImpl());
+  }
+
+  private async cleanupImpl() {
     try {
       const cutoff = new Date(Date.now() - this.inactiveRetentionDays * 24 * 60 * 60 * 1000);
 

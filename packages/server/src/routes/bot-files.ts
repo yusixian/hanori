@@ -1,13 +1,14 @@
+import { FileTooLargeError, readFileBounded } from "@cos-tool-bot/shared/file-reader";
 import { bots, type Database } from "@cos-tool-bot/database";
 import { DEFAULT_INJECTABLE_FILES, DEFAULT_MAX_INJECTION_SIZE } from "@cos-tool-bot/shared";
-import archiver from "archiver";
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { z } from "zod";
 import { zValidator } from "@hono/zod-validator";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { Readable } from "node:stream";
+import { createDirectoryZip } from "../utils/directory-zip.js";
+import { attachmentDisposition } from "../utils/content-disposition.js";
 import { BOT_DATA_TEMPLATES } from "../templates/bot-data-templates.js";
 import type { BotPool } from "../services/bot-pool.js";
 import {
@@ -19,17 +20,29 @@ import {
   resolveAndValidateDir,
 } from "../utils/file-validation.js";
 
-/**
- * Extract the file sub-path from the raw URL.
- * Hono delivers `c.req.path` already percent-decoded once, so we must NOT
- * call `decodeURIComponent` again (double-decode would turn `%252e` → `..`).
- */
-function extractFilePath(reqPath: string, botId: string, segment = "files"): string {
-  if (botId.includes("/")) return "";
-  const prefix = `/api/bots/${botId}/${segment}/`;
-  const idx = reqPath.indexOf(prefix);
-  if (idx === -1) return "";
-  return reqPath.slice(idx + prefix.length);
+/** Decode raw URL components once; Hono's req.path preserves reserved escapes. */
+function extractFilePath(reqUrl: string, botId: string, segment = "files"): string {
+  try {
+    const parts = new URL(reqUrl).pathname.split("/").map((part) => decodeURIComponent(part));
+    if (
+      botId.includes("/") ||
+      parts[1] !== "api" ||
+      parts[2] !== "bots" ||
+      parts[3] !== botId ||
+      parts[4] !== segment
+    )
+      return "";
+    const components = parts.slice(5);
+    // Separators must be literal URL separators, not hidden inside an encoded component.
+    if (components.some((part) => part.includes("/"))) return "";
+    return components.join("/");
+  } catch {
+    return "";
+  }
+}
+
+function isInjectableFile(dataDir: string, resolved: string, injectableFiles: readonly string[]) {
+  return injectableFiles.some((file) => resolveAndValidate(dataDir, file) === resolved);
 }
 
 export function botFilesRoutes(db: Database, botPool: BotPool) {
@@ -55,33 +68,39 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         try {
           await fs.mkdir(resolvedDir, { recursive: true });
           const entries = await fs.readdir(resolvedDir, { withFileTypes: true });
-          const files = await Promise.all(
-            entries
-              .filter((entry) => {
-                if (entry.isDirectory()) return true;
-                const ext = path.extname(entry.name).toLowerCase();
-                return ALLOWED_EXTENSIONS.has(ext);
-              })
-              .map(async (entry) => {
-                const fullPath = path.join(resolvedDir, entry.name);
-                const relativePath = subPath ? `${subPath}/${entry.name}` : entry.name;
-                if (entry.isDirectory()) {
+          const files = (
+            await Promise.all(
+              entries
+                .filter((entry) => {
+                  if (entry.isDirectory()) return true;
+                  const ext = path.extname(entry.name).toLowerCase();
+                  return ALLOWED_EXTENSIONS.has(ext);
+                })
+                .map(async (entry) => {
+                  const fullPath = path.join(resolvedDir, entry.name);
+                  const relativePath = subPath ? `${subPath}/${entry.name}` : entry.name;
+                  if (entry.isDirectory()) {
+                    return {
+                      name: entry.name,
+                      path: relativePath,
+                      size: 0,
+                      type: "dir" as const,
+                    };
+                  }
+                  const stat = await fs.stat(fullPath).catch((error: unknown) => {
+                    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+                    throw error;
+                  });
+                  if (!stat) return null;
                   return {
                     name: entry.name,
                     path: relativePath,
-                    size: 0,
-                    type: "dir" as const,
+                    size: stat.size,
+                    type: "file" as const,
                   };
-                }
-                const stat = await fs.stat(fullPath);
-                return {
-                  name: entry.name,
-                  path: relativePath,
-                  size: stat.size,
-                  type: "file" as const,
-                };
-              }),
-          );
+                }),
+            )
+          ).filter((entry) => entry !== null);
           files.sort((a, b) => {
             if (a.type !== b.type) return a.type === "dir" ? -1 : 1;
             return a.name.localeCompare(b.name);
@@ -96,6 +115,8 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       "/:botId/files-zip",
       zValidator("query", z.object({ path: z.string().max(500).optional() })),
       async (c) => {
+        // Initialize the Node adapter's lazy abort signal before the first await.
+        const signal = c.req.raw.signal;
         const botId = c.req.param("botId");
         const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
         if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
@@ -111,35 +132,19 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
           return c.json({ ok: false as const, error: "Directory not found" }, 404);
         }
 
-        const archive = archiver("zip", { zlib: { level: 5 } });
-
-        // Recursively add only allowed file types
-        const addDir = async (dirPath: string, prefix: string) => {
-          const entries = await fs.readdir(dirPath, { withFileTypes: true });
-          for (const entry of entries) {
-            const fullPath = path.join(dirPath, entry.name);
-            const entryPrefix = prefix ? `${prefix}/${entry.name}` : entry.name;
-            if (entry.isDirectory()) {
-              await addDir(fullPath, entryPrefix);
-            } else {
-              const ext = path.extname(entry.name).toLowerCase();
-              if (ALLOWED_EXTENSIONS.has(ext)) {
-                archive.file(fullPath, { name: entryPrefix });
-              }
-            }
-          }
-        };
-
-        await addDir(resolvedDir, "");
-        archive.finalize();
-
         const dirName = subPath ? subPath.replace(/\//g, "_") : "files";
-        return new Response(Readable.toWeb(archive) as ReadableStream, {
-          headers: {
-            "Content-Type": "application/zip",
-            "Content-Disposition": `attachment; filename="${dirName}.zip"; filename*=UTF-8''${encodeURIComponent(dirName)}.zip`,
-          },
-        });
+        const disposition = attachmentDisposition(`${dirName}.zip`);
+        try {
+          return new Response(await createDirectoryZip(resolvedDir, signal), {
+            headers: {
+              "Content-Type": "application/zip",
+              "Content-Disposition": disposition,
+            },
+          });
+        } catch (error) {
+          if (signal.aborted) return new Response(null, { status: 499 });
+          throw error;
+        }
       },
     )
     .get("/:botId/files-raw/*", async (c) => {
@@ -147,7 +152,7 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      const filePath = extractFilePath(c.req.path, botId, "files-raw");
+      const filePath = extractFilePath(c.req.url, botId, "files-raw");
       if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
 
       const dataDir = getDataDir(botId);
@@ -155,11 +160,7 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
 
       try {
-        const stat = await fs.stat(resolved);
-        if (stat.size > MAX_FILE_SIZE) {
-          return c.json({ ok: false as const, error: "File too large" }, 413);
-        }
-        const buffer = await fs.readFile(resolved);
+        const buffer = await readFileBounded(resolved, MAX_FILE_SIZE);
         const ext = path.extname(resolved).toLowerCase();
         const contentType = CONTENT_TYPE_MAP[ext] ?? "application/octet-stream";
         const headers: Record<string, string> = { "Content-Type": contentType };
@@ -167,12 +168,13 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         const download = c.req.query("download");
         if (download === "true") {
           const fileName = path.basename(resolved);
-          headers["Content-Disposition"] =
-            `attachment; filename="${fileName.replace(/"/g, '\\"')}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+          headers["Content-Disposition"] = attachmentDisposition(fileName);
         }
 
         return c.body(buffer, 200, headers);
-      } catch {
+      } catch (error) {
+        if (error instanceof FileTooLargeError)
+          return c.json({ ok: false as const, error: "File too large" }, 413);
         return c.json({ ok: false as const, error: "File not found" }, 404);
       }
     })
@@ -181,7 +183,7 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      const filePath = extractFilePath(c.req.path, botId);
+      const filePath = extractFilePath(c.req.url, botId);
       if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
 
       const dataDir = getDataDir(botId);
@@ -189,13 +191,15 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
 
       try {
-        const stat = await fs.stat(resolved);
-        if (stat.size > MAX_FILE_SIZE) {
+        const buffer = await readFileBounded(resolved, MAX_FILE_SIZE);
+        return c.json({
+          ok: true as const,
+          content: buffer.toString("utf-8"),
+          size: buffer.length,
+        });
+      } catch (error) {
+        if (error instanceof FileTooLargeError)
           return c.json({ ok: false as const, error: "File too large" }, 413);
-        }
-        const content = await fs.readFile(resolved, "utf-8");
-        return c.json({ ok: true as const, content, size: stat.size });
-      } catch {
         return c.json({ ok: false as const, error: "File not found" }, 404);
       }
     })
@@ -204,29 +208,31 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      const filePath = extractFilePath(c.req.path, botId);
+      const filePath = extractFilePath(c.req.url, botId);
       if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
 
       const dataDir = getDataDir(botId);
       const resolved = resolveAndValidate(dataDir, filePath);
       if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
 
-      let body: { content: string };
+      let body: unknown;
       try {
         body = await c.req.json();
       } catch {
         return c.json({ ok: false as const, error: "Invalid JSON body" }, 400);
       }
-      if (typeof body.content !== "string") {
+      const parsed = z.object({ content: z.string() }).safeParse(body);
+      if (!parsed.success) {
         return c.json({ ok: false as const, error: "Content must be a string" }, 400);
       }
-      if (Buffer.byteLength(body.content, "utf-8") > MAX_FILE_SIZE) {
+      const { content } = parsed.data;
+      if (Buffer.byteLength(content, "utf-8") > MAX_FILE_SIZE) {
         return c.json({ ok: false as const, error: "Content too large" }, 413);
       }
 
       try {
         await fs.mkdir(path.dirname(resolved), { recursive: true });
-        await fs.writeFile(resolved, body.content, "utf-8");
+        await fs.writeFile(resolved, content, "utf-8");
         return c.json({ ok: true as const });
       } catch {
         return c.json({ ok: false as const, error: "Failed to write file" }, 500);
@@ -237,13 +243,16 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
-      const filePath = extractFilePath(c.req.path, botId);
+      const filePath = extractFilePath(c.req.url, botId);
       if (!filePath) return c.json({ ok: false as const, error: "File path required" }, 400);
 
       // Prevent deletion of injectable files
       const injectableFiles =
         bot.aiConfig?.dataFilesConfig?.injectableFiles ?? DEFAULT_INJECTABLE_FILES;
-      if (injectableFiles.includes(filePath)) {
+      const dataDir = getDataDir(botId);
+      const resolved = resolveAndValidate(dataDir, filePath);
+      if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
+      if (isInjectableFile(dataDir, resolved, injectableFiles)) {
         return c.json(
           {
             ok: false as const,
@@ -252,10 +261,6 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
           403,
         );
       }
-
-      const dataDir = getDataDir(botId);
-      const resolved = resolveAndValidate(dataDir, filePath);
-      if (!resolved) return c.json({ ok: false as const, error: "Invalid path" }, 403);
 
       try {
         await fs.unlink(resolved);
@@ -281,12 +286,8 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
         const skipped: string[] = [];
 
         for (const filePath of filePaths) {
-          if (injectableFiles.includes(filePath)) {
-            skipped.push(filePath);
-            continue;
-          }
           const resolved = resolveAndValidate(dataDir, filePath);
-          if (!resolved) {
+          if (!resolved || isInjectableFile(dataDir, resolved, injectableFiles)) {
             skipped.push(filePath);
             continue;
           }
@@ -358,11 +359,10 @@ export function botFilesRoutes(db: Database, botPool: BotPool) {
       for (const [name, content] of Object.entries(BOT_DATA_TEMPLATES)) {
         const filePath = path.join(dataDir, name);
         try {
-          await fs.access(filePath);
-          // File already exists, skip
-        } catch {
-          await fs.writeFile(filePath, content, "utf-8");
+          await fs.writeFile(filePath, content, { encoding: "utf-8", flag: "wx" });
           created.push(name);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
         }
       }
 

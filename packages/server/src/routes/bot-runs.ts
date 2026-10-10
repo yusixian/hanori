@@ -70,22 +70,21 @@ export function botRunRoutes(service: BotRunService) {
         return c.json({ ok: true as const, data: run });
       },
     )
-    .get("/:botId/runs/:runId/stream", (c) =>
-      streamSSE(c, async (stream) => {
+    .get("/:botId/runs/:runId/stream", (c) => {
+      if (c.req.raw.signal.aborted) return new Response(null, { status: 499 });
+      return streamSSE(c, async (stream) => {
         const { botId, runId } = c.req.param();
         const requestedSequence = Number(
           c.req.header("Last-Event-ID") ?? c.req.query("after") ?? "0",
         );
         let sequence = Number.isFinite(requestedSequence) ? Math.max(0, requestedSequence) : 0;
-        let aborted = false;
-        stream.onAbort(() => {
-          aborted = true;
-        });
-        while (!aborted) {
+        while (!stream.aborted) {
           const status = await service.getStatus(botId, runId);
-          if (!status) return;
+          if (!status || stream.aborted) return;
           const events = await service.eventsAfter(runId, sequence);
+          if (stream.aborted) return;
           for (const event of events) {
+            if (stream.aborted) return;
             await stream.writeSSE({
               event: "bot-run-event",
               id: String(event.sequence),
@@ -96,12 +95,13 @@ export function botRunRoutes(service: BotRunService) {
           if (status !== "running" && events.length === 0) {
             break;
           }
+          if (stream.aborted) return;
           await stream.sleep(300);
         }
-        if (aborted) return;
+        if (stream.aborted) return;
         const run = await service.get(botId, runId);
-        if (!run) return;
+        if (!run || stream.aborted) return;
         await stream.writeSSE({ event: "bot-run-complete", data: JSON.stringify(run) });
-      }),
-    );
+      });
+    });
 }

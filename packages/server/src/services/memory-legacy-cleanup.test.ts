@@ -9,7 +9,7 @@ const now = new Date("2026-09-24T12:00:00.000Z");
 const olderTime = new Date("2026-09-23T12:00:00.000Z");
 
 function memory(id: number, overrides: Record<string, unknown> = {}) {
-  return {
+  const row = {
     id,
     botId,
     telegramId: 7,
@@ -25,6 +25,7 @@ function memory(id: number, overrides: Record<string, unknown> = {}) {
     isActive: true,
     ...overrides,
   };
+  return { ...row, createdAtMicros: BigInt(row.createdAt.getTime()) * 1000n };
 }
 
 function candidate() {

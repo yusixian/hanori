@@ -1,8 +1,9 @@
 import type { Database } from "@cos-tool-bot/database";
 import { backups, settings } from "@cos-tool-bot/database";
 import type { BackupConfig, BackupRecord, BackupStorageConfig } from "@cos-tool-bot/shared";
+import { isValidBackupFilePrefix } from "@cos-tool-bot/shared";
 import { desc, eq } from "drizzle-orm";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -57,7 +58,7 @@ export class BackupService {
       const prefix = config?.filePrefix || "cos-tool-bot";
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const filename = `${prefix}_${timestamp}.sql.gz`;
-      const filePath = join(this.backupDir, filename);
+      const filePath = this.getBackupFilePath(filename);
 
       // Run pg_dump and pipe through gzip
       await this.runPgDump(filePath);
@@ -68,6 +69,7 @@ export class BackupService {
       // Upload to remote if configured
       let remoteUrl: string | null = null;
       let remoteProvider: string | null = null;
+      let uploadError: string | null = null;
 
       if (config?.storage && config.storage.type !== "local") {
         try {
@@ -79,20 +81,7 @@ export class BackupService {
         } catch (err) {
           // Remote upload failure doesn't fail the backup
           const msg = err instanceof Error ? err.message : String(err);
-          const [record] = await this.db
-            .insert(backups)
-            .values({
-              filename,
-              sizeBytes: fileStats.size,
-              durationMs,
-              remoteUrl: null,
-              remoteProvider: null,
-              status: "completed",
-              error: `Remote upload failed: ${msg}`,
-            })
-            .returning();
-          await this.cleanupOldBackups();
-          return this.toRecord(record!);
+          uploadError = `Remote upload failed: ${msg}`;
         }
       }
 
@@ -105,10 +94,13 @@ export class BackupService {
           remoteUrl,
           remoteProvider,
           status: "completed",
+          error: uploadError,
         })
         .returning();
 
-      await this.cleanupOldBackups();
+      await this.cleanupOldBackups().catch((err) => {
+        this.logger.warn({ err }, "Failed to clean up old backups");
+      });
       return this.toRecord(record!);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -139,6 +131,9 @@ export class BackupService {
   }
 
   getBackupFilePath(filename: string): string {
+    if (!filename || filename === "." || filename === ".." || !isValidBackupFilePrefix(filename)) {
+      throw new Error("Invalid backup filename");
+    }
     return join(this.backupDir, filename);
   }
 
@@ -149,8 +144,10 @@ export class BackupService {
     // Skip file cleanup for failed backups (no real file exists)
     if (row.status !== "failed") {
       // Delete local file
-      const filePath = join(this.backupDir, row.filename);
-      await unlink(filePath).catch(() => {});
+      const filePath = this.getBackupFilePath(row.filename);
+      await unlink(filePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "ENOENT") throw error;
+      });
 
       // Delete remote file
       if (row.remoteProvider) {
@@ -178,6 +175,9 @@ export class BackupService {
   }
 
   async saveConfig(config: BackupConfig): Promise<void> {
+    if (config.filePrefix !== undefined && !isValidBackupFilePrefix(config.filePrefix)) {
+      throw new Error("Invalid backup file prefix");
+    }
     const value = JSON.stringify(config);
     await this.db
       .insert(settings)
@@ -215,77 +215,46 @@ export class BackupService {
     for (const row of rows) {
       try {
         await this.deleteBackup(row.id);
-      } catch {
-        // Continue cleaning up other backups
+      } catch (err) {
+        this.logger.warn({ err, backupId: row.id }, "Failed to delete old backup");
       }
     }
   }
 
   private async getStorageProvider(config: BackupStorageConfig): Promise<StorageProvider | null> {
-    try {
-      return createStorageProvider(config, (encrypted) => decrypt(encrypted, this.encryptionKey));
-    } catch {
-      this.logger.error("Encryption key mismatch: cannot decrypt storage credentials");
-      return null;
-    }
+    return createStorageProvider(config, (encrypted) => decrypt(encrypted, this.encryptionKey));
   }
 
-  private runPgDump(filePath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let pipelineDone = false;
-      let exitCode: number | null = null;
-
-      const settle = (err?: Error) => {
-        if (settled) return;
-        settled = true;
-        if (err) reject(err);
-        else resolve();
-      };
-
-      const tryResolve = () => {
-        if (!pipelineDone || exitCode === null) return;
-        if (exitCode !== 0) {
-          settle(new Error(`pg_dump exited with code ${exitCode}`));
-        } else {
-          settle();
-        }
-      };
-
-      const child = execFile(
-        "pg_dump",
-        [this.databaseUrl, "--no-owner", "--no-privileges", "--clean", "--if-exists"],
-        { maxBuffer: 512 * 1024 * 1024 },
-      );
-
-      if (!child.stdout) {
-        settle(new Error("pg_dump stdout not available"));
-        return;
-      }
-
-      child.on("error", (err) => {
-        if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-          settle(new Error("pg_dump not found. Install postgresql-client to enable backups."));
-        } else {
-          settle(err);
-        }
-      });
-
-      const gzip = createGzip();
-      const outStream = createWriteStream(filePath);
-
-      pipeline(child.stdout, gzip, outStream)
-        .then(() => {
-          pipelineDone = true;
-          tryResolve();
-        })
-        .catch((err) => settle(err));
-
-      child.on("exit", (code) => {
-        exitCode = code ?? 1;
-        if (pipelineDone) tryResolve();
-      });
+  private async runPgDump(filePath: string): Promise<void> {
+    const child = spawn(
+      "pg_dump",
+      [this.databaseUrl, "--no-owner", "--no-privileges", "--clean", "--if-exists"],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let spawnError: Error | undefined;
+    child.on("error", (error) => {
+      spawnError = error;
     });
+    const closed = new Promise<number | null>((resolve) => child.once("close", resolve));
+    const output = pipeline(child.stdout!, createGzip(), createWriteStream(filePath));
+
+    try {
+      const [, code] = await Promise.all([output, closed]);
+      if (spawnError) throw spawnError;
+      if (code !== 0) throw new Error(`pg_dump exited with code ${code ?? 1}`);
+    } catch (error) {
+      // A failed destination must not leave pg_dump running after the backup lock is released.
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await closed;
+      await output.catch(() => {});
+      await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") this.logger.warn({ err }, "Failed to remove incomplete backup");
+      });
+      if ((spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+        throw new Error("pg_dump not found. Install postgresql-client to enable backups.");
+      }
+      throw spawnError ?? error;
+    }
   }
 
   private toRecord(row: typeof backups.$inferSelect): BackupRecord {

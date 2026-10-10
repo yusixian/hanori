@@ -233,6 +233,10 @@ export class HarnessService {
     this.work.scheduler.stop();
   }
 
+  close(): Promise<void> {
+    return this.work.scheduler.close();
+  }
+
   private requireConfig(): LoadedHarnessConfig {
     if (!this.loaded) throw new Error("Dev Harness config is not loaded");
     return this.loaded;

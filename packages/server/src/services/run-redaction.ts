@@ -4,12 +4,8 @@ const BEARER = /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi;
 const SENSITIVE_HEADER = /\b(authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+/gi;
 const SENSITIVE_LABEL =
   "authorization|proxy[-_ ]?authorization|api[-_ ]?key|(?:access|refresh|auth|bearer|bot|session|csrf)[-_ ]?token|token|secret|password|passwd|passphrase|cookie|credential";
-const QUOTED_CREDENTIAL = new RegExp(
-  `(["'])(${SENSITIVE_LABEL})\\1(\\s*:\\s*)(["'])(.*?)\\4`,
-  "gi",
-);
-const PLAIN_CREDENTIAL = new RegExp(
-  `\\b(${SENSITIVE_LABEL})\\b(\\s*[:=]\\s*)([^\\s,;&}\\]]+)`,
+const CREDENTIAL_ASSIGNMENT = new RegExp(
+  String.raw`(?<!\w)(["']?)(${SENSITIVE_LABEL})\1(\s*[:=]\s*)("(?:\\[\s\S]|[^"\\])*(?:"|\\?$)|'(?:\\[\s\S]|[^'\\])*(?:'|\\?$)|\[REDACTED\]|[^\s,;&}\]]+)`,
   "gi",
 );
 const MAX_DIAGNOSTIC_DEPTH = 12;
@@ -51,11 +47,12 @@ export function redactDiagnostic(value: unknown, secrets: string[] = []): unknow
       .replace(SENSITIVE_HEADER, "$1: [REDACTED]")
       .replace(BEARER, "Bearer [REDACTED]")
       .replace(
-        QUOTED_CREDENTIAL,
-        (_match, quote: string, key: string, separator: string, valueQuote: string) =>
-          `${quote}${key}${quote}${separator}${valueQuote}[REDACTED]${valueQuote}`,
-      )
-      .replace(PLAIN_CREDENTIAL, "$1$2[REDACTED]");
+        CREDENTIAL_ASSIGNMENT,
+        (_match, quote: string, key: string, separator: string, credential: string) => {
+          const valueQuote = /^["']/.test(credential) ? credential[0] : "";
+          return `${quote}${key}${quote}${separator}${valueQuote}[REDACTED]${valueQuote}`;
+        },
+      );
     for (const secret of secrets) {
       if (secret.length >= 4) result = result.split(secret).join("[REDACTED]");
     }
@@ -75,6 +72,10 @@ export function redactDiagnostic(value: unknown, secrets: string[] = []): unknow
     if (typeof input === "bigint") return input.toString();
     if (input instanceof Date)
       return Number.isNaN(input.getTime()) ? "Invalid Date" : input.toISOString();
+    if (ArrayBuffer.isView(input)) {
+      return { type: scrubString(input.constructor.name), byteLength: input.byteLength };
+    }
+    if (input instanceof ArrayBuffer) return { type: "ArrayBuffer", byteLength: input.byteLength };
     if (input instanceof Error) {
       if (seen.has(input)) return "[Circular]";
       if (depth >= MAX_DIAGNOSTIC_DEPTH) return "[truncated: diagnostic depth limit]";
@@ -90,7 +91,7 @@ export function redactDiagnostic(value: unknown, secrets: string[] = []): unknow
           ),
       );
       return {
-        name: input.name,
+        name: scrubString(input.name),
         message: scrubString(input.message),
         stack: input.stack ? scrubString(input.stack) : undefined,
         cause: visit(input.cause, "cause", depth + 1),

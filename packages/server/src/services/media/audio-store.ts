@@ -2,16 +2,20 @@ import { constants } from "node:fs";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { lstat, mkdir, open, readdir, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import {
-  inspectConvertedWav,
-  inspectConvertedWavFile,
-  type WavFileInspectionOptions,
-} from "./wav.js";
+import { inspectConvertedWavFile, type WavFileInspectionOptions } from "./wav.js";
 import { MAX_ASR_DURATION_SECONDS, MAX_ASR_WAV_BYTES } from "./long-audio.js";
 
 const ttlSeconds = 24 * 60 * 60;
 const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const filePattern = /^([a-f0-9-]{36})\.(\d{10})\.wav$/;
+
+async function unlinkIfExists(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 /** Only confirmed, validated audio can be staged. Signed URLs survive a host restart. */
 export class MediaAudioStore {
@@ -54,29 +58,6 @@ export class MediaAudioStore {
       (stat.mode & 0o077) !== 0
     )
       throw new Error("invalid_audio_store");
-  }
-  async stage(id: string, bytes: Buffer, signal?: AbortSignal): Promise<string> {
-    if (!uuid.test(id) || !this.origin) throw new Error("audio_url_unavailable");
-    inspectConvertedWav(bytes, 655);
-    signal?.throwIfAborted();
-    await this.root();
-    const expires = String(Math.floor(Date.now() / 1000) + ttlSeconds);
-    const path = join(this.directory, `${id}.${expires}.wav`);
-    const handle = await open(
-      path,
-      constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-      0o600,
-    );
-    try {
-      await handle.writeFile(bytes);
-      signal?.throwIfAborted();
-    } catch (error) {
-      await unlink(path).catch(() => undefined);
-      throw error;
-    } finally {
-      await handle.close();
-    }
-    return this.url(id, expires);
   }
   private url(id: string, expires: string) {
     const url = new URL(`/api/asr-audio/${id}`, this.origin);
@@ -153,8 +134,11 @@ export class MediaAudioStore {
       if (target && path) await unlink(path).catch(() => undefined);
       throw error;
     } finally {
-      await target?.close();
-      await source.close();
+      try {
+        await target?.close();
+      } finally {
+        await source.close();
+      }
     }
   }
   private authorized(id: string, expires: string, signature: string) {
@@ -210,41 +194,12 @@ export class MediaAudioStore {
       await handle?.close();
     }
   }
-  async read(id: string, expires: string, signature: string): Promise<Buffer | null> {
-    if (!this.authorized(id, expires, signature)) return null;
-    let handle;
-    try {
-      await this.root();
-      handle = await open(
-        join(this.directory, `${id}.${expires}.wav`),
-        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
-      );
-      const stat = await handle.stat();
-      if (
-        !stat.isFile() ||
-        stat.nlink !== 1 ||
-        stat.uid !== process.getuid?.() ||
-        (stat.mode & 0o077) !== 0 ||
-        stat.size > 20 * 1024 * 1024 ||
-        stat.size < 44
-      )
-        return null;
-      const bytes = await handle.readFile();
-      if (bytes.length !== stat.size) return null;
-      inspectConvertedWav(bytes, 655);
-      return bytes;
-    } catch {
-      return null;
-    } finally {
-      await handle?.close();
-    }
-  }
   async remove(id: string) {
     if (!uuid.test(id)) return;
     await this.root();
     for (const name of await readdir(this.directory)) {
       if (filePattern.test(name) && name.startsWith(`${id}.`))
-        await unlink(join(this.directory, name));
+        await unlinkIfExists(join(this.directory, name));
     }
   }
   async sweep() {
@@ -252,7 +207,7 @@ export class MediaAudioStore {
     const now = Math.floor(Date.now() / 1000);
     for (const name of await readdir(this.directory)) {
       const match = filePattern.exec(name);
-      if (match && Number(match[2]) <= now) await unlink(join(this.directory, name));
+      if (match && Number(match[2]) <= now) await unlinkIfExists(join(this.directory, name));
     }
   }
 }

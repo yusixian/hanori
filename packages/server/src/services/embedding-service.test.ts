@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   embedMany: vi.fn(),
 }));
 
-vi.mock("ai", () => mocks);
+vi.mock("ai", () => ({ ...mocks, wrapEmbeddingModel: ({ model }: { model: unknown }) => model }));
 vi.mock("@ai-sdk/openai-compatible", () => ({
   createOpenAICompatible: () => ({ embeddingModel: () => "embedding-model" }),
 }));

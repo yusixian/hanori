@@ -292,6 +292,70 @@ describe("CodingWorkerClient", () => {
     },
   );
 
+  it.each([204, 205, 304, 600, "truncated", "oversized"] as const)(
+    "settles malformed native HTTP responses (%s) and preserves the fresh boot boundary",
+    async (failure) => {
+      let healthCalls = 0;
+      const server = createServer((request, response) => {
+        if (request.url?.startsWith("/health?challenge=")) {
+          const signed = signedHealth(request.url, `boot-${++healthCalls}`);
+          void signed.json().then((body) => response.end(JSON.stringify(body)));
+          return;
+        }
+        response.setHeader("X-Coding-Worker-Accepted-Boot-Id", "boot-1");
+        if (failure === "truncated") {
+          response.writeHead(200, { "Content-Length": "100" });
+          response.write('{"ok":');
+          setTimeout(() => response.destroy(), 10);
+        } else if (failure === "oversized") {
+          response.end(Buffer.alloc(256 * 1024 + 1));
+        } else {
+          response.writeHead(failure).end();
+        }
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("HTTP test server did not bind");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(new Error("test response deadline")), 1000);
+      try {
+        const client = new CodingWorkerClient({
+          url: `http://127.0.0.1:${address.port}`,
+          secret: WORKER_SECRET,
+        });
+        const error = await client
+          .run(
+            {
+              workspacePath: "workspace",
+              task: "change code",
+              timeoutMs: 60_000,
+              model: {
+                apiKey: "model-secret",
+                baseURL: "https://example.com/v1",
+                id: "model",
+                providerFormat: "openai",
+                capabilities: ["tool_calling", "code"],
+              },
+            },
+            controller.signal,
+          )
+          .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).not.toContain("test response deadline");
+        expect(healthCalls).toBe(2);
+        if (failure === "oversized") expect((error as Error).message).toContain("too large");
+        else if (typeof failure === "number" && failure !== 600)
+          expect((error as Error).message).toContain(`Pi coding worker failed (${failure})`);
+      } finally {
+        clearTimeout(timeout);
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) =>
+          server.close((error) => (error ? reject(error) : resolve())),
+        );
+      }
+    },
+  );
+
   it("does not restart-wait when the HTTP worker disappears after preflight", async () => {
     const sleep = vi.fn(async () => {
       throw new Error("unexpected restart wait");

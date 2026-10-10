@@ -1,32 +1,36 @@
+import { abortable } from "../../utils/abortable.js";
 import { createHash, createHmac } from "node:crypto";
 import { ASR_TRANSCRIPT_BOUNDS, type TranscriptDocument } from "@cos-tool-bot/shared";
 import type { MediaJobConfiguration } from "../media-jobs/contracts.js";
 import { AsrClientError, createAsrClient, type AsrFailure } from "./asr.js";
 import { MediaHttpError, readMediaDocument, sendMediaJsonDocument } from "./http.js";
 import { inspectConvertedWav } from "./wav.js";
-import { MAX_ASR_DURATION_SECONDS } from "./long-audio.js";
+import { MAX_ASR_DURATION_SECONDS, MAX_TENCENT_INLINE_BYTES } from "./long-audio.js";
 
 export interface MediaAsrOptions {
   signal?: AbortSignal;
-  /** A trusted host creates a temporary URL for the exact validated audio. */
-  audioUrl?: string;
   onProviderTask?(id: string): Promise<void>;
 }
-export interface MediaAsrClient {
+interface ByteAsrClient {
   transcribeBytes(bytes: Buffer, options?: MediaAsrOptions): Promise<TranscriptDocument>;
+}
+interface UrlAsrClient {
   /** Duration comes from the host-validated PCM file, not video metadata or model input. */
-  transcribeUrl?(
+  transcribeUrl(
     url: string,
     durationSeconds: number,
     options?: MediaAsrOptions,
   ): Promise<TranscriptDocument>;
-  resume?(
+  resume(
     taskId: string,
     submittedAt: Date,
     signal?: AbortSignal,
     durationSeconds?: number,
   ): Promise<TranscriptDocument>;
 }
+
+export type MediaAsrClient = ByteAsrClient | UrlAsrClient;
+type AsrConfiguration = MediaJobConfiguration["asr"];
 
 const TENCENT_HOST = "asr.tencentcloudapi.com";
 const ALIYUN_HOST = "dashscope.aliyuncs.com";
@@ -84,7 +88,7 @@ function normalize(error: unknown, signal?: AbortSignal): AsrClientError {
     );
   return new AsrClientError("upstream_error");
 }
-function audioUrl(value: string | undefined): string {
+function audioUrl(value: string): string {
   try {
     if (!value || value.length > 4096 || /[\s\\]/.test(value)) invalid("invalid_configuration");
     const url = new URL(value);
@@ -109,7 +113,7 @@ function duration(value: number) {
 }
 function inputDuration(bytes: Buffer) {
   if (!Buffer.isBuffer(bytes)) invalid("invalid_file");
-  if (bytes.length > 20 * 1024 * 1024) invalid("too_large");
+  if (bytes.length > MAX_TENCENT_INLINE_BYTES) invalid("too_large");
   try {
     return inspectConvertedWav(bytes, MAX_AUDIO_SECONDS).durationSeconds;
   } catch {
@@ -145,14 +149,7 @@ function document(segments: unknown, audioSeconds: number, language?: string): T
   });
   return { source: "asr", track: "original", language: language ?? null, cues };
 }
-async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-  });
-}
+
 async function bounded<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   signal?: AbortSignal,
@@ -236,7 +233,7 @@ function tencentFailure(code: unknown): AsrFailure {
     return "invalid_configuration";
   return "upstream_error";
 }
-function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
+function tencentClient(config: AsrConfiguration): ByteAsrClient & UrlAsrClient {
   if (
     !config.secretId ||
     !/^[A-Za-z0-9]{1,128}$/.test(config.secretId) ||
@@ -290,7 +287,16 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
       },
     );
     const envelope = record(parse(response.bytes, true).Response);
-    if (envelope.Error) invalid(tencentFailure(record(envelope.Error).Code));
+    if (envelope.Error) {
+      const code = record(envelope.Error).Code;
+      if (
+        action === "DescribeTaskStatus" &&
+        typeof code === "string" &&
+        /^RequestLimitExceeded(?:\.|$)/.test(code)
+      )
+        throw new MediaHttpError("rate_limited");
+      invalid(tencentFailure(code));
+    }
     return record(envelope.Data);
   }
   async function wait(
@@ -369,9 +375,7 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
     async transcribeBytes(bytes, options = {}) {
       const seconds = inputDuration(bytes);
       return transcribe(
-        bytes.length <= 5 * 1024 * 1024
-          ? { SourceType: 1, Data: bytes.toString("base64"), DataLen: bytes.length }
-          : { SourceType: 0, Url: audioUrl(options.audioUrl) },
+        { SourceType: 1, Data: bytes.toString("base64"), DataLen: bytes.length },
         seconds,
         options,
       );
@@ -393,7 +397,7 @@ function tencentClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
   };
 }
 
-function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
+function aliyunClient(config: AsrConfiguration): UrlAsrClient {
   if (
     typeof config.apiKey !== "string" ||
     !/^[!-~]{1,4096}$/.test(config.apiKey) ||
@@ -517,9 +521,6 @@ function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
     );
   }
   return {
-    async transcribeBytes(bytes, options = {}) {
-      return transcribe(audioUrl(options.audioUrl), inputDuration(bytes), options);
-    },
     async transcribeUrl(url, seconds, options = {}) {
       return transcribe(audioUrl(url), duration(seconds), options);
     },
@@ -534,7 +535,17 @@ function aliyunClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
 }
 
 /** One explicitly selected provider per task. Submission is never retried or silently switched. */
-export function createMediaAsrClient(config: MediaJobConfiguration["asr"]): MediaAsrClient {
+export function createMediaAsrClient(
+  config: AsrConfiguration & { provider: "tencent" },
+): ByteAsrClient & UrlAsrClient;
+export function createMediaAsrClient(
+  config: AsrConfiguration & { provider: "tencent" | "aliyun" },
+): UrlAsrClient;
+export function createMediaAsrClient(
+  config: AsrConfiguration & { provider?: "openai" | "groq" },
+): ByteAsrClient;
+export function createMediaAsrClient(config: AsrConfiguration): MediaAsrClient;
+export function createMediaAsrClient(config: AsrConfiguration): MediaAsrClient {
   if (
     config.language !== undefined &&
     (typeof config.language !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(config.language))

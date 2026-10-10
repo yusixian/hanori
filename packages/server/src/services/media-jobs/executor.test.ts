@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   download: vi.fn(),
   transcribeBytes: vi.fn(),
   transcribeUrl: vi.fn(),
+  resume: vi.fn(),
   bilibili: vi.fn(),
   asr: vi.fn(),
 }));
@@ -54,6 +55,7 @@ vi.mock("../media/asr-providers.js", () => ({
       transcribeBytes: (bytes: Buffer, options?: { signal?: AbortSignal }) =>
         client.transcribeBytes(bytes, options?.signal),
       transcribeUrl: mocks.transcribeUrl,
+      resume: mocks.resume,
     };
   },
 }));
@@ -369,10 +371,43 @@ describe("media executor isolated conversion pipeline", () => {
     expect(stages).toEqual(["downloading", "converting", "transcribing"]);
   }, 15_000);
 
+  it.each([5 * 1024 * 1024 - 2, 5 * 1024 * 1024])(
+    "submits a %i-byte Tencent WAV without a public audio store",
+    async (size) => {
+      const seconds = (size - 44) / 32_000;
+      const output = pcm(seconds);
+      expect(output.length).toBe(size);
+      mocks.getVideo.mockResolvedValue({
+        ...video(),
+        parts: [{ part: 1, durationSeconds: seconds }],
+      });
+      fakeConverter(async (path) => {
+        await writeFile(path, output);
+        return metadata(output, seconds);
+      });
+      const config = {
+        ...configuration,
+        asr: { ...configuration.asr, provider: "tencent" as const },
+        limits: { ...configuration.limits, maxDurationSeconds: 200 },
+      };
+      expect(
+        await executor.execute(job({ durationSeconds: seconds, estimatedCost: 1 }), config, {
+          signal: signal(),
+          onStage,
+        }),
+      ).toEqual(document);
+      expect(mocks.transcribeUrl).not.toHaveBeenCalled();
+      expect(mocks.transcribeBytes).toHaveBeenCalledOnce();
+      expect((mocks.transcribeBytes.mock.calls[0]![0] as Buffer).equals(output)).toBe(true);
+      expect(stages).toEqual(["downloading", "converting", "transcribing"]);
+    },
+  );
+
   it("passes a one-hour verified file URL to Tencent without reading the full WAV into a Buffer", async () => {
     const seconds = 3600;
     const audioStore = new MediaAudioStore(root, "https://audio.example.com", SECRET);
     const stage = vi.spyOn(audioStore, "stageFile");
+    const remove = vi.spyOn(audioStore, "remove");
     const executor = new MediaJobExecutor(jobs, converter, process.getgid!(), socket, audioStore);
     mocks.getVideo.mockResolvedValue({
       ...video(),
@@ -420,6 +455,15 @@ describe("media executor isolated conversion pipeline", () => {
       timeoutMs: 30 * 60_000,
     });
     const url = new URL(mocks.transcribeUrl.mock.calls[0]![0]);
+    expect(remove).not.toHaveBeenCalled();
+    expect(
+      (
+        await lstat(
+          join(root, "asr-audio", `${inputJob.id}.${url.searchParams.get("expires")}.wav`),
+        )
+      ).size,
+    ).toBe(115_200_044);
+    await audioStore.remove(inputJob.id);
     expect(
       await audioStore.openStream(
         inputJob.id,
@@ -427,6 +471,21 @@ describe("media executor isolated conversion pipeline", () => {
         url.searchParams.get("signature")!,
       ),
     ).toBeNull();
+  });
+
+  it("returns a resumed provider result without deleting audio before persistence", async () => {
+    const audioStore = new MediaAudioStore(root, "https://audio.example.com", SECRET);
+    const remove = vi.spyOn(audioStore, "remove").mockRejectedValue(new Error("cleanup denied"));
+    const executor = new MediaJobExecutor(jobs, converter, process.getgid!(), socket, audioStore);
+    mocks.resume.mockResolvedValue(document);
+    expect(
+      await executor.resume(
+        job({ providerTaskId: "synthetic-provider-task", providerSubmittedAt: new Date() }),
+        configuration,
+        signal(),
+      ),
+    ).toEqual(document);
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("returns the subtitle flag without fetching or downloading audio during inspection", async () => {

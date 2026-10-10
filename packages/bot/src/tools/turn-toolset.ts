@@ -218,7 +218,7 @@ function createReplyMcpTools(
   mcp: McpToolsOptions,
   isAdmin: boolean,
 ): Record<string, Tool> {
-  const tools = createMcpTools(mcp, { includeAdminTools: isAdmin });
+  const tools = createMcpTools(mcp, { includeAdminTools: isAdmin }, input.interaction.onceGuard);
   const names = Object.keys(tools);
   if (names.length > 0) {
     input.onLog?.({ level: "info", message: `MCP tools injected: ${names.join(", ")}` });

@@ -82,5 +82,7 @@ export interface MediaJobDependencies {
   /** At-most-once terminal status notice in the original chat/topic. Never deliver transcript or provider errors here. */
   notify?(job: MediaJobRow): Promise<void>;
   cleanup?(jobId: string, attempt: number): Promise<void>;
+  /** Job-level artifacts can be removed only after the result is durably completed. */
+  cleanupCompleted?(jobId: string): Promise<void>;
   sweep?(): Promise<void>;
 }

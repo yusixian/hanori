@@ -17,7 +17,7 @@ const THINKING_PATTERNS: Array<{ re: RegExp; label: string }> = [
   { re: /<reasoning>[\s\S]*?<\/reasoning>/gi, label: "<reasoning>" },
   // Garbled proxy format: non-ASCII prefix + "thought" ... "(End thought)"
   {
-    re: /[^\x00-\x7F]+thought[\s\S]*?\(End thought\)/gi,
+    re: /[\u0080-\uFFFF]+thought[\s\S]*?\(End thought\)/gi,
     label: "garbled-thought",
   },
 ];
@@ -55,7 +55,7 @@ const TAG_PAIRS: Array<{
   { open: /<thought>/i, close: /<\/thought>/i, label: "<thought>" },
   { open: /<reasoning>/i, close: /<\/reasoning>/i, label: "<reasoning>" },
   {
-    open: /[^\x00-\x7F]+thought/i,
+    open: /[\u0080-\uFFFF]+thought/i,
     close: /\(End thought\)/i,
     label: "garbled-thought",
   },

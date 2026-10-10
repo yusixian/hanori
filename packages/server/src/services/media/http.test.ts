@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { createHash } from "node:crypto";
-import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, open, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -19,6 +19,10 @@ import {
   type MediaDownloadPolicy,
 } from "./http.js";
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, open: vi.fn(actual.open) };
+});
 vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
 vi.mock("node:https", () => ({ request: vi.fn() }));
 
@@ -42,8 +46,10 @@ function response(
   return stream;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetAllMocks();
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(open).mockImplementation(actual.open);
   pendingResponses.length = 0;
   requestBodies.length = 0;
   vi.mocked(lookup).mockResolvedValue([{ address: "8.8.8.8", family: 4 }] as never);
@@ -240,6 +246,50 @@ describe("bounded media file downloads", () => {
         await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
       } finally {
         vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each(["write", "close"] as const)(
+    "closes the real file and removes partial output after a %s failure",
+    async (failureStage) => {
+      const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      const path = join(directory, "failed.m4a");
+      const failure = Object.assign(new Error("Synthetic disk failure"), { code: "ENOSPC" });
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
+      let close: (() => Promise<void>) | undefined;
+      let persistedBytes = 0;
+      vi.mocked(open).mockImplementationOnce(async (...args) => {
+        handle = await actual.open(...args);
+        close = handle.close.bind(handle);
+        if (failureStage === "write") {
+          const write = handle.writeFile.bind(handle);
+          vi.spyOn(handle, "writeFile").mockImplementationOnce(async () => {
+            await write(mp4.subarray(0, 12));
+            persistedBytes = (await handle!.stat()).size;
+            throw failure;
+          });
+        } else {
+          vi.spyOn(handle, "close").mockImplementationOnce(async () => {
+            persistedBytes = (await handle!.stat()).size;
+            await close!();
+            throw failure;
+          });
+        }
+        return handle;
+      });
+      const stream = response(200, { "content-type": "audio/mp4" }, [mp4]);
+      try {
+        await expect(
+          downloadMediaFile("https://cdn.example.com/audio", audioPolicy, path),
+        ).rejects.toMatchObject({ code: "upstream_error" });
+        expect(persistedBytes).toBe(failureStage === "write" ? 12 : mp4.length);
+        expect(handle).toBeDefined();
+        await expect(handle!.stat()).rejects.toMatchObject({ code: "EBADF" });
+        await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+        expect(stream.destroyed).toBe(true);
+      } finally {
+        await close?.().catch(() => undefined);
       }
     },
   );

@@ -179,42 +179,27 @@ export class PendingActionRegistry {
 
   clearChat(chatId: number): void {
     for (const [id, poll] of this.polls) {
-      if (poll.chatId === chatId) {
-        if (poll.debounceTimer) clearTimeout(poll.debounceTimer);
-        this.polls.delete(id);
-      }
+      if (poll.chatId === chatId) this.removePoll(id);
     }
     for (const [id, choice] of this.choices) {
       if (choice.chatId === chatId) this.choices.delete(id);
     }
     for (const [id, timer] of this.timers) {
-      if (timer.chatId === chatId) {
-        clearTimeout(timer.handle);
-        this.timers.delete(id);
-      }
+      if (timer.chatId === chatId) this.removeTimer(id);
     }
   }
 
   destroy(): void {
     clearInterval(this.cleanupHandle);
-    for (const poll of this.polls.values()) {
-      if (poll.debounceTimer) clearTimeout(poll.debounceTimer);
-    }
-    for (const timer of this.timers.values()) {
-      clearTimeout(timer.handle);
-    }
-    this.polls.clear();
+    for (const id of this.polls.keys()) this.removePoll(id);
+    for (const id of this.timers.keys()) this.removeTimer(id);
     this.choices.clear();
-    this.timers.clear();
   }
 
   private cleanExpired(): void {
     const now = Date.now();
     for (const [id, poll] of this.polls) {
-      if (now - poll.createdAt > TTL_MS) {
-        if (poll.debounceTimer) clearTimeout(poll.debounceTimer);
-        this.polls.delete(id);
-      }
+      if (now - poll.createdAt > TTL_MS) this.removePoll(id);
     }
     for (const [id, choice] of this.choices) {
       if (now - choice.createdAt > TTL_MS) this.choices.delete(id);
@@ -222,10 +207,7 @@ export class PendingActionRegistry {
     for (const [id, timer] of this.timers) {
       const deadline =
         timer.expiresAt ?? timer.createdAt + (timer.persistent ? PERSISTENT_TTL_MS : TTL_MS);
-      if (now > deadline) {
-        clearTimeout(timer.handle);
-        this.timers.delete(id);
-      }
+      if (now > deadline) this.removeTimer(id);
     }
   }
 }

@@ -64,6 +64,7 @@ export async function extractWithYtdlp(
       child.stdin.on("error", () => stop(new YtdlpError("extractor_failed")));
       child.on("error", () => stop(new YtdlpError("unavailable")));
       child.on("close", (code) => {
+        buffer += decoder.end();
         finished = true;
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);

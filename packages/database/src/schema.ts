@@ -1393,6 +1393,19 @@ export const summaryConfigs = pgTable(
   (t) => [uniqueIndex("summary_configs_bot_chat_uniq").on(t.botId, t.chatId)],
 );
 
+// Global scheduling must not create per-chat overrides: their presence disables fallback.
+export const globalSummaryScheduleClaims = pgTable(
+  "global_summary_schedule_claims",
+  {
+    botId: uuid("bot_id")
+      .references(() => bots.id, { onDelete: "cascade" })
+      .notNull(),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    lastScheduledAt: timestamp("last_scheduled_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.botId, t.chatId] })],
+);
+
 export const chatSummaries = pgTable(
   "chat_summaries",
   {

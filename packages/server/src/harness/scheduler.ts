@@ -122,6 +122,8 @@ export function chooseMachine(
 export class HarnessScheduler {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running: Promise<void> | null = null;
+  private closing = false;
+  private closeTask?: Promise<void>;
   readonly queue: QueueWatch;
   private readonly reconciler: HarnessReconciler;
 
@@ -131,9 +133,17 @@ export class HarnessScheduler {
   }
 
   start() {
-    if (this.timer) return;
+    if (this.closing || this.timer) return;
     this.timer = setInterval(() => void this.tick(), TICK_MS);
     this.timer.unref();
+  }
+
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    this.stop();
+    this.closeTask = this.running ?? Promise.resolve();
+    return this.closeTask;
   }
 
   stop() {
@@ -143,6 +153,7 @@ export class HarnessScheduler {
 
   /** Overlapping ticks share one run. */
   tick(): Promise<void> {
+    if (this.closing) return Promise.resolve();
     this.running ??= this.runTick().finally(() => {
       this.running = null;
     });
@@ -161,7 +172,7 @@ export class HarnessScheduler {
       () => service.releases.poll(),
       () => this.reconciler.run(),
     ]) {
-      if (service.lodyUpdating) return;
+      if (this.closing || service.lodyUpdating) return;
       try {
         await step();
       } catch (error) {
@@ -269,6 +280,7 @@ export class HarnessScheduler {
     const agents = listed.ok ? await service.lody().listAgentConfigs() : null;
     const load = await this.load();
     for (const request of queued) {
+      if (this.closing) break;
       const config = this.work.config(request.projectKey);
       if (!config) continue;
       const limit = this.waitReason(config, request, load);
@@ -330,7 +342,7 @@ export class HarnessScheduler {
   ): Promise<boolean> {
     const { service } = this.work;
     return this.work.withRequest(request.id, async () => {
-      if (service.lodyUpdating) return false;
+      if (this.closing || service.lodyUpdating) return false;
       const now = service.now();
       if (
         !(await service.store.transitionRequest(request.id, [S.queued], S.starting, {

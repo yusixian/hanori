@@ -38,6 +38,17 @@ it("marks denied image admissions as failed and correlates accepted tasks withou
 });
 
 describe("toToolLogValue", () => {
+  it("redacts known secrets before truncating strings and error diagnostics", () => {
+    const secret = "fake-secret-123456";
+    const text = "x".repeat(16_380) + secret + "y".repeat(100);
+    const error = Object.assign(new Error(text), { responseBody: text });
+    for (const value of [text, { detail: text }, error]) {
+      const result = JSON.stringify(toToolLogValue(value, [secret]));
+      expect(result).not.toContain("fake");
+      expect(result).toContain("truncated");
+    }
+  });
+
   it("summarizes inline media while preserving ordinary data fields", () => {
     expect(
       toToolLogValue({

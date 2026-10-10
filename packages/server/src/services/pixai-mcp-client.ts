@@ -6,6 +6,8 @@ import {
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
+import type { PixaiMcpAuthSession } from "./pixai-mcp-oauth-provider.js";
+
 export const PIXAI_MCP_TOOL_NAMES = [
   "get_capabilities",
   "list_models",
@@ -74,8 +76,14 @@ interface PixaiMcpConnection {
   transport: StreamableHTTPClientTransport;
 }
 
+interface ActiveConnection extends PixaiMcpConnection {
+  authSession: PixaiMcpAuthSession;
+  connected: boolean;
+  pending?: Promise<void>;
+}
+
 export interface PixaiMcpClientOptions {
-  authProvider: OAuthClientProvider;
+  createAuthSession: () => PixaiMcpAuthSession;
   environment?: "production" | "non-production";
   endpointOverride?: string | URL;
   fetch?: typeof fetch;
@@ -83,6 +91,7 @@ export interface PixaiMcpClientOptions {
   onCallError?: (failure: {
     toolName: PixaiMcpToolName;
     code: PixaiMcpClientErrorCode;
+    isCurrent: () => boolean;
   }) => void | Promise<void>;
   connectionFactory?: (
     endpoint: URL,
@@ -124,11 +133,11 @@ export class PixaiMcpClient {
 
   private readonly callTimeoutMs: number;
   private readonly connectionFactory: NonNullable<PixaiMcpClientOptions["connectionFactory"]>;
-  private readonly authProvider: OAuthClientProvider;
+  private readonly createAuthSession: () => PixaiMcpAuthSession;
   private readonly fetchFn?: typeof fetch;
   private readonly onCallError?: PixaiMcpClientOptions["onCallError"];
-  private connection: PixaiMcpConnection | undefined;
-  private connected = false;
+  private connection: ActiveConnection | undefined;
+  private generation = 0;
 
   constructor(options: PixaiMcpClientOptions) {
     this.endpoint = resolvePixaiMcpEndpoint({
@@ -137,61 +146,80 @@ export class PixaiMcpClient {
     });
     this.callTimeoutMs = options.callTimeoutMs ?? 5 * 60 * 1000;
     this.connectionFactory = options.connectionFactory ?? createConnection;
-    this.authProvider = options.authProvider;
+    this.createAuthSession = options.createAuthSession;
     this.fetchFn = options.fetch;
     this.onCallError = options.onCallError;
     this.connection = this.createConnection();
   }
 
   async connect(): Promise<void> {
-    if (!this.connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
-    if (this.connected) return;
+    const connection = this.connection ?? (this.connection = this.createConnection());
+    if (!connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
+    if (connection.connected) return;
+    if (connection.pending) return connection.pending;
+    const pending = (async () => {
+      try {
+        await connection.client.connect(connection.transport);
+        if (this.connection !== connection) throw new PixaiMcpClientError("NOT_CONNECTED");
+        connection.connected = true;
+      } catch (error) {
+        throw new PixaiMcpClientError(
+          isUnauthorizedError(error) ? "AUTHORIZATION_REQUIRED" : "CONNECTION_FAILED",
+        );
+      }
+    })();
+    connection.pending = pending;
     try {
-      await this.connection.client.connect(this.connection.transport);
-      this.connected = true;
-    } catch (error) {
-      throw new PixaiMcpClientError(
-        isUnauthorizedError(error) ? "AUTHORIZATION_REQUIRED" : "CONNECTION_FAILED",
-      );
+      await pending;
+    } finally {
+      if (connection.pending === pending) connection.pending = undefined;
     }
   }
 
   async finishAuthorization(authorizationCode: string): Promise<void> {
-    if (!this.connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
+    const connection = this.connection;
+    if (!connection)
+      throw new PixaiMcpClientError(this.endpoint ? "NOT_CONNECTED" : "NOT_CONFIGURED");
     try {
-      await this.connection.transport.finishAuth(authorizationCode);
+      await connection.transport.finishAuth(authorizationCode);
+      if (this.connection !== connection) throw new PixaiMcpClientError("NOT_CONNECTED");
       try {
-        await this.connection.client.close();
+        await connection.client.close();
       } catch {
         // The unauthorized handshake may already have closed this client.
       }
-      const connection = this.createConnection();
-      if (!connection) throw new PixaiMcpClientError("NOT_CONFIGURED");
-      this.connection = connection;
-      await connection.client.connect(connection.transport);
-      this.connected = true;
+      if (this.connection !== connection) throw new PixaiMcpClientError("NOT_CONNECTED");
+      // Callback exchange and the replacement SDK transport share one revocable grant.
+      const replacement = this.createConnection(connection.authSession)!;
+      this.connection = replacement;
+      await this.connect();
     } catch {
       throw new PixaiMcpClientError("OAUTH_CALLBACK_FAILED");
     }
   }
 
   async close(): Promise<void> {
-    this.connected = false;
-    try {
-      await this.connection?.client.close();
-    } catch {
-      // Closing is best-effort and must not expose transport details.
-    } finally {
-      // MCP SDK Client/transport instances are single-session objects. OAuth reconnects
-      // start from a fresh pair while preserving the durable provider state.
-      this.connection = this.createConnection();
-    }
+    const connection = this.connection;
+    this.generation++;
+    this.connection = undefined;
+    if (!connection) return;
+    const drained = connection.authSession.revokeAndDrain();
+    await Promise.all([
+      drained,
+      connection.client.close().catch(() => {
+        // Closing is best-effort and must not expose transport details.
+      }),
+    ]);
   }
 
-  private createConnection(): PixaiMcpConnection | undefined {
-    return this.endpoint
-      ? this.connectionFactory(this.endpoint, this.authProvider, this.fetchFn)
-      : undefined;
+  private createConnection(authSession?: PixaiMcpAuthSession): ActiveConnection | undefined {
+    if (!this.endpoint) return undefined;
+    const session = authSession ?? this.createAuthSession();
+    return {
+      ...this.connectionFactory(this.endpoint, session.provider, this.fetchFn),
+      authSession: session,
+      connected: false,
+    };
   }
 
   getCapabilities<T = unknown>(signal?: AbortSignal): Promise<PixaiMcpToolResponse<T>> {
@@ -262,17 +290,19 @@ export class PixaiMcpClient {
     signal?: AbortSignal,
     timeoutMs = this.callTimeoutMs,
   ): Promise<PixaiMcpToolResponse<T>> {
-    if (!this.connected || !this.connection) {
+    const connection = this.connection;
+    if (!connection?.connected) {
       const error = new PixaiMcpClientError(this.endpoint ? "NOT_CONNECTED" : "NOT_CONFIGURED");
-      await this.notifyCallError(name, error.code);
+      await this.notifyCallError(name, error.code, connection);
       throw error;
     }
     try {
-      const rawValue = await this.connection.client.callTool({ name, arguments: args }, undefined, {
+      const rawValue = await connection.client.callTool({ name, arguments: args }, undefined, {
         signal,
         timeout: timeoutMs,
         maxTotalTimeout: timeoutMs,
       });
+      if (this.connection !== connection) throw new PixaiMcpClientError("NOT_CONNECTED");
       const parsed = CallToolResultSchema.safeParse(rawValue);
       if (!parsed.success) throw new PixaiMcpClientError("TOOL_RESULT_INVALID");
       const raw = parsed.data;
@@ -285,8 +315,9 @@ export class PixaiMcpClient {
           : new PixaiMcpClientError(
               isUnauthorizedError(error) ? "AUTHORIZATION_REQUIRED" : "TOOL_CALL_FAILED",
             );
-      if (mapped.code === "AUTHORIZATION_REQUIRED") this.connected = false;
-      await this.notifyCallError(name, mapped.code);
+      if (this.connection === connection && mapped.code === "AUTHORIZATION_REQUIRED")
+        connection.connected = false;
+      await this.notifyCallError(name, mapped.code, connection);
       throw mapped;
     }
   }
@@ -294,9 +325,13 @@ export class PixaiMcpClient {
   private async notifyCallError(
     toolName: PixaiMcpToolName,
     code: PixaiMcpClientErrorCode,
+    connection: ActiveConnection | undefined,
   ): Promise<void> {
+    const generation = this.generation;
+    const isCurrent = () => this.connection === connection && this.generation === generation;
+    if (!isCurrent()) return;
     try {
-      await this.onCallError?.({ toolName, code });
+      await this.onCallError?.({ toolName, code, isCurrent });
     } catch {
       // Connection diagnostics must never replace the sanitized MCP failure.
     }

@@ -16,6 +16,7 @@ import {
   type PluginTurnSession,
 } from "@cos-tool-bot/shared";
 import { and, eq, sql } from "drizzle-orm";
+import { InFlightTasks } from "../../utils/in-flight-tasks.js";
 import { PluginConfigStore, PluginConfigStoreError } from "./config-store.js";
 import { PluginLoginService, type PluginLoginServiceOptions } from "./login.js";
 import { GitPluginArtifacts } from "./git-artifacts.js";
@@ -58,6 +59,7 @@ interface ActiveSession {
 export class PluginManager implements PluginRuntimePort {
   private readonly configs: PluginConfigStore;
   private readonly definitions = new Map<string, Promise<PluginDefinition>>();
+  private readonly preparations = new InFlightTasks();
   private readonly active = new Set<ActiveSession>();
   private readonly runtimeErrors = new Map<string, string>();
   private mutation: Promise<unknown> = Promise.resolve();
@@ -408,23 +410,31 @@ export class PluginManager implements PluginRuntimePort {
     });
   }
 
+  // Track host reads only; uncooperative plugin promises keep their existing bounded wrappers.
+  private prepare<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.stopped) return Promise.reject(new PluginRuntimeError("plugin_stopped"));
+    return this.preparations.track(operation());
+  }
+
   private async openLogin(id: string, botId: string, start: PluginLoginStart, signal: AbortSignal) {
     if (this.stopped) throw new PluginRuntimeError("plugin_stopped");
-    const row = await this.installed(id);
+    const row = await this.prepare(() => this.installed(id));
     const manifest = this.manifest(row);
     if (!manifest.login) throw new PluginManagerError("invalid_installation");
-    const assertCurrent = async () => {
-      signal.throwIfAborted();
-      const current = await this.installed(id);
-      this.checkRevision(current, row.revision);
-      const state = await this.configs.get(botId, this.manifest(current));
-      if (state.revision !== start.expectedRevision)
-        throw new PluginConfigStoreError("stale_revision");
-      if (state.needsReview || state.manifestHash !== start.manifestHash)
-        throw new PluginConfigStoreError("manifest_changed");
-      signal.throwIfAborted();
-    };
+    const assertCurrent = () =>
+      this.prepare(async () => {
+        signal.throwIfAborted();
+        const current = await this.installed(id);
+        this.checkRevision(current, row.revision);
+        const state = await this.configs.get(botId, this.manifest(current));
+        if (state.revision !== start.expectedRevision)
+          throw new PluginConfigStoreError("stale_revision");
+        if (state.needsReview || state.manifestHash !== start.manifestHash)
+          throw new PluginConfigStoreError("manifest_changed");
+        signal.throwIfAborted();
+      });
     await assertCurrent();
+    signal.throwIfAborted();
     const definition = await this.definition(row);
     if (!definition.startLogin) throw new PluginManagerError("invalid_installation");
     signal.throwIfAborted();
@@ -443,9 +453,12 @@ export class PluginManager implements PluginRuntimePort {
   }
 
   async checkBot(id: string, botId: string): Promise<{ success: boolean }> {
-    const row = await this.installed(id);
-    const state = await this.configs.runtime(botId, this.manifest(row));
-    if (!state) return { success: false };
+    const { row, state } = await this.prepare(async () => {
+      const row = await this.installed(id);
+      const state = await this.configs.runtime(botId, this.manifest(row));
+      return { row, state };
+    });
+    if (!state || this.stopped) return { success: false };
     const controller = new AbortController();
     const active: ActiveSession = {
       botId,
@@ -489,14 +502,15 @@ export class PluginManager implements PluginRuntimePort {
     }
   }
 
-  private async assertCurrent(row: Installation, botId: string, revision: number): Promise<void> {
-    if (this.stopped) throw new PluginRuntimeError("plugin_stopped");
-    const installed = await this.installed(row.id);
-    if (installed.revision !== row.revision || installed.commit !== row.commit)
-      throw new PluginRuntimeError("plugin_stopped");
-    const current = await this.configs.get(botId, this.manifest(installed));
-    if (!current.enabled || current.needsReview || current.revision !== revision)
-      throw new PluginRuntimeError("plugin_stopped");
+  private assertCurrent(row: Installation, botId: string, revision: number): Promise<void> {
+    return this.prepare(async () => {
+      const installed = await this.installed(row.id);
+      if (installed.revision !== row.revision || installed.commit !== row.commit)
+        throw new PluginRuntimeError("plugin_stopped");
+      const current = await this.configs.get(botId, this.manifest(installed));
+      if (this.stopped || !current.enabled || current.needsReview || current.revision !== revision)
+        throw new PluginRuntimeError("plugin_stopped");
+    });
   }
 
   async createSession(actor: PluginActor, signal?: AbortSignal): Promise<PluginTurnSession> {
@@ -509,12 +523,12 @@ export class PluginManager implements PluginRuntimePort {
       },
     };
     const created: ActiveSession[] = [];
-    const rows = await this.db
-      .select()
-      .from(pluginInstallations)
-      .where(eq(pluginInstallations.isInstalled, true));
+    const rows = await this.prepare(async () =>
+      this.db.select().from(pluginInstallations).where(eq(pluginInstallations.isInstalled, true)),
+    );
     try {
       for (const row of rows) {
+        if (this.stopped) break;
         signal?.throwIfAborted();
         const controller = new AbortController();
         const combined = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
@@ -547,8 +561,10 @@ export class PluginManager implements PluginRuntimePort {
           },
         };
         try {
-          const state = await this.configs.runtime(actor.botId, this.manifest(row));
-          if (!state) continue;
+          const state = await this.prepare(() =>
+            this.configs.runtime(actor.botId, this.manifest(row)),
+          );
+          if (!state || this.stopped) continue;
           this.active.add(active);
           created.push(active);
           await this.assertCurrent(row, actor.botId, state.revision);
@@ -616,5 +632,6 @@ export class PluginManager implements PluginRuntimePort {
     await this.logins.close();
     await Promise.allSettled([...this.active].map((entry) => entry.stop()));
     await this.mutation;
+    await this.preparations.drain();
   }
 }

@@ -1,6 +1,7 @@
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { IMAGE_EXTENSIONS, getDataDir } from "@cos-tool-bot/shared";
+import { IMAGE_EXTENSIONS } from "@cos-tool-bot/shared";
+import { getDataDir, resolveAndValidate } from "@cos-tool-bot/shared/file-validation";
 import type { Logger } from "pino";
 
 const GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS = 30_000;
@@ -29,15 +30,20 @@ export async function downloadGenerationImages(
       const ext = guessExtension(url);
       const filename = `${taskId}_${i}${ext}`;
       try {
+        const target = resolveAndValidate(dir, filename);
+        if (path.basename(filename) !== filename || !target) {
+          throw new Error("Invalid generation image filename");
+        }
         const res = await fetch(url, {
           signal: AbortSignal.timeout(GENERATION_IMAGE_DOWNLOAD_TIMEOUT_MS),
         });
         if (!res.ok) {
+          await res.body?.cancel().catch(() => {});
           logger.warn({ taskId, index: i, status: res.status }, "PixAI image download failed");
           return null;
         }
         const buffer = Buffer.from(await res.arrayBuffer());
-        await writeFile(path.join(dir, filename), buffer);
+        await writeFile(target, buffer);
         return filename;
       } catch (err) {
         logger.warn(err, `PixAI image download error: task=${taskId} index=${i}`);
@@ -57,7 +63,11 @@ export async function cleanupGenerationImages(
   await Promise.all(
     localFiles.map(async (filename) => {
       try {
-        await unlink(path.join(dir, filename));
+        const target = resolveAndValidate(dir, filename);
+        if (path.basename(filename) !== filename || !target) {
+          throw new Error("Invalid generation image filename");
+        }
+        await unlink(target);
       } catch (err) {
         logger.warn(err, `PixAI image cleanup error: file=${filename}`);
       }

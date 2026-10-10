@@ -235,3 +235,38 @@ describe("send_choice callback continuation", () => {
     expect(continueChatMock).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { chat: { id: -200 }, message_id: 77 },
+  { chat: { id: CHAT_ID }, message_id: 78 },
+  undefined,
+])("rejects a choice callback from a different or missing source message: %j", async (message) => {
+  continueChatMock.mockResolvedValue(true);
+  const registry = createRegistry();
+  const { api, editMessageText } = createApi();
+  const handler = createHandler(api, registry);
+  await handler({ callbackQuery: { ...callback().callbackQuery, message } });
+  expect(registry.getChoice("choice-1")?.resolved).toBe(false);
+  expect(continueChatMock).not.toHaveBeenCalled();
+  expect(editMessageText).not.toHaveBeenCalled();
+  await handler(callback());
+  expect(continueChatMock).toHaveBeenCalledOnce();
+});
+
+it.each(["-1", "2", "0junk", "0.5", "", "9007199254740992"])(
+  "does not consume a choice for invalid option index %j",
+  async (index) => {
+    continueChatMock.mockResolvedValue(true);
+    const registry = createRegistry();
+    const { api, editMessageText } = createApi();
+    const handler = createHandler(api, registry);
+    const ctx = callback();
+    ctx.callbackQuery.data = `cos:c:choice-1:${index}`;
+    await handler(ctx);
+    expect(registry.getChoice("choice-1")?.resolved).toBe(false);
+    expect(continueChatMock).not.toHaveBeenCalled();
+    expect(editMessageText).not.toHaveBeenCalled();
+    await handler(callback());
+    expect(continueChatMock).toHaveBeenCalledOnce();
+  },
+);

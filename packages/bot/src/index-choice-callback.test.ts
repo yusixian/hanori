@@ -74,14 +74,14 @@ function messageUpdate() {
   };
 }
 
-function callbackUpdate(data: string) {
+function callbackUpdate(data: string, messageId: number) {
   return {
     update_id: 2,
     callback_query: {
       id: "callback-1",
       from: { id: USER_ID, is_bot: false, first_name: "Tester" },
       message: {
-        message_id: 101,
+        message_id: messageId,
         date: 1_700_000_001,
         chat: { id: CHAT_ID, type: "supergroup", title: "Test Group" },
         text: "选择一个",
@@ -173,7 +173,13 @@ describe("createBot send_choice callback ingress", () => {
       await bot.handleUpdate(messageUpdate() as never);
       await vi.waitFor(() => expect(choiceData).toMatch(/^cos:c:[^:]+:0$/));
 
-      callback = bot.handleUpdate(callbackUpdate(choiceData) as never);
+      const choiceRequestIndex = testState.requests.findIndex(
+        ({ method, body }) =>
+          method === "sendMessage" && (body as { text?: string } | undefined)?.text === "选择一个",
+      );
+      expect(choiceRequestIndex).toBeGreaterThanOrEqual(0);
+      const choiceMessageId = choiceRequestIndex + 101;
+      callback = bot.handleUpdate(callbackUpdate(choiceData, choiceMessageId) as never);
       await vi.waitFor(() => {
         expect(testState.requests.some(({ method }) => method === "answerCallbackQuery")).toBe(
           true,

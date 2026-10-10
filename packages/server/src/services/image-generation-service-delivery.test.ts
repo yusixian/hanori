@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
-import { getDataDir } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import type { Database } from "@cos-tool-bot/database";
 import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -484,4 +484,29 @@ describe("image delivery provenance and safe recovery", () => {
     expect(keys[0]).not.toBe(keys[2]);
     expect(deps.pixai.startGeneration).not.toHaveBeenCalled();
   });
+});
+
+it("waits for an admitted delivery receipt during close without sending it again", async () => {
+  const { service, deliver, row } = setup();
+  let receipt!: (ids: number[]) => void;
+  deliver.mockReturnValue(
+    new Promise<number[]>((resolve) => {
+      receipt = resolve;
+    }),
+  );
+  const recovery = service.recoverPending();
+  await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+  let closed = false;
+  const close = service.close().then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
+  receipt([456]);
+  await recovery;
+  await close;
+  expect(row.deliveryMessageIds).toEqual([456]);
+  expect(row.deliveredAt).toBeInstanceOf(Date);
+  expect(deliver).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });

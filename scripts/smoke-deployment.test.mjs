@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  deploymentProbe,
+  expectedMigrationHashes,
   assertLocalDockerEndpoint,
   assertSmokeConfig,
   smokeHostEnvironment,
@@ -202,4 +206,87 @@ describe("deployment smoke failure handling", () => {
       }
     },
   );
+});
+
+describe("deployment credential probe", () => {
+  const sha = "a".repeat(40);
+  const password = "synthetic-original-password";
+  const expectedToken = "123:abcdefghi";
+  async function runProbe({
+    tokenMasked = "123:abc***ghi",
+    loginOk = true,
+    wrongKey = false,
+  } = {}) {
+    const exit = vi.fn();
+    const fetch = vi.fn(async (url, init) => {
+      if (url.endsWith("/api/health/ready"))
+        return { ok: true, json: async () => ({ status: "ready", version: sha }) };
+      if (url.endsWith("/api/auth/sign-in/email")) {
+        expect(JSON.parse(init.body).password).toBe(password);
+        return {
+          ok: loginOk,
+          headers: {
+            get: () => "session=synthetic",
+            getSetCookie: () => ["session=synthetic; HttpOnly"],
+          },
+        };
+      }
+      if (url.endsWith("/api/bots") && !init) return { status: 401 };
+      if (url.endsWith("/api/bots/bot-id"))
+        return {
+          ok: true,
+          json: async () => ({ ok: true, data: { id: "bot-id", isActive: false, tokenMasked } }),
+        };
+      return { ok: true, headers: { get: () => "text/html" } };
+    });
+    await runInNewContext(
+      deploymentProbe({ sha, password, expectedToken, botId: "bot-id", wrongKey }),
+      {
+        fetch,
+        console: { error: vi.fn() },
+        process: { exit, env: { PANEL_PASSWORD: "" } },
+      },
+    );
+    return exit;
+  }
+  it("authenticates with the original password while bootstrap is disabled", async () => {
+    expect(await runProbe()).not.toHaveBeenCalled();
+  });
+  it("rejects HTTP 200 with an undecryptable credential", async () => {
+    expect(await runProbe({ tokenMasked: "(密钥不匹配)" })).toHaveBeenCalledExactlyOnceWith(1);
+  });
+  it("checks the negative wrong-key case rather than accepting any HTTP 200", async () => {
+    expect(await runProbe({ wrongKey: true, tokenMasked: "(密钥不匹配)" })).not.toHaveBeenCalled();
+    expect(await runProbe({ wrongKey: true })).toHaveBeenCalledExactlyOnceWith(1);
+  });
+  it("fails if the original credential account cannot sign in", async () => {
+    expect(await runProbe({ loginOk: false })).toHaveBeenCalledExactlyOnceWith(1);
+  });
+});
+
+describe("candidate migration evidence", () => {
+  it("compares SQL content hashes in journal order, not just migration count", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "smoke-migrations-"));
+    try {
+      const folder = join(directory, "packages/database/drizzle");
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(join(folder, "meta"), { recursive: true });
+      writeFileSync(
+        join(folder, "meta/_journal.json"),
+        JSON.stringify({ entries: [{ tag: "first" }, { tag: "next" }] }),
+      );
+      writeFileSync(join(folder, "first.sql"), "CREATE TABLE first (id int);");
+      writeFileSync(join(folder, "next.sql"), "ALTER TABLE first ADD name text;");
+      const hashes = await expectedMigrationHashes(directory);
+      expect(hashes).toEqual(
+        ["CREATE TABLE first (id int);", "ALTER TABLE first ADD name text;"].map((sql) =>
+          createHash("sha256").update(sql).digest("hex"),
+        ),
+      );
+      writeFileSync(join(folder, "next.sql"), "SELECT 1;");
+      expect(await expectedMigrationHashes(directory)).not.toEqual(hashes);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });

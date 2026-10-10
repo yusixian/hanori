@@ -1071,6 +1071,19 @@ export class MediaJobService implements MediaTranscriptionPort {
   }
   private async cleanup(id: string, attempt: number) {
     if (await this.performCleanup(id, attempt)) {
+      if (this.deps.cleanupCompleted) {
+        const [completed] = await this.db
+          .select({ id: jobs.id })
+          .from(jobs)
+          .where(and(eq(jobs.id, id), eq(jobs.attempt, attempt), eq(jobs.status, "completed")));
+        if (completed) {
+          try {
+            await this.deps.cleanupCompleted(id);
+          } catch {
+            return;
+          }
+        }
+      }
       await this.db
         .update(jobs)
         .set({ cleanupPending: false })

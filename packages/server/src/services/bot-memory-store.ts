@@ -44,6 +44,15 @@ function toDto(row: typeof botMemories.$inferSelect): BotMemory {
   };
 }
 
+// API edit tokens have millisecond precision. Keep every version advance on the database
+// clock and strictly above the previous token, including dedup touches.
+function nextMemoryUpdatedAt() {
+  return sql`greatest(
+    date_trunc('milliseconds', clock_timestamp() at time zone 'UTC'),
+    date_trunc('milliseconds', coalesce(${botMemories.updatedAt}, ${botMemories.createdAt})) + interval '1 millisecond'
+  )`;
+}
+
 function agentMutationScope(access?: BotMemoryAccess) {
   if (!access) return undefined;
   const chatScope = eq(botMemories.scopeChatId, access.chatId);
@@ -328,12 +337,7 @@ export class BotMemoryStore {
       .update(botMemories)
       .set({
         ...updates,
-        // Database DEFAULT now() may have microseconds, while the API version is milliseconds.
-        // Advance the stored version by at least one millisecond for a reliable CAS token.
-        updatedAt: sql`greatest(
-          date_trunc('milliseconds', clock_timestamp() at time zone 'UTC'),
-          date_trunc('milliseconds', coalesce(${botMemories.updatedAt}, ${botMemories.createdAt})) + interval '1 millisecond'
-        )`,
+        updatedAt: nextMemoryUpdatedAt(),
         ...(data.content === undefined
           ? {}
           : {
@@ -413,41 +417,12 @@ export class BotMemoryStore {
       limit?: number;
     },
   ): Promise<BotMemory[]> {
-    const limit = params.limit ?? 20;
-    const conditions = [
-      eq(botMemories.botId, botId),
-      eq(botMemories.isActive, true),
-      or(isNull(botMemories.expiresAt), gt(botMemories.expiresAt, new Date()))!,
-      params.scopeChatId == null
-        ? isNull(botMemories.scopeChatId)
-        : or(isNull(botMemories.scopeChatId), eq(botMemories.scopeChatId, params.scopeChatId))!,
-    ];
-    if (params.telegramId != null) {
-      conditions.push(
-        or(
-          isNull(botMemories.telegramId),
-          and(
-            eq(botMemories.telegramId, params.telegramId),
-            params.includeUnscopedPersonal === false
-              ? params.scopeChatId == null
-                ? sql`1=0`
-                : eq(botMemories.scopeChatId, params.scopeChatId)
-              : undefined,
-          ),
-        )!,
-      );
-    } else {
-      conditions.push(isNull(botMemories.telegramId));
-    }
-
-    const rows = await this.db
-      .select()
-      .from(botMemories)
-      .where(and(...conditions))
-      .orderBy(desc(botMemories.updatedAt))
-      .limit(limit);
-
-    return rows.map(toDto);
+    return this.recallMemories(botId, {
+      telegramId: params.telegramId,
+      scopeChatId: params.scopeChatId,
+      includeUnscopedPersonal: params.includeUnscopedPersonal,
+      limit: params.limit,
+    });
   }
 
   async getCategories(botId: string): Promise<string[]> {
@@ -539,7 +514,7 @@ export class BotMemoryStore {
   async touchMemory(memoryId: number): Promise<void> {
     await this.db
       .update(botMemories)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: nextMemoryUpdatedAt() })
       .where(eq(botMemories.id, memoryId));
   }
 }

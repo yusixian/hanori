@@ -479,3 +479,65 @@ describe("UsageGovernor", () => {
     if (!result.allowed) expect(result.retryAt).toEqual(new Date("2026-08-31T16:00:00.000Z"));
   });
 });
+
+it("continues expired reservation recovery after one transaction fails and retries only the pending row", async () => {
+  const state = createRepository();
+  const governor = new UsageGovernor(state.repository, "UTC");
+  for (const userId of [42, 43]) {
+    const result = await governor.reserve({
+      botId: BOT_ID,
+      resource: "image",
+      chatKind: "group",
+      chatId: -100,
+      userId,
+      now: NOW,
+      reservationTtlMs: 60_000,
+    });
+    expect(result.allowed).toBe(true);
+  }
+  const failure = new Error("transaction unavailable");
+  vi.mocked(state.tx.lock).mockRejectedValueOnce(failure);
+  const expiredAt = new Date(NOW.getTime() + 60_000);
+  const result = await governor
+    .reclaimExpiredReservations(expiredAt)
+    .catch((error: unknown) => error);
+  expect(state.reservations.map((row) => row.status)).toEqual(["reserved", "refunded"]);
+  expect(result).toBeInstanceOf(AggregateError);
+  await expect(governor.reclaimExpiredReservations(expiredAt)).resolves.toBe(1);
+  expect(state.reservations.map((row) => row.status)).toEqual(["refunded", "refunded"]);
+  expect(state.events.filter((event) => event.eventType === "refunded")).toHaveLength(2);
+  expect([...state.buckets.values()].every((units) => units === 0)).toBe(true);
+});
+
+it("aggregates every missing candidate while still visiting the whole batch", async () => {
+  const state = createRepository();
+  const governor = new UsageGovernor(state.repository, "UTC");
+  vi.mocked(state.tx.listExpiredReservations).mockResolvedValueOnce([
+    { id: "deleted-a", botId: BOT_ID, resource: "image" },
+    { id: "deleted-b", botId: BOT_ID, resource: "image" },
+  ]);
+  const result = await governor.reclaimExpiredReservations(NOW).catch((error: unknown) => error);
+  expect(result).toBeInstanceOf(AggregateError);
+  if (!(result instanceof AggregateError)) throw new Error("expected aggregate failure");
+  expect(result.errors).toEqual([
+    expect.objectContaining({
+      message: "Failed to reclaim reservation deleted-a",
+      cause: expect.objectContaining({ code: "RESERVATION_NOT_FOUND" }),
+    }),
+    expect.objectContaining({
+      message: "Failed to reclaim reservation deleted-b",
+      cause: expect.objectContaining({ code: "RESERVATION_NOT_FOUND" }),
+    }),
+  ]);
+  expect(state.tx.getReservationForUpdate).toHaveBeenCalledTimes(2);
+  expect(state.tx.adjustBuckets).not.toHaveBeenCalled();
+});
+
+it("preserves candidate-query failure without attempting refunds", async () => {
+  const state = createRepository();
+  const governor = new UsageGovernor(state.repository, "UTC");
+  const error = new Error("candidate query failed");
+  vi.mocked(state.tx.listExpiredReservations).mockRejectedValueOnce(error);
+  await expect(governor.reclaimExpiredReservations(NOW)).rejects.toBe(error);
+  expect(state.tx.getReservationForUpdate).not.toHaveBeenCalled();
+});

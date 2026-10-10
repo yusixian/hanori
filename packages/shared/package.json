@@ -8,10 +8,22 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./file-validation": {
+      "types": "./src/file-validation.ts",
+      "browser": null,
+      "development": "./src/file-validation.ts",
+      "default": "./dist/file-validation.js"
+    },
+    "./file-reader": {
+      "types": "./src/file-reader.ts",
+      "browser": null,
+      "development": "./src/file-reader.ts",
+      "default": "./dist/file-reader.js"
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts",
+    "build": "tsdown src/index.ts src/file-validation.ts src/file-reader.ts --format esm --dts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

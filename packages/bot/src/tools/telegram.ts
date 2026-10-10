@@ -2,9 +2,9 @@ import type { TimeoutConfig } from "@cos-tool-bot/shared";
 import {
   DEFAULT_TIMEOUT_CONFIG,
   MAX_FILE_SIZE,
-  resolveAndValidate,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
+import { resolveAndValidate } from "@cos-tool-bot/shared/file-validation";
 import type { Tool } from "ai";
 import { tool } from "ai";
 import type { Api } from "grammy";
@@ -45,7 +45,7 @@ export interface TelegramToolsOptions {
     reason: string;
     handle: ReturnType<typeof setTimeout>;
   }) => void | Promise<void>;
-  onTimerCancel?: (timerId: string) => void;
+  onTimerCancel?: (timerId: string) => void | Promise<void>;
   onTimerFiredPersist?: (timerId: string) => Promise<void>;
   onceGuard?: OnceGuardContext;
   dataDir?: string;
@@ -438,9 +438,12 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
           if (!options.pendingActions) {
             return { error: "Timer features not available" };
           }
-          const removed = options.pendingActions.removeTimer(timer_id);
-          if (!removed) return { error: "Timer not found or already expired" };
-          options.onTimerCancel?.(timer_id);
+          const pending = options.pendingActions.getTimer(timer_id);
+          if (!pending || pending.chatId !== chatId) {
+            return { error: "Timer not found or already expired" };
+          }
+          await options.onTimerCancel?.(timer_id);
+          options.pendingActions.removeTimer(timer_id);
           return { success: true, cancelled_timer_id: timer_id };
         } catch (err) {
           return { error: String(err) };

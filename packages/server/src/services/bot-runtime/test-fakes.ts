@@ -134,6 +134,7 @@ export function runtimeServices(
 export function runtimeHost(overrides: Partial<BotRuntimeHost> = {}): BotRuntimeHost {
   return {
     restartBot: async () => {},
+    createDeferredRestart: () => () => {},
     withAiConfigLock: (_botId, operation) => operation(),
     isDelegatedGroupAdmin: async () => false,
     triggerConversationCleanup: () => {},

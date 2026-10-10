@@ -1,9 +1,10 @@
+import { InFlightTasks } from "../utils/in-flight-tasks.js";
 import type { Database } from "@cos-tool-bot/database";
 import { rssCollections, rssFeeds, rssItems } from "@cos-tool-bot/database";
 import type { RssCollectionRecord, RssFeedRecord, RssItemRecord } from "@cos-tool-bot/shared";
 import { and, desc, eq, isNotNull, isNull, lt, inArray, sql } from "drizzle-orm";
 import type { Logger } from "pino";
-import Parser from "rss-parser";
+import { fetchRssFeed } from "./rss-feed-fetch.js";
 import {
   buildDigestEventDescription,
   mapCollectionRecord,
@@ -15,7 +16,6 @@ import {
 
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 const DIGEST_CHECK_INTERVAL_MS = 60 * 1000; // 1 minute
-const FETCH_TIMEOUT_MS = 15_000;
 const MAX_CONCURRENT_FETCHES = 5;
 const MAX_SUMMARY_LENGTH = 500;
 const CLEANUP_DAYS = 30;
@@ -27,9 +27,12 @@ export type RssDigestTrigger = (
 ) => boolean | Promise<boolean>;
 
 export class RssFeedService {
+  private closing = false;
+  private closeTask?: Promise<void>;
+  private readonly tasks = new InFlightTasks();
+  private initialPollTimer: ReturnType<typeof setTimeout> | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private digestTimer: ReturnType<typeof setInterval> | null = null;
-  private parser = new Parser({ timeout: FETCH_TIMEOUT_MS });
   private onDigestTrigger?: RssDigestTrigger;
   private lastCleanupAt = 0;
   private digestInFlight = new Set<number>();
@@ -44,6 +47,7 @@ export class RssFeedService {
   }
 
   start() {
+    if (this.closing || this.pollTimer) return;
     this.pollTimer = setInterval(() => {
       this.pollAllFeeds().catch((err) => {
         this.logger.error(err, "RSS poll cycle failed");
@@ -52,23 +56,29 @@ export class RssFeedService {
     this.pollTimer.unref();
 
     this.digestTimer = setInterval(() => {
-      this.checkDigests().catch((err) => {
+      this.execute(() => this.checkDigests()).catch((err) => {
         this.logger.error(err, "RSS digest check failed");
       });
     }, DIGEST_CHECK_INTERVAL_MS);
     this.digestTimer.unref();
 
     // Initial poll after a short delay
-    setTimeout(() => {
+    this.initialPollTimer = setTimeout(() => {
+      this.initialPollTimer = null;
       this.pollAllFeeds().catch((err) => {
         this.logger.error(err, "RSS initial poll failed");
       });
     }, 5000);
+    this.initialPollTimer.unref();
 
     this.logger.info("RSS feed service started");
   }
 
   stop() {
+    if (this.initialPollTimer) {
+      clearTimeout(this.initialPollTimer);
+      this.initialPollTimer = null;
+    }
     if (this.pollTimer) {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
@@ -80,9 +90,26 @@ export class RssFeedService {
     this.logger.info("RSS feed service stopped");
   }
 
+  close(): Promise<void> {
+    if (this.closeTask) return this.closeTask;
+    this.closing = true;
+    this.stop();
+    this.closeTask = this.tasks.drain();
+    return this.closeTask;
+  }
+
+  private execute<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new Error("RSS service is closing"));
+    return this.tasks.track(operation());
+  }
+
   // ── Polling ──
 
-  async pollAllFeeds() {
+  pollAllFeeds(): Promise<void> {
+    return this.execute(() => this.pollAllFeedsImpl());
+  }
+
+  private async pollAllFeedsImpl() {
     const activeCollections = await this.db
       .select({ id: rssCollections.id })
       .from(rssCollections)
@@ -107,21 +134,25 @@ export class RssFeedService {
       this.logger.info(`RSS poll: ${totalNew} new items from ${feeds.length} feeds`);
     }
 
-    // Cleanup old digested items (at most once per day)
+    // Throttle successful cleanup; a failed attempt can retry on the next poll.
     if (Date.now() - this.lastCleanupAt > 24 * 60 * 60 * 1000) {
       try {
         const cutoff = new Date(Date.now() - CLEANUP_DAYS * 24 * 60 * 60 * 1000);
         await this.db
           .delete(rssItems)
           .where(and(isNotNull(rssItems.digestedAt), lt(rssItems.digestedAt, cutoff)));
+        this.lastCleanupAt = Date.now();
       } catch (err) {
         this.logger.warn(err, "RSS cleanup failed");
       }
-      this.lastCleanupAt = Date.now();
     }
   }
 
-  async pollCollection(collectionId: number) {
+  pollCollection(collectionId: number): Promise<number> {
+    return this.execute(() => this.pollCollectionImpl(collectionId));
+  }
+
+  private async pollCollectionImpl(collectionId: number) {
     const feeds = await this.db
       .select()
       .from(rssFeeds)
@@ -133,7 +164,7 @@ export class RssFeedService {
 
   private async fetchFeed(feed: typeof rssFeeds.$inferSelect): Promise<number> {
     try {
-      const result = await this.parser.parseURL(feed.feedUrl);
+      const result = await fetchRssFeed(feed.feedUrl);
 
       const toInsert = result.items
         .map((item) => {
@@ -197,14 +228,23 @@ export class RssFeedService {
       );
 
     for (const collection of collections) {
+      if (this.closing) break;
       if (collection.lastDigestAt && collection.lastDigestAt > twentyThreeHoursAgo) {
         continue;
       }
-      await this.triggerDigest(collection.id);
+      try {
+        await this.triggerDigest(collection.id);
+      } catch (err) {
+        this.logger.error({ err, collectionId: collection.id }, "RSS collection digest failed");
+      }
     }
   }
 
-  async triggerDigest(collectionId: number): Promise<boolean> {
+  triggerDigest(collectionId: number): Promise<boolean> {
+    return this.execute(() => this.triggerDigestImpl(collectionId));
+  }
+
+  private async triggerDigestImpl(collectionId: number): Promise<boolean> {
     if (!this.onDigestTrigger) return false;
     if (this.digestInFlight.has(collectionId)) return false;
     this.digestInFlight.add(collectionId);
@@ -391,7 +431,19 @@ export class RssFeedService {
     return row ? mapFeedRecord(row) : null;
   }
 
-  async addFeed(
+  addFeed(
+    collectionId: number,
+    feedUrl: string,
+    title?: string,
+    maxDigestItems?: number | null,
+    signal?: AbortSignal,
+  ): Promise<RssFeedRecord> {
+    return this.execute(() =>
+      this.addFeedImpl(collectionId, feedUrl, title, maxDigestItems, signal),
+    );
+  }
+
+  private async addFeedImpl(
     collectionId: number,
     feedUrl: string,
     title?: string,
@@ -402,7 +454,7 @@ export class RssFeedService {
     let feedTitle = title ?? feedUrl;
     if (!title) {
       try {
-        const parsed = await this.parser.parseURL(feedUrl);
+        const parsed = await fetchRssFeed(feedUrl);
         feedTitle = parsed.title ?? feedUrl;
       } catch {
         // Use URL as fallback title

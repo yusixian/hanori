@@ -95,6 +95,8 @@ export interface BotRuntimeHost {
     botId: string,
   ): { status: "running" | "stopped" | "restarting"; uptime: number | null } | undefined;
   restartBot(botId: string): Promise<void>;
+  /** Capture a deferred restart request that expires with the current runtime. */
+  createDeferredRestart(botId: string): () => void;
   withAiConfigLock<T>(botId: string, operation: () => Promise<T>): Promise<T>;
   isDelegatedGroupAdmin(botId: string, chatId: number, userId: number): Promise<boolean>;
   triggerConversationCleanup(botId: string, retentionDays: number): void;

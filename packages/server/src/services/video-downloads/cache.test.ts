@@ -35,8 +35,6 @@ describe("video download disk cache", () => {
   });
 
   afterEach(async () => {
-    cache.stopSweep();
-    vi.useRealTimers();
     await rm(temporary, { recursive: true, force: true });
   });
 
@@ -251,19 +249,6 @@ describe("video download disk cache", () => {
     cache = createCache();
     await cache.sweep();
     expect(await cache.inspect(malformed.id)).toBeNull();
-  });
-
-  it("schedules bounded periodic sweeps and stops cleanly", async () => {
-    vi.useFakeTimers();
-    const sweep = vi.spyOn(cache, "sweep").mockResolvedValue();
-    const onError = vi.fn();
-    cache.startSweep(20, onError);
-    await vi.advanceTimersByTimeAsync(60);
-    expect(sweep).toHaveBeenCalledTimes(3);
-    cache.stopSweep();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(sweep).toHaveBeenCalledTimes(3);
-    expect(onError).not.toHaveBeenCalled();
   });
 
   it("keeps an orphan when its pre-removal worker cancellation fails and deletes it after retry", async () => {

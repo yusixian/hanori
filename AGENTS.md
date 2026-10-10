@@ -74,6 +74,8 @@ alongside manually started server/panel/tunnel. Details:
 
 - Strict TypeScript, ESM; internal relative imports use `.js` extensions. `shared` must not depend
   on runtime packages. Never hand-edit `dist/`, `*.tsbuildinfo`, or Drizzle metadata snapshots.
+- Keep the `shared` root entry browser-safe. Node file path helpers are imported from
+  `@cos-tool-bot/shared/file-validation`; do not re-export them from the root entry.
 - **Hono RPC**: keep middleware and `.route()` registrations chained in the `new Hono()` expression
   in `packages/server/src/app.ts`, and route factories returning a chained instance, or `AppType`
   inference breaks. The panel imports `AppType` as a dev-only type (`hc<AppType>()`); never add a
@@ -117,6 +119,9 @@ alongside manually started server/panel/tunnel. Details:
 
 ## Public Documentation and Releases
 
+- After substantial changes, update pending release notes in `docs/releases/` and the public
+  changelog overview/navigation. Clearly label unreleased candidates; this does not authorize
+  version publication, tagging, or deployment. Preserve historical release notes.
 - The product version comes from the root `package.json`; private workspace package versions are
   not separate product releases. Keep the deployment `APP_VERSION`/health `version` contract as a
   full Git SHA, not a SemVer string.

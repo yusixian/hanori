@@ -97,6 +97,8 @@ function memoryRow(id: number, content: unknown) {
 /** Scripted Drizzle double for one private-chat consolidation batch. */
 function consolidationDb(transactionSource: typeof source, aiConfig: Record<string, unknown>) {
   const events: string[] = [];
+  const releaseLease = vi.fn(async () => {});
+  const beforeTransaction = vi.fn(async () => {});
   const lease = { botId, cursorMessageId: 0, leaseOwner: "owner", leaseUntil: new Date(8e15) };
   const rows = (query: Query): unknown[] => {
     if (query.table === bots) {
@@ -139,7 +141,16 @@ function consolidationDb(transactionSource: typeof source, aiConfig: Record<stri
       then: <TResult1 = unknown[], TResult2 = never>(
         onFulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
         onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-      ) => Promise.resolve(rows(query)).then(onFulfilled, onRejected),
+      ) =>
+        (async () => {
+          if (
+            query.table === memoryConsolidationState &&
+            query.op === "update" &&
+            query.set?.["leaseOwner"] === null
+          )
+            await releaseLease();
+          return rows(query);
+        })().then(onFulfilled, onRejected),
     };
     return chain;
   };
@@ -152,13 +163,14 @@ function consolidationDb(transactionSource: typeof source, aiConfig: Record<stri
   const db = {
     ...executor(false),
     transaction: async <T>(run: (tx: ReturnType<typeof executor>) => Promise<T>) => {
+      await beforeTransaction();
       events.push("begin");
       const result = await run(executor(true));
       events.push("commit");
       return result;
     },
   };
-  return { db: db as unknown as Database, events };
+  return { db: db as unknown as Database, events, releaseLease, beforeTransaction };
 }
 
 function consolidate(
@@ -176,7 +188,10 @@ function consolidate(
     botMemoryConfig: { enabled: true },
     ...(options.embeddingConfig ? { embeddingConfig: options.embeddingConfig } : {}),
   };
-  const { db, events } = consolidationDb(options.transactionSource ?? source, aiConfig);
+  const { db, events, releaseLease, beforeTransaction } = consolidationDb(
+    options.transactionSource ?? source,
+    aiConfig,
+  );
   const store = {
     updateEmbeddingIfContentMatches: vi.fn(async () => {
       events.push("store vector");
@@ -193,9 +208,16 @@ function consolidate(
   const logger = { error: vi.fn(), info: vi.fn(), warn: vi.fn() };
   const usage = {
     reserve: vi.fn(async () => ({ allowed: true, reservationId: "reservation" })),
-    refund: vi.fn(async () => undefined),
-    settle: vi.fn(async () => undefined),
+    refund: vi.fn(async (): Promise<void> => {}),
+    settle: vi.fn(async (): Promise<void> => {}),
   };
+  const callModel = vi.fn(async (_config: AiConfigStored, _prompt: string) => ({
+    text: JSON.stringify(proposals),
+    model: "model",
+    providerId: "provider",
+    inputTokens: 1,
+    outputTokens: 1,
+  }));
   const consolidator = new MemoryConsolidator(
     db,
     logger as unknown as Logger,
@@ -206,15 +228,20 @@ function consolidate(
       () => (options.runningEmbedder === false ? undefined : embedder),
       logger,
     ),
-    async (_config: AiConfigStored, _prompt: string) => ({
-      text: JSON.stringify(proposals),
-      model: "model",
-      providerId: "provider",
-      inputTokens: 1,
-      outputTokens: 1,
-    }),
+    callModel,
   );
-  return { run: () => consolidator.tick(), events, store, embedder, logger };
+  return {
+    run: () => consolidator.tick(),
+    consolidator,
+    events,
+    store,
+    embedder,
+    logger,
+    usage,
+    callModel,
+    releaseLease,
+    beforeTransaction,
+  };
 }
 
 beforeEach(() => {
@@ -303,4 +330,77 @@ describe("memory consolidation embeddings", () => {
     expect(sdk.embedMany).not.toHaveBeenCalled();
     expect(store.updateEmbeddingIfContentMatches).not.toHaveBeenCalled();
   });
+});
+
+it.each(["model", "settle", "transaction", "embedding", "lease"] as const)(
+  "close waits for %s and finishes the successful batch",
+  async (stage) => {
+    const fixture = consolidate();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const gate = vi.fn(async () => {
+      await pending;
+    });
+    if (stage === "model")
+      fixture.callModel.mockImplementationOnce(async () => {
+        await gate();
+        return {
+          text: JSON.stringify(proposals),
+          model: "model",
+          providerId: "provider",
+          inputTokens: 1,
+          outputTokens: 1,
+        };
+      });
+    if (stage === "settle") fixture.usage.settle.mockImplementationOnce(gate);
+    if (stage === "transaction") fixture.beforeTransaction.mockImplementationOnce(gate);
+    if (stage === "embedding")
+      fixture.embedder.generateEmbeddings.mockImplementationOnce(async (texts) => {
+        await gate();
+        return texts.map((text) => [text.length]);
+      });
+    if (stage === "lease") fixture.releaseLease.mockImplementationOnce(gate);
+    const tick = fixture.run();
+    await vi.waitFor(() => expect(gate).toHaveBeenCalledOnce());
+    const closing = fixture.consolidator.close();
+    const closed = vi.fn();
+    void closing.then(closed);
+    await Promise.resolve();
+    expect(closed).not.toHaveBeenCalled();
+    release();
+    await tick;
+    await closing;
+    expect(fixture.usage.settle).toHaveBeenCalledOnce();
+    expect(fixture.usage.refund).not.toHaveBeenCalled();
+    expect(fixture.store.updateEmbeddingIfContentMatches).toHaveBeenCalledTimes(2);
+    expect(fixture.releaseLease).toHaveBeenCalledOnce();
+    expect(fixture.logger.error).not.toHaveBeenCalled();
+  },
+);
+
+it("close waits for refund and lease release after model failure", async () => {
+  const fixture = consolidate();
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  fixture.callModel.mockRejectedValueOnce(new Error("model failed"));
+  fixture.usage.refund.mockImplementationOnce(async () => {
+    await pending;
+  });
+  const tick = fixture.run();
+  await vi.waitFor(() => expect(fixture.usage.refund).toHaveBeenCalledOnce());
+  const closing = fixture.consolidator.close();
+  const closed = vi.fn();
+  void closing.then(closed);
+  await Promise.resolve();
+  expect(closed).not.toHaveBeenCalled();
+  release();
+  await tick;
+  await closing;
+  expect(fixture.releaseLease).toHaveBeenCalledOnce();
+  expect(fixture.usage.settle).not.toHaveBeenCalled();
+  expect(fixture.store.updateEmbeddingIfContentMatches).not.toHaveBeenCalled();
 });

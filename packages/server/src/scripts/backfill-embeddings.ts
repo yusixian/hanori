@@ -4,20 +4,17 @@
  * Usage: tsx packages/server/src/scripts/backfill-embeddings.ts
  *
  * Reads each bot's embeddingConfig from the bots table to obtain API credentials.
- * Processes records with `embedding IS NULL` in batches.
+ * Processes a bounded ID range with `embedding IS NULL` in batches, once per row.
  * Safe to re-run: skips rows that already have embeddings.
  */
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createDb, bots, EMBEDDING_DIMENSIONS } from "@cos-tool-bot/database";
 import {
-  createDb,
-  bots,
-  botMemories,
-  conversationMessages,
-  EMBEDDING_DIMENSIONS,
-} from "@cos-tool-bot/database";
-import { and, eq, isNull, inArray } from "drizzle-orm";
+  backfillMissingEmbeddings,
+  type EmbeddingBackfillProgress,
+} from "../services/embedding-backfill.js";
 import { EmbeddingService } from "../services/embedding-service.js";
 import { tryDecrypt } from "../utils/crypto.js";
 
@@ -48,8 +45,6 @@ if (!databaseUrl) {
 
 const encryptionKey = process.env["ENCRYPTION_KEY"] ?? "";
 
-const BATCH_SIZE = 100;
-
 const { db, client } = createDb(databaseUrl);
 
 try {
@@ -77,65 +72,16 @@ try {
 
     console.log(`Bot "${bot.name}" (${bot.id}): starting backfill...`);
 
-    // Backfill bot memories
-    let memoryCount = 0;
-    while (true) {
-      const rows = await db
-        .select({ id: botMemories.id, content: botMemories.content })
-        .from(botMemories)
-        .where(and(eq(botMemories.botId, bot.id), isNull(botMemories.embedding)))
-        .limit(BATCH_SIZE);
-
-      if (rows.length === 0) break;
-
-      const embeddings = await service.generateEmbeddings(rows.map((r) => r.content));
-      const updates = rows
-        .map((r, i) => ({ id: r.id, embedding: embeddings[i] }))
-        .filter((u): u is { id: number; embedding: number[] } => u.embedding != null);
-      await Promise.all(
-        updates.map((u) =>
-          db.update(botMemories).set({ embedding: u.embedding }).where(eq(botMemories.id, u.id)),
-        ),
-      );
-      memoryCount += rows.length;
-      console.log(`  memories: ${memoryCount} processed`);
+    for (const kind of ["memories", "messages"] as const) {
+      const report = (progress: EmbeddingBackfillProgress) =>
+        console.log(
+          `  ${kind}: ${progress.attempted} attempted, ${progress.saved} saved, ${progress.failed} failed, ${progress.skipped} skipped`,
+        );
+      const progress = await backfillMissingEmbeddings(db, bot.id, kind, service, report);
+      if (progress.attempted === 0) report(progress);
     }
-
-    // Backfill conversation messages (only user/assistant)
-    let msgCount = 0;
-    while (true) {
-      const rows = await db
-        .select({ id: conversationMessages.id, content: conversationMessages.content })
-        .from(conversationMessages)
-        .where(
-          and(
-            eq(conversationMessages.botId, bot.id),
-            isNull(conversationMessages.embedding),
-            inArray(conversationMessages.role, ["user", "assistant"]),
-          ),
-        )
-        .limit(BATCH_SIZE);
-
-      if (rows.length === 0) break;
-
-      const embeddings = await service.generateEmbeddings(rows.map((r) => r.content));
-      const updates = rows
-        .map((r, i) => ({ id: r.id, embedding: embeddings[i] }))
-        .filter((u): u is { id: number; embedding: number[] } => u.embedding != null);
-      await Promise.all(
-        updates.map((u) =>
-          db
-            .update(conversationMessages)
-            .set({ embedding: u.embedding })
-            .where(eq(conversationMessages.id, u.id)),
-        ),
-      );
-      msgCount += rows.length;
-      console.log(`  messages: ${msgCount} processed`);
-    }
-
     console.log(
-      `Bot "${bot.name}": backfill complete (${memoryCount} memories, ${msgCount} messages)`,
+      `Bot "${bot.name}": backfill complete; failed or changed rows remain for a later run`,
     );
   }
 

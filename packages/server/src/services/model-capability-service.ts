@@ -1,23 +1,24 @@
 import type { ModelCapability } from "@cos-tool-bot/shared";
 import { inferCapabilities as heuristicInfer } from "@cos-tool-bot/shared";
 import type { Logger } from "pino";
+import { z } from "zod";
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
 const REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-interface ModelsDevEntry {
-  name?: string;
-  provider?: string;
-  modalities?: {
-    input?: string[];
-    output?: string[];
-  };
-  tool_call?: boolean;
-  reasoning?: boolean;
-  attachment?: boolean;
-}
-
-type ModelsDevData = Record<string, ModelsDevEntry>;
+const modelEntrySchema = z.object({
+  modalities: z.object({ input: z.array(z.string()).optional() }).optional(),
+  tool_call: z.boolean().optional(),
+  reasoning: z.boolean().optional(),
+  attachment: z.boolean().optional(),
+});
+const modelsDevSchema = z.record(
+  z.string(),
+  z.object({
+    models: z.record(z.string().min(1), modelEntrySchema),
+  }),
+);
+type ModelsDevEntry = z.infer<typeof modelEntrySchema>;
 
 export class ModelCapabilityService {
   private cache = new Map<string, ModelCapability[]>();
@@ -62,23 +63,42 @@ export class ModelCapabilityService {
 
   private async refresh(): Promise<void> {
     const res = await fetch(MODELS_DEV_URL, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
-    const data = (await res.json()) as ModelsDevData;
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      throw new Error(`models.dev HTTP ${res.status}`);
+    }
+    const data = modelsDevSchema.parse(await res.json());
 
     const newCache = new Map<string, ModelCapability[]>();
-    for (const [modelId, entry] of Object.entries(data)) {
-      const caps = this.mapCapabilities(modelId, entry);
-      newCache.set(modelId, caps);
+    const ambiguous = new Set<string>();
+    for (const provider of Object.values(data)) {
+      for (const [modelId, entry] of Object.entries(provider.models)) {
+        if (ambiguous.has(modelId)) continue;
+        const caps = this.mapCapabilities(modelId, entry);
+        const previous = newCache.get(modelId);
+        // Discovery supplies only a model ID, not a models.dev provider identity.
+        if (
+          previous &&
+          (previous.length !== caps.length || previous.some((cap) => !caps.includes(cap)))
+        ) {
+          ambiguous.add(modelId);
+          newCache.set(modelId, heuristicInfer(modelId));
+        } else {
+          newCache.set(modelId, caps);
+        }
+      }
     }
-    this.cache = newCache;
+    if (newCache.size === 0) throw new Error("models.dev returned no models");
+    // Map iteration order also serves longest-prefix lookup between refreshes.
+    this.cache = new Map([...newCache].sort(([a], [b]) => b.length - a.length));
     this.logger.info(`ModelCapabilityService: loaded ${newCache.size} models from models.dev`);
   }
 
   private mapCapabilities(modelId: string, entry: ModelsDevEntry): ModelCapability[] {
     const caps: ModelCapability[] = [];
 
-    // Vision: attachment flag or image in input modalities
-    if (entry.attachment || entry.modalities?.input?.includes("image")) {
+    // Explicit input modalities distinguish images from PDF-only attachments.
+    if (entry.modalities?.input ? entry.modalities.input.includes("image") : entry.attachment) {
       caps.push("vision");
     }
 
@@ -105,7 +125,7 @@ export class ModelCapabilityService {
       caps.push("code");
     }
 
-    if (lower.includes("long") || lower.includes("128k") || lower.includes("200k")) {
+    if (heuristicInfer(modelId).includes("long_context")) {
       caps.push("long_context");
     }
 
@@ -125,8 +145,7 @@ export class ModelCapabilityService {
 
     // 2. Prefix match (e.g. "gpt-4o-2024-11-20" → "gpt-4o").
     //    Longest key first so "o1-mini" wins over "o1".
-    const byKeyLengthDesc = [...this.cache].sort(([a], [b]) => b.length - a.length);
-    for (const [key, caps] of byKeyLengthDesc) {
+    for (const [key, caps] of this.cache) {
       if (modelId.startsWith(key)) return caps;
     }
 

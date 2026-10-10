@@ -10,6 +10,7 @@ export function createMcpCallbacks(
   host: BotRuntimeHost,
 ) {
   const db = services.db;
+  const requestRestart = services.mcpClientManager ? host.createDeferredRestart(botId) : undefined;
   return services.mcpClientManager
     ? {
         listServers: async () => {
@@ -45,7 +46,7 @@ export function createMcpCallbacks(
               .where(eq(bots.id, botId));
             return { ok: true as const };
           });
-          if (result.ok) setTimeout(() => host.restartBot(botId).catch(() => {}), 2000);
+          if (result.ok) requestRestart!();
           return result;
         },
         removeServer: async (serverId: number) => {
@@ -61,7 +62,7 @@ export function createMcpCallbacks(
               .where(eq(bots.id, botId));
             return { ok: true as const };
           });
-          if (result.ok) setTimeout(() => host.restartBot(botId).catch(() => {}), 2000);
+          if (result.ok) requestRestart!();
           return result;
         },
       }

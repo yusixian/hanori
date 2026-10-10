@@ -414,6 +414,71 @@ describe("TelegramProfileObserver", () => {
     expect(fetchImpl.mock.calls[0]?.[0]).toContain("/botsecret/photos/largest.jpg");
   });
 
+  it.each([false, true])(
+    "cancels an HTTP error body even when cancellation fails (%s)",
+    async (cancelFails) => {
+      const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+      tempDirs.push(dataDir);
+      const { memory, avatarUpdates } = createMemory();
+      const cancel = vi.fn(() => {
+        if (cancelFails) throw new Error("synthetic cancellation failure");
+      });
+      const pull = vi.fn();
+      const body = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 });
+      const onError = vi.fn();
+      const observer = new TelegramProfileObserver({
+        memory,
+        token: "secret",
+        dataDir,
+        onError,
+        fetchImpl: vi.fn(async () => new Response(body, { status: 503 })),
+      });
+      observer.observe(createApi() as never, user);
+      await observer.waitForIdle(user.id);
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(pull).not.toHaveBeenCalled();
+      expect(onError).toHaveBeenCalledWith(
+        new Error("Telegram profile photo download failed: 503"),
+      );
+      expect(avatarUpdates).toHaveLength(0);
+      expect(await fs.readdir(dataDir)).toEqual([]);
+    },
+  );
+
+  it("stops an oversized streamed avatar before consuming the remaining body", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    const { memory, avatarUpdates } = createMemory();
+    const cancel = vi.fn();
+    let chunks = 0;
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          chunks += 1;
+          if (chunks <= 8) controller.enqueue(new Uint8Array(1024 * 1024));
+          else controller.close();
+        },
+        cancel,
+      },
+      { highWaterMark: 0 },
+    );
+    const onError = vi.fn();
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      onError,
+      fetchImpl: vi.fn(async () => new Response(body)),
+    });
+    observer.observe(createApi() as never, user);
+    await observer.waitForIdle(user.id);
+    expect(onError).toHaveBeenCalledOnce();
+    expect(avatarUpdates).toHaveLength(0);
+    expect(chunks).toBe(6);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(await fs.readdir(dataDir)).toEqual([]);
+  });
+
   it("keeps the previous avatar and removes the downloaded file when persistence fails", async () => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
     tempDirs.push(dataDir);
@@ -719,6 +784,83 @@ describe("TelegramProfileObserver", () => {
     expect(race.getCurrentAvatarVersion()).toBeNull();
     expect(race.getCurrentAvatarPath()).toBeNull();
     await expect(fs.readdir(path.join(race.dataDir, "avatars"))).resolves.toEqual([]);
+  });
+
+  it.each([
+    { scenario: "a recreated profile", nextProfileId: 2 },
+    { scenario: "a new refresh cycle for the same profile", nextProfileId: 1 },
+  ])(
+    "keeps the refresh window for $scenario when the old refresh fails late",
+    async ({ nextProfileId }) => {
+      const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+      tempDirs.push(dataDir);
+      const { memory, avatarUpdates } = createMemory();
+      memory.touchProfile = vi
+        .fn()
+        .mockResolvedValueOnce({ created: false, profileId: 1 })
+        .mockResolvedValue({ created: false, profileId: nextProfileId });
+      const gate = deferred<void>();
+      const error = new Error("Old avatar request failed");
+      const oldApi = {
+        getUserProfilePhotos: vi.fn(async () => {
+          await gate.promise;
+          throw error;
+        }),
+        getFile: vi.fn(),
+      };
+      const newApi = createControlledApi("none", "new", Promise.resolve());
+      const onError = vi.fn();
+      let now = 100;
+      const observer = new TelegramProfileObserver({
+        memory,
+        token: "secret",
+        dataDir,
+        now: () => now,
+        onError,
+      });
+      try {
+        observer.observe(oldApi as never, user);
+        await vi.waitFor(() => expect(oldApi.getUserProfilePhotos).toHaveBeenCalledOnce());
+        now += 24 * 60 * 60 * 1000;
+        observer.observe(newApi as never, user);
+        await vi.waitFor(() => expect(avatarUpdates).toHaveLength(1));
+        gate.resolve();
+        await observer.waitForIdle(user.id);
+        now += 5 * 60 * 1000;
+        observer.observe(newApi as never, user);
+        await observer.waitForIdle(user.id);
+        expect(newApi.getUserProfilePhotos).toHaveBeenCalledOnce();
+        expect(onError).toHaveBeenCalledWith(error);
+      } finally {
+        gate.resolve();
+        await observer.waitForIdle(user.id);
+      }
+    },
+  );
+
+  it("still retries the current failed refresh after five minutes", async () => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), "profile-observer-"));
+    tempDirs.push(dataDir);
+    const { memory } = createMemory();
+    const api = createControlledApi("none", "retry", Promise.resolve());
+    api.getUserProfilePhotos.mockRejectedValueOnce(new Error("Current refresh failed"));
+    let now = 100;
+    const observer = new TelegramProfileObserver({
+      memory,
+      token: "secret",
+      dataDir,
+      now: () => now,
+    });
+    observer.observe(api as never, user);
+    await observer.waitForIdle(user.id);
+    now += 5 * 60 * 1000 - 1;
+    observer.observe(api as never, user);
+    await observer.waitForIdle(user.id);
+    expect(api.getUserProfilePhotos).toHaveBeenCalledOnce();
+    now += 1;
+    observer.observe(api as never, user);
+    await observer.waitForIdle(user.id);
+    expect(api.getUserProfilePhotos).toHaveBeenCalledTimes(2);
   });
 
   it("refreshes an avatar at most once per cache window", async () => {

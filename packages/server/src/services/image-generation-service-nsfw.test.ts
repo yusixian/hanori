@@ -3,7 +3,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import type { NsfwChecker } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
-import { getDataDir, type ImageArtifact } from "@cos-tool-bot/shared";
+import { type ImageArtifact } from "@cos-tool-bot/shared";
+import { getDataDir } from "@cos-tool-bot/shared/file-validation";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ImageGenerationService } from "./image-generation-service.js";
 import {

@@ -38,7 +38,7 @@ export class WrapperContext extends Context {
       if (this.waiting_message) {
         try {
           await this.deleteMessages([this.waiting_message.message_id]);
-        } catch (_e) {
+        } catch {
           // ignore delete errors
         }
       }

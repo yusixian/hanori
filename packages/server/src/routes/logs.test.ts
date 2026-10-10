@@ -2,6 +2,7 @@ import type { Database } from "@cos-tool-bot/database";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { Hono } from "hono";
+import { SSEStreamingApi } from "hono/streaming";
 import { describe, expect, it, vi } from "vitest";
 import { logRoutes } from "./logs.js";
 
@@ -104,4 +105,91 @@ describe("log routes", () => {
     expect((await app.request("/logs?correlationId=")).status).toBe(400);
     expect(fixture.select).not.toHaveBeenCalled();
   });
+});
+
+it.each(["initial query", "poll query", "batch write"] as const)(
+  "stops log streaming when disconnected during the %s",
+  async (stage) => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const limit = vi.fn(async () => {
+      const initial = limit.mock.calls.length === 1;
+      if ((initial && stage === "initial query") || (!initial && stage === "poll query"))
+        await gate;
+      return initial
+        ? [{ id: 7 }]
+        : [
+            { id: 8, message: "first" },
+            { id: 9, message: "second" },
+          ];
+    });
+    const builder = {
+      from: () => builder,
+      where: () => builder,
+      orderBy: () => builder,
+      limit,
+    };
+    const select = vi.fn(() => builder);
+    const app = new Hono().route("/logs", logRoutes({ select } as unknown as Database));
+    const originalWrite = SSEStreamingApi.prototype.writeSSE;
+    const writes = vi.spyOn(SSEStreamingApi.prototype, "writeSSE");
+    if (stage === "batch write") {
+      writes.mockImplementation(async function (this: SSEStreamingApi, message) {
+        await originalWrite.call(this, message);
+        if (writes.mock.calls.length === 1) await gate;
+      });
+    }
+    let finished!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    const originalClose = SSEStreamingApi.prototype.close;
+    const close = vi
+      .spyOn(SSEStreamingApi.prototype, "close")
+      .mockImplementation(async function (this: SSEStreamingApi) {
+        try {
+          await originalClose.call(this);
+        } finally {
+          finished();
+        }
+      });
+    const response = await app.request(`/logs/stream?botId=${BOT_ID}`);
+    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    try {
+      if (stage === "batch write") {
+        reader = response.body!.getReader();
+        const first = await reader.read();
+        expect(new TextDecoder().decode(first.value)).toContain("id: 8");
+        expect(new TextDecoder().decode(first.value)).toContain("first");
+      } else {
+        await vi.waitFor(() =>
+          expect(limit).toHaveBeenCalledTimes(stage === "initial query" ? 1 : 2),
+        );
+      }
+      await (reader ? reader.cancel() : response.body!.cancel());
+      release();
+      await completion;
+      expect(writes).toHaveBeenCalledTimes(stage === "batch write" ? 1 : 0);
+      expect(select).toHaveBeenCalledTimes(stage === "initial query" ? 1 : 2);
+    } finally {
+      await (reader ? reader.cancel() : response.body!.cancel());
+      release();
+      await completion;
+      writes.mockRestore();
+      close.mockRestore();
+    }
+  },
+);
+
+it("does not start log queries for a request already disconnected", async () => {
+  const limit = vi.fn(async () => []);
+  const builder = { from: () => builder, where: () => builder, orderBy: () => builder, limit };
+  const select = vi.fn(() => builder);
+  const app = new Hono().route("/logs", logRoutes({ select } as unknown as Database));
+  const response = await app.request("/logs/stream", { signal: AbortSignal.abort() });
+  await response.body?.cancel();
+  expect(response.status).toBe(499);
+  expect(select).not.toHaveBeenCalled();
 });

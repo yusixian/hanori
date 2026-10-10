@@ -7,6 +7,7 @@ import { DEFAULT_TIMEOUT_CONFIG } from "@cos-tool-bot/shared";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
 import type { JSONValue } from "ai";
 import { streamText } from "ai";
+import type { Logger } from "pino";
 import { tryDecrypt } from "../utils/crypto.js";
 import { getActiveProvider, migrateAiConfig } from "../utils/ai-config-migrate.js";
 import { classifyProviderError, redactDiagnostic } from "./run-redaction.js";
@@ -81,6 +82,7 @@ export class BotRunService {
     private db: Database,
     private encryptionKey: string,
     private stream: typeof streamText = streamText,
+    private logger: Pick<Logger, "error"> = console,
   ) {
     this.initialization = this.reconcileInterruptedRuns();
     void this.initialization.catch(() => {});
@@ -141,16 +143,18 @@ export class BotRunService {
   }
 
   async cancel(botId: string, runId: string) {
-    const run = await this.get(botId, runId);
-    if (!run || run.status !== "running") return false;
+    const status = await this.getStatus(botId, runId);
+    if (status !== "running") return false;
     const controller = this.activeRuns.get(runId);
     if (controller) {
       controller.abort(new Error("Cancelled by operator"));
     } else {
-      await this.db
+      const [cancelled] = await this.db
         .update(botRuns)
         .set({ status: "failed", failureReason: "cancelled", completedAt: new Date() })
-        .where(and(eq(botRuns.id, runId), eq(botRuns.botId, botId)));
+        .where(and(eq(botRuns.id, runId), eq(botRuns.botId, botId), eq(botRuns.status, "running")))
+        .returning({ id: botRuns.id });
+      return Boolean(cancelled);
     }
     return true;
   }
@@ -196,7 +200,16 @@ export class BotRunService {
       })
       .returning();
     if (!run) throw new Error("Failed to create Bot Run");
-    void this.execute(run.id, text, config, provider, apiKey, secrets);
+    void this.execute(run.id, text, config, provider, apiKey, secrets).catch((error: unknown) => {
+      try {
+        this.logger.error(
+          redactDiagnostic({ runId: run.id, error }, secrets),
+          "Bot Run background execution failed",
+        );
+      } catch {
+        // A diagnostic sink failure must not recreate an unhandled background rejection.
+      }
+    });
     return run;
   }
 

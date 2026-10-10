@@ -15,6 +15,7 @@ export interface McpServerRecord {
 }
 
 export interface McpServerToolInfo {
+  readOnlyHint?: boolean;
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
@@ -37,4 +38,16 @@ export interface McpServerPreset {
   url: string;
   headerTemplate?: Record<string, string>;
   docsUrl?: string;
+}
+
+/** A transport failure after dispatch does not imply remote rollback. */
+export class McpToolCallError extends Error {
+  constructor(
+    readonly outcome: "cancelled" | "failed" | "unknown",
+    readonly requestId: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = "McpToolCallError";
+  }
 }

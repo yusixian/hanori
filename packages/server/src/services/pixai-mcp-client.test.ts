@@ -58,7 +58,10 @@ describe("PixaiMcpClient", () => {
 
   it("leaves an unconfigured client inactive without constructing a transport", async () => {
     const connectionFactory = vi.fn();
-    const client = new PixaiMcpClient({ authProvider, connectionFactory });
+    const client = new PixaiMcpClient({
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
+      connectionFactory,
+    });
     await expect(client.connect()).rejects.toEqual(new PixaiMcpClientError("NOT_CONFIGURED"));
     await expect(client.getTask("operation-1")).rejects.toEqual(
       new PixaiMcpClientError("NOT_CONFIGURED"),
@@ -96,7 +99,7 @@ describe("PixaiMcpClient", () => {
     };
     const client = new PixaiMcpClient({
       endpointOverride: "https://mcp.example.com/mcp/pixai",
-      authProvider,
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
         transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
@@ -126,7 +129,7 @@ describe("PixaiMcpClient", () => {
     };
     const client = new PixaiMcpClient({
       endpointOverride: "https://mcp.example.com/mcp/pixai",
-      authProvider,
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
         transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
@@ -161,7 +164,7 @@ describe("PixaiMcpClient", () => {
       transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
     }));
     const client = new PixaiMcpClient({
-      authProvider,
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
       connectionFactory,
       endpointOverride: "https://mcp.example.com/mcp/pixai",
     });
@@ -184,7 +187,7 @@ describe("PixaiMcpClient", () => {
     };
     const client = new PixaiMcpClient({
       endpointOverride: "https://mcp.example.com/mcp/pixai",
-      authProvider,
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
         transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
@@ -206,7 +209,7 @@ describe("PixaiMcpClient", () => {
     };
     const client = new PixaiMcpClient({
       endpointOverride: "https://mcp.example.com/mcp/pixai",
-      authProvider,
+      createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
       onCallError,
       connectionFactory: (endpoint, provider) => ({
         client: sdkClient,
@@ -225,10 +228,168 @@ describe("PixaiMcpClient", () => {
     expect(onCallError).toHaveBeenNthCalledWith(1, {
       toolName: "get_capabilities",
       code: "AUTHORIZATION_REQUIRED",
+      isCurrent: expect.any(Function),
     });
     expect(onCallError).toHaveBeenNthCalledWith(2, {
       toolName: "get_capabilities",
       code: "NOT_CONNECTED",
+      isCurrent: expect.any(Function),
     });
   });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+
+it("ignores an old call failure after close and reconnect", async () => {
+  const pending = deferred<unknown>();
+  const onCallError = vi.fn();
+  const first = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    callTool: vi.fn(() => pending.promise),
+  };
+  const second = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    callTool: vi.fn(async () => ({ content: [], structuredContent: { result: "ok" } })),
+  };
+  const clients = [first, second];
+  const revoke = vi.fn(async () => {});
+  const client = new PixaiMcpClient({
+    endpointOverride: "https://mcp.example.com",
+    createAuthSession: () => ({ provider: authProvider, revokeAndDrain: revoke }),
+    onCallError,
+    connectionFactory: (endpoint, provider) => ({
+      client: clients.shift()!,
+      transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
+    }),
+  });
+  await client.connect();
+  const call = client.getCapabilities();
+  const rejection = expect(call).rejects.toMatchObject({ code: "AUTHORIZATION_REQUIRED" });
+  await client.close();
+  expect(revoke).toHaveBeenCalledOnce();
+  await client.connect();
+  pending.reject(new UnauthorizedError());
+  await rejection;
+  expect(onCallError).not.toHaveBeenCalled();
+  await expect(client.getCapabilities()).resolves.toMatchObject({ result: "ok" });
+});
+
+it("coalesces connects and a late handshake cannot restore a closed session", async () => {
+  const handshake = deferred<void>();
+  const first = {
+    connect: vi.fn(() => handshake.promise),
+    close: vi.fn(async () => {}),
+    callTool: vi.fn(),
+  };
+  const second = {
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    callTool: vi.fn(async () => ({ content: [], structuredContent: { result: "ok" } })),
+  };
+  const clients = [first, second];
+  const client = new PixaiMcpClient({
+    endpointOverride: "https://mcp.example.com",
+    createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
+    connectionFactory: (endpoint, provider) => ({
+      client: clients.shift()!,
+      transport: new StreamableHTTPClientTransport(endpoint, { authProvider: provider }),
+    }),
+  });
+  const connecting = client.connect();
+  const duplicate = client.connect();
+  const rejected = Promise.all([
+    expect(connecting).rejects.toMatchObject({ code: "CONNECTION_FAILED" }),
+    expect(duplicate).rejects.toMatchObject({ code: "CONNECTION_FAILED" }),
+  ]);
+  expect(first.connect).toHaveBeenCalledOnce();
+  await client.close();
+  await client.connect();
+  handshake.resolve();
+  await rejected;
+  expect(second.close).not.toHaveBeenCalled();
+  await expect(client.getCapabilities()).resolves.toMatchObject({ result: "ok" });
+});
+
+it("does not replace a new connection when an old OAuth callback finishes late", async () => {
+  const callback = deferred<void>();
+  const sdk = () => ({
+    connect: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    callTool: vi.fn(async () => ({ content: [], structuredContent: { result: "ok" } })),
+  });
+  const first = sdk();
+  const second = sdk();
+  const clients = [first, second];
+  const factory = vi.fn((endpoint: URL, provider: OAuthClientProvider) => {
+    const transport = new StreamableHTTPClientTransport(endpoint, { authProvider: provider });
+    vi.spyOn(transport, "finishAuth").mockImplementation(() => callback.promise);
+    return { client: clients.shift()!, transport };
+  });
+  const client = new PixaiMcpClient({
+    endpointOverride: "https://mcp.example.com",
+    createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
+    connectionFactory: factory,
+  });
+  const finishing = client.finishAuthorization("code");
+  const rejected = expect(finishing).rejects.toMatchObject({ code: "OAUTH_CALLBACK_FAILED" });
+  await client.close();
+  await client.connect();
+  callback.resolve();
+  await rejected;
+  expect(factory).toHaveBeenCalledTimes(2);
+  expect(second.close).not.toHaveBeenCalled();
+  await expect(client.getCapabilities()).resolves.toMatchObject({ result: "ok" });
+});
+
+it("invalidates delayed diagnostic writes across close even while disconnected", async () => {
+  let isCurrent!: () => boolean;
+  const client = new PixaiMcpClient({
+    createAuthSession: () => ({ provider: authProvider, revokeAndDrain: async () => {} }),
+    onCallError: (failure) => {
+      isCurrent = failure.isCurrent;
+    },
+  });
+  await expect(client.getCapabilities()).rejects.toMatchObject({ code: "NOT_CONFIGURED" });
+  expect(isCurrent()).toBe(true);
+  await client.close();
+  expect(isCurrent()).toBe(false);
+});
+
+it("keeps the authorization session while replacing the SDK pair after callback", async () => {
+  const revoke = vi.fn(async () => {});
+  const createAuthSession = vi.fn(() => ({ provider: authProvider, revokeAndDrain: revoke }));
+  const connectionFactory = vi.fn((endpoint: URL, provider: OAuthClientProvider) => {
+    const transport = new StreamableHTTPClientTransport(endpoint, { authProvider: provider });
+    vi.spyOn(transport, "finishAuth").mockResolvedValue(undefined);
+    return {
+      client: {
+        connect: vi.fn(async () => {}),
+        close: vi.fn(async () => {}),
+        callTool: vi.fn(async () => ({ content: [], structuredContent: { result: "ok" } })),
+      },
+      transport,
+    };
+  });
+  const client = new PixaiMcpClient({
+    endpointOverride: "https://mcp.example.com",
+    createAuthSession,
+    connectionFactory,
+  });
+  await client.finishAuthorization("code");
+  expect(createAuthSession).toHaveBeenCalledOnce();
+  expect(connectionFactory).toHaveBeenCalledTimes(2);
+  expect(revoke).not.toHaveBeenCalled();
+  await expect(client.getCapabilities()).resolves.toMatchObject({ result: "ok" });
+  await client.close();
+  expect(revoke).toHaveBeenCalledOnce();
 });
