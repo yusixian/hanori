@@ -34,6 +34,9 @@ export function publicDocsRoutes(root = "./public") {
   };
   return (
     new Hono<DocsEnv>()
+      .use("/robots.txt", policy)
+      .get("/robots.txt", serveStatic({ root, path: "docs/robots.txt" }))
+      .all("/robots.txt", (c) => c.text("Not found", 404))
       .use("/docs/*", policy)
       // React Router fetches the root loader here when navigating back to /docs.
       .use("/docs.data", policy)
@@ -54,7 +57,7 @@ export function publicDocsRoutes(root = "./public") {
       // Missing docs and assets must never fall through to the authenticated panel's SPA shell.
       .all("/docs/*", (c) =>
         c.html(
-          '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>页面未找到 · Hanori</title><main><h1>页面未找到</h1><p>这个文档地址不存在。</p><a href="/docs/">返回文档首页</a></main></html>',
+          '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>页面未找到 · Hanori</title><main><h1>页面未找到</h1><p>这个文档地址不存在。</p><a href="/docs/">返回文档首页</a></main></html>',
           404,
         ),
       )

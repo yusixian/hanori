@@ -49,7 +49,8 @@ COPY --from=deps /app/packages/coding-worker/node_modules ./packages/coding-work
 COPY . .
 ARG APP_VERSION=""
 RUN APP_VERSION="$APP_VERSION" node scripts/write-deployment-version.mjs
-RUN pnpm -r build
+ARG DOCS_SITE_URL=""
+RUN DOCS_SITE_URL="$DOCS_SITE_URL" pnpm -r build
 
 # Production
 FROM base AS runner

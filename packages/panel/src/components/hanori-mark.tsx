@@ -1,5 +1,13 @@
-import mark from "../../../docs/public/docs/icon.svg";
+import mark from "../../../docs/public/docs/icon.svg?raw";
+import "../../../docs/app/lib/hanori-mark.css";
 
 export function HanoriMark({ className }: { className?: string }) {
-  return <img src={mark} alt="" aria-hidden="true" width={40} height={40} className={className} />;
+  return (
+    <span
+      aria-hidden="true"
+      className={`hanori-mark ${className ?? ""}`}
+      // Only the bundled, repository-owned SVG is inserted here.
+      dangerouslySetInnerHTML={{ __html: mark }}
+    />
+  );
 }

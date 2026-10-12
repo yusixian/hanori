@@ -4,6 +4,7 @@ services:
       context: .
       args:
         - APP_VERSION=${APP_VERSION:-}
+        - DOCS_SITE_URL=${DOCS_SITE_URL:-}
     expose:
       - "3000"
     # Dokploy attaches app to its public network alongside Compose's private networks.
