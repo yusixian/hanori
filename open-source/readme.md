@@ -1,3 +1,5 @@
+<img src="packages/docs/public/docs/icon.svg" width="80" height="80" alt="Hanori 樱花对话气泡标识" />
+
 # Hanori · 花织
 
 以 Telegram 为入口的自托管 AI 伙伴。聊聊日常、留下记忆，也一起把灵感画出来。花织包含 React 工作台、Hono API、PostgreSQL、公开文档，以及可选的 Lark、MCP、GitHub 与隔离编码 worker。核心服务可以不配置 Bot Token、AI 服务商或第三方 OAuth 就完成初始化；这些能力随后在面板按需开启。

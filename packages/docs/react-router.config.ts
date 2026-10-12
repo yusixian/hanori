@@ -5,7 +5,13 @@ import { getSlugs } from "fumadocs-core/source";
 export default {
   ssr: false,
   async prerender({ getStaticPaths }) {
-    const paths = new Set([...getStaticPaths(), "/docs", "/docs/search.json"]);
+    const paths = new Set([
+      ...getStaticPaths(),
+      "/docs",
+      "/docs/search.json",
+      "/docs/sitemap.xml",
+      "/docs/robots.txt",
+    ]);
 
     for await (const entry of glob("**/*.mdx", { cwd: "content/docs" })) {
       const slugs = getSlugs(entry);

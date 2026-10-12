@@ -14,6 +14,7 @@ beforeAll(async () => {
   await mkdir(`${root}/docs/changelog/v0.2.0`, { recursive: true });
   await mkdir(`${root}/docs/assets`, { recursive: true });
   await writeFile(`${root}/docs/index.html`, "<h1>公开文档</h1>");
+  await writeFile(`${root}/docs/robots.txt`, "User-agent: *\nDisallow: /api/\n");
   await writeFile(`${root}/docs.data`, "root loader payload");
   await writeFile(
     `${root}/docs/changelog/v0.2.0/index.html`,
@@ -40,6 +41,15 @@ describe("public documentation hosting", () => {
     expect(csp).toContain(`script-src 'self' 'sha256-${hash}'`);
     expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
     expect(response.headers.get("Cache-Control")).toBe("no-cache, no-store, must-revalidate");
+  });
+
+  it("serves crawler rules at the site root without falling back to the panel", async () => {
+    const response = await app.request("/robots.txt");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toContain("text/plain");
+    expect(await response.text()).toBe("User-agent: *\nDisallow: /api/\n");
+    const missing = publicDocsRoutes(`${root}/absent`);
+    expect((await missing.request("/robots.txt")).status).toBe(404);
   });
 
   it("redirects the docs root and serves both trailing-slash forms", async () => {

@@ -51,3 +51,11 @@ pnpm exec vitest run packages/server/src/routes/public-docs.test.ts
 Docker 将 `packages/docs/build/client/docs/` 复制到 `public/docs/`，并复制 React Router 首页导航需要的 `docs.data`。文档站的根 `index.html` 和 SPA fallback 不会复制，避免覆盖管理面板入口。新增页面与资源保持在 `/docs` 路径空间内。
 
 Hono 对文档 HTML 中的构建脚本计算 CSP 哈希；管理面板的安全策略保持独立。文档缺失路径返回真正的 404，不回退到面板登录页。验收应覆盖未登录访问、深层地址刷新、搜索、移动端菜单和更新说明入口。
+
+## 品牌资源与 SEO
+
+导航和 favicon 复用 `packages/docs/public/docs/icon.svg`。PNG 图标、Apple touch icon 与 1200 × 630 分享卡片位于 `public/docs/brand/`；生成方式见该目录 README。
+
+公开域名通过构建变量 `DOCS_SITE_URL` 指定，不硬编码维护者实例。未配置时保留文档的可索引行为，省略绝对地址；配置 HTTPS origin 后生成每页 canonical、OG/Twitter 绝对链接和完整 sitemap。生产 `/robots.txt` 由公开文档路由读取构建的 `/docs/robots.txt`，不会落入面板 SPA。详细配置见[公开配置指南](../packages/docs/content/docs/self-hosting/configuration.mdx)。
+
+验证应同时覆盖空配置与显式 origin，检查初始 HTML（无需 JS）、客户端导航后的元信息、sitemap 页面集合及实际 PNG 尺寸。品牌资源更新后需要重新构建，不依赖第三方图片托管。
