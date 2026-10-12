@@ -1,16 +1,16 @@
+import mark from "../../public/docs/icon.svg?raw";
+import "./hanori-mark.css";
 import { BookOpenText, LayoutDashboard } from "lucide-react";
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 
 function Wordmark() {
   return (
     <span className="docs-wordmark">
-      <img
-        src="/docs/icon.svg"
-        alt=""
+      <span
         aria-hidden="true"
-        className="docs-wordmark__mark"
-        width={36}
-        height={36}
+        className="hanori-mark docs-wordmark__mark"
+        // Only the bundled, repository-owned SVG is inserted here.
+        dangerouslySetInnerHTML={{ __html: mark }}
       />
       <span className="docs-wordmark__text">
         <strong>Hanori</strong>

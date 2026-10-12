@@ -1,4 +1,4 @@
-<img src="packages/docs/public/docs/icon.svg" width="80" height="80" alt="Hanori 樱花对话气泡标识" />
+<img src="packages/docs/public/docs/icon.svg" width="80" height="80" alt="Hanori 经纬交织标识" />
 
 # Hanori · 花织
 

@@ -15,8 +15,15 @@ interface copy in HTML rather than baking it into the image.
 
 ## Logo and social previews
 
-The existing `../icon.svg` is the Hanori mark: sakura petals around a smiling
-conversation bubble. It is shared by the panel and documentation navigation.
+`../icon.svg` is the selected Warp (经纬) mark: two warp threads and one weft
+thread weave an H, joining Hanori's initial with the “织” in 花织. The owner
+selected this direction from Claude's five SVG proposals.
+
+The panel and documentation inline the same repository-owned SVG and share
+`app/lib/hanori-mark.css`. Hover gently advances the weft and offsets the warp;
+keyboard focus on the documentation home link has the same effect. Reduced
+motion disables movement. Dark mode uses pale berry threads. The favicon and
+all exported assets remain static.
 The PNG exports use the same mark on the brand's warm white background:
 
 - `hanori-logo.png`: 512 × 512 for repository and project profiles.

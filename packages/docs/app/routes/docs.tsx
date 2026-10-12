@@ -40,7 +40,7 @@ export function meta({ loaderData }: Route.MetaArgs) {
 
   const description =
     loaderData.description ?? "Hanori · 花织：自托管 Telegram AI 伙伴的配置、使用与部署指南。";
-  const imageAlt = "Hanori · 花织，樱花与笑脸对话气泡标识，自托管 Telegram AI 伙伴";
+  const imageAlt = "Hanori · 花织，经纬交织的 H 标识，自托管 Telegram AI 伙伴";
   return [
     { title },
     { name: "description", content: description },

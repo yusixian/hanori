@@ -89,3 +89,30 @@ test("crawler files and correctly sized brand assets are anonymously accessible"
     expect(png.readUInt32BE(20)).toBe(height);
   }
 });
+
+test("Warp responds to hover and keyboard focus while respecting reduced motion", async ({
+  page,
+  request,
+}) => {
+  await page.goto("/docs/");
+  const mark = page.locator(".hanori-mark").filter({ visible: true }).first();
+  const thread = mark.locator(".hanori-weft");
+  await expect(thread).toHaveCSS("transform", "none");
+  await mark.hover();
+  await expect(thread).toHaveCSS("transform", "matrix(1, 0, 0, 1, 1.8, 0)");
+  await page.mouse.move(0, 0);
+  await expect(thread).toHaveCSS("transform", "none");
+  await page.keyboard.press("Tab");
+  const home = mark.locator("xpath=ancestor::a[1]");
+  await home.focus();
+  await expect(home).toBeFocused();
+  await expect(thread).toHaveCSS("transform", "matrix(1, 0, 0, 1, 1.8, 0)");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(thread).toHaveCSS("transform", "none");
+  await expect(thread).toHaveCSS("transition-duration", "0s");
+  await page.evaluate(() => document.documentElement.classList.add("dark"));
+  await expect(thread).toHaveCSS("fill", "rgb(240, 143, 170)");
+  const favicon = await request.get("/docs/icon.svg");
+  expect(favicon.status()).toBe(200);
+  expect(await favicon.text()).not.toMatch(/<style|<animate|<script/);
+});
