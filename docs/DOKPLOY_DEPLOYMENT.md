@@ -115,39 +115,51 @@ pnpm build
 
 在 Dokploy 中创建 Project 和 Production Environment，然后添加 Compose：
 
-| 配置                 | 值                                    |
-| -------------------- | ------------------------------------- |
-| Compose Type         | Docker Compose                        |
-| Provider             | GitHub                                |
-| Repository           | `example-owner/cos-tool-bot`               |
-| Branch               | `main`                                |
-| Compose Path         | `./docker-compose.yml`                |
-| Isolated Deployments | 关闭，保留仓库声明的网络边界          |
-| Auto Deploy          | 迁移完成前关闭                        |
-| Advanced Command     | 复制默认命令并追加 `--force-recreate` |
+| 配置                 | 值                                        |
+| -------------------- | ----------------------------------------- |
+| Compose Type         | Docker Compose                            |
+| Provider             | GitHub                                    |
+| Repository           | `example-owner/cos-tool-bot`                   |
+| Branch               | `main`                                    |
+| Compose Path         | `./docker-compose.yml`                    |
+| Isolated Deployments | 关闭，保留仓库声明的网络边界              |
+| Auto Deploy          | 迁移完成前关闭                            |
+| Advanced Command     | 保留默认命令，移除全栈 `--force-recreate` |
 
 Dokploy 的 Environment 会用于 Compose 变量插值；容器真正需要的变量已经在 `docker-compose.yml` 中显式映射。不要添加 `env_file: .env`，避免把数据库密码等无关变量全部注入 app。
 
 使用默认 Domains 网络时，设置 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只为 `app` 配置域名。不要开启 **Enable Isolated Deployment**：该选项会向所有服务注入网络，与媒体 worker 的 `network_mode: none` 冲突，并绕过编码 worker 仅连接 `coding-sandbox` 的网络边界。刷新仓库来源后检查 Preview Compose，确认 app 保留 `default`、`harness-bridge` 并连接代理网络，media worker 没有 `networks` 字段，coding worker 只有 `coding-sandbox`。已有实例调整开关时保留项目名和 volume 配置，不能删除或重新初始化已有数据卷。
 
-Dokploy 默认使用 `docker compose ... up -d --build --remove-orphans`。已经成功退出的
-`db-backup` 容器在配置未变化时可能被复用，因此只保留默认命令不能保证再次执行备份。
-在 Advanced Command 中复制界面展示的完整默认命令，只在末尾追加
-`--force-recreate`。例如界面默认值是：
+Dokploy 默认使用 `docker compose ... up -d --build --remove-orphans`。保留默认命令；
+如果以前按旧指南添加了 `--force-recreate`，现在将其移除。例如：
 
 ```text
 compose -p <DOKPLOY_APP_NAME> -f docker-compose.yml up -d --build --remove-orphans
 ```
 
-则保存为：
-
-```text
-compose -p <DOKPLOY_APP_NAME> -f docker-compose.yml up -d --build --remove-orphans --force-recreate
-```
-
 不要照抄占位符；保留界面给出的真实 project name 和 Compose path。Dokploy 会自动在前面加
-`docker`。`--force-recreate` 会重建容器但保留命名卷，使 `db-backup` 在每次手动或自动部署时
-重新执行；代价是 Compose stack 会有短暂重启窗口。
+`docker`。普通 `up` 会重新启动已退出的 `db-backup`，复用容器不等于复用上一次的执行结果。
+`app` 的 `service_completed_successfully` 依赖仍要求本次备份成功后才启动。不要添加
+`--no-deps` 绕过备份，也不要改用 `restart app` 代替部署。
+
+去掉全栈强制重建后，配置和镜像未变化的数据库保持运行；应用镜像或配置变化时仍会重建
+应用，因此这不是零停机部署。备份失败会阻止新应用启动，但 Compose 可能已停止旧应用，
+不能承诺失败时旧版本仍持续服务。数据库镜像、配置或卷挂载变化仍可能触发数据库重建，
+应另安排维护窗口；建议固定基础镜像 digest，避免 tag 漂移造成意外重建。
+
+这项调整需要手动保存到已有 Dokploy 服务的 Advanced Command；只更新仓库文档不会改变
+平台已保存的命令。首次采用时记录 Docker Compose 版本及 `db` 容器 ID、`StartedAt`，
+部署后核对它们未变化，并检查 `db-backup` 的本次启动/结束时间、退出码 0 和新的
+`Verified database backup` 日志，最后检查应用 readiness 与版本 SHA。若备份没有重跑，
+停止推广该命令并检查平台是否实际执行了完整 `up`。
+
+本地可运行 `pnpm deployment:smoke` 验证同版本重部署、应用配置更新和备份失败拦截。
+它使用独立的临时 Compose 项目、数据库和凭据，验证数据库不重启及备份重跑；需要本机
+Docker daemon，不能用生产项目替代。`pnpm deployment:smoke --check` 只检查隔离配置。
+
+行为依据：[Compose up](https://docs.docker.com/reference/cli/docker/compose/up/) 与
+[Compose v2.33.1 的 startService 实现](https://github.com/docker/compose/blob/v2.33.1/pkg/compose/convergence.go)
+（只跳过正在运行的容器）。生产平台的实际版本仍须按上述步骤验收。
 
 ### 4.3 填写生产环境变量
 

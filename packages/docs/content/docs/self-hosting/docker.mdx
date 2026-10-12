@@ -52,6 +52,14 @@ app 镜像已内置 Python 和固定版本的 yt-dlp，供 Bilibili 字幕及视
 
 Dokploy 的 **Advanced → Enable Isolated Deployment** 应关闭，保留仓库为各服务定义的网络边界。该选项会给所有服务追加网络，与 `media-worker` 的 `network_mode: none` 冲突，也会让编码 worker 多出一条网络连接。使用 Dokploy 的默认 Domains 配置时，设置 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只给 `app` 配置域名。部署前刷新仓库来源并检查 **Preview Compose**：`app` 保留 `default`、`harness-bridge` 并加入代理网络，`media-worker` 没有 `networks` 字段，编码 worker 仅加入 `coding-sandbox`。已有实例更改这个开关时，保持 Compose 项目名和存储卷配置不变，不要删除数据卷。
 
+### 减少更新时的数据库中断
+
+Dokploy 的 Advanced Command 保留默认的 `up -d --build --remove-orphans`。如果此前添加了全栈 `--force-recreate`，请在平台中移除它；更新仓库文件不会自动修改平台保存的命令。普通应用更新会按镜像和配置差异重建服务，数据库没有变化时保持运行。
+
+完整 `up` 会重新启动已退出的 `db-backup`；`app` 仍需等待本次备份成功后才能启动。不要用 `--no-deps` 绕过这项依赖。首次调整后检查数据库容器 ID 和启动时间保持不变、备份的本次执行时间及退出码正常，再确认应用 ready 和版本 SHA。可先在有 Docker 的本机运行 `pnpm deployment:smoke`，在独立临时环境检查备份重跑、数据库连续运行及备份失败拦截。
+
+应用更新仍有重启窗口，备份失败时旧应用也可能已经停止。这项调整不保证零停机；数据库镜像或配置变化仍应安排维护窗口，基础镜像建议固定 digest。
+
 ## 4. 验证启动
 
 检查容器状态、日志和健康接口：

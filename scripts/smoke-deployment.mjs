@@ -189,7 +189,7 @@ export async function main(args = process.argv.slice(2)) {
   });
   if (values.help) {
     process.stdout.write(
-      "Usage: node scripts/smoke-deployment.mjs [--check] [--sha FULL_GIT_SHA] [--previous-sha FULL_GIT_SHA]\nBuild, initialize and independently restore disposable local Compose projects. --previous-sha also tests upgrade from that local Git commit. --check validates isolation only. No real Bot or provider is used.\n",
+      "Usage: node scripts/smoke-deployment.mjs [--check] [--sha FULL_GIT_SHA] [--previous-sha FULL_GIT_SHA]\nBuild, initialize, verify redeployment and backup failure gating, and independently restore disposable local Compose projects. --previous-sha also tests upgrade from that local Git commit. --check validates isolation only. No real Bot or provider is used.\n",
     );
     return;
   }
@@ -302,6 +302,25 @@ export async function main(args = process.argv.slice(2)) {
       "120",
       "app",
     );
+  const inspectService = async (p, service) => {
+    const id = await p.compose("ps", "--all", "--quiet", service);
+    if (!id || id.includes("\n")) throw new Error(`Expected one ${service} container.`);
+    // Select lifecycle fields only: a full inspect contains resolved credentials.
+    return readJson(
+      await command(
+        "docker",
+        [
+          "inspect",
+          "--format",
+          '{"id":{{json .Id}},"state":{"StartedAt":{{json .State.StartedAt}},"FinishedAt":{{json .State.FinishedAt}},"Status":{{json .State.Status}},"ExitCode":{{json .State.ExitCode}},"Running":{{json .State.Running}}},"restarts":{{json .RestartCount}}}',
+          id,
+        ],
+        environment,
+        30_000,
+        controller.signal,
+      ),
+    );
+  };
   const migrationHistory = (p) =>
     p.sql(
       "SELECT coalesce(json_agg(hash ORDER BY id), '[]'::json) FROM drizzle.__drizzle_migrations",
@@ -469,6 +488,85 @@ export async function main(args = process.argv.slice(2)) {
       JSON.stringify(expectedMigrations)
     )
       throw new Error("Candidate migrations are incomplete or differ from the source journal.");
+    phase = "redeployment without database restart";
+    const databaseBefore = await inspectService(source, "db");
+    const assertDatabaseUnchanged = async () => {
+      const databaseAfter = await inspectService(source, "db");
+      if (
+        databaseAfter.id !== databaseBefore.id ||
+        databaseAfter.state.StartedAt !== databaseBefore.state.StartedAt ||
+        databaseAfter.restarts !== databaseBefore.restarts ||
+        !databaseAfter.state.Running
+      )
+        throw new Error("Deployment unexpectedly restarted or replaced the database.");
+    };
+    const assertBackupReran = async (before) => {
+      const after = await inspectService(source, "db-backup");
+      if (
+        after.state.Status !== "exited" ||
+        after.state.ExitCode !== 0 ||
+        after.state.StartedAt === before.state.StartedAt
+      )
+        throw new Error("Deployment did not rerun a successful database backup.");
+      return after;
+    };
+    const firstBackup = await inspectService(source, "db-backup");
+    const firstApp = await inspectService(source, "app");
+    await source.compose("up", "-d", "--wait", "--wait-timeout", "120", "app");
+    const repeatedBackup = await assertBackupReran(firstBackup);
+    await assertDatabaseUnchanged();
+    const unchangedApp = await inspectService(source, "app");
+    if (
+      unchangedApp.id !== firstApp.id ||
+      unchangedApp.state.StartedAt !== firstApp.state.StartedAt
+    )
+      throw new Error("Unchanged application unexpectedly restarted.");
+
+    const override = readJson(await readFile(source.overridePath, "utf8"));
+    override.services.app.labels.push("deployment.smoke.revision=updated");
+    await writeFile(source.overridePath, JSON.stringify(override), { mode: 0o600 });
+    await source.compose("up", "-d", "--wait", "--wait-timeout", "120", "app");
+    const updatedBackup = await assertBackupReran(repeatedBackup);
+    await assertDatabaseUnchanged();
+    const updatedApp = await inspectService(source, "app");
+    if (
+      updatedApp.id === firstApp.id ||
+      Date.parse(updatedApp.state.StartedAt) < Date.parse(updatedBackup.state.FinishedAt)
+    )
+      throw new Error("Updated application did not start after the fresh backup completed.");
+    await source.app(probe());
+    stage("Repeated deployment reran backups; application update kept the database running.");
+
+    phase = "failed backup blocks application startup";
+    const failingOverride = structuredClone(override);
+    failingOverride.services.app.labels.push("deployment.smoke.failure=expected");
+    // Invalid credentials fail the real pg_dump command in this disposable database.
+    failingOverride.services["db-backup"] = {
+      environment: { PGPASSWORD: "invalid-smoke-password" },
+    };
+    await writeFile(source.overridePath, JSON.stringify(failingOverride), { mode: 0o600 });
+    let backupBlockedStartup = false;
+    try {
+      await source.compose("up", "-d", "--wait", "--wait-timeout", "120", "app");
+    } catch {
+      backupBlockedStartup = true;
+    }
+    const failedBackup = await inspectService(source, "db-backup");
+    const blockedApp = await inspectService(source, "app");
+    if (
+      !backupBlockedStartup ||
+      failedBackup.state.Status !== "exited" ||
+      failedBackup.state.ExitCode === 0 ||
+      blockedApp.state.Status !== "created"
+    )
+      throw new Error("Failed backup did not prevent the new application from starting.");
+    await assertDatabaseUnchanged();
+    await writeFile(source.overridePath, JSON.stringify(override), { mode: 0o600 });
+    await source.compose("up", "-d", "--wait", "--wait-timeout", "120", "app");
+    await assertBackupReran(failedBackup);
+    await assertDatabaseUnchanged();
+    await source.app(probe());
+    stage("Backup failure blocked application startup; correcting it restored readiness.");
     phase = "container recreation and persistence";
     const migrations = await migrationHistory(source);
     await boot(source, true);
