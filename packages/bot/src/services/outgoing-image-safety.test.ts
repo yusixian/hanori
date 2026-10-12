@@ -76,7 +76,7 @@ describe("outgoing image safety", () => {
     expect(payloadOf(transport, "sendPhoto").has_spoiler).toBe(true);
     expect(transport).toHaveBeenCalledOnce();
   });
-  it("checks album photos independently and covers classification failures", async () => {
+  it("checks every album photo and covers the batch on classification failure", async () => {
     const { api, checker, transport } = setup();
     vi.mocked(checker.checkImageBytes)
       .mockResolvedValueOnce(safe)
@@ -89,8 +89,34 @@ describe("outgoing image safety", () => {
       payloadOf(transport, "sendMediaGroup").media.map(
         (media: { has_spoiler: boolean }) => media.has_spoiler,
       ),
-    ).toEqual([false, true]);
+    ).toEqual([true, true]);
   });
+  it.each([
+    [0.49, false],
+    [0.5, true],
+    [0.9, true],
+  ])(
+    "checks the whole album before applying its combined score decision (%s)",
+    async (score, hasSpoiler) => {
+      const { api, checker, transport } = setup();
+      vi.mocked(checker.checkImageBytes)
+        .mockResolvedValueOnce({
+          ...safe,
+          scores: { ...safe.scores, porn: score, neutral: 1 - score },
+        })
+        .mockResolvedValueOnce(safe);
+      await api.sendMediaGroup(42, [
+        { type: "photo", media: "https://images.test/one" },
+        { type: "photo", media: "https://images.test/two" },
+      ]);
+      expect(checker.checkImageBytes).toHaveBeenCalledTimes(2);
+      expect(payloadOf(transport, "sendMediaGroup").media).toEqual([
+        expect.objectContaining({ has_spoiler: hasSpoiler }),
+        expect.objectContaining({ has_spoiler: hasSpoiler }),
+      ]);
+    },
+  );
+
   it("protects replacement photos", async () => {
     const { api, checker, transport } = setup();
     vi.mocked(checker.checkImageBytes).mockResolvedValue(unsafe);

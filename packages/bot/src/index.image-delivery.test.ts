@@ -256,7 +256,7 @@ describe("one-shot image transport", () => {
   });
 });
 
-it("checks each album image on the one-shot client using the configured NSFW threshold", async () => {
+it("checks every album image and masks the whole batch at the configured NSFW threshold", async () => {
   const directory = await mkdtemp("/private/tmp/image-delivery-safety-");
   const files = [join(directory, "one.png"), join(directory, "two.png")];
   await writeFile(files[0]!, Buffer.from([1, 2, 3]));
@@ -284,7 +284,7 @@ it("checks each album image on the one-shot client using the configured NSFW thr
     expect(mediaPart).toBeDefined();
     expect(
       JSON.parse(mediaPart!).map((media: { has_spoiler: boolean }) => media.has_spoiler),
-    ).toEqual([true, false]);
+    ).toEqual([true, true]);
     return {
       json: async () => ({ ok: true, result: [{ message_id: 20 }, { message_id: 21 }] }),
     } as Awaited<ReturnType<Fetch>>;

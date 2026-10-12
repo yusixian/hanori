@@ -273,6 +273,10 @@ export function createOutgoingImageSafety(options: {
           else if (media.type === "document")
             await checkDocument(media, temporaryDirectories, nativeSignal);
         }
+        const photos = (body.media as Media[]).filter((media) => media.type === "photo");
+        if (photos.some((photo) => photo.has_spoiler)) {
+          for (const photo of photos) photo.has_spoiler = true;
+        }
       } else if (method === "editMessageMedia") {
         const media = body.media as Media;
         if (media.type === "photo") await protectPhoto(media, nativeSignal);
