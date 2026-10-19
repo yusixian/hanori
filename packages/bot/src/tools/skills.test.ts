@@ -16,6 +16,31 @@ async function executeLoadSkill(
 }
 
 describe("load_skill", () => {
+  it("bounds retries of a missing resource while keeping other resources and new turns available", async () => {
+    const options = {
+      skills: resolveBuiltInSkills(["prompt-atelier"]),
+      hasImageGeneration: true,
+      hasWebSearch: false,
+    };
+    const tools = createSkillTools(options);
+    const input = { skill: "prompt-atelier", resource: "missing.md" };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await executeLoadSkill(tools, input);
+      expect(result).toMatchObject({ ok: false, error: "resource_not_found" });
+      expect(result).not.toHaveProperty("blocked");
+    }
+    await expect(
+      executeLoadSkill(tools, { skill: "prompt-atelier", resource: "references/styles.md" }),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(executeLoadSkill(tools, input)).resolves.toMatchObject({
+      ok: false,
+      blocked: true,
+      code: "skill_retry_limit",
+      attempts: 3,
+    });
+    expect(await executeLoadSkill(createSkillTools(options), input)).not.toHaveProperty("blocked");
+  });
+
   it("loads only enabled Skills", async () => {
     const tools = createSkillTools({
       skills: resolveBuiltInSkills(["prompt-atelier"]),

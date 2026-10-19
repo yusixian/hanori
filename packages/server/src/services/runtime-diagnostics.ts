@@ -11,7 +11,11 @@ import type {
   RuntimeDiagnosticsPort,
   RuntimeEffectiveConfig,
 } from "@cos-tool-bot/shared";
-import { RUNTIME_DIAGNOSTIC_CODES, RUNTIME_DIAGNOSTIC_OPERATIONS } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_RUNTIME_DIAGNOSTIC_RETENTION_MS,
+  RUNTIME_DIAGNOSTIC_CODES,
+  RUNTIME_DIAGNOSTIC_OPERATIONS,
+} from "@cos-tool-bot/shared";
 
 interface Trace extends RuntimeDiagnosticTrace {
   scope: RuntimeDiagnosticScope;
@@ -85,7 +89,10 @@ export class RuntimeDiagnostics implements RuntimeDiagnosticsPort {
 
   constructor(private readonly options: Options) {
     this.now = options.now ?? Date.now;
-    this.retentionMs = Math.max(1, Math.min(options.retentionMs ?? 3_600_000, MAX_WINDOW));
+    this.retentionMs = Math.max(
+      1,
+      Math.min(options.retentionMs ?? DEFAULT_RUNTIME_DIAGNOSTIC_RETENTION_MS, MAX_WINDOW),
+    );
     this.processStartedAt = this.now();
   }
   bindRuntime(readers: RuntimeDiagnosticReaders): void {

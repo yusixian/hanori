@@ -7,7 +7,7 @@ import { zodToAiSchema } from "./utils.js";
 
 const DESCRIPTIONS = {
   get_runtime_status:
-    "管理员只读诊断：查看当前 Bot 的运行状态、依赖可达性与当前聊天执行队列。未知健康状态会明确标记。",
+    "管理员只读诊断：查看当前 Bot 的运行状态、依赖可达性与当前聊天执行队列。observationCapabilities 说明未实现的主动探针或任务读取；unknown/unobserved 不能当作故障，lastModelEvent/lastDeliveryEvent 只代表最近观测，不证明当前健康。",
   get_effective_config:
     "管理员只读诊断：查看当前聊天实际使用的模型、超时、回复模式、功能开关与本轮可用工具，不包含凭据或提示词。",
   get_request_trace:
@@ -28,14 +28,12 @@ const FILTER_FIELDS = {
     .describe("真实消息记录中的 messageId；不要猜测。省略或 null 表示不按消息过滤。"),
   toolCallId: z
     .string()
-    .min(1)
     .max(100)
     .nullable()
     .optional()
     .describe("真实诊断记录中的工具调用 ID；不要猜测。省略或 null 表示不按工具调用过滤。"),
   traceId: z
     .string()
-    .min(1)
     .max(100)
     .nullable()
     .optional()

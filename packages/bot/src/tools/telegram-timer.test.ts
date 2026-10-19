@@ -146,10 +146,11 @@ describe("telegram timer scheduling", () => {
       tools,
     });
 
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]?.output).toMatchObject({
-      error: expect.stringContaining("604800"),
-    });
+    expect(result.content).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "tool-error", error: expect.stringContaining("604800") }),
+      ]),
+    );
     expect(onTimerCreate).not.toHaveBeenCalled();
     pendingActions.destroy();
   });
@@ -177,9 +178,11 @@ describe("telegram timer scheduling", () => {
         tools,
       });
 
-      expect(result.toolResults[0]?.output).toMatchObject({
-        error: expect.stringContaining(bound),
-      });
+      expect(result.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "tool-error", error: expect.stringContaining(bound) }),
+        ]),
+      );
       expect(onTimerCreate).not.toHaveBeenCalled();
       pendingActions.destroy();
     },

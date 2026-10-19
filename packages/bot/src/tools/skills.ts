@@ -15,6 +15,21 @@ export function createSkillTools(options: SkillToolsOptions): Record<string, Too
   if (options.skills.length === 0) return {};
   const byName = new Map(options.skills.map((skill) => [skill.name, skill]));
   const names = options.skills.map((skill) => skill.name).join(", ");
+  const failures = new Map<string, number>();
+  function failure(key: string, result: Record<string, unknown>) {
+    const attempts = (failures.get(key) ?? 0) + 1;
+    failures.set(key, attempts);
+    return attempts >= 3
+      ? {
+          ...result,
+          blocked: true,
+          code: "skill_retry_limit",
+          attempts,
+          guidance:
+            "The same Skill load failed three times in this turn. Stop tool calls and explain the missing Skill/resource. Do not claim that image generation or other work was submitted or completed.",
+        }
+      : result;
+  }
   const retrievalCompatibility =
     "Host tool compatibility: web_search → search(scope=web); search_history → search(scope=history); search_profiles → search(scope=profiles); recall_memories → search(scope=memory); search_generation_characters → search(scope=characters,provider=builtin.characters.local); search_danbooru_character_tags → search(scope=characters,provider=builtin.characters.danbooru); search_prompt_assets → search(scope=prompt_assets); fetch_artwork_info → search(scope=artwork,query=URL). These old names are not callable here. Only use sources listed in the actual search tool; get result bodies in bounded chunks with read_reference. Bot/user/chat identities cannot be overridden.";
 
@@ -35,12 +50,16 @@ export function createSkillTools(options: SkillToolsOptions): Record<string, Too
       execute: async ({ skill: requestedName, resource }) => {
         const skill = byName.get(requestedName);
         if (!skill) {
-          return { ok: false, error: "skill_not_enabled", availableSkills: [...byName.keys()] };
+          return failure(JSON.stringify([requestedName, "skill_not_enabled"]), {
+            ok: false,
+            error: "skill_not_enabled",
+            availableSkills: [...byName.keys()],
+          });
         }
         const imagePreparation = isImagePromptSkill(skill);
         if (resource) {
           if (!Object.hasOwn(skill.resources, resource)) {
-            return {
+            return failure(JSON.stringify([requestedName, resource, "resource_not_found"]), {
               ok: false,
               error: "resource_not_found",
               skill: skill.name,
@@ -49,7 +68,7 @@ export function createSkillTools(options: SkillToolsOptions): Record<string, Too
               guidance: imagePreparation
                 ? "This is preparation only; no image has been submitted. Use a listed resource or the main Skill, then call create_image if generation is requested. Never claim completion after this error."
                 : "Use a listed resource or load the main Skill. Never claim completion after this error.",
-            };
+            });
           }
           const content = skill.resources[resource];
           return {

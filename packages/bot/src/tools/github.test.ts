@@ -84,6 +84,73 @@ function adminConfig(token = "token") {
 }
 
 describe("GitHub tools permissions", () => {
+  it("lists only the configured repositories for admins without requesting credentials or GitHub", async () => {
+    const fetchMock = vi.fn();
+    const tokenProvider = vi.fn();
+    const registry = new PendingGitHubActionRegistry();
+    const options = {
+      config: {
+        ...adminConfig(),
+        repositories: ["Owner/Repo", "owner/repo", "other/project"],
+        tokenProvider,
+      },
+      isAdmin: true,
+      userId: 7,
+      chatId: -100,
+      api: createApi(),
+      pendingActions: registry,
+      fetch: fetchMock,
+    };
+    try {
+      const tools = createGitHubTools(options);
+      await expect(execute(tools.github_list_repositories, {})).resolves.toMatchObject({
+        source: "configured_allowlist",
+        repositories: ["Owner/Repo", "other/project"],
+        total: 2,
+        hasMore: false,
+      });
+      await expect(
+        execute(tools.github_list_repositories, { page: 2, limit: 1 }),
+      ).resolves.toMatchObject({
+        repositories: ["other/project"],
+        total: 2,
+        hasMore: false,
+      });
+      expect(
+        createGitHubTools({ ...options, isAdmin: false }).github_list_repositories,
+      ).toBeUndefined();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(tokenProvider).not.toHaveBeenCalled();
+    } finally {
+      registry.destroy();
+    }
+  });
+
+  it("guides failed repository resolution back to discovery without exposing the allowlist", async () => {
+    const registry = new PendingGitHubActionRegistry();
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 404 }));
+    try {
+      const tools = createGitHubTools({
+        config: adminConfig(),
+        isAdmin: true,
+        userId: 7,
+        chatId: -100,
+        api: createApi(),
+        pendingActions: registry,
+        fetch: fetchMock,
+      });
+      await expect(
+        execute(tools.github_repository, { repository: "guess/missing" }),
+      ).resolves.toMatchObject({
+        code: "repository_resolution_failed",
+        repository: "guess/missing",
+        guidance: expect.stringContaining("github_list_repositories"),
+      });
+    } finally {
+      registry.destroy();
+    }
+  });
+
   it("gives non-admins anonymous public-read tools only", async () => {
     const fetchMock = vi.fn().mockResolvedValue(repoResponse());
     const registry = new PendingGitHubActionRegistry();
