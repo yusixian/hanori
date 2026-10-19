@@ -58,6 +58,7 @@ const EXPECTED_READ_ONLY_TOOL_NAMES = new Set([
   "list_image_presets",
   "get_image_generation",
   "github_repository",
+  "github_list_repositories",
   "github_read_file",
   "github_list_tree",
   "github_list_issues",

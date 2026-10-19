@@ -37,6 +37,27 @@ function setup(overrides: { maxTraces?: number; maxEvents?: number; retentionMs?
 }
 const actor = { chatId: -10, userId: 1, messageId: 20 };
 describe("RuntimeDiagnostics", () => {
+  it("retains a failed request for 24 hours by default without removing the capacity bound", async () => {
+    const { service, advance } = setup();
+    const traceId = service.startTrace(actor);
+    service.record(traceId, { stage: "model", outcome: "failed", code: "model_timeout" });
+    advance(23 * 60 * 60 * 1000);
+    await expect(
+      service.query(actor, { operation: "get_request_trace", traceId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      retentionMs: 86_400_000,
+      traces: [{ traceId }],
+    });
+    advance(60 * 60 * 1000 + 1);
+    await expect(
+      service.query(actor, { operation: "get_request_trace", traceId }),
+    ).resolves.toMatchObject({
+      ok: false,
+      code: "not_found",
+    });
+  });
+
   it("audits denials and fails closed when audit storage fails", async () => {
     const { service, audit } = setup();
     expect(

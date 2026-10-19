@@ -112,13 +112,14 @@ for (const { version, theme, status = "" } of [
   { version: "v0.20.0", theme: "插件市场、统一检索与 Bot 运行诊断", status: "阶段记录" },
   { version: "v0.20.1", theme: "运行可靠性与架构维护（待发布）", status: "候选记录" },
   { version: "v0.21.0", theme: "插件、生图与自动化更新" },
+  { version: "v0.21.1", theme: "仓库发现与诊断可靠性（未发布候选）", status: "未发布候选" },
 ]) {
   test(`${version} supports anonymous deep links, navigation and search`, async ({
     page,
   }, info) => {
     await page.goto("/docs/changelog/");
     const label = status
-      ? `${version}（${status}）：${theme.replace("（待发布）", "")}`
+      ? `${version}（${status}）：${theme.replace(/（(?:待发布|未发布候选)）$/, "")}`
       : `${version}：${theme}`;
     await page.getByRole("link", { name: label, exact: true }).click();
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(version);

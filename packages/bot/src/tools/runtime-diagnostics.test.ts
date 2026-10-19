@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { asSchema } from "ai";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import { createRuntimeDiagnosticTools } from "./runtime-diagnostics.js";
 import { composeTurnTools } from "../utils/tool-pipeline.js";
@@ -59,11 +60,16 @@ describe("runtime diagnostic tools", () => {
       expect.objectContaining({
         stage: "tool",
         outcome: "failed",
+        code: "tool_forbidden",
         toolName: "get_request_trace",
         toolCallId: "call",
       }),
     );
-    expect(JSON.stringify(events.mock.calls)).not.toContain("forbidden");
+    for (const [event] of events.mock.calls) {
+      expect(event).not.toHaveProperty("input");
+      expect(event).not.toHaveProperty("output");
+      expect(event).not.toHaveProperty("error");
+    }
   });
 });
 
@@ -80,6 +86,18 @@ describe("diagnostic argument schemas and normalization", () => {
   async function execute(tool: import("ai").Tool, input: unknown) {
     return tool.execute!(input as never, { toolCallId: "actual-call", messages: [] });
   }
+  it("accepts blank optional identifiers through SDK validation before normalization", async () => {
+    const { service, actor, tools } = fixture();
+    const selected = tools.get_request_trace!;
+    const result = await asSchema(selected.inputSchema).validate!({
+      traceId: "",
+      toolCallId: "  ",
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) throw result.error;
+    await execute(selected, result.value);
+    expect(service.query).toHaveBeenCalledWith(actor, { operation: "get_request_trace" });
+  });
   it("normalizes empty online identifiers without changing valid parameters", async () => {
     const { service, actor, tools } = fixture();
     await execute(tools.get_runtime_status!, {

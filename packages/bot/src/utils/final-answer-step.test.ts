@@ -2,8 +2,68 @@ import { generateText, jsonSchema, stepCountIs, tool, type ModelMessage, type To
 import { MockLanguageModelV3 } from "ai/test";
 import { describe, expect, it, vi } from "vitest";
 import { prepareFinalAnswerStep } from "./final-answer-step.js";
+import { createSkillTools } from "../tools/skills.js";
+import { resolveBuiltInSkills } from "../skills/catalog.js";
+import { composeTurnTools } from "./tool-pipeline.js";
+import { createRequestCache } from "../tools/utils.js";
 
 describe("final answer step", () => {
+  it("ends repeated missing Skill resource calls with an explanation after three attempts", async () => {
+    const onLog = vi.fn();
+    const onEffect = vi.fn();
+    const tools = composeTurnTools(
+      createSkillTools({
+        skills: resolveBuiltInSkills(["prompt-atelier"]),
+        hasImageGeneration: true,
+        hasWebSearch: false,
+      }),
+      { requestCache: createRequestCache(), getStep: () => 1, onLog, onEffect },
+    );
+    let callCount = 0;
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const final = options.toolChoice?.type === "none";
+        return {
+          content: final
+            ? [{ type: "text", text: "参考资料不存在，尚未提交生图请求。" }]
+            : [
+                {
+                  type: "tool-call",
+                  toolCallId: `load-${++callCount}`,
+                  toolName: "load_skill",
+                  input: JSON.stringify({ skill: "prompt-atelier", resource: "missing.md" }),
+                },
+              ],
+          finishReason: { unified: final ? "stop" : "tool-calls", raw: undefined },
+          usage: {
+            inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
+            outputTokens: { total: 1, text: 1, reasoning: 0 },
+          },
+          warnings: [],
+        };
+      },
+    });
+    const result = await generateText({
+      model,
+      tools,
+      prompt: "draw",
+      prepareStep: prepareFinalAnswerStep(20),
+      stopWhen: stepCountIs(20),
+    });
+    expect(result.steps).toHaveLength(4);
+    expect(result.text).toContain("尚未提交");
+    expect(onEffect).not.toHaveBeenCalled();
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "AI tool result",
+        meta: expect.objectContaining({
+          success: false,
+          output: expect.objectContaining({ code: "skill_retry_limit", attempts: 3 }),
+        }),
+      }),
+    );
+  });
+
   it("preserves a single allowed action when the turn budget is one step", async () => {
     const execute = vi.fn(async () => ({ ok: true }));
     const model = new MockLanguageModelV3({

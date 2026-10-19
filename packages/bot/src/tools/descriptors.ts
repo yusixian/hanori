@@ -155,6 +155,12 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   { name: "get_current_time", statusLabel: "🕐 获取时间...", effect: "read_only" },
   { name: "generate_image", statusLabel: "🎨 画画中...", effect: "mutating" },
   { name: "github_repository", statusLabel: "🐙 查看 GitHub 仓库...", effect: "read_only" },
+  {
+    name: "github_list_repositories",
+    statusLabel: "🐙 查看仓库列表...",
+    effect: "read_only",
+    callLimit: 10,
+  },
   { name: "github_read_file", statusLabel: "🐙 读取仓库代码...", effect: "read_only" },
   { name: "github_list_tree", statusLabel: "🐙 查看代码结构...", effect: "read_only" },
   { name: "github_list_issues", statusLabel: "🐙 查看 Issue...", effect: "read_only" },

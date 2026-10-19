@@ -583,7 +583,11 @@ describe("AI reply group capture and privacy", () => {
     streamTextMock.mockImplementationOnce(
       (options: {
         tools: Record<string, Tool>;
-        prepareStep: (input: { messages: ModelMessage[] }) => { messages: ModelMessage[] };
+        prepareStep: (input: {
+          messages: ModelMessage[];
+          steps: typeof steps;
+          stepNumber: number;
+        }) => { messages: ModelMessage[] };
       }) => {
         async function* textStream() {
           toolOutput = await options.tools.get_profile_avatar!.execute!(
@@ -591,6 +595,8 @@ describe("AI reply group capture and privacy", () => {
             { toolCallId: "avatar-call", messages: [] },
           );
           preparedMessages = options.prepareStep({
+            steps,
+            stepNumber: 1,
             messages: [
               {
                 role: "tool",

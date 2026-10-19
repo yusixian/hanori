@@ -1,6 +1,8 @@
 import type { ImageDeliveryState, ImageGenerationState } from "./image-generation.js";
 import type { UsageResource, UsageWindow } from "./usage-governance.js";
 
+export const DEFAULT_RUNTIME_DIAGNOSTIC_RETENTION_MS = 24 * 60 * 60 * 1000;
+
 export const RUNTIME_DIAGNOSTIC_CODES = [
   "queue_full",
   "empty_response",
@@ -24,6 +26,12 @@ export const RUNTIME_DIAGNOSTIC_CODES = [
   "tool_started",
   "tool_succeeded",
   "tool_failed",
+  "tool_invalid_input",
+  "tool_forbidden",
+  "tool_not_found",
+  "tool_storage_error",
+  "skill_retry_limit",
+  "repository_resolution_failed",
   "delivery_failed",
   "response_sent",
   "cancelled",
@@ -188,6 +196,13 @@ export interface RuntimeDiagnosticResponse {
     redis: "not_configured";
     model: "unknown";
     telegram: "unknown";
+    observationCapabilities?: Record<
+      "model" | "telegram" | "githubTasks",
+      {
+        status: "not_implemented";
+        reason: "active_probe_not_configured" | "task_reader_not_connected";
+      }
+    >;
     lastModelEvent?: Pick<RuntimeDiagnosticEvent, "outcome" | "code"> & { at: number };
     lastDeliveryEvent?: Pick<RuntimeDiagnosticEvent, "outcome" | "code"> & { at: number };
     scheduler?: RuntimeSchedulerSnapshot;

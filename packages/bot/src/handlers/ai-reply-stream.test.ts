@@ -127,6 +127,96 @@ function createDiagnostics(): NonNullable<AiReplyConfig["runtimeDiagnostics"]> {
 }
 
 describe("AI reply streaming", () => {
+  it("only sends the uncovered step after multi_message delivered an earlier step", async () => {
+    const scene = "The door opened.";
+    const final = "Choose your next move.";
+    streamTextMock.mockImplementationOnce((options: { tools: Record<string, Tool> }) => ({
+      textStream: (async function* () {
+        yield scene;
+        await options.tools.multi_message!.execute!(
+          { messages: [{ text: scene }] },
+          { toolCallId: "scene", messages: [] },
+        );
+        yield final;
+      })(),
+      text: Promise.resolve(final),
+      steps: Promise.resolve([
+        { text: scene, toolCalls: [{ toolName: "multi_message" }], toolResults: [] },
+        { text: final, toolCalls: [], toolResults: [] },
+      ]),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+      totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 2, totalTokens: 4 }),
+      finishReason: Promise.resolve("stop"),
+    }));
+    const { ctx, replies } = createContext({ chatId: -100 });
+    const onLog = vi.fn();
+    const config = createConfig(onLog);
+    const runtime = createAiReplyHandler({
+      ...config,
+      triggerConfig: { ...config.triggerConfig, triggerWords: ["hello"] },
+      messageConfig: { ...config.messageConfig!, replyMode: "segment", richMessageEnabled: false },
+    });
+    try {
+      await runtime.handler(ctx, vi.fn());
+      expect(ctx.api.sendMessage).toHaveBeenCalledWith(-100, scene, undefined);
+      expect(replies).toContain(final);
+      expect(replies).not.toContain(`${scene}\n\n${final}`);
+      expect(onLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "AI response",
+          meta: expect.objectContaining({
+            responseText: `${scene}\n\n${final}`,
+            deliveredText: `${scene}\n${final}`,
+          }),
+        }),
+      );
+    } finally {
+      await runtime.destroy();
+    }
+  });
+
+  it.each(["segment", "stream"] as const)(
+    "preserves text before a choice tool in group %s replies",
+    async (replyMode) => {
+      const scene = "The lights dimmed. She stepped closer.";
+      const final = "Choose your next move.";
+      streamTextMock.mockReturnValueOnce({
+        textStream: (async function* () {
+          yield scene;
+          yield final;
+        })(),
+        text: Promise.resolve(final),
+        steps: Promise.resolve([
+          { text: scene, toolCalls: [{ toolName: "send_choice" }], toolResults: [] },
+          { text: final, toolCalls: [], toolResults: [] },
+        ]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+        totalUsage: Promise.resolve({ inputTokens: 2, outputTokens: 2, totalTokens: 4 }),
+        finishReason: Promise.resolve("stop"),
+      });
+      const { ctx, replies } = createContext({ chatId: -100 });
+      const onLog = vi.fn();
+      const config = createConfig(onLog);
+      const runtime = createAiReplyHandler({
+        ...config,
+        triggerConfig: { ...config.triggerConfig, triggerWords: ["hello"] },
+        messageConfig: { ...config.messageConfig!, replyMode, richMessageEnabled: false },
+      });
+      try {
+        await runtime.handler(ctx, vi.fn());
+        expect(replies).toContain(`${scene}\n\n${final}`);
+        expect(onLog).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: "AI response",
+            meta: expect.objectContaining({ responseText: `${scene}\n\n${final}` }),
+          }),
+        );
+      } finally {
+        await runtime.destroy();
+      }
+    },
+  );
+
   it.each([false, true])(
     "classifies transport timeouts consistently (SDK callback: %s)",
     async (notify) => {

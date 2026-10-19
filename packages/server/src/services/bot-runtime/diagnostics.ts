@@ -1,5 +1,9 @@
 import { botLogs, imageGenerations, rssCollections } from "@cos-tool-bot/database";
-import { USAGE_RESOURCES, USAGE_WINDOWS } from "@cos-tool-bot/shared";
+import {
+  DEFAULT_RUNTIME_DIAGNOSTIC_RETENTION_MS,
+  USAGE_RESOURCES,
+  USAGE_WINDOWS,
+} from "@cos-tool-bot/shared";
 import type {
   ImageGenerationState,
   RuntimeDiagnosticResponse,
@@ -160,6 +164,11 @@ export function createRuntimeDiagnostics(
         redis: "not_configured",
         model: "unknown",
         telegram: "unknown",
+        observationCapabilities: {
+          model: { status: "not_implemented", reason: "active_probe_not_configured" },
+          telegram: { status: "not_implemented", reason: "active_probe_not_configured" },
+          githubTasks: { status: "not_implemented", reason: "task_reader_not_connected" },
+        },
         version,
         environment:
           environment === "production" || environment === "development" || environment === "test"
@@ -235,5 +244,7 @@ function collectDiagnosticSecrets(value: unknown): string[] {
 /** Bounded independently from persistent owner logs and image task provenance. */
 export function diagnosticRetentionMs(value: string | undefined): number {
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 86_400_000 ? parsed : 3_600_000;
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= 86_400_000
+    ? parsed
+    : DEFAULT_RUNTIME_DIAGNOSTIC_RETENTION_MS;
 }

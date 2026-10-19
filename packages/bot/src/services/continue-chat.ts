@@ -60,6 +60,7 @@ import type { PendingAdminActionRegistry } from "./pending-github-actions.js";
 import { KeyedIngressLock } from "./ai-ingress-lock.js";
 import { createAiTurnLogger } from "../utils/ai-turn-log.js";
 import { throwCapturedStreamError } from "../utils/stream-error.js";
+import { getTurnResponseTexts } from "../utils/turn-response-text.js";
 
 /**
  * Serialises continuations for callers that supply no `runWithExecution`, keyed by
@@ -738,21 +739,29 @@ async function doContinueChat(
     }
 
     throwCapturedStreamError(providerStreamError, false);
-    const rawResponseText = (await result.text).trim();
-    const afterThink = stripThinkingContent(rawResponseText, ({ pattern, strippedLength }) => {
-      config.onLog?.({
-        level: "info",
-        message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
-        meta: { chatId },
-      });
-    });
-    const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
-      config.onLog?.({
-        level: "warn",
-        message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
-        meta: { chatId },
-      });
-    });
+    const finalText = await result.text;
+    const steps = await result.steps;
+    const rawResponseTexts = getTurnResponseTexts(finalText, steps);
+    const rawResponseText = rawResponseTexts.join("\n\n");
+    const responseTexts = rawResponseTexts
+      .map((rawText) => {
+        const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "info",
+            message: `Stripped thinking content from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId },
+          });
+        });
+        return stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
+          config.onLog?.({
+            level: "warn",
+            message: `Stripped meta prefix from continueChat segment (pattern: ${pattern}, ${strippedLength} chars)`,
+            meta: { chatId },
+          });
+        });
+      })
+      .filter((text) => text.trim());
+    const text = responseTexts.join("\n\n");
     config.onLog?.({
       level: "debug",
       message: "AI continuation response",
@@ -767,15 +776,16 @@ async function doContinueChat(
     stopChatActionHeartbeat = undefined;
     const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
     const sentViaMultiMessage = deliveredMultiMessages.length > 0;
-    const trailingTextCovered =
-      sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
+    const pendingText = responseTexts
+      .filter((part) => !isTextCoveredByDeliveries(part, deliveredMultiMessages))
+      .join("\n\n");
     const deliveredFinalChunks: string[] = [];
 
     // Send text unless its complete content is already confirmed as delivered.
-    if ((!isStreamMode && !trailingTextCovered && text) || (streamFailed && text)) {
+    if ((!isStreamMode || streamFailed) && pendingText) {
       const msgCfg = config.messageConfig ?? DEFAULT_MESSAGE_CONFIG;
       const threshold = msgCfg.autoSplitThreshold ?? 0;
-      const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
+      const chunks = splitMessage(pendingText, threshold > 0 ? threshold : 4096);
       for (const [i, chunk] of chunks.entries()) {
         if (isExecutionCancelled()) break;
         if (i > 0) {
@@ -851,7 +861,6 @@ async function doContinueChat(
     }
 
     // Await full results for post-processing
-    const steps = await result.steps;
     const totalUsage = await result.totalUsage;
     const durationMs = Date.now() - startTime;
 

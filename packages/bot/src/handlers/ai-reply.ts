@@ -9,6 +9,7 @@ import {
   type TurnToolsetConfig,
 } from "../tools/turn-toolset.js";
 import { resolveCompleteStreamText, throwCapturedStreamError } from "../utils/stream-error.js";
+import { getTurnResponseTexts } from "../utils/turn-response-text.js";
 import type {
   AgentToolsConfig,
   AiExecutionConfig,
@@ -2834,22 +2835,31 @@ export function createAiReplyHandler(
         }
 
         throwCapturedStreamError(providerStreamError, false);
-        const rawText = await resolveCompleteStreamText(result.text, capturedStreamError);
+        const finalText = await resolveCompleteStreamText(result.text, capturedStreamError);
+        const steps = await result.steps;
         diagnostic({ stage: "model", outcome: "succeeded", code: "model_succeeded" });
-        const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
-          onLog?.({
-            level: "info",
-            message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
-            meta: { chatId, userId },
-          });
-        });
-        const text = stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
-          onLog?.({
-            level: "warn",
-            message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
-            meta: { chatId, userId },
-          });
-        });
+        const responseTexts = getTurnResponseTexts(finalText, steps)
+          .map((rawText) => {
+            const afterThink = stripThinkingContent(rawText, ({ pattern, strippedLength }) => {
+              onLog?.({
+                level: "info",
+                message: `Stripped thinking content from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId, userId },
+              });
+            });
+            return stripMetaPrefix(afterThink, ({ pattern, strippedLength }) => {
+              onLog?.({
+                level: "warn",
+                message: `Stripped meta prefix from segment text (pattern: ${pattern}, ${strippedLength} chars)`,
+                meta: { chatId, userId },
+              });
+            });
+          })
+          .filter((text) => text.trim());
+        const text = responseTexts.join("\n\n");
+        const pendingText = responseTexts
+          .filter((part) => !isTextCoveredByDeliveries(part, deliveredMultiMessages))
+          .join("\n\n");
         const deliveredMultiMessageContent = deliveredMultiMessages.join("\n");
         const emptyResponse = !text.trim() && !deliveredMultiMessageContent.trim();
         diagnostic({
@@ -2857,9 +2867,7 @@ export function createAiReplyHandler(
           outcome: emptyResponse ? "skipped" : "succeeded",
           ...(emptyResponse ? { code: "empty_response" as const } : {}),
         });
-        const trailingTextCovered =
-          sentViaMultiMessage && isTextCoveredByDeliveries(text, deliveredMultiMessages);
-        const steps = await result.steps;
+        const trailingTextCovered = sentViaMultiMessage && !pendingText;
         const usage = await result.usage;
         const totalUsage = await result.totalUsage;
         const finishReason = await result.finishReason;
@@ -2901,10 +2909,10 @@ export function createAiReplyHandler(
         } else if (!isStreamMode) {
           if (sentViaMultiMessage && (!text || trailingTextCovered)) {
             await ctx.deleteWaiting();
-          } else if (text) {
+          } else if (pendingText) {
             const messageIds = await sendFormattedChunks(
               ctx,
-              text,
+              pendingText,
               msgCfg,
               richMessageEnabled,
               logRichFallback,
@@ -2934,7 +2942,9 @@ export function createAiReplyHandler(
 
         const durationMs = Date.now() - startTime;
         const assistantContent = sentViaMultiMessage
-          ? [deliveredMultiMessageContent, sentFinalText ? text : ""].filter(Boolean).join("\n")
+          ? [deliveredMultiMessageContent, sentFinalText ? pendingText : ""]
+              .filter(Boolean)
+              .join("\n")
           : text || "";
 
         if (sentViaMultiMessage && text && !sentFinalText) {
@@ -2942,8 +2952,12 @@ export function createAiReplyHandler(
             level: trailingTextCovered ? "info" : "warn",
             message: trailingTextCovered
               ? `Suppressed ${text.length} trailing chars already delivered via multi_message`
-              : `Failed to deliver ${text.length} uncovered trailing chars after multi_message`,
-            meta: { chatId, userId, trailingLength: text.length },
+              : `Failed to deliver ${pendingText.length} uncovered trailing chars after multi_message`,
+            meta: {
+              chatId,
+              userId,
+              trailingLength: trailingTextCovered ? text.length : pendingText.length,
+            },
           });
         }
 
