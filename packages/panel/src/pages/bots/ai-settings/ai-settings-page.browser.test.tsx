@@ -201,6 +201,7 @@ function stubAiSettingsFetchWithDeferredConfig() {
 }
 
 beforeEach(async () => {
+  await page.viewport(1440, 900);
   await i18n.changeLanguage("en");
 });
 
