@@ -200,6 +200,22 @@ describe("production HTTP policy", () => {
     expect(adminHarness.status).toBe(403);
   });
 
+  it.each(["admin", "editor", "viewer"])(
+    "restricts shared image MCP platform settings to the owner (%s)",
+    async (role) => {
+      for (const method of ["GET", "PUT"]) {
+        const response = await createRoleApp(role).request("/api/image-mcp-platform", { method });
+        expect(response.status).toBe(403);
+      }
+    },
+  );
+
+  it("allows the owner through the platform boundary", async () => {
+    const response = await createRoleApp("owner").request("/api/image-mcp-platform");
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ ok: false, error: "unavailable" });
+  });
+
   it("isolates Telegram framing and SDK permissions to Mini App HTML routes", () => {
     const adminCsp = APP_SECURITY_HEADERS["Content-Security-Policy"];
     const miniAppCsp = MINI_APP_SECURITY_HEADERS["Content-Security-Policy"];

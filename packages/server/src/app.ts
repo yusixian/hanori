@@ -38,6 +38,8 @@ import { timerRoutes } from "./routes/timers.js";
 import { usageRoutes } from "./routes/usage.js";
 import { governanceRoutes } from "./routes/governance.js";
 import { imageMcpRoutes } from "./routes/image-mcp.js";
+import { imageMcpPlatformRoutes } from "./routes/image-mcp-platform.js";
+import type { ImageMcpPlatformService } from "./services/image-mcp-platform.js";
 import { botRunRoutes } from "./routes/bot-runs.js";
 import { botDebugRoutes } from "./routes/bot-debug.js";
 import { engagementSampleRoutes } from "./routes/engagement-samples.js";
@@ -105,6 +107,7 @@ interface AppOptions {
   imageGenerationService: ImageGenerationService;
   imageMcpConnectionService: ImageMcpConnectionService;
   imageMcpConnections?: Partial<Record<"mcp_openai" | "mcp_gemini", ImageMcpConnectionService>>;
+  imageMcpPlatform?: ImageMcpPlatformService;
   usageGovernor: UsageGovernor;
   memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
@@ -140,6 +143,7 @@ export function createApp(options: AppOptions) {
     imageGenerationService,
     imageMcpConnectionService,
     imageMcpConnections,
+    imageMcpPlatform,
     memoryConsolidationPreview,
     engagementSampleService: providedEngagementSampleService,
     runtimeHealth,
@@ -224,27 +228,54 @@ export function createApp(options: AppOptions) {
     .use("/api/harness/admin/*", requireRoles(ownerOnly))
     .route("/api/harness/admin", harnessAdminRoutes(harnessAdmin))
     .route("/api/harness", harnessRoutes(harness))
+    .use("/api/image-mcp-platform/*", requireAppAccess(auth, db), requireRoles(ownerOnly))
+    .route("/api/image-mcp-platform", imageMcpPlatformRoutes(imageMcpPlatform))
     .use("/api/image-mcp/status", requireAppAccess(auth, db))
     .use("/api/image-mcp/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp", requireAppAccess(auth, db))
     .use("/api/image-mcp", requireRoles(ownerOnly))
-    .route("/api/image-mcp", imageMcpRoutes(imageMcpConnectionService, baseURL))
+    .route(
+      "/api/image-mcp",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform ? imageMcpPlatform.connection("mcp_pixai") : imageMcpConnectionService,
+        baseURL,
+      ),
+    )
     .use("/api/image-mcp-openai/status", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp-openai/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp-openai", requireAppAccess(auth, db))
     .use("/api/image-mcp-openai", requireRoles(ownerOnly))
-    .route("/api/image-mcp-openai", imageMcpRoutes(imageMcpConnections?.mcp_openai, baseURL))
+    .route(
+      "/api/image-mcp-openai",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform
+            ? imageMcpPlatform.connection("mcp_openai")
+            : imageMcpConnections?.mcp_openai,
+        baseURL,
+      ),
+    )
     .use("/api/image-mcp-gemini/status", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini/status", requireRoles(ownerOrAdmin))
     .use("/api/image-mcp-gemini/oauth/start", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini/oauth/start", requireRoles(ownerOnly))
     .use("/api/image-mcp-gemini", requireAppAccess(auth, db))
     .use("/api/image-mcp-gemini", requireRoles(ownerOnly))
-    .route("/api/image-mcp-gemini", imageMcpRoutes(imageMcpConnections?.mcp_gemini, baseURL))
+    .route(
+      "/api/image-mcp-gemini",
+      imageMcpRoutes(
+        () =>
+          imageMcpPlatform
+            ? imageMcpPlatform.connection("mcp_gemini")
+            : imageMcpConnections?.mcp_gemini,
+        baseURL,
+      ),
+    )
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
@@ -268,7 +299,13 @@ export function createApp(options: AppOptions) {
     .use("/api/bots/:botId/memories/consolidation-preview", requireRoles(ownerOrAdmin))
     .route(
       "/api/bots",
-      governanceRoutes(db, imageGenerationService, imageMcpConnectionService, imageMcpConnections),
+      governanceRoutes(
+        db,
+        imageGenerationService,
+        imageMcpConnectionService,
+        imageMcpConnections,
+        imageMcpPlatform,
+      ),
     )
     .route(
       "/api/bots",

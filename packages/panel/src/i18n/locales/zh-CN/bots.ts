@@ -535,6 +535,20 @@ export const bots = {
     reset: "重置为默认值",
     resetReady: "已恢复为默认值，点击保存后生效。",
     save: "保存",
+    platform: {
+      title: "图片 MCP 平台",
+      description:
+        "填写一个平台地址即可配置 PixAI、GPT Image 和 Gemini Image。此设置由所有 Bot 共享。",
+      address: "平台地址",
+      hint: "只需填写域名，自动使用 HTTPS。保存后立即生效；更换平台需重新授权，清空地址将关闭三个连接。请先等待正在生成的任务结束。",
+      save: "保存平台地址",
+      saved: "平台地址已生效，可在下方分别连接供应商。",
+      loadError: "无法加载平台地址，请重试。",
+      saveError: "无法保存平台地址，请刷新确认后重试。",
+      invalidAddress: "请输入域名或 HTTPS 站点地址，不要包含接口路径、登录凭据、查询参数或片段。",
+      conflict: "平台地址已在其他页面修改，请刷新后重试。",
+      notConfigured: "请先在上方保存图片 MCP 平台地址。",
+    },
     connection: {
       independent: "各供应商独立授权，连接其中一个不影响其他连接。",
       title: "PixAI MCP 连接",

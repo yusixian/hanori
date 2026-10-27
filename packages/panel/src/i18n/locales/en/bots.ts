@@ -563,6 +563,21 @@ export const bots = {
     reset: "Reset to defaults",
     resetReady: "Defaults restored. Save to apply them.",
     save: "Save",
+    platform: {
+      title: "Image MCP platform",
+      description:
+        "One platform address configures PixAI, GPT Image, and Gemini Image for all Bots.",
+      address: "Platform address",
+      hint: "Enter a domain to use HTTPS automatically. Changes apply immediately. Changing platforms requires authorization again; clearing the address disables all three connections. Wait for active generations to finish first.",
+      save: "Save platform address",
+      saved: "Platform address applied. Connect each provider below.",
+      loadError: "Could not load the platform address. Try again.",
+      saveError: "Could not save the platform address. Refresh to check its state before retrying.",
+      invalidAddress:
+        "Enter a domain or HTTPS site address without an API path, credentials, query, or fragment.",
+      conflict: "The platform address changed in another page. Refresh and try again.",
+      notConfigured: "Save the image MCP platform address above first.",
+    },
     connection: {
       independent:
         "Each provider has its own authorization; connecting one does not disconnect the others.",

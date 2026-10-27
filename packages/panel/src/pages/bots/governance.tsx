@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { GovernanceSubjectPicker, type GovernanceSubjectOption } from "./governance-subject-picker";
 import { createGovernanceSubjectResolver } from "./governance-subject-resolver";
+import { ImageMcpPlatformSettings } from "./image-mcp-platform-settings";
 
 type GeneralRouteMode = "off" | "explicit_only" | "semantic_auto";
 interface ConnectionView {
@@ -363,11 +364,27 @@ export function BotGovernancePage() {
         : backendId === "mcp_gemini"
           ? "/api/image-mcp-gemini"
           : "/api/image-mcp";
-    const response = await authFetch(`${prefix}/oauth/start`, { method: "POST" });
-    const body = (await response.json()) as { ok?: boolean; authorizationUrl?: string };
-    if (response.ok && body.ok && body.authorizationUrl)
-      window.location.assign(body.authorizationUrl);
-    else setMessage(t("governance.connection.startError"));
+    try {
+      const response = await authFetch(`${prefix}/oauth/start`, { method: "POST" });
+      const body = (await response.json()) as { ok?: boolean; authorizationUrl?: string };
+      if (response.ok && body.ok && body.authorizationUrl)
+        window.location.assign(body.authorizationUrl);
+      else setMessage(t("governance.connection.startError"));
+    } catch {
+      setMessage(t("governance.connection.startError"));
+    }
+  };
+
+  const refreshConnections = async () => {
+    try {
+      const response = await authFetch(`/api/bots/${encodeURIComponent(botId!)}/governance`);
+      const body = (await response.json()) as { ok?: boolean; data?: GovernanceDraft };
+      if (!response.ok || !body.ok || !body.data) throw new Error();
+      const { connection, connections } = body.data;
+      setDraft((current) => ({ ...current, connection, connections }));
+    } catch {
+      setMessage(t("governance.loadError"));
+    }
   };
 
   if (loading) {
@@ -421,6 +438,8 @@ export function BotGovernancePage() {
         </p>
       )}
 
+      <ImageMcpPlatformSettings onSaved={() => void refreshConnections()} />
+
       {(["mcp_openai", "mcp_gemini"] as const).map((backendId) => (
         <Card key={backendId}>
           <CardHeader>
@@ -436,9 +455,17 @@ export function BotGovernancePage() {
               )}
             </Badge>
             {draft.connections?.[backendId]?.lastError && (
-              <p className="text-destructive text-sm">{draft.connections[backendId]?.lastError}</p>
+              <p className="text-destructive text-sm">
+                {draft.connections[backendId]?.lastError === "NOT_CONFIGURED"
+                  ? t("governance.platform.notConfigured")
+                  : draft.connections[backendId]?.lastError}
+              </p>
             )}
-            <Button type="button" onClick={() => void beginOAuth(backendId)}>
+            <Button
+              type="button"
+              disabled={draft.connections?.[backendId]?.lastError === "NOT_CONFIGURED"}
+              onClick={() => void beginOAuth(backendId)}
+            >
               {t("governance.connection.connect")}
             </Button>
           </CardContent>
@@ -469,9 +496,17 @@ export function BotGovernancePage() {
               : t("governance.connection.noScopes")}
           </div>
           {draft.connection.lastError && (
-            <p className="text-destructive text-sm">{draft.connection.lastError}</p>
+            <p className="text-destructive text-sm">
+              {draft.connection.lastError === "NOT_CONFIGURED"
+                ? t("governance.platform.notConfigured")
+                : draft.connection.lastError}
+            </p>
           )}
-          <Button variant="outline" onClick={() => void beginOAuth()}>
+          <Button
+            variant="outline"
+            disabled={draft.connection.lastError === "NOT_CONFIGURED"}
+            onClick={() => void beginOAuth()}
+          >
             {draft.connection.status === "connected"
               ? t("governance.connection.reconnect")
               : t("governance.connection.connect")}

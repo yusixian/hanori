@@ -285,13 +285,14 @@ export class ImageGenerationService implements ImageGenerationPort {
 
   private backend(provider: string, metadata?: Record<string, unknown> | null) {
     const selected =
-      provider === "mcp_pixai"
+      this.backends[provider as ImageProviderRoute] ??
+      (provider === "mcp_pixai"
         ? {
             adapter: this.pixai,
             artifacts: this.artifacts,
             endpoint: this.backends.mcp_pixai?.endpoint,
           }
-        : this.backends[provider as ImageProviderRoute];
+        : undefined);
     if (
       !selected ||
       (typeof metadata?.endpoint === "string" && metadata.endpoint !== selected.endpoint)
@@ -577,6 +578,8 @@ export class ImageGenerationService implements ImageGenerationPort {
 
     const id = randomUUID();
     const idempotencyKey = requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
+    const endpoint = this.backends[provider]?.endpoint;
+    const providerMetadata = { backendId: provider, ...(endpoint ? { endpoint } : {}) };
     const initialSnapshot: ImageGenerationRequestSnapshot = {
       ...(presetKey ? { presetKey } : {}),
       ...dynamic.data,
@@ -598,12 +601,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         negativePrompt: request.negativePrompt,
         seed: request.seed,
         requestSnapshot: initialSnapshot,
-        providerMetadata: {
-          backendId: provider,
-          ...(this.backends[provider]?.endpoint
-            ? { endpoint: this.backends[provider]!.endpoint }
-            : {}),
-        },
+        providerMetadata,
         usageReservationId,
       });
     } catch {
@@ -636,7 +634,7 @@ export class ImageGenerationService implements ImageGenerationPort {
 
     let prepared;
     try {
-      prepared = await this.backend(provider).adapter.prepareGeneration({
+      prepared = await this.backend(provider, providerMetadata).adapter.prepareGeneration({
         ...(presetKey ? { presetKey } : {}),
         ...dynamic.data,
         prompt,

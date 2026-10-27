@@ -41,14 +41,14 @@ Mini App secret 与 Better Auth secret、Bot Token 分开生成；轮换 Mini Ap
 | 变量                         | 用途                                                                                                                                                   |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `EMBEDDING_DIMENSIONS`       | embedding 维度，默认 `3072`；变更后需要迁移和重新索引。                                                                                                |
-| `PIXAI_MCP_URL`              | 可选的图片 MCP 完整 HTTPS 地址，例如 `https://mcp.example.com/mcp/pixai`。留空关闭该集成；开发环境允许本机 HTTP。更换地址后需要 owner 重新授权。       |
+| `PIXAI_MCP_URL`              | 旧部署兼容：PixAI MCP 完整地址。首次保存页面中的图片 MCP 平台地址后不再使用。                                                                          |
 | `NSFW_API_URL`               | 图片内容安全服务地址，接口须支持 `POST /classify` 和 multipart `image`。未配置或检测失败时，Bot 保守遮罩照片。Docker 默认使用 `http://nsfw-api:3000`。 |
 | `LOG_RETENTION_DAYS`         | 普通日志保留天数。                                                                                                                                     |
 | `LOG_RETENTION_DAYS_ERROR`   | 错误日志保留天数。                                                                                                                                     |
 | `LOG_CLEANUP_INTERVAL_HOURS` | 日志清理间隔。                                                                                                                                         |
 | `GENERATION_RETENTION_DAYS`  | 图片生成记录和文件的默认保留策略。                                                                                                                     |
-| `OPENAI_IMAGE_MCP_URL`       | GPT 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/openai-image`。独立于 PixAI 授权，留空关闭。                                                  |
-| `GEMINI_IMAGE_MCP_URL`       | Gemini 生图 MCP 完整地址，例如 `https://mcp.example.com/mcp/gemini-image`。独立授权，留空关闭。                                                        |
+| `OPENAI_IMAGE_MCP_URL`       | 旧部署兼容：GPT 生图 MCP 完整地址。新配置请使用面板中的图片 MCP 平台地址。                                                                             |
+| `GEMINI_IMAGE_MCP_URL`       | 旧部署兼容：Gemini 生图 MCP 完整地址。新配置请使用面板中的图片 MCP 平台地址。                                                                          |
 
 Embedding 维度必须与数据库列一致。已经部署后直接修改它，可能导致迁移和索引不兼容；应先生成并审查迁移，再安排回填。
 
@@ -129,7 +129,9 @@ CODING_WORKER_SECRET=生成的独立随机值
 
 ## 生图供应商与默认预设
 
-先在 MCP Platform 的预设页面保存 OpenAI / Gemini API key 并创建预设，再配置上面的对应 MCP 地址。在 Bot 的 **用量与生图治理** 中分别连接 GPT 和 Gemini；三个供应商可以同时连接。
+以 owner 身份在任意 Bot 的 **用量与生图治理 → 图片 MCP 平台** 中填写一个平台域名，例如 `mcp.example.com`，保存后立即为所有 Bot 配置 PixAI、GPT Image 和 Gemini Image 的接口地址，无需新增环境变量或重启。设置持久化到现有数据库；更换平台会清除受影响连接的授权，清空后保存会关闭三个连接。
+
+先在 MCP Platform 保存对应供应商的连接和 API key，再在 Hanori 的连接卡片中分别授权；三个供应商可以同时连接。GPT / Gemini 的预设可选，未填写时使用平台供应商连接的默认配置。完整步骤和旧部署兼容行为见 [图片 MCP](/docs/integrations/mcp#图片-mcp)。
 
 动漫插画默认使用 PixAI，通用图的新配置默认使用 GPT。每个用途都能单独修改默认供应商，并为 PixAI、GPT、Gemini 分别填写默认预设 key 和允许的预设。明确说“用 GPT”或“用 Gemini”只覆盖当前请求，不改动持久默认值；关闭或未连接的供应商不会被自动替代。通用图仍需要启用路由与对应模式。
 

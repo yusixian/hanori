@@ -66,6 +66,7 @@ import { BotLifecycleService } from "./services/bot-lifecycle-service.js";
 import { BotSettingsService } from "./services/bot-settings-service.js";
 import { UsageGovernor } from "./services/usage-governor.js";
 import { ImageMcpConnectionService } from "./services/image-mcp-connection-service.js";
+import { ImageMcpPlatformService } from "./services/image-mcp-platform.js";
 import { ImageGenerationService } from "./services/image-generation-service.js";
 import { BotConfiguredGeneralImageBackend } from "./services/general-image-backend.js";
 import { ChatAiSelectionRuntimeRegistry } from "./services/chat-ai-selection-runtime-registry.js";
@@ -305,51 +306,50 @@ const engagementSampleCleaner = new EngagementSampleCleaner(engagementSampleServ
 engagementSampleCleaner.start();
 botPool.setEngagementSampleService(engagementSampleService);
 const usageGovernor = new UsageGovernor(db);
-const imageMcpConnectionService = new ImageMcpConnectionService({
+const imageMcpPlatform = new ImageMcpPlatformService(
   db,
-  encryptionKey: env.ENCRYPTION_KEY,
-  baseURL: env.BETTER_AUTH_URL,
-  logger,
-  environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
-  endpointOverride: env.PIXAI_MCP_URL || undefined,
-});
+  (provider, endpointOverride) => {
+    const name =
+      provider === "mcp_pixai"
+        ? "pixai"
+        : provider === "mcp_openai"
+          ? "openai-image"
+          : "gemini-image";
+    return new ImageMcpConnectionService({
+      db,
+      encryptionKey: env.ENCRYPTION_KEY,
+      baseURL: env.BETTER_AUTH_URL,
+      logger,
+      environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
+      endpointOverride,
+      connectionId: provider === "mcp_pixai" ? "default" : name,
+      routePrefix:
+        provider === "mcp_pixai"
+          ? "/api/image-mcp"
+          : provider === "mcp_openai"
+            ? "/api/image-mcp-openai"
+            : "/api/image-mcp-gemini",
+      scopes: [
+        "openid",
+        "profile",
+        "offline_access",
+        `mcp:${name}:read`,
+        `mcp:${name}:generate`,
+        `mcp:${name}:cancel`,
+      ],
+    });
+  },
+  {
+    mcp_pixai: env.PIXAI_MCP_URL,
+    mcp_openai: env.OPENAI_IMAGE_MCP_URL,
+    mcp_gemini: env.GEMINI_IMAGE_MCP_URL,
+  },
+);
+await imageMcpPlatform.initialize();
+const imageMcpConnectionService = imageMcpPlatform.connection("mcp_pixai")!;
 const imageMcpConnections = {
-  mcp_openai: new ImageMcpConnectionService({
-    db,
-    encryptionKey: env.ENCRYPTION_KEY,
-    baseURL: env.BETTER_AUTH_URL,
-    logger,
-    environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
-    endpointOverride: env.OPENAI_IMAGE_MCP_URL || undefined,
-    connectionId: "openai-image",
-    routePrefix: "/api/image-mcp-openai",
-    scopes: [
-      "openid",
-      "profile",
-      "offline_access",
-      "mcp:openai-image:read",
-      "mcp:openai-image:generate",
-      "mcp:openai-image:cancel",
-    ],
-  }),
-  mcp_gemini: new ImageMcpConnectionService({
-    db,
-    encryptionKey: env.ENCRYPTION_KEY,
-    baseURL: env.BETTER_AUTH_URL,
-    logger,
-    environment: process.env.NODE_ENV === "production" ? "production" : "non-production",
-    endpointOverride: env.GEMINI_IMAGE_MCP_URL || undefined,
-    connectionId: "gemini-image",
-    routePrefix: "/api/image-mcp-gemini",
-    scopes: [
-      "openid",
-      "profile",
-      "offline_access",
-      "mcp:gemini-image:read",
-      "mcp:gemini-image:generate",
-      "mcp:gemini-image:cancel",
-    ],
-  }),
+  mcp_openai: imageMcpPlatform.connection("mcp_openai")!,
+  mcp_gemini: imageMcpPlatform.connection("mcp_gemini")!,
 };
 const imageGenerationService = new ImageGenerationService({
   db,
@@ -359,17 +359,15 @@ const imageGenerationService = new ImageGenerationService({
   pixai: imageMcpConnectionService.adapter,
   artifacts: imageMcpConnectionService.artifacts,
   backends: {
-    mcp_pixai: {
-      adapter: imageMcpConnectionService.adapter,
-      artifacts: imageMcpConnectionService.artifacts,
-      endpoint: imageMcpConnectionService.endpoint,
+    get mcp_pixai() {
+      return imageMcpPlatform.backend("mcp_pixai");
     },
-    ...Object.fromEntries(
-      Object.entries(imageMcpConnections).map(([id, service]) => [
-        id,
-        { adapter: service.adapter, artifacts: service.artifacts, endpoint: service.endpoint },
-      ]),
-    ),
+    get mcp_openai() {
+      return imageMcpPlatform.backend("mcp_openai");
+    },
+    get mcp_gemini() {
+      return imageMcpPlatform.backend("mcp_gemini");
+    },
   },
   generalBackend: new BotConfiguredGeneralImageBackend(db),
   logger,
@@ -634,6 +632,7 @@ const app = createApp({
   imageGenerationService,
   imageMcpConnectionService,
   imageMcpConnections,
+  imageMcpPlatform,
   usageGovernor,
   memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
@@ -655,8 +654,6 @@ serve(
 
 // Connect MCP servers before bots so tools are available at bot startup
 await mcpClientManager.connectAll();
-await imageMcpConnectionService.initialize();
-await Promise.all(Object.values(imageMcpConnections).map((service) => service.initialize()));
 await usageGovernor.reclaimExpiredReservations();
 await usageGovernor.pruneExpiredDetails();
 
@@ -718,12 +715,7 @@ const shutdown = createShutdownHandler(async (signal) => {
   await steps.run("plugins", () => pluginManager.close());
   await imagesStopped;
   await steps.run("mcp", () => mcpClientManager.destroyAll());
-  await steps.run("image-mcp", () => imageMcpConnectionService.close());
-  await Promise.all(
-    Object.entries(imageMcpConnections).map(([name, service]) =>
-      steps.run(`image-mcp:${name}`, () => service.close()),
-    ),
-  );
+  await steps.run("image-mcp", () => imageMcpPlatform.close());
   await usageStopped;
   await harnessStopped;
   await steps.run("modelCapabilityService", () => modelCapabilityService.stop());
