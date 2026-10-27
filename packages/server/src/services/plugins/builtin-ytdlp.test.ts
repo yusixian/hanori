@@ -117,3 +117,107 @@ it("binds the download provider on the host and keeps downloads admin-only", asy
     (await setup({}, port)).session.tools!.some((tool) => tool.name === "download_video"),
   ).toBe(false);
 });
+
+it("accepts subtitle filters and exposes a primary track that can be read without listing", async () => {
+  vi.mocked(runYtdlpBridge)
+    .mockResolvedValueOnce({
+      ...video,
+      originalLanguage: "en",
+      tracks: [
+        {
+          ...video.tracks[0],
+          language: "fr",
+          isTranslated: true,
+          originalLanguage: "en",
+          translationGroup: "en",
+        },
+        {
+          ...video.tracks[0],
+          source: "platform_cc",
+          originalLanguage: "en",
+          translationGroup: "en",
+        },
+      ],
+    })
+    .mockResolvedValueOnce({ cues: [{ startMs: 0, endMs: 1000, text: "Direct caption" }] });
+  const { execute } = await setup();
+  const found = (await execute("lookup_video", { input: video.url })) as {
+    videoReference: string;
+    primaryTrackReference: string;
+  };
+  expect(
+    await execute("read_transcript", { trackReference: found.primaryTrackReference }),
+  ).toMatchObject({ cues: [{ text: "Direct caption" }] });
+  expect(
+    await execute("list_subtitles", {
+      videoReference: found.videoReference,
+      language: "FR",
+      source: "platform_auto",
+    }),
+  ).toMatchObject({ total: 1, tracks: [{ language: "fr", isTranslated: true }] });
+  expect(await execute("list_subtitles", { videoReference: found.videoReference })).toMatchObject({
+    total: 1,
+    hiddenTranslationCount: 1,
+  });
+  expect(
+    await execute("list_subtitles", {
+      videoReference: found.videoReference,
+      includeTranslations: true,
+    }),
+  ).toMatchObject({ total: 2 });
+  for (const invalid of [
+    { language: "" },
+    { language: "en_*" },
+    { source: "manual" },
+    { includeTranslations: "true" },
+    { limit: 21 },
+  ]) {
+    expect(
+      await execute("list_subtitles", { videoReference: found.videoReference, ...invalid }),
+    ).toEqual({ status: "invalid_request", error: "invalid_arguments" });
+  }
+  expect(runYtdlpBridge).toHaveBeenCalledTimes(2);
+});
+
+it("returns actionable recovery for stale and unknown references without calling the extractor", async () => {
+  vi.mocked(runYtdlpBridge).mockResolvedValue(video);
+  const first = await setup();
+  const found = (await first.execute("lookup_video", { input: video.url })) as {
+    videoReference: string;
+    primaryTrackReference: string;
+  };
+  await first.session.dispose?.();
+  const next = await setup();
+  for (const [name, input] of [
+    ["list_subtitles", { videoReference: found.videoReference }],
+    ["list_formats", { videoReference: found.videoReference }],
+    ["read_transcript", { trackReference: found.primaryTrackReference }],
+  ] as const) {
+    expect(await next.execute(name, input)).toMatchObject({
+      status: "invalid_request",
+      error: "reference_expired",
+      recovery: expect.stringContaining("lookup_video"),
+    });
+  }
+  expect(await next.execute("list_subtitles", { videoReference: "missing" })).toMatchObject({
+    status: "invalid_request",
+    error: "unknown_reference",
+    recovery: expect.stringContaining("original video URL"),
+  });
+  expect(runYtdlpBridge).toHaveBeenCalledTimes(1);
+  const refreshed = (await next.execute("lookup_video", { input: video.url })) as {
+    videoReference: string;
+  };
+  expect(
+    await next.execute("list_subtitles", { videoReference: refreshed.videoReference }),
+  ).toMatchObject({ status: "available", total: 1 });
+});
+
+it("keeps malformed extractor responses separate from reference errors", async () => {
+  vi.mocked(runYtdlpBridge).mockResolvedValue({ malformed: true });
+  const { execute } = await setup();
+  expect(await execute("lookup_video", { input: video.url })).toEqual({
+    status: "upstream_error",
+    error: "invalid_response",
+  });
+});

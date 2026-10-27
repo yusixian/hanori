@@ -134,6 +134,69 @@ export const plugins = {
     },
     cloudCancellation: "Local waiting stopped; the cloud task may continue and incur charges.",
   },
+  ytdlp: {
+    startTitle: "Start with video summaries",
+    startAnonymous:
+      "Leave Cookies empty, keep video downloads off, and keep the other defaults. Add Cookies later if the site asks you to sign in.",
+    startSave:
+      "Choose “Save configuration” at the bottom, then “Enable” above. Save any later changes before they take effect.",
+    startTry: "Send this Bot a link to an individual video and ask it to summarize the video.",
+    subtitleHint:
+      "Content summaries need accessible subtitles. Without them, the plugin can only read details such as the title and description; it does not automatically transcribe audio.",
+    testHint:
+      "“Test saved configuration” only checks whether the plugin can start. It does not contact YouTube or validate Cookies. Try a video link to check actual access.",
+    cookiesHelpTitle: "How do I add Cookies when sign-in is needed?",
+    cookiesExport:
+      "Sign in to the site in your own browser. Use a Cookie export tool that supports Netscape format to export only that site’s cookies.txt. For YouTube, follow the official guide below.",
+    cookiesPaste:
+      "Open cookies.txt in a text editor and paste its contents above, preserving line breaks and tabs. The first line is usually # Netscape HTTP Cookie File. Do not enter a file path or a single-line Cookie request header.",
+    cookiesSave:
+      "Choose “Save configuration”. The field clears after saving; this is expected. “A secret is saved” confirms it was stored. Leaving the field empty keeps it.",
+    cookiesPrivacy:
+      "Cookies are sign-in credentials; do not send them in chat. They are encrypted per Bot and used only for matching site domains, up to 16,384 characters. Site rate limits and bot checks may still prevent access.",
+    cookiesGuide: "Read yt-dlp’s official YouTube Cookie export guide",
+    fields: {
+      cookies: {
+        label: "Site Cookies (optional)",
+        description:
+          "Paste Netscape-format Cookies when a video requires sign-in. Without saved Cookies, access is anonymous. Leave this empty to keep any saved Cookies.",
+      },
+      downloadEnabled: {
+        label: "Allow video downloads and Telegram delivery",
+        description:
+          "Enable this to receive video files when an administrator explicitly requests a download. The server needs the media conversion service. The limits below apply only to file downloads, not subtitle summaries.",
+      },
+      downloadMaxSeconds: {
+        label: "Maximum video duration (seconds)",
+        description: "Default: {{value}} seconds. Longer videos are rejected, not trimmed.",
+      },
+      downloadMaxMb: {
+        label: "Maximum video file size (MB)",
+        description:
+          "Default: {{value}} MB. Telegram’s 50 MB upload limit still applies even if you enter a larger value.",
+      },
+      downloadCacheMinutes: {
+        label: "Keep videos on the server for (minutes)",
+        description:
+          "Default: {{value}} minutes. Expiry removes only the server copy; files already sent to Telegram are unaffected.",
+      },
+      downloadCacheMb: {
+        label: "Video cache space (MB)",
+        description:
+          "Default: {{value}} MB for downloads and merging, shared with Bilibili downloads. Allow at least twice the effective file size limit plus 1 MiB.",
+      },
+      downloadMinFreeMb: {
+        label: "Minimum free server disk space (MB)",
+        description:
+          "Default: {{value}} MB. Downloads are rejected when space is insufficient, to avoid filling the disk.",
+      },
+      downloadDailyJobs: {
+        label: "Daily downloads per administrator",
+        description:
+          "Default: {{value}}. Counted per Bot and user, sharing the daily quota with Bilibili downloads.",
+      },
+    },
+  },
   config: {
     empty: "This plugin has no configuration fields.",
     draftHint:

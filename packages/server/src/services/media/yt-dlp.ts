@@ -7,6 +7,8 @@ type FailureCode =
   | "extractor_failed"
   | "timeout"
   | "invalid_response"
+  | "unknown_reference"
+  | "reference_expired"
   | "limit_exceeded"
   | "login_required"
   | "rate_limited"

@@ -1,6 +1,7 @@
 // All built-in extractors use the same host-controlled network bridge. No shell or user flags.
 export const UNIVERSAL_YTDLP_SCRIPT = String.raw`
 import base64
+import hashlib
 import io
 import json
 import os
@@ -9,7 +10,7 @@ import html
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 def emit(value):
     print(json.dumps(value, ensure_ascii=True, separators=(",", ":")), flush=True)
@@ -151,29 +152,68 @@ def parse_subtitle(text, ext):
         raise Failure("extractor_failed")
     return sorted(cues, key=lambda c: c["startMs"])
 
+def language_tag(value):
+    return re.sub(r"[^a-zA-Z0-9-]", "-", str(value or ""))[:64].strip("-") or None
+
 def track_list(info):
-    tracks = []
+    tracks, seen = [], set()
+    is_youtube = str(info.get("extractor_key") or info.get("extractor") or "").lower() == "youtube"
     for field, source in (("subtitles", "platform_cc"), ("automatic_captions", "platform_auto")):
         for language, formats in (info.get(field) or {}).items():
             if language == "live_chat":
                 continue
             preferred = sorted(formats, key=lambda f: {"json3": 0, "vtt": 1, "srt": 2, "ttml": 3, "srv3": 4, "json": 5}.get(f.get("ext"), 99))
             chosen = next((f for f in preferred if f.get("ext") in ("json3", "vtt", "srt", "ttml", "srv3", "json") and (f.get("url") or f.get("data"))), None)
-            if chosen:
-                tag = re.sub(r"[^a-zA-Z0-9-]", "-", str(language))[:64].strip("-") or "und"
-                tracks.append({"language": tag, "label": clipped(chosen.get("name") or language, 120),
-                    "source": source, "ext": chosen["ext"], "url": chosen.get("url"), "data": chosen.get("data"),
-                    "headers": chosen.get("http_headers") or info.get("http_headers") or {}})
-    return tracks[:2000]
+            if not chosen:
+                continue
+            tag = language_tag(language) or "und"
+            translated, original, group = False, None, None
+            if is_youtube and chosen.get("url"):
+                parts = urlsplit(chosen["url"])
+                pairs = parse_qsl(parts.query, keep_blank_values=True)
+                query = dict(pairs)
+                # YouTube uses tlang for translations and emits -orig/unsuffixed aliases.
+                # Names and automatic_captions alone cannot establish translation provenance.
+                translated = bool(query.get("tlang"))
+                original = language_tag(query.get("lang"))
+                tag = language_tag(query.get("tlang")) if translated else original or language_tag(tag.removesuffix("-orig"))
+                tag = tag or "und"
+                if original:
+                    identity = urlunsplit((parts.scheme, parts.netloc, parts.path,
+                        urlencode(sorted((k, v) for k, v in pairs if k not in ("tlang", "fmt", "xosf"))), ""))
+                    group = hashlib.sha256(identity.encode()).hexdigest()
+                    key = (group, tag.lower(), translated)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+            tracks.append({"language": tag, "label": clipped(chosen.get("name") or language, 120),
+                "source": source, "isTranslated": translated, "originalLanguage": original, "translationGroup": group,
+                "ext": chosen["ext"], "url": chosen.get("url"), "data": chosen.get("data"),
+                "headers": chosen.get("http_headers") or info.get("http_headers") or {}})
+    return sorted(tracks, key=lambda t: t["isTranslated"])[:2000]
+
+def original_language(info, tracks):
+    if explicit := language_tag(info.get("language")):
+        return explicit
+    audio = [f for f in (info.get("formats") or []) if f.get("acodec") not in (None, "none") and f.get("language")]
+    preferred = {language_tag(f["language"]) for f in audio if (f.get("language_preference") or 0) >= 10}
+    originals = {t["originalLanguage"] for t in tracks if t["source"] == "platform_auto" and not t["isTranslated"] and t["originalLanguage"]}
+    languages = {language_tag(f["language"]) for f in audio}
+    for candidates in (preferred, originals, languages):
+        candidates.discard(None)
+        if len(candidates) == 1:
+            return next(iter(candidates))
+    return None
 
 def summary(info):
+    tracks = track_list(info)
     return {"id": clipped(info.get("id"), 300), "extractor": clipped(info.get("extractor_key") or info.get("extractor"), 100),
         "url": info.get("webpage_url") or info.get("original_url") or request["url"],
         "title": clipped(info.get("title"), 500), "description": clipped(info.get("description"), 4000),
         "author": clipped(info.get("uploader") or info.get("channel") or info.get("creator"), 200),
         "durationSeconds": info.get("duration"), "liveStatus": info.get("live_status"),
         "chapters": [{"title": clipped(c.get("title"), 200), "startSeconds": c.get("start_time"), "endSeconds": c.get("end_time")} for c in (info.get("chapters") or [])[:100]],
-        "tracks": track_list(info),
+        "tracks": tracks, "originalLanguage": original_language(info, tracks),
         "formats": [{k: f.get(k) for k in ("format_id", "ext", "width", "height", "fps", "vcodec", "acodec", "filesize", "filesize_approx", "protocol")} for f in (info.get("formats") or [])[:200]]}
 
 try:

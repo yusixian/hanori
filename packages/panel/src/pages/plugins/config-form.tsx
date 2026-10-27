@@ -10,7 +10,7 @@ import {
   type PluginConfigUpdate,
   type PluginManifest,
 } from "@cos-tool-bot/shared";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
 export interface PluginConfigFormProps {
@@ -21,6 +21,7 @@ export interface PluginConfigFormProps {
   onSave: (update: PluginConfigUpdate) => Promise<void>;
   disabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  fieldHelp?: Record<string, ReactNode>;
 }
 
 type Draft = Record<string, string | boolean>;
@@ -52,6 +53,7 @@ function ConfigDraft({
   onSave,
   disabled,
   onDirtyChange,
+  fieldHelp,
 }: PluginConfigFormProps) {
   const { t } = useTranslation("plugins");
   const id = useId();
@@ -316,6 +318,7 @@ function ConfigDraft({
                 ) : null}
               </div>
             ) : null}
+            {fieldHelp?.[field.key]}
             {error ? (
               <p
                 id={`${fieldId}-error`}

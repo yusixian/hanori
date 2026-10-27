@@ -29,6 +29,78 @@ const reply = (url: string, text: string, mime = "text/html", status = 200, head
 afterEach(() => vi.resetAllMocks());
 
 describe.skipIf(!available)("universal real yt-dlp extraction", { timeout: 20_000 }, () => {
+  it("normalizes YouTube originals, aliases and translated tracks using actual bridge metadata", async () => {
+    const base =
+      "https://www.youtube.com/api/timedtext?v=fixture&lang=en&kind=asr&signature=private";
+    const formats = (url: string) => [{ url, ext: "json3", name: "Fixture caption" }];
+    const automatic = Object.fromEntries([
+      ...Array.from({ length: 176 }, (_, index) => [
+        `x-${index}`,
+        formats(`${base}&tlang=x-${index}&fmt=json3`),
+      ]),
+      ["en-orig", formats(`${base}&fmt=json3`)],
+      ["en", formats(`${base}&fmt=json3`)],
+    ]);
+    const fixture = {
+      id: "fixture",
+      extractor_key: "Youtube",
+      webpage_url: "https://www.youtube.com/watch?v=fixture",
+      automatic_captions: automatic,
+    };
+    // Execute the production normalization functions with extractor output, without live requests.
+    const definitions = UNIVERSAL_YTDLP_SCRIPT.split("\ntry:\n    options =")[0]!;
+    const normalize = (info: unknown) =>
+      runYtdlpBridge({
+        script: `${definitions}\nemit({"type":"result","value":summary(request["fixture"])})`,
+        input: { fixture: info, nodePath: process.execPath },
+        read: vi.fn(),
+      }) as Promise<import("./ytdlp-universal.js").ExtractedVideo>;
+    const value = await normalize(fixture);
+    expect(value.originalLanguage).toBe("en");
+    expect(value.tracks).toHaveLength(177);
+    expect(value.tracks[0]).toMatchObject({
+      language: "en",
+      isTranslated: false,
+      originalLanguage: "en",
+    });
+    expect(value.tracks.slice(1).every((t) => t.isTranslated)).toBe(true);
+    expect(new Set(value.tracks.map((t) => t.translationGroup)).size).toBe(1);
+
+    const manual = "https://www.youtube.com/api/timedtext?v=fixture&lang=en&signature=private";
+    const cc = await normalize({
+      ...fixture,
+      formats: [{ acodec: "aac", language: "en", language_preference: 10 }],
+      subtitles: { en: formats(`${manual}&fmt=vtt`) },
+      automatic_captions: {
+        "en-en": formats(`${manual}&fmt=json3`),
+        "zh-Hans-en": formats(`${manual}&tlang=zh-Hans&fmt=json3`),
+      },
+    });
+    expect(cc.originalLanguage).toBe("en");
+    expect(cc.tracks).toHaveLength(2);
+    expect(cc.tracks[0]).toMatchObject({
+      language: "en",
+      source: "platform_cc",
+      isTranslated: false,
+    });
+    expect(cc.tracks[1]).toMatchObject({
+      language: "zh-Hans",
+      source: "platform_auto",
+      isTranslated: true,
+    });
+    expect(cc.tracks[0]!.translationGroup).toBe(cc.tracks[1]!.translationGroup);
+
+    const generic = await normalize({
+      ...fixture,
+      extractor_key: "Generic",
+      automatic_captions: { en: formats(`${base}&tlang=fr`) },
+    });
+    expect(generic.tracks).toMatchObject([
+      { language: "en", isTranslated: false, translationGroup: null },
+    ]);
+    expect(generic.originalLanguage).toBeNull();
+  });
+
   it("uses the upstream generic extractor for an unlisted site's direct media", async () => {
     vi.mocked(readExtractorResponse).mockImplementation(async (url) =>
       reply(url, "synthetic-video", "video/mp4"),
