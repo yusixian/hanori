@@ -229,7 +229,8 @@ export class IsolatedAudioConverter {
     id: string,
     input: {
       videoSha256: string;
-      audioSha256: string;
+      audioSha256?: string;
+      generic?: true;
       maxDurationSeconds: number;
       maxBytes: number;
     },
@@ -238,7 +239,9 @@ export class IsolatedAudioConverter {
     this.assertId(id);
     if (
       !/^[a-f0-9]{64}$(?![\s\S])/.test(input.videoSha256) ||
-      !/^[a-f0-9]{64}$(?![\s\S])/.test(input.audioSha256) ||
+      (input.audioSha256 === undefined
+        ? input.generic !== true
+        : !/^[a-f0-9]{64}$(?![\s\S])/.test(input.audioSha256)) ||
       !Number.isSafeInteger(input.maxDurationSeconds) ||
       input.maxDurationSeconds < 1 ||
       !Number.isSafeInteger(input.maxBytes) ||

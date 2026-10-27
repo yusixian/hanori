@@ -59,7 +59,12 @@ describe.skipIf(!baseUrl)("durable video download jobs", () => {
     url = parsed.href;
     connection = createDb(url);
     await connection.client.unsafe("CREATE TABLE public.bots (id uuid PRIMARY KEY)");
-    for (const name of ["0065_sturdy_mephisto.sql", "0066_large_thunderbolt_ross.sql"]) {
+    for (const name of [
+      "0065_sturdy_mephisto.sql",
+      "0066_large_thunderbolt_ross.sql",
+      "0070_colorful_rhino.sql",
+      "0071_safe_thanos.sql",
+    ]) {
       const migration = await readFile(
         new URL(`../../../../database/drizzle/${name}`, import.meta.url),
         "utf8",
@@ -164,6 +169,72 @@ describe.skipIf(!baseUrl)("durable video download jobs", () => {
     });
     expect(await create(2, { ...actor, userId: 43 })).toMatchObject({ status: "queued" });
     expect(await create(2, { ...actor, botId: otherBotId })).toMatchObject({ status: "queued" });
+  });
+
+  it("persists the general extractor provider and verifies unknown duration before delivery", async () => {
+    configuration = {
+      ...fixtureConfig(),
+      provider: "ytdlp",
+      cookie: undefined,
+      cookies: "synthetic-secret",
+    };
+    vi.mocked(deps.inspect).mockResolvedValue({
+      canonicalUrl: "https://video.example/clip",
+      bvid: JSON.stringify(["Generic", "clip"]),
+      part: 1,
+      title: "Generic clip",
+      durationSeconds: null,
+    });
+    vi.mocked(deps.download).mockImplementation(async (_row, _config, options) => {
+      await options.onStage("downloading");
+      await options.onStage("merging");
+      return {
+        path: "/synthetic/output.mp4",
+        bytes: 80,
+        expiresAt: Date.now() + 60_000,
+        durationSeconds: 42,
+      };
+    });
+    const saved = await service.create(actor, {
+      sourceUrl: "https://video.example/clip",
+      provider: "ytdlp",
+    });
+    expect(saved.durationSeconds).toBeNull();
+    expect(await stored(saved.id)).toMatchObject({ provider: "ytdlp", duration_seconds: null });
+    await service.tick();
+    expect(await service.get(actor, saved.id)).toMatchObject({
+      status: "completed",
+      durationSeconds: 42,
+      messageId: 123,
+    });
+    expect(deps.configuration).toHaveBeenCalledWith(actor.botId, "ytdlp");
+    expect(deps.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "ytdlp", durationSeconds: 42 }),
+      expect.anything(),
+      expect.any(AbortSignal),
+    );
+    expect(JSON.stringify(await stored(saved.id))).not.toContain("synthetic-secret");
+  });
+
+  it("fails closed when a general download still lacks verified duration", async () => {
+    configuration = { ...fixtureConfig(), provider: "ytdlp" };
+    vi.mocked(deps.inspect).mockResolvedValue({
+      canonicalUrl: "https://video.example/clip",
+      bvid: JSON.stringify(["Generic", "clip"]),
+      part: 1,
+      title: "Generic clip",
+      durationSeconds: null,
+    });
+    const saved = await service.create(actor, {
+      sourceUrl: "https://video.example/clip",
+      provider: "ytdlp",
+    });
+    await service.tick();
+    expect(await service.get(actor, saved.id)).toMatchObject({
+      status: "failed",
+      error: "duration_limit",
+    });
+    expect(deps.deliver).not.toHaveBeenCalled();
   });
 
   it("isolates job reads and cancellation by bot, chat, user, and forum thread", async () => {
@@ -331,6 +402,47 @@ describe.skipIf(!baseUrl)("durable video download jobs", () => {
       error: "configuration_changed",
     });
     expect(deps.deliver).not.toHaveBeenCalled();
+  });
+
+  it("changing yt-dlp settings leaves active and queued Bilibili downloads untouched", async () => {
+    const active = await create();
+    const queued = await create(2);
+    deps.configuration = vi.fn(async (_botId, provider) =>
+      provider === "ytdlp" ? { ...fixtureConfig(), provider } : configuration,
+    );
+    vi.mocked(deps.inspect).mockResolvedValueOnce({
+      canonicalUrl: "https://video.example/clip",
+      bvid: JSON.stringify(["Generic", "clip"]),
+      part: 1,
+      title: "Generic clip",
+      durationSeconds: 60,
+    });
+    const generic = await service.create(actor, {
+      sourceUrl: "https://video.example/clip",
+      provider: "ytdlp",
+    });
+    const entered = gate();
+    const proceed = gate();
+    let signal!: AbortSignal;
+    deps.download = vi.fn(async (_row, _config, options) => {
+      signal = options.signal;
+      await options.onStage("downloading");
+      entered.release();
+      await proceed.promise;
+      signal.throwIfAborted();
+      return { path: "/synthetic/output.mp4", bytes: 80, expiresAt: Date.now() + 60_000 };
+    });
+    const tick = service.tick();
+    await entered.promise;
+    await service.cancelForBot(actor.botId, "ytdlp");
+    expect(signal.aborted).toBe(false);
+    expect(await stored(active.id)).toMatchObject({ cancel_requested: false });
+    expect(await stored(queued.id)).toMatchObject({ cancel_requested: false });
+    expect(await stored(generic.id)).toMatchObject({ cancel_requested: true });
+    proceed.release();
+    await tick;
+    expect(await service.get(actor, active.id)).toMatchObject({ status: "completed" });
+    expect(deps.deliver).toHaveBeenCalledTimes(1);
   });
 
   it("marks an upload exception unknown and never resends automatically", async () => {

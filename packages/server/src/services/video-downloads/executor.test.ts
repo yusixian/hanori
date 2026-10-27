@@ -54,6 +54,7 @@ function row(): VideoDownloadRow {
     configRevision: 1,
     installationRevision: 3,
     sourceUrl,
+    provider: "bilibili",
     bvid,
     part: 1,
     title: "Synthetic clip",
@@ -163,7 +164,9 @@ describe("video download executor", () => {
       "synthetic-private-cookie",
     );
     await executor.cleanup(job.id, true);
-    expect(await cache.inspect(job.id)).toEqual(result);
+    const { durationSeconds, ...cached } = result;
+    expect(durationSeconds).toBe(60);
+    expect(await cache.inspect(job.id)).toEqual(cached);
   });
 
   it("rejects changed source metadata and low disk space before downloading files", async () => {

@@ -268,7 +268,7 @@ test("a save conflict retains the secret draft and requires explicit reload befo
   await expect.element(page.getByText(/This plugin changed elsewhere/)).toBeVisible();
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("synthetic-unsaved-cookie");
   await expect.element(page.getByRole("button", { name: "Enable", exact: true })).toBeDisabled();
-  expect(document.body.textContent).not.toContain("synthetic-unsaved-cookie");
+  expect(document.body.innerText).not.toContain("synthetic-unsaved-cookie");
   await page.getByRole("button", { name: "Reload saved configuration" }).click();
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("");
   await expect.element(page.getByRole("button", { name: "Enable", exact: true })).toBeEnabled();

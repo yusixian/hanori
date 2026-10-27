@@ -225,8 +225,10 @@ if (nsfwChecker) botPool.setNsfwChecker(nsfwChecker);
     env.MEDIA_WORKER_SOCKET,
   );
   videoDownloadService = new VideoDownloadService(db, {
-    configuration: (botId) =>
-      mediaConverter ? loadVideoDownloadConfiguration(pluginManager, botId) : Promise.resolve(null),
+    configuration: (botId, provider) =>
+      mediaConverter
+        ? loadVideoDownloadConfiguration(pluginManager, botId, provider)
+        : Promise.resolve(null),
     inspect: (source, config, signal) => executor.inspect(source, config, signal),
     download: (row, config, options) => executor.download(row, config, options),
     cleanup: (id, retain) => executor.cleanup(id, retain),
@@ -247,9 +249,6 @@ if (nsfwChecker) botPool.setNsfwChecker(nsfwChecker);
         AbortSignal.timeout(15_000),
       ),
     reportError: (code) => logger.warn({ code }, "Video download maintenance failed"),
-  });
-  pluginManager.onConfigurationChanged(async (pluginId, botId) => {
-    if (pluginId === "hanori.bilibili") await videoDownloadService.cancelForBot(botId);
   });
 }
 const mediaConfiguration = (botId: string) =>
@@ -298,6 +297,11 @@ const mediaConfiguration = (botId: string) =>
   });
   pluginManager.onConfigurationChanged(async (pluginId, botId) => {
     if (pluginId === "hanori.bilibili") await mediaJobService!.cancelForBot(botId);
+    if (pluginId === "hanori.bilibili" || pluginId === "hanori.ytdlp")
+      await videoDownloadService.cancelForBot(
+        botId,
+        pluginId === "hanori.bilibili" ? "bilibili" : "ytdlp",
+      );
   });
 }
 if (mediaTranscription) botPool.setMediaTranscriptionPort(mediaTranscription);
