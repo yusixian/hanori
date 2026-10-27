@@ -26,6 +26,7 @@ import { PluginRequestError, pluginsApi, type PluginsApi } from "./api";
 import { PluginConfigForm } from "./config-form";
 import { MediaJobsPanel } from "./media-jobs";
 import { PluginQrLoginDialog } from "./qr-login-dialog";
+import { YtdlpCookiesHelp, YtdlpSetupGuide } from "./ytdlp-setup-guide";
 
 const fullSha = /^[a-f0-9]{40}$/i;
 const githubRepository = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -219,6 +220,20 @@ function BotPluginSettings({
   api: PluginsApi;
 }) {
   const { t } = useTranslation("plugins");
+  const isYtdlp = entry.manifest.id === "hanori.ytdlp";
+  const displayManifest = isYtdlp
+    ? {
+        ...entry.manifest,
+        config: entry.manifest.config.map((field) => ({
+          ...field,
+          label: t(`ytdlp.fields.${field.key}.label`, { defaultValue: field.label }),
+          description: t(`ytdlp.fields.${field.key}.description`, {
+            defaultValue: field.description ?? "",
+            value: field.default,
+          }),
+        })),
+      }
+    : entry.manifest;
   const [state, setState] = useState<PluginBotState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -369,7 +384,11 @@ function BotPluginSettings({
             {state.runtime.status === "error" ? (
               <p className="text-destructive text-sm">{t("runtimeError")}</p>
             ) : null}
-            <p className="text-muted-foreground text-sm">{t("savedTestHint")}</p>
+            {isYtdlp ? (
+              <YtdlpSetupGuide />
+            ) : (
+              <p className="text-muted-foreground text-sm">{t("savedTestHint")}</p>
+            )}
             {entry.manifest.login ? (
               <div className="space-y-2">
                 <Button
@@ -392,7 +411,8 @@ function BotPluginSettings({
               </div>
             ) : null}
             <PluginConfigForm
-              manifest={entry.manifest}
+              manifest={displayManifest}
+              fieldHelp={isYtdlp ? { cookies: <YtdlpCookiesHelp /> } : undefined}
               configuration={state.configuration}
               revision={state.revision}
               scopeKey={`${entry.manifest.id}/${botId}/${reload}`}

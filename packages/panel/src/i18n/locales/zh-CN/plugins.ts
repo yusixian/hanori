@@ -123,6 +123,66 @@ export const plugins = {
     },
     cloudCancellation: "已停止本地等待；云端任务可能继续执行并产生费用。",
   },
+  ytdlp: {
+    startTitle: "先开始总结视频",
+    startAnonymous:
+      "Cookies 可以先留空，视频下载保持关闭，其余选项保留默认值。站点提示需要登录时，再补充 Cookies。",
+    startSave: "在表单底部选择「保存配置」，再选择上方的「启用」。之后修改配置也要先保存才会生效。",
+    startTry: "向当前 Bot 发送一个具体视频链接，并说「帮我总结这个视频」。",
+    subtitleHint:
+      "内容总结依赖可读取的字幕。没有字幕时只能读取标题、简介等信息，不会自动语音转录。",
+    testHint:
+      "「测试已保存配置」只检查插件能否启动，不会访问 YouTube 或验证 Cookies。实际能否读取视频，请用视频链接试一次。",
+    cookiesHelpTitle: "需要登录时，怎样填写 Cookies？",
+    cookiesExport:
+      "在自己的浏览器登录目标站点，用支持 Netscape 格式的 Cookie 导出工具，只导出该站点的 cookies.txt。YouTube 的具体步骤见下方官方指南。",
+    cookiesPaste:
+      "用文本编辑器打开 cookies.txt，把文件内容粘贴到上方输入框，保留换行和制表符。第一行通常是 # Netscape HTTP Cookie File；不要填写文件路径或单行 Cookie 请求头。",
+    cookiesSave:
+      "选择「保存配置」。保存后输入框会清空，这是正常的；显示「已保存密钥」即表示已保存，留空不会删除它。",
+    cookiesPrivacy:
+      "Cookies 相当于登录凭据，请勿发到聊天里。此处按 Bot 加密保存、按站点域名使用，最多 16,384 字符。登录后仍可能遇到平台限流或机器人检查。",
+    cookiesGuide: "查看 yt-dlp 官方 YouTube Cookies 导出指南",
+    fields: {
+      cookies: {
+        label: "站点 Cookies（可选）",
+        description:
+          "需要登录才能访问视频时填写 Netscape 格式的 Cookies 文本。未保存时使用匿名访问；已保存时留空即可保留。",
+      },
+      downloadEnabled: {
+        label: "允许下载视频并发回 Telegram",
+        description:
+          "想接收视频文件时再开启，由管理员向 Bot 明确提出下载请求。服务器需启用 media 转换服务。下方限制仅影响文件下载，不影响字幕总结。",
+      },
+      downloadMaxSeconds: {
+        label: "单个视频最长时长（秒）",
+        description: "默认 {{value}} 秒。超过此时长会拒绝下载，不会自动截取片段。",
+      },
+      downloadMaxMb: {
+        label: "单个视频最大文件大小（MB）",
+        description:
+          "默认 {{value}} MB。仍受 Telegram 的 50 MB 上传上限限制；填得更大也不会突破此上限。",
+      },
+      downloadCacheMinutes: {
+        label: "服务器保留视频的时间（分钟）",
+        description:
+          "默认 {{value}} 分钟。过期后只清除服务器上的副本，已发到 Telegram 的文件不受影响。",
+      },
+      downloadCacheMb: {
+        label: "视频缓存可用空间（MB）",
+        description:
+          "默认 {{value}} MB，供下载和合并文件使用；与 B 站下载共用。至少需为有效单文件大小上限的两倍，再加 1 MiB。",
+      },
+      downloadMinFreeMb: {
+        label: "服务器至少保留的空闲空间（MB）",
+        description: "默认 {{value}} MB。空间不足时会拒绝下载，避免占满磁盘。",
+      },
+      downloadDailyJobs: {
+        label: "每位管理员每天最多下载次数",
+        description: "默认 {{value}} 次，按当前 Bot 和用户统计，与 B 站下载共用每日配额。",
+      },
+    },
+  },
   config: {
     empty: "此插件没有配置项。",
     draftHint: "可以保存未完成的配置。启用插件前需填写必填项。",
