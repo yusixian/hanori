@@ -177,10 +177,12 @@ export const videoDownloadJobs = pgTable(
     configRevision: integer("config_revision").notNull(),
     installationRevision: integer("installation_revision").notNull(),
     sourceUrl: text("source_url").notNull(),
+    provider: text("provider").$type<"bilibili" | "ytdlp">().notNull().default("bilibili"),
+    // Existing Bilibili IDs remain intact; yt-dlp stores [extractor, id] as a JSON tuple.
     bvid: text("bvid").notNull(),
     part: integer("part").notNull(),
     title: text("title").notNull(),
-    durationSeconds: integer("duration_seconds").notNull(),
+    durationSeconds: integer("duration_seconds"),
     status: text("status").$type<VideoDownloadStatus>().notNull().default("queued"),
     error: text("error"),
     bytes: integer("bytes"),

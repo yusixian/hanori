@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
   mergePluginConfig,
   PluginConfigError,
@@ -243,12 +244,17 @@ function ConfigDraft({
                   </option>
                 ))}
               </select>
-            ) : field.type === "text" && !field.secret ? (
+            ) : field.type === "text" ? (
               <Textarea
                 {...controlProps}
+                autoComplete={field.secret ? "new-password" : "off"}
+                spellCheck={field.secret ? false : undefined}
                 value={String(draft[field.key])}
                 onChange={(event) => edit(field.key, event.target.value)}
-                className="min-w-0 [overflow-wrap:anywhere]"
+                className={cn(
+                  "min-w-0 [overflow-wrap:anywhere]",
+                  field.secret && "[-webkit-text-security:disc]",
+                )}
               />
             ) : (
               <Input

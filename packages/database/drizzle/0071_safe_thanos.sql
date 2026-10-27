@@ -1,0 +1,1 @@
+ALTER TABLE "video_download_jobs" ALTER COLUMN "duration_seconds" DROP NOT NULL;

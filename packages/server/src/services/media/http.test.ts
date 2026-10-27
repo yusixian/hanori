@@ -15,6 +15,8 @@ import {
   readMediaDocument,
   resolveMediaUrl,
   sendMediaDocument,
+  readExtractorResponse,
+  publicMediaUrl,
   type MediaDocumentPolicy,
   type MediaDownloadPolicy,
 } from "./http.js";
@@ -22,6 +24,120 @@ import {
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, open: vi.fn(actual.open) };
+});
+
+describe("public yt-dlp network boundary", () => {
+  const signal = () => new AbortController().signal;
+  const input = {
+    method: "GET",
+    headers: {
+      "User-Agent": "synthetic",
+      Host: "metadata.google.internal",
+      "Proxy-Authorization": "private",
+    },
+    data: null,
+  };
+  it("accepts unfamiliar public sites and pins their DNS result without forwarding transport headers", async () => {
+    response(200, { "content-type": "text/html" }, ["Fixture"]);
+    const result = await readExtractorResponse("https://new-video.example/watch", input, signal());
+    expect(Buffer.from(result.data, "base64").toString()).toBe("Fixture");
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostname: "new-video.example",
+        headers: { "user-agent": "synthetic", "accept-encoding": "identity" },
+        lookup: expect.any(Function),
+      }),
+      expect.any(Function),
+    );
+  });
+  it("rejects a public hostname resolving to private or mixed addresses before connecting", async () => {
+    vi.mocked(lookup).mockResolvedValue([
+      { address: "8.8.8.8", family: 4 },
+      { address: "127.0.0.1", family: 4 },
+    ] as never);
+    await expect(
+      readExtractorResponse("https://video.example/watch", input, signal()),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    expect(request).not.toHaveBeenCalled();
+  });
+  it("returns redirects and HTTP errors for extractor handling without following unsafe destinations", async () => {
+    response(302, { location: "http://169.254.169.254/latest/meta-data" }, []);
+    expect(
+      await readExtractorResponse("https://video.example/watch", input, signal()),
+    ).toMatchObject({ status: 302, data: "" });
+    expect(request).toHaveBeenCalledTimes(1);
+    response(429, { "content-type": "application/json" }, ['{"error":"rate_limited"}']);
+    expect(
+      await readExtractorResponse("https://video.example/watch", input, signal()),
+    ).toMatchObject({ status: 429 });
+  });
+  it.each([
+    "file:///etc/passwd",
+    "http://localhost/a",
+    "http://127.0.0.1/a",
+    "http://169.254.169.254/a",
+    "http://[::1]/a",
+    "https://owner:password@video.example/a",
+    "https://metadata.google.internal/a",
+  ])("rejects unsafe source %s", (url) => {
+    expect(() => publicMediaUrl(url)).toThrow(MediaHttpError);
+  });
+  it("bounds response bytes, request bodies and plaintext credential use", async () => {
+    response(200, {}, ["oversized"]);
+    await expect(
+      readExtractorResponse("https://video.example/watch", input, signal(), 4),
+    ).rejects.toMatchObject({ code: "too_large" });
+    await expect(
+      readExtractorResponse(
+        "https://video.example/watch",
+        { ...input, method: "POST", data: "!invalid-base64" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(
+      readExtractorResponse(
+        "http://video.example/watch",
+        { ...input, headers: { Cookie: "private" } },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
+  it("reads only a prefix when an extractor probes a large media file for metadata", async () => {
+    response(200, { "content-type": "video/mp4", "content-length": "500000000" }, [
+      Buffer.alloc(4096),
+      Buffer.alloc(4096),
+    ]);
+    const result = await readExtractorResponse(
+      "https://video.example/clip.mp4",
+      input,
+      signal(),
+      8 * 1024 * 1024,
+      true,
+    );
+    expect(Buffer.from(result.data, "base64")).toHaveLength(1024);
+    expect(result.headers["content-length"]).toBe("500000000");
+  });
+  it("carries extractor JSON POST bodies without accepting arbitrary methods", async () => {
+    response(200);
+    const body = Buffer.from('{"videoId":"fixture"}');
+    await readExtractorResponse(
+      "https://video.example/player",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        data: body.toString("base64"),
+      },
+      signal(),
+    );
+    expect(requestBodies).toEqual([body]);
+    await expect(
+      readExtractorResponse(
+        "https://video.example/player",
+        { ...input, method: "DELETE" },
+        signal(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+  });
 });
 vi.mock("node:dns/promises", () => ({ lookup: vi.fn() }));
 vi.mock("node:https", () => ({ request: vi.fn() }));

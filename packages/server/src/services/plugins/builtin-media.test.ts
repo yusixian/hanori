@@ -129,18 +129,31 @@ describe("built-in media plugins", () => {
     expect(builtins.map((entry) => entry.manifest.id)).toEqual([
       "hanori.bilibili",
       "hanori.netease",
+      "hanori.ytdlp",
     ]);
     for (const builtin of builtins) {
       expect(parsePluginManifest(builtin.manifest)).toMatchObject({
         apiVersion: 1,
-        version: builtin.manifest.id === "hanori.bilibili" ? "1.3.1" : "1.1.0",
-        login: { type: "qr" },
+        version:
+          builtin.manifest.id === "hanori.bilibili"
+            ? "1.3.1"
+            : builtin.manifest.id === "hanori.ytdlp"
+              ? "1.0.0"
+              : "1.1.0",
+        ...(builtin.manifest.id === "hanori.ytdlp" ? {} : { login: { type: "qr" } }),
       });
       expect(builtin.manifest.config).toContainEqual(
-        expect.objectContaining({ key: "cookie", type: "text", secret: true, required: false }),
+        expect.objectContaining({
+          key: builtin.manifest.id === "hanori.ytdlp" ? "cookies" : "cookie",
+          type: "text",
+          secret: true,
+          required: false,
+        }),
       );
       expect(builtin.definition.check).toBeUndefined();
-      expect(builtin.definition.startLogin).toBeTypeOf("function");
+      if (builtin.manifest.id === "hanori.ytdlp")
+        expect(builtin.definition.startLogin).toBeUndefined();
+      else expect(builtin.definition.startLogin).toBeTypeOf("function");
       const value = await builtin.definition.createSession(context());
       validatePluginSession(value);
       expect(

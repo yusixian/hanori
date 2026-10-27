@@ -119,6 +119,67 @@ afterEach(async () => {
 });
 
 describe("real FFmpeg network-free AVC/AAC mux", () => {
+  it("normalizes generic separate video and audio through the existing isolated worker", async () => {
+    const result = await mux({ generic: true });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    expect(result.body).toMatchObject({ ok: true, durationSeconds: expect.any(Number) });
+  });
+
+  it("transcodes a generic WebM video into a silent H264 MP4", async () => {
+    const webm = join(directory, "fixture.webm");
+    await exec("ffmpeg", [
+      "-v",
+      "error",
+      "-nostdin",
+      "-i",
+      join(directory, "video.mp4"),
+      "-c:v",
+      "libvpx-vp9",
+      "-an",
+      webm,
+    ]);
+    const bytes = await readFile(webm);
+    await chmod(join(directory, "video.mp4"), 0o600);
+    await writeFile(join(directory, "video.mp4"), bytes);
+    await chmod(join(directory, "video.mp4"), 0o440);
+    const result = await http(`/jobs/${job}/mux-video`, "POST", {
+      generic: true,
+      videoSha256: createHash("sha256").update(bytes).digest("hex"),
+      maxDurationSeconds: 5,
+      maxBytes: 45_000_000,
+    });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    expect(result.body.ok).toBe(true);
+    const probe = JSON.parse(
+      (
+        await exec("ffprobe", [
+          "-v",
+          "error",
+          "-show_entries",
+          "stream=codec_name",
+          "-of",
+          "json",
+          join(directory, "output.mp4"),
+        ])
+      ).stdout,
+    );
+    expect(probe.streams).toEqual([{ codec_name: "h264" }]);
+  });
+
+  it("rejects a generic playlist disguised as a video", async () => {
+    const bytes = Buffer.from("#EXTM3U\n#EXTINF:1,\nhttps://example.com/private.ts\n");
+    await chmod(join(directory, "video.mp4"), 0o600);
+    await writeFile(join(directory, "video.mp4"), bytes);
+    await chmod(join(directory, "video.mp4"), 0o440);
+    const result = await http(`/jobs/${job}/mux-video`, "POST", {
+      generic: true,
+      videoSha256: createHash("sha256").update(bytes).digest("hex"),
+      maxDurationSeconds: 5,
+      maxBytes: 45_000_000,
+    });
+    expect(result.status).toBe(400);
+    await assertClean();
+  });
   it("merges complete AVC/AAC tracks with faststart and verifies output hash", async () => {
     const result = await mux();
     expect(result.status).toBe(200);

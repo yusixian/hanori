@@ -1,0 +1,1 @@
+ALTER TABLE "video_download_jobs" ADD COLUMN "provider" text DEFAULT 'bilibili' NOT NULL;

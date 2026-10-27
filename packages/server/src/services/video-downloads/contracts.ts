@@ -1,6 +1,8 @@
-import type { VideoDownloadStatus } from "@cos-tool-bot/shared";
+import type { VideoDownloadStatus, VideoDownloadProvider } from "@cos-tool-bot/shared";
 
 export interface VideoDownloadConfiguration {
+  provider?: VideoDownloadProvider;
+  cookies?: string;
   revision: number;
   installationRevision: number;
   cookie?: string;
@@ -19,7 +21,7 @@ export interface InspectedVideoDownload {
   bvid: string;
   part: number;
   title: string;
-  durationSeconds: number;
+  durationSeconds: number | null;
 }
 
 export class VideoDownloadError extends Error {
