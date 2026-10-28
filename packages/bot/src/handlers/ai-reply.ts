@@ -2434,6 +2434,7 @@ export function createAiReplyHandler(
               ? {
                   config: config.githubToolsConfig,
                   issueProposals: config.githubIssueProposals,
+                  threadId: msg.is_topic_message ? msg.message_thread_id : undefined,
                   codeCallbacks: config.githubCodeCallbacks,
                   codingModel: resolveGitHubCodingModelConfig(
                     config.githubToolsConfig,

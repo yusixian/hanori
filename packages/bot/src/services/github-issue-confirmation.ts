@@ -1,4 +1,8 @@
-import type { GitHubIssueProposal, GitHubIssueProposalPort } from "@cos-tool-bot/shared";
+import type {
+  BotLogEntry,
+  GitHubIssueProposal,
+  GitHubIssueProposalPort,
+} from "@cos-tool-bot/shared";
 import { InlineKeyboard, type Api } from "grammy";
 
 export function formatGitHubIssueProposal(proposal: GitHubIssueProposal) {
@@ -54,13 +58,22 @@ export async function sendGitHubIssueProposal(api: Api, proposal: GitHubIssuePro
   });
 }
 
-export function createGitHubIssueProposalCallbackHandler(api: Api, port: GitHubIssueProposalPort) {
+export function createGitHubIssueProposalCallbackHandler(
+  api: Api,
+  port: GitHubIssueProposalPort,
+  onLog?: (entry: BotLogEntry) => void | Promise<void>,
+) {
   return async (ctx: {
     callbackQuery: {
       id: string;
       data?: string;
       from: { id: number };
-      message?: { chat: { id: number }; message_id: number; message_thread_id?: number };
+      message?: {
+        chat: { id: number };
+        message_id: number;
+        message_thread_id?: number;
+        is_topic_message?: boolean;
+      };
     };
   }) => {
     const { callbackQuery: query } = ctx;
@@ -74,6 +87,31 @@ export function createGitHubIssueProposalCallbackHandler(api: Api, port: GitHubI
       });
       return true;
     }
+    const message = query.message;
+    // Ordinary replies can carry changing thread IDs; only real topics constrain confirmation.
+    const threadId = message.is_topic_message ? message.message_thread_id : undefined;
+    const decision = match[2] === "yes" ? "confirm" : match[2] === "no" ? "cancel" : "verify";
+    const logOutcome = (outcome: "resolved" | "rejected", status?: GitHubIssueProposal["status"]) =>
+      Promise.resolve()
+        .then(() =>
+          onLog?.({
+            level: outcome === "rejected" ? "warn" : "info",
+            message: "GitHub Issue proposal callback",
+            meta: {
+              proposalId: match[1],
+              decision,
+              outcome,
+              ...(status ? { status } : {}),
+              userId: query.from.id,
+              chatId: message.chat.id,
+              messageId: message.message_id,
+              messageThreadId: message.message_thread_id ?? null,
+              isTopicMessage: message.is_topic_message === true,
+              threadId: threadId ?? null,
+            },
+          }),
+        )
+        .catch(() => {});
     // A Telegram acknowledgement is presentation only; it never claims or approves a proposal.
     await api.raw
       .answerCallbackQuery({ callback_query_id: query.id, text: "正在校验当前授权" })
@@ -84,10 +122,11 @@ export function createGitHubIssueProposalCallbackHandler(api: Api, port: GitHubI
         {
           userId: query.from.id,
           chatId: query.message.chat.id,
-          threadId: query.message.message_thread_id,
+          threadId,
         },
-        match[2] === "yes" ? "confirm" : match[2] === "no" ? "cancel" : "verify",
+        decision,
       );
+      void logOutcome("resolved", proposal.status);
       await api
         .editMessageText(
           proposal.chatId,
@@ -99,14 +138,13 @@ export function createGitHubIssueProposalCallbackHandler(api: Api, port: GitHubI
         )
         .catch(() => {});
     } catch (error) {
+      void logOutcome("rejected");
       // Keep the original card intact: unauthorized users cannot remove another user's buttons.
       await api
         .sendMessage(
           query.message.chat.id,
           error instanceof Error ? error.message : "GitHub 提案校验失败",
-          query.message.message_thread_id === undefined
-            ? {}
-            : { message_thread_id: query.message.message_thread_id },
+          threadId === undefined ? {} : { message_thread_id: threadId },
         )
         .catch(() => {});
     }

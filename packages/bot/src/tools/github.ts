@@ -36,6 +36,7 @@ export interface GitHubToolsOptions {
   isAdmin: boolean;
   userId: number;
   chatId: number;
+  /** Actual Telegram topic ID; ordinary reply-chain IDs must not bind confirmation. */
   threadId?: number;
   issueProposals?: GitHubIssueProposalPort;
   api: Api;

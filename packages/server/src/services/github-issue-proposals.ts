@@ -191,12 +191,16 @@ export class GitHubIssueProposalService {
   }
 
   private matches(proposal: GitHubIssueProposal, actor: GitHubIssueProposalActor) {
-    if (
-      proposal.initiator !== actor.userId ||
-      proposal.chatId !== actor.chatId ||
-      proposal.threadId !== (actor.threadId ?? null)
-    ) {
-      throw new Error("只有发起该提案的管理员可以在原会话确认或撤销");
+    if (proposal.initiator !== actor.userId) {
+      throw new Error("只有发起该提案的管理员可以操作，请使用发起提案时的 Telegram 账号");
+    }
+    if (proposal.chatId !== actor.chatId) {
+      throw new Error("请回到发起该提案的原聊天操作");
+    }
+    if (proposal.threadId !== (actor.threadId ?? null)) {
+      throw new Error(
+        "提案话题不匹配，请回到发起提案的原话题操作；普通群的旧确认卡可能绑定了旧回复串",
+      );
     }
   }
 
