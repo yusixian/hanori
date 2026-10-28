@@ -791,6 +791,7 @@ export function createBot(config: BotConfig) {
     const issueProposalHandler = createGitHubIssueProposalCallbackHandler(
       bot.api,
       config.githubIssueProposals,
+      config.onLog,
     );
     bot.on("callback_query:data", async (ctx, next) => {
       if (!(await issueProposalHandler(ctx))) await next();
