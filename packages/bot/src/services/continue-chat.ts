@@ -116,6 +116,8 @@ export interface ContinueChatConfig {
   timeoutConfig?: TimeoutConfig;
   webTools?: Record<string, Tool>;
   imageGenerationPort?: ImageGenerationPort;
+  imageGenerationConfirmation?: "always" | "never";
+  groupOverrides?: Record<string, import("@cos-tool-bot/shared").AiGroupOverride>;
   generationLibraryPort?: GenerationLibraryPort;
   skills?: readonly BotSkillDefinition[];
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
@@ -498,6 +500,8 @@ async function doContinueChat(
       skills: config.skills,
       generationLibraryPort: config.generationLibraryPort,
       imageGenerationPort: config.imageGenerationPort,
+      imageGenerationConfirmation: config.imageGenerationConfirmation,
+      groupOverrides: config.groupOverrides,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
       rssCallbacks: config.rssCallbacks,
       pendingAdminActions: config.pendingAdminActions,

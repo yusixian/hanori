@@ -211,6 +211,7 @@ export interface AiReplyConfig {
   triggerConfig: AiTriggerConfig;
   engagement?: EngagementConfigRuntime;
   groupOverrides: Record<string, AiGroupOverride>;
+  imageGenerationConfirmation?: "always" | "never";
   adminChatIds: number[];
   conversationConfig?: ConversationConfig;
   conversation?: ConversationCallbacks;
@@ -2098,6 +2099,8 @@ export function createAiReplyHandler(
           skills: config.skills,
           generationLibraryPort: config.generationLibraryPort,
           imageGenerationPort: config.imageGenerationPort,
+          imageGenerationConfirmation: config.imageGenerationConfirmation,
+          groupOverrides: config.groupOverrides,
           isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
           rssCallbacks: config.rssCallbacks,
           pendingAdminActions,

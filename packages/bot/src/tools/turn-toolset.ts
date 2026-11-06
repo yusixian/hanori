@@ -4,6 +4,7 @@ import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import { createRuntimeDiagnosticTools } from "./runtime-diagnostics.js";
 import type {
   ArtworkToolsConfig,
+  AiGroupOverride,
   BotLogEntry,
   BotMemoryCallbacks,
   BotMemoryConfig,
@@ -78,6 +79,8 @@ export interface TurnToolsetConfig {
   skills?: readonly BotSkillDefinition[];
   generationLibraryPort?: GenerationLibraryPort;
   imageGenerationPort?: ImageGenerationPort;
+  imageGenerationConfirmation?: "always" | "never";
+  groupOverrides?: Record<string, AiGroupOverride>;
   isDelegatedGroupAdmin?: (chatId: number, userId: number) => Promise<boolean>;
   rssCallbacks?: Omit<
     RssToolsOptions,
@@ -176,7 +179,12 @@ function resolveMemoryWritePolicy(entry: ReplyTurn | ContinueTurn): MemoryWriteP
 export async function resolveImageGenerationActor(
   config: Pick<
     TurnToolsetConfig,
-    "botId" | "adminIds" | "imageGenerationPort" | "isDelegatedGroupAdmin"
+    | "botId"
+    | "adminIds"
+    | "imageGenerationPort"
+    | "isDelegatedGroupAdmin"
+    | "imageGenerationConfirmation"
+    | "groupOverrides"
   >,
   scope: { chatId: number; isPrivate: boolean; userId?: number },
 ): Promise<ImageGenerationActor | undefined> {
@@ -187,6 +195,10 @@ export async function resolveImageGenerationActor(
     !isPrivate && !isBotAdmin
       ? (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true
       : false;
+  const imageConfirmationPolicy =
+    config.groupOverrides?.[String(chatId)]?.imageGenerationConfirmation ??
+    config.imageGenerationConfirmation ??
+    "always";
   return {
     botId: config.botId,
     chatId,
@@ -194,6 +206,7 @@ export async function resolveImageGenerationActor(
     chatType: isPrivate ? "private" : "supergroup",
     isBotAdmin,
     isDelegatedGroupAdmin,
+    ...(imageConfirmationPolicy === "always" ? {} : { imageConfirmationPolicy }),
   };
 }
 
@@ -292,6 +305,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     config.imageGenerationPort && imageActor
       ? await createImageGenerationTools({
           port: config.imageGenerationPort,
+          api,
           getActor: () => ({
             ...imageActor,
             requestContext: {

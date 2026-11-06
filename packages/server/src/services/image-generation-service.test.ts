@@ -665,6 +665,69 @@ describe("ImageGenerationService failure accounting", () => {
     expect(dependencies.usageGovernor.refund).not.toHaveBeenCalled();
   });
 
+  it("leaves awaiting confirmations untouched during recovery", async () => {
+    const dependencies = createDependencies();
+    const row = generationRow({
+      state: "awaiting_approval",
+      approvalState: "required",
+      providerOperationId: null,
+      providerMetadata: { confirmationVersion: 1 },
+      usageReservationId: null,
+    });
+    const update = vi.fn();
+    const db = {
+      select: vi.fn((projection?: Record<string, unknown>) =>
+        projection && "id" in projection ? query([{ id: row.id }]) : query([row]),
+      ),
+      update,
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await service.recoverPending();
+
+    expect(update).not.toHaveBeenCalled();
+    expect(dependencies.pixai.startGeneration).not.toHaveBeenCalled();
+    expect(row).toMatchObject({ state: "awaiting_approval", approvalState: "required" });
+  });
+
+  it("cancels an awaiting confirmation through the generic image cancellation tool", async () => {
+    const dependencies = createDependencies();
+    const row = generationRow({
+      state: "awaiting_approval",
+      approvalState: "required",
+      providerOperationId: null,
+      providerMetadata: { confirmationVersion: 1 },
+      usageReservationId: null,
+    });
+    const db = {
+      select: vi.fn(() => query([row])),
+      update: vi.fn(() => ({
+        set: vi.fn((values: Record<string, unknown>) => ({
+          where: vi.fn(() => mutation(row, values)),
+        })),
+      })),
+    } as unknown as Database;
+    const service = new ImageGenerationService({
+      db,
+      usageGovernor: dependencies.usageGovernor as never,
+      pixai: dependencies.pixai as never,
+      artifacts: dependencies.artifacts as never,
+      logger: dependencies.logger as never,
+    });
+
+    await expect(service.cancel(ACTOR, row.id)).resolves.toMatchObject({
+      ok: true,
+      generation: { state: "cancelled", approval: "rejected" },
+    });
+    expect(dependencies.pixai.startGeneration).not.toHaveBeenCalled();
+  });
+
   it("marks interrupted general-backend results unknown without resubmission or refund", async () => {
     const dependencies = createDependencies();
     const row = generationRow({

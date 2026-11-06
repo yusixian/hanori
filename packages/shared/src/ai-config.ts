@@ -49,6 +49,7 @@ export interface AiGroupOverride {
   maxContextMessages?: number;
   groupHistoryMaxTokens?: number;
   imageGenerationEnabled?: boolean;
+  imageGenerationConfirmation?: "always" | "never";
   /** Controls whether safe Provider/model labels are exposed in the Mini App. */
   aiSelectionDisplay?: "inherit" | "show" | "hide";
 }
@@ -82,6 +83,7 @@ export interface AiConfigStored {
   /** Defaults to true; false restores the legacy individual search tools. */
   unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
+  imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsConfigStored;
   artworkToolsConfig?: ArtworkToolsConfig;
@@ -128,6 +130,7 @@ export interface AiConfigPublic {
   webToolsConfig?: WebToolsConfigPublic;
   unifiedSearchEnabled?: boolean;
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
+  imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
   githubToolsConfig?: GitHubToolsConfigPublic;
   artworkToolsConfig?: ArtworkToolsConfig;

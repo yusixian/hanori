@@ -160,6 +160,7 @@ export async function assembleAiReply(
       }
     },
     groupOverrides: aiConfig.groupOverrides,
+    imageGenerationConfirmation: aiConfig.imageGenerationConfirmation ?? "always",
     conversationConfig: conversationCfg,
     conversation,
     memoryConfig: memoryCfg,

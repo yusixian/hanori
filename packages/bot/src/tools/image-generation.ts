@@ -8,8 +8,10 @@ import type {
 } from "@cos-tool-bot/shared";
 import type { Tool } from "ai";
 import { tool } from "ai";
+import type { Api } from "grammy";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
+import { sendImageConfirmationMessage } from "../handlers/image-confirmation.js";
 
 const imageDynamicParametersSchema = z
   .object({
@@ -26,6 +28,7 @@ export interface ImageGenerationToolOptions {
   getActor: () => ImageGenerationActor;
   description?: string;
   replyMessageId?: number;
+  api?: Api;
 }
 
 export async function createImageGenerationTools({
@@ -33,6 +36,7 @@ export async function createImageGenerationTools({
   getActor,
   description,
   replyMessageId,
+  api,
 }: ImageGenerationToolOptions): Promise<Record<string, Tool>> {
   const tools: Record<string, Tool> = {
     get_image_generation: tool({
@@ -163,18 +167,46 @@ export async function createImageGenerationTools({
           },
           executionOptions,
         ) =>
-          port.create(getActor(), {
-            ...(executionOptions.toolCallId ? { toolCallId: executionOptions.toolCallId } : {}),
-            purpose: purpose as ImagePurpose,
-            ...(backendId ? { backendId: backendId as ImageProviderRoute } : {}),
-            routingIntent,
-            prompt,
-            ...(materials ? { materials: materials as GenerationMaterialSelection } : {}),
-            ...(presetKey ? { presetKey } : {}),
-            ...(parameters ? { parameters } : {}),
-            ...(negativePrompt ? { negativePrompt } : {}),
-            ...(seed !== undefined ? { seed } : {}),
-          }),
+          (async () => {
+            const result = await port.create(getActor(), {
+              ...(executionOptions.toolCallId ? { toolCallId: executionOptions.toolCallId } : {}),
+              purpose: purpose as ImagePurpose,
+              ...(backendId ? { backendId: backendId as ImageProviderRoute } : {}),
+              routingIntent,
+              prompt,
+              ...(materials ? { materials: materials as GenerationMaterialSelection } : {}),
+              ...(presetKey ? { presetKey } : {}),
+              ...(parameters ? { parameters } : {}),
+              ...(negativePrompt ? { negativePrompt } : {}),
+              ...(seed !== undefined ? { seed } : {}),
+            });
+            if (result.accepted && result.generation.state === "awaiting_approval") {
+              if (!api) return { pending_confirmation: true, generation_id: result.generation.id };
+              try {
+                const confirmationMessageId = await sendImageConfirmationMessage(
+                  api,
+                  getActor().chatId,
+                  result.generation,
+                  getActor().requestContext?.threadId,
+                );
+                const recorded = await port.recordConfirmationMessage?.(
+                  getActor(),
+                  result.generation.id,
+                  confirmationMessageId,
+                );
+                if (recorded === false) throw new Error("image_confirmation_record_failed");
+              } catch (error) {
+                await port.cancelConfirmation?.(getActor(), result.generation.id).catch(() => {});
+                throw error;
+              }
+              return {
+                pending_confirmation: true,
+                generation_id: result.generation.id,
+                message: "已发送生图确认卡，确认后才会提交任务。",
+              };
+            }
+            return result;
+          })(),
       }),
       list_image_presets: tool({
         description:
