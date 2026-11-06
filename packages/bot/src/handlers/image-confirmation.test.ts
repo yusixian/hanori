@@ -62,4 +62,68 @@ describe("image generation confirmation", () => {
       expect.any(Object),
     );
   });
+
+  it("confirms a pending generation and clears the card actions", async () => {
+    const confirm = vi.fn(async () => ({ accepted: true as const, generation }));
+    const api = {
+      raw: { answerCallbackQuery: vi.fn().mockResolvedValue(true) },
+      editMessageText: vi.fn().mockResolvedValue(true),
+    };
+    const handler = createImageConfirmationCallbackQueryHandler({
+      api: api as never,
+      botId: "bot",
+      adminIds: [],
+      port: { confirm } as unknown as ImageGenerationPort,
+    });
+
+    await expect(
+      handler({
+        callbackQuery: {
+          id: "query",
+          data: `cos:image:${generation.id}:confirm`,
+          from: { id: 7 },
+          message: { chat: { id: 12 }, message_id: 99 },
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ userId: 7 }), generation.id);
+    expect(api.editMessageText).toHaveBeenLastCalledWith(
+      12,
+      99,
+      expect.stringContaining("已确认"),
+      { reply_markup: { inline_keyboard: [] } },
+    );
+  });
+
+  it("cancels a pending generation and reports a failed cancellation", async () => {
+    const cancelConfirmation = vi.fn(async () => ({
+      ok: false as const,
+      reason: "terminal" as const,
+      message: "已经处理",
+    }));
+    const api = {
+      raw: { answerCallbackQuery: vi.fn().mockResolvedValue(true) },
+      editMessageText: vi.fn().mockResolvedValue(true),
+    };
+    const handler = createImageConfirmationCallbackQueryHandler({
+      api: api as never,
+      botId: "bot",
+      adminIds: [],
+      port: { cancelConfirmation } as unknown as ImageGenerationPort,
+    });
+
+    await expect(
+      handler({
+        callbackQuery: {
+          id: "query",
+          data: `cos:image:${generation.id}:cancel`,
+          from: { id: 7 },
+          message: { chat: { id: 12 }, message_id: 99 },
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(api.editMessageText).toHaveBeenLastCalledWith(12, 99, "❌ 已经处理", {
+      reply_markup: { inline_keyboard: [] },
+    });
+  });
 });

@@ -206,7 +206,7 @@ export async function resolveImageGenerationActor(
     chatType: isPrivate ? "private" : "supergroup",
     isBotAdmin,
     isDelegatedGroupAdmin,
-    imageConfirmationPolicy,
+    ...(imageConfirmationPolicy === "always" ? {} : { imageConfirmationPolicy }),
   };
 }
 

@@ -260,8 +260,8 @@ export function createImageConfirmationCallbackQueryHandler(options: ImageConfir
         .catch(() => {});
       return true;
     }
-    const generation = "generation" in result ? result.generation : undefined;
-    const accepted = action === "confirm" ? result.accepted : result.ok;
+    const generation = result.generation;
+    const accepted = "accepted" in result ? result.accepted : result.ok;
     const failureMessage = "message" in result ? result.message : undefined;
     const text = accepted
       ? action === "confirm"

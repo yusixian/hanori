@@ -189,11 +189,12 @@ export async function createImageGenerationTools({
                   result.generation,
                   getActor().requestContext?.threadId,
                 );
-                await port.recordConfirmationMessage?.(
+                const recorded = await port.recordConfirmationMessage?.(
                   getActor(),
                   result.generation.id,
                   confirmationMessageId,
                 );
+                if (recorded === false) throw new Error("image_confirmation_record_failed");
               } catch (error) {
                 await port.cancelConfirmation?.(getActor(), result.generation.id).catch(() => {});
                 throw error;

@@ -109,6 +109,10 @@ export interface ImageGenerationServiceOptions {
   isGroupEnabled?: (botId: string, chatId: number) => Promise<boolean>;
 }
 
+interface CreateImageOptions {
+  requestSnapshot?: ImageGenerationRequestSnapshot;
+}
+
 export const DEFAULT_IMAGE_GOVERNANCE_CONFIG: ImageGovernanceConfig = {
   timezone: "Asia/Shanghai",
   generalRouteMode: "off",
@@ -390,6 +394,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async createImpl(
     actor: ImageGenerationActor,
     request: CreateImageRequest,
+    options?: CreateImageOptions,
   ): Promise<ImageGenerationAdmission> {
     const requestContext = {
       ...actor.requestContext,
@@ -584,10 +589,19 @@ export class ImageGenerationService implements ImageGenerationPort {
     const endpoint = this.backends[provider]?.endpoint;
     const providerMetadata = { backendId: provider, ...(endpoint ? { endpoint } : {}) };
     const initialSnapshot: ImageGenerationRequestSnapshot = {
+      ...options?.requestSnapshot,
       ...(presetKey ? { presetKey } : {}),
       ...dynamic.data,
       ...(dynamic.data.model ? { modelId: dynamic.data.model } : {}),
-      ...(Object.keys(requestContext).length ? { requestContext } : {}),
+      ...(options?.requestSnapshot?.requestContext !== undefined ||
+      Object.keys(requestContext).length
+        ? {
+            requestContext: {
+              ...options?.requestSnapshot?.requestContext,
+              ...requestContext,
+            },
+          }
+        : {}),
       ...(materialSnapshot ? { materials: materialSnapshot } : {}),
     };
     try {
@@ -781,16 +795,50 @@ export class ImageGenerationService implements ImageGenerationPort {
           imageSize: snapshot.imageSize,
         }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
       );
-      return this.createImpl(confirmedActor, {
-        purpose: row.purpose as ImagePurpose,
-        backendId: row.provider as ImageProviderRoute,
-        prompt: draftPrompt,
-        ...(row.presetKey ? { presetKey: row.presetKey } : {}),
-        ...(row.negativePrompt ? { negativePrompt: row.negativePrompt } : {}),
-        ...(draftSeed === null || draftSeed === undefined ? {} : { seed: draftSeed }),
-        ...(Object.keys(parameters).length ? { parameters } : {}),
-      });
+      const result = await this.createImpl(
+        {
+          ...confirmedActor,
+          ...(Object.keys(snapshot.requestContext ?? {}).length || actor.requestContext
+            ? {
+                requestContext: {
+                  ...snapshot.requestContext,
+                  ...actor.requestContext,
+                },
+              }
+            : {}),
+        },
+        {
+          purpose: row.purpose as ImagePurpose,
+          backendId: row.provider as ImageProviderRoute,
+          prompt: draftPrompt,
+          ...(row.presetKey ? { presetKey: row.presetKey } : {}),
+          ...(row.negativePrompt ? { negativePrompt: row.negativePrompt } : {}),
+          ...(draftSeed === null || draftSeed === undefined ? {} : { seed: draftSeed }),
+          ...(Object.keys(parameters).length ? { parameters } : {}),
+        },
+        { requestSnapshot: snapshot },
+      );
+      if (!result.accepted) await this.restoreConfirmation(generationId, row.botId);
+      return result;
     });
+  }
+
+  private async restoreConfirmation(generationId: string, botId: string): Promise<void> {
+    const [restored] = await this.db
+      .update(imageGenerations)
+      .set({ state: "awaiting_approval", approvalState: "required", updatedAt: new Date() })
+      .where(
+        and(
+          eq(imageGenerations.id, generationId),
+          eq(imageGenerations.state, "cancelled"),
+          eq(imageGenerations.approvalState, "approved"),
+        ),
+      )
+      .returning({ id: imageGenerations.id });
+    if (restored)
+      await this.recordEvent(botId, generationId, "state_changed", "awaiting_approval", undefined, {
+        confirmation: "retryable",
+      });
   }
 
   editConfirmation(
@@ -808,7 +856,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           ? row.providerMetadata["confirmationVersion"] + 1
           : 2;
       const metadata = {
-        ...(row.providerMetadata ?? {}),
+        ...row.providerMetadata,
         confirmationVersion: version,
         confirmationDraftSeed: patch.seed,
         confirmationState: "draft",
@@ -840,7 +888,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           ? row.providerMetadata["confirmationVersion"] + 1
           : 2;
       const metadata: Record<string, unknown> = {
-        ...(row.providerMetadata ?? {}),
+        ...row.providerMetadata,
         confirmationVersion: version,
       };
       delete metadata.confirmationDraftSeed;
@@ -874,7 +922,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           ? row.providerMetadata["confirmationVersion"] + 1
           : 2;
       const metadata = {
-        ...(row.providerMetadata ?? {}),
+        ...row.providerMetadata,
         confirmationVersion: version,
         confirmationDraftPrompt: value,
         confirmationState: "draft",
@@ -902,10 +950,10 @@ export class ImageGenerationService implements ImageGenerationPort {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
       if (!row || !canAccess(actor, row) || row.state !== "awaiting_approval") return false;
-      await this.db
+      const [updated] = await this.db
         .update(imageGenerations)
         .set({
-          providerMetadata: { ...(row.providerMetadata ?? {}), confirmationMessageId: messageId },
+          providerMetadata: { ...row.providerMetadata, confirmationMessageId: messageId },
           updatedAt: new Date(),
         })
         .where(
@@ -913,8 +961,9 @@ export class ImageGenerationService implements ImageGenerationPort {
             eq(imageGenerations.id, generationId),
             eq(imageGenerations.state, "awaiting_approval"),
           ),
-        );
-      return true;
+        )
+        .returning({ id: imageGenerations.id });
+      return Boolean(updated);
     });
   }
 
@@ -947,30 +996,35 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageCancellationResult> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
-      if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
-      if (row.state !== "awaiting_approval")
-        return { ok: false, reason: "terminal", generation: toView(row) };
-      const [cancelled] = await this.db
-        .update(imageGenerations)
-        .set({ state: "cancelled", approvalState: "rejected", updatedAt: new Date() })
-        .where(
-          and(
-            eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
-          ),
-        )
-        .returning({ id: imageGenerations.id });
-      if (!cancelled)
-        return {
-          ok: false,
-          reason: "terminal",
-          generation: (await this.getOwned(actor, generationId))!,
-        };
-      await this.recordEvent(row.botId, generationId, "state_changed", "cancelled", undefined, {
-        confirmation: "rejected",
-      });
-      return { ok: true, generation: (await this.getOwned(actor, generationId))! };
+      return this.cancelConfirmationImpl(actor, generationId, row);
     });
+  }
+
+  private async cancelConfirmationImpl(
+    actor: ImageGenerationActor,
+    generationId: string,
+    row: GenerationRow | null,
+  ): Promise<ImageCancellationResult> {
+    if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
+    if (row.state !== "awaiting_approval")
+      return { ok: false, reason: "terminal", generation: toView(row) };
+    const [cancelled] = await this.db
+      .update(imageGenerations)
+      .set({ state: "cancelled", approvalState: "rejected", updatedAt: new Date() })
+      .where(
+        and(eq(imageGenerations.id, generationId), eq(imageGenerations.state, "awaiting_approval")),
+      )
+      .returning({ id: imageGenerations.id });
+    if (!cancelled)
+      return {
+        ok: false,
+        reason: "terminal",
+        generation: (await this.getOwned(actor, generationId))!,
+      };
+    await this.recordEvent(row.botId, generationId, "state_changed", "cancelled", undefined, {
+      confirmation: "rejected",
+    });
+    return { ok: true, generation: (await this.getOwned(actor, generationId))! };
   }
 
   retryDelivery(
@@ -1133,6 +1187,8 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageCancellationResult> {
     const row = await this.getRow(generationId);
     if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
+    if (row.state === "awaiting_approval")
+      return this.cancelConfirmationImpl(actor, generationId, row);
     if (
       row.state === "cancel_requested" ||
       row.providerMetadata?.["cancellationState"] === "requested"
@@ -1367,6 +1423,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async advanceOnce(id: string): Promise<void> {
     const row = await this.getRow(id);
     if (!row) return;
+    if (row.state === "awaiting_approval") return;
     if (row.state === "succeeded" && row.localFiles.length > 0) {
       await this.settleImageUsage(row);
       await this.deliverCompleted(row);
