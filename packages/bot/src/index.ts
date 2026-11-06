@@ -66,6 +66,10 @@ import {
 import { getUpdateConstraint, hasLeadingBotCommand } from "./middleware/update-constraint.js";
 import { AiIngressLock } from "./services/ai-ingress-lock.js";
 import { createMediaConfirmationCallbackQueryHandler } from "./handlers/media-confirmation.js";
+import {
+  createImageConfirmationCallbackQueryHandler,
+  createImageConfirmationReplyHandler,
+} from "./handlers/image-confirmation.js";
 import { createOutgoingImageSafety } from "./services/outgoing-image-safety.js";
 import type { NsfwChecker } from "./services/nsfw-checker.js";
 import { formatImageGenerationCaption } from "./utils/image-generation-delivery.js";
@@ -369,6 +373,41 @@ export function createBot(config: BotConfig) {
     });
     bot.on("callback_query:data", async (ctx, next) => {
       if (!(await mediaConfirmationHandler(ctx))) await next();
+    });
+  }
+  const imageGenerationPort = config.aiReply?.imageGenerationPort;
+  if (imageGenerationPort) {
+    const imageConfirmationHandler = createImageConfirmationCallbackQueryHandler({
+      api: bot.api,
+      botId: config.botId,
+      adminIds: adminChatIds,
+      port: imageGenerationPort,
+    });
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await imageConfirmationHandler(ctx))) await next();
+    });
+    const imageConfirmationReplyHandler = createImageConfirmationReplyHandler({
+      api: bot.api,
+      botId: config.botId,
+      adminIds: adminChatIds,
+      port: imageGenerationPort,
+    });
+    bot.on("message", async (ctx, next) => {
+      const message = ctx.message;
+      if (
+        await imageConfirmationReplyHandler({
+          message: {
+            message_id: message.message_id,
+            chat: message.chat,
+            message_thread_id: message.message_thread_id,
+            reply_to_message: message.reply_to_message,
+          },
+          from: ctx.from,
+          text: message.text ?? message.caption,
+        })
+      )
+        return;
+      await next();
     });
   }
 

@@ -119,9 +119,11 @@ export const aiConfigSchema = z
           AI_SETTING_BOUNDS.groupHistoryMaxTokens,
         ).optional(),
         imageGenerationEnabled: z.boolean().optional(),
+        imageGenerationConfirmation: z.enum(["always", "never"]).optional(),
         engagement: engagementPolicySchema.partial().nullable().optional(),
       }),
     ),
+    imageGenerationConfirmation: z.enum(["always", "never"]).default("always"),
     conversationConfig: z
       .object({
         enabled: z.boolean(),

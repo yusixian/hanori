@@ -266,6 +266,10 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     groupBehavioralPrompt: patch.groupBehavioralPrompt,
     triggerConfig: patch.triggerConfig,
     groupOverrides,
+    imageGenerationConfirmation:
+      patch.imageGenerationConfirmation ??
+      existingMigrated?.imageGenerationConfirmation ??
+      "always",
     conversationConfig,
     memoryConfig: patch.memoryConfig,
     stickerPacks: patch.stickerPacks ?? current?.stickerPacks,
