@@ -261,12 +261,13 @@ export function createImageConfirmationCallbackQueryHandler(options: ImageConfir
       return true;
     }
     const generation = "generation" in result ? result.generation : undefined;
-    const text =
-      result.accepted === true
-        ? match[2] === "confirm"
-          ? "✅ 已确认，生图任务已提交。"
-          : "❌ 已取消生图"
-        : `❌ ${result.message ?? "该确认已失效或无权操作"}`;
+    const accepted = action === "confirm" ? result.accepted : result.ok;
+    const failureMessage = "message" in result ? result.message : undefined;
+    const text = accepted
+      ? action === "confirm"
+        ? "✅ 已确认，生图任务已提交。"
+        : "❌ 已取消生图"
+      : `❌ ${failureMessage ?? "该确认已失效或无权操作"}`;
     await options.api
       .editMessageText(
         chatId,

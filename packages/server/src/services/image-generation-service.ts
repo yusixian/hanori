@@ -26,6 +26,7 @@ import {
   type ImageGovernanceConfig,
   type ImagePreset,
   type ImageProviderRoute,
+  type ImagePurpose,
   parseImageDynamicParameters,
   type ImageRouteCapabilities,
   type ImageRouteConfig,
@@ -838,7 +839,10 @@ export class ImageGenerationService implements ImageGenerationPort {
         typeof row.providerMetadata?.["confirmationVersion"] === "number"
           ? row.providerMetadata["confirmationVersion"] + 1
           : 2;
-      const metadata = { ...(row.providerMetadata ?? {}), confirmationVersion: version };
+      const metadata: Record<string, unknown> = {
+        ...(row.providerMetadata ?? {}),
+        confirmationVersion: version,
+      };
       delete metadata.confirmationDraftSeed;
       delete metadata.confirmationState;
       const [updated] = await this.db
