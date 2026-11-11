@@ -87,6 +87,7 @@ export interface ContinueChatRunContext {
 }
 
 export interface ContinueChatConfig {
+  onOwnMessageEdited?: (chatId: number, messageId: number, content: string) => void;
   diagnosticSecrets?: readonly string[];
   botId: string;
   resolveSelection: (chatId: number) => Readonly<ContinueChatSelection>;
@@ -481,6 +482,7 @@ async function doContinueChat(
       : undefined;
 
     const deliveredMultiMessages: string[] = [];
+    const deliveredMessages = new Map<number, string>();
     let replyableMessageIds: readonly number[] = [];
     const isPrivate = chatId > 0;
     const toolsetConfig: TurnToolsetConfig = {
@@ -528,6 +530,15 @@ async function doContinueChat(
         onceGuard,
         telegram: {
           getReplyableMessageIds: () => replyableMessageIds,
+          conversation: convCfg.enabled ? config.conversation : undefined,
+          richMessageEnabled: isRichMessageEnabled(config.messageConfig),
+          onTextMessageSent: (id, content) => {
+            deliveredMessages.set(id, content);
+          },
+          onOwnMessageEdited: (id, content) => {
+            if (deliveredMessages.has(id)) deliveredMessages.set(id, content);
+            config.onOwnMessageEdited?.(chatId, id, content);
+          },
           pendingActions: config.pendingActions,
           onTimerFired: wrappedOnTimerFired,
           onTimerCreate:
@@ -540,7 +551,8 @@ async function doContinueChat(
         },
         behavior: {
           moodState: config.moodState,
-          onMultiMessageSent: (text) => {
+          onMultiMessageSent: (text, id) => {
+            deliveredMessages.set(id, text);
             deliveredMultiMessages.push(text);
             visibleDeliveryCount += 1;
           },
@@ -699,7 +711,7 @@ async function doContinueChat(
               });
             },
           );
-          const { sentMessages } = await streamToChat(
+          const { sentMessages, text: streamedContent } = await streamToChat(
             api,
             chatId,
             filteredStream,
@@ -707,6 +719,8 @@ async function doContinueChat(
           );
           for (const msg of sentMessages) {
             chatBotMsgIds.push(msg.message_id);
+            const content = msg.text ?? (msg.rich_message ? streamedContent : undefined);
+            if (content) deliveredMessages.set(msg.message_id, content);
           }
           streamedMessageCount = sentMessages.length;
         } catch (streamErr) {
@@ -816,6 +830,7 @@ async function doContinueChat(
             },
           );
           chatBotMsgIds.push(message.message_id);
+          deliveredMessages.set(message.message_id, chunk);
           deliveredFinalChunks.push(chunk);
           visibleDeliveryCount += 1;
         } catch (sendError) {
@@ -907,12 +922,12 @@ async function doContinueChat(
       });
 
       // Save the exact assistant content delivered to the chat.
-      if (assistantContent) {
+      for (const [id, content] of deliveredMessages) {
         toSave.push({
           chatId,
           role: "assistant",
-          content: assistantContent,
-          meta: { trigger: "event_continuation" },
+          content,
+          meta: { trigger: "event_continuation", tgMessageId: id },
         });
       }
 

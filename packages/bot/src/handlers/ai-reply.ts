@@ -589,6 +589,7 @@ export async function sendFormattedChunks(
   richMessageEnabled: boolean,
   onFallback?: (mode: "rich" | "html", error: unknown) => void,
   shouldAbort?: () => boolean,
+  onDelivered?: (messageId: number, text: string) => void,
 ): Promise<number[]> {
   const threshold = messageConfig.autoSplitThreshold ?? 0;
   const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
@@ -605,6 +606,7 @@ export async function sendFormattedChunks(
     const replyMsgId = await safeFormattedReply(ctx, chunk, richMessageEnabled, onFallback);
     if (!replyMsgId) throw new Error("Telegram reply delivery failed");
     messageIds.push(replyMsgId);
+    onDelivered?.(replyMsgId, chunk);
     // A final fallback may edit the waiting message even when Rich delivery is enabled.
     // Detach it after conversion so later chunks become additional persistent messages.
     if (ctx.waiting_message?.message_id === replyMsgId) {
@@ -1372,6 +1374,7 @@ export function createAiReplyHandler(
       groupBehavioralPrompt: config.groupBehavioralPrompt,
       conversationConfig: config.conversationConfig,
       conversation: config.conversation,
+      onOwnMessageEdited: updateEngagementMessage,
       privacy: config.privacy,
       memoryConfig: config.memoryConfig,
       memory: config.memory,
@@ -1473,6 +1476,15 @@ export function createAiReplyHandler(
       entry.lastActive = Date.now();
     }
     return entry.buffer;
+  }
+
+  function updateEngagementMessage(chatId: number, messageId: number, content: string) {
+    for (const [key, entry] of engagementBuffers) {
+      if (!key.startsWith(`${chatId}:`)) continue;
+      for (const message of entry.buffer.getAll()) {
+        if (message.isBot && message.messageId === messageId) message.text = content;
+      }
+    }
   }
 
   function engagementScopeKey(chatId: number, threadId: number | undefined): string {
@@ -2122,11 +2134,21 @@ export function createAiReplyHandler(
         const replyableMessageIds: number[] = [msg.message_id];
 
         const deliveredMultiMessages: string[] = [];
+        const deliveredMessages = new Map<number, string>();
         const interaction: TurnInteractionInput = {
           recentBotMessageIds: chatBotMsgIds,
           onceGuard,
           telegram: {
             getReplyableMessageIds: () => replyableMessageIds,
+            conversation: persistConversation ? config.conversation : undefined,
+            richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
+            onTextMessageSent: (id, content) => {
+              deliveredMessages.set(id, content);
+            },
+            onOwnMessageEdited: (id, content) => {
+              if (deliveredMessages.has(id)) deliveredMessages.set(id, content);
+              updateEngagementMessage(chatId, id, content);
+            },
             pendingActions,
             onTimerFired: async (timerChatId, timerId, reason) => {
               await onTimerFired(timerChatId, timerId, reason, userId);
@@ -2144,7 +2166,10 @@ export function createAiReplyHandler(
           },
           behavior: {
             moodState,
-            onMultiMessageSent: (text) => deliveredMultiMessages.push(text),
+            onMultiMessageSent: (text, id) => {
+              deliveredMultiMessages.push(text);
+              deliveredMessages.set(id, text);
+            },
           },
         };
 
@@ -2733,10 +2758,12 @@ export function createAiReplyHandler(
             });
             // Buffer leading whitespace so the first yield always carries a visible char.
             // Telegram draft methods reject cumulative content that trims to empty.
+            let streamedContent = "";
             let leadingBuffer = "";
             let hasVisibleContent = false;
             async function* managedTextStream() {
               const emit = async (out: string) => {
+                streamedContent += out;
                 if (out) await ctx.deleteWaiting();
               };
               for await (const chunk of result.textStream) {
@@ -2811,7 +2838,12 @@ export function createAiReplyHandler(
               streamStarted = false;
             }
 
-            for (const message of sentMessages) chatBotMsgIds.push(message.message_id);
+            for (const message of sentMessages) {
+              chatBotMsgIds.push(message.message_id);
+              const content =
+                message.text ?? (message.rich_message ? streamedContent.trim() : undefined);
+              if (content) deliveredMessages.set(message.message_id, content);
+            }
           } else {
             // ─── Segment mode and group stream mode: drain before final delivery ───
             // biome-ignore lint/suspicious/noEmptyBlockStatements: intentional drain
@@ -2893,6 +2925,9 @@ export function createAiReplyHandler(
               richMessageEnabled,
               logRichFallback,
               () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
+              (id, content) => {
+                deliveredMessages.set(id, content);
+              },
             );
             chatBotMsgIds.push(...messageIds);
             streamStarted = messageIds.length > 0;
@@ -2921,6 +2956,9 @@ export function createAiReplyHandler(
               richMessageEnabled,
               logRichFallback,
               () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
+              (id, content) => {
+                deliveredMessages.set(id, content);
+              },
             );
             chatBotMsgIds.push(...messageIds);
             sentFinalText = messageIds.length > 0;
@@ -3098,18 +3136,21 @@ export function createAiReplyHandler(
 
           // Persist only content confirmed as delivered. Uncovered trailing text is
           // sent through the normal fallback path before it reaches this point.
-          toSave.push({
-            chatId,
-            role: "assistant",
-            content: assistantContent,
-            sourceKey: `${sourcePrefix}:assistant`,
-            meta: {
-              model: currentModel,
-              trigger: triggerResult,
-              usage,
-              ...turnOrderMeta,
-            },
-          });
+          for (const [id, content] of deliveredMessages) {
+            toSave.push({
+              chatId,
+              role: "assistant",
+              content,
+              sourceKey: `telegram:${id}:assistant`,
+              meta: {
+                model: currentModel,
+                trigger: triggerResult,
+                usage,
+                ...turnOrderMeta,
+                tgMessageId: id,
+              },
+            });
+          }
 
           if (!executionContext.isCurrent()) return;
           try {
@@ -3147,16 +3188,17 @@ export function createAiReplyHandler(
               !coalescedExtras.some((extra) => extra.hasUnverifiablePrivacySource);
           }
           if (botMessageId !== undefined && engagementResponseProvenanceVerified) {
-            getOrCreateEngagementBuffer(chatId, msg.message_thread_id).push({
-              messageId: botMessageId,
-              userId: ctx.me.id,
-              text: assistantContent.trim(),
-              timestamp: Date.now(),
-              isBot: true,
-              threadId: msg.message_thread_id,
-              privacyUserIds: engagementResponsePrivacyUserIds,
-              privacyCapturedAt: engagementResponseCapturedAt,
-            });
+            for (const [messageId, content] of deliveredMessages)
+              getOrCreateEngagementBuffer(chatId, msg.message_thread_id).push({
+                messageId,
+                userId: ctx.me.id,
+                text: content.trim(),
+                timestamp: Date.now(),
+                isBot: true,
+                threadId: msg.message_thread_id,
+                privacyUserIds: engagementResponsePrivacyUserIds,
+                privacyCapturedAt: engagementResponseCapturedAt,
+              });
           }
         }
 

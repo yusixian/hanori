@@ -415,6 +415,43 @@ export class ConversationStore {
     return deleted.length;
   }
 
+  async findOwnMessage(botId: string, chatId: number, messageId: number): Promise<boolean> {
+    const rows = await this.db
+      .select({ id: conversationMessages.id })
+      .from(conversationMessages)
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          eq(conversationMessages.role, "assistant"),
+          sql`${conversationMessages.meta}->>'tgMessageId' = ${String(messageId)}`,
+        ),
+      )
+      .limit(1);
+    return rows.length > 0;
+  }
+
+  async updateOwnMessage(
+    botId: string,
+    chatId: number,
+    messageId: number,
+    content: string,
+  ): Promise<void> {
+    const rows = await this.db
+      .update(conversationMessages)
+      .set({ content, embedding: null })
+      .where(
+        and(
+          eq(conversationMessages.botId, botId),
+          eq(conversationMessages.chatId, chatId),
+          eq(conversationMessages.role, "assistant"),
+          sql`${conversationMessages.meta}->>'tgMessageId' = ${String(messageId)}`,
+        ),
+      )
+      .returning({ id: conversationMessages.id });
+    if (!rows.length) throw new Error("Editable message history no longer exists");
+  }
+
   async addMessage(params: ConversationMessageInput) {
     await this.addMessages([params]);
   }

@@ -1816,3 +1816,42 @@ describe("relay history search", () => {
     },
   );
 });
+
+describe("editable assistant history", () => {
+  it("scopes durable lookup and update by bot, chat, role and Telegram ID", async () => {
+    const scopes: Array<{ sql: string; params: unknown[] }> = [];
+    const values: unknown[] = [];
+    const query = {
+      from: () => query,
+      where: (condition: SQL) => {
+        scopes.push(new PgDialect().sqlToQuery(condition));
+        return query;
+      },
+      limit: async () => [{ id: 7 }],
+      set: (value: unknown) => {
+        values.push(value);
+        return query;
+      },
+      returning: async () => [{ id: 7 }],
+    };
+    const store = new ConversationStore({
+      select: () => query,
+      update: () => query,
+    } as unknown as Database);
+    expect(await store.findOwnMessage("bot-a", 42, 12)).toBe(true);
+    await store.updateOwnMessage("bot-a", 42, 12, "corrected");
+    expect(scopes).toHaveLength(2);
+    for (const scope of scopes) {
+      expect(scope.params).toEqual(["bot-a", 42, "assistant", "12"]);
+      expect(scope.sql).toContain("tgMessageId");
+    }
+    expect(values).toEqual([{ content: "corrected", embedding: null }]);
+  });
+  it("does not report synchronization when the history record disappeared", async () => {
+    const query = { set: () => query, where: () => query, returning: async () => [] };
+    const store = new ConversationStore({ update: () => query } as unknown as Database);
+    await expect(store.updateOwnMessage("bot-a", 42, 12, "corrected")).rejects.toThrow(
+      "no longer exists",
+    );
+  });
+});

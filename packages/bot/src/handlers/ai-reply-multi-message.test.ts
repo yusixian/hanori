@@ -191,9 +191,9 @@ describe("AI reply multi_message delivery", () => {
     });
     expect(steps[2]?.toolResults[0]?.output).toEqual(expect.objectContaining({ blocked: true }));
     const savedBatch = conversation.addMessages.mock.calls[0]?.[0] ?? [];
-    expect(savedBatch.find((message) => message.role === "assistant")?.content).toBe(
-      deliveredContent,
-    );
+    const assistantRows = savedBatch.filter((message) => message.role === "assistant");
+    expect(assistantRows.map((message) => message.content).join("\n")).toBe(deliveredContent);
+    expect(assistantRows.map((message) => message.meta?.tgMessageId)).toEqual([20, 21, 10]);
     expect(logs).toContainEqual(
       expect.objectContaining({
         level: "info",

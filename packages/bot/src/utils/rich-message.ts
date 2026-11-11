@@ -147,3 +147,37 @@ export async function sendMarkdownWithFallback(
   const message = await api.sendMessage(chatId, markdown, options);
   return { message, mode: "plain" };
 }
+
+/** Only a definite entity-parser rejection permits a plain-text retry. */
+export function isTelegramEntityParseError(error: unknown): boolean {
+  const e = error as { error_code?: number; description?: string };
+  return (
+    e?.error_code === 400 &&
+    /can't parse entities|can't find end of|unsupported start tag/i.test(e.description ?? "")
+  );
+}
+
+export async function editMarkdownMessage(
+  api: Api,
+  chatId: number,
+  messageId: number,
+  markdown: string,
+  richMessageEnabled: boolean,
+): Promise<void> {
+  if (richMessageEnabled && classifyMarkdownDelivery(markdown) === "rich") {
+    await api.raw.editMessageText({
+      chat_id: chatId,
+      message_id: messageId,
+      rich_message: toInputRichMessage("markdown", markdown),
+    });
+    return;
+  }
+  try {
+    await api.editMessageText(chatId, messageId, markdownToTelegramHtml(markdown), {
+      parse_mode: "HTML",
+    });
+  } catch (error) {
+    if (!isTelegramEntityParseError(error)) throw error;
+    await api.editMessageText(chatId, messageId, markdown);
+  }
+}

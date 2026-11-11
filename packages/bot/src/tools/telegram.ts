@@ -1,4 +1,4 @@
-import type { TimeoutConfig } from "@cos-tool-bot/shared";
+import type { ConversationCallbacks, TimeoutConfig } from "@cos-tool-bot/shared";
 import {
   DEFAULT_TIMEOUT_CONFIG,
   MAX_FILE_SIZE,
@@ -13,6 +13,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { z } from "zod";
 import type { PendingActionRegistry } from "../services/pending-actions.js";
+import { editMarkdownMessage } from "../utils/rich-message.js";
 import type { OnceGuardContext } from "./utils.js";
 import { wrapOnce, zodToAiSchema } from "./utils.js";
 
@@ -35,6 +36,10 @@ export interface TelegramToolsOptions {
   chatId: number;
   userId?: number;
   recentBotMessageIds: number[];
+  conversation?: ConversationCallbacks;
+  richMessageEnabled?: boolean;
+  onTextMessageSent?: (messageId: number, content: string) => void;
+  onOwnMessageEdited?: (messageId: number, content: string) => void;
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
   onTimerFired?: (chatId: number, timerId: string, reason: string) => Promise<void>;
@@ -303,6 +308,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_markup: keyboard,
           });
           recentBotMessageIds.push(sent.message_id);
+          options.onTextMessageSent?.(sent.message_id, prompt);
           options.pendingActions.registerChoice(
             choiceId,
             chatId,
@@ -482,15 +488,45 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
         }),
       ),
       execute: async ({ message_id, text }) => {
-        if (!recentBotMessageIds.includes(message_id)) {
-          return { error: "只能编辑 bot 最近发送的消息" };
-        }
+        const visible =
+          options.getReplyableMessageIds?.().includes(message_id) ||
+          (recentBotMessageIds.includes(message_id) && !previousBotMessageIds.has(message_id));
+        if (!visible) return { error: "只能编辑本轮上下文中可见的 bot 消息" };
+        let persisted = false;
         try {
-          await api.editMessageText(chatId, message_id, text);
-          return { success: true };
+          persisted = (await options.conversation?.findOwnMessage?.(chatId, message_id)) ?? false;
+          if (!persisted && !recentBotMessageIds.includes(message_id)) {
+            return { error: "无法确认消息属于当前 bot 和聊天" };
+          }
+          try {
+            await editMarkdownMessage(
+              api,
+              chatId,
+              message_id,
+              text,
+              options.richMessageEnabled ?? false,
+            );
+          } catch (error) {
+            const e = error as { error_code?: number; description?: string };
+            if (e?.error_code !== 400 || !/message is not modified/i.test(e.description ?? ""))
+              throw error;
+          }
         } catch (err) {
           return { error: String(err) };
         }
+        options.onOwnMessageEdited?.(message_id, text);
+        if (persisted) {
+          try {
+            await options.conversation!.updateOwnMessage!(chatId, message_id, text);
+          } catch (err) {
+            return {
+              success: true,
+              history_synced: false,
+              error: `Telegram 已修改，历史同步失败；可用相同内容重试同步：${String(err)}`,
+            };
+          }
+        }
+        return { success: true, history_synced: true };
       },
     }),
 
@@ -576,6 +612,7 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_parameters: { message_id: reply_to_message_id },
           });
           recentBotMessageIds.push(sent.message_id);
+          options.onTextMessageSent?.(sent.message_id, text);
           return {
             success: true,
             message_id: sent.message_id,

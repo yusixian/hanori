@@ -149,6 +149,9 @@ export function createConversationRuntime({
   };
 
   const conversation: ConversationCallbacks = {
+    findOwnMessage: (chatId, messageId) => store.findOwnMessage(botId, chatId, messageId),
+    updateOwnMessage: (chatId, messageId, content) =>
+      store.updateOwnMessage(botId, chatId, messageId, content),
     getHistory: (chatId, limit, tokenBudget, options) =>
       store.getHistory(botId, chatId, limit, tokenBudget, options),
     getRecentUserMessagesAcrossChats: (userId, excludeChatId, limit, beforeId) =>

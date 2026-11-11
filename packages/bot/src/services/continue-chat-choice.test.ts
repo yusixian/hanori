@@ -1,4 +1,5 @@
 import type {
+  ConversationCallbacks,
   ImageGenerationActor,
   ImageGenerationPort,
   ImageRouteCapabilities,
@@ -136,6 +137,41 @@ function route(): ImageRouteCapabilities {
 }
 
 describe("choice continuation tools", () => {
+  it("persists proactive replies by actual delivery ID", async () => {
+    streamTextMock.mockReturnValueOnce({
+      textStream: (async function* () {
+        yield "proactive answer";
+      })(),
+      text: Promise.resolve("proactive answer"),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    });
+    const addMessages = vi.fn<ConversationCallbacks["addMessages"]>();
+    const conversation: ConversationCallbacks = {
+      getHistory: async () => ({ summary: null, messages: [] }),
+      addMessage: vi.fn(),
+      addMessages,
+      triggerCompression: vi.fn(),
+      clearHistory: vi.fn(),
+    };
+    const { api } = createApi();
+    await continueChat(api, createConfig(createCoordinator(), { conversation }), {
+      chatId: CHAT_ID,
+      userId: USER_ID,
+      eventDescription: "timer expired",
+      requireDelivery: true,
+    });
+    expect(addMessages).toHaveBeenCalledOnce();
+    expect(addMessages.mock.calls[0]![0].filter((row) => row.role === "assistant")).toEqual([
+      {
+        chatId: CHAT_ID,
+        role: "assistant",
+        content: "proactive answer",
+        meta: { trigger: "event_continuation", tgMessageId: 201 },
+      },
+    ]);
+  });
+
   it.each([
     {
       name: "earlier step already delivered",
