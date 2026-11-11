@@ -404,6 +404,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     ...(config.dataFiles
       ? createFileTools({
           dataDir: config.dataFiles.dataDir,
+          snapshotFiles: config.dataFiles.snapshotFiles,
           protectedFiles: config.dataFiles.injectableFiles,
         })
       : {}),

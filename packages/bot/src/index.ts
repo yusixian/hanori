@@ -986,6 +986,7 @@ export {
   isBuiltInSkillId,
   listBotSkills,
   resolveBotSkills,
+  resolveBuiltInSkills,
   type BotSkillDefinition,
   type BotSkillSummary,
 } from "./skills/catalog.js";
@@ -1022,3 +1023,5 @@ export {
   executeScheduledTaskWithBotConfig,
   type TaskHistoryMessage,
 } from "./services/scheduled-task-executor.js";
+
+export { capturePromptConfig, snapshotDataFiles } from "./services/prompt-snapshot.js";

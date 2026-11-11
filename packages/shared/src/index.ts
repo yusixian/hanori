@@ -85,3 +85,4 @@ export * from "./asr-settings.js";
 export * from "./video-downloads.js";
 
 export * from "./scheduled-tasks.js";
+export * from "./prompt-versions.js";

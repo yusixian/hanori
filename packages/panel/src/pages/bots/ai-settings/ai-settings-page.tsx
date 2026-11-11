@@ -1,3 +1,4 @@
+import { PromptVersions } from "./prompt-versions";
 import { TaskAgentFields } from "./sections/task-agent-fields";
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
@@ -1311,6 +1312,7 @@ export function BotAiSettingsPage() {
 
             {activeSection === "replies" && (
               <div className="space-y-3">
+                {botId && <PromptVersions key={botId} botId={botId} />}
                 <SettingsDisclosureRow
                   {...disclosureProps("reply-prompts")}
                   title={t("disclosures.replyPrompts.title")}

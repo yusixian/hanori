@@ -1,3 +1,4 @@
+import { capturePromptConfig, type PromptSnapshotConfig } from "./prompt-snapshot.js";
 import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { imageToolCompletion } from "../utils/image-generation-status.js";
 import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
@@ -87,7 +88,7 @@ export interface ContinueChatRunContext {
   isCurrent(): boolean;
 }
 
-export interface ContinueChatConfig {
+export interface ContinueChatConfig extends PromptSnapshotConfig {
   scheduledTasks?: ScheduledTaskPort;
   onOwnMessageEdited?: (chatId: number, messageId: number, content: string) => void;
   diagnosticSecrets?: readonly string[];
@@ -408,11 +409,12 @@ export async function continueChat(
 
 async function doContinueChat(
   api: Api,
-  config: ContinueChatConfig,
+  baseConfig: ContinueChatConfig,
   event: ContinueChatEvent,
   executionContext?: ContinueChatRunContext,
   privacyMode?: "normal" | "isolated" | "off",
 ): Promise<boolean> {
+  const config = await capturePromptConfig(baseConfig);
   const { chatId, eventDescription } = event;
   const convCfg = config.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
 

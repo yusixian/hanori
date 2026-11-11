@@ -132,6 +132,40 @@ describe("production HTTP policy", () => {
     },
   );
 
+  it.each(["viewer", "editor"])("rejects %s prompt version reads and mutations", async (role) => {
+    for (const [path, method] of [
+      ["", "GET"],
+      ["/working", "GET"],
+      ["/version-id", "GET"],
+      ["", "POST"],
+      ["/preview", "POST"],
+      ["/activate", "POST"],
+      ["/version-id", "DELETE"],
+    ]) {
+      expect(
+        (
+          await createRoleApp(role).request(`/api/bots/${TEST_BOT_ID}/prompt-versions${path}`, {
+            method,
+          })
+        ).status,
+      ).toBe(403);
+    }
+  });
+  it.each(["owner", "admin"])(
+    "allows %s through prompt version authorization to validation",
+    async (role) => {
+      const result = await createRoleApp(role).request(
+        `/api/bots/${TEST_BOT_ID}/prompt-versions/activate`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: "invalid" }),
+        },
+      );
+      expect(result.status).toBe(400);
+    },
+  );
+
   it("does not log signed audio bearer credentials", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
     try {

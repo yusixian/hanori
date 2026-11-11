@@ -295,6 +295,7 @@ async function buildStaticSections(input: StaticPromptInput): Promise<RawSection
       "developer",
       buildExtendedToolsPrompt({
         capabilities: input.toolCapabilities,
+        botMemoryContractIncluded: input.toolCapabilities.has("bot-memory"),
         availableAgents,
         isPrivate: input.isPrivate,
         timerMaxSeconds: resolveTimerMaxSeconds(input.timerMaxSeconds),

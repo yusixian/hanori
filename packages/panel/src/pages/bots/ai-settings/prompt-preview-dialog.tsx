@@ -202,6 +202,7 @@ export function PromptPreviewDialog({
             <h2 id="prompt-preview-title" className="text-lg font-semibold">
               {t("promptPreview.title")}
             </h2>
+            <p className="text-muted-foreground text-xs">{t("promptVersions.workingPreview")}</p>
           </div>
           <button
             type="button"

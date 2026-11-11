@@ -3,6 +3,7 @@ import type { ToolPromptCapability } from "./tool-capabilities.js";
 
 export interface ExtendedToolsPromptOptions {
   capabilities: ReadonlySet<ToolPromptCapability>;
+  botMemoryContractIncluded?: boolean;
   availableAgents: string[];
   isPrivate: boolean;
   /** Effective set_timer ceiling, in seconds. Must match the tool schema. */
@@ -123,11 +124,13 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
     lines.push("- 当用户发送文件或图片时，消息中会标注附件信息");
     lines.push("- 如果你判断需要保存该文件，应在当前回合立即调用 save_received_file");
     lines.push("- 只有管理员在面板中标记为「可注入」的 .md 文件才会被注入到 system prompt");
-    lines.push("- 当你需要记录长期信息或更新自己的设定时，使用 write_file");
+    lines.push(
+      "- write_file 可更新工作文件；已启用提示词版本中的文件只读，修改设定需管理员另存新版本并启用",
+    );
   }
 
-  // Bot memory tools
-  if (opts.capabilities.has("bot-memory")) {
+  // The context assembler already includes the full memory policy as its own section.
+  if (opts.capabilities.has("bot-memory") && !opts.botMemoryContractIncluded) {
     lines.push("");
     lines.push("长期记忆工具:");
     lines.push(
