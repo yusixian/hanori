@@ -127,6 +127,98 @@ function createDiagnostics(): NonNullable<AiReplyConfig["runtimeDiagnostics"]> {
 }
 
 describe("AI reply streaming", () => {
+  it("captures the active prompt when a queued turn starts while the running turn stays pinned", async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const prompts: string[] = [];
+    let version = "version-one";
+    const getPromptSnapshot = vi.fn(async () => ({
+      id: version,
+      snapshot: {
+        systemPrompt: version,
+        behavioralPrompt: "",
+        groupBehavioralPrompt: "",
+        files: [],
+        skills: [],
+        maxInjectionBytes: 1024,
+      },
+    }));
+    streamTextMock.mockImplementation((options: { messages: unknown[] }) => {
+      const first = prompts.length === 0;
+      prompts.push(JSON.stringify(options.messages));
+      return {
+        textStream: (async function* () {
+          if (first) await blocked;
+          yield "answer";
+        })(),
+        text: Promise.resolve("answer"),
+        steps: Promise.resolve([]),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+        totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+        finishReason: Promise.resolve("stop"),
+      };
+    });
+    const runtime = createAiReplyHandler({
+      ...createConfig(vi.fn()),
+      getPromptSnapshot,
+      adminChatIds: [123, 456],
+      executionConfig: { maxConcurrentReplies: 1, queueNotice: { enabled: true, text: "queued" } },
+    });
+    const a = createContext();
+    const b = createContext({ chatId: 456, userId: 456 });
+    try {
+      const first = runtime.handler(a.ctx, vi.fn());
+      await vi.waitFor(() => expect(prompts).toHaveLength(1));
+      const second = runtime.handler(b.ctx, vi.fn());
+      await vi.waitFor(() => expect(b.ctx.wait).toHaveBeenCalled());
+      expect(getPromptSnapshot).toHaveBeenCalledTimes(1);
+      version = "version-two";
+      release();
+      await Promise.all([first, second]);
+      await vi.waitFor(() => expect(prompts).toHaveLength(2));
+      expect(prompts[0]).toContain("version-one");
+      expect(prompts[0]).not.toContain("version-two");
+      expect(prompts[1]).toContain("version-two");
+    } finally {
+      release();
+      await runtime.destroy();
+      streamTextMock.mockReset();
+    }
+  });
+
+  it("keeps an empty unversioned system prompt free of undefined text when no task suffix exists", async () => {
+    let systemMessages = "";
+    streamTextMock.mockImplementationOnce(
+      (options: { messages: Array<{ role: string; content: unknown }> }) => {
+        systemMessages = options.messages
+          .filter((message) => message.role === "system")
+          .map((message) => String(message.content))
+          .join("\n");
+        return {
+          textStream: (async function* () {
+            yield "answer";
+          })(),
+          text: Promise.resolve("answer"),
+          steps: Promise.resolve([]),
+          usage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+          totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+          finishReason: Promise.resolve("stop"),
+        };
+      },
+    );
+    const runtime = createAiReplyHandler({ ...createConfig(vi.fn()), systemPrompt: "" });
+    try {
+      await runtime.handler(createContext().ctx, vi.fn());
+      expect(systemMessages).not.toBe("");
+      expect(systemMessages).not.toContain("undefined");
+    } finally {
+      await runtime.destroy();
+      streamTextMock.mockReset();
+    }
+  });
+
   it("only sends the uncovered step after multi_message delivered an earlier step", async () => {
     const scene = "The door opened.";
     const final = "Choose your next move.";

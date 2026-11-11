@@ -1,3 +1,4 @@
+import { readActivePromptSnapshot } from "../prompt-versions.js";
 import type {
   AiReplyBotConfig,
   AiSelectionCallbacks,
@@ -130,6 +131,7 @@ export async function assembleAiReply(
 
   const aiReply: AiReplyBotConfig = {
     botId,
+    getPromptSnapshot: () => readActivePromptSnapshot(services.db, botId),
     scheduledTasks: services.scheduledTasks,
     apiKey,
     baseURL: activeProvider.baseURL,

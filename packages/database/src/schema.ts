@@ -1,3 +1,4 @@
+import type { PromptSnapshot, PromptPreviewSnapshot } from "@cos-tool-bot/shared";
 import type {
   AiConfigStored,
   ScheduledTaskPlan,
@@ -87,6 +88,7 @@ export const pluginInstallations = pgTable(
 );
 
 export const bots = pgTable("bots", {
+  activePromptVersionId: uuid("active_prompt_version_id"),
   id: uuid("id").defaultRandom().primaryKey(),
   name: text("name").notNull(),
   platform: text("platform").notNull().default("telegram"),
@@ -1844,4 +1846,23 @@ export const scheduledTaskRuns = pgTable(
     error: text("error"),
   },
   (t) => [index("scheduled_task_runs_task_idx").on(t.taskId, t.startedAt)],
+);
+
+export const promptVersions = pgTable(
+  "prompt_versions",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    applicationVersion: text("application_version").notNull(),
+    snapshot: json("snapshot").$type<PromptSnapshot>().notNull(),
+    previews: json("previews")
+      .$type<{ private: PromptPreviewSnapshot; group: PromptPreviewSnapshot }>()
+      .notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => [index("prompt_versions_bot_idx").on(table.botId, table.createdAt)],
 );

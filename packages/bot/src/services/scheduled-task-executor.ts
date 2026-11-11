@@ -1,3 +1,4 @@
+import { capturePromptConfig } from "./prompt-snapshot.js";
 import { createAiSelectionRuntime } from "../handlers/ai-selection.js";
 import { createWebTools } from "../tools/web.js";
 import { PendingAdminActionRegistry } from "./pending-github-actions.js";
@@ -290,7 +291,7 @@ export function bindTaskDestinationTopic(
 export async function executeScheduledTaskWithBotConfig(
   input: ScheduledTaskBotInput,
 ): Promise<ScheduledTaskExecutionResult> {
-  const { aiConfig } = input;
+  const aiConfig = await capturePromptConfig(input.aiConfig);
   const api = typeof input.api === "string" ? new Api(input.api) : input.api;
   bindTaskDestinationTopic(api, input.plan.destination);
   const reservation = await aiConfig.usageGovernance?.reserve({

@@ -10,6 +10,7 @@ import { zodToAiSchema } from "./utils.js";
 
 export function createFileTools(opts: {
   dataDir: string;
+  snapshotFiles?: Readonly<Record<string, string>>;
   protectedFiles?: ReadonlySet<string>;
 }): Record<string, Tool> {
   const { dataDir, protectedFiles } = opts;
@@ -26,6 +27,11 @@ export function createFileTools(opts: {
       execute: async ({ path: filePath }) => {
         const resolved = resolveAndValidate(dataDir, filePath);
         if (!resolved) return { error: "Invalid path (only .md/.txt/.json allowed)" };
+        if (
+          opts.snapshotFiles &&
+          Object.hasOwn(opts.snapshotFiles, path.relative(dataDir, resolved))
+        )
+          return { ok: true, content: opts.snapshotFiles[path.relative(dataDir, resolved)] };
         try {
           const buffer = await readFileBounded(resolved, MAX_FILE_SIZE);
           return { ok: true, content: buffer.toString("utf-8") };
@@ -48,6 +54,14 @@ export function createFileTools(opts: {
       execute: async ({ path: filePath, content }) => {
         const resolved = resolveAndValidate(dataDir, filePath);
         if (!resolved) return { error: "Invalid path" };
+        if (
+          opts.snapshotFiles &&
+          Object.hasOwn(opts.snapshotFiles, path.relative(dataDir, resolved))
+        )
+          return {
+            error:
+              "Versioned prompt files are read-only in this turn; edit and activate a new prompt version",
+          };
         const ext = path.extname(filePath).toLowerCase();
         if (!TEXT_EXTENSIONS.has(ext))
           return { error: "Only text files can be written (.md/.txt/.json/.csv/.xml/.html/.css)" };
@@ -73,6 +87,11 @@ export function createFileTools(opts: {
       execute: async ({ path: filePath }) => {
         const resolved = resolveAndValidate(dataDir, filePath);
         if (!resolved) return { error: "Invalid path" };
+        if (
+          opts.snapshotFiles &&
+          Object.hasOwn(opts.snapshotFiles, path.relative(dataDir, resolved))
+        )
+          return { error: "Versioned prompt files are read-only in this turn" };
         // Prevent deletion of files marked as injectable (system prompt files)
         if (
           protectedFiles &&

@@ -519,6 +519,13 @@
       "when": 1794410336451,
       "tag": "0073_next_hercules",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1794413489979,
+      "tag": "0074_supreme_captain_flint",
+      "breakpoints": true
     }
   ]
 }
