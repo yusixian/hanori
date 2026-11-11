@@ -1,3 +1,4 @@
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type {
   BotTimerHandlers,
@@ -58,6 +59,7 @@ export interface BotRuntimeInput {
  * instance they were assembled with.
  */
 export interface BotRuntimeServices {
+  scheduledTasks?: ScheduledTaskPort;
   plugins?: PluginRuntimePort;
   mediaTranscriptionPort?: MediaTranscriptionPort;
   nsfwChecker?: NsfwChecker;

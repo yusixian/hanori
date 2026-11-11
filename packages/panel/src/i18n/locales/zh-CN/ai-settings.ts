@@ -1,5 +1,23 @@
 import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  taskAgent: {
+    title: "定时任务 Agent 默认配置",
+    description:
+      "任务在独立会话执行。未设置字段在执行时继承当前默认值；审批后的任务计划可单独覆盖。",
+    provider: "供应商",
+    model: "模型",
+    prompt: "Agent 指令",
+    tools: "允许的工具（逗号分隔）",
+    toolsHelp: "留空继承默认工具列表。勾选“不使用工具”可显式禁用全部工具。",
+    noTools: "不使用工具",
+    timeoutMs: "超时（毫秒）",
+    maxSteps: "最大步骤数",
+    inherit: "继承",
+    namedTitle: "命名 Agent",
+    name: "Agent 名称",
+    add: "添加 Agent",
+    remove: "移除 Agent",
+  },
   engagementSamples,
   engagement: {
     title: "智能群聊接话",

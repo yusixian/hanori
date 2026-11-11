@@ -136,6 +136,7 @@ export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiC
     unifiedSearchEnabled: migrated.unifiedSearchEnabled !== false,
     imageGenerationReceiptConfig: migrated.imageGenerationReceiptConfig,
     agentToolsConfig: migrated.agentToolsConfig,
+    taskAgentConfig: migrated.taskAgentConfig,
     githubToolsConfig: toGitHubToolsConfigPublic(migrated.githubToolsConfig),
     artworkToolsConfig: migrated.artworkToolsConfig,
     botMemoryConfig: migrated.botMemoryConfig,

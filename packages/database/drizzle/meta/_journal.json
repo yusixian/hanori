@@ -505,6 +505,20 @@
       "when": 1793102084186,
       "tag": "0071_safe_thanos",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1794410305082,
+      "tag": "0072_illegal_loa",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1794410336451,
+      "tag": "0073_next_hercules",
+      "breakpoints": true
     }
   ]
 }

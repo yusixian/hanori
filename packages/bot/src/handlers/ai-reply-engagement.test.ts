@@ -1,3 +1,5 @@
+import { beginTaskDiscussion, endTaskDiscussion } from "../services/task-discussion.js";
+import type { ScheduledTaskPort, ScheduledTaskRecord } from "@cos-tool-bot/shared";
 import { AiExecutionCoordinator } from "../services/ai-execution-coordinator.js";
 import { AiReplyQueueFullError } from "../services/ai-reply-scheduler.js";
 import {
@@ -156,6 +158,88 @@ function streamResult(text = "answer") {
 }
 
 describe("AI engagement decisions", () => {
+  it("accepts configuration follow-ups before a plan card exists", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+    vi.stubGlobal("fetch", fetchMock);
+    const cfg = config("active");
+    cfg.scheduledTasks = {
+      getPendingDiscussion: vi.fn().mockResolvedValue(null),
+    } as unknown as ScheduledTaskPort;
+    const actor = {
+      botId: cfg.botId,
+      chatId: -100,
+      userId: 42,
+      userName: "Tester",
+      isAdmin: false,
+    };
+    beginTaskDiscussion(actor);
+    streamTextMock.mockImplementation(() => streamResult());
+    const runtime = createAiReplyHandler(cfg);
+    runtimes.push(runtime);
+    try {
+      await runtime.handler(context("每个月一号", { messageId: 1 }), vi.fn());
+      await runtime.handler(context("上午九点", { messageId: 2 }), vi.fn());
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(streamTextMock.mock.calls[1])).toContain("用户正在补充定时任务配置");
+    } finally {
+      endTaskDiscussion(actor);
+    }
+  });
+
+  it.each([true, false])(
+    "keeps task configuration responsive and records only actual topic identity (%s)",
+    async (isTopic) => {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(response("silent"));
+      vi.stubGlobal("fetch", fetchMock);
+      const cfg = config("active");
+      cfg.scheduledTasks = {
+        getPendingDiscussion: vi.fn().mockResolvedValue({
+          id: "task-pending",
+          pendingVersion: 2,
+          pendingPlan: { name: "monthly" },
+        } as ScheduledTaskRecord),
+      } as unknown as ScheduledTaskPort;
+      const upsertUserMessage = vi.fn().mockResolvedValue({ id: 1 });
+      const addMessages = vi.fn();
+      cfg.conversation = {
+        getHistory: async () => ({ summary: null, messages: [] }),
+        addMessage: vi.fn(),
+        addMessages,
+        upsertUserMessage,
+        triggerCompression: vi.fn(),
+        clearHistory: vi.fn(),
+      };
+      cfg.messageConfig = {
+        replyMode: "segment",
+        richMessageEnabled: false,
+        autoSplitThreshold: 0,
+        splitDelayMs: 0,
+      };
+      streamTextMock.mockImplementation(() => streamResult());
+      const runtime = createAiReplyHandler(cfg);
+      runtimes.push(runtime);
+      const first = context("改成每月一次", { messageId: 1, threadId: 7 });
+      const second = context("周一发到本群", { messageId: 2, threadId: 7 });
+      if (isTopic) {
+        first.message!.is_topic_message = true;
+        second.message!.is_topic_message = true;
+      }
+      await runtime.handler(first, vi.fn());
+      await runtime.handler(second, vi.fn());
+      expect(upsertUserMessage.mock.calls[0]![0].meta.threadId).toBe(isTopic ? 7 : null);
+      const assistant = addMessages.mock.calls
+        .flatMap(([rows]) => rows)
+        .find((row) => row.role === "assistant");
+      expect(assistant.meta.threadId).toBe(isTopic ? 7 : null);
+      expect(assistant.meta).toHaveProperty("threadId");
+      expect(upsertUserMessage.mock.calls[0]![0].meta).toHaveProperty("threadId");
+      expect(streamTextMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(streamTextMock.mock.calls[1])).toContain("task-pending");
+    },
+  );
+
   it("uses edited text in the next prompt and engagement context, including after handler restart", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => response("addressed"));
     vi.stubGlobal("fetch", fetchMock);

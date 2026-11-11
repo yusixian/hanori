@@ -1,3 +1,4 @@
+import { sendConfirmationCard } from "./confirmation-card.js";
 import type {
   ImageGenerationActor,
   ImageGenerationPort,
@@ -47,9 +48,11 @@ export async function sendImageConfirmationMessage(
 ): Promise<number> {
   if (generation.state !== "awaiting_approval" || generation.approval !== "required")
     throw new Error("image_confirmation_unavailable");
-  const message = await api.sendMessage(chatId, imageConfirmationText(generation), {
-    ...(threadId === undefined ? {} : { message_thread_id: threadId }),
-    reply_markup: {
+  return sendConfirmationCard(
+    api,
+    chatId,
+    imageConfirmationText(generation),
+    {
       inline_keyboard: [
         [
           { text: "确认生成", callback_data: `cos:image:${generation.id}:confirm` },
@@ -59,8 +62,8 @@ export async function sendImageConfirmationMessage(
         ],
       ],
     },
-  });
-  return message.message_id;
+    threadId,
+  );
 }
 
 export function createImageConfirmationReplyHandler(options: ImageConfirmationOptions) {

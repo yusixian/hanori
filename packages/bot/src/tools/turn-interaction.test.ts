@@ -64,8 +64,11 @@ describe("turn interaction assembly", () => {
       expect(Object.keys(assembled[family]).sort()).toEqual(Object.keys(legacy[family]).sort());
       expect(createToolSchemaHash(assembled[family])).toBe(createToolSchemaHash(legacy[family]));
     }
+    expect(asSchema(assembled.telegramTools.set_timer!.inputSchema).jsonSchema).not.toHaveProperty(
+      "properties.seconds.maximum",
+    );
     expect(asSchema(assembled.telegramTools.set_timer!.inputSchema).jsonSchema).toMatchObject({
-      properties: { seconds: { maximum: 604_800 } },
+      properties: { seconds: { minimum: 5 } },
     });
   });
 

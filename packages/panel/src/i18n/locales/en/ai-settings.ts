@@ -1,5 +1,24 @@
 import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  taskAgent: {
+    title: "Scheduled task Agent defaults",
+    description:
+      "Tasks run in independent sessions. Unset fields inherit current defaults at execution time; each approved plan can override them.",
+    provider: "Provider",
+    model: "Model",
+    prompt: "Agent instructions",
+    tools: "Allowed tools (comma separated)",
+    toolsHelp:
+      "Blank inherits the default tool list. Enable “No tools” to explicitly disable all tools.",
+    noTools: "No tools",
+    timeoutMs: "Timeout (milliseconds)",
+    maxSteps: "Maximum steps",
+    inherit: "Inherit",
+    namedTitle: "Named Agents",
+    name: "Agent name",
+    add: "Add Agent",
+    remove: "Remove Agent",
+  },
   engagementSamples,
   engagement: {
     title: "Smart group engagement",

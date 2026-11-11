@@ -86,6 +86,7 @@ export async function assembleBotRuntime(
   return {
     config: {
       botId,
+      scheduledTasks: services.scheduledTasks,
       nsfwChecker: services.nsfwChecker,
       nsfwThreshold: aiRuntime?.config.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold,
       runtimeDiagnostics: diagnostics,

@@ -130,6 +130,7 @@ export async function assembleAiReply(
 
   const aiReply: AiReplyBotConfig = {
     botId,
+    scheduledTasks: services.scheduledTasks,
     apiKey,
     baseURL: activeProvider.baseURL,
     model: aiConfig.activeModelId ?? activeProvider.defaultModel,

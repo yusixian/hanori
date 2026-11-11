@@ -1,3 +1,4 @@
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { imageToolCompletion } from "../utils/image-generation-status.js";
 import type { PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import {
@@ -87,6 +88,7 @@ export interface ContinueChatRunContext {
 }
 
 export interface ContinueChatConfig {
+  scheduledTasks?: ScheduledTaskPort;
   onOwnMessageEdited?: (chatId: number, messageId: number, content: string) => void;
   diagnosticSecrets?: readonly string[];
   botId: string;
@@ -502,6 +504,7 @@ async function doContinueChat(
       skills: config.skills,
       generationLibraryPort: config.generationLibraryPort,
       imageGenerationPort: config.imageGenerationPort,
+      scheduledTasks: config.scheduledTasks,
       imageGenerationConfirmation: config.imageGenerationConfirmation,
       groupOverrides: config.groupOverrides,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,

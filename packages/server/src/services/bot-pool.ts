@@ -1,3 +1,13 @@
+import { readScheduledTaskHistory } from "./scheduled-task-history.js";
+import { executeScheduledTaskWithBotConfig } from "@cos-tool-bot/bot";
+import type {
+  ScheduledTaskPlan,
+  ScheduledTaskPort,
+  ScheduledTaskRecord,
+} from "@cos-tool-bot/shared";
+import type { ScheduledTaskExecutorOptions } from "./scheduled-tasks.js";
+import { assembleAiReply } from "./bot-runtime/ai-reply.js";
+import { redactDiagnostic } from "./run-redaction.js";
 import { ImageDeliveryError } from "@cos-tool-bot/shared";
 import type { MediaTranscriptionPort, PluginRuntimePort } from "@cos-tool-bot/shared";
 import type { BotTimerHandlers, TelegramObservationCallbacks } from "@cos-tool-bot/bot";
@@ -228,6 +238,75 @@ export class BotPool {
   ): void {
     this.services.chatAiSelectionService = service;
     this.services.chatAiSelectionRuntimeRegistry = runtimeRegistry;
+  }
+
+  async notifyScheduledTaskFailure(task: ScheduledTaskRecord, error: string): Promise<void> {
+    const manager = this.managers.get(task.botId);
+    if (!(manager instanceof BotManager) || manager.status !== "running")
+      throw new Error("Task notification Bot is unavailable");
+    const [bot] = await this.db.select().from(bots).where(eq(bots.id, task.botId)).limit(1);
+    if (!bot) throw new Error("Task notification Bot is unavailable");
+    const text = `定时任务 ${task.id} 连续失败后已暂停。请查看执行记录后恢复。\n${String(redactDiagnostic(error)).slice(0, 1500)}`;
+    const recipients = bot.adminChatIds.length ? bot.adminChatIds : [task.chatId];
+    await Promise.all(
+      recipients.map((chatId) =>
+        manager.sendHtml(
+          chatId,
+          escapeHtml(text),
+          chatId === task.chatId ? (task.threadId ?? undefined) : undefined,
+        ),
+      ),
+    );
+  }
+
+  setScheduledTasks(port: ScheduledTaskPort) {
+    this.services.scheduledTasks = port;
+  }
+
+  async runScheduledTask(
+    task: ScheduledTaskRecord,
+    plan: ScheduledTaskPlan,
+    context: ScheduledTaskExecutorOptions,
+  ): ReturnType<typeof executeScheduledTaskWithBotConfig> {
+    const manager = this.managers.get(task.botId);
+    if (!(manager instanceof BotManager) || manager.status !== "running")
+      throw new Error("Task Bot is not running");
+    const [bot] = await this.db.select().from(bots).where(eq(bots.id, task.botId)).limit(1);
+    if (!bot || task.approvedByUserId === null)
+      throw new Error("Task Bot or approved administrator is unavailable");
+    const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    if (!token) throw new Error("Task Bot credentials are unavailable");
+    const runtime = toAiConfigRuntime(bot.aiConfig, env.ENCRYPTION_KEY);
+    if (!runtime) throw new Error("Task AI configuration is unavailable");
+    const secrets = [token, ...runtime.providers.map((provider) => provider.apiKey)];
+    try {
+      const assembled = await assembleAiReply(
+        bot.id,
+        runtime,
+        new DbLogger(this.db, this.logger, bot.id),
+        this.services,
+        this.runtimeHost,
+      );
+      if (!assembled) throw new Error("Task Agent AI configuration is unavailable or disabled");
+      return await executeScheduledTaskWithBotConfig({
+        api: token,
+        plan,
+        chatId: task.chatId,
+        threadId: task.threadId ?? undefined,
+        userId: task.approvedByUserId,
+        signal: context.signal,
+        onAgentResolved: context.onAgentResolved,
+        aiConfig: assembled.aiReply,
+        taskAgentConfig: runtime.config.taskAgentConfig,
+        agentToolsConfig: runtime.config.agentToolsConfig,
+        adminIds: bot.adminChatIds,
+        readTaskHistory: (window) => readScheduledTaskHistory(this.db, task, window),
+      });
+    } catch (error) {
+      throw new Error(
+        String(redactDiagnostic(error instanceof Error ? error.message : String(error), secrets)),
+      );
+    }
   }
 
   setBackupService(service: BackupService) {

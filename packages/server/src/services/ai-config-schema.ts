@@ -14,6 +14,15 @@ import {
 } from "@cos-tool-bot/shared";
 import { z } from "zod";
 
+export const agentExecutionConfigSchema = z.object({
+  providerId: z.string().trim().min(1).optional(),
+  modelId: z.string().trim().min(1).optional(),
+  systemPrompt: z.string().optional(),
+  toolNames: z.array(z.string().trim().min(1)).optional(),
+  timeoutMs: z.number().int().min(1000).max(2_147_483_647).optional(),
+  maxSteps: z.number().int().min(1).max(MAX_SUB_AGENT_STEPS).optional(),
+});
+
 export function boundedNumberSchema(bounds: NumericSettingBounds) {
   const number = bounds.integer ? z.number().int() : z.number();
   return number.min(bounds.min).max(bounds.max);
@@ -232,6 +241,7 @@ export const aiConfigSchema = z
           .optional(),
       })
       .optional(),
+    taskAgentConfig: agentExecutionConfigSchema.optional(),
     agentToolsConfig: z
       .object({
         enabled: z.boolean(),
@@ -240,10 +250,7 @@ export const aiConfigSchema = z
         agents: z
           .record(
             z.string(),
-            z.object({
-              enabled: z.boolean().optional(),
-              systemPrompt: z.string().optional(),
-            }),
+            agentExecutionConfigSchema.extend({ enabled: z.boolean().optional() }),
           )
           .optional(),
       })

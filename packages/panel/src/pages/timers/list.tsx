@@ -1,3 +1,4 @@
+import { ScheduledTasksPanel } from "./scheduled-tasks-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -56,6 +57,7 @@ export function TimersListPage() {
 
   return (
     <div className="space-y-6">
+      <ScheduledTasksPanel />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Timer className="text-primary h-6 w-6" />
