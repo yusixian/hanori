@@ -106,6 +106,7 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
 });
 
 for (const { version, theme, status = "" } of [
+  { version: "v0.22.0", theme: "视频工具与可编辑消息" },
   { version: "v0.18.0", theme: "更新 Lody CLI 与模型列表" },
   { version: "v0.19.0", theme: "自动发现模型与显式配置" },
   { version: "v0.19.1", theme: "授权期间保留 MCP 连接状态" },
