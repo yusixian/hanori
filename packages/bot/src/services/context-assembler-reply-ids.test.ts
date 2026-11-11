@@ -49,7 +49,7 @@ describe("replyable message ids in the assembled prompt", () => {
 
     expect(promptText(bundle.messages)).toContain("[#4820 Alice]: 这个 hydration 的文章讲了啥");
     expect(promptText(bundle.messages)).toContain("[#4822 Bob]: 帮我写个频道摘要");
-    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+    expect(bundle.replyableMessageIds).toEqual([4820, 4821, 4822]);
   });
 
   it.each(["reply", "continue"])(
@@ -77,28 +77,28 @@ describe("replyable message ids in the assembled prompt", () => {
     const bundle = await assembleContext(input({ historyFormat: "messages" }));
 
     expect(promptText(bundle.messages)).toContain("[#4820 Alice]: 这个 hydration 的文章讲了啥");
-    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+    expect(bundle.replyableMessageIds).toEqual([4820, 4821, 4822]);
   });
 
-  it("omits the bot's own messages, so the model cannot cite them as reply targets", async () => {
+  it("labels bot messages for editing", async () => {
     const bundle = await assembleContext(input({ historyFormat: "prompt" }));
 
-    expect(promptText(bundle.messages)).not.toContain("#4821");
-    expect(bundle.replyableMessageIds).not.toContain(4821);
+    expect(promptText(bundle.messages)).toContain("#4821");
+    expect(bundle.replyableMessageIds).toContain(4821);
   });
 
-  it("leaves private chats unlabelled", async () => {
+  it("labels only bot messages in private chats", async () => {
     const bundle = await assembleContext(input({ isPrivate: true, chatId: 42 }));
 
     expect(promptText(bundle.messages)).not.toContain("#4820");
-    expect(bundle.replyableMessageIds).toEqual([]);
+    expect(bundle.replyableMessageIds).toEqual([4821]);
   });
 
   it("keeps a message that lost its id out of the reply target set", async () => {
     const bundle = await assembleContext(input({ historyFormat: "prompt" }));
 
     expect(promptText(bundle.messages)).toContain("Bob: 压缩时丢了 id 的旧消息");
-    expect(bundle.replyableMessageIds).toEqual([4820, 4822]);
+    expect(bundle.replyableMessageIds).toEqual([4820, 4821, 4822]);
   });
 });
 

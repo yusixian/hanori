@@ -581,7 +581,12 @@ function historySections(
   };
   /** Records the id as quotable and returns it, or returns undefined when it stays hidden. */
   const claimQuotableId = (message: (typeof history.messages)[number]) => {
-    if (isPrivate || message.role !== "user" || message.tgMessageId === undefined) return undefined;
+    if (
+      (isPrivate && message.role !== "assistant") ||
+      !["user", "assistant"].includes(message.role) ||
+      message.tgMessageId === undefined
+    )
+      return undefined;
     replyableMessageIds?.push(message.tgMessageId);
     return message.tgMessageId;
   };
@@ -603,7 +608,10 @@ function historySections(
       const lines = history.messages.map((message) => {
         const content = historyContent(message);
         if (message.role === "context") return `[群聊上下文]\n${content}`;
-        if (message.role === "assistant") return `AI: ${content}`;
+        if (message.role === "assistant") {
+          const id = claimQuotableId(message);
+          return id === undefined ? `AI: ${content}` : `AI [#${id}]: ${content}`;
+        }
         const name = message.userName || "User";
         const id = claimQuotableId(message);
         return id === undefined ? `${name}: ${content}` : `[#${id} ${name}]: ${content}`;
@@ -664,6 +672,10 @@ function historySections(
     const role = message.role === "assistant" ? "assistant" : "user";
     const attributedContent = historyContent(message);
     let content = attributedContent;
+    if (message.role === "assistant") {
+      const id = claimQuotableId(message);
+      if (id !== undefined) content = `[#${id}] ${attributedContent}`;
+    }
     if (!isPrivate && message.userName && message.role === "user") {
       const id = claimQuotableId(message);
       const label = id === undefined ? message.userName : `#${id} ${message.userName}`;

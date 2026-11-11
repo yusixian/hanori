@@ -73,6 +73,8 @@ export interface RecentCrossChatUserMessage {
 }
 
 export interface ConversationCallbacks {
+  findOwnMessage?(chatId: number, messageId: number): Promise<boolean>;
+  updateOwnMessage?(chatId: number, messageId: number, content: string): Promise<void>;
   getHistory(
     chatId: number,
     limit: number,
