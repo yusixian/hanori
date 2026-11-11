@@ -1272,7 +1272,7 @@ describe("image tool completion fallback", () => {
         if (mode === "create") {
           expect(create).toHaveBeenCalledWith(
             expect.objectContaining({
-              requestContext: expect.objectContaining({ messageId: 7, threadId: 73 }),
+              requestContext: expect.objectContaining({ messageId: 7, threadId: undefined }),
             }),
             expect.objectContaining({
               toolCallId: "image-call",

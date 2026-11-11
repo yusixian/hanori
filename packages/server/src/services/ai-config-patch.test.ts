@@ -628,3 +628,91 @@ it("does not let an editor reset a finite Issue policy by omitting the field", (
     }).githubToolsConfig?.createIssueConfirmationTtlMinutes,
   ).toBe(60);
 });
+
+describe("task Agent configuration", () => {
+  it("persists explicit no-tools defaults and preserves them for older clients", () => {
+    const config = {
+      modelId: "task-model",
+      toolNames: [],
+      timeoutMs: 60_000,
+      maxSteps: 12,
+      systemPrompt: "Run approved plans",
+    };
+    const stored = absorb(null, buildPatch({ enabled: false, taskAgentConfig: config }));
+    expect(stored.taskAgentConfig).toEqual(config);
+    expect(toAiConfigPublic(stored).taskAgentConfig).toEqual(config);
+    expect(absorb(stored, buildPatch({ enabled: false })).taskAgentConfig).toEqual(config);
+  });
+  it("rejects changes from non-administrators", () => {
+    expect(() =>
+      absorbAiConfigPatch({
+        current: null,
+        patch: buildPatch({ enabled: false, taskAgentConfig: { toolNames: ["generate_image"] } }),
+        actorRole: "member",
+        encryptionKey: ENCRYPTION_KEY,
+      }),
+    ).toThrow("只有 owner 或 admin");
+  });
+  it("remaps temporary provider IDs without storing credentials in the task config", () => {
+    const stored = absorb(
+      null,
+      buildPatch({
+        enabled: false,
+        providers: [
+          {
+            id: "__new_task",
+            label: "Tasks",
+            baseURL: "https://example.com/v1",
+            providerFormat: "openai",
+            defaultModel: "task-model",
+            apiKey: "private-key",
+          },
+        ],
+        taskAgentConfig: { providerId: "__new_task", modelId: "task-model" },
+      }),
+    );
+    expect(stored.taskAgentConfig?.providerId).toEqual(stored.providers![0]!.id);
+    expect(JSON.stringify(toAiConfigPublic(stored).taskAgentConfig)).not.toContain("private-key");
+  });
+  it("rejects an unknown configured provider", () => {
+    expect(() =>
+      absorb(null, buildPatch({ enabled: false, taskAgentConfig: { providerId: "missing" } })),
+    ).toThrow("Task Agent provider does not exist");
+  });
+  it.each([{ timeoutMs: 0 }, { timeoutMs: 2_147_483_648 }, { maxSteps: 0 }, { toolNames: [""] }])(
+    "validates executable limits: %j",
+    (taskAgentConfig) => {
+      expect(() => buildPatch({ enabled: false, taskAgentConfig })).toThrow();
+    },
+  );
+});
+
+describe("named task Agents", () => {
+  it("persists full execution configuration and rejects non-admin changes", () => {
+    const agentToolsConfig = {
+      enabled: true,
+      agents: {
+        researcher: {
+          enabled: true,
+          modelId: "research",
+          toolNames: [],
+          timeoutMs: 2000,
+          maxSteps: 3,
+        },
+      },
+    };
+    const stored = absorb(null, buildPatch({ enabled: false, agentToolsConfig }));
+    expect(stored.agentToolsConfig).toEqual(agentToolsConfig);
+    expect(absorb(stored, buildPatch({ enabled: false })).agentToolsConfig).toEqual(
+      agentToolsConfig,
+    );
+    expect(() =>
+      absorbAiConfigPatch({
+        current: null,
+        patch: buildPatch({ enabled: false, agentToolsConfig }),
+        actorRole: "member",
+        encryptionKey: ENCRYPTION_KEY,
+      }),
+    ).toThrow("只有 owner 或 admin");
+  });
+});

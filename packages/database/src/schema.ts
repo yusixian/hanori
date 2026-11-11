@@ -1,5 +1,7 @@
 import type {
   AiConfigStored,
+  ScheduledTaskPlan,
+  AgentExecutionConfig,
   CosInsideConfig,
   EmailForwardConfig,
   EngagementContextMessage,
@@ -1791,4 +1793,55 @@ export const harnessTopicMessages = pgTable(
     index("harness_topic_messages_message_idx").on(t.chatId, t.messageId),
     index("harness_topic_messages_created_idx").on(t.createdAt),
   ],
+);
+
+export const scheduledTasks = pgTable(
+  "scheduled_tasks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    botId: uuid("bot_id")
+      .notNull()
+      .references(() => bots.id, { onDelete: "cascade" }),
+    chatId: bigint("chat_id", { mode: "number" }).notNull(),
+    threadId: integer("thread_id"),
+    proposerId: bigint("proposer_id", { mode: "number" }).notNull(),
+    proposerName: text("proposer_name").notNull(),
+    approvedByUserId: bigint("approved_by_user_id", { mode: "number" }),
+    activePlan: json("active_plan").$type<ScheduledTaskPlan>(),
+    pendingPlan: json("pending_plan").$type<ScheduledTaskPlan>(),
+    revision: integer("revision").notNull().default(0),
+    pendingVersion: integer("pending_version"),
+    lastTrialVersion: integer("last_trial_version"),
+    expiresAt: timestamp("expires_at"),
+    confirmationMessageId: bigint("confirmation_message_id", { mode: "number" }),
+    status: text("status").notNull().default("pending"),
+    nextRunAt: timestamp("next_run_at"),
+    runningRunId: uuid("running_run_id"),
+    consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("scheduled_tasks_due_idx").on(t.status, t.nextRunAt),
+    index("scheduled_tasks_scope_idx").on(t.botId, t.chatId),
+  ],
+);
+
+export const scheduledTaskRuns = pgTable(
+  "scheduled_task_runs",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => scheduledTasks.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    trial: boolean("trial").notNull().default(false),
+    scheduledFor: timestamp("scheduled_for").notNull(),
+    startedAt: timestamp("started_at").notNull().defaultNow(),
+    finishedAt: timestamp("finished_at"),
+    plan: json("plan").$type<ScheduledTaskPlan>().notNull(),
+    agent: json("agent").$type<AgentExecutionConfig>().notNull(),
+    output: text("output"),
+    error: text("error"),
+  },
+  (t) => [index("scheduled_task_runs_task_idx").on(t.taskId, t.startedAt)],
 );

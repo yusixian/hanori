@@ -53,7 +53,7 @@ describe("prompt tool capabilities", () => {
     expect(preview.trace.staticPrefixHash).toBe(runtime.trace.staticPrefixHash);
     expect(continuation.trace.staticPrefixHash).toBe(runtime.trace.staticPrefixHash);
     expect(preview.fullPrompt).toContain("- web_search: 搜索网络获取最新信息");
-    expect(preview.fullPrompt).toContain("单个定时器最长 604800 秒");
+    expect(preview.fullPrompt).toContain("没有一天或七天上限");
   });
 
   it("does not advertise search from invalid preview config or config alone at runtime", async () => {

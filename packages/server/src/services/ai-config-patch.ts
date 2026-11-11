@@ -205,6 +205,56 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       githubToolsConfig.codingModelId,
     );
   }
+  if (
+    patch.taskAgentConfig !== undefined &&
+    JSON.stringify(patch.taskAgentConfig) !== JSON.stringify(current?.taskAgentConfig ?? {}) &&
+    !ownerOrAdmin.has(actorRole)
+  ) {
+    throw new HTTPException(403, { message: "只有 owner 或 admin 可以修改任务 Agent 配置" });
+  }
+  const taskAgentConfig = patch.taskAgentConfig
+    ? {
+        ...patch.taskAgentConfig,
+        providerId: patch.taskAgentConfig.providerId
+          ? (providerIdMap.get(patch.taskAgentConfig.providerId) ??
+            patch.taskAgentConfig.providerId)
+          : undefined,
+      }
+    : current?.taskAgentConfig;
+  if (
+    taskAgentConfig?.providerId &&
+    !(providers ?? existingMigrated?.providers ?? []).some(
+      (provider) => provider.id === taskAgentConfig.providerId,
+    )
+  ) {
+    throw new AiConfigPatchError("Task Agent provider does not exist");
+  }
+  if (
+    patch.agentToolsConfig !== undefined &&
+    JSON.stringify(patch.agentToolsConfig) !== JSON.stringify(current?.agentToolsConfig) &&
+    !ownerOrAdmin.has(actorRole)
+  ) {
+    throw new HTTPException(403, { message: "只有 owner 或 admin 可以修改 Agent 配置" });
+  }
+  const selectedAgentToolsConfig = patch.agentToolsConfig ?? current?.agentToolsConfig;
+  const agentToolsConfig = selectedAgentToolsConfig ? { ...selectedAgentToolsConfig } : undefined;
+  if (agentToolsConfig?.agents) {
+    agentToolsConfig.agents = Object.fromEntries(
+      Object.entries(agentToolsConfig.agents).map(([name, agent]) => {
+        const providerId = agent.providerId
+          ? (providerIdMap.get(agent.providerId) ?? agent.providerId)
+          : undefined;
+        if (
+          providerId &&
+          !(providers ?? existingMigrated?.providers ?? []).some(
+            (provider) => provider.id === providerId,
+          )
+        )
+          throw new AiConfigPatchError("Named Agent provider does not exist");
+        return [name, { ...agent, providerId }];
+      }),
+    );
+  }
   const imageOcrConfig = patch.imageOcrConfig
     ? {
         ...patch.imageOcrConfig,
@@ -283,7 +333,8 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
       patch.imageGenerationReceiptConfig === undefined
         ? existingMigrated?.imageGenerationReceiptConfig
         : resolveImageGenerationReceiptConfig(patch.imageGenerationReceiptConfig),
-    agentToolsConfig: patch.agentToolsConfig,
+    agentToolsConfig,
+    taskAgentConfig,
     githubToolsConfig,
     artworkToolsConfig: patch.artworkToolsConfig,
     botMemoryConfig: patch.botMemoryConfig,

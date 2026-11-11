@@ -1,3 +1,5 @@
+import { scheduledTaskRoutes } from "./routes/scheduled-tasks.js";
+import type { ScheduledTaskService } from "./services/scheduled-tasks.js";
 import { pluginRoutes } from "./routes/plugins.js";
 import { createAsrRoutes } from "./routes/asr.js";
 import { asrAudioRoutes } from "./routes/asr-audio.js";
@@ -78,6 +80,7 @@ import type { RuntimeHealthReader } from "./runtime-health.js";
 import { EngagementSampleService } from "./services/engagement-sample-service.js";
 
 interface AppOptions {
+  scheduledTasks?: ScheduledTaskService;
   logger?: Pick<Logger, "error">;
   pluginManager?: PluginManager;
   mediaJobs?: PluginMediaJobsOptions;
@@ -344,6 +347,9 @@ export function createApp(options: AppOptions) {
     .use("/api/api-test", requireAppAccess(auth, db))
     .use("/api/api-test/*", requireAppAccess(auth, db))
     .route("/api/api-test", apiTestRoutes())
+    .use("/api/scheduled-tasks", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .use("/api/scheduled-tasks/*", requireAppAccess(auth, db), requireRoles(ownerOrAdmin))
+    .route("/api/scheduled-tasks", scheduledTaskRoutes(options.scheduledTasks))
     .use("/api/timers", requireAppAccess(auth, db))
     .use("/api/timers/*", requireAppAccess(auth, db))
     .route(

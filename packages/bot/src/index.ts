@@ -1,3 +1,5 @@
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
+import { createScheduledTaskConfirmationHandler } from "./handlers/scheduled-task-confirmation.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
 import type {
   BotLogEntry,
@@ -118,6 +120,7 @@ export interface TimerCallbacks {
 }
 
 export interface BotConfig {
+  scheduledTasks?: ScheduledTaskPort;
   nsfwChecker?: NsfwChecker;
   nsfwThreshold?: number;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
@@ -373,6 +376,19 @@ export function createBot(config: BotConfig) {
     });
     bot.on("callback_query:data", async (ctx, next) => {
       if (!(await mediaConfirmationHandler(ctx))) await next();
+    });
+  }
+  const scheduledTasks = config.scheduledTasks ?? config.aiReply?.scheduledTasks;
+  if (scheduledTasks) {
+    const handler = createScheduledTaskConfirmationHandler({
+      api: bot.api,
+      botId: config.botId,
+      port: scheduledTasks,
+      adminIds: adminChatIds,
+      isDelegatedGroupAdmin: config.aiReply?.isDelegatedGroupAdmin,
+    });
+    bot.on("callback_query:data", async (ctx, next) => {
+      if (!(await handler(ctx))) await next();
     });
   }
   const imageGenerationPort = config.aiReply?.imageGenerationPort;
@@ -1001,3 +1017,8 @@ export {
 export type { McpToolEntry, McpToolsOptions } from "./tools/mcp.js";
 export { sendLocalVideoFile } from "./services/video-download-delivery.js";
 export { GitHubClient, type GitHubIssue } from "./services/github-client.js";
+
+export {
+  executeScheduledTaskWithBotConfig,
+  type TaskHistoryMessage,
+} from "./services/scheduled-task-executor.js";

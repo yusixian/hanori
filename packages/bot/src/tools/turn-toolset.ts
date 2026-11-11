@@ -1,3 +1,5 @@
+import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
+import { createScheduledTaskTools } from "./scheduled-tasks.js";
 import type { PluginActor, PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import { createPluginTools } from "./plugins.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
@@ -61,6 +63,7 @@ const MAX_TIMER_CHAIN_DEPTH = 2;
 
 /** Bot configuration and long-lived ports a turn's tools are bound from. */
 export interface TurnToolsetConfig {
+  scheduledTasks?: ScheduledTaskPort;
   botId: string;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
   adminIds?: number[];
@@ -133,6 +136,7 @@ export interface TurnToolsetInput {
   chatId: number;
   isPrivate: boolean;
   userId?: number;
+  userName?: string;
   privacyMode?: UserPrivacyMode;
   /** From resolveImageGenerationActor; image tools need both this actor and the port. */
   imageGenerationActor: ImageGenerationActor | undefined;
@@ -268,12 +272,35 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     config.unifiedSearchEnabled === true,
   );
 
+  const taskActor =
+    userId === undefined
+      ? undefined
+      : {
+          botId: config.botId,
+          chatId,
+          userId,
+          userName: input.userName,
+          threadId: input.threadId,
+          isBotAdmin: isAdmin,
+          isAdmin:
+            isAdmin ||
+            (!input.isPrivate && (await config.isDelegatedGroupAdmin?.(chatId, userId)) === true),
+        };
+  const scheduledTools =
+    personalized && config.scheduledTasks && taskActor
+      ? createScheduledTaskTools({ api, port: config.scheduledTasks, getActor: () => taskActor })
+      : {};
   const { telegramTools, behaviorTools, artworkTools } = createTurnInteractionTools({
     api,
     chatId,
     recentBotMessageIds: input.interaction.recentBotMessageIds,
     onceGuard: input.interaction.onceGuard,
-    telegram: { ...input.interaction.telegram, userId },
+    telegram: {
+      ...input.interaction.telegram,
+      userId,
+      scheduledTasks: config.scheduledTasks,
+      scheduledTaskActor: taskActor,
+    },
     behavior: {
       ...input.interaction.behavior,
       richMessageEnabled: isRichMessageEnabled(config.messageConfig),
@@ -333,6 +360,7 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
     : undefined;
 
   const tools: Record<string, Tool> = {
+    ...scheduledTools,
     ...(entry.kind === "reply" && isAdmin && userId !== undefined && config.runtimeDiagnostics
       ? createRuntimeDiagnosticTools({
           port: config.runtimeDiagnostics,

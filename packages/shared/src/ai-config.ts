@@ -1,3 +1,4 @@
+import type { AgentExecutionConfig } from "./scheduled-tasks.js";
 import type { AiExecutionConfig, TimeoutConfig } from "./ai-execution.js";
 import type { AiProviderEntry, AiProviderEntryPublic, ModelEntry } from "./ai-providers.js";
 import type {
@@ -85,6 +86,8 @@ export interface AiConfigStored {
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
   imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
+  /** Task defaults are resolved fresh for each run; explicit task fields override them. */
+  taskAgentConfig?: AgentExecutionConfig;
   githubToolsConfig?: GitHubToolsConfigStored;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;
@@ -132,6 +135,8 @@ export interface AiConfigPublic {
   imageGenerationReceiptConfig?: ImageGenerationReceiptConfig;
   imageGenerationConfirmation?: "always" | "never";
   agentToolsConfig?: AgentToolsConfig;
+  /** Task defaults are resolved fresh for each run; explicit task fields override them. */
+  taskAgentConfig?: AgentExecutionConfig;
   githubToolsConfig?: GitHubToolsConfigPublic;
   artworkToolsConfig?: ArtworkToolsConfig;
   botMemoryConfig?: BotMemoryConfig;

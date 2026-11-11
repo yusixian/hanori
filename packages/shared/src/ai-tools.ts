@@ -1,3 +1,4 @@
+import type { AgentExecutionConfig } from "./scheduled-tasks.js";
 import type { PixAIConfig } from "./pixai.js";
 
 export interface WebToolsConfig {
@@ -41,13 +42,7 @@ export interface AgentToolsConfig {
   enabled: boolean;
   subAgentModel?: string;
   maxSubAgentSteps?: number;
-  agents?: Record<
-    string,
-    {
-      enabled?: boolean;
-      systemPrompt?: string;
-    }
-  >;
+  agents?: Record<string, AgentExecutionConfig & { enabled?: boolean }>;
 }
 
 export interface ArtworkToolsConfig {

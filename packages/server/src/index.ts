@@ -1,3 +1,4 @@
+import { ScheduledTaskService } from "./services/scheduled-tasks.js";
 import { registerFatalErrorHandlers } from "./fatal-errors.js";
 import { UsageMaintenanceService } from "./services/usage-maintenance.js";
 import { redactDiagnostic } from "./services/run-redaction.js";
@@ -206,6 +207,13 @@ const pluginManager = new PluginManager(
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const scheduledTasks = new ScheduledTaskService(
+  db,
+  (task, plan, context) => botPool.runScheduledTask(task, plan, context),
+  (task, error) => botPool.notifyScheduledTaskFailure(task, error),
+  logger,
+);
+botPool.setScheduledTasks(scheduledTasks);
 const nsfwChecker = env.NSFW_API_URL
   ? new NsfwChecker({
       apiUrl: env.NSFW_API_URL,
@@ -616,6 +624,7 @@ const app = createApp({
   backupService,
   modelCapabilityService,
   timerRegistry,
+  scheduledTasks,
   rssFeedService,
   mcpClientManager,
   pluginManager,
@@ -663,6 +672,7 @@ await usageGovernor.pruneExpiredDetails();
 
 // Start all active bots
 await botPool.startAll();
+await scheduledTasks.start();
 if (!mediaConverter) await mediaJobService.cancelForBot();
 await mediaJobService.start();
 if (!mediaConverter) await videoDownloadService.cancelForBot();
@@ -706,13 +716,14 @@ const shutdown = createShutdownHandler(async (signal) => {
   runtimeHealth.markStopping();
   const harnessStopped = steps.run("harness-scheduler", () => harnessService?.close());
   const timersStopped = steps.run("timerRegistry", () => timerRegistry.close());
+  const scheduledTasksStopped = steps.run("scheduled-tasks", () => scheduledTasks.close());
   const usageStopped = steps.run("usage-maintenance", () => usageMaintenance.close());
   const rssStopped = steps.run("rss", () => rssFeedService.close());
   const summariesStopped = steps.run("summaries", () => summaryService.close());
   const memoriesStopped = steps.run("memory-consolidation", () => memoryConsolidator.close());
   await steps.run("shutdown-log", () => dbLogger.info(`[${signal}] Shutting down...`));
   // Digests, summaries and reminders use Bot AI tools through delivery and persistence.
-  await Promise.all([rssStopped, summariesStopped, timersStopped]);
+  await Promise.all([rssStopped, summariesStopped, timersStopped, scheduledTasksStopped]);
   const imagesStopped = steps.run("images", () => imageGenerationService.close());
   await steps.run("media-jobs", () => mediaJobService.close());
   await steps.run("video-downloads", () => videoDownloadService.close());

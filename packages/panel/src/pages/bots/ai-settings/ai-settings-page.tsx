@@ -1,3 +1,4 @@
+import { TaskAgentFields } from "./sections/task-agent-fields";
 import { EngagementSection } from "./sections/engagement-section";
 import { Button } from "@/components/ui/button";
 import { useBeforeLogout, type LogoutAction } from "@/components/layout/before-logout";
@@ -1516,7 +1517,25 @@ export function BotAiSettingsPage() {
                   description={t("disclosures.agentTools.description")}
                   summary={agentCfg.enabled ? t("common.enabled") : t("common.disabled")}
                 >
-                  <AgentToolsSection config={agentCfg} onUpdate={updateAgentTools} />
+                  <AgentToolsSection
+                    config={agentCfg}
+                    onUpdate={updateAgentTools}
+                    providers={config.providers ?? []}
+                  />
+                  <div className="mt-6 space-y-4">
+                    <h3 className="text-base font-semibold">{t("taskAgent.title")}</h3>
+                    <p className="text-muted-foreground text-sm">{t("taskAgent.description")}</p>
+                    <TaskAgentFields
+                      config={config.taskAgentConfig ?? {}}
+                      providers={config.providers ?? []}
+                      onUpdate={(updates) =>
+                        setConfig((prev) => ({
+                          ...prev,
+                          taskAgentConfig: { ...prev.taskAgentConfig, ...updates },
+                        }))
+                      }
+                    />
+                  </div>
                 </SettingsDisclosureRow>
                 <SettingsDisclosureRow
                   {...disclosureProps("artwork-tools")}

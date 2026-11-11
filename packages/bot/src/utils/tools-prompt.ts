@@ -50,7 +50,7 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push("- send_choice: 发送 inline keyboard 选择按钮（用户点击后你会自动收到通知）");
   lines.push("- close_poll: 手动关闭投票并获取最终结果");
   lines.push(
-    `- set_timer: 设置定时器，到期后你会自动收到通知继续对话。单个定时器最长 ${opts.timerMaxSeconds} 秒`,
+    "- set_timer: 提出一次性定时任务；配置持久任务服务时需管理员确认后生效，没有一天或七天上限。复杂或周期任务用 propose_scheduled_task。",
   );
   lines.push("- cancel_timer: 取消定时器");
   lines.push("- send_dice: 发送骰子/随机动画");
