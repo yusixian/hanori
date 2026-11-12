@@ -1,3 +1,4 @@
+import { buildModelProviderOptions } from "../utils/model-options.js";
 import { capturePromptConfig, type PromptSnapshotConfig } from "../services/prompt-snapshot.js";
 import { hasTaskDiscussion } from "../services/task-discussion.js";
 import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
@@ -65,7 +66,7 @@ import {
   isTimeoutError,
   resolveTimerMaxSeconds,
 } from "@cos-tool-bot/shared";
-import type { JSONValue, LanguageModel, Tool, UserModelMessage } from "ai";
+import type { LanguageModel, Tool, UserModelMessage } from "ai";
 import { stepCountIs, streamText } from "ai";
 import { prepareFinalAnswerStep } from "../utils/final-answer-step.js";
 import type { Api, MiddlewareFn } from "grammy";
@@ -1256,27 +1257,6 @@ export function createAiReplyHandler(
     });
   };
 
-  function buildProviderOptions(
-    entry?: ModelEntry,
-    providerFormat?: "openai" | "gemini",
-  ): Record<string, Record<string, JSONValue>> | undefined {
-    if (!entry?.thinking) return undefined;
-    const enabled = entry.thinking === "enabled";
-    if ((providerFormat ?? config.providerFormat) === "gemini") {
-      return {
-        google: {
-          thinkingConfig: {
-            thinkingBudget: enabled ? (entry.thinkingBudget ?? -1) : 0,
-            includeThoughts: enabled,
-          },
-        },
-      };
-    }
-    const thinking: Record<string, JSONValue> = { type: entry.thinking };
-    if (entry.thinkingBudget != null) thinking.budget_tokens = entry.thinkingBudget;
-    return { custom: { thinking } };
-  }
-
   function createDelegation(
     selection: Readonly<ResolvedAiSelection>,
     onLog: AiReplyConfig["onLog"],
@@ -1320,7 +1300,7 @@ export function createAiReplyHandler(
           providerId: selection.providerId,
           temperature: selection.modelEntry?.temperature,
           maxTokens: selection.modelEntry?.maxTokens,
-          providerOptions: buildProviderOptions(
+          providerOptions: buildModelProviderOptions(
             selection.modelEntry,
             selection.providerRuntime.providerFormat,
           ),
@@ -2761,7 +2741,10 @@ export function createAiReplyHandler(
           abortSignal: AbortSignal.any([perStepAbort.signal, providerAbort.signal]),
           temperature: modelEntry?.temperature,
           maxOutputTokens: modelEntry?.maxTokens,
-          providerOptions: buildProviderOptions(modelEntry, currentProviderRuntime.providerFormat),
+          providerOptions: buildModelProviderOptions(
+            modelEntry,
+            currentProviderRuntime.providerFormat,
+          ),
           experimental_onToolCallStart: () => perStepAbort.pause(),
           experimental_onToolCallFinish: () => perStepAbort.resume(),
           onStepFinish: ({ toolResults }) => {

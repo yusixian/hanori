@@ -8,6 +8,7 @@ import type {
   ScheduledTaskRun,
 } from "@cos-tool-bot/shared";
 import { useCallback, useEffect, useState } from "react";
+import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { TaskPlanForm, type TaskPlanInput } from "./plan-form";
 
@@ -16,6 +17,15 @@ async function result<T>(response: Response): Promise<T> {
   if (!response.ok || !body.ok) throw new Error(body.error ?? String(response.status));
   return body.data;
 }
+function taskTime(value: string | null, timezone: string) {
+  return value
+    ? `${new Date(value).toLocaleString(undefined, { timeZone: timezone, hour12: false })} · ${timezone}`
+    : "—";
+}
+export function BotScheduledTasksPage() {
+  const { botId } = useParams<{ botId: string }>();
+  return <ScheduledTasksPanel key={botId} botId={botId} />;
+}
 function PlanSummary({ plan }: { plan: ScheduledTaskPlan }) {
   const { t } = useTranslation("admin");
   const schedule = plan.schedule;
@@ -23,7 +33,7 @@ function PlanSummary({ plan }: { plan: ScheduledTaskPlan }) {
     <div className="space-y-2 text-sm">
       <p className="text-muted-foreground text-xs">
         {t("scheduledTasks.firstRun")}:{" "}
-        {new Date(schedule.kind === "once" ? schedule.at : schedule.startsAt).toLocaleString()} ·{" "}
+        {taskTime(schedule.kind === "once" ? schedule.at : schedule.startsAt, schedule.timezone)} ·{" "}
         {t("scheduledTasks.missedPolicy")}
       </p>
       <p className="break-words whitespace-pre-wrap">{plan.instructions}</p>
@@ -37,7 +47,7 @@ function PlanSummary({ plan }: { plan: ScheduledTaskPlan }) {
               ? ` · ${schedule.everySeconds} ${t("scheduledTasks.secondsUnit")}`
               : schedule.kind === "calendar"
                 ? ` · ${String(schedule.hour).padStart(2, "0")}:${String(schedule.minute).padStart(2, "0")} · ${schedule.period === "week" ? t(`scheduledTasks.weekdays.${schedule.weekday ?? 0}`) : schedule.dayOfMonth}`
-                : ` · ${new Date(schedule.at).toLocaleString()}`}
+                : ` · ${taskTime(schedule.at, schedule.timezone)}`}
           </dd>
         </div>
         <div>
@@ -77,7 +87,7 @@ function PlanSummary({ plan }: { plan: ScheduledTaskPlan }) {
     </div>
   );
 }
-export function ScheduledTasksPanel() {
+export function ScheduledTasksPanel({ botId }: { botId?: string } = {}) {
   const { t } = useTranslation("admin");
   const [tasks, setTasks] = useState<ScheduledTaskRecord[]>([]);
   const [bots, setBots] = useState<{ id: string; name: string }[]>([]);
@@ -88,10 +98,10 @@ export function ScheduledTasksPanel() {
   const [logs, setLogs] = useState<{ id: string; rows: ScheduledTaskRun[] } | null>(null);
   const reload = useCallback(async () => {
     const rows = await result<ScheduledTaskRecord[]>(
-      await client.api["scheduled-tasks"].$get({ query: {} }),
+      await client.api["scheduled-tasks"].$get({ query: botId ? { botId } : {} }),
     );
     setTasks(rows);
-  }, []);
+  }, [botId]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -119,12 +129,33 @@ export function ScheduledTasksPanel() {
       void reload().catch((e) => {
         if (active) setError(String(e));
       });
-    }, 10000);
+    }, 3000);
     return () => {
       active = false;
       clearInterval(timer);
     };
   }, [reload]);
+  const logId = logs?.id;
+  useEffect(() => {
+    if (!logId) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const rows = await result<ScheduledTaskRun[]>(
+          await client.api["scheduled-tasks"][":id"].runs.$get({ param: { id: logId } }),
+        );
+        if (active) setLogs({ id: logId, rows });
+      } catch (e) {
+        if (active) setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 3000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [logId]);
   const act = async (operation: () => Promise<unknown>) => {
     setBusy(true);
     setError("");
@@ -197,7 +228,7 @@ export function ScheduledTasksPanel() {
             <TaskPlanForm
               key={editing === "new" ? "new" : editing.id}
               task={editing === "new" ? undefined : editing}
-              bots={bots}
+              bots={botId ? bots.filter((bot) => bot.id === botId) : bots}
               busy={busy}
               onSave={save}
               onCancel={() => setEditing(null)}
@@ -232,9 +263,42 @@ export function ScheduledTasksPanel() {
               {task.activePlan && <PlanSummary plan={task.activePlan} />}
               <p className="text-muted-foreground text-xs">
                 {t("timers.nextRun")}:{" "}
-                {task.nextRunAt ? new Date(task.nextRunAt).toLocaleString() : "—"}
+                {taskTime(task.nextRunAt, task.activePlan?.schedule.timezone ?? "UTC")}
                 {task.runningRunId ? ` · ${t("scheduledTasks.status.running")}` : ""}
               </p>
+              {task.latestRun && (
+                <div
+                  className="space-y-1 rounded-lg border p-3 text-sm"
+                  aria-label={t("scheduledTasks.latestRun")}
+                >
+                  <p className="font-medium">
+                    {t("scheduledTasks.latestRun")} ·{" "}
+                    <span
+                      className={
+                        task.latestRun.status === "failed" ||
+                        task.latestRun.status === "interrupted"
+                          ? "text-destructive"
+                          : ""
+                      }
+                    >
+                      {t(`scheduledTasks.status.${task.latestRun.status}`)}
+                    </span>
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {t("scheduledTasks.startedAt")}:{" "}
+                    {taskTime(task.latestRun.startedAt, task.latestRun.plan.schedule.timezone)}
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    {t("scheduledTasks.finishedAt")}:{" "}
+                    {taskTime(task.latestRun.finishedAt, task.latestRun.plan.schedule.timezone)}
+                  </p>
+                  {task.latestRun.error && (
+                    <p className="text-destructive break-words whitespace-pre-wrap">
+                      {task.latestRun.error}
+                    </p>
+                  )}
+                </div>
+              )}
               {task.pendingPlan && (
                 <div className="bg-muted/40 space-y-3 rounded-lg border p-4">
                   <h4 className="font-medium">
@@ -268,6 +332,33 @@ export function ScheduledTasksPanel() {
                 </div>
               )}
               <div className="flex flex-wrap gap-2">
+                {task.activePlan && ["active", "paused", "completed"].includes(task.status) && (
+                  <Button
+                    size="sm"
+                    disabled={busy || !!task.runningRunId}
+                    onClick={() =>
+                      void act(async () => {
+                        await result(
+                          await client.api["scheduled-tasks"][":id"].run.$post({
+                            param: { id: task.id },
+                          }),
+                        );
+                        setLogs({
+                          id: task.id,
+                          rows: await result<ScheduledTaskRun[]>(
+                            await client.api["scheduled-tasks"][":id"].runs.$get({
+                              param: { id: task.id },
+                            }),
+                          ),
+                        });
+                      })
+                    }
+                  >
+                    {task.runningRunId
+                      ? t("scheduledTasks.status.running")
+                      : t("scheduledTasks.runNow")}
+                  </Button>
+                )}
                 {task.status !== "cancelled" && (
                   <Button
                     variant="outline"
@@ -331,6 +422,9 @@ export function ScheduledTasksPanel() {
                   {t("scheduledTasks.logs")}
                 </Button>
               </div>
+              {task.activePlan && ["active", "paused", "completed"].includes(task.status) && (
+                <p className="text-muted-foreground text-xs">{t("scheduledTasks.runNowHelp")}</p>
+              )}
               {logs?.id === task.id && (
                 <div className="space-y-3 border-t pt-4">
                   <h4 className="font-medium">{t("scheduledTasks.logs")}</h4>
@@ -340,18 +434,37 @@ export function ScheduledTasksPanel() {
                     logs.rows.map((run) => (
                       <details key={run.id} className="rounded border p-3">
                         <summary className="cursor-pointer text-sm">
-                          {new Date(run.startedAt).toLocaleString()} ·{" "}
+                          {taskTime(run.startedAt, run.plan.schedule.timezone)} ·{" "}
                           {t(`scheduledTasks.status.${run.status}`)}
-                          {run.trial ? ` · ${t("scheduledTasks.trial")}` : ""}
+                          {` · ${t(run.trial ? "scheduledTasks.trial" : run.manual ? "scheduledTasks.manual" : "scheduledTasks.scheduled")}`}
                         </summary>
                         <div className="mt-3 space-y-3">
                           <p className="text-muted-foreground text-xs">
                             {t("scheduledTasks.scheduledFor")}:{" "}
-                            {new Date(run.scheduledFor).toLocaleString()}
+                            {taskTime(run.scheduledFor, run.plan.schedule.timezone)}
+                          </p>
+                          <p className="text-muted-foreground text-xs">
+                            {t("scheduledTasks.finishedAt")}:{" "}
+                            {taskTime(run.finishedAt, run.plan.schedule.timezone)}
+                          </p>
+                          <p className="text-muted-foreground text-xs break-all">
+                            {t("scheduledTasks.runId")}: {run.id}
                           </p>
                           <pre className="max-h-80 overflow-auto text-sm break-words whitespace-pre-wrap">
-                            {run.error ?? run.output ?? t("scheduledTasks.status.running")}
+                            {run.error ??
+                              run.output ??
+                              t(
+                                run.status === "running"
+                                  ? "scheduledTasks.status.running"
+                                  : "scheduledTasks.noOutput",
+                              )}
                           </pre>
+                          <p className="text-xs break-words">
+                            {t("scheduledTasks.messageIds")}:{" "}
+                            {run.messageIds?.length
+                              ? run.messageIds.join(", ")
+                              : t("scheduledTasks.noReceipts")}
+                          </p>
                           <PlanSummary plan={{ ...run.plan, agent: run.agent }} />
                         </div>
                       </details>

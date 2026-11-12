@@ -150,6 +150,74 @@ describe("durable scheduled tasks", () => {
     vi.setSystemTime(new Date("2026-01-01T03:30:00Z"));
   });
   afterEach(() => vi.useRealTimers());
+  it("runs the approved plan manually without changing schedule or pending edits", async () => {
+    const s = setup();
+    const task = await approved(s);
+    const pending = await s.service.propose(
+      actor,
+      { ...plan, instructions: "Unapproved edit" },
+      task.id,
+    );
+    await s.service.runNow(admin, task.id);
+    await settle();
+    expect(s.execute.mock.calls[0]?.[1].instructions).toBe(plan.instructions);
+    expect(await s.service.get(actor, task.id)).toMatchObject({
+      nextRunAt: task.nextRunAt,
+      pendingVersion: pending.pendingVersion,
+      status: "active",
+      consecutiveFailures: 0,
+    });
+    expect((await s.service.runs(actor, task.id))[0]).toMatchObject({
+      manual: true,
+      trial: false,
+      status: "succeeded",
+    });
+  });
+  it("rejects unapproved, cancelled, non-admin and cross-Bot manual execution", async () => {
+    const s = setup();
+    const pending = await s.service.propose(actor, plan);
+    await expect(s.service.runNow(admin, pending.id)).rejects.toThrow("Approved");
+    const task = await approved(s);
+    await expect(s.service.runNow(actor, task.id)).rejects.toThrow("Administrator");
+    await expect(s.service.runNow({ ...admin, botId: "other" }, task.id)).rejects.toThrow(
+      "Approved",
+    );
+    await s.service.manage(admin, task.id, "cancel");
+    await expect(s.service.runNow(admin, task.id)).rejects.toThrow("Approved");
+    expect(s.execute).not.toHaveBeenCalled();
+  });
+  it("allows a completed approved one-shot to run manually without rescheduling it", async () => {
+    const s = setup();
+    const proposal = await s.service.propose(actor, {
+      ...plan,
+      schedule: { kind: "once", at: "2026-01-01T00:00:00Z", timezone: "UTC" },
+    });
+    await s.service.decide(admin, { id: proposal.id, version: 1, action: "approve" });
+    await s.service.tick();
+    await settle();
+    await s.service.runNow(admin, proposal.id);
+    await settle();
+    expect(s.execute).toHaveBeenCalledTimes(2);
+    expect(await s.service.get(actor, proposal.id)).toMatchObject({
+      status: "completed",
+      nextRunAt: null,
+    });
+  });
+  it("manual failure does not pause the schedule or consume the next occurrence", async () => {
+    const s = setup(vi.fn().mockRejectedValue(new Error("Fixture failure")));
+    const task = await approved(s);
+    for (let i = 0; i < 3; i++) {
+      await s.service.runNow(admin, task.id);
+      await settle();
+    }
+    expect(await s.service.get(actor, task.id)).toMatchObject({
+      status: "active",
+      nextRunAt: task.nextRunAt,
+      consecutiveFailures: 0,
+    });
+    expect(s.notify).not.toHaveBeenCalled();
+    expect((await s.service.runs(actor, task.id))[0]?.status).toBe("failed");
+  });
   it("requires admin and the displayed version; repeating confirmation does not create another task", async () => {
     const s = setup();
     const task = await s.service.propose(actor, plan);

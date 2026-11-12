@@ -1,7 +1,7 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import type { ModelEntry } from "@cos-tool-bot/shared";
 import type { LanguageModel } from "ai";
-import { createUsageAwareOpenAICompatible } from "../utils/openai-compatible.js";
+import { createReasoningCompatibleModelFactory } from "../utils/responses-compatibility.js";
 import { createModelFetch } from "../utils/model-fetch.js";
 
 export interface AiProviderRuntime {
@@ -81,8 +81,7 @@ function defaultProviderFactory(provider: AiProviderRuntime): AiModelFactory {
         apiKey: provider.apiKey,
         fetch: createModelFetch(),
       })
-    : createUsageAwareOpenAICompatible({
-        name: "custom",
+    : createReasoningCompatibleModelFactory({
         baseURL: provider.baseURL,
         apiKey: provider.apiKey,
       });

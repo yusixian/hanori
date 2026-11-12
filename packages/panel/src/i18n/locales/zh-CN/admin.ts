@@ -1,5 +1,18 @@
 export const admin = {
   scheduledTasks: {
+    messageIds: "Telegram 消息 ID",
+    noReceipts: "未记录投递回执",
+    runNow: "立即运行一次",
+    runNowHelp:
+      "执行已批准计划并发送真实结果，不执行待批准修改；不改变周期、下次执行或周期失败计数。状态每 3 秒自动刷新。",
+    latestRun: "最近执行",
+    startedAt: "开始时间",
+    finishedAt: "结束时间",
+    manual: "手动运行",
+    scheduled: "周期执行",
+    runId: "执行 ID",
+    noOutput: "未记录输出。",
+
     firstRun: "开始 / 最早执行时间",
     missedPolicy: "错过执行：仅补最近一期，之后继续调度",
     proposer: "提议人",

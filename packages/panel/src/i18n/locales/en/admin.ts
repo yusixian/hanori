@@ -1,5 +1,18 @@
 export const admin = {
   scheduledTasks: {
+    messageIds: "Telegram message IDs",
+    noReceipts: "No delivery receipts recorded",
+    runNow: "Run once now",
+    runNowHelp:
+      "Runs the approved plan and sends real output; pending edits are not executed. The schedule, next run and scheduled-failure counter stay unchanged. Status refreshes every 3 seconds.",
+    latestRun: "Latest execution",
+    startedAt: "Started",
+    finishedAt: "Finished",
+    manual: "Manual run",
+    scheduled: "Scheduled run",
+    runId: "Run ID",
+    noOutput: "No output was recorded.",
+
     firstRun: "Start / earliest run",
     missedPolicy: "Missed runs: execute the latest occurrence once, then continue the schedule",
     proposer: "Proposed by",

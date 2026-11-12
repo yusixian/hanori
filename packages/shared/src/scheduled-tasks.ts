@@ -61,12 +61,15 @@ export interface ScheduledTaskRecord {
   runningRunId: string | null;
   consecutiveFailures: number;
   createdAt: string;
+  latestRun?: ScheduledTaskRun | null;
 }
 export interface ScheduledTaskRun {
   id: string;
   taskId: string;
   status: "running" | "succeeded" | "failed" | "interrupted";
   trial: boolean;
+  manual?: boolean;
+  messageIds?: number[];
   scheduledFor: string;
   startedAt: string;
   finishedAt: string | null;
