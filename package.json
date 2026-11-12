@@ -1,6 +1,6 @@
 {
   "name": "hanori",
-  "version": "0.26.1",
+  "version": "0.27.0",
   "private": true,
   "description": "A self-hosted AI companion for Telegram, memory and creative tools",
   "type": "module",

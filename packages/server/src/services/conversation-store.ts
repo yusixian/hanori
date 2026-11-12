@@ -614,6 +614,7 @@ export class ConversationStore {
       excludeSourceKey?: string;
       beforeId?: number;
       beforeTelegramMessageId?: number;
+      threadId?: number | null;
     },
   ) {
     const historyBeforeId = options?.beforeId;
@@ -621,7 +622,15 @@ export class ConversationStore {
       historyBeforeId,
       options?.beforeTelegramMessageId,
     );
-    const activeCompaction = await this.getActiveCompaction(botId, chatId);
+    // Compactions mix all topics; only raw, scoped rows are safe for a topic request.
+    const activeCompaction =
+      options?.threadId === undefined ? await this.getActiveCompaction(botId, chatId) : undefined;
+    const threadCondition =
+      options?.threadId === undefined
+        ? undefined
+        : options.threadId === null
+          ? sql`${conversationMessages.meta}::jsonb ? 'threadId' AND ${conversationMessages.meta}->>'threadId' IS NULL`
+          : sql`${conversationMessages.meta}->>'threadId' = ${String(options.threadId)}`;
     const active =
       historyBeforeId === undefined || (activeCompaction?.cursorId ?? 0) < historyBeforeId
         ? activeCompaction
@@ -661,6 +670,7 @@ export class ConversationStore {
           );
         }
         if (historyBoundary) conditions.push(historyBoundary);
+        if (threadCondition) conditions.push(threadCondition);
         if (pageBeforeOrderId !== undefined && pageBeforeId !== undefined) {
           conditions.push(
             or(
@@ -756,6 +766,7 @@ export class ConversationStore {
           gt(historyOrderId, cursorId),
           inArray(conversationMessages.role, ["user", "assistant", "context"]),
           historyBoundary,
+          threadCondition,
           excludeSourceKey
             ? or(
                 isNull(conversationMessages.sourceKey),

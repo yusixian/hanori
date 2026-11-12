@@ -33,6 +33,43 @@ describe("buildConversationHistoryBoundary", () => {
 });
 
 describe("ConversationStore.getHistory", () => {
+  it.each([undefined, 12_000])(
+    "scopes topic history before applying budget %s and excludes mixed summaries",
+    async (tokenBudget) => {
+      for (const threadId of [20, null]) {
+        const conditions: ReturnType<PgDialect["sqlToQuery"]>[] = [];
+        const tables: unknown[] = [];
+        const db = {
+          select: () => {
+            const query = {
+              from: (table: unknown) => {
+                tables.push(table);
+                return query;
+              },
+              where: (condition: SQL) => {
+                conditions.push(new PgDialect().sqlToQuery(condition));
+                return query;
+              },
+              orderBy: () => query,
+              limit: async () => [],
+            };
+            return query;
+          },
+        } as unknown as Database;
+        const result = await new ConversationStore(db).getHistory("bot", -100, 20, tokenBudget, {
+          threadId,
+        });
+        expect(result.summary).toBeNull();
+        expect(tables).toEqual([conversationMessages]);
+        expect(conditions[0]!.sql).toContain("->>'threadId'");
+        if (threadId === null) {
+          expect(conditions[0]!.sql).toContain("::jsonb ? 'threadId'");
+          expect(conditions[0]!.sql).toContain("->>'threadId' IS NULL");
+        } else expect(conditions[0]!.params).toContain("20");
+      }
+    },
+  );
+
   it("keeps queued Telegram turns in conversation order", async () => {
     const rows = [
       {

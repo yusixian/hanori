@@ -99,6 +99,7 @@ export interface ContextAssemblyInput {
   historyExcludeSourceKey?: string;
   historyBeforeId?: number;
   historyBeforeTelegramMessageId?: number;
+  historyThreadId?: number | null;
   ringBufferContext?: string;
   memoryConfig?: MemoryConfig;
   memory?: MemoryCallbacks;
@@ -746,8 +747,10 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
     const historyOptions =
       input.historyExcludeSourceKey ||
       input.historyBeforeId !== undefined ||
-      input.historyBeforeTelegramMessageId !== undefined
+      input.historyBeforeTelegramMessageId !== undefined ||
+      input.historyThreadId !== undefined
         ? {
+            ...(input.historyThreadId !== undefined ? { threadId: input.historyThreadId } : {}),
             ...(input.historyExcludeSourceKey
               ? { excludeSourceKey: input.historyExcludeSourceKey }
               : {}),
