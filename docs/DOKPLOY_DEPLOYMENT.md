@@ -471,6 +471,8 @@ docker logs --tail=200 "$DB_BACKUP_CONTAINER"
 curl -i "https://${ORIGINAL_DOMAIN}/api/health/ready"
 ```
 
+若 readiness 持续返回旧 SHA，先查看本次候选的 Deployments 状态和构建日志；构建阶段失败可能保留健康的旧实例，不能仅等待健康状态变绿。不要在原因未查明时重复触发部署。
+
 常见判定：
 
 - `/live` 200、`/ready` 503 `starting`：应用仍在迁移或启动依赖。
