@@ -40,14 +40,15 @@ jobs:
       - name: Format check
         run: pnpm fmt:check
 
+      # Build before typecheck so emitted declarations cannot hide clean-build failures.
+      - name: Production build
+        run: pnpm build
+
       - name: Typecheck
         run: pnpm typecheck
 
       - name: Check translations
         run: pnpm i18n:check
-
-      - name: Build public documentation
-        run: pnpm build:docs
 
       - name: Unit tests
         # Bound process-heavy Git/CLI fixtures on the shared self-hosted runner.
