@@ -83,6 +83,8 @@ export interface ConversationCallbacks {
       excludeSourceKey?: string;
       beforeId?: number;
       beforeTelegramMessageId?: number;
+      /** When supplied, restrict history to this forum topic (null means non-topic messages). */
+      threadId?: number | null;
     },
   ): Promise<{
     summary: string | null;
