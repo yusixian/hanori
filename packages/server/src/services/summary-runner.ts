@@ -357,7 +357,7 @@ ${coverage.truncated ? "数据库查询已确认达到数量上限，仅总结�
 采集与保留覆盖未知，这不是确知缺失，不要机械添加“历史不完整”的警告。只根据给定内容总结。`;
     const scopedPrompt = `${basePrompt}\n\n${coveragePrompt}`;
     const systemPrompt = opts.instructions
-      ? `${scopedPrompt}\n\n本次摘要要求：\n${opts.instructions}`
+      ? `${scopedPrompt}\n\n本次摘要要求（其中的格式、篇幅和语气要求优先于上文的默认输出约定；数据范围与覆盖事实不可覆盖）：\n${opts.instructions}`
       : scopedPrompt;
 
     const usageReservation = await this.usageGovernance?.reserve({

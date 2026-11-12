@@ -109,6 +109,9 @@ describe.runIf(Boolean(url))("scoped summary real database and model boundary", 
       );
       expect(model.generate.mock.calls[0]![0].messages[0].content).toContain("List decisions");
       expect(model.generate.mock.calls[0]![0].messages[0].content).toContain(
+        "格式、篇幅和语气要求优先于上文的默认输出约定",
+      );
+      expect(model.generate.mock.calls[0]![0].messages[0].content).toContain(
         "不要声称达到数量上限",
       );
       const history = await db.execute(
