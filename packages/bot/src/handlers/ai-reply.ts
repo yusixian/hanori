@@ -1,3 +1,4 @@
+import type { ChatSummaryCallback } from "@cos-tool-bot/shared";
 import { buildModelProviderOptions } from "../utils/model-options.js";
 import { capturePromptConfig, type PromptSnapshotConfig } from "../services/prompt-snapshot.js";
 import { hasTaskDiscussion } from "../services/task-discussion.js";
@@ -194,6 +195,7 @@ export function resolveGitHubCodingModelConfig(
 
 export interface AiReplyConfig extends PromptSnapshotConfig {
   scheduledTasks?: ScheduledTaskPort;
+  summarizeChat?: ChatSummaryCallback;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
   getDiagnosticTraceId?: (ctx: WrapperContext) => string | undefined;
   botId: string;
@@ -1376,6 +1378,7 @@ export function createAiReplyHandler(
       webTools,
       imageGenerationPort: config.imageGenerationPort,
       scheduledTasks: config.scheduledTasks,
+      summarizeChat: config.summarizeChat,
       generationLibraryPort: config.generationLibraryPort,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,
       usageGovernance: config.usageGovernance,
@@ -2144,6 +2147,7 @@ export function createAiReplyHandler(
           generationLibraryPort: config.generationLibraryPort,
           imageGenerationPort: config.imageGenerationPort,
           scheduledTasks: config.scheduledTasks,
+          summarizeChat: config.summarizeChat,
           imageGenerationConfirmation: config.imageGenerationConfirmation,
           groupOverrides: config.groupOverrides,
           isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,

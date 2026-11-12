@@ -180,3 +180,31 @@ it("persists the effective Agent before execution and does not run when persiste
   expect(mocks.generateText).not.toHaveBeenCalled();
   expect(mocks.assemble).not.toHaveBeenCalled();
 });
+
+it("runs the bounded summary callback and leaves delivery to the task exactly once", async () => {
+  const settings = config();
+  settings.summarizeTaskHistory = vi.fn(async () => ({ ok: true, contentRaw: "server summary" }));
+  settings.toolsetConfig.summarizeChat = vi.fn();
+  mocks.generateText.mockImplementationOnce(async (request) => {
+    expect(request.tools.summarize_chat).toBeUndefined();
+    expect(await request.tools.summarize_task_history.execute({})).toEqual({
+      ok: true,
+      contentRaw: "server summary",
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    return { text: "Final summary", totalUsage: {} };
+  });
+  await executeScheduledTask({ api: {} as Api, plan, chatId: -1, userId: 0, config: settings });
+  expect(settings.summarizeTaskHistory).toHaveBeenCalledOnce();
+  expect(settings.summarizeTaskHistory).toHaveBeenCalledWith(expect.any(AbortSignal));
+  expect(mocks.assemble.mock.calls[0]![0].config.summarizeChat).toBeUndefined();
+  expect(mocks.send).toHaveBeenCalledOnce();
+  await executeScheduledTask({
+    api: {} as Api,
+    plan: { ...plan, agent: { toolNames: ["read_task_history"] } },
+    chatId: -1,
+    userId: 0,
+    config: settings,
+  });
+  expect(mocks.generateText.mock.calls[1]![0].tools.summarize_task_history).toBeUndefined();
+});

@@ -601,3 +601,31 @@ describe("trusted plugin turn binding", () => {
     expect(bound.dispose).toHaveBeenCalledOnce();
   });
 });
+
+it("registers a current-topic summary callback without exposing actor or destination arguments", async () => {
+  const summarizeChat = vi.fn(async () => ({ ok: true, contentRaw: "summary" }));
+  const signal = new AbortController().signal;
+  const tools = await assemble(reply(), {
+    config: createToolsetConfig({ summarizeChat }),
+    chatId: -123,
+    threadId: 7,
+    userId: MEMBER_ID,
+    signal,
+  });
+  await run(tools.tools, "summarize_chat", {
+    instructions: "List decisions",
+    mode: { kind: "hours", hours: 2 },
+  });
+  expect(summarizeChat).toHaveBeenCalledWith({
+    chatId: -123,
+    threadId: 7,
+    userId: MEMBER_ID,
+    signal,
+    request: { instructions: "List decisions", mode: { kind: "hours", hours: 2 } },
+  });
+  const off = await assemble(reply(), {
+    config: createToolsetConfig({ summarizeChat }),
+    privacyMode: "off",
+  });
+  expect(off.tools.summarize_chat).toBeUndefined();
+});

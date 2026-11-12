@@ -86,6 +86,38 @@ export function summaryRoutes(
   }
 
   return new Hono()
+    .post(
+      "/:botId/summary/preview",
+      zValidator("param", botIdParamSchema),
+      zValidator(
+        "json",
+        z
+          .object({
+            chatId: z.number().int(),
+            threadId: z.number().int().positive().optional(),
+            since: z.string().datetime({ offset: true }),
+            until: z.string().datetime({ offset: true }),
+            maxMessages: z.number().int().min(1).max(2000),
+            instructions: z.string().max(8000).optional(),
+            sourceRoles: z.literal("original").optional(),
+          })
+          .strict(),
+      ),
+      async (c) => {
+        const { botId } = c.req.valid("param");
+        const { chatId, threadId, sourceRoles, ...request } = c.req.valid("json");
+        const data = await summaryService.summarize({
+          botId,
+          chatId,
+          threadId,
+          userId: 0,
+          owner: true,
+          originalMessagesOnly: sourceRoles === "original",
+          request,
+        });
+        return c.json({ ok: true as const, data });
+      },
+    )
     .get("/:botId/summary/defaults", zValidator("param", botIdParamSchema), async (c) => {
       const { botId } = c.req.valid("param");
       const [row] = await db
@@ -159,6 +191,7 @@ export function summaryRoutes(
           userId: 0,
           mode: mode as SummaryMode,
           bypassCooldown: true,
+          owner: true,
         });
         return c.json({ ok: true as const, data: result });
       },

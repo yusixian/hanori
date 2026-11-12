@@ -1,3 +1,4 @@
+import type { ChatSummaryCallback } from "@cos-tool-bot/shared";
 import { capturePromptConfig, type PromptSnapshotConfig } from "./prompt-snapshot.js";
 import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { imageToolCompletion } from "../utils/image-generation-status.js";
@@ -89,6 +90,7 @@ export interface ContinueChatRunContext {
 }
 
 export interface ContinueChatConfig extends PromptSnapshotConfig {
+  summarizeChat?: ChatSummaryCallback;
   scheduledTasks?: ScheduledTaskPort;
   onOwnMessageEdited?: (chatId: number, messageId: number, content: string) => void;
   diagnosticSecrets?: readonly string[];
@@ -507,6 +509,7 @@ async function doContinueChat(
       generationLibraryPort: config.generationLibraryPort,
       imageGenerationPort: config.imageGenerationPort,
       scheduledTasks: config.scheduledTasks,
+      summarizeChat: config.summarizeChat,
       imageGenerationConfirmation: config.imageGenerationConfirmation,
       groupOverrides: config.groupOverrides,
       isDelegatedGroupAdmin: config.isDelegatedGroupAdmin,

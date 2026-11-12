@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useParams } from "react-router";
+import { SummaryPreview } from "./summary-preview";
 import { SummaryConfigForm } from "./summary-config-form";
 import { useTranslation } from "react-i18next";
 
@@ -603,6 +604,8 @@ export function BotSummaryPage() {
           {t("summary.description")}
         </p>
       </div>
+
+      <SummaryPreview key={botId} botId={botId} onGenerated={() => setHistoryKey((k) => k + 1)} />
 
       <SummaryConfigList botId={botId} onChanged={() => setHistoryKey((k) => k + 1)} />
 

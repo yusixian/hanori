@@ -288,6 +288,12 @@ export class BotPool {
         this.runtimeHost,
       );
       if (!assembled) throw new Error("Task Agent AI configuration is unavailable or disabled");
+      const now = new Date();
+      const historyWindow = {
+        since: new Date(now.getTime() - (plan.dataScope.lookbackHours ?? 24) * 3600_000),
+        until: now,
+        limit: Math.min(plan.dataScope.maxMessages ?? 500, 1000),
+      };
       return await executeScheduledTaskWithBotConfig({
         api: token,
         plan,
@@ -300,7 +306,26 @@ export class BotPool {
         taskAgentConfig: runtime.config.taskAgentConfig,
         agentToolsConfig: runtime.config.agentToolsConfig,
         adminIds: bot.adminChatIds,
-        readTaskHistory: (window) => readScheduledTaskHistory(this.db, task, window),
+        now,
+        readTaskHistory: async () => {
+          if (plan.dataScope.kind !== "chat") throw new Error("Task has no approved history scope");
+          return readScheduledTaskHistory(this.db, task, historyWindow);
+        },
+        summarizeTaskHistory: this.services.summaryService
+          ? async (signal) => {
+              if (plan.dataScope.kind !== "chat")
+                throw new Error("Task has no approved history scope");
+              return this.services.summaryService!.summarize({
+                botId: task.botId,
+                chatId: task.chatId,
+                threadId: task.threadId,
+                userId: task.approvedByUserId!,
+                approvedWindow: historyWindow,
+                signal,
+                request: { instructions: plan.instructions },
+              });
+            }
+          : undefined,
       });
     } catch (error) {
       throw new Error(

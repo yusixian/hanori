@@ -58,3 +58,48 @@ export interface SummaryConfigStored {
   roleFilter?: Array<"user" | "context" | "assistant">;
   timezone?: string;
 }
+
+/** Exhaustion of eligible stored records, not a claim about all Telegram history. */
+export interface HistoryCoverage {
+  scope: {
+    botId: string;
+    chatId: number;
+    threadId: number | null;
+    since: string;
+    until: string;
+    limit: number;
+  };
+  returnedCount: number;
+  firstMessageAt: string | null;
+  lastMessageAt: string | null;
+  complete: boolean;
+  truncated: boolean;
+  reason: "message_limit" | null;
+  collectionCoverage: "unknown";
+}
+
+export interface SummaryRequest {
+  mode?: SummaryMode;
+  since?: string;
+  until?: string;
+  instructions?: string;
+  maxMessages?: number;
+}
+
+export interface SummaryToolResult {
+  ok: boolean;
+  reason?: string;
+  summaryId?: number;
+  contentRaw?: string;
+  messageCount?: number;
+  coverage?: HistoryCoverage;
+}
+
+/** Bound by the server; chat identity and actor come from the current turn, never model arguments. */
+export type ChatSummaryCallback = (input: {
+  chatId: number;
+  threadId?: number;
+  userId: number;
+  request: SummaryRequest;
+  signal?: AbortSignal;
+}) => Promise<SummaryToolResult>;

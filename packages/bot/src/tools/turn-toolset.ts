@@ -1,4 +1,5 @@
-import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
+import { createSummaryTools } from "./summary.js";
+import type { ChatSummaryCallback, ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { createScheduledTaskTools } from "./scheduled-tasks.js";
 import type { PluginActor, PluginRuntimePort, PluginTurnSession } from "@cos-tool-bot/shared";
 import { createPluginTools } from "./plugins.js";
@@ -64,6 +65,7 @@ const MAX_TIMER_CHAIN_DEPTH = 2;
 /** Bot configuration and long-lived ports a turn's tools are bound from. */
 export interface TurnToolsetConfig {
   scheduledTasks?: ScheduledTaskPort;
+  summarizeChat?: ChatSummaryCallback;
   botId: string;
   runtimeDiagnostics?: RuntimeDiagnosticsPort;
   adminIds?: number[];
@@ -361,6 +363,14 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
 
   const tools: Record<string, Tool> = {
     ...scheduledTools,
+    ...(input.privacyMode === "normal" && config.summarizeChat && userId !== undefined
+      ? createSummaryTools(config.summarizeChat, {
+          chatId,
+          threadId: input.threadId,
+          userId,
+          signal: input.signal,
+        })
+      : {}),
     ...(entry.kind === "reply" && isAdmin && userId !== undefined && config.runtimeDiagnostics
       ? createRuntimeDiagnosticTools({
           port: config.runtimeDiagnostics,

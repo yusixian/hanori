@@ -18,7 +18,7 @@ export const DEFAULT_SUMMARY_SYSTEM_PROMPT = `你是群聊概括助手。以符�
 - Bot 自己的回复（用户名显示为 "未知"，无消息链接）：正文为 bot 之前发送的文本
 
 其它约定：
-- 正文超过 2000 字会截断，末尾带 "…"
+- 长正文会拆成连续片段，在服务端分块总结后归并
 - 所谓"消息链接"仅对有 tgMessageId 的用户消息存在；群聊上下文与 bot 回复都没有链接
 
 指南：
@@ -57,9 +57,9 @@ export function dispatchContent(content: string, meta: unknown): string {
     replyToMessageId?: number;
   } | null;
   if (m?.photoFileId) return "[图片]" + (content ? ` ${content}` : "");
-  if (m?.documentFileName) return `[文件:${m.documentFileName}]`;
+  if (m?.documentFileName) return `[文件:${m.documentFileName}]${content ? ` ${content}` : ""}`;
   if (m?.replyToMessageId) return `（回复消息 id ${m.replyToMessageId}）${content}`;
-  return content.length > 2000 ? content.slice(0, 2000) + "…" : content;
+  return content;
 }
 
 export function formatMessages(msgs: FormattableMessage[], chatId: number): string {

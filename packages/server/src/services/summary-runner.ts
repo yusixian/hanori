@@ -1,15 +1,15 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { Database } from "@cos-tool-bot/database";
-import { chatSummaries, conversationMessages, tokenUsage } from "@cos-tool-bot/database";
+import { chatSummaries, tokenUsage } from "@cos-tool-bot/database";
 import type {
   AiConfigStored,
   SummaryMode,
+  HistoryCoverage,
   SummaryTrigger,
   UsageGovernancePort,
 } from "@cos-tool-bot/shared";
 import { generateText } from "ai";
-import { and, between, desc, eq, inArray } from "drizzle-orm";
 import { countTokens } from "gpt-tokenizer";
 import type { Logger } from "pino";
 import { tryDecrypt } from "../utils/crypto.js";
@@ -25,7 +25,7 @@ import {
   formatMessages,
   wrapSummaryHtml,
 } from "./summary-prompts.js";
-import { conversationMessageOrderId } from "./conversation-store.js";
+import { readScopedHistory } from "./scoped-history.js";
 
 export type RunError =
   | "too_few_messages"
@@ -45,24 +45,26 @@ type SummarySourceMessage = {
   meta: unknown;
 };
 
-function truncateSummaryInput(content: string, tokenBudget: number): string {
-  if (tokenBudget <= 0) return "";
-  if (countTokens(content) <= tokenBudget) return content;
-
-  let low = 0;
-  let high = content.length;
-  let best = "";
-  while (low <= high) {
-    const midpoint = Math.floor((low + high) / 2);
-    const candidate = `${content.slice(0, midpoint)}…`;
-    if (countTokens(candidate) <= tokenBudget) {
-      best = candidate;
-      low = midpoint + 1;
-    } else {
-      high = midpoint - 1;
+function splitSummaryInput(content: string, tokenBudget: number): string[] {
+  if (tokenBudget < 1) throw new Error("Summary token budget must be positive");
+  const parts: string[] = [];
+  while (countTokens(content) > tokenBudget) {
+    let low = 1,
+      high = content.length,
+      end = 0;
+    while (low <= high) {
+      const midpoint = Math.floor((low + high) / 2);
+      if (countTokens(content.slice(0, midpoint)) <= tokenBudget) {
+        end = midpoint;
+        low = midpoint + 1;
+      } else high = midpoint - 1;
     }
+    if (!end) throw new Error("Summary token budget cannot fit a character");
+    parts.push(content.slice(0, end));
+    content = content.slice(end);
   }
-  return best;
+  if (content) parts.push(content);
+  return parts;
 }
 
 export function chunkSummaryMessages(
@@ -76,18 +78,19 @@ export function chunkSummaryMessages(
   let current: string[] = [];
   let currentTokens = 0;
   for (const message of messages) {
-    const formatted = truncateSummaryInput(formatMessages([message], chatId), tokenBudget);
-    const messageTokens = countTokens(formatted);
-    const candidateTokens =
-      currentTokens + (current.length > 0 ? separatorTokens : 0) + messageTokens;
-    if (current.length > 0 && candidateTokens > tokenBudget) {
-      chunks.push(current.join(separator));
-      current = [];
-      currentTokens = 0;
+    for (const formatted of splitSummaryInput(formatMessages([message], chatId), tokenBudget)) {
+      const messageTokens = countTokens(formatted);
+      const candidateTokens =
+        currentTokens + (current.length > 0 ? separatorTokens : 0) + messageTokens;
+      if (current.length > 0 && candidateTokens > tokenBudget) {
+        chunks.push(current.join(separator));
+        current = [];
+        currentTokens = 0;
+      }
+      if (current.length > 0) currentTokens += separatorTokens;
+      current.push(formatted);
+      currentTokens += messageTokens;
     }
-    if (current.length > 0) currentTokens += separatorTokens;
-    current.push(formatted);
-    currentTokens += messageTokens;
   }
   if (current.length > 0) chunks.push(current.join(separator));
   return chunks;
@@ -105,7 +108,7 @@ function chunkSummaryFragments(
   let current: string[] = [];
   for (const fragment of fragments) {
     const candidate = [...current, fragment];
-    const content = candidate.map((item, index) => `[分块 ${index + 1}]\n${item}`).join("\n\n");
+    const content = candidate.map((item, index) => `[分块摘要 ${index + 1}]\n${item}`).join("\n\n");
     if (current.length > 0 && countTokens(content) > tokenBudget) {
       chunks.push(current);
       current = [fragment];
@@ -133,7 +136,7 @@ export async function summarizeBoundedChunks(
         [
           systemPrompt,
           "",
-          `这是完整时间窗口的第 ${index + 1}/${chunks.length} 个连续分块。请完整提取该分块的主题、决定、待办、未解决事项与必要链接，供后续归并；不要假装已经看过其他分块。`,
+          `这是本次获准读取记录的第 ${index + 1}/${chunks.length} 个连续分块。请完整提取该分块的主题、决定、待办、未解决事项与必要链接，供后续归并；不要假装已经看过其他分块。`,
         ].join("\n"),
         chunk,
         SUMMARY_CHUNK_OUTPUT_TOKENS,
@@ -145,6 +148,8 @@ export async function summarizeBoundedChunks(
   while (summaries.length > 1) {
     mergeLevel++;
     const groups = chunkSummaryFragments(summaries);
+    if (groups.length >= summaries.length)
+      throw new Error("Summary merge could not reduce fragments within its input budget");
     const next: string[] = [];
     for (const group of groups) {
       const content = group
@@ -158,7 +163,7 @@ export async function summarizeBoundedChunks(
             `请归并这些分块摘要（归并层级 ${mergeLevel}），去重但不要遗漏主题、决定、待办、未解决事项和链接。只根据给定摘要作答。`,
           ].join("\n"),
           content,
-          SUMMARY_MERGE_OUTPUT_TOKENS,
+          groups.length === 1 ? SUMMARY_MERGE_OUTPUT_TOKENS : SUMMARY_CHUNK_OUTPUT_TOKENS,
         ),
       );
     }
@@ -190,8 +195,14 @@ export interface RunOptions {
   botId: string;
   chatId: number;
   mode: SummaryMode;
+  signal?: AbortSignal;
   trigger: SummaryTrigger;
   triggeredBy?: number;
+  threadId?: number | null;
+  window?: { since: Date; until: Date; limit: number };
+  originalMessagesOnly?: boolean;
+  instructions?: string;
+  maxMessages?: number;
   configOverrides?: {
     customPrompt?: string | null;
     providerId?: string | null;
@@ -208,6 +219,7 @@ export interface RunResult {
   messageCount: number;
   error?: RunError;
   errorDetail?: string;
+  coverage?: HistoryCoverage;
 }
 
 export class SummaryRunner {
@@ -220,6 +232,7 @@ export class SummaryRunner {
   ) {}
 
   async run(opts: RunOptions): Promise<RunResult> {
+    opts.signal?.throwIfAborted();
     const cfg = await this.getAiConfig(opts.botId);
     if (!cfg || cfg.summaryConfig?.enabled === false) {
       this.logger.info(
@@ -233,7 +246,15 @@ export class SummaryRunner {
       return { ok: false, error: "disabled", messageCount: 0 };
     }
 
-    const { windowStart, windowEnd, limit } = this.resolveWindow(opts, cfg);
+    const resolved = this.resolveWindow(opts, cfg);
+    resolved.limit = Math.min(resolved.limit, opts.maxMessages ?? MAX_COUNT);
+    const { windowStart, windowEnd, limit } = opts.window
+      ? {
+          windowStart: opts.window.since,
+          windowEnd: opts.window.until,
+          limit: Math.min(opts.window.limit, resolved.limit),
+        }
+      : resolved;
     const roleFilter = cfg.summaryConfig?.roleFilter ?? [...DEFAULT_ROLE_FILTER];
 
     const providerResolution = this.resolveProvider(cfg, opts.configOverrides?.providerId ?? null);
@@ -280,13 +301,11 @@ export class SummaryRunner {
       );
     }
 
-    const msgs = await this.fetchMessages(
-      opts.botId,
-      opts.chatId,
-      windowStart,
-      windowEnd,
-      limit,
-      roleFilter,
+    const { messages: msgs, coverage } = await readScopedHistory(
+      this.db,
+      { botId: opts.botId, chatId: opts.chatId, threadId: opts.threadId ?? null },
+      { since: windowStart, until: windowEnd, limit },
+      opts.originalMessagesOnly ? roleFilter.filter((role) => role !== "assistant") : roleFilter,
     );
 
     if (msgs.length < MIN_MESSAGES_FOR_SUMMARY) {
@@ -304,6 +323,7 @@ export class SummaryRunner {
         ok: false,
         error: "too_few_messages",
         messageCount: msgs.length,
+        coverage,
         summaryId: sumRow.id,
       };
     }
@@ -320,12 +340,25 @@ export class SummaryRunner {
         errorMessage: `no_provider:${reasonDetail}`,
         durationMs: 0,
       });
-      return { ok: false, error: "no_provider", messageCount: msgs.length, summaryId: sumRow.id };
+      return {
+        ok: false,
+        error: "no_provider",
+        messageCount: msgs.length,
+        coverage,
+        summaryId: sumRow.id,
+      };
     }
-    const systemPrompt =
+    const basePrompt =
       opts.configOverrides?.customPrompt ??
       cfg.summaryConfig?.systemPrompt ??
       DEFAULT_SUMMARY_SYSTEM_PROMPT;
+    const coveragePrompt = `本次查询范围：${coverage.scope.since} 至 ${coverage.scope.until}；话题 ${coverage.scope.threadId ?? "主话题"}；实际读取 ${coverage.returnedCount} 条，数量上限 ${coverage.scope.limit}。
+${coverage.truncated ? "数据库查询已确认达到数量上限，仅总结所读取的最近记录；请说明这个已知范围限制。" : "获准范围内当前可用数据库记录已经读完，不要声称达到数量上限。"}
+采集与保留覆盖未知，这不是确知缺失，不要机械添加“历史不完整”的警告。只根据给定内容总结。`;
+    const scopedPrompt = `${basePrompt}\n\n${coveragePrompt}`;
+    const systemPrompt = opts.instructions
+      ? `${scopedPrompt}\n\n本次摘要要求：\n${opts.instructions}`
+      : scopedPrompt;
 
     const usageReservation = await this.usageGovernance?.reserve({
       botId: opts.botId,
@@ -335,7 +368,7 @@ export class SummaryRunner {
       userId: undefined,
     });
     if (usageReservation && !usageReservation.allowed) {
-      return { ok: false, error: "rate_limited", messageCount: msgs.length };
+      return { ok: false, error: "rate_limited", messageCount: msgs.length, coverage };
     }
     const usageReservationId = usageReservation?.allowed
       ? usageReservation.reservationId
@@ -366,7 +399,9 @@ export class SummaryRunner {
         content: string,
         maxOutputTokens: number,
       ) => {
+        opts.signal?.throwIfAborted();
         const result = await generateText({
+          abortSignal: opts.signal,
           model: modelFactory(modelId),
           maxOutputTokens,
           messages: [
@@ -379,6 +414,7 @@ export class SummaryRunner {
         aggregateUsage.totalTokens +=
           result.usage?.totalTokens ??
           (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0);
+        opts.signal?.throwIfAborted();
         const text = result.text?.trim() ?? "";
         if (!text) throw new Error("empty_response");
         return text;
@@ -388,6 +424,7 @@ export class SummaryRunner {
 
       const durationMs = Date.now() - startedAt;
 
+      opts.signal?.throwIfAborted();
       const contentHtml = wrapSummaryHtml(raw);
       const sumRow = await this.writeHistory({
         opts,
@@ -423,6 +460,7 @@ export class SummaryRunner {
         contentHtml,
         contentRaw: raw,
         messageCount: msgs.length,
+        coverage,
       };
     } catch (err) {
       if (usageReservationId && this.usageGovernance) {
@@ -462,6 +500,7 @@ export class SummaryRunner {
         error: "llm_failed",
         errorDetail: detail,
         messageCount: msgs.length,
+        coverage,
         summaryId: sumRow.id,
       };
     }
@@ -554,39 +593,6 @@ export class SummaryRunner {
         return { windowStart: start, windowEnd: end, limit };
       }
     }
-  }
-
-  private async fetchMessages(
-    botId: string,
-    chatId: number,
-    windowStart: Date,
-    windowEnd: Date,
-    limit: number,
-    roleFilter: readonly string[],
-  ) {
-    const historyOrderId = conversationMessageOrderId();
-    const rows = await this.db
-      .select({
-        id: conversationMessages.id,
-        role: conversationMessages.role,
-        content: conversationMessages.content,
-        userName: conversationMessages.userName,
-        meta: conversationMessages.meta,
-        createdAt: conversationMessages.createdAt,
-        historyOrderId,
-      })
-      .from(conversationMessages)
-      .where(
-        and(
-          eq(conversationMessages.botId, botId),
-          eq(conversationMessages.chatId, chatId),
-          inArray(conversationMessages.role, [...roleFilter]),
-          between(conversationMessages.createdAt, windowStart, windowEnd),
-        ),
-      )
-      .orderBy(desc(historyOrderId), desc(conversationMessages.id))
-      .limit(limit);
-    return newestRowsToChronological(rows);
   }
 
   private async writeHistory(params: {

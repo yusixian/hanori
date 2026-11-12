@@ -133,6 +133,9 @@ export async function assembleAiReply(
     botId,
     getPromptSnapshot: () => readActivePromptSnapshot(services.db, botId),
     scheduledTasks: services.scheduledTasks,
+    summarizeChat: services.summaryService
+      ? (input) => services.summaryService!.summarize({ ...input, botId })
+      : undefined,
     apiKey,
     baseURL: activeProvider.baseURL,
     model: aiConfig.activeModelId ?? activeProvider.defaultModel,

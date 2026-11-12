@@ -81,7 +81,9 @@ function createRoleApp(role: string, onSession?: () => void) {
     timerRegistry: {} as never,
     rssFeedService: {} as never,
     mcpClientManager: {} as never,
-    summaryService: {} as never,
+    summaryService: {
+      summarize: vi.fn(async () => ({ ok: true, contentRaw: "preview" })),
+    } as never,
     summaryConfigService: {} as never,
     githubAppService: {} as never,
     miniAppSessionSecret: "x".repeat(32),
@@ -401,4 +403,39 @@ it.each([
   const response = await app.fetch(request);
   expect(authenticated).toBe(true);
   expect(response.status).toBe(path === "/api/logs/stream" ? 499 : 403);
+});
+
+it.each(["admin", "member"])(
+  "rejects %s at the owner-only summary preview boundary",
+  async (role) => {
+    const response = await createRoleApp(role).request(`/api/bots/${TEST_BOT_ID}/summary/preview`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chatId: -1,
+        since: "2026-01-01T00:00:00Z",
+        until: "2026-01-02T00:00:00Z",
+        maxMessages: 1000,
+      }),
+    });
+    expect(response.status).toBe(403);
+  },
+);
+
+it("allows an authenticated owner to preview without a production sender", async () => {
+  const response = await createRoleApp("owner").request(
+    `/api/bots/${TEST_BOT_ID}/summary/preview`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chatId: -1,
+        since: "2026-01-01T00:00:00Z",
+        until: "2026-01-02T00:00:00Z",
+        maxMessages: 1000,
+      }),
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({ ok: true, data: { ok: true, contentRaw: "preview" } });
 });

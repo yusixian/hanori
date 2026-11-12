@@ -1,3 +1,4 @@
+import { bots } from "@cos-tool-bot/database";
 import type { Database } from "@cos-tool-bot/database";
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -55,10 +56,14 @@ function createService(row: typeof configRow | null) {
   }));
   const db = {
     execute: vi.fn().mockResolvedValue([]),
-    select: () => ({ from: () => ({ where: async () => (row ? [row] : []) }) }),
+    select: () => ({
+      from: (table: unknown) => ({
+        where: async () => (table === bots ? [{ adminChatIds: [42] }] : row ? [row] : []),
+      }),
+    }),
     update,
   } as unknown as Database;
-  const run = vi.fn(async () => ({
+  const run = vi.fn(async (_opts: unknown) => ({
     ok: true as const,
     summaryId: 1,
     contentHtml: "summary",
@@ -416,4 +421,61 @@ describe("ChatSummaryService close", () => {
     await close;
     expect(send).not.toHaveBeenCalled();
   });
+});
+
+it("owner previews and approved task summaries leave manual cooldown untouched and do not deliver", async () => {
+  const { service, run, update } = createService({ ...configRow, accessMode: "admin" });
+  const request = {
+    since: "2026-01-01T00:00:00Z",
+    until: "2026-01-02T00:00:00Z",
+    maxMessages: 1000,
+    instructions: "decisions",
+  };
+  expect(
+    await service.summarize({ botId: "bot-a", chatId: -1001, userId: 0, owner: true, request }),
+  ).toMatchObject({ ok: true });
+  expect(update).not.toHaveBeenCalled();
+  const approvedWindow = {
+    since: new Date(request.since),
+    until: new Date(request.until),
+    limit: 1000,
+  };
+  expect(
+    await service.summarize({
+      botId: "bot-a",
+      chatId: -1001,
+      userId: 0,
+      approvedWindow,
+      request: { instructions: "approved" },
+    }),
+  ).toMatchObject({ ok: true });
+  expect(update).not.toHaveBeenCalled();
+  expect(run.mock.calls[1]?.[0]).toMatchObject({
+    window: approvedWindow,
+    originalMessagesOnly: true,
+    instructions: "approved",
+  });
+});
+it("tool callers cannot bypass summary admin access or broaden an approved range", async () => {
+  const { service, run } = createService({ ...configRow, accessMode: "admin" });
+  expect(
+    await service.summarize({ botId: "bot-a", chatId: -1001, userId: 43, request: {} }),
+  ).toEqual({
+    ok: false,
+    reason: "no_access",
+    summaryId: undefined,
+    contentRaw: undefined,
+    messageCount: undefined,
+    coverage: undefined,
+  });
+  expect(run).not.toHaveBeenCalled();
+  expect(
+    await service.summarize({
+      botId: "bot-a",
+      chatId: -1001,
+      userId: 42,
+      approvedWindow: { since: new Date(0), until: new Date(1), limit: 10 },
+      request: { mode: { kind: "recent", count: 1000 } },
+    }),
+  ).toEqual({ ok: false, reason: "outside_approved_scope" });
 });
