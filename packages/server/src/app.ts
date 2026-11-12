@@ -282,6 +282,7 @@ export function createApp(options: AppOptions) {
     )
     .use("/api/bots", requireAppAccess(auth, db))
     .use("/api/bots/*", requireAppAccess(auth, db))
+    .use("/api/bots/:botId/summary/preview", requireRoles(ownerOnly))
     .use("/api/bots/:botId/runs", requireRoles(ownerOnly))
     .use("/api/bots/:botId/runs/*", requireRoles(ownerOnly))
     .use("/api/bots/:botId/debug", requireRoles(ownerOnly))

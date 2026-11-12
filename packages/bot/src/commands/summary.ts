@@ -19,6 +19,7 @@ export interface SummaryCallbacks {
     botId: string;
     chatId: number;
     userId: number;
+    threadId?: number;
     mode: SummaryMode;
     bypassCooldown?: boolean;
     skipSend?: boolean;
@@ -120,6 +121,7 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
         chatId,
         userId,
         mode: parsed.value,
+        threadId: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined,
         bypassCooldown: deps.adminChatIds.includes(userId),
         skipSend: true,
         deliver: async (html) => {
@@ -127,6 +129,9 @@ export function createSummaryCommand(deps: SummaryCallbacks): CommandMiddleware<
           await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => {});
           await ctx.api.sendMessage(chatId, html, {
             parse_mode: "HTML",
+            message_thread_id: ctx.message?.is_topic_message
+              ? ctx.message.message_thread_id
+              : undefined,
             reply_parameters: ctx.message ? { message_id: ctx.message.message_id } : undefined,
           });
         },

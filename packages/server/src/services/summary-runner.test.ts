@@ -34,12 +34,12 @@ describe("summary source selection", () => {
     expect(chunks.join("\n")).toContain("message-39");
   });
 
-  it("bounds a single oversized formatted message", () => {
+  it("splits a single oversized formatted message without losing its tail", () => {
     const chunks = chunkSummaryMessages(
       [
         {
           userName: "User",
-          content: "very long content ".repeat(2_000),
+          content: "very long content ".repeat(2_000) + "FINAL_TAIL",
           meta: null,
         },
       ],
@@ -47,8 +47,9 @@ describe("summary source selection", () => {
       100,
     );
 
-    expect(chunks).toHaveLength(1);
-    expect(countTokens(chunks[0]!)).toBeLessThanOrEqual(100);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.every((chunk) => countTokens(chunk) <= 100)).toBe(true);
+    expect(chunks.join("")).toContain("FINAL_TAIL");
   });
 
   it("keeps the production input budget bounded", () => {
@@ -82,4 +83,31 @@ describe("summary source selection", () => {
       summarizeBoundedChunks(["chunk-a", "chunk-b"], "system", callModel),
     ).rejects.toThrow("chunk failed");
   });
+});
+
+it("reduces multiple layers of long summaries while bounding every merge request", async () => {
+  const calls: Array<{ tokens: number; cap: number }> = [];
+  const result = await summarizeBoundedChunks(
+    Array.from({ length: 6 }, (_, i) => `source-${i}`),
+    "prompt",
+    async (_system, content, cap) => {
+      calls.push({ tokens: countTokens(content), cap });
+      return "long ".repeat(Math.min(cap, 8000) - 100);
+    },
+  );
+  expect(result).not.toBe("");
+  expect(calls.length).toBe(9); // six source chunks, two intermediate merges, one final merge
+  expect(calls.every((call) => call.tokens <= SUMMARY_INPUT_TOKEN_BUDGET)).toBe(true);
+  expect(calls.slice(6, -1).every((call) => call.cap === 8192)).toBe(true);
+  expect(calls.at(-1)?.cap).toBe(16000);
+});
+it("fails explicitly when model output cannot converge inside the merge budget", async () => {
+  let calls = 0;
+  await expect(
+    summarizeBoundedChunks(["one", "two"], "prompt", async () => {
+      calls++;
+      return "long ".repeat(16000);
+    }),
+  ).rejects.toThrow("could not reduce");
+  expect(calls).toBe(2);
 });

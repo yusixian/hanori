@@ -1,3 +1,4 @@
+import type { HistoryCoverage, SummaryToolResult } from "@cos-tool-bot/shared";
 import { buildModelProviderOptions } from "../utils/model-options.js";
 import { capturePromptConfig } from "./prompt-snapshot.js";
 import { createAiSelectionRuntime } from "../handlers/ai-selection.js";
@@ -27,9 +28,10 @@ import { splitMessage } from "../utils/split-message.js";
 import { isTextCoveredByDeliveries } from "../utils/delivery.js";
 
 const DEFAULT_TASK_PROMPT =
-  "你是定时任务执行助手。只执行已批准的计划，按需读取计划允许的数据，不假设拥有完整聊天记录。数据不足时明确说明缺口，不编造总结。其他工具的确认要求仍然有效。";
+  "你是定时任务执行助手。只执行已批准的计划，按需读取计划允许的数据，不假设拥有完整聊天记录。总结聊天优先使用 summarize_task_history，由服务端分块归并。仅在 coverage.truncated=true 时说明已达数量上限；collectionCoverage=unknown 不等于已知缺失，不机械添加历史不完整警告。只依据读到的数据，不编造总结。其他工具的确认要求仍然有效。";
 const DEFAULT_TASK_TOOLS = [
   "read_task_history",
+  "summarize_task_history",
   "web_search",
   "fetch_webpage",
   "search",
@@ -59,13 +61,14 @@ export interface ScheduledTaskExecutorConfig {
     maxOutputTokens?: number;
   };
   /** The implementation must query only this Bot/chat/thread and respect privacy filters. */
+  summarizeTaskHistory?: (signal?: AbortSignal) => Promise<SummaryToolResult>;
   readTaskHistory(input: {
     chatId: number;
     threadId?: number;
     since: Date;
     until: Date;
     limit: number;
-  }): Promise<{ messages: TaskHistoryMessage[]; complete: boolean }>;
+  }): Promise<{ messages: TaskHistoryMessage[]; complete: boolean; coverage?: HistoryCoverage }>;
 }
 export interface ScheduledTaskExecutorInput {
   api: Api;
@@ -143,6 +146,7 @@ export async function executeScheduledTask(
   // Do not install unrestricted history, personal memory or local file tools in a task session.
   const toolsetConfig: TurnToolsetConfig = {
     ...config.toolsetConfig,
+    summarizeChat: undefined,
     memory: undefined,
     botMemory: undefined,
     dataFiles: undefined,
@@ -175,14 +179,15 @@ export async function executeScheduledTask(
     const tools: Record<string, Tool> = {};
     const permitted = new Set(agent.toolNames);
     for (const [name, candidate] of Object.entries(toolset.tools)) {
-      if (name !== "read_task_history" && permitted.has(name)) tools[name] = candidate;
+      if (name !== "read_task_history" && name !== "summarize_task_history" && permitted.has(name))
+        tools[name] = candidate;
     }
     if (plan.dataScope.kind === "chat" && permitted.has("read_task_history")) {
       const until = input.now ?? new Date();
       const since = new Date(until.getTime() - (plan.dataScope.lookbackHours ?? 24) * 3_600_000);
       tools.read_task_history = tool({
         description:
-          "读取已批准任务范围内的聊天记录；范围、话题、起止时间和数量由计划固定，不能扩大。complete=false 表示记录不完整。",
+          "读取已批准任务范围内的聊天记录；范围、话题、起止时间和数量由计划固定，不能扩大。complete仅表示当前允许范围内数据库记录已读完；false表示数量上限截断，采集/保留覆盖unknown不表示确知缺失。",
         inputSchema: zodToAiSchema(z.object({})),
         execute: async () => {
           signal.throwIfAborted();
@@ -193,6 +198,21 @@ export async function executeScheduledTask(
             until,
             limit: plan.dataScope.maxMessages ?? 500,
           });
+        },
+      });
+    }
+    if (
+      plan.dataScope.kind === "chat" &&
+      permitted.has("summarize_task_history") &&
+      config.summarizeTaskHistory
+    ) {
+      tools.summarize_task_history = tool({
+        description:
+          "使用独立总结模型总结已批准任务的固定Bot/聊天/话题/时间窗口/数量范围，并按计划要求分块归并。仅返回摘要与coverage，不发送消息，不返回全量原文；不能扩大范围或修改要求。",
+        inputSchema: zodToAiSchema(z.object({}).strict()),
+        execute: async () => {
+          signal.throwIfAborted();
+          return config.summarizeTaskHistory!(signal);
         },
       });
     }
@@ -250,6 +270,7 @@ export interface ScheduledTaskBotInput extends Omit<ScheduledTaskExecutorInput, 
   agentToolsConfig?: AgentToolsConfig;
   adminIds?: number[];
   readTaskHistory: ScheduledTaskExecutorConfig["readTaskHistory"];
+  summarizeTaskHistory?: ScheduledTaskExecutorConfig["summarizeTaskHistory"];
 }
 
 const TOPIC_METHODS = new Set([
@@ -319,6 +340,7 @@ export async function executeScheduledTaskWithBotConfig(
         taskAgentConfig: input.taskAgentConfig,
         agentToolsConfig: input.agentToolsConfig ?? aiConfig.agentToolsConfig,
         readTaskHistory: input.readTaskHistory,
+        summarizeTaskHistory: input.summarizeTaskHistory,
         resolveModel(providerId, modelId) {
           const provider = aiConfig.providers?.find(
             (candidate) => candidate.id === (providerId ?? aiConfig.activeProviderId),

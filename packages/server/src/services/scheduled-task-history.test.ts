@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb } from "@cos-tool-bot/database";
+import { createDb, type Database } from "@cos-tool-bot/database";
 import { sql } from "drizzle-orm";
+import { readScopedHistory } from "./scoped-history.js";
 import { readScheduledTaskHistory } from "./scheduled-task-history.js";
 
 // Explicit isolated PostgreSQL only; no production schema or pgvector is required.
@@ -28,9 +29,7 @@ describe.runIf(Boolean(databaseUrl))("task history PostgreSQL isolation", () => 
     await connection?.client.end();
   });
 
-  async function fixture<T>(
-    run: (db: Parameters<typeof readScheduledTaskHistory>[0]) => Promise<T>,
-  ) {
+  async function fixture<T>(run: (db: Pick<Database, "select" | "execute">) => Promise<T>) {
     return connection.db.transaction(async (db) => {
       // Temp tables shadow public tables only on this transaction's connection.
       await db.execute(
@@ -78,7 +77,29 @@ describe.runIf(Boolean(databaseUrl))("task history PostgreSQL isolation", () => 
         `1:${label}`,
         `4:${label}`,
       ]);
-      expect(result.complete).toBe(false);
+      expect(result.complete).toBe(true);
+    });
+  });
+  it.each([2, 10])("reports available history complete at limit %s", async (limit) => {
+    await fixture(async (db) => {
+      const result = await readScheduledTaskHistory(
+        db,
+        { botId, chatId: -1, threadId: 7 },
+        { ...window, limit },
+      );
+      expect(result.messages).toHaveLength(2);
+      expect(result.complete).toBe(true);
+    });
+  });
+  it("reports an empty authorized window complete", async () => {
+    await fixture(async (db) => {
+      const result = await readScheduledTaskHistory(
+        db,
+        { botId, chatId: -1, threadId: 7 },
+        { ...window, until: new Date("2026-11-11T01:00:00Z") },
+      );
+      expect(result.messages).toEqual([]);
+      expect(result.complete).toBe(true);
     });
   });
   it("applies limits after privacy filtering and returns chronological results", async () => {
@@ -89,6 +110,70 @@ describe.runIf(Boolean(databaseUrl))("task history PostgreSQL isolation", () => 
         { ...window, limit: 1 },
       );
       expect(result.messages.map((message) => message.content)).toEqual(["4:topic7"]);
+      expect(result.complete).toBe(false);
+    });
+  });
+  it("retains only assistant rows with a same-scope, currently visible source", async () => {
+    await fixture(async (db) => {
+      await db.execute(sql`INSERT INTO conversation_messages(bot_id,chat_id,role,content,meta,created_at)
+        SELECT ${botId},-1,'assistant','reply:' || id,json_build_object('threadId',7,'turnOrderId',id),'2026-11-11 13:00:00'
+        FROM conversation_messages WHERE role = 'user'`);
+      const result = await readScopedHistory(db, { botId, chatId: -1, threadId: 7 }, window, [
+        "assistant",
+      ]);
+      // Source ids 3/15 are the normal/default-normal messages in topic 7.
+      expect(result.messages.map((m) => m.content)).toEqual([
+        "reply:3",
+        "reply:15",
+        "reply:19",
+        "reply:20",
+      ]);
+      // Sources outside the requested time window may validate a reply's privacy without entering its summary.
+      expect(result.coverage.complete).toBe(true);
+      await db.execute(
+        sql`UPDATE user_privacy_settings SET mode='off' WHERE bot_id=${botId} AND user_id=1`,
+      );
+      const after = await readScopedHistory(db, { botId, chatId: -1, threadId: 7 }, window, [
+        "assistant",
+      ]);
+      expect(after.messages.map((m) => m.content)).toEqual(["reply:15"]);
+    });
+  });
+  it("returns structured coverage without calling unknown retention a gap", async () => {
+    await fixture(async (db) => {
+      const result = await readScheduledTaskHistory(
+        db,
+        { botId, chatId: -1, threadId: 7 },
+        { ...window, limit: 1 },
+      );
+      expect(result.coverage).toMatchObject({
+        returnedCount: 1,
+        complete: false,
+        truncated: true,
+        reason: "message_limit",
+        collectionCoverage: "unknown",
+        scope: { limit: 1, threadId: 7 },
+      });
+    });
+  });
+  it("keeps a delayed assistant reply beside its source turn, with actual timestamp bounds", async () => {
+    await fixture(async (db) => {
+      await db.execute(
+        sql`INSERT INTO conversation_messages(bot_id,chat_id,role,content,meta,created_at) VALUES (${botId},-1,'assistant','delayed reply','{"threadId":7,"turnOrderId":3}','2026-11-11 13:00:00')`,
+      );
+      const result = await readScopedHistory(db, { botId, chatId: -1, threadId: 7 }, window, [
+        "user",
+        "assistant",
+      ]);
+      expect(result.messages.map((m) => m.content)).toEqual([
+        "1:topic7",
+        "delayed reply",
+        "4:topic7",
+      ]);
+      expect(result.coverage).toMatchObject({
+        firstMessageAt: "2026-11-11T12:00:00.000Z",
+        lastMessageAt: "2026-11-11T13:00:00.000Z",
+      });
     });
   });
 });

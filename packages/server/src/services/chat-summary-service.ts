@@ -8,7 +8,12 @@ import {
   globalSummaryScheduleClaims,
   summaryConfigs,
 } from "@cos-tool-bot/database";
-import type { SummaryMode } from "@cos-tool-bot/shared";
+import type {
+  SummaryMode,
+  SummaryRequest,
+  SummaryToolResult,
+  HistoryCoverage,
+} from "@cos-tool-bot/shared";
 import { and, eq, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import {
@@ -16,6 +21,8 @@ import {
   DEFAULT_TIMEZONE,
   DEFAULT_ROLE_FILTER,
   MIN_MESSAGES_FOR_SUMMARY,
+  MAX_COUNT,
+  MAX_HOURS,
 } from "./summary-prompts.js";
 import type { SummaryRunner } from "./summary-runner.js";
 
@@ -48,6 +55,9 @@ export interface TriggerManualResult {
   reason?: ManualReason;
   summaryId?: number;
   contentHtml?: string;
+  contentRaw?: string;
+  messageCount?: number;
+  coverage?: HistoryCoverage;
 }
 
 interface ManualSummaryOptions {
@@ -55,7 +65,15 @@ interface ManualSummaryOptions {
   chatId: number;
   userId: number;
   mode: SummaryMode;
+  signal?: AbortSignal;
   bypassCooldown?: boolean;
+  threadId?: number | null;
+  instructions?: string;
+  window?: { since: Date; until: Date; limit: number };
+  originalMessagesOnly?: boolean;
+  independentExecution?: boolean;
+  maxMessages?: number;
+  owner?: boolean;
   skipSend?: boolean;
   deliver?: (html: string) => Promise<void>;
 }
@@ -105,6 +123,83 @@ export class ChatSummaryService {
     return this.tasks.track(this.triggerManualImpl(opts));
   }
 
+  /** No delivery side effect. The caller binds the actor and current chat, never the model. */
+  async summarize(opts: {
+    botId: string;
+    chatId: number;
+    threadId?: number | null;
+    userId: number;
+    request: SummaryRequest;
+    signal?: AbortSignal;
+    owner?: boolean;
+    originalMessagesOnly?: boolean;
+    approvedWindow?: { since: Date; until: Date; limit: number };
+  }): Promise<SummaryToolResult> {
+    const request = opts.request;
+    if (
+      request.maxMessages !== undefined &&
+      (!Number.isInteger(request.maxMessages) ||
+        request.maxMessages < 1 ||
+        request.maxMessages > MAX_COUNT)
+    )
+      return { ok: false, reason: "invalid_range" };
+    if ((request.since || request.until) && request.mode)
+      return { ok: false, reason: "ambiguous_range" };
+    let window = opts.approvedWindow;
+    if (window && (request.since || request.until || request.mode))
+      return { ok: false, reason: "outside_approved_scope" };
+    if (!window && (request.since || request.until)) {
+      const since = new Date(request.since ?? ""),
+        until = new Date(request.until ?? "");
+      if (
+        !Number.isFinite(since.getTime()) ||
+        !Number.isFinite(until.getTime()) ||
+        since >= until ||
+        until.getTime() - since.getTime() > MAX_HOURS * 3600_000 ||
+        until.getTime() > Date.now()
+      )
+        return { ok: false, reason: "invalid_time_range" };
+      window = { since, until, limit: MAX_COUNT };
+    }
+    const mode = request.mode ?? { kind: "default" };
+    if (
+      (mode.kind === "hours" &&
+        (!Number.isInteger(mode.hours) || mode.hours < 1 || mode.hours > MAX_HOURS)) ||
+      (mode.kind === "recent" &&
+        (!Number.isInteger(mode.count) || mode.count < 1 || mode.count > MAX_COUNT))
+    )
+      return { ok: false, reason: "invalid_range" };
+    const [bot] = await this.db
+      .select({ adminChatIds: bots.adminChatIds })
+      .from(bots)
+      .where(eq(bots.id, opts.botId));
+    const result = await this.triggerManual({
+      botId: opts.botId,
+      chatId: opts.chatId,
+      threadId: opts.threadId,
+      userId: opts.userId,
+      mode,
+      window,
+      instructions: request.instructions,
+      originalMessagesOnly: !!opts.approvedWindow || opts.originalMessagesOnly,
+      maxMessages: request.maxMessages,
+      independentExecution: !!opts.approvedWindow || opts.owner,
+      bypassCooldown:
+        !!opts.approvedWindow || opts.owner || bot?.adminChatIds.includes(opts.userId) === true,
+      owner: !!opts.approvedWindow || opts.owner,
+      skipSend: true,
+      signal: opts.signal,
+    });
+    return {
+      ok: result.ok,
+      reason: result.reason,
+      summaryId: result.summaryId,
+      contentRaw: result.contentRaw,
+      messageCount: result.messageCount,
+      coverage: result.coverage,
+    };
+  }
+
   private async triggerManualImpl(opts: ManualSummaryOptions): Promise<TriggerManualResult> {
     if (!this.isBotRunning(opts.botId)) {
       return { ok: false, reason: "disabled" };
@@ -119,9 +214,17 @@ export class ChatSummaryService {
       .from(summaryConfigs)
       .where(and(eq(summaryConfigs.botId, opts.botId), eq(summaryConfigs.chatId, opts.chatId)));
 
+    if (row?.accessMode === "admin" && !opts.owner) {
+      const [bot] = await this.db
+        .select({ adminChatIds: bots.adminChatIds })
+        .from(bots)
+        .where(eq(bots.id, opts.botId));
+      if (!bot?.adminChatIds.includes(opts.userId)) return { ok: false, reason: "no_access" };
+    }
+
     // Atomically claim the manual cooldown before running. The initial read supplies
     // per-chat overrides, but only this conditional update decides who may proceed.
-    if (!opts.bypassCooldown && row) {
+    if (!opts.independentExecution && !opts.bypassCooldown && row) {
       const cooldownSeconds = row.cooldownSeconds ?? DEFAULT_COOLDOWN_SECONDS;
       const claimed = await this.db
         .update(summaryConfigs)
@@ -144,7 +247,7 @@ export class ChatSummaryService {
       if (claimed.length === 0) {
         return { ok: false, reason: "cooldown" };
       }
-    } else if (opts.bypassCooldown && row) {
+    } else if (!opts.independentExecution && opts.bypassCooldown && row) {
       await this.db
         .update(summaryConfigs)
         .set({ lastManualAt: sql`CURRENT_TIMESTAMP` })
@@ -161,6 +264,12 @@ export class ChatSummaryService {
       botId: opts.botId,
       chatId: opts.chatId,
       mode: opts.mode,
+      signal: opts.signal,
+      threadId: opts.threadId,
+      window: opts.window,
+      instructions: opts.instructions,
+      originalMessagesOnly: opts.originalMessagesOnly,
+      maxMessages: opts.maxMessages,
       trigger: "manual",
       triggeredBy: opts.userId,
       configOverrides: row
@@ -178,6 +287,8 @@ export class ChatSummaryService {
         ok: false,
         reason: (result.error as ManualReason) ?? "llm_failed",
         summaryId: result.summaryId,
+        messageCount: result.messageCount,
+        coverage: result.coverage,
       };
     }
 
@@ -193,7 +304,14 @@ export class ChatSummaryService {
         );
       }
     }
-    return { ok: true, summaryId: result.summaryId, contentHtml: result.contentHtml };
+    return {
+      ok: true,
+      summaryId: result.summaryId,
+      contentHtml: result.contentHtml,
+      contentRaw: result.contentRaw,
+      messageCount: result.messageCount,
+      coverage: result.coverage,
+    };
   }
 
   private async tick(): Promise<void> {

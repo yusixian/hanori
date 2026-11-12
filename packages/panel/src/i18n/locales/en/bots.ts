@@ -379,6 +379,43 @@ export const bots = {
     networkError: "Network error, please try again",
   },
   summary: {
+    preview: {
+      title: "Preview summary (no sending)",
+      description:
+        "Uses the summary model and settings. Calls the model and saves a summary record, without sending to Telegram or creating a scheduled task.",
+      chatId: "Chat ID",
+      threadId: "Topic ID (optional)",
+      topicHint: "Leave empty for the main conversation. Other topics are excluded.",
+      since: "Start time",
+      until: "End time",
+      timezone: "Times use {{timezone}}. Choose a window of up to 72 hours.",
+      maxMessages: "Message limit (1–2000)",
+      instructions: "Summary requirements (optional)",
+      originalOnly: "Only summarize original member messages (exclude Bot replies)",
+      generate: "Generate preview",
+      generating: "Generating…",
+      wait: "Summarizing the selected records. Nothing will be sent to Telegram.",
+      coverage: "Records read",
+      truncated:
+        "The message limit was reached. Additional eligible records in this window were not read.",
+      complete: "All available records in this scope were read.",
+      count: "Read {{count}} records · effective limit {{limit}}",
+      scope: "Chat {{chatId}} · topic {{topic}}",
+      mainTopic: "Main conversation",
+      collectionBoundary:
+        "This describes eligible stored records after privacy filtering. It does not verify Telegram collection or retention coverage.",
+      result: "Summary preview",
+      tooFew: "Too few eligible messages to summarize. No message was sent.",
+      disabled: "Summaries are disabled for this Bot.",
+      noAccess: "You do not have permission to summarize this conversation.",
+      cooldown: "Summary cooldown is active. Try again later.",
+      noProvider: "No usable summary provider is configured.",
+      invalidRange: "Choose a valid start and end time, no more than 72 hours apart.",
+      invalidNumbers:
+        "Enter a nonzero integer Chat ID, a positive Topic ID if needed, and a message limit from 1 to 2000.",
+      failed:
+        "The preview could not be generated. No message was sent. Check the summary configuration and try again.",
+    },
     loadConfigsFailed: "Could not load summary configurations. Try again.",
     loadHistoryFailed: "Could not load summary history. Try again.",
     description: "Keep up with group conversations, with summaries on demand or on a schedule.",
