@@ -84,6 +84,11 @@ export function scheduledTaskRoutes(service?: ScheduledTaskService) {
         return c.json({ ok: true as const, data });
       },
     )
+    .post("/:id/run", async (c) => {
+      const task = await service!.getForPanel(c.req.param("id"));
+      if (!task) return c.json({ ok: false as const, error: "Task not found" }, 404);
+      return c.json({ ok: true as const, data: await service!.runNow(actor(task), task.id) }, 202);
+    })
     .post(
       "/:id/manage",
       zValidator("json", z.object({ action: z.enum(["pause", "resume", "cancel"]) })),

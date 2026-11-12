@@ -14,6 +14,7 @@ function fixture() {
   service.getForPanel = vi.fn().mockResolvedValue(task);
   service.decide = vi.fn().mockResolvedValue(task);
   service.propose = vi.fn().mockResolvedValue(task);
+  service.runNow = vi.fn().mockResolvedValue(task);
   service.manage = vi.fn().mockResolvedValue(task);
   return { service, app: scheduledTaskRoutes(service) };
 }
@@ -43,6 +44,15 @@ describe("scheduled task management routes", () => {
         isBotAdmin: true,
       },
       { id: "task-1", version: 2, action: "approve" },
+    );
+  });
+  it("accepts a manual run using persisted scope and returns without claiming completion", async () => {
+    const { app, service } = fixture();
+    const response = await app.request("/task-1/run", post({ chatId: 999 }));
+    expect(response.status).toBe(202);
+    expect(service.runNow).toHaveBeenCalledWith(
+      expect.objectContaining({ botId: task.botId, chatId: -100, isAdmin: true }),
+      task.id,
     );
   });
   it("returns a conflict for a stale confirmation", async () => {

@@ -1,3 +1,4 @@
+import { BotScheduledTasksPage } from "./pages/timers/scheduled-tasks-panel";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { AppLayout } from "@/components/layout/app-layout";
@@ -148,6 +149,7 @@ export function AdminPanelApp() {
               <Route path="/bots/:botId/edit" element={<BotEditPage />} />
               <Route path="/bots/:botId/ai" element={<BotAiSettingsPage />} />
               <Route path="/bots/:botId/governance" element={<BotGovernancePage />} />
+              <Route path="/bots/:botId/tasks" element={<BotScheduledTasksPage />} />
               <Route path="/bots/:botId/skills" element={<BotSkillsPage />} />
               <Route path="/bots/:botId/conversations" element={<BotConversationsPage />} />
               <Route path="/bots/:botId/profiles" element={<BotProfilesPage />} />

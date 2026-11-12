@@ -1,3 +1,4 @@
+import { buildModelProviderOptions } from "../utils/model-options.js";
 import { capturePromptConfig } from "./prompt-snapshot.js";
 import { createAiSelectionRuntime } from "../handlers/ai-selection.js";
 import { createWebTools } from "../tools/web.js";
@@ -53,6 +54,9 @@ export interface ScheduledTaskExecutorConfig {
     model: LanguageModel;
     providerId: string;
     modelId: string;
+    providerOptions?: ReturnType<typeof buildModelProviderOptions>;
+    temperature?: number;
+    maxOutputTokens?: number;
   };
   /** The implementation must query only this Bot/chat/thread and respect privacy filters. */
   readTaskHistory(input: {
@@ -194,6 +198,9 @@ export async function executeScheduledTask(
     }
     const result = await generateText({
       model: selection.model,
+      providerOptions: selection.providerOptions,
+      temperature: selection.temperature,
+      maxOutputTokens: selection.maxOutputTokens,
       system: agent.systemPrompt,
       messages: [
         {
@@ -330,10 +337,14 @@ export async function executeScheduledTaskWithBotConfig(
             },
           });
           const selection = runtime.resolve();
+          const modelEntry = provider.models?.find((entry) => entry.id === selectedModel);
           return {
             model: selection.providerFactory(selectedModel),
             providerId: provider.id,
             modelId: selectedModel,
+            providerOptions: buildModelProviderOptions(modelEntry, provider.providerFormat),
+            temperature: modelEntry?.temperature,
+            maxOutputTokens: modelEntry?.maxTokens,
           };
         },
         toolsetConfig: {

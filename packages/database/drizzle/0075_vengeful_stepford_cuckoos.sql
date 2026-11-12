@@ -1,0 +1,2 @@
+ALTER TABLE "scheduled_task_runs" ADD COLUMN "manual" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "scheduled_task_runs" ADD COLUMN "message_ids" json DEFAULT '[]'::json NOT NULL;

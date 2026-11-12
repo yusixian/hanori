@@ -405,6 +405,7 @@ function AppLayoutContent() {
             {
               label: t("navigation.botGroups.automation"),
               items: [
+                { label: t("navigation.timers"), path: `/bots/${botId}/tasks`, icon: Timer },
                 {
                   label: t("navigation.skills"),
                   path: `/bots/${botId}/skills`,

@@ -526,6 +526,13 @@
       "when": 1794413489979,
       "tag": "0074_supreme_captain_flint",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1794505379601,
+      "tag": "0075_vengeful_stepford_cuckoos",
+      "breakpoints": true
     }
   ]
 }

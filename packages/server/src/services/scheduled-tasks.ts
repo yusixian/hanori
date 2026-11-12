@@ -9,7 +9,7 @@ import type {
   ScheduledTaskRun,
   ScheduledTaskStatus,
 } from "@cos-tool-bot/shared";
-import { and, desc, eq, isNull, lte, gt, ne, or } from "drizzle-orm";
+import { and, desc, eq, isNull, lte, gt, ne, or, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { Logger } from "pino";
 import {
@@ -86,7 +86,7 @@ export type ScheduledTaskExecutor = (
   task: ScheduledTaskRecord,
   plan: ScheduledTaskPlan,
   options: ScheduledTaskExecutorOptions,
-) => Promise<{ output: string; agent: AgentExecutionConfig }>;
+) => Promise<{ output: string; agent: AgentExecutionConfig; messageIds?: number[] }>;
 function record(row: Row): ScheduledTaskRecord {
   return {
     ...row,
@@ -94,6 +94,15 @@ function record(row: Row): ScheduledTaskRecord {
     expiresAt: row.expiresAt?.toISOString() ?? null,
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
+  };
+}
+function runRecord(row: typeof scheduledTaskRuns.$inferSelect): ScheduledTaskRun {
+  return {
+    ...row,
+    status: row.status as ScheduledTaskRun["status"],
+    scheduledFor: row.scheduledFor.toISOString(),
+    startedAt: row.startedAt.toISOString(),
+    finishedAt: row.finishedAt?.toISOString() ?? null,
   };
 }
 function scope(actor: ScheduledTaskActor) {
@@ -110,7 +119,10 @@ export class ScheduledTaskService implements ScheduledTaskPort {
   private polling = false;
   private closing = false;
   private admitted = new Set<Promise<void>>();
-  private failedResults = new Map<string, { taskId: string; revision: number; trial: boolean }>();
+  private failedResults = new Map<
+    string,
+    { taskId: string; revision: number; scheduled: boolean }
+  >();
   private executions = new Map<string, { controller: AbortController; promise: Promise<void> }>();
   constructor(
     private db: Database,
@@ -119,13 +131,24 @@ export class ScheduledTaskService implements ScheduledTaskPort {
     private logger: Logger,
   ) {}
   async listForPanel(botId?: string) {
-    return (
-      await this.db
-        .select()
-        .from(scheduledTasks)
-        .where(botId ? eq(scheduledTasks.botId, botId) : undefined)
-        .orderBy(desc(scheduledTasks.createdAt))
-    ).map(record);
+    const tasks = await this.db
+      .select()
+      .from(scheduledTasks)
+      .where(botId ? eq(scheduledTasks.botId, botId) : undefined)
+      .orderBy(desc(scheduledTasks.createdAt));
+    if (!tasks.length) return [];
+    const latest = await this.db
+      .selectDistinctOn([scheduledTaskRuns.taskId])
+      .from(scheduledTaskRuns)
+      .where(
+        inArray(
+          scheduledTaskRuns.taskId,
+          tasks.map((task) => task.id),
+        ),
+      )
+      .orderBy(scheduledTaskRuns.taskId, desc(scheduledTaskRuns.startedAt));
+    const latestByTask = new Map(latest.map((run) => [run.taskId, runRecord(run)]));
+    return tasks.map((task) => ({ ...record(task), latestRun: latestByTask.get(task.id) ?? null }));
   }
   async getForPanel(id: string) {
     const [row] = await this.db.select().from(scheduledTasks).where(eq(scheduledTasks.id, id));
@@ -156,13 +179,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         .where(eq(scheduledTaskRuns.taskId, id))
         .orderBy(desc(scheduledTaskRuns.startedAt))
         .limit(100)
-    ).map((row) => ({
-      ...row,
-      status: row.status as ScheduledTaskRun["status"],
-      scheduledFor: row.scheduledFor.toISOString(),
-      startedAt: row.startedAt.toISOString(),
-      finishedAt: row.finishedAt?.toISOString() ?? null,
-    }));
+    ).map(runRecord);
   }
   async getPendingDiscussion(actor: ScheduledTaskActor, replyToMessageId?: number) {
     const rows = await this.db
@@ -262,7 +279,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
       await this.execute(
         { ...task, approvedByUserId: actor.userId },
         task.pendingPlan,
-        true,
+        "trial",
         decision.version,
       );
       return (await this.get(actor, task.id))!;
@@ -342,6 +359,14 @@ export class ScheduledTaskService implements ScheduledTaskPort {
       this.executions.get(task.runningRunId)?.controller.abort();
     return record(row!);
   }
+  async runNow(actor: ScheduledTaskActor, id: string) {
+    if (!actor.isAdmin) throw new ScheduledTaskRequestError("Administrator permission required");
+    const task = await this.get(actor, id);
+    if (!task?.activePlan || !["active", "paused", "completed"].includes(task.status))
+      throw new ScheduledTaskRequestError("Approved task required");
+    await this.execute(task, task.activePlan, "manual");
+    return (await this.get(actor, id))!;
+  }
   async start() {
     if (this.timer) return;
     // A prior process may have sent content before dying. Do not replay that unknown outcome.
@@ -369,13 +394,15 @@ export class ScheduledTaskService implements ScheduledTaskPort {
           .update(scheduledTasks)
           .set({
             runningRunId: null,
-            nextRunAt: interrupted?.trial
-              ? task.nextRunAt
-              : task.activePlan
-                ? nextTaskOccurrence(task.activePlan.schedule, new Date(Date.now() + 1))
-                : null,
+            nextRunAt:
+              interrupted?.trial || interrupted?.manual
+                ? task.nextRunAt
+                : task.activePlan
+                  ? nextTaskOccurrence(task.activePlan.schedule, new Date(Date.now() + 1))
+                  : null,
             status:
               !interrupted?.trial &&
+              !interrupted?.manual &&
               task.status === "active" &&
               task.activePlan?.schedule.kind === "once"
                 ? "completed"
@@ -408,7 +435,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         );
       for (const row of due)
         if (row.activePlan)
-          void this.execute(record(row), row.activePlan, false).catch((error) =>
+          void this.execute(record(row), row.activePlan, "scheduled").catch((error) =>
             this.logger.error(error, "Scheduled task execution failed"),
           );
     } finally {
@@ -418,10 +445,10 @@ export class ScheduledTaskService implements ScheduledTaskPort {
   private execute(
     task: ScheduledTaskRecord,
     plan: ScheduledTaskPlan,
-    trial: boolean,
+    kind: "scheduled" | "trial" | "manual",
     version?: number,
   ): Promise<void> {
-    const operation = this.executeImpl(task, plan, trial, version);
+    const operation = this.executeImpl(task, plan, kind, version);
     this.admitted.add(operation);
     void operation.finally(() => this.admitted.delete(operation)).catch(() => {});
     return operation;
@@ -429,9 +456,10 @@ export class ScheduledTaskService implements ScheduledTaskPort {
   private async executeImpl(
     task: ScheduledTaskRecord,
     plan: ScheduledTaskPlan,
-    trial: boolean,
+    kind: "scheduled" | "trial" | "manual",
     version?: number,
   ) {
+    const trial = kind === "trial";
     if (this.closing) throw new ScheduledTaskRequestError("Scheduler is stopping");
     const runId = crypto.randomUUID(),
       now = new Date();
@@ -453,7 +481,9 @@ export class ScheduledTaskService implements ScheduledTaskPort {
                     ne(scheduledTasks.lastTrialVersion, version!),
                   ),
                 )
-              : and(eq(scheduledTasks.status, "active"), lte(scheduledTasks.nextRunAt, now)),
+              : kind === "manual"
+                ? eq(scheduledTasks.status, task.status)
+                : and(eq(scheduledTasks.status, "active"), lte(scheduledTasks.nextRunAt, now)),
           ),
         )
         .returning();
@@ -463,21 +493,24 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         taskId: task.id,
         status: "running",
         trial,
-        scheduledFor: trial
-          ? now
-          : (latestTaskOccurrence(plan.schedule, now) ?? new Date(task.nextRunAt!)),
+        manual: kind === "manual",
+        scheduledFor:
+          kind !== "scheduled"
+            ? now
+            : (latestTaskOccurrence(plan.schedule, now) ?? new Date(task.nextRunAt!)),
         plan,
         agent: plan.agent,
       });
       return true;
     });
     if (!claimed) {
-      if (trial) throw new ScheduledTaskRequestError("Trial already started or task is running");
+      if (kind !== "scheduled")
+        throw new ScheduledTaskRequestError("Execution already started or the plan changed");
       return;
     }
     const controller = new AbortController();
     if (this.closing) controller.abort();
-    const promise = this.perform(task, plan, runId, trial, controller.signal);
+    const promise = this.perform(task, plan, runId, kind, controller.signal);
     this.executions.set(runId, { controller, promise });
     this.admitted.add(promise);
     void promise
@@ -486,7 +519,11 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         this.admitted.delete(promise);
       })
       .catch((error) => {
-        this.failedResults.set(runId, { taskId: task.id, revision: task.revision, trial });
+        this.failedResults.set(runId, {
+          taskId: task.id,
+          revision: task.revision,
+          scheduled: kind === "scheduled",
+        });
         this.logger.error(error, "Scheduled task result persistence failed");
       });
   }
@@ -508,7 +545,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
             error: "Execution ended but its result could not be saved; outcome may be partial",
           })
           .where(and(eq(scheduledTaskRuns.id, runId), eq(scheduledTaskRuns.status, "running")));
-        const samePlan = !failed.trial && task.revision === failed.revision;
+        const samePlan = failed.scheduled && task.revision === failed.revision;
         const next = task.activePlan
           ? nextTaskOccurrence(task.activePlan.schedule, new Date(Date.now() + 1))
           : null;
@@ -539,12 +576,14 @@ export class ScheduledTaskService implements ScheduledTaskPort {
     task: ScheduledTaskRecord,
     plan: ScheduledTaskPlan,
     runId: string,
-    trial: boolean,
+    kind: "scheduled" | "trial" | "manual",
     signal: AbortSignal,
   ) {
+    const trial = kind === "trial";
     let output: string | null = null,
       error: string | null = null,
       agent = plan.agent;
+    let messageIds: number[] = [];
     try {
       const result = await this.executor(task, plan, {
         runId,
@@ -560,6 +599,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
       });
       output = result.output;
       agent = result.agent;
+      messageIds = result.messageIds ?? [];
     } catch (failure) {
       error = failure instanceof Error ? failure.message : String(failure);
     }
@@ -574,6 +614,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
           output,
           error,
           agent,
+          messageIds,
         })
         .where(eq(scheduledTaskRuns.id, runId));
       const [current] = await tx
@@ -583,7 +624,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         .for("update");
       if (!current) return;
       paused =
-        !trial &&
+        kind === "scheduled" &&
         current.revision === task.revision &&
         current.status === "active" &&
         failures >= 3;
@@ -594,7 +635,7 @@ export class ScheduledTaskService implements ScheduledTaskPort {
         .update(scheduledTasks)
         .set({
           runningRunId: null,
-          ...(!trial && current.revision === task.revision
+          ...(kind === "scheduled" && current.revision === task.revision
             ? {
                 nextRunAt: next,
                 consecutiveFailures: failures,

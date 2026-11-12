@@ -1837,6 +1837,8 @@ export const scheduledTaskRuns = pgTable(
       .references(() => scheduledTasks.id, { onDelete: "cascade" }),
     status: text("status").notNull(),
     trial: boolean("trial").notNull().default(false),
+    manual: boolean("manual").notNull().default(false),
+    messageIds: json("message_ids").$type<number[]>().notNull().default([]),
     scheduledFor: timestamp("scheduled_for").notNull(),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     finishedAt: timestamp("finished_at"),
