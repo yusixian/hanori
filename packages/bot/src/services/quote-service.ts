@@ -167,6 +167,25 @@ export class QuoteService {
         throw new QuoteError("被回复消息不可引用。", "The replied message cannot be quoted.");
     }
     sources.sort((a, b) => a.messageId - b.messageId);
+    if (input.includeReplyPreview && !input.snapshotOnly) {
+      const missing = sources.filter((source) => !source.replyToMessageId);
+      const targets = missing.length
+        ? await this.deps.store.getQuoteReplyTargets?.(
+            input.chatId,
+            input.threadId,
+            missing.map((source) => source.messageId),
+          )
+        : undefined;
+      sources = sources.map((source) => {
+        const parent =
+          source.replyToMessageId ??
+          live.find(
+            (candidate) => candidate.messageId === source.messageId && candidate.replyToMessageId,
+          )?.replyToMessageId ??
+          targets?.[source.messageId];
+        return parent ? { ...source, replyToMessageId: parent } : source;
+      });
+    }
     const parentIds = [
       ...new Set(sources.flatMap((s) => (s.replyToMessageId ? [s.replyToMessageId] : []))),
     ];
@@ -244,7 +263,8 @@ export class QuoteService {
         return { base64: normalized.toString("base64"), mimeType: "image/png" as const };
       };
       const messages: QuoteRenderMessage[] = [];
-      let previewUnavailable = false;
+      let previewUnavailable =
+        !!input.includeReplyPreview && sources.some((source) => !source.replyToMessageId);
       for (const source of sources) {
         signal.throwIfAborted();
         const message: QuoteRenderMessage = {
@@ -324,8 +344,8 @@ export class QuoteService {
             : undefined,
           previewUnavailable
             ? input.locale === "en"
-              ? "Some parent previews are unavailable."
-              : "部分父消息预览不可用。"
+              ? "Some parent previews could not be read: a message may have no parent, its reply relationship may not be saved, or the parent may be unavailable."
+              : "部分消息未找到可用父预览：可能没有父回复、未保存回复关系，或父消息不可读取。"
             : undefined,
         ]
           .filter(Boolean)

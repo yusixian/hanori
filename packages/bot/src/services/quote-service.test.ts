@@ -19,6 +19,7 @@ const source = (id = 1, text = "Hello"): QuoteSource => ({
 function setup() {
   const store = {
     getQuoteSources: vi.fn(async () => [] as QuoteSource[]),
+    getQuoteReplyTargets: vi.fn(async () => ({}) as Record<number, number>),
     getQuoteColor: vi.fn(async () => undefined),
     setQuoteColor: vi.fn(),
     isQuoteOutput: vi.fn(async () => false),
@@ -48,6 +49,70 @@ function setup() {
   return { store, renderer, api, buffer, service, request };
 }
 describe("quote delivery", () => {
+  it.each(["user", "bot"])(
+    "restores a %s reply from local relationships without replacing live text",
+    async (kind) => {
+      const f = setup();
+      f.store.getQuoteReplyTargets.mockResolvedValue({ 1: 2 });
+      f.store.getQuoteSources.mockResolvedValue([source(2, "Parent")]);
+      const result = await f.service.send({
+        ...f.request,
+        includeReplyPreview: true,
+        liveSources: [{ ...source(1, "Edited live excerpt"), author: { key: kind, name: kind } }],
+      });
+      expect(f.store.getQuoteReplyTargets).toHaveBeenCalledWith(10, null, [1]);
+      expect(f.store.getQuoteSources).toHaveBeenCalledWith(10, null, { ids: [2] });
+      expect(f.renderer.render.mock.calls[0]![0].messages[0]).toMatchObject({
+        text: "Edited live excerpt",
+        reply: { author: "Alice", text: "Parent" },
+      });
+      expect(result.notice).toBeUndefined();
+    },
+  );
+
+  it("preserves a buffered reply relationship when the live nested copy omits it", async () => {
+    const f = setup();
+    f.buffer.mockResolvedValue([{ ...source(), replyToMessageId: 2 }, source(2, "Parent")]);
+    await f.service.send({ ...f.request, includeReplyPreview: true });
+    expect(f.renderer.render.mock.calls[0]![0].messages[0]!.reply?.text).toBe("Parent");
+  });
+
+  it.each(["missing", "protected", "topic", "privacy"])(
+    "omits an unreadable %s parent and explains it",
+    async (reason) => {
+      const f = setup();
+      f.store.getQuoteReplyTargets.mockResolvedValue({ 1: 2 });
+      const parent = {
+        ...source(2, "Do not disclose"),
+        protectedContent: reason === "protected",
+        threadId: reason === "topic" ? 9 : null,
+        privacyUserIds: reason === "privacy" ? [8] : [],
+      };
+      f.store.getQuoteSources.mockResolvedValue(reason === "missing" ? [] : [parent]);
+      const service =
+        reason === "privacy"
+          ? new QuoteService(f.service.deps, {
+              api: f.api as unknown as Api,
+              deliveryApi: f.api as unknown as Api,
+              privacy: {
+                getMode: async (id: number) => (id === 8 ? "off" : "normal"),
+                runExclusiveMany: async (_ids: number[], run: () => Promise<unknown>) => run(),
+              } as unknown as UserPrivacyCallbacks,
+            })
+          : f.service;
+      const result = await service.send({ ...f.request, includeReplyPreview: true, locale: "en" });
+      expect(f.renderer.render.mock.calls[0]![0].messages[0]!.reply).toBeUndefined();
+      expect(result.notice).toContain("could not be read");
+    },
+  );
+
+  it("explains missing historical relationships without inventing a parent", async () => {
+    const f = setup();
+    const result = await f.service.send({ ...f.request, includeReplyPreview: true });
+    expect(result.notice).toContain("未保存回复关系");
+    expect(f.renderer.render.mock.calls[0]![0].messages[0]!.reply).toBeUndefined();
+  });
+
   it("keeps long same-author bodies separate and bounds emoji parent previews by UTF16", async () => {
     const f = setup();
     const first = {

@@ -177,6 +177,12 @@ export interface QuoteSourceStoreCallbacks {
     threadId: number | null,
     query: QuoteSourceQuery,
   ): Promise<QuoteSource[]>;
+  /** Recover relationships only; callers must separately authorize every parent source. */
+  getQuoteReplyTargets?(
+    chatId: number,
+    threadId: number | null,
+    messageIds: readonly number[],
+  ): Promise<Record<number, number>>;
   isQuoteOutput(chatId: number, messageId: number): Promise<boolean>;
   markQuoteOutput(chatId: number, messageId: number): Promise<void>;
   getQuoteColor(chatId: number): Promise<string | undefined>;

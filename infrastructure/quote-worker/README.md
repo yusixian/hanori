@@ -15,7 +15,9 @@ entities per message. Author names accept 256 UTF-16 units, author keys 512, and
 preview text 180. Callers truncate previews at grapheme boundaries within that UTF-16 budget.
 Entities use Telegram UTF-16 offsets. Callers must already apply authorization,
 privacy, protected-content and spoiler masking. Adjacent equal author key/name messages share one
-bubble while keeping their individual text, parent previews and images in order.
+bubble while keeping their individual text, parent previews and images in order. Text has up to
+432 logical pixels of width with a compact 36-pixel avatar; parent previews use smaller text and
+a vertical accent to separate them from the quoted body. Short bubbles still shrink to content.
 
 Static PNG/JPEG/WebP inputs are bounded to 8 MiB and 16 million pixels each, 24 MiB combined;
 avatars are limited to 1 MiB and 4 million pixels. Animated inputs are rejected. Output is transparent

@@ -7,12 +7,13 @@ describe("quote command handlers", () => {
     "rejects invalid arguments %s",
     (raw) => expect(parseQuoteArgs(raw)).toBeUndefined(),
   );
-  it("parses count, preview and inline color", () =>
-    expect(parseQuoteArgs("-3 r purple")).toEqual({
+  it.each(["-3 r purple", "r purple -3", "purple -3 r"])("parses argument order %s", (args) =>
+    expect(parseQuoteArgs(args)).toEqual({
       count: -3,
       includeReplyPreview: true,
       color: "purple",
-    }));
+    }),
+  );
   function setup() {
     const send = vi.fn(async () => ({ messageId: 99, receiptSaved: true }));
     const store = { getQuoteColor: vi.fn(), setQuoteColor: vi.fn() };

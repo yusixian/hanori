@@ -489,6 +489,8 @@ async function doContinueChat(
 
     const deliveredMultiMessages: string[] = [];
     const deliveredMessages = new Map<number, string>();
+    const deliveredReplyTargets = new Map<number, number>();
+    const deliveredThreads = new Map<number, number | null>();
     let replyableMessageIds: readonly number[] = [];
     const isPrivate = chatId > 0;
     const toolsetConfig: TurnToolsetConfig = {
@@ -540,8 +542,10 @@ async function doContinueChat(
           getReplyableMessageIds: () => replyableMessageIds,
           conversation: convCfg.enabled ? config.conversation : undefined,
           richMessageEnabled: isRichMessageEnabled(config.messageConfig),
-          onTextMessageSent: (id, content) => {
+          onTextMessageSent: (id, content, parent, thread) => {
             deliveredMessages.set(id, content);
+            if (parent) deliveredReplyTargets.set(id, parent);
+            if (thread !== undefined) deliveredThreads.set(id, thread);
           },
           onOwnMessageEdited: (id, content) => {
             if (deliveredMessages.has(id)) deliveredMessages.set(id, content);
@@ -935,7 +939,14 @@ async function doContinueChat(
           chatId,
           role: "assistant",
           content,
-          meta: { trigger: "event_continuation", tgMessageId: id },
+          meta: {
+            trigger: "event_continuation",
+            tgMessageId: id,
+            ...(deliveredThreads.has(id) ? { threadId: deliveredThreads.get(id) } : {}),
+            ...(deliveredReplyTargets.has(id)
+              ? { replyToTgMessageId: deliveredReplyTargets.get(id) }
+              : {}),
+          },
         });
       }
 

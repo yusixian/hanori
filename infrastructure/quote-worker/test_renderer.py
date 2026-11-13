@@ -74,6 +74,15 @@ class RendererTests(unittest.TestCase):
         colored = [y for y in range(merged.height) if (lambda p: p[1] > 160 and p[0] < 140 and p[3] > 200)(merged.getpixel((180, y)))]
         self.assertEqual(sum(i == 0 or y > colored[i-1] + 1 for i, y in enumerate(colored)), 2)
 
+    def test_parent_previews_survive_same_author_merge(self):
+        data = document('第一句', reply={'author': '阿岚', 'text': '第一条父消息'})
+        data['messages'].append({'author': data['messages'][0]['author'], 'text': '第二句',
+                                 'reply': {'author': '阿岚', 'text': '第二条父消息'}})
+        _, image, _ = self.paint(data)
+        del data['messages'][1]['reply']
+        _, without_second, _ = self.paint(data)
+        self.assertGreater(image.height / image.width, without_second.height / without_second.width)
+
     def test_long_author_and_utf16_bounded_emoji_parent(self):
         data = document('署名和父消息均保留', reply={'author': '中文署名' * 32, 'text': '😀' * 89 + '…'})
         data['messages'][0]['author'] = {'key': 'k' * 512, 'name': '测试群聊' * 32}

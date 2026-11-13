@@ -38,7 +38,12 @@ export interface TelegramToolsOptions {
   recentBotMessageIds: number[];
   conversation?: ConversationCallbacks;
   richMessageEnabled?: boolean;
-  onTextMessageSent?: (messageId: number, content: string) => void;
+  onTextMessageSent?: (
+    messageId: number,
+    content: string,
+    replyToMessageId?: number,
+    threadId?: number | null,
+  ) => void;
   onOwnMessageEdited?: (messageId: number, content: string) => void;
   ttsEndpoint?: string;
   pendingActions?: PendingActionRegistry;
@@ -620,7 +625,12 @@ export function createTelegramTools(options: TelegramToolsOptions): Record<strin
             reply_parameters: { message_id: reply_to_message_id },
           });
           recentBotMessageIds.push(sent.message_id);
-          options.onTextMessageSent?.(sent.message_id, text);
+          options.onTextMessageSent?.(
+            sent.message_id,
+            text,
+            sent.reply_to_message?.message_id,
+            sent.is_topic_message ? (sent.message_thread_id ?? null) : null,
+          );
           return {
             success: true,
             message_id: sent.message_id,
