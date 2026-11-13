@@ -96,6 +96,24 @@ export function renameProviderModelReferences({
             }
           : provider,
       ),
+      modelRecovery:
+        config.modelRecovery?.fallback?.providerId === providerId &&
+        config.modelRecovery.fallback.modelId === currentId
+          ? { ...config.modelRecovery, fallback: { providerId, modelId: nextId } }
+          : config.modelRecovery,
+      groupOverrides: Object.fromEntries(
+        Object.entries(config.groupOverrides).map(([key, override]) => [
+          key,
+          {
+            ...override,
+            modelRecovery:
+              override.modelRecovery?.fallback?.providerId === providerId &&
+              override.modelRecovery.fallback.modelId === currentId
+                ? { ...override.modelRecovery, fallback: { providerId, modelId: nextId } }
+                : override.modelRecovery,
+          },
+        ]),
+      ),
       githubToolsConfig:
         config.githubToolsConfig?.codingModelId === currentId && githubUsesProvider
           ? { ...config.githubToolsConfig, codingModelId: nextId }

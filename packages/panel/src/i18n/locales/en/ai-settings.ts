@@ -1,5 +1,30 @@
 import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  recovery: {
+    title: "Retries and fallback",
+    description: "Recover failed chat model requests without changing the primary model.",
+    maxRetries: "Extra retries per turn",
+    retryOption: "Retries: {{count}}",
+    retryHelp:
+      "All model steps in a chat turn share this retry budget. A configured fallback may be selected once after recoverable failures.",
+    useFallback: "Use a fallback model",
+    provider: "Fallback provider",
+    model: "Fallback model",
+    chooseProvider: "Choose a provider",
+    unavailableProvider: "Unavailable provider",
+    modelPlaceholder: "Choose a model",
+    providerMissing: "Choose an available provider, or turn off fallback.",
+    modelMissing: "Choose a model from this provider’s catalog.",
+    sameModel: "This is the current primary model. It will not be used as a separate fallback.",
+    fallbackHelp: "Add a supported model to the provider’s catalog before selecting it here.",
+    noFallback: "No fallback is configured. Failed requests will not switch to another model.",
+    safetyHelp:
+      "Cancellation and permanent configuration errors stop recovery. A step that has started streaming text or tool arguments is not replayed.",
+    override: "Customize recovery for this chat",
+    inherited: "Using global retry and fallback settings.",
+    overridden: "These settings replace the global recovery policy for this chat.",
+    fixErrors: "Complete or disable the fallback selection before saving.",
+  },
   promptVersions: {
     draftOrigin: "Draft loaded from",
     compareSource: "Compare against",

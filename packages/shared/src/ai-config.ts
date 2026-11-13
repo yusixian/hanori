@@ -38,7 +38,17 @@ export interface AiTriggerConfig {
   randomReplyCooldown: number;
 }
 
+export interface ModelRecoveryConfig {
+  /** Shared additional same-model attempts across one conversational turn (0–2). */
+  maxRetries: number;
+  fallback: { providerId: string; modelId: string } | null;
+}
+
+export const DEFAULT_MODEL_RECOVERY: ModelRecoveryConfig = { maxRetries: 1, fallback: null };
+
 export interface AiGroupOverride {
+  /** Missing means inherit the global policy. */
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: Partial<EngagementPolicy>;
   chatId: number;
   chatTitle?: string;
@@ -56,6 +66,7 @@ export interface AiGroupOverride {
 }
 
 export interface AiConfigStored {
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: EngagementConfigStored;
   enabled: boolean;
   /** @deprecated migrated into providers[0].encryptedApiKey — kept for rollback compat */
@@ -108,6 +119,7 @@ export interface AiConfigStored {
 }
 
 export interface AiConfigPublic {
+  modelRecovery?: ModelRecoveryConfig;
   engagement?: EngagementConfigPublic;
   enabled: boolean;
   /** @deprecated reflects providers[activeProviderId].hasApiKey for backward compat */

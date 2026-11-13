@@ -1,7 +1,12 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { AiGroupOverride, EngagementPolicy } from "@cos-tool-bot/shared";
+import type {
+  AiGroupOverride,
+  EngagementPolicy,
+  ModelRecoveryConfig,
+  AiProviderEntryPublic,
+} from "@cos-tool-bot/shared";
 import { Plus } from "lucide-react";
 import { useState } from "react";
 import { GroupOverrideRow } from "../components/group-override-row";
@@ -10,11 +15,15 @@ import { useTranslation } from "react-i18next";
 export function GroupOverridesSection({
   overrides,
   engagement,
+  modelRecovery,
+  providers,
   onAdd,
   onUpdate,
   onRemove,
 }: {
   engagement?: EngagementPolicy;
+  modelRecovery?: ModelRecoveryConfig;
+  providers?: AiProviderEntryPublic[];
   overrides: Record<string, AiGroupOverride>;
   onAdd: (chatId: number, chatTitle?: string) => void;
   onUpdate: (key: string, updates: Partial<AiGroupOverride>) => void;
@@ -46,6 +55,8 @@ export function GroupOverridesSection({
             groupKey={key}
             override={override}
             engagement={engagement}
+            modelRecovery={modelRecovery}
+            providers={providers}
             onUpdate={(updates) => onUpdate(key, updates)}
             onRemove={() => onRemove(key)}
           />
