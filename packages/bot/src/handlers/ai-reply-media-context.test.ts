@@ -92,9 +92,224 @@ const kinds = [
   ["voice", "语音"],
   ["video_note", "视频笔记"],
 ] as const;
+const extraContent = [
+  [
+    "story",
+    { chat: { id: -200, type: "channel", title: "Source", username: "source" }, id: 12 },
+    "Story",
+    "Source",
+  ],
+  ["paid_media", { star_count: 20, paid_media: [{ type: "preview" }] }, "付费媒体", "20"],
+  [
+    "poll",
+    {
+      question: "Pick a route",
+      options: [{ text: "Scenic https://example.com/route", voter_count: 2 }],
+      total_voter_count: 2,
+      is_closed: false,
+    },
+    "投票",
+    "Scenic https://example.com/route",
+  ],
+  [
+    "contact",
+    {
+      first_name: "Example",
+      last_name: "Person",
+      phone_number: "+1234567",
+      vcard: "private-vcard",
+    },
+    "联系人",
+    "+1234567",
+  ],
+  ["location", { latitude: 30, longitude: 120, live_period: 3600 }, "位置", "30, 120"],
+  [
+    "venue",
+    { title: "Library", address: "Example road", location: { latitude: 30, longitude: 120 } },
+    "地点",
+    "Example road",
+  ],
+  ["dice", { emoji: "🎲", value: 4 }, "骰子", "4"],
+  [
+    "game",
+    { title: "Game title", description: "Game description", text: "https://example.com/game" },
+    "游戏",
+    "https://example.com/game",
+  ],
+  [
+    "checklist",
+    { title: "Packing", tasks: [{ id: 1, text: "Camera", completion_date: 0 }] },
+    "清单",
+    "Camera",
+  ],
+  [
+    "rich_message",
+    {
+      blocks: [
+        {
+          type: "paragraph",
+          text: { type: "url", text: "Useful resource", url: "https://example.com/rich" },
+        },
+      ],
+    },
+    "富文本",
+    "https://example.com/rich",
+  ],
+  ["live_photo", { ...media }, "实况照片", "未解析"],
+] as const;
 const prompt = () => JSON.stringify(streamTextMock.mock.calls.at(-1)?.[0]?.messages);
 
 describe("media context through the AI handler", () => {
+  it.each(extraContent)(
+    "retains %s through persistence, ring buffer and a direct request",
+    async (kind, value, label, detail) => {
+      const store = history();
+      const message = {
+        [kind]: value,
+        forward_origin: { type: "hidden_user", date: 1, sender_user_name: "Origin" },
+      };
+      await runtime(store).handler(context(message), vi.fn());
+      expect(store.upsertUserMessage).toHaveBeenCalledOnce();
+      const row = vi.mocked(store.upsertUserMessage!).mock.calls[0]![0];
+      expect(row.content).toContain(label);
+      expect(row.content).toContain(detail);
+      expect(row.meta?.forwardOrigin).toMatchObject({ name: "Origin" });
+      const buffered = runtime();
+      await buffered.handler(context(message), vi.fn());
+      await buffered.handler(
+        context({ message_id: 8, text: "sample explain the previous message" }),
+        vi.fn(),
+      );
+      expect(prompt()).toContain(detail);
+      expect(prompt()).toContain("Origin");
+      const direct = context(message);
+      Object.assign(direct, { chat: { id: 42, type: "private" } });
+      await runtime().handler(direct, vi.fn());
+      expect(prompt()).toContain(detail);
+      expect(direct.api.getFile).not.toHaveBeenCalled();
+      expect(prompt()).not.toContain("private-vcard");
+    },
+  );
+
+  it.each(extraContent)("keeps %s visible in reply context", async (kind, value, label) => {
+    const reply = {
+      message_id: 6,
+      from: { id: 55, first_name: "Original", is_bot: false },
+      [kind]: value,
+    };
+    const ctx = context({ text: "sample explain this", reply_to_message: reply });
+    Object.assign(ctx, { reply_to_message: reply });
+    await runtime().handler(ctx, vi.fn());
+    expect(prompt()).toContain(label);
+  });
+
+  it.each([
+    { new_chat_title: "changed" },
+    { checklist_tasks_added: { tasks: [{ text: "private service text" }] } },
+    { successful_payment: { currency: "XTR", total_amount: 20 } },
+  ])("does not admit service events: %j", async (message) => {
+    const store = history();
+    await runtime(store).handler(context(message), vi.fn());
+    expect(store.upsertUserMessage).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { rich_message: { blocks: [{ type: "paragraph", text: "sample rich request" }] } },
+    {
+      poll: {
+        question: "sample poll request",
+        options: [],
+        total_voter_count: 0,
+        is_closed: false,
+      },
+    },
+    { checklist: { title: "sample checklist request", tasks: [] } },
+  ])("uses visible text to trigger a group request without duplicating it: %j", async (message) => {
+    const ctx = context(message);
+    await runtime().handler(ctx, vi.fn());
+    expect(streamTextMock).toHaveBeenCalledOnce();
+    expect(prompt().match(/sample (rich|poll|checklist) request/g)).toHaveLength(1);
+  });
+
+  it("keeps static-photo processing for live photos and describes the unparsed motion", async () => {
+    const ctx = context({ live_photo: media, photo: [{ ...media }], caption: "sample live" });
+    vi.mocked(ctx.api.getFile).mockResolvedValue({ file_id: "fixture", file_unique_id: "fixture" });
+    await runtime().handler(ctx, vi.fn());
+    expect(prompt()).toContain("动态部分未解析");
+    expect(prompt()).toContain("图片");
+    expect(ctx.api.getFile).toHaveBeenCalledWith("fixture");
+  });
+
+  it("preserves a selected rich-text quote without repeating the unselected body", async () => {
+    const reply = {
+      message_id: 6,
+      from: { id: 55, first_name: "Source", is_bot: false },
+      rich_message: { blocks: [{ type: "paragraph", text: "Unselected text. Selected text." }] },
+    };
+    const ctx = context({
+      text: "sample explain",
+      reply_to_message: reply,
+      quote: { text: "Selected text.", position: 17 },
+    });
+    Object.assign(ctx, { reply_to_message: reply });
+    const store = history();
+    await runtime(store).handler(ctx, vi.fn());
+    expect(prompt()).toContain("Selected text.");
+    expect(prompt()).toContain("富文本消息");
+    expect(prompt()).not.toContain("Unselected text.");
+    expect(vi.mocked(store.upsertUserMessage!).mock.calls[0]![0].content).not.toContain(
+      "Unselected text.",
+    );
+  });
+
+  it("applies existing privacy and chat access rules to newly admitted contacts", async () => {
+    const store = history();
+    const handler = runtime(store, {
+      privacy: {
+        getMode: vi.fn().mockResolvedValue("off"),
+        runExclusive: async (_id, operation) => operation(),
+        setMode: vi.fn(),
+        forget: vi.fn(),
+      },
+    });
+    await handler.handler(
+      context({ contact: { first_name: "Example", phone_number: "+1234" } }),
+      vi.fn(),
+    );
+    expect(store.upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userAuthoredContent: undefined,
+        content: expect.stringContaining("+1234"),
+      }),
+    );
+    expect(streamTextMock).not.toHaveBeenCalled();
+    const denied = context({ contact: { first_name: "Example", phone_number: "denied-phone" } });
+    Object.assign(denied, { chat: { id: -999, type: "supergroup" } });
+    await handler.handler(denied, vi.fn());
+    expect(store.upsertUserMessage).toHaveBeenCalledOnce();
+    expect(JSON.stringify(vi.mocked(store.upsertUserMessage!).mock.calls)).not.toContain(
+      "denied-phone",
+    );
+  });
+
+  it.each([
+    [{ video: media }, "视频"],
+    [{ story: { chat: { id: -200, type: "channel", title: "sample" }, id: 1 } }, "sample"],
+    [{ rich_message: { blocks: [{ type: "photo", photo: [media] }] } }, "未解析"],
+  ])("does not trigger on generated metadata or source labels: %j", async (message, word) => {
+    await runtime(undefined, {
+      triggerConfig: {
+        replyToBot: true,
+        mentionBot: true,
+        triggerWords: [word],
+        randomReplyPercent: 0,
+        randomReplyCooldown: 60,
+      },
+    }).handler(context(message), vi.fn());
+    expect(streamTextMock).not.toHaveBeenCalled();
+  });
+
   it.each(kinds)(
     "captures captionless %s once and exposes it to the next ring-buffer turn",
     async (kind, label) => {

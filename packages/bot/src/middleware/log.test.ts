@@ -3,6 +3,47 @@ import type { WrapperContext } from "../context.js";
 import { createLogMiddleware } from "./log.js";
 
 describe("createLogMiddleware", () => {
+  test.each([
+    "story",
+    "paid_media",
+    "poll",
+    "contact",
+    "location",
+    "venue",
+    "dice",
+    "rich_message",
+    "game",
+    "checklist",
+    "audio",
+    "video_note",
+    "live_photo",
+  ])("logs only the bounded kind for %s", async (kind) => {
+    const onLog = vi.fn();
+    await createLogMiddleware(onLog)(
+      {
+        from: { id: 7, username: "member" },
+        chat: { id: -123, type: "group" },
+        message: {
+          message_id: 42,
+          [kind]: {
+            text: "sensitive-content",
+            phone_number: "secret-phone",
+            file_id: "secret-file",
+          },
+        },
+      } as unknown as WrapperContext,
+      vi.fn(),
+    );
+    expect(onLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({ messageId: 42, mediaKind: kind }),
+      }),
+    );
+    expect(JSON.stringify(onLog.mock.calls)).not.toMatch(
+      /sensitive-content|secret-phone|secret-file/,
+    );
+  });
+
   test("omits text content from group message logs", async () => {
     const onLog = vi.fn();
     const next = vi.fn();

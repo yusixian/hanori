@@ -1,3 +1,8 @@
+import {
+  additionalMessageText,
+  describeAdditionalMessageContent,
+  telegramContentKind,
+} from "../utils/message-content.js";
 import type { ChatSummaryCallback } from "@cos-tool-bot/shared";
 import { buildModelProviderOptions } from "../utils/model-options.js";
 import { capturePromptConfig, type PromptSnapshotConfig } from "../services/prompt-snapshot.js";
@@ -384,7 +389,7 @@ async function prepareMessageVideoStickerFrames(
 
 function extractFilesFromMessage(msg: Message | undefined): ReceivedFile[] {
   const files: ReceivedFile[] = [];
-  if (!msg || describeUnparsedMedia(msg)) return files;
+  if (!msg || msg.animation || msg.video || msg.audio || msg.voice || msg.video_note) return files;
   if (msg.photo) {
     const largest = msg.photo[msg.photo.length - 1]!;
     files.push({ type: "photo", file_id: largest.file_id, file_size: largest.file_size });
@@ -806,7 +811,7 @@ function describeReplyQuote(
   quote: Message["quote"],
   fileDesc?: string,
 ): string {
-  const unparsedMedia = describeUnparsedMedia(replyMsg);
+  const unparsedMedia = describeAdditionalMessageContent(replyMsg, !!quote?.text.trim());
   const attachmentDesc =
     (unparsedMedia ? `${unparsedMedia} ` : "") +
     (fileDesc ?? describeFiles(extractFilesFromMessage(replyMsg), "", " "));
@@ -822,27 +827,10 @@ function describeReplyQuote(
   return `[回复 ${getDisplayName(replyMsg.from)} 的消息: ${content}]\n`;
 }
 
-// Metadata only: these media are not downloaded or decoded by the chat handler.
-function describeUnparsedMedia(msg: Message | undefined): string {
-  if (!msg) return "";
-  const kind = msg.animation
-    ? "动图"
-    : msg.video
-      ? "视频"
-      : msg.audio
-        ? "音频"
-        : msg.voice
-          ? "语音"
-          : msg.video_note
-            ? "视频笔记"
-            : undefined;
-  return kind ? `[${kind}：未解析媒体内容，请勿声称已观看或收听]` : "";
-}
-
 function describeGroupMessageForHistory(msg: Message): string {
   if (msg.text) return msg.text;
   const caption = msg.caption?.trim();
-  let attachment = describeUnparsedMedia(msg);
+  let attachment = describeAdditionalMessageContent(msg);
   if (attachment) return [attachment, caption].filter(Boolean).join("\n");
   if (msg.photo) attachment = "[图片]";
   else if (msg.document) {
@@ -1702,14 +1690,7 @@ export function createAiReplyHandler(
     const personalizationEnabled = privacyMode !== "off";
     if (personalizationEnabled && ctx.from) profileObserver?.observe(ctx.api, ctx.from);
 
-    const supportsAiContent = !!(
-      msg.text ||
-      msg.caption ||
-      msg.photo ||
-      msg.document ||
-      msg.sticker ||
-      describeUnparsedMedia(msg)
-    );
+    const supportsAiContent = !!msg.caption || telegramContentKind(msg) !== "other";
     if (!supportsAiContent) {
       diagnostic({ stage: "complete", outcome: "skipped", code: "unsupported_content" });
       turnCoalescer.advance(coalesceConversationScope, coalesceAdmission);
@@ -1748,7 +1729,7 @@ export function createAiReplyHandler(
           (entry) => entry.threadId === (msg.is_topic_message ? msg.message_thread_id : undefined),
         );
       if (!aiDisabled && engagementPolicy?.mode !== "off" && personalizationEnabled) {
-        const engagementText = (msg.text ?? msg.caption ?? "").trim();
+        const engagementText = (msg.text ?? msg.caption ?? additionalMessageText(msg)).trim();
         const engagementBuffer = getOrCreateEngagementBuffer(chatId, msg.message_thread_id);
         if (engagementText && currentEngagementSource.verifiable) {
           engagementBuffer.push({
@@ -1858,7 +1839,7 @@ export function createAiReplyHandler(
         isPrivate,
         aiDisabled,
         privacyMode,
-        text: msg.text ?? msg.caption ?? "",
+        text: msg.text ?? msg.caption ?? additionalMessageText(msg),
         entities: msg.entities ?? msg.caption_entities ?? [],
         replyToUserId: configuringTask ? ctx.me.id : msg.reply_to_message?.from?.id,
         bot: ctx.me,
@@ -2450,7 +2431,7 @@ export function createAiReplyHandler(
         }
 
         // --- Build text metadata and optional OCR context for history and the model ---
-        const unparsedMedia = describeUnparsedMedia(msg);
+        const unparsedMedia = describeAdditionalMessageContent(msg);
         const attachmentDesc =
           (unparsedMedia ? `${unparsedMedia}\n` : "") +
           describeFiles(
