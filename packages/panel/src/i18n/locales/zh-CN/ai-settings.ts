@@ -1,5 +1,29 @@
 import { engagementSamples } from "./engagement-samples";
 export const aiSettings = {
+  recovery: {
+    title: "重试与备用模型",
+    description: "聊天模型请求失败时尝试恢复，不改变主模型设置。",
+    maxRetries: "每回合额外重试次数",
+    retryOption: "额外重试 {{count}} 次",
+    retryHelp:
+      "同一聊天回合的所有模型步骤共享重试次数。遇到可恢复错误后，最多切换一次已配置的备用模型。",
+    useFallback: "使用备用模型",
+    provider: "备用服务商",
+    model: "备用模型",
+    chooseProvider: "选择服务商",
+    unavailableProvider: "服务商已不可用",
+    modelPlaceholder: "选择模型",
+    providerMissing: "请选择可用服务商，或关闭备用模型。",
+    modelMissing: "请选择此服务商目录中的模型。",
+    sameModel: "这与当前主模型相同，不会作为独立备用模型使用。",
+    fallbackHelp: "请先在服务商模型目录中添加支持的模型，再在这里选择。",
+    noFallback: "尚未配置备用模型，请求失败时不会自动切换模型。",
+    safetyHelp: "取消和确定的配置错误会停止恢复。已开始输出文本或工具参数的步骤不会重放。",
+    override: "单独设置此聊天的恢复策略",
+    inherited: "继承全局重试与备用模型设置。",
+    overridden: "以下设置替代此聊天的全局恢复策略。",
+    fixErrors: "请补全备用模型选择，或关闭备用模型后再保存。",
+  },
   promptVersions: {
     draftOrigin: "草稿加载来源",
     compareSource: "比较基准",

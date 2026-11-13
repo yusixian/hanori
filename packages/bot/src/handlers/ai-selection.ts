@@ -66,6 +66,10 @@ interface AiSelectionRuntimeConfig {
 
 export interface AiSelectionRuntime {
   resolve(chatId?: number): Readonly<ResolvedAiSelection>;
+  resolvePair(pair: {
+    providerId: string;
+    modelId: string;
+  }): Readonly<ResolvedAiSelection> | undefined;
   applyAiSelectionSnapshot(snapshot: AiSelectionSnapshot): void;
   setModel(chatId: number, modelId: string, actorTelegramUserId: number): Promise<void>;
   resetModel(chatId: number, actorTelegramUserId: number): Promise<void>;
@@ -191,6 +195,16 @@ export function createAiSelectionRuntime(config: AiSelectionRuntimeConfig): AiSe
 
   return {
     resolve,
+    resolvePair(pair) {
+      const providerRuntime = providerRegistry.get(pair.providerId);
+      if (!providerRuntime || !supportsModel(providerRuntime, pair.modelId)) return undefined;
+      return Object.freeze({
+        ...pair,
+        providerRuntime,
+        providerFactory: factoryFor(providerRuntime),
+        modelEntry: providerRuntime.models?.find((model) => model.id === pair.modelId),
+      });
+    },
     applyAiSelectionSnapshot(snapshot) {
       currentSnapshot = freezeSnapshot(snapshot);
     },

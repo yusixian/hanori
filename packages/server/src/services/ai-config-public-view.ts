@@ -141,6 +141,7 @@ export function toAiConfigPublic(config: AiConfigStored | null | undefined): AiC
     artworkToolsConfig: migrated.artworkToolsConfig,
     botMemoryConfig: migrated.botMemoryConfig,
     messageConfig: migrated.messageConfig,
+    modelRecovery: migrated.modelRecovery,
     executionConfig: migrated.executionConfig ?? DEFAULT_AI_EXECUTION_CONFIG,
     models: active.models ?? migrated.models,
     modelCommandAccess: migrated.modelCommandAccess,

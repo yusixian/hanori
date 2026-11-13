@@ -1,3 +1,4 @@
+import { createModelRecovery, type RecoverySelection } from "../utils/model-recovery.js";
 import type { QuoteSource } from "@cos-tool-bot/shared";
 import type { QuoteService } from "../services/quote-service.js";
 import {
@@ -256,6 +257,7 @@ export interface AiReplyConfig extends PromptSnapshotConfig {
   botMemoryConfig?: BotMemoryConfig;
   messageConfig?: MessageConfig;
   executionConfig?: AiExecutionConfig;
+  modelRecovery?: import("@cos-tool-bot/shared").ModelRecoveryConfig;
   /** Return after scheduler admission so grammY can process the next update in the same Chat. */
   detachReplyExecution?: boolean;
   imageOcrConfig?: ImageOcrConfig;
@@ -1335,6 +1337,23 @@ export function createAiReplyHandler(
       });
   }
 
+  function recoverySelection(
+    selection: import("./ai-selection.js").ResolvedAiSelection,
+  ): RecoverySelection {
+    return {
+      model: selection.providerFactory(selection.modelId),
+      modelId: selection.modelId,
+      providerId: selection.providerId,
+      providerFormat: selection.providerRuntime.providerFormat,
+      temperature: selection.modelEntry?.temperature,
+      maxTokens: selection.modelEntry?.maxTokens,
+      providerOptions: buildModelProviderOptions(
+        selection.modelEntry,
+        selection.providerRuntime.providerFormat,
+      ),
+    };
+  }
+
   function buildContinueChatConfig(): ContinueChatConfig {
     return {
       diagnosticSecrets: [
@@ -1344,10 +1363,17 @@ export function createAiReplyHandler(
         ...(config.providers ?? []).map((provider) => provider.apiKey),
       ],
       botId: config.botId,
+      modelRecovery: config.modelRecovery,
+      groupOverrides: config.groupOverrides,
+      resolveFallback: (pair) => {
+        const selection = selectionRuntime.resolvePair(pair);
+        return selection ? recoverySelection(selection) : undefined;
+      },
       resolveSelection: (selectionChatId) => {
         const selection = selectionRuntime.resolve(selectionChatId);
         return Object.freeze({
           model: selection.providerFactory(selection.modelId),
+          providerFormat: selection.providerRuntime.providerFormat,
           modelId: selection.modelId,
           providerId: selection.providerId,
           temperature: selection.modelEntry?.temperature,
@@ -2293,8 +2319,6 @@ export function createAiReplyHandler(
         const currentSelection = selectionRuntime.resolve(chatId);
         const currentModel = currentSelection.modelId;
         const currentProviderRuntime = currentSelection.providerRuntime;
-        const currentProviderFactory = currentSelection.providerFactory;
-
         // Collect group context from ring buffer
         let ringBufferContext = "";
         if (!isPrivate && !readConversation && personalizationEnabled) {
@@ -2843,6 +2867,23 @@ export function createAiReplyHandler(
         let capturedStreamError: unknown;
         let providerStreamError: unknown;
         diagnostic({ stage: "model", outcome: "started" });
+        const recoveryPolicy =
+          config.groupOverrides[String(chatId)]?.modelRecovery ?? config.modelRecovery;
+        const fallbackSelection = recoveryPolicy?.fallback
+          ? selectionRuntime.resolvePair(recoveryPolicy.fallback)
+          : undefined;
+        const recovery = createModelRecovery({
+          primary: recoverySelection(currentSelection),
+          fallback: fallbackSelection ? recoverySelection(fallbackSelection) : undefined,
+          config: recoveryPolicy,
+          onLog,
+          signal: perStepAbort.signal,
+          secrets: [
+            config.apiKey,
+            config.token,
+            ...(config.providers ?? []).map((provider) => provider.apiKey),
+          ],
+        });
         const result = streamText({
           onError: ({ error }) => {
             capturedStreamError ??= error;
@@ -2867,9 +2908,9 @@ export function createAiReplyHandler(
               level: "error",
               message: "AI provider stream failed",
               meta: {
-                model: currentModel,
-                providerId: currentProviderRuntime.id,
-                providerFormat: currentProviderRuntime.providerFormat,
+                model: recovery.selection().modelId,
+                providerId: recovery.selection().providerId,
+                providerFormat: recovery.selection().providerFormat,
                 error,
               },
             });
@@ -2879,7 +2920,9 @@ export function createAiReplyHandler(
             stopChatActionHeartbeat?.();
             stopChatActionHeartbeat = undefined;
           },
-          model: currentProviderFactory(currentModel),
+          model: recovery.model,
+          maxRetries: 0,
+          experimental_repairToolCall: recovery.repairToolCall,
           messages,
           tools: wrappedTools,
           prepareStep: prepareFinalAnswerStep(maxSteps, toolset.prepareStep),
@@ -3060,6 +3103,7 @@ export function createAiReplyHandler(
         throwCapturedStreamError(providerStreamError, false);
         const finalText = await resolveCompleteStreamText(result.text, capturedStreamError);
         const steps = await result.steps;
+        const responseSelection = recovery.streamSelections.at(-1) ?? recovery.selection();
         diagnostic({ stage: "model", outcome: "succeeded", code: "model_succeeded" });
         const responseTexts = getTurnResponseTexts(finalText, steps)
           .map((rawText) => {
@@ -3199,8 +3243,8 @@ export function createAiReplyHandler(
           level: "debug",
           message: "AI response",
           meta: {
-            model: currentModel,
-            providerId: currentProviderRuntime.id,
+            model: responseSelection.modelId,
+            providerId: responseSelection.providerId,
             responseText: personalizationEnabled ? text : "[omitted: privacy off]",
             deliveredText: personalizationEnabled ? assistantContent : "[omitted: privacy off]",
             durationMs,
@@ -3214,24 +3258,46 @@ export function createAiReplyHandler(
         });
 
         // Record token usage
-        config.onTokenUsage?.({
-          chatId,
-          userId,
-          model: currentModel,
-          promptTokens: totalUsage.inputTokens ?? 0,
-          completionTokens: totalUsage.outputTokens ?? 0,
-          totalTokens: totalUsage.totalTokens ?? 0,
-          ...extractCacheTokenUsage(
-            totalUsage,
-            steps.map((step) => step.usage),
-          ),
-          providerId: currentProviderRuntime.id,
-          staticPrefixHash: promptTrace.staticPrefixHash,
-          toolSchemaHash,
-          cacheFingerprint,
-          durationMs,
-          trigger: triggerResult as string,
-        });
+        const usageRecords = recovery.streamSelections.some(
+          (entry) =>
+            entry.providerId !== currentSelection.providerId || entry.modelId !== currentModel,
+        )
+          ? steps.map((step, index) => ({
+              selection: recovery.streamSelections[index] ?? recovery.selection(),
+              usage: step.usage,
+              steps: [step.usage],
+            }))
+          : [
+              {
+                selection: recovery.streamSelections[0] ?? recovery.selection(),
+                usage: totalUsage,
+                steps: steps.map((step) => step.usage),
+              },
+            ];
+        for (const record of [
+          ...usageRecords,
+          ...recovery.repairUsages.map((record) => ({ ...record, steps: [record.usage] })),
+        ])
+          config.onTokenUsage?.({
+            chatId,
+            userId,
+            model: record.selection.modelId,
+            promptTokens: record.usage.inputTokens ?? 0,
+            completionTokens: record.usage.outputTokens ?? 0,
+            totalTokens: record.usage.totalTokens ?? 0,
+            ...extractCacheTokenUsage(record.usage, record.steps),
+            providerId: record.selection.providerId,
+            staticPrefixHash: promptTrace.staticPrefixHash,
+            toolSchemaHash,
+            cacheFingerprint: createCacheFingerprint({
+              providerId: record.selection.providerId,
+              model: record.selection.modelId,
+              staticPrefixHash: promptTrace.staticPrefixHash,
+              toolSchemaHash,
+            }),
+            durationMs,
+            trigger: triggerResult as string,
+          });
 
         // Save messages to conversation history (before checking text emptiness)
         if (persistConversation) {
@@ -3261,7 +3327,11 @@ export function createAiReplyHandler(
                 role: "system" as ConversationRole,
                 content: sysMsg,
                 sourceKey: `${sourcePrefix}:system`,
-                meta: { ...turnOrderMeta, model: currentModel, trigger: triggerResult },
+                meta: {
+                  ...turnOrderMeta,
+                  model: responseSelection.modelId,
+                  trigger: triggerResult,
+                },
               });
             }
           }
@@ -3334,7 +3404,7 @@ export function createAiReplyHandler(
               content,
               sourceKey: `telegram:${id}:assistant`,
               meta: {
-                model: currentModel,
+                model: responseSelection.modelId,
                 trigger: triggerResult,
                 usage,
                 ...turnOrderMeta,

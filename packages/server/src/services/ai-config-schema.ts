@@ -98,8 +98,16 @@ export const engagementPolicySchema = z.object({
   timeoutMs: z.number().int().min(100).max(5_000),
 });
 
+export const modelRecoverySchema = z.object({
+  maxRetries: z.number().int().min(0).max(2),
+  fallback: z
+    .object({ providerId: z.string().trim().min(1), modelId: z.string().trim().min(1) })
+    .nullable(),
+});
+
 export const aiConfigSchema = z
   .object({
+    modelRecovery: modelRecoverySchema.optional(),
     revision: z.string().min(1).max(100),
     engagement: engagementPolicySchema
       .extend({ apiKey: z.string().trim().max(512).optional() })
@@ -116,6 +124,7 @@ export const aiConfigSchema = z
     groupOverrides: z.record(
       z.string(),
       z.object({
+        modelRecovery: modelRecoverySchema.nullable().optional(),
         chatId: z.number(),
         chatTitle: z.string().optional(),
         enabled: z.boolean().optional(),

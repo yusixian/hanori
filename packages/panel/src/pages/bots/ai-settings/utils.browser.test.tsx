@@ -197,3 +197,28 @@ test("reports when authoritative config cannot be reloaded", async () => {
     }),
   ).resolves.toBe("reload-failed");
 });
+
+test("renames fallback references without losing chat keys or changing another provider", () => {
+  const current = config();
+  const recovery = { maxRetries: 1, fallback: { providerId: "provider-a", modelId: "old-model" } };
+  current.modelRecovery = recovery;
+  current.groupOverrides = {
+    "-100": { chatId: -100, whitelisted: true, modelRecovery: recovery },
+    "-200": {
+      chatId: -200,
+      whitelisted: true,
+      modelRecovery: { ...recovery, fallback: { providerId: "provider-b", modelId: "old-model" } },
+    },
+  };
+  const renamed = renameProviderModelReferences({
+    config: current,
+    summaryConfig,
+    imageOcrConfig: { enabled: false },
+    providerId: "provider-a",
+    currentId: "old-model",
+    nextId: "new-model",
+  });
+  expect(renamed.config.modelRecovery?.fallback?.modelId).toBe("new-model");
+  expect(renamed.config.groupOverrides["-100"]?.modelRecovery?.fallback?.modelId).toBe("new-model");
+  expect(renamed.config.groupOverrides["-200"]?.modelRecovery?.fallback?.modelId).toBe("old-model");
+});

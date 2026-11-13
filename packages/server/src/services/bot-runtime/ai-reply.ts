@@ -189,6 +189,7 @@ export async function assembleAiReply(
     botMemoryConfig: botMemoryCfg,
     botMemory,
     messageConfig: aiConfig.messageConfig,
+    modelRecovery: aiConfig.modelRecovery,
     executionConfig: aiConfig.executionConfig,
     imageOcrConfig: aiConfig.imageOcrConfig,
     timeoutConfig: runtimeTimeoutConfig,

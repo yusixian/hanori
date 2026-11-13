@@ -104,3 +104,12 @@ test("sends never-expiring and finite Issue confirmation policies in the save re
     buildAiConfigSaveBody(input).githubToolsConfig?.createIssueConfirmationTtlMinutes,
   ).toBeNull();
 });
+
+test("saves recovery defaults and distinguishes inherited chat policy from disabled fallback", () => {
+  const input = fixture();
+  input.config.groupOverrides["-2"]!.modelRecovery = { maxRetries: 0, fallback: null };
+  const body = buildAiConfigSaveBody(input);
+  expect(body.modelRecovery).toEqual({ maxRetries: 1, fallback: null });
+  expect(body.groupOverrides["-1"]?.modelRecovery).toBeNull();
+  expect(body.groupOverrides["-2"]?.modelRecovery).toEqual({ maxRetries: 0, fallback: null });
+});

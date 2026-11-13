@@ -281,7 +281,11 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
 
   const groupOverrides = Object.fromEntries(
     Object.entries(patch.groupOverrides).map(([chatId, incoming]) => {
-      const { engagement: engagementPatch, ...rest } = incoming;
+      const { engagement: engagementPatch, modelRecovery: recoveryPatch, ...rest } = incoming;
+      const recovery =
+        recoveryPatch === undefined
+          ? existingMigrated?.groupOverrides[chatId]?.modelRecovery
+          : recoveryPatch;
       const existingEngagement = existingMigrated?.groupOverrides[chatId]?.engagement;
       const engagement =
         engagementPatch === undefined
@@ -293,6 +297,7 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
         chatId,
         {
           ...rest,
+          ...(recovery ? { modelRecovery: { ...recovery } } : {}),
           ...(engagement === null || engagement === undefined ? {} : { engagement }),
         } satisfies AiGroupOverride,
       ];
@@ -300,6 +305,10 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
   );
 
   const updatedAiConfig: AiConfigStored = {
+    modelRecovery:
+      (patch.modelRecovery ?? existingMigrated?.modelRecovery)
+        ? { ...(patch.modelRecovery ?? existingMigrated!.modelRecovery!) }
+        : undefined,
     engagement,
     enabled: patch.enabled,
     encryptedApiKey,
@@ -367,5 +376,24 @@ export function absorbAiConfigPatch(input: AbsorbAiConfigPatchInput): AiConfigSt
     skillConfig: existingMigrated?.skillConfig,
   };
 
+  for (const recovery of [
+    updatedAiConfig.modelRecovery,
+    ...Object.values(updatedAiConfig.groupOverrides).map((group) => group.modelRecovery),
+  ]) {
+    if (!recovery?.fallback) continue;
+    const target = recovery.fallback;
+    const providerId = providerIdMap.get(target.providerId) ?? target.providerId;
+    const provider = updatedAiConfig.providers?.find((entry) => entry.id === providerId);
+    if (
+      !provider ||
+      !(
+        provider.defaultModel === target.modelId ||
+        provider.models?.some((model) => model.id === target.modelId)
+      )
+    ) {
+      throw new AiConfigPatchError("Fallback Provider/model must reference a configured model");
+    }
+    recovery.fallback = { ...target, providerId };
+  }
   return updatedAiConfig;
 }

@@ -167,7 +167,12 @@ describe("choice continuation tools", () => {
         chatId: CHAT_ID,
         role: "assistant",
         content: "proactive answer",
-        meta: { trigger: "event_continuation", tgMessageId: 201 },
+        meta: {
+          trigger: "event_continuation",
+          tgMessageId: 201,
+          model: "model-a",
+          providerId: "p",
+        },
       },
     ]);
   });
