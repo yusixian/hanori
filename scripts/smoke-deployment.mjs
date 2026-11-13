@@ -51,13 +51,13 @@ export function assertSmokeConfig(config, project) {
   const names = Object.keys(config.services ?? {})
     .sort()
     .join();
-  if (names !== "app,db,db-backup,nsfw-api") fail();
-  for (const service of Object.values(config.services)) {
+  if (names !== "app,db,db-backup,nsfw-api,quote-worker") fail();
+  for (const [name, service] of Object.entries(config.services)) {
     if (
       service.ports?.length ||
       service.container_name ||
       service.privileged ||
-      service.network_mode
+      (service.network_mode && !(name === "quote-worker" && service.network_mode === "none"))
     )
       fail();
     if (service.env_file?.length || service.external_links?.length || service.volumes_from?.length)
@@ -142,6 +142,7 @@ export function deploymentProbe({
   marker,
   create = false,
   wrongKey = false,
+  requireQuoteRenderer = true,
 }) {
   return `
     const assert = (ok) => { if (!ok) throw new Error('Deployment HTTP check failed'); };
@@ -149,6 +150,7 @@ export function deploymentProbe({
       const ready = await fetch('http://localhost:3000/api/health/ready');
       const health = await ready.json();
       assert(ready.ok && health.status === 'ready' && health.version === ${JSON.stringify(sha)});
+      ${requireQuoteRenderer ? "assert(health.quoteRenderer === true);" : ""}
       for (const path of ['/', '/docs/', '/docs/self-hosting/docker']) {
         const response = await fetch('http://localhost:3000' + path);
         assert(response.ok && response.headers.get('content-type')?.includes('text/html'));
@@ -275,6 +277,7 @@ export async function main(args = process.argv.slice(2)) {
         overridePath,
         JSON.stringify({
           services: {
+            "quote-worker": { image: `${project}-quote-worker`, build: { context: root } },
             app: {
               image: config.image,
               build: { context: config.source, args: { APP_VERSION: config.version } },
@@ -435,13 +438,20 @@ export async function main(args = process.argv.slice(2)) {
     phase = "image build";
     source.started = true;
     source.images.add(source.image);
+    source.images.add(`${source.project}-quote-worker`);
     stage("Building initial image in a disposable project.");
-    await source.compose("build", "app");
+    await source.compose("build", "app", "quote-worker");
     phase = "first boot and owner login";
     await boot(source);
     const expectedToken = `123456789:${randomBytes(24).toString("hex")}`;
     const botId = await source.app(
-      deploymentProbe({ sha: source.version, password, expectedToken, create: true }),
+      deploymentProbe({
+        sha: source.version,
+        password,
+        expectedToken,
+        create: true,
+        requireQuoteRenderer: !previousSha,
+      }),
     );
     if (!/^[a-f0-9-]{36}$/.test(botId)) throw new Error("Synthetic Bot was not created.");
     const marker = randomUUID();
@@ -582,7 +592,13 @@ export async function main(args = process.argv.slice(2)) {
     phase = "independent restore";
     restored.started = true;
     restored.images.add(restored.image);
+    restored.images.add(`${restored.project}-quote-worker`);
     await command("docker", ["tag", source.image, restored.image], environment);
+    await command(
+      "docker",
+      ["tag", `${source.project}-quote-worker`, `${restored.project}-quote-worker`],
+      environment,
+    );
     phase = "restore database boot";
     await restored.compose("up", "-d", "--wait", "--wait-timeout", "120", "db");
     phase = "restore database transfer";

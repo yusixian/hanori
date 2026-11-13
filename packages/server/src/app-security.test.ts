@@ -376,6 +376,79 @@ describe("production HTTP policy", () => {
       version: TEST_SHA,
     });
   });
+  it.each([true, false, "failure"])(
+    "reports optional renderer health %s without making the app unready",
+    async (rendererState) => {
+      const runtimeHealth = new RuntimeHealth(TEST_SHA);
+      const app = createApp({
+        db: {} as never,
+        auth: { handler: vi.fn() } as never,
+        baseURL: "https://bot.example.test",
+        botPool: { getGenerationLibraryService: () => ({}) } as never,
+        encryptionKey: "test-key",
+        backupService: {} as never,
+        modelCapabilityService: {} as never,
+        timerRegistry: {} as never,
+        rssFeedService: {} as never,
+        mcpClientManager: {} as never,
+        summaryService: {} as never,
+        summaryConfigService: {} as never,
+        githubAppService: {} as never,
+        miniAppSessionSecret: "x".repeat(32),
+        telegramDirectoryService: {} as never,
+        telegramMembershipVerifier: {} as never,
+        miniAppAccessService: {} as never,
+        groupConfigService: {} as never,
+        chatAiSelectionService: {} as never,
+        botLifecycleService: {} as never,
+        botSettingsService: {} as never,
+        imageGenerationService: {} as never,
+        imageMcpConnectionService: {} as never,
+        usageGovernor: {} as never,
+        runtimeHealth,
+        quoteRenderer: {
+          available: vi.fn(async () => {
+            if (rendererState === "failure") throw new Error("offline");
+            return rendererState === true;
+          }),
+        },
+      });
+
+      await expect((await app.request("/api/health")).json()).resolves.toEqual({ ok: true });
+      await expect((await app.request("/api/health/live")).json()).resolves.toEqual({
+        ok: true,
+        status: "live",
+        version: TEST_SHA,
+      });
+
+      const starting = await app.request("/api/health/ready");
+      expect(starting.status).toBe(503);
+      await expect(starting.json()).resolves.toEqual({
+        ok: false,
+        status: "starting",
+        version: TEST_SHA,
+      });
+
+      runtimeHealth.markReady();
+      const ready = await app.request("/api/health/ready");
+      expect(ready.status).toBe(200);
+      await expect(ready.json()).resolves.toEqual({
+        ok: true,
+        status: "ready",
+        version: TEST_SHA,
+        quoteRenderer: rendererState === true,
+      });
+
+      runtimeHealth.markStopping();
+      const stopping = await app.request("/api/health/ready");
+      expect(stopping.status).toBe(503);
+      await expect(stopping.json()).resolves.toEqual({
+        ok: false,
+        status: "stopping",
+        version: TEST_SHA,
+      });
+    },
+  );
 });
 
 it.each([

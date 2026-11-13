@@ -94,6 +94,7 @@ export const TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   { name: "update_profile", statusLabel: "📝 记住你的变化...", effect: "mutating" },
   { name: "search_profiles", statusLabel: "🔎 想想这个人...", effect: "read_only" },
   { name: "search_history", statusLabel: "📜 翻翻聊天记录...", effect: "read_only" },
+  { name: "create_quote_sticker", statusLabel: "💬 制作语录...", effect: "visible", callLimit: 1 },
   // Telegram tools
   { name: "send_photo", statusLabel: "📷 发送图片...", effect: "visible" },
   { name: "send_voice", statusLabel: "🎙️ 发送语音...", effect: "visible" },

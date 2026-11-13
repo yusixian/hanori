@@ -9,6 +9,7 @@ import {
 } from "./descriptors.js";
 
 const EXPECTED_VISIBLE_EFFECT_TOOL_NAMES = new Set([
+  "create_quote_sticker",
   "react_to_message",
   "send_sticker",
   "send_photo",

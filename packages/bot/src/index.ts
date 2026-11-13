@@ -1,3 +1,7 @@
+import { createQuoteCommands } from "./commands/quote.js";
+import { QuoteService, type QuoteDependencies } from "./services/quote-service.js";
+export { QuoteService, type QuoteDependencies } from "./services/quote-service.js";
+export { captureQuoteSource } from "./utils/quote-source.js";
 import type { ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { createScheduledTaskConfirmationHandler } from "./handlers/scheduled-task-confirmation.js";
 import type { RuntimeDiagnosticsPort } from "@cos-tool-bot/shared";
@@ -120,6 +124,7 @@ export interface TimerCallbacks {
 }
 
 export interface BotConfig {
+  quotes?: QuoteDependencies;
   scheduledTasks?: ScheduledTaskPort;
   nsfwChecker?: NsfwChecker;
   nsfwThreshold?: number;
@@ -427,6 +432,19 @@ export function createBot(config: BotConfig) {
     });
   }
 
+  let quoteSources: (
+    chatId: number,
+    threadId: number | null,
+  ) => Promise<readonly import("@cos-tool-bot/shared").QuoteSource[]> = async () => [];
+  const quotes = config.quotes
+    ? new QuoteService(config.quotes, {
+        api: bot.api,
+        privacy: config.privacy,
+        getBufferedSources: (chatId, threadId) => quoteSources(chatId, threadId),
+        safety: { checker: config.nsfwChecker, threshold: config.nsfwThreshold },
+      })
+    : undefined;
+
   // Build AI handler + runtime state (created before commands so state is available)
   let aiHandler: ReturnType<typeof createAiReplyHandler>["handler"] | undefined;
   let aiState: ReturnType<typeof createAiReplyHandler>["state"] | undefined;
@@ -484,6 +502,7 @@ export function createBot(config: BotConfig) {
     const result = createAiReplyHandler(
       {
         ...config.aiReply,
+        quotes,
         runtimeDiagnostics: config.runtimeDiagnostics,
         getDiagnosticTraceId: (ctx) => diagnosticTraces.get(ctx),
         privacy: config.privacy,
@@ -500,6 +519,7 @@ export function createBot(config: BotConfig) {
       },
       { ingressLock: aiIngressLock },
     );
+    quoteSources = result.getQuoteSources;
     aiHandler = result.handler;
     aiState = result.state;
     aiSetModelForChat = result.setModelForChat;
@@ -591,6 +611,14 @@ export function createBot(config: BotConfig) {
           : undefined,
       );
     });
+  }
+  if (quotes) {
+    const commands = createQuoteCommands(quotes, {
+      privacy: config.privacy,
+      adminIds: adminChatIds,
+    });
+    commandRegistry.register("q", commands.q);
+    commandRegistry.register("qcolor", commands.qcolor);
   }
   commandRegistry.register(
     "md2tg",
@@ -911,7 +939,10 @@ export function createBot(config: BotConfig) {
   });
 
   harness?.onBotReady(createHarnessTelegram(bot.api));
-  botDisposers.set(bot, () => disposeAiRuntime?.());
+  botDisposers.set(bot, async () => {
+    quotes?.close();
+    await disposeAiRuntime?.();
+  });
   return bot;
 }
 

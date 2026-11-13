@@ -50,6 +50,7 @@ export const env = {
   GEMINI_IMAGE_MCP_URL: optional("GEMINI_IMAGE_MCP_URL"),
   PIXAI_MCP_URL: optional("PIXAI_MCP_URL"),
   PLUGIN_DIRECTORY: optional("PLUGIN_DIRECTORY", "./data/plugins"),
+  QUOTE_WORKER_SOCKET: optional("QUOTE_WORKER_SOCKET"),
   MEDIA_WORKER_SOCKET: optional("MEDIA_WORKER_SOCKET"),
   MEDIA_WORKER_SECRET: optional("MEDIA_WORKER_SECRET"),
   MEDIA_JOB_DIR: optional("MEDIA_JOB_DIR", "./data/media-jobs"),

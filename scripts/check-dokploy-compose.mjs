@@ -79,6 +79,77 @@ for (const volume of ["pgdata", "backups", "botdata", "codeworkspaces", "codegit
   assert(dokploy.volumes?.[volume], `Dokploy config is missing persistent volume ${volume}`);
 }
 
+const quote = services["quote-worker"];
+assert(quote && !quote.profiles?.length, "quote-worker must be enabled without a profile");
+assert(quote.build?.target === "quote-worker", "quote-worker must build its native renderer image");
+assert(
+  quote.network_mode === "none" &&
+    !Object.keys(quote.networks ?? {}).length &&
+    !quote.ports?.length,
+  "quote-worker must remain offline",
+);
+assert(
+  quote.read_only && quote.user === "1000:1000",
+  "quote-worker must use read-only root and unprivileged UID 1000",
+);
+assert(
+  quote.cap_drop?.includes("ALL") &&
+    !quote.cap_add?.length &&
+    quote.security_opt?.includes("no-new-privileges:true"),
+  "quote-worker must not gain privileges",
+);
+assert(
+  !quote.privileged && !quote.devices?.length && !quote.secrets?.length && !quote.configs?.length,
+  "quote-worker must not receive host resources or credentials",
+);
+assert(
+  quote.mem_limit > 0 &&
+    quote.mem_limit <= 512 * 1024 * 1024 &&
+    quote.cpus > 0 &&
+    quote.cpus <= 1 &&
+    quote.pids_limit > 0 &&
+    quote.pids_limit <= 32,
+  "quote-worker resource limits are required",
+);
+assert(
+  Object.keys(quote.environment ?? {}).join() === "QUOTE_WORKER_SOCKET",
+  "quote-worker may receive only its Unix socket path",
+);
+assert(
+  quote.environment.QUOTE_WORKER_SOCKET === "/quote-control/worker.sock" &&
+    services.app.environment.QUOTE_WORKER_SOCKET === "/quote-control/worker.sock",
+  "app and quote-worker socket paths must match",
+);
+assert(
+  quote.volumes?.length === 1 &&
+    quote.volumes[0].type === "volume" &&
+    quote.volumes[0].source === "quotecontrol" &&
+    quote.volumes[0].target === "/quote-control",
+  "quote-worker may share only its socket volume",
+);
+assert(
+  services.app.volumes.some(
+    (mount) => mount.source === "quotecontrol" && mount.target === "/quote-control",
+  ),
+  "app must mount the quote socket volume",
+);
+assert(
+  services.app.depends_on?.["quote-worker"]?.condition === "service_healthy",
+  "app startup must wait for the real renderer probe",
+);
+assert(
+  quote.tmpfs?.length === 1 && quote.tmpfs[0] === "/tmp:size=128m,mode=1777",
+  "quote-worker temporary files must be bounded",
+);
+assert(
+  dokploy.volumes?.quotecontrol?.driver_opts?.o === "size=1048576,uid=0,gid=1000,mode=0770",
+  "quote socket volume must be bounded and private to root/worker group",
+);
+assert(
+  JSON.stringify(quote.healthcheck?.test).includes("/health"),
+  "quote-worker needs its native renderer health check",
+);
+
 const coding = renderConfig(["docker-compose.yml"], "coding");
 assert(coding.services["coding-worker"], "coding profile is missing coding-worker");
 assert(coding.services["coding-egress-proxy"], "coding profile is missing coding-egress-proxy");

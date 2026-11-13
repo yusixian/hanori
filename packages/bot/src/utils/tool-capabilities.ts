@@ -18,6 +18,7 @@ export type ToolPromptCapability =
   | "image-generation"
   | "memory"
   | "multi-message"
+  | "quote-sticker"
   | "sticker"
   | "web"
   | "web-search"
@@ -31,6 +32,7 @@ const CAPABILITY_MARKER_TOOLS: Record<ToolPromptCapability, string> = {
   "image-generation": "get_image_generation",
   memory: "get_profile",
   "multi-message": "multi_message",
+  "quote-sticker": "create_quote_sticker",
   sticker: "send_sticker",
   web: "fetch_webpage",
   "web-search": "web_search",

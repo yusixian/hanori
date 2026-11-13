@@ -367,6 +367,27 @@ describe("selectHistoryWithinTokenBudget", () => {
     expect(truncated.messages[0]!.content.length).toBeLessThan(5000);
   });
 
+  it("does not expose a full quote source when its visible history body is truncated", () => {
+    const quoteSource = {
+      version: 1 as const,
+      messageId: 10,
+      threadId: null,
+      capturedAt: 100,
+      text: "long body ".repeat(500),
+      entities: [],
+      author: { key: "user:42", name: "Alice" },
+      privacyUserIds: [42],
+    };
+    const result = selectHistoryWithinTokenBudget(
+      [{ ...rows[0]!, content: quoteSource.text, quoteSource }],
+      undefined,
+      100,
+    );
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.content.length).toBeLessThan(quoteSource.text.length);
+    expect(result.messages[0]?.quoteSource).toBeUndefined();
+  });
+
   it("marks a compacted summary as degraded when the raw tail is also truncated", () => {
     const largeRows = rows.map((row) => ({ ...row, content: row.content.repeat(100) }));
     const selected = selectHistoryWithinTokenBudget(

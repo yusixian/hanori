@@ -39,6 +39,11 @@ export function buildExtendedToolsPrompt(opts: ExtendedToolsPromptOptions): stri
   lines.push(
     "- react_to_message: 对当前消息添加 emoji 表情回应。只能使用 Telegram 允许的 emoji: 👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 🕊 🤡 🥱 🥴 😍 🐳 ❤‍🔥 🌚 🌭 💯 🤣 ⚡ 🍌 🏆 💔 🤨 😐 🍓 🍾 💋 🖕 😈 😴 😭 🤓 👻 👨‍💻 👀 🎃 🙈 😇 😨 🤝 ✍ 🤗 🫡 🎅 🎄 ☃ 💅 🤪 🗿 🆒 💘 🙉 🦄 😘 💊 🙊 😎 👾 🤷‍♂ 🤷 🤷‍♀ 😡",
   );
+  if (opts.capabilities.has("quote-sticker")) {
+    lines.push(
+      "- create_quote_sticker: 将本轮真实可见消息制作成语录；可响应明确请求或克制记录名场面，只截原文，不编造、不刷屏。每轮最多发送一次，受隐私与保护规则约束。",
+    );
+  }
   if (opts.capabilities.has("sticker")) {
     lines.push("- send_sticker: 发送一个贴纸来表达情绪");
   }

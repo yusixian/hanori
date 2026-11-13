@@ -5,6 +5,8 @@ import {
   conversationSummaries,
 } from "@cos-tool-bot/database";
 import {
+  parseQuoteSource,
+  type QuoteSource,
   formatConversationForwardOrigin,
   formatConversationRelayOrigin,
   parseConversationRelayOrigin,
@@ -236,6 +238,18 @@ function projectTgMessageId(meta: Record<string, unknown> | null | undefined): {
   return typeof tgMessageId === "number" && Number.isInteger(tgMessageId) ? { tgMessageId } : {};
 }
 
+function projectQuoteSource(meta: Record<string, unknown> | null | undefined): {
+  quoteSource?: QuoteSource;
+} {
+  const source = parseQuoteSource(meta?.["quoteSource"]);
+  return source &&
+    source.messageId === meta?.["tgMessageId"] &&
+    Object.hasOwn(meta ?? {}, "threadId") &&
+    source.threadId === meta?.["threadId"]
+    ? { quoteSource: source }
+    : {};
+}
+
 function truncateToTokenBudget(content: string, budget: number): string {
   if (budget <= 0) return "";
   if (countTokens(content) <= budget) return content;
@@ -261,6 +275,7 @@ export function selectHistoryWithinTokenBudget(
     forwardOrigin?: ConversationForwardOrigin;
     relayOrigin?: ConversationRelayOrigin;
     tgMessageId?: number;
+    quoteSource?: QuoteSource;
   }>,
   active:
     | {
@@ -328,6 +343,7 @@ export function selectHistoryWithinTokenBudget(
       reversed.push({
         ...message,
         content: truncateToTokenBudget(message.content, contentBudget),
+        quoteSource: undefined,
       });
       tailTokens = tailBudget;
       break;
@@ -650,6 +666,7 @@ export class ConversationStore {
         forwardOrigin?: ConversationForwardOrigin;
         relayOrigin?: ConversationRelayOrigin;
         tgMessageId?: number;
+        quoteSource?: QuoteSource;
       }> = [];
       let pageBeforeOrderId: number | undefined;
       let pageBeforeId: number | undefined;
@@ -702,6 +719,7 @@ export class ConversationStore {
           ...projectForwardOrigin(meta),
           ...projectRelayOrigin(meta),
           ...projectTgMessageId(meta),
+          ...projectQuoteSource(meta),
         }));
         newestFirst.push(...projectedBatch);
         scannedTokens += projectedBatch.reduce(
@@ -743,6 +761,7 @@ export class ConversationStore {
           ...(message.forwardOrigin ? { forwardOrigin: message.forwardOrigin } : {}),
           ...(message.relayOrigin ? { relayOrigin: message.relayOrigin } : {}),
           ...(message.tgMessageId === undefined ? {} : { tgMessageId: message.tgMessageId }),
+          ...(message.quoteSource ? { quoteSource: message.quoteSource } : {}),
         })),
         budgetTrace: selected.trace,
       };
@@ -789,6 +808,7 @@ export class ConversationStore {
         ...projectForwardOrigin(meta),
         ...projectRelayOrigin(meta),
         ...projectTgMessageId(meta),
+        ...projectQuoteSource(meta),
       })),
     };
   }

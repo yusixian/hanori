@@ -116,6 +116,7 @@ interface AppOptions {
   memoryConsolidationPreview?: MemoryConsolidationPreviewPort;
   engagementSampleService?: EngagementSampleService;
   runtimeHealth: RuntimeHealthReader;
+  quoteRenderer?: { available(): Promise<boolean> };
   harness?: HarnessWebhookHandler;
   /** Absent when HARNESS_CONFIG_PATH is unset; the admin API then reports `enabled: false`. */
   harnessAdmin?: HarnessAdminPort;
@@ -374,7 +375,7 @@ export function createApp(options: AppOptions) {
       const { version } = runtimeHealth.snapshot();
       return c.json({ ok: true as const, status: "live" as const, version });
     })
-    .get("/api/health/ready", (c) => {
+    .get("/api/health/ready", async (c) => {
       const snapshot = runtimeHealth.snapshot();
       if (snapshot.status !== "ready") {
         return c.json(
@@ -382,7 +383,14 @@ export function createApp(options: AppOptions) {
           503,
         );
       }
-      return c.json({ ok: true as const, status: snapshot.status, version: snapshot.version });
+      return c.json({
+        ok: true as const,
+        status: snapshot.status,
+        version: snapshot.version,
+        ...(options.quoteRenderer
+          ? { quoteRenderer: await options.quoteRenderer.available().catch(() => false) }
+          : {}),
+      });
     })
     .all("/api/*", (c) => c.json({ ok: false as const, error: "Not found" }, 404));
 

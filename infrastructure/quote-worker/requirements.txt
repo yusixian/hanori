@@ -1,0 +1,4 @@
+cairocffi==1.7.1
+pangocffi==0.14.1
+pangocairocffi==0.7.1
+Pillow==13.0.0

@@ -14,8 +14,12 @@ export interface UserPrivacyForgetResult {
   personalMemories: number;
 }
 
+export class UserPrivacyBusyError extends Error {}
+
 export interface UserPrivacyCallbacks {
   getMode(userId: number): Promise<UserPrivacyMode>;
+  /** Durable quote-only boundary so old Telegram replies cannot bypass an off/forget after restart. */
+  getQuoteResetAt?(userId: number): Promise<number | undefined>;
   /** Last off/forget boundary for invalidating captured context after re-enabling. */
   getContextResetAt?(userId: number): number | undefined;
   /**
@@ -23,6 +27,12 @@ export interface UserPrivacyCallbacks {
    * Callers must use this around reads, writes, and privacy mutations.
    */
   runExclusive<T>(userId: number, operation: () => Promise<T>): Promise<T>;
+  /** Reentrant multi-author operations, including tools within an existing user lock. */
+  runExclusiveMany?<T>(
+    userIds: readonly number[],
+    operation: () => Promise<T>,
+    options?: { waitIfBusy?: boolean },
+  ): Promise<T>;
   setMode(userId: number, mode: UserPrivacyMode): Promise<void>;
   forget(userId: number): Promise<UserPrivacyForgetResult>;
 }

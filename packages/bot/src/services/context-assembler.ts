@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 import { countTokens } from "gpt-tokenizer";
 import type {
+  QuoteSource,
   AgentToolsConfig,
   BotMemory,
   BotMemoryCallbacks,
@@ -73,6 +74,7 @@ export interface PromptBundle {
    * cite, so they are also the only legal `reply_to_specific` targets.
    */
   replyableMessageIds: number[];
+  quoteSources?: QuoteSource[];
 }
 
 export interface CompletedPromptBundle {
@@ -81,6 +83,7 @@ export interface CompletedPromptBundle {
 }
 
 export interface ContextAssemblyInput {
+  quoteSourcesEnabled?: boolean;
   systemPrompt: string;
   behavioralPrompt?: string;
   groupBehavioralPrompt?: string;
@@ -366,11 +369,13 @@ function finishBundle(
   messages: PromptBundle["messages"],
   sections: PromptSectionTrace[],
   replyableMessageIds: number[] = [],
+  quoteSources?: QuoteSource[],
 ): PromptBundle {
   const staticContent = messages[0]?.content ?? "";
   return {
     messages,
     replyableMessageIds,
+    ...(quoteSources ? { quoteSources } : {}),
     trace: {
       sections,
       totalEstimatedTokens: messages.reduce(
@@ -562,6 +567,7 @@ function historySections(
   isPrivate: boolean,
   ringBufferContext?: string,
   replyableMessageIds?: number[],
+  quoteSources?: QuoteSource[],
 ): RawSection[][] {
   const historyDetails = history.budgetTrace
     ? {
@@ -584,12 +590,14 @@ function historySections(
   /** Records the id as quotable and returns it, or returns undefined when it stays hidden. */
   const claimQuotableId = (message: (typeof history.messages)[number]) => {
     if (
-      (isPrivate && message.role !== "assistant") ||
+      (isPrivate && message.role !== "assistant" && !(quoteSources && message.quoteSource)) ||
       !["user", "assistant"].includes(message.role) ||
       message.tgMessageId === undefined
     )
       return undefined;
     replyableMessageIds?.push(message.tgMessageId);
+    if (message.quoteSource && message.quoteSource.messageId === message.tgMessageId)
+      quoteSources?.push(structuredClone(message.quoteSource));
     return message.tgMessageId;
   };
   if (historyFormat === "prompt") {
@@ -678,9 +686,13 @@ function historySections(
       const id = claimQuotableId(message);
       if (id !== undefined) content = `[#${id}] ${attributedContent}`;
     }
-    if (!isPrivate && message.userName && message.role === "user") {
+    if (
+      ((!isPrivate && message.userName) || (quoteSources && message.quoteSource)) &&
+      message.role === "user"
+    ) {
       const id = claimQuotableId(message);
-      const label = id === undefined ? message.userName : `#${id} ${message.userName}`;
+      const label =
+        id === undefined ? message.userName || "User" : `#${id} ${message.userName || "User"}`;
       content = `[${label}]: ${attributedContent}`;
     }
     groups.push([
@@ -717,6 +729,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
   const messages: PromptBundle["messages"] = [];
   const traces: PromptSectionTrace[] = [];
   const replyableMessageIds: number[] = [];
+  const quoteSources: QuoteSource[] | undefined = input.quoteSourcesEnabled ? [] : undefined;
   const conversationConfig = input.conversationConfig ?? DEFAULT_CONVERSATION_CONFIG;
   const historyFormat = input.historyFormat ?? conversationConfig.historyFormat ?? "prompt";
   const memoryConfig = input.memoryConfig ?? DEFAULT_MEMORY_CONFIG;
@@ -796,6 +809,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
       input.isPrivate,
       input.ringBufferContext,
       replyableMessageIds,
+      quoteSources,
     )) {
       appendMessage(messages, traces, group);
     }
@@ -964,7 +978,7 @@ export async function buildPromptBundle(input: ContextAssemblyInput): Promise<Pr
 
   appendMessage(messages, traces, lateBindingSections);
 
-  return finishBundle(messages, traces, replyableMessageIds);
+  return finishBundle(messages, traces, replyableMessageIds, quoteSources);
 }
 
 export async function assembleContext(input: ContextAssemblyInput): Promise<AssembledContext> {

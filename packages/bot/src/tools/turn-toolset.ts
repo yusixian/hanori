@@ -1,3 +1,6 @@
+import { createQuoteTools } from "./quote.js";
+import type { QuoteService } from "../services/quote-service.js";
+import type { QuoteSource } from "@cos-tool-bot/shared";
 import { createSummaryTools } from "./summary.js";
 import type { ChatSummaryCallback, ScheduledTaskPort } from "@cos-tool-bot/shared";
 import { createScheduledTaskTools } from "./scheduled-tasks.js";
@@ -64,6 +67,7 @@ const MAX_TIMER_CHAIN_DEPTH = 2;
 
 /** Bot configuration and long-lived ports a turn's tools are bound from. */
 export interface TurnToolsetConfig {
+  quotes?: QuoteService;
   scheduledTasks?: ScheduledTaskPort;
   summarizeChat?: ChatSummaryCallback;
   botId: string;
@@ -131,6 +135,7 @@ export interface TurnInteractionInput {
 }
 
 export interface TurnToolsetInput {
+  quoteSources?: readonly QuoteSource[];
   threadId?: number;
   currentTraceId?: string;
   signal?: AbortSignal;
@@ -361,7 +366,23 @@ export async function createTurnToolset(input: TurnToolsetInput): Promise<TurnTo
         config.plugins!.createSession({ ...pluginActor, readOnly: true }, signal)
     : undefined;
 
+  const quoteTools =
+    config.quotes && personalized && userId !== undefined && (await config.quotes.available())
+      ? createQuoteTools(config.quotes, {
+          chatId,
+          threadId: input.threadId,
+          userId,
+          sources: input.quoteSources,
+          visibleIds: input.interaction.telegram.getReplyableMessageIds ?? (() => []),
+          onceGuard: input.interaction.onceGuard,
+          signal: input.signal,
+          replyToMessageId: entry.kind === "reply" ? entry.message.id : undefined,
+          onSent: (id) => input.interaction.recentBotMessageIds.push(id),
+        })
+      : {};
+
   const tools: Record<string, Tool> = {
+    ...quoteTools,
     ...scheduledTools,
     ...(input.privacyMode === "normal" && config.summarizeChat && userId !== undefined
       ? createSummaryTools(config.summarizeChat, {

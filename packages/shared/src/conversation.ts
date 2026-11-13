@@ -1,3 +1,4 @@
+import type { QuoteSource } from "./quote.js";
 export interface ConversationConfig {
   enabled: boolean;
   maxContextMessages: number;
@@ -98,6 +99,7 @@ export interface ConversationCallbacks {
       createdAt?: string;
       /** Telegram message ID, present for messages the bot ingested from a chat. */
       tgMessageId?: number;
+      quoteSource?: QuoteSource;
     }>;
     budgetTrace?: ConversationHistoryBudgetTrace;
   }>;
