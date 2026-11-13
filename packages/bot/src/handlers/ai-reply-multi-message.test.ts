@@ -173,6 +173,10 @@ describe("AI reply multi_message delivery", () => {
       wait: vi.fn().mockResolvedValue(10),
       deleteWaiting: vi.fn(),
       resolveWait: vi.fn().mockResolvedValue(10),
+      waiting_message: {
+        ...sentMessage(10, "waiting"),
+        reply_to_message: { ...sentMessage(7, "hello"), reply_to_message: undefined },
+      },
       directlyReply: vi.fn(),
     } as unknown as BotContext;
     const runtime = createAiReplyHandler(config);
@@ -194,6 +198,11 @@ describe("AI reply multi_message delivery", () => {
     const assistantRows = savedBatch.filter((message) => message.role === "assistant");
     expect(assistantRows.map((message) => message.content).join("\n")).toBe(deliveredContent);
     expect(assistantRows.map((message) => message.meta?.tgMessageId)).toEqual([20, 21, 10]);
+    expect(assistantRows.map((message) => message.meta?.replyToTgMessageId)).toEqual([
+      undefined,
+      undefined,
+      7,
+    ]);
     expect(logs).toContainEqual(
       expect.objectContaining({
         level: "info",

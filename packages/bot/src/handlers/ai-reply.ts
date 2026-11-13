@@ -542,22 +542,32 @@ const DETACHED_DELIVERY_DRAIN_WAIT_MS = 5_000;
 async function directlyReplyAndCleanup(
   ctx: WrapperContext,
   text: string,
+  onReplyTarget?: (id: number, parent: number | undefined) => void,
 ): Promise<number | undefined> {
   const sent = await ctx.directlyReply(text).catch(() => undefined);
   if (!sent) return undefined;
+  onReplyTarget?.(sent.message_id, sent.reply_to_message?.message_id);
   await ctx.deleteWaiting().catch(() => {});
   return sent.message_id;
 }
 
-async function safeReply(ctx: WrapperContext, text: string): Promise<number | undefined> {
+async function safeReply(
+  ctx: WrapperContext,
+  text: string,
+  onReplyTarget?: (id: number, parent: number | undefined) => void,
+): Promise<number | undefined> {
+  const resolve = async (mode?: "HTML") => {
+    const id = await ctx.resolveWait(mode ? markdownToTelegramHtml(text) : text, mode);
+    onReplyTarget?.(id, ctx.waiting_message?.reply_to_message?.message_id);
+    return id;
+  };
   try {
-    const html = markdownToTelegramHtml(text);
-    return await ctx.resolveWait(html, "HTML");
+    return await resolve("HTML");
   } catch {
     try {
-      return await ctx.resolveWait(text);
+      return await resolve();
     } catch {
-      return directlyReplyAndCleanup(ctx, text);
+      return directlyReplyAndCleanup(ctx, text, onReplyTarget);
     }
   }
 }
@@ -567,8 +577,9 @@ export async function safeFormattedReply(
   text: string,
   richMessageEnabled: boolean,
   onFallback?: (mode: "rich" | "html", error: unknown) => void,
+  onReplyTarget?: (id: number, parent: number | undefined) => void,
 ): Promise<number | undefined> {
-  if (!richMessageEnabled) return safeReply(ctx, text);
+  if (!richMessageEnabled) return safeReply(ctx, text, onReplyTarget);
 
   const messageThreadId = ctx.message?.message_thread_id;
   const topicOptions =
@@ -598,9 +609,10 @@ export async function safeFormattedReply(
       );
     }
     await ctx.deleteWaiting();
+    onReplyTarget?.(result.message.message_id, result.message.reply_to_message?.message_id);
     return result.message.message_id;
   } catch {
-    return safeReply(ctx, text);
+    return safeReply(ctx, text, onReplyTarget);
   }
 }
 
@@ -611,7 +623,7 @@ export async function sendFormattedChunks(
   richMessageEnabled: boolean,
   onFallback?: (mode: "rich" | "html", error: unknown) => void,
   shouldAbort?: () => boolean,
-  onDelivered?: (messageId: number, text: string) => void,
+  onDelivered?: (messageId: number, text: string, parent?: number) => void,
 ): Promise<number[]> {
   const threshold = messageConfig.autoSplitThreshold ?? 0;
   const chunks = splitMessage(text, threshold > 0 ? threshold : 4096);
@@ -625,10 +637,19 @@ export async function sendFormattedChunks(
       if (shouldAbort?.()) break;
     }
 
-    const replyMsgId = await safeFormattedReply(ctx, chunk, richMessageEnabled, onFallback);
+    let parent: number | undefined;
+    const replyMsgId = await safeFormattedReply(
+      ctx,
+      chunk,
+      richMessageEnabled,
+      onFallback,
+      (_id, target) => {
+        parent = target;
+      },
+    );
     if (!replyMsgId) throw new Error("Telegram reply delivery failed");
     messageIds.push(replyMsgId);
-    onDelivered?.(replyMsgId, chunk);
+    onDelivered?.(replyMsgId, chunk, parent);
     // A final fallback may edit the waiting message even when Rich delivery is enabled.
     // Detach it after conversion so later chunks become additional persistent messages.
     if (ctx.waiting_message?.message_id === replyMsgId) {
@@ -2228,6 +2249,7 @@ export function createAiReplyHandler(
 
         const deliveredMultiMessages: string[] = [];
         const deliveredMessages = new Map<number, string>();
+        const deliveredReplyTargets = new Map<number, number>();
         const interaction: TurnInteractionInput = {
           recentBotMessageIds: chatBotMsgIds,
           onceGuard,
@@ -2235,8 +2257,9 @@ export function createAiReplyHandler(
             getReplyableMessageIds: () => replyableMessageIds,
             conversation: persistConversation ? config.conversation : undefined,
             richMessageEnabled: isRichMessageEnabled(turnMessageConfig),
-            onTextMessageSent: (id, content) => {
+            onTextMessageSent: (id, content, parent) => {
               deliveredMessages.set(id, content);
+              if (parent) deliveredReplyTargets.set(id, parent);
             },
             onOwnMessageEdited: (id, content) => {
               if (deliveredMessages.has(id)) deliveredMessages.set(id, content);
@@ -3005,6 +3028,8 @@ export function createAiReplyHandler(
               const content =
                 message.text ?? (message.rich_message ? streamedContent.trim() : undefined);
               if (content) deliveredMessages.set(message.message_id, content);
+              if (message.reply_to_message)
+                deliveredReplyTargets.set(message.message_id, message.reply_to_message.message_id);
             }
           } else {
             // ─── Segment mode and group stream mode: drain before final delivery ───
@@ -3087,8 +3112,9 @@ export function createAiReplyHandler(
               richMessageEnabled,
               logRichFallback,
               () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
-              (id, content) => {
+              (id, content, parent) => {
                 deliveredMessages.set(id, content);
+                if (parent) deliveredReplyTargets.set(id, parent);
               },
             );
             chatBotMsgIds.push(...messageIds);
@@ -3118,8 +3144,9 @@ export function createAiReplyHandler(
               richMessageEnabled,
               logRichFallback,
               () => aiDisabled || !!manualAbort?.signal.aborted || !executionContext.isCurrent(),
-              (id, content) => {
+              (id, content, parent) => {
                 deliveredMessages.set(id, content);
+                if (parent) deliveredReplyTargets.set(id, parent);
               },
             );
             chatBotMsgIds.push(...messageIds);
@@ -3312,6 +3339,9 @@ export function createAiReplyHandler(
                 usage,
                 ...turnOrderMeta,
                 tgMessageId: id,
+                ...(deliveredReplyTargets.has(id)
+                  ? { replyToTgMessageId: deliveredReplyTargets.get(id) }
+                  : {}),
                 threadId: msg.is_topic_message ? msg.message_thread_id : null,
               },
             });

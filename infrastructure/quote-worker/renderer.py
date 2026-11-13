@@ -23,8 +23,8 @@ MAX_ASSET = 8 * 1024 * 1024
 MAX_TOTAL_ASSETS = 24 * 1024 * 1024
 MAX_PIXELS = 16_000_000
 MAX_OUTPUT = 8 * 1024 * 1024
-BODY_SIZE = 28
-NAME_SIZE = 22
+BODY_SIZE = 24
+NAME_SIZE = 20
 FONT = "Noto Sans, Noto Sans CJK SC, Noto Color Emoji"
 STYLE = {
     "bold": ('weight', 'bold'), "italic": ('style', 'italic'),
@@ -74,7 +74,7 @@ def styled_markup(value, entities):
     return ''.join(output)
 
 
-def measure(context, value, size, entities=(), bold=False, width=400):
+def measure(context, value, size, entities=(), bold=False, width=432):
     layout = pangocairo.create_layout(context)
     font = pango.FontDescription()
     font.family = FONT
@@ -151,14 +151,15 @@ def render(document, destination):
         require(total_text <= 12000, 'text_limit')
         entities = message.get('entities', [])
         require(isinstance(entities, list) and len(entities) <= 100)
-        blocks = [(measure(measuring, name, NAME_SIZE, bold=True), name_color)]
+        parts = [('text', (measure(measuring, name, NAME_SIZE, bold=True), name_color))]
         reply = message.get('reply')
         if reply:
             fields(reply, ('author', 'text'))
-            preview = text(reply.get('author'), 256) + '\n' + text(reply.get('text'), 180)
-            blocks.append((measure(measuring, preview, 18), foreground))
+            reply_name = measure(measuring, text(reply.get('author'), 256), 16, bold=True, width=420)
+            reply_text = measure(measuring, text(reply.get('text'), 180), 16, width=420)
+            parts.append(('reply', (reply_name, reply_text)))
         if body:
-            blocks.append((measure(measuring, body, BODY_SIZE, entities), foreground))
+            parts.append(('text', (measure(measuring, body, BODY_SIZE, entities), foreground)))
         media = image_asset(message['media'], assets) if message.get('media') else None
         avatar = None
         if message.get('author', {}).get('avatar'):
@@ -166,7 +167,6 @@ def render(document, destination):
             avatar = image_asset(author['avatar'], assets, True)
         media_w = math.ceil(media.get_width() / 2) if media else 0
         media_h = math.ceil(media.get_height() / 2) if media else 0
-        parts = [('text', block) for block in blocks]
         if media:
             parts.append(('image', (media, media_w, media_h)))
         if rows and rows[-1]['key'] == key and rows[-1]['name'] == name:
@@ -180,12 +180,15 @@ def render(document, destination):
             if kind == 'text':
                 widths.append(part[0][1])
                 heights.append(part[0][2])
+            elif kind == 'reply':
+                widths.append(max(part[0][1], part[1][1]) + 12)
+                heights.append(part[0][2] + part[1][2] + 4)
             else:
                 widths.append(part[1])
                 heights.append(part[2])
-        row['width'] = max([24, *widths]) + 28
+        row['width'] = max([24, *widths]) + 24
         row['height'] = max(48, sum(heights) + 6 * len(heights) + 22)
-        width = max(width, 68 + row['width'] + 12)
+        width = max(width, 48 + row['width'] + 8)
         height += row['height'] + 12
         require(width <= 512 and height <= 4096, 'canvas_limit')
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width * 2, height * 2)
@@ -195,13 +198,13 @@ def render(document, destination):
     for row in rows:
         key, initial, avatar = row["key"], row["initial"], row["avatar"]
         ctx.set_source_rgb(*background)
-        bubble(ctx, 68, y, row["width"], row["height"])
+        bubble(ctx, 48, y, row["width"], row["height"])
         ctx.save()
-        ctx.arc(32, y + 24, 24, 0, math.tau)
+        ctx.arc(24, y + 18, 18, 0, math.tau)
         ctx.clip()
         if avatar:
-            ctx.translate(8, y)
-            ctx.scale(.5, .5)
+            ctx.translate(6, y)
+            ctx.scale(.375, .375)
             ctx.set_source_surface(avatar)
             ctx.paint()
         else:
@@ -210,7 +213,7 @@ def render(document, destination):
             ctx.paint()
             obj, w, h, dx, dy = initial
             ctx.set_source_rgb(1, 1, 1)
-            ctx.move_to(32 - w / 2 + dx, y + 24 - h / 2 + dy)
+            ctx.move_to(24 - w / 2 + dx, y + 18 - h / 2 + dy)
             pangocairo.show_layout(ctx, obj)
         ctx.restore()
         cursor = y + 12
@@ -218,13 +221,26 @@ def render(document, destination):
             if kind == 'text':
                 (obj, _, h, dx, dy), foreground_color = part
                 ctx.set_source_rgb(*foreground_color)
-                ctx.move_to(82 + dx, cursor + dy)
+                ctx.move_to(60 + dx, cursor + dy)
                 pangocairo.show_layout(ctx, obj)
                 cursor += h + 6
+            elif kind == 'reply':
+                reply_name, reply_text = part
+                preview_height = reply_name[2] + reply_text[2] + 4
+                ctx.set_source_rgb(*name_color)
+                ctx.rectangle(60, cursor, 3, preview_height)
+                ctx.fill()
+                for block, tint in ((reply_name, name_color), (reply_text, foreground)):
+                    obj, _, h, dx, dy = block
+                    ctx.set_source_rgba(*tint, .85)
+                    ctx.move_to(72 + dx, cursor + dy)
+                    pangocairo.show_layout(ctx, obj)
+                    cursor += h + 2
+                cursor += 6
             else:
                 media, _, media_h = part
                 ctx.save()
-                ctx.translate(82, cursor)
+                ctx.translate(60, cursor)
                 ctx.scale(.5, .5)
                 ctx.set_source_surface(media)
                 ctx.paint()

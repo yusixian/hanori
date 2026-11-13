@@ -20,6 +20,55 @@ export class QuoteSourceStore {
     return {
       getQuoteSources: (chatId, threadId, query) =>
         this.getQuoteSources(botId, chatId, threadId, query),
+      getQuoteReplyTargets: async (chatId, threadId, messageIds) => {
+        if (
+          !messageIds.length ||
+          messageIds.length > 10 ||
+          messageIds.some((id) => !Number.isSafeInteger(id) || id <= 0)
+        )
+          throw new Error("Invalid quote reply query");
+        const rows = await this.db
+          .selectDistinctOn([sql`${conversationMessages.meta}->>'tgMessageId'`], {
+            meta: conversationMessages.meta,
+          })
+          .from(conversationMessages)
+          .where(
+            and(
+              eq(conversationMessages.botId, botId),
+              eq(conversationMessages.chatId, chatId),
+              inArray(conversationMessages.role, ["user", "context", "assistant"]),
+              sql`${conversationMessages.meta}::jsonb ? 'threadId'`,
+              threadId === null
+                ? sql`${conversationMessages.meta}->>'threadId' is null`
+                : eq(sql<string>`${conversationMessages.meta}->>'threadId'`, String(threadId)),
+              inArray(
+                sql<string>`${conversationMessages.meta}->>'tgMessageId'`,
+                messageIds.map(String),
+              ),
+            ),
+          )
+          .orderBy(sql`${conversationMessages.meta}->>'tgMessageId'`, desc(conversationMessages.id))
+          .limit(messageIds.length);
+        const targets: Record<number, number> = {};
+        for (const { meta } of rows) {
+          const id = meta?.["tgMessageId"];
+          const source = parseQuoteSource(meta?.["quoteSource"]);
+          const parent =
+            meta?.["replyToTgMessageId"] ??
+            (source?.messageId === id && source?.threadId === threadId
+              ? source.replyToMessageId
+              : undefined);
+          if (
+            typeof id === "number" &&
+            typeof parent === "number" &&
+            Number.isSafeInteger(parent) &&
+            parent > 0 &&
+            targets[id] === undefined
+          )
+            targets[id] = parent;
+        }
+        return targets;
+      },
       getQuoteColor: async (chatId) => {
         const [row] = await this.db
           .select({ value: settings.value })

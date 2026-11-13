@@ -60,8 +60,18 @@ describe.runIf(Boolean(url))("quote sources PostgreSQL boundaries", () => {
       await tx.execute(
         sql`INSERT INTO user_privacy_settings (bot_id,user_id,mode) VALUES (${botId},6,'off')`,
       );
+      await insert(30, { threadId: null, replyToTgMessageId: 10 });
+      await insert(31, { threadId: null, quoteSource: { ...source(31), replyToMessageId: 12 } });
+      await insert(32, { threadId: 20, replyToTgMessageId: 10 });
+      await insert(33, { threadId: null, replyToTgMessageId: 10 }, otherBot);
+      await insert(34, { threadId: null, replyToTgMessageId: 10 }, botId, -200);
+      await insert(35, { replyToTgMessageId: 10 });
       const db = tx as unknown as Database;
       const store = new QuoteSourceStore(db).forBot(botId);
+      expect(await store.getQuoteReplyTargets!(-100, null, [30, 31, 32, 33, 34, 35])).toEqual({
+        30: 10,
+        31: 12,
+      });
       expect(
         (
           await store.getQuoteSources(-100, null, { anchorId: 10, direction: "forward", limit: 2 })
