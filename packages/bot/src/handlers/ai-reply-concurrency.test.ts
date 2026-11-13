@@ -979,9 +979,13 @@ describe("AI reply turn coalescing", () => {
     },
   );
 
-  it.each([false, true])(
-    "keeps selected quotes when coalescing follow-ups (private=%s)",
-    async (privateChat) => {
+  it.each(
+    [false, true].flatMap((privateChat) =>
+      ["text", "rich_message"].map((source) => ({ privateChat, source })),
+    ),
+  )(
+    "keeps selected $source quotes when coalescing follow-ups (private=$privateChat)",
+    async ({ privateChat, source }) => {
       const activeReply = deferred<string>();
       streamTextMock
         .mockImplementationOnce(() => streamResult(activeReply.promise))
@@ -1005,7 +1009,9 @@ describe("AI reply turn coalescing", () => {
           date: 0,
           chat: followUp.chat!,
           from: { id: 99, is_bot: true, first_name: "Ai" },
-          text: `未选中的全文 ${quote}`,
+          ...(source === "text"
+            ? { text: `未选中的全文 ${quote}` }
+            : { rich_message: { blocks: [{ type: "paragraph", text: `未选中的全文 ${quote}` }] } }),
         } as Message;
         followUp.msg!.quote = { text: quote, position: 8 };
         await runtime.handler(followUp, vi.fn());
