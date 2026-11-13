@@ -87,6 +87,18 @@ function createCommandTestBot(
     adminChatIds: [userId],
     logger: { warn: vi.fn(), error: vi.fn() } as never,
     miniAppUrl: complete ? "https://panel.example/mini-app/bot-commands/help" : undefined,
+    quotes: complete
+      ? {
+          renderer: { available: vi.fn(async () => true), render: vi.fn() },
+          store: {
+            getQuoteSources: vi.fn(),
+            getQuoteColor: vi.fn(),
+            setQuoteColor: vi.fn(),
+            isQuoteOutput: vi.fn(),
+            markQuoteOutput: vi.fn(),
+          },
+        }
+      : undefined,
     aiReply: complete
       ? {
           botId: "bot-commands",
@@ -195,6 +207,27 @@ function privateMessage(content: Record<string, unknown>, senderId = userId) {
 }
 
 describe("createBot command registry", () => {
+  it("registers quote commands without an AI configuration", () => {
+    const bot = createBot({
+      token: "test-token",
+      botId: "quote-test",
+      adminChatIds: [],
+      logger: { warn: vi.fn(), error: vi.fn() } as never,
+      quotes: {
+        renderer: { available: vi.fn(async () => true), render: vi.fn() },
+        store: {
+          getQuoteSources: vi.fn(),
+          getQuoteColor: vi.fn(),
+          setQuoteColor: vi.fn(),
+          isQuoteOutput: vi.fn(),
+          markQuoteOutput: vi.fn(),
+        },
+      },
+    });
+    expect(getActiveBotCommands(bot).map((command) => command.command)).toEqual(
+      expect.arrayContaining(["q", "qcolor"]),
+    );
+  });
   it("handles persisted ASR confirmation in the original topic even when AI is disabled", async () => {
     const port: MediaTranscriptionPort = {
       create: vi.fn(),

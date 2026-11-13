@@ -560,3 +560,72 @@ describe("media context through the AI handler", () => {
     expect(content.match(/fixture caption/g)).toHaveLength(1);
   });
 });
+
+describe("quote metadata admission", () => {
+  const quotes = { available: async () => true } as unknown as NonNullable<AiReplyConfig["quotes"]>;
+  function quoteContext(extra: Record<string, unknown> = {}) {
+    return context({
+      date: 100,
+      chat: { id: -100, type: "supergroup" },
+      from: { id: 42, is_bot: false, first_name: "Sender" },
+      text: "ordinary source",
+      ...extra,
+    });
+  }
+  it("persists sanitized minimal sources and rechecks privacy on buffered reads", async () => {
+    let mode: "normal" | "off" = "normal";
+    const store = history();
+    const handler = runtime(store, {
+      quotes,
+      privacy: {
+        getMode: async () => mode,
+        runExclusive: async (_id, run) => run(),
+        setMode: vi.fn(),
+        forget: vi.fn(),
+      },
+    });
+    await handler.handler(
+      quoteContext({
+        text: "public secret",
+        entities: [{ type: "spoiler", offset: 7, length: 6 }],
+      }),
+      vi.fn(),
+    );
+    expect(store.upsertUserMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        meta: expect.objectContaining({
+          quoteSource: expect.objectContaining({
+            messageId: 7,
+            threadId: null,
+            text: "public [剧透已隐藏]",
+            capturedAt: 100000,
+          }),
+        }),
+      }),
+    );
+    expect(await handler.getQuoteSources(-100, null)).toHaveLength(1);
+    expect(await handler.getQuoteSources(-100, 20)).toEqual([]);
+    mode = "off";
+    expect(await handler.getQuoteSources(-100, null)).toEqual([]);
+    mode = "normal";
+    expect(await handler.getQuoteSources(-100, null)).toEqual([]);
+  });
+  it("does not retain quote sources in off mode while preserving existing public history", async () => {
+    const store = history();
+    const handler = runtime(store, {
+      quotes,
+      privacy: {
+        getMode: async () => "off",
+        runExclusive: async (_id, run) => run(),
+        setMode: vi.fn(),
+        forget: vi.fn(),
+      },
+    });
+    await handler.handler(quoteContext(), vi.fn());
+    expect(await handler.getQuoteSources(-100, null)).toEqual([]);
+    expect(store.upsertUserMessage).toHaveBeenCalledOnce();
+    const row = vi.mocked(store.upsertUserMessage!).mock.calls[0]?.[0];
+    expect(row?.content).toContain("ordinary source");
+    expect(row?.meta).not.toHaveProperty("quoteSource");
+  });
+});

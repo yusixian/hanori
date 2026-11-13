@@ -605,3 +605,54 @@ describe("prompt bundle", () => {
     error.mockRestore();
   });
 });
+
+describe("quote history snapshots", () => {
+  it.each(["messages", "prompt"] as const)(
+    "captures only structured sources shown in %s history",
+    async (historyFormat) => {
+      const conversation = createConversation();
+      const source = {
+        version: 1 as const,
+        messageId: 101,
+        threadId: null,
+        capturedAt: 100,
+        text: "Original",
+        entities: [],
+        author: { key: "user:42", name: "Alice" },
+        privacyUserIds: [42],
+      };
+      vi.mocked(conversation.getHistory).mockResolvedValue({
+        summary: null,
+        messages: [
+          {
+            role: "user",
+            content: "Original",
+            userName: "Alice",
+            tgMessageId: 101,
+            quoteSource: source,
+          },
+          { role: "user", content: "Legacy", userName: "Alice", tgMessageId: 102 },
+        ],
+      });
+      const result = await assembleContext(
+        runtimeInput({ conversation, historyFormat, quoteSourcesEnabled: true }),
+      );
+      expect(result.quoteSources).toEqual([source]);
+      expect(result.replyableMessageIds).toContain(101);
+      expect(result.replyableMessageIds).not.toContain(102);
+      expect(JSON.stringify(result.messages)).toContain("101");
+      source.text = "Later edit";
+      expect(result.quoteSources?.[0]?.text).toBe("Original");
+    },
+  );
+  it("leaves private legacy IDs hidden when the quote feature is unavailable", async () => {
+    const conversation = createConversation();
+    vi.mocked(conversation.getHistory).mockResolvedValue({
+      summary: null,
+      messages: [{ role: "user", content: "Legacy", userName: "Alice", tgMessageId: 101 }],
+    });
+    const result = await assembleContext(runtimeInput({ conversation }));
+    expect(result.quoteSources).toBeUndefined();
+    expect(result.replyableMessageIds).not.toContain(101);
+  });
+});

@@ -106,6 +106,7 @@ test("release titles and navigation stay concise", async ({ page }, info) => {
 });
 
 for (const { version, theme, status = "" } of [
+  { version: "v0.28.0", theme: "语录贴纸与配色" },
   { version: "v0.27.1", theme: "Telegram 内容接收补漏" },
   { version: "v0.27.0", theme: "媒体上下文与局部引用" },
   { version: "v0.26.1", theme: "自定义总结格式优先级" },

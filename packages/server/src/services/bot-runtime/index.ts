@@ -86,6 +86,10 @@ export async function assembleBotRuntime(
   return {
     config: {
       botId,
+      quotes:
+        services.quoteRenderer && services.quoteSourceStore
+          ? { renderer: services.quoteRenderer, store: services.quoteSourceStore.forBot(botId) }
+          : undefined,
       scheduledTasks: services.scheduledTasks,
       nsfwChecker: services.nsfwChecker,
       nsfwThreshold: aiRuntime?.config.webToolsConfig?.imageGeneration?.pixaiConfig?.nsfwThreshold,

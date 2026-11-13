@@ -30,6 +30,7 @@ function isolatedConfig() {
       db: {},
       "db-backup": {},
       "nsfw-api": {},
+      "quote-worker": { network_mode: "none" },
     },
     volumes: { botdata: { name: `${project}_botdata` } },
     networks: { default: { name: `${project}_default` } },
@@ -156,7 +157,7 @@ describe("deployment smoke failure handling", () => {
           const password = fs.readFileSync(envPath, 'utf8').match(/^DB_PASSWORD=(.*)$/m)[1];
           console.log(JSON.stringify({
             name: project,
-            services: { app: { labels: { 'traefik.enable': 'false' }, environment: { DATABASE_URL: 'postgresql://bot:' + password + '@db:5432/cos_tool_bot' } }, db: {}, 'db-backup': {}, 'nsfw-api': {} },
+            services: { app: { labels: { 'traefik.enable': 'false' }, environment: { DATABASE_URL: 'postgresql://bot:' + password + '@db:5432/cos_tool_bot' } }, db: {}, 'db-backup': {}, 'nsfw-api': {}, 'quote-worker': { network_mode: 'none' } },
             volumes: { pgdata: { name: project + '_pgdata' } },
             networks: { default: { name: project + '_default' } }
           }));
@@ -215,12 +216,13 @@ describe("deployment credential probe", () => {
   async function runProbe({
     tokenMasked = "123:abc***ghi",
     loginOk = true,
+    quoteRenderer = true,
     wrongKey = false,
   } = {}) {
     const exit = vi.fn();
     const fetch = vi.fn(async (url, init) => {
       if (url.endsWith("/api/health/ready"))
-        return { ok: true, json: async () => ({ status: "ready", version: sha }) };
+        return { ok: true, json: async () => ({ status: "ready", version: sha, quoteRenderer }) };
       if (url.endsWith("/api/auth/sign-in/email")) {
         expect(JSON.parse(init.body).password).toBe(password);
         return {
@@ -251,6 +253,9 @@ describe("deployment credential probe", () => {
   }
   it("authenticates with the original password while bootstrap is disabled", async () => {
     expect(await runProbe()).not.toHaveBeenCalled();
+  });
+  it("rejects readiness when the native quote renderer is unavailable", async () => {
+    expect(await runProbe({ quoteRenderer: false })).toHaveBeenCalledExactlyOnceWith(1);
   });
   it("rejects HTTP 200 with an undecryptable credential", async () => {
     expect(await runProbe({ tokenMasked: "(密钥不匹配)" })).toHaveBeenCalledExactlyOnceWith(1);

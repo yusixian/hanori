@@ -24,8 +24,11 @@ export function createPrivacyCallbacks(
 ): UserPrivacyCallbacks {
   return {
     getMode: (userId) => privacyService.getMode(botId, userId),
+    getQuoteResetAt: (userId) => privacyService.getQuoteResetAt(botId, userId),
     getContextResetAt: (userId) => privacyService.getContextResetAt(botId, userId),
     runExclusive: (userId, operation) => privacyService.runExclusive(botId, userId, operation),
+    runExclusiveMany: (userIds, operation, options) =>
+      privacyService.runLibraryExclusiveMany(botId, userIds, operation, options),
     setMode: (userId, mode) => privacyService.setMode(botId, userId, mode),
     forget: async (userId) => {
       await privacyService.setMode(botId, userId, "off");

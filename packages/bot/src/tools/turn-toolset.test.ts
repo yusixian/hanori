@@ -45,6 +45,18 @@ function promptFor(toolset: TurnToolset): string {
 }
 
 describe("turn toolset", () => {
+  it("offers quote tools only with a live renderer and personalization enabled", async () => {
+    const quotes = {
+      available: vi.fn(async () => true),
+    } as unknown as import("../services/quote-service.js").QuoteService;
+    const config = createToolsetConfig({ quotes });
+    expect((await assemble(reply(), { config })).tools.create_quote_sticker).toBeDefined();
+    expect(
+      (await assemble(reply(), { config, privacyMode: "off" })).tools.create_quote_sticker,
+    ).toBeUndefined();
+    vi.mocked(quotes.available).mockResolvedValue(false);
+    expect((await assemble(reply(), { config })).tools.create_quote_sticker).toBeUndefined();
+  });
   it("offers continuations exactly the reply families minus the declared reply-only tools", async () => {
     const replyNames = Object.keys((await assemble(reply())).tools);
     const continueNames = Object.keys((await assemble(continuation())).tools);

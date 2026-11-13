@@ -1,3 +1,4 @@
+import { QuoteRendererClient } from "./services/quote-renderer.js";
 import { ScheduledTaskService } from "./services/scheduled-tasks.js";
 import { registerFatalErrorHandlers } from "./fatal-errors.js";
 import { UsageMaintenanceService } from "./services/usage-maintenance.js";
@@ -207,6 +208,10 @@ const pluginManager = new PluginManager(
 
 // Bot Pool
 const botPool = new BotPool(db, logger, timerRegistry);
+const quoteRenderer = env.QUOTE_WORKER_SOCKET
+  ? new QuoteRendererClient({ socketPath: env.QUOTE_WORKER_SOCKET })
+  : undefined;
+if (quoteRenderer) botPool.setQuoteRenderer(quoteRenderer);
 const scheduledTasks = new ScheduledTaskService(
   db,
   (task, plan, context) => botPool.runScheduledTask(task, plan, context),
@@ -650,6 +655,7 @@ const app = createApp({
   memoryConsolidationPreview: memoryConsolidator,
   engagementSampleService,
   runtimeHealth,
+  quoteRenderer,
   harness: harnessService,
   harnessAdmin,
 });

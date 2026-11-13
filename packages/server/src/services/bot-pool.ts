@@ -1,3 +1,5 @@
+import type { QuoteDependencies } from "@cos-tool-bot/bot";
+import { QuoteSourceStore } from "./quote-source-store.js";
 import { readScheduledTaskHistory } from "./scheduled-task-history.js";
 import { executeScheduledTaskWithBotConfig } from "@cos-tool-bot/bot";
 import type {
@@ -257,6 +259,11 @@ export class BotPool {
         ),
       ),
     );
+  }
+
+  setQuoteRenderer(renderer: QuoteDependencies["renderer"]) {
+    this.services.quoteRenderer = renderer;
+    this.services.quoteSourceStore = new QuoteSourceStore(this.db);
   }
 
   setScheduledTasks(port: ScheduledTaskPort) {
