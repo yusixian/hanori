@@ -109,10 +109,6 @@ export interface ImageGenerationServiceOptions {
   isGroupEnabled?: (botId: string, chatId: number) => Promise<boolean>;
 }
 
-interface CreateImageOptions {
-  requestSnapshot?: ImageGenerationRequestSnapshot;
-}
-
 export const DEFAULT_IMAGE_GOVERNANCE_CONFIG: ImageGovernanceConfig = {
   timezone: "Asia/Shanghai",
   generalRouteMode: "off",
@@ -394,7 +390,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async createImpl(
     actor: ImageGenerationActor,
     request: CreateImageRequest,
-    options?: CreateImageOptions,
+    confirmation?: GenerationRow,
   ): Promise<ImageGenerationAdmission> {
     const requestContext = {
       ...actor.requestContext,
@@ -412,6 +408,18 @@ export class ImageGenerationService implements ImageGenerationPort {
     if (!binding) return { accepted: false, reason: "provider_unavailable" };
     if (provider !== "general_backend" && !this.isMcpBackendAvailable(provider))
       return { accepted: false, reason: "provider_unavailable" };
+    let adapter: PixaiMcpAdapter | undefined;
+    if (provider !== "general_backend") {
+      try {
+        adapter = this.backend(provider, confirmation?.providerMetadata).adapter;
+      } catch {
+        return {
+          accepted: false,
+          reason: "provider_unavailable",
+          message: "原图片供应商连接不可用，请恢复连接后重试。",
+        };
+      }
+    }
     const nativeImages = provider === "mcp_openai" || provider === "mcp_gemini";
     const dynamic = (() => {
       try {
@@ -522,7 +530,7 @@ export class ImageGenerationService implements ImageGenerationPort {
     // A model may repeat create_image with a new tool call id or spell out a default.
     // Deduplicate the resolved provider inputs, including the compiled material prompt.
     const requestKey =
-      requestContext.messageId !== undefined
+      !confirmation && requestContext.messageId !== undefined
         ? `cos-tool-bot:${actor.botId}:${createHash("sha256")
             .update(
               JSON.stringify([
@@ -558,7 +566,10 @@ export class ImageGenerationService implements ImageGenerationPort {
         )
         .limit(1);
       if (existing && canAccess(actor, existing))
-        return { accepted: true, generation: toView(existing) };
+        return {
+          accepted: true,
+          generation: toView(existing, isPendingConfirmation(existing)),
+        };
     }
 
     let usageReservationId: string | undefined;
@@ -584,20 +595,22 @@ export class ImageGenerationService implements ImageGenerationPort {
       usageReservationId = reservation.reservationId;
     }
 
-    const id = randomUUID();
-    const idempotencyKey = requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
+    const id = confirmation?.id ?? randomUUID();
+    const idempotencyKey =
+      confirmation?.idempotencyKey ?? requestKey ?? `cos-tool-bot:${actor.botId}:${id}`;
     const endpoint = this.backends[provider]?.endpoint;
     const providerMetadata = { backendId: provider, ...(endpoint ? { endpoint } : {}) };
     const initialSnapshot: ImageGenerationRequestSnapshot = {
-      ...options?.requestSnapshot,
+      ...confirmation?.requestSnapshot,
+      ...(request.routingIntent ? { routingIntent: request.routingIntent } : {}),
       ...(presetKey ? { presetKey } : {}),
       ...dynamic.data,
       ...(dynamic.data.model ? { modelId: dynamic.data.model } : {}),
-      ...(options?.requestSnapshot?.requestContext !== undefined ||
+      ...(confirmation?.requestSnapshot?.requestContext !== undefined ||
       Object.keys(requestContext).length
         ? {
             requestContext: {
-              ...options?.requestSnapshot?.requestContext,
+              ...confirmation?.requestSnapshot?.requestContext,
               ...requestContext,
             },
           }
@@ -605,22 +618,52 @@ export class ImageGenerationService implements ImageGenerationPort {
       ...(materialSnapshot ? { materials: materialSnapshot } : {}),
     };
     try {
-      await this.db.insert(imageGenerations).values({
-        id,
-        botId: actor.botId,
-        chatId: actor.chatId,
-        userId: actor.userId,
-        provider,
-        purpose: request.purpose,
-        presetKey,
-        idempotencyKey,
-        prompt,
-        negativePrompt: request.negativePrompt,
-        seed: request.seed,
-        requestSnapshot: initialSnapshot,
-        providerMetadata,
-        usageReservationId,
-      });
+      if (confirmation) {
+        const [claimed] = await this.db
+          .update(imageGenerations)
+          .set({
+            state: "preparing",
+            approvalState: "approved",
+            prompt,
+            seed: request.seed,
+            requestSnapshot: initialSnapshot,
+            usageReservationId,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(imageGenerations.id, id),
+              pendingConfirmationFilter(),
+              sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${confirmation.providerMetadata?.["confirmationVersion"] ?? 1}`,
+            ),
+          )
+          .returning({ id: imageGenerations.id });
+        if (!claimed) {
+          await this.refund(actor.botId, usageReservationId);
+          return {
+            accepted: false,
+            reason: "invalid_request",
+            message: "Image confirmation is no longer pending or has changed",
+          };
+        }
+      } else {
+        await this.db.insert(imageGenerations).values({
+          id,
+          botId: actor.botId,
+          chatId: actor.chatId,
+          userId: actor.userId,
+          provider,
+          purpose: request.purpose,
+          presetKey,
+          idempotencyKey,
+          prompt,
+          negativePrompt: request.negativePrompt,
+          seed: request.seed,
+          requestSnapshot: initialSnapshot,
+          providerMetadata,
+          usageReservationId,
+        });
+      }
     } catch {
       await this.refund(actor.botId, usageReservationId).catch(() => {});
       if (requestKey) {
@@ -635,14 +678,24 @@ export class ImageGenerationService implements ImageGenerationPort {
           )
           .limit(1);
         if (existing && canAccess(actor, existing))
-          return { accepted: true, generation: toView(existing) };
+          return {
+            accepted: true,
+            generation: toView(existing, isPendingConfirmation(existing)),
+          };
       }
       return { accepted: false, reason: "provider_unavailable" };
     }
-    await this.recordEvent(actor.botId, id, "created", "preparing", undefined, {
-      ...requestContext,
-      chatId: actor.chatId,
-    });
+    await this.recordEvent(
+      actor.botId,
+      id,
+      confirmation ? "state_changed" : "created",
+      "preparing",
+      undefined,
+      {
+        ...requestContext,
+        chatId: actor.chatId,
+      },
+    );
 
     if (requiresConfirmation) {
       await this.db
@@ -657,17 +710,17 @@ export class ImageGenerationService implements ImageGenerationPort {
       await this.recordEvent(actor.botId, id, "state_changed", "awaiting_approval", undefined, {
         confirmationRequired: true,
       });
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, true))! };
     }
 
-    if (provider === "general_backend") {
+    if (!adapter) {
       this.background(id, "general", () => this.runGeneral(id));
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     }
 
     let prepared;
     try {
-      prepared = await this.backend(provider, providerMetadata).adapter.prepareGeneration({
+      prepared = await adapter.prepareGeneration({
         ...(presetKey ? { presetKey } : {}),
         ...dynamic.data,
         prompt,
@@ -684,7 +737,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "provider_unavailable",
-        generation: (await this.getOwned(actor, id)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation)) ?? undefined,
       };
     }
     if (prepared.approvalRequired && !actor.isBotAdmin && !actor.isDelegatedGroupAdmin) {
@@ -693,7 +746,7 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "approval_required",
-        generation: (await this.getOwned(actor, id)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation)) ?? undefined,
       };
     }
     try {
@@ -721,43 +774,53 @@ export class ImageGenerationService implements ImageGenerationPort {
       return {
         accepted: false,
         reason: "provider_unavailable",
-        generation: (await this.getOwned(actor, id).catch(() => null)) ?? undefined,
+        generation: (await this.getOwned(actor, id, !!confirmation).catch(() => null)) ?? undefined,
       };
     }
 
     try {
-      const operation = await this.backend(provider).adapter.startGeneration(
-        prepared.planId,
-        idempotencyKey,
-      );
+      const operation = await adapter.startGeneration(prepared.planId, idempotencyKey);
       await this.persistStartedOperation(id, prepared.planId, operation, actor.botId);
       this.background(id, "advance", () => this.advance(id));
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     } catch {
       // The provider may have accepted the idempotent start before the connection or
       // database failed. Keep the reservation and retry the same key during recovery.
       this.scheduleAdvance(id, 5_000);
-      return { accepted: true, generation: (await this.getOwned(actor, id))! };
+      return { accepted: true, generation: (await this.getOwned(actor, id, !!confirmation))! };
     }
   }
 
   async get(
     actor: ImageGenerationActor,
     generationId: string,
+    options?: { confirmationPreview?: boolean },
   ): Promise<ImageGenerationView | null> {
-    return this.getOwned(actor, generationId);
+    return this.getOwned(actor, generationId, options?.confirmationPreview);
   }
 
-  confirm(actor: ImageGenerationActor, generationId: string): Promise<ImageGenerationAdmission> {
+  confirm(
+    actor: ImageGenerationActor,
+    generationId: string,
+    expectedVersion = 1,
+  ): Promise<ImageGenerationAdmission> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
       if (!row || !canAccess(actor, row)) return { accepted: false, reason: "not_allowed" };
-      if (row.state !== "awaiting_approval" || row.approvalState !== "required") {
+      if (!isPendingConfirmation(row)) {
         return {
           accepted: false,
           reason: "invalid_request",
           message: "Image confirmation is no longer pending",
           generation: toView(row),
+        };
+      }
+      if ((row.providerMetadata?.["confirmationVersion"] ?? 1) !== expectedVersion) {
+        return {
+          accepted: false,
+          reason: "invalid_request",
+          message: "确认卡已更新，请核对最新参数后重新确认。",
+          generation: toView(row, true),
         };
       }
       const snapshot = row.requestSnapshot ?? {};
@@ -769,22 +832,6 @@ export class ImageGenerationService implements ImageGenerationPort {
         typeof row.providerMetadata?.["confirmationDraftPrompt"] === "string"
           ? row.providerMetadata["confirmationDraftPrompt"]
           : row.prompt;
-      const claimed = await this.db
-        .update(imageGenerations)
-        .set({ state: "cancelled", approvalState: "approved", updatedAt: new Date() })
-        .where(
-          and(
-            eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
-          ),
-        )
-        .returning({ id: imageGenerations.id });
-      if (!claimed.length)
-        return {
-          accepted: false,
-          reason: "invalid_request",
-          message: "Image confirmation was already handled",
-        };
       const confirmedActor = { ...actor, imageConfirmationPolicy: "never" as const };
       const parameters = Object.fromEntries(
         Object.entries({
@@ -795,7 +842,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           imageSize: snapshot.imageSize,
         }).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
       );
-      const result = await this.createImpl(
+      return this.createImpl(
         {
           ...confirmedActor,
           ...(Object.keys(snapshot.requestContext ?? {}).length || actor.requestContext
@@ -811,34 +858,16 @@ export class ImageGenerationService implements ImageGenerationPort {
           purpose: row.purpose as ImagePurpose,
           backendId: row.provider as ImageProviderRoute,
           prompt: draftPrompt,
+          materials: { skipLibrary: true },
+          routingIntent: snapshot.routingIntent,
           ...(row.presetKey ? { presetKey: row.presetKey } : {}),
           ...(row.negativePrompt ? { negativePrompt: row.negativePrompt } : {}),
           ...(draftSeed === null || draftSeed === undefined ? {} : { seed: draftSeed }),
           ...(Object.keys(parameters).length ? { parameters } : {}),
         },
-        { requestSnapshot: snapshot },
+        row,
       );
-      if (!result.accepted) await this.restoreConfirmation(generationId, row.botId);
-      return result;
     });
-  }
-
-  private async restoreConfirmation(generationId: string, botId: string): Promise<void> {
-    const [restored] = await this.db
-      .update(imageGenerations)
-      .set({ state: "awaiting_approval", approvalState: "required", updatedAt: new Date() })
-      .where(
-        and(
-          eq(imageGenerations.id, generationId),
-          eq(imageGenerations.state, "cancelled"),
-          eq(imageGenerations.approvalState, "approved"),
-        ),
-      )
-      .returning({ id: imageGenerations.id });
-    if (restored)
-      await this.recordEvent(botId, generationId, "state_changed", "awaiting_approval", undefined, {
-        confirmation: "retryable",
-      });
   }
 
   editConfirmation(
@@ -848,7 +877,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageGenerationView | null> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
-      if (!row || !canAccess(actor, row) || row.state !== "awaiting_approval") return null;
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
       if (!Number.isSafeInteger(patch.seed) || patch.seed < 0 || patch.seed > 4_294_967_295)
         return null;
       const version =
@@ -867,12 +896,12 @@ export class ImageGenerationService implements ImageGenerationPort {
         .where(
           and(
             eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
+            pendingConfirmationFilter(),
             sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
           ),
         )
         .returning({ id: imageGenerations.id });
-      return updated ? this.getOwned(actor, generationId) : null;
+      return updated ? this.getOwned(actor, generationId, true) : null;
     });
   }
 
@@ -882,7 +911,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageGenerationView | null> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
-      if (!row || !canAccess(actor, row) || row.state !== "awaiting_approval") return null;
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
       const version =
         typeof row.providerMetadata?.["confirmationVersion"] === "number"
           ? row.providerMetadata["confirmationVersion"] + 1
@@ -892,6 +921,7 @@ export class ImageGenerationService implements ImageGenerationPort {
         confirmationVersion: version,
       };
       delete metadata.confirmationDraftSeed;
+      delete metadata.confirmationDraftPrompt;
       delete metadata.confirmationState;
       const [updated] = await this.db
         .update(imageGenerations)
@@ -899,11 +929,12 @@ export class ImageGenerationService implements ImageGenerationPort {
         .where(
           and(
             eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
+            pendingConfirmationFilter(),
+            sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
           ),
         )
         .returning({ id: imageGenerations.id });
-      return updated ? this.getOwned(actor, generationId) : null;
+      return updated ? this.getOwned(actor, generationId, true) : null;
     });
   }
 
@@ -914,7 +945,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageGenerationView | null> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
-      if (!row || !canAccess(actor, row) || row.state !== "awaiting_approval") return null;
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return null;
       const value = prompt.trim();
       if (!value || value.length > 8_000) return null;
       const version =
@@ -933,12 +964,12 @@ export class ImageGenerationService implements ImageGenerationPort {
         .where(
           and(
             eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
+            pendingConfirmationFilter(),
             sql`coalesce((${imageGenerations.providerMetadata}->>'confirmationVersion')::integer, 1) = ${version - 1}`,
           ),
         )
         .returning({ id: imageGenerations.id });
-      return updated ? this.getOwned(actor, generationId) : null;
+      return updated ? this.getOwned(actor, generationId, true) : null;
     });
   }
 
@@ -949,19 +980,14 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<boolean> {
     return this.execute(async () => {
       const row = await this.getRow(generationId);
-      if (!row || !canAccess(actor, row) || row.state !== "awaiting_approval") return false;
+      if (!row || !canAccess(actor, row) || !isPendingConfirmation(row)) return false;
       const [updated] = await this.db
         .update(imageGenerations)
         .set({
-          providerMetadata: { ...row.providerMetadata, confirmationMessageId: messageId },
+          providerMetadata: mergeProviderMetadata({ confirmationMessageId: messageId }),
           updatedAt: new Date(),
         })
-        .where(
-          and(
-            eq(imageGenerations.id, generationId),
-            eq(imageGenerations.state, "awaiting_approval"),
-          ),
-        )
+        .where(and(eq(imageGenerations.id, generationId), pendingConfirmationFilter()))
         .returning({ id: imageGenerations.id });
       return Boolean(updated);
     });
@@ -979,7 +1005,7 @@ export class ImageGenerationService implements ImageGenerationPort {
           and(
             eq(imageGenerations.botId, actor.botId),
             eq(imageGenerations.chatId, actor.chatId),
-            eq(imageGenerations.state, "awaiting_approval"),
+            pendingConfirmationFilter(),
           ),
         )
         .limit(100);
@@ -1006,14 +1032,12 @@ export class ImageGenerationService implements ImageGenerationPort {
     row: GenerationRow | null,
   ): Promise<ImageCancellationResult> {
     if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
-    if (row.state !== "awaiting_approval")
+    if (!isPendingConfirmation(row))
       return { ok: false, reason: "terminal", generation: toView(row) };
     const [cancelled] = await this.db
       .update(imageGenerations)
       .set({ state: "cancelled", approvalState: "rejected", updatedAt: new Date() })
-      .where(
-        and(eq(imageGenerations.id, generationId), eq(imageGenerations.state, "awaiting_approval")),
-      )
+      .where(and(eq(imageGenerations.id, generationId), pendingConfirmationFilter()))
       .returning({ id: imageGenerations.id });
     if (!cancelled)
       return {
@@ -1187,8 +1211,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   ): Promise<ImageCancellationResult> {
     const row = await this.getRow(generationId);
     if (!row || !canAccess(actor, row)) return { ok: false, reason: "not_found" };
-    if (row.state === "awaiting_approval")
-      return this.cancelConfirmationImpl(actor, generationId, row);
+    if (isPendingConfirmation(row)) return this.cancelConfirmationImpl(actor, generationId, row);
     if (
       row.state === "cancel_requested" ||
       row.providerMetadata?.["cancellationState"] === "requested"
@@ -1423,7 +1446,7 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async advanceOnce(id: string): Promise<void> {
     const row = await this.getRow(id);
     if (!row) return;
-    if (row.state === "awaiting_approval") return;
+    if (isPendingConfirmation(row)) return;
     if (row.state === "succeeded" && row.localFiles.length > 0) {
       await this.settleImageUsage(row);
       await this.deliverCompleted(row);
@@ -2031,9 +2054,10 @@ export class ImageGenerationService implements ImageGenerationPort {
   private async getOwned(
     actor: ImageGenerationActor,
     id: string,
+    preview = false,
   ): Promise<ImageGenerationView | null> {
     const row = await this.getRow(id);
-    return row && canAccess(actor, row) ? toView(row) : null;
+    return row && canAccess(actor, row) ? toView(row, preview) : null;
   }
 
   private async getRow(id: string) {
@@ -2212,6 +2236,22 @@ function sanitizedProviderErrorCode(error: unknown): string {
 
 type GenerationRow = NonNullable<Awaited<ReturnType<ImageGenerationService["getRow"]>>>;
 
+function isPendingConfirmation(row: GenerationRow): boolean {
+  return (
+    row.state === "awaiting_approval" &&
+    row.approvalState === "required" &&
+    !row.providerOperationId
+  );
+}
+
+function pendingConfirmationFilter() {
+  return and(
+    eq(imageGenerations.state, "awaiting_approval"),
+    eq(imageGenerations.approvalState, "required"),
+    isNull(imageGenerations.providerOperationId),
+  );
+}
+
 function canAccess(actor: ImageGenerationActor, row: GenerationRow): boolean {
   if (actor.botId !== row.botId) return false;
   if (actor.isBotAdmin) return true;
@@ -2324,7 +2364,7 @@ function deliveryState(row: GenerationRow): NonNullable<ImageGenerationView["del
   return "pending";
 }
 
-function toView(row: GenerationRow): ImageGenerationView {
+function toView(row: GenerationRow, preview = false): ImageGenerationView {
   return {
     id: row.id,
     purpose: row.purpose as ImageGenerationView["purpose"],
@@ -2337,6 +2377,26 @@ function toView(row: GenerationRow): ImageGenerationView {
       typeof row.providerMetadata?.["confirmationVersion"] === "number"
         ? row.providerMetadata["confirmationVersion"]
         : undefined,
+    ...(preview && row.providerMetadata?.["confirmationVersion"]
+      ? {
+          confirmationPreview: {
+            prompt:
+              typeof row.providerMetadata["confirmationDraftPrompt"] === "string"
+                ? row.providerMetadata["confirmationDraftPrompt"]
+                : row.prompt,
+            negativePrompt: row.negativePrompt ?? undefined,
+            size:
+              row.requestSnapshot?.size ??
+              row.requestSnapshot?.imageSize ??
+              (row.requestSnapshot?.width && row.requestSnapshot.height
+                ? `${row.requestSnapshot.width}×${row.requestSnapshot.height}`
+                : undefined),
+            aspectRatio: row.requestSnapshot?.aspectRatio,
+            quality: row.requestSnapshot?.quality,
+            modelId: row.requestSnapshot?.modelId,
+          },
+        }
+      : {}),
     confirmationSeed:
       typeof row.providerMetadata?.["confirmationDraftSeed"] === "number"
         ? row.providerMetadata["confirmationDraftSeed"]

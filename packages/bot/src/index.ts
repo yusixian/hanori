@@ -421,6 +421,7 @@ export function createBot(config: BotConfig) {
             message_id: message.message_id,
             chat: message.chat,
             message_thread_id: message.message_thread_id,
+            is_topic_message: message.is_topic_message,
             reply_to_message: message.reply_to_message,
           },
           from: ctx.from,

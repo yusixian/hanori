@@ -438,6 +438,96 @@ describe("image delivery provenance and safe recovery", () => {
     expect(JSON.stringify(view)).not.toContain("private");
   });
 
+  it("submits one provider operation on the original Telegram confirmation ID across racing clicks", async () => {
+    const { row, service, deps, events } = setup({
+      state: "awaiting_approval",
+      approvalState: "required",
+      providerOperationId: null,
+      providerMetadata: {
+        confirmationVersion: 2,
+        confirmationDraftPrompt: "edited cat",
+        confirmationDraftSeed: 0,
+      },
+    });
+    vi.spyOn(service, "getConfig").mockResolvedValue(
+      structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG),
+    );
+    const prepare = vi.fn().mockResolvedValue({ planId: "plan", approvalRequired: false });
+    Object.assign(deps.pixai, { prepareGeneration: prepare });
+    deps.pixai.startGeneration.mockResolvedValue({ operationId: "new-op", state: "queued" });
+    deps.pixai.waitForGeneration.mockResolvedValue({ operationId: "new-op", state: "queued" });
+    expect(await service.get(ACTOR, row.id, { confirmationPreview: true })).toMatchObject({
+      confirmationPreview: { prompt: "edited cat" },
+      confirmationSeed: 0,
+    });
+    expect(await service.get(ACTOR, row.id)).not.toHaveProperty("confirmationPreview");
+    await expect(service.confirm(ACTOR, row.id)).resolves.toMatchObject({
+      accepted: false,
+      reason: "invalid_request",
+      generation: { state: "awaiting_approval", confirmationVersion: 2 },
+    });
+    expect(prepare).not.toHaveBeenCalled();
+    const results = await Promise.all([
+      service.confirm(ACTOR, row.id, 2),
+      service.confirm(ACTOR, row.id, 2),
+    ]);
+    expect(results.filter((result) => result.accepted)).toHaveLength(1);
+    expect(prepare).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ prompt: "edited cat", seed: 0 }),
+    );
+    expect(deps.pixai.startGeneration).toHaveBeenCalledExactlyOnceWith("plan", row.idempotencyKey);
+    expect(row).toMatchObject({ providerOperationId: "new-op", prompt: "edited cat", seed: 0 });
+    expect(events).toContainEqual(
+      expect.objectContaining({ generationId: row.id, kind: "submitted" }),
+    );
+  });
+
+  it("keeps the card pending when the original MCP endpoint is unavailable", async () => {
+    const { row, service, deps } = setup({
+      state: "awaiting_approval",
+      approvalState: "required",
+      providerOperationId: null,
+      providerMetadata: { confirmationVersion: 1, endpoint: "https://old.example/mcp" },
+    });
+    vi.spyOn(service, "getConfig").mockResolvedValue(
+      structuredClone(DEFAULT_IMAGE_GOVERNANCE_CONFIG),
+    );
+    await expect(service.confirm(ACTOR, row.id)).resolves.toMatchObject({
+      accepted: false,
+      reason: "provider_unavailable",
+    });
+    expect(row.state).toBe("awaiting_approval");
+    expect(deps.pixai.listPresets).not.toHaveBeenCalled();
+    expect(deps.pixai.startGeneration).not.toHaveBeenCalled();
+  });
+
+  it("polls provider approval during recovery and leaves cancellation to the provider", async () => {
+    const { row, service, deps } = setup({
+      state: "awaiting_approval",
+      approvalState: "required",
+      providerOperationId: "operation-1",
+      providerMetadata: { confirmationVersion: 1 },
+    });
+    await expect(service.editConfirmation(ACTOR, row.id, { seed: 2 })).resolves.toBeNull();
+    await expect(service.cancelConfirmation(ACTOR, row.id)).resolves.toMatchObject({ ok: false });
+    const cancelGeneration = vi
+      .fn()
+      .mockResolvedValue({ operationId: "operation-1", state: "cancelled" });
+    Object.assign(deps.pixai, { cancelGeneration });
+    deps.pixai.waitForGeneration.mockResolvedValue({
+      operationId: "operation-1",
+      state: "running",
+    });
+    await service.recoverPending();
+    expect(row.state).toBe("running");
+    row.state = "awaiting_approval";
+    await expect(service.cancel(ACTOR, row.id)).resolves.toMatchObject({
+      ok: true,
+      generation: { state: "cancelled" },
+    });
+    expect(cancelGeneration).toHaveBeenCalledExactlyOnceWith("operation-1");
+  });
+
   it("deduplicates the same host request after restart without reserving or submitting again", async () => {
     const { row, service, deps } = setup({ state: "queued" });
     vi.spyOn(service, "getConfig").mockResolvedValue(

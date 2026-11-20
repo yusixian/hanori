@@ -87,6 +87,34 @@ describe("create_image routing contract", () => {
     });
   });
 
+  it("returns the provider's pending approval without issuing another Telegram card", async () => {
+    const result = {
+      accepted: true,
+      generation: {
+        id: "gen",
+        state: "awaiting_approval",
+        approval: "required",
+        providerOperationId: "op",
+      },
+    };
+    const api = { sendMessage: vi.fn() };
+    const tools = await createImageGenerationTools({
+      port: {
+        create: vi.fn().mockResolvedValue(result),
+        listRoutes: vi.fn().mockResolvedValue([route("anime_illustration", true)]),
+      } as unknown as ImageGenerationPort,
+      getActor: () => routingActor,
+      api: api as never,
+    });
+    await expect(
+      (tools.create_image as unknown as ExecutableTool).execute(
+        { purpose: "anime_illustration", prompt: "cat" },
+        { abortSignal: new AbortController().signal },
+      ),
+    ).resolves.toEqual(result);
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
   it("exposes the full same-chat generation context for a replied delivery", async () => {
     const actor: ImageGenerationActor = {
       botId: "00000000-0000-4000-8000-000000000017",
