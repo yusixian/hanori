@@ -8,9 +8,11 @@ export async function sendConfirmationCard(
   text: string,
   keyboard: InlineKeyboardMarkup,
   threadId?: number,
+  parseMode?: "HTML",
 ): Promise<number> {
   const message = await api.sendMessage(chatId, text, {
     reply_markup: keyboard,
+    ...(parseMode ? { parse_mode: parseMode } : {}),
     ...(threadId === undefined ? {} : { message_thread_id: threadId }),
   });
   return message.message_id;

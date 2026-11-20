@@ -11,7 +11,10 @@ import { tool } from "ai";
 import type { Api } from "grammy";
 import { z } from "zod";
 import { zodToAiSchema } from "./utils.js";
-import { sendImageConfirmationMessage } from "../handlers/image-confirmation.js";
+import {
+  awaitsImageConfirmation,
+  sendImageConfirmationMessage,
+} from "../handlers/image-confirmation.js";
 
 const imageDynamicParametersSchema = z
   .object({
@@ -180,7 +183,7 @@ export async function createImageGenerationTools({
               ...(negativePrompt ? { negativePrompt } : {}),
               ...(seed !== undefined ? { seed } : {}),
             });
-            if (result.accepted && result.generation.state === "awaiting_approval") {
+            if (result.accepted && awaitsImageConfirmation(result.generation)) {
               if (!api) return { pending_confirmation: true, generation_id: result.generation.id };
               try {
                 const confirmationMessageId = await sendImageConfirmationMessage(
