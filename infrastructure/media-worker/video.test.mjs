@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
+  realpath,
   chmod,
   lstat,
   mkdir,
@@ -55,7 +56,8 @@ async function assertClean() {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp("/private/tmp/video-mux-");
+  // Keep the Unix socket path below the macOS and Linux length limits.
+  root = await mkdtemp(join(await realpath("/tmp"), "video-mux-"));
   job = randomUUID();
   directory = join(root, "jobs", "video-downloads", job);
   await mkdir(directory, { recursive: true });

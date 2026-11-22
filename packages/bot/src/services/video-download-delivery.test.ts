@@ -1,4 +1,14 @@
-import { open, mkdtemp, rm, symlink, truncate, writeFile, type FileHandle } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import {
+  realpath,
+  open,
+  mkdtemp,
+  rm,
+  symlink,
+  truncate,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import type { ReadStream } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -16,7 +26,7 @@ let bytes: Buffer;
 let opened: Array<{ file: FileHandle; stream: ReadStream }>;
 
 beforeEach(async () => {
-  directory = await mkdtemp("/private/tmp/video-delivery-");
+  directory = await mkdtemp(join(await realpath(tmpdir()), "video-delivery-"));
   path = join(directory, "video.mp4");
   bytes = Buffer.alloc(2 * 1024 * 1024 + 17);
   for (let index = 0; index < bytes.length; index++) bytes[index] = index % 251;

@@ -1,7 +1,18 @@
-import { truncate, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { EventEmitter } from "node:events";
 
-import { mkdtemp, writeFile, mkdir, readdir, rm, symlink, link } from "node:fs/promises";
+import {
+  realpath,
+  truncate,
+  readFile,
+  mkdtemp,
+  writeFile,
+  mkdir,
+  readdir,
+  rm,
+  symlink,
+  link,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 
@@ -50,7 +61,7 @@ function command(args: string[]): string {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp("/private/tmp/hanori-artifact-test-");
+  root = await mkdtemp(join(await realpath(tmpdir()), "hanori-artifact-test-"));
   installer = new GitPluginArtifacts(join(root, "artifacts"));
   artifactManifest = manifest;
   treeOutput = tree;

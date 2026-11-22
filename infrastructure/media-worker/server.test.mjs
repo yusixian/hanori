@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { appendFileSync, truncateSync } from "node:fs";
 import {
+  realpath,
   mkdtemp,
   mkdir,
   readFile,
@@ -141,7 +142,8 @@ function mockSpawn(binary, args, _options) {
 }
 
 beforeEach(async () => {
-  root = await mkdtemp("/private/tmp/media-worker-test-");
+  // Keep the Unix socket path below the macOS and Linux length limits.
+  root = await mkdtemp(join(await realpath("/tmp"), "media-worker-test-"));
   job = randomUUID();
   await mkdir(join(root, "jobs", job), { recursive: true });
   input = join(root, "jobs", job, "input.m4a");
