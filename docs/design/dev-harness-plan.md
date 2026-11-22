@@ -38,7 +38,7 @@
 | 2.5 | 合并：复核 SHA 与 checks → GitHub App squash merge；新 push 使旧按钮失效并刷新卡片                                                     | 在沙盒仓库走通                                |
 | 2.6 | 风险等级：按路径计算 T0–T3，固定 T3 路径；T3 不给合并按钮；T2 合并前在卡片上就地展开详情并确认                                         | 单测覆盖路径匹配                              |
 | 2.7 | 审计：每次按钮操作写 `harness_events`                                                                                                  | 可在面板或日志中查到                          |
-| 2.8 | 沙盒仓库 `example-owner/harness-sandbox`（私有，极小网页项目 + CI）                                                                         | owner 已同意创建                              |
+| 2.8 | 沙盒仓库 `example-owner/harness-sandbox`（私有，极小网页项目 + CI）                                                                    | owner 已同意创建                              |
 
 ## H3 Lody 执行与小 bug 闭环
 

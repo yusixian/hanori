@@ -84,12 +84,9 @@ describe("public snapshot policy", () => {
     ).toEqual([]);
   });
   it("keeps legacy release behavior while removing private PR links", () => {
-    expect(
-      sanitizePublicFile(
-        "docs/releases/v0.2.0.md",
-        asBuffer("Feature #73"),
-      ).toString(),
-    ).toBe("Feature #73");
+    expect(sanitizePublicFile("docs/releases/v0.2.0.md", asBuffer("Feature #73")).toString()).toBe(
+      "Feature #73",
+    );
   });
   it("preserves mixed-case username tests while anonymizing fixtures", () => {
     const data = asBuffer('trustedAuthors: ["example-owner"], author: "example-owner"');

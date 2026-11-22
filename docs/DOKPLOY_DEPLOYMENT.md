@@ -119,7 +119,7 @@ pnpm build
 | -------------------- | ----------------------------------------- |
 | Compose Type         | Docker Compose                            |
 | Provider             | GitHub                                    |
-| Repository           | `example-owner/cos-tool-bot`                   |
+| Repository           | `example-owner/cos-tool-bot`              |
 | Branch               | `main`                                    |
 | Compose Path         | `./docker-compose.yml`                    |
 | Isolated Deployments | 关闭，保留仓库声明的网络边界              |
