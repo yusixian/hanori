@@ -15,16 +15,16 @@ Telegram 用户
 
 Cloudflare Tunnel 只负责 HTTPS 网页和 API。Telegram Bot 收消息使用 Bot API 长轮询，不经过 Tunnel；因此“网页打不开”和“Bot 完全不回复”要分开排查。
 
-本机当前使用：
+以下是配置示例。请使用自己实例的 Bot、应用内 ID 和 Tunnel 信息。
 
-| 项目                    | 值                                                   |
-| ----------------------- | ---------------------------------------------------- |
+| 项目                    | 值                                                        |
+| ----------------------- | --------------------------------------------------------- |
 | HTTPS origin            | `https://tg-test.example.invalid`                         |
-| 测试 Bot                | `@example_channel_bot`（示例测试 Bot）                  |
-| 应用内 Bot ID           | `00000000-0000-4000-8000-000000000017`               |
-| API                     | `http://127.0.0.1:43100`                             |
-| Vite                    | `http://127.0.0.1:43103`                             |
-| PostgreSQL              | `localhost:43105/cos_tool_bot`                       |
+| 测试 Bot                | `@example_channel_bot`（示例测试 Bot）                    |
+| 应用内 Bot ID           | `00000000-0000-4000-8000-000000000017`                    |
+| API                     | `http://127.0.0.1:43100`                                  |
+| Vite                    | `http://127.0.0.1:43103`                                  |
+| PostgreSQL              | `localhost:43105/cos_tool_bot`                            |
 | Cloudflare named tunnel | `example-tunnel` / `00000000-0000-4000-8000-000000000029` |
 
 不要把 Bot Token、Cloudflare credential JSON、`MINI_APP_SESSION_SECRET` 或后台密码写入本文或提交到 Git。

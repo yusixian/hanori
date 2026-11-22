@@ -65,22 +65,9 @@ pnpm lint             # oxlint 代码检查
 
 首次部署或更新服务器，请阅读 [Docker 部署指南](docs/DEPLOYMENT.md)。管理员通过面板连接 GitHub 前，请阅读 [GitHub App 配置指南](docs/GITHUB_APP.md)。认证迁移、Google OAuth 和完整环境变量说明见 [配置与初始化指南](docs/SETUP.md)。
 
-## CI / Self-hosted Runner
+## CI
 
-CI(`.github/workflows/ci.yml`)运行在维护者的 Mac 上（self-hosted runner，标签 `cos-tool-bot`),**不使用 GitHub 托管的 runner**。runner 不在线时，workflow 会一直排队等待，不会执行。推送代码 / 开 PR 前请确认 runner 服务已启动：
-
-```bash
-cd ~/actions-runner/cos-tool-bot
-
-./svc.sh status   # 查看运行状态
-./svc.sh start    # 启动（安装后重启系统会自动运行）
-./svc.sh stop     # 停止
-```
-
-- runner 目录：`~/actions-runner/cos-tool-bot`（与其他项目的 runner 实例相互独立，一台机器可以同时作为多个项目的 runner)
-- 运行日志：`~/actions-runner/cos-tool-bot/_diag/`
-- 服务通过 launchd 注册（`~/Library/LaunchAgents/actions.runner.example-owner-cos-tool-bot.*.plist`)，安装命令为 `./svc.sh install`
-- 需要重新注册时：在仓库 Settings → Actions → Runners → New self-hosted runner 获取 token 后重新运行 `./config.sh`，再执行 `./svc.sh install && ./svc.sh start`
+推送到主线或向主线提交 PR 会在 GitHub 托管的 Ubuntu 环境运行构建、类型、翻译、单元和浏览器检查。具体命令见 [CI 工作流](.github/workflows/ci.yml)。
 
 ## 环境变量
 

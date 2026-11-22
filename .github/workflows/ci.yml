@@ -6,13 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   check:
-    # Self-hosted runner on the maintainer's Mac; see readme "CI / Self-hosted Runner".
-    # Jobs remain queued while the local runner service is offline.
-    runs-on: [self-hosted, macOS, ARM64, cos-tool-bot]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v4
 
@@ -25,9 +28,8 @@ jobs:
 
       - name: Install pinned yt-dlp for extractor tests
         run: |
-          # setup-python's macOS archives assume /Users/runner on hosted runners.
-          /opt/homebrew/bin/python3 -c 'import sys; assert sys.version_info >= (3, 10)'
-          /opt/homebrew/bin/python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
+          python3 -c 'import sys; assert sys.version_info >= (3, 10)'
+          python3 -m venv "$RUNNER_TEMP/bilibili-ytdlp"
           "$RUNNER_TEMP/bilibili-ytdlp/bin/pip" install -r infrastructure/bilibili-ytdlp/requirements.txt
           echo "$RUNNER_TEMP/bilibili-ytdlp/bin" >> "$GITHUB_PATH"
 
@@ -51,12 +53,10 @@ jobs:
         run: pnpm i18n:check
 
       - name: Unit tests
-        # Bound process-heavy Git/CLI fixtures on the shared self-hosted runner.
         run: pnpm test --maxWorkers=4
 
       - name: Install Chromium
-        # Playwright's --with-deps option is only supported on Debian/Ubuntu.
-        run: pnpm --filter @cos-tool-bot/panel exec playwright install chromium
+        run: pnpm --filter @cos-tool-bot/panel exec playwright install --with-deps chromium
 
       - name: Browser tests
         run: pnpm test:browser
