@@ -89,7 +89,7 @@ describe("public snapshot policy", () => {
     );
   });
   it("preserves mixed-case username tests while anonymizing fixtures", () => {
-    const data = asBuffer('trustedAuthors: ["example-owner"], author: "example-owner"');
+    const data = asBuffer('trustedAuthors: ["example-owner"], author: "Example-Owner"');
     expect(sanitizePublicFile("packages/server/src/harness/intake.test.ts", data).toString()).toBe(
       'trustedAuthors: ["demo-org"], author: "Demo-Org"',
     );
