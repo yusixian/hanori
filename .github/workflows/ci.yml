@@ -72,3 +72,61 @@ jobs:
 
       - name: Public documentation browser tests
         run: pnpm test:docs
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.PRODUCTION_READY_URL != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    concurrency:
+      group: production-deployment
+      cancel-in-progress: false
+    steps:
+      - name: Promote the tested commit
+        id: promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          READY_URL: ${{ vars.PRODUCTION_READY_URL }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$head" != "$GITHUB_SHA" ]]; then
+            echo "A newer main commit is awaiting its own checks."
+            exit 0
+          fi
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/heads/production" \
+            -f sha="$GITHUB_SHA" -F force=false --silent
+          if curl -fsS --max-time 10 "$READY_URL" | jq -e --arg sha "$GITHUB_SHA" \
+            '.status == "ready" and .version == $sha' >/dev/null; then
+            echo "Production already serves this commit."
+            exit 0
+          fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger the Dokploy Compose deployment
+        if: steps.promote.outputs.deploy == 'true'
+        env:
+          DEPLOY_HOOK: ${{ secrets.DOKPLOY_DEPLOY_HOOK }}
+        run: |
+          payload=$(jq -nc --arg sha "$GITHUB_SHA" \
+            '{ref:"refs/heads/production", after:$sha, head_commit:{id:$sha, message:"Deploy tested main commit"}}')
+          status=$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' \
+            -H 'Content-Type: application/json' -H 'X-GitHub-Event: push' --data "$payload" "$DEPLOY_HOOK")
+          [[ "$status" == 200 ]] || { echo "Dokploy returned HTTP $status"; exit 1; }
+
+      - name: Verify the deployed commit
+        if: steps.promote.outputs.deploy == 'true'
+        env:
+          READY_URL: ${{ vars.PRODUCTION_READY_URL }}
+        run: |
+          for attempt in {1..80}; do
+            if curl -fsS --max-time 8 "$READY_URL" | jq -e --arg sha "$GITHUB_SHA" \
+              '.status == "ready" and .version == $sha' >/dev/null; then
+              echo "Production is ready at $GITHUB_SHA."
+              exit 0
+            fi
+            sleep 12
+          done
+          echo "Production did not report the tested commit before the deadline."
+          exit 1

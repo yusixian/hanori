@@ -488,3 +488,9 @@ curl -i "https://${ORIGINAL_DOMAIN}/api/health/ready"
 - Dokploy Auto Deploy：<https://docs.dokploy.com/docs/core/auto-deploy>
 - Dokploy Volume Backups：<https://docs.dokploy.com/docs/core/volume-backups>
 - Docker Compose 启动顺序：<https://docs.docker.com/compose/how-tos/startup-order/>
+
+### 通过 main 的 CI 自动上线
+
+使用仓库内置的部署任务时，先从当前生产提交创建 `production` 分支，让同一个 Dokploy Compose 的 Git 来源跟踪该分支并开启 Auto Deploy。将这个服务的 Webhook URL 存为 GitHub Actions secret `DOKPLOY_DEPLOY_HOOK`，并将生产实例的完整 `/api/health/ready` 地址存为 Actions variable `PRODUCTION_READY_URL`。保留现有环境变量、域名和卷。
+
+日常推送 `main` 即可。CI 的 `check` 成功后，`deploy` 将通过测试的提交快进到 `production`，调用一次 Compose webhook，再等待线上报告相同的 Git SHA。Webhook 由这个任务直接调用，无需另行注册 GitHub push webhook。PR 仅运行检查。移除 `PRODUCTION_READY_URL` 可暂停后续自动部署。
