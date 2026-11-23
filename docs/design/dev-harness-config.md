@@ -10,7 +10,7 @@
 - **逐层覆盖**（`/harness config <路径>` 显示的来源层名称）：
   1. 内置默认、按 `kind` 推断
   2. `harness.yaml`（全局）→ `harness.yaml 项目`
-  3. `.cos/harness.yml`；仓库没有这个文件时换成「按仓库推断」（§8）
+  3. `.github/hanori-policy.yml`（兼容旧路径 `.cos/harness.yml`）；仓库没有这个文件时换成「按仓库推断」（§8）
   4. 「面板设置（全局）」：面板中设置的 lead 执行配置（§9）
   5. 「面板设置」：面板项目的绑定、策略修改和该项目的执行配置
   6. 覆盖层（全局）→ 覆盖层（项目）：Telegram `/harness set` 的临时调整
@@ -87,8 +87,8 @@ executors:
     listen: tailnet # tailnet | public
 
 machines:
-  mbp: { lody: MBP-64G, tags: [macos, electron], enabled: true }
-  desktop-5090: { lody: Desktop-5090, tags: [windows, gpu], enabled: false }
+  mbp: { lody: Mac-Runner, tags: [macos, electron], enabled: true }
+  windows-runner: { lody: Windows-Runner, tags: [windows, gpu], enabled: false }
 
 roles: # 只写要改的角色，其余保留内置值
   triage: { model: sonnet, effort: low }
@@ -163,7 +163,7 @@ projects: # 可省略；YAML 项目在面板中只读，与面板项目同名或
       time: { idleRemindAfter: 90m }
 ```
 
-## 4. `.cos/harness.yml`（业务仓库，默认分支）
+## 4. `.github/hanori-policy.yml`（业务仓库，默认分支）
 
 ```yaml
 version: 1
@@ -267,7 +267,7 @@ owner 可以在网页面板的「Dev Harness」页（`/harness`）或 Mini App �
 
 ## 8. 按仓库推断
 
-仓库默认分支没有 `.cos/harness.yml` 时，server 读取少量文件推断策略，结果缓存在 `harness_projects.inferred_policy`，默认分支有新提交时随策略一起刷新。只写有把握的字段，其余仍用默认值：
+仓库默认分支没有策略文件 时，server 读取少量文件推断策略，结果缓存在 `harness_projects.inferred_policy`，默认分支有新提交时随策略一起刷新。只写有把握的字段，其余仍用默认值：
 
 | 仓库特征                                          | `kind`            | `verify`                                                                                                                                             |
 | ------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |

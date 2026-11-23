@@ -47,8 +47,8 @@ guardrails:
     bugStartsImmediately: true
 
 machines:
-  mbp: { lody: MBP-64G }
-  desktop-5090: { lody: Desktop-5090, enabled: false }
+  mbp: { lody: Mac-Runner }
+  windows-runner: { lody: Windows-Runner, enabled: false }
 
 github:
   mergeMethod: squash

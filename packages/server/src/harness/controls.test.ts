@@ -54,7 +54,7 @@ describe("/list", () => {
     expect(reply.html).toContain("<b>进行中的请求（1）</b>");
     expect(reply.html).toContain("🔵 进行中");
     expect(reply.html).toContain(`href="https://github.com/${TEST_REPO}/issues/41">#41</a>`);
-    expect(reply.html).toContain("5 分钟前 · MBP-64G");
+    expect(reply.html).toContain("5 分钟前 · Mac-Runner");
     expect(reply.html).toContain(`<code>${request.id.slice(0, 8)}</code>`);
 
     const general = await run(ctx, "list", "", null);

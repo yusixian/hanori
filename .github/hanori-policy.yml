@@ -1,5 +1,5 @@
-# Dev Harness policy for cos-tool-bot itself. The harness runs inside this repository and merges
-# to main deploy production, so every path that could loosen its own guardrails, auth, secrets,
+# Dev Harness policy for Hanori itself. The harness runs inside this repository and
+# every path that could loosen its own guardrails, auth, secrets,
 # deployment, or data is T3 and must be merged on GitHub by the owner.
 # Field reference: docs/design/dev-harness-config.md §4.
 version: 1
@@ -31,7 +31,6 @@ risk:
     - "packages/server/src/routes/harness*.ts"
     - "harness.example.yaml"
     - "AGENTS.md"
-    - "CLAUDE.md"
     - ".claude/**"
     - ".agents/**"
     # Auth, access control, credentials, and secrets.

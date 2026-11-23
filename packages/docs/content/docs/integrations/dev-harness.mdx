@@ -19,7 +19,7 @@ Dev Harness 让一个专用 Bot 在 Telegram 话题群里接收 bug、交给你�
 owner 打开网页面板的「Dev Harness」页，或在群里点 `/status`、`/harness` 回复下方的「⚙️ 管理项目」：
 
 1. 从 GitHub App 能访问的仓库里选一个。列表包含 App 安装到的所有个人账号和组织；缺少的仓库点「授权更多仓库」去 GitHub 授权。
-2. 选择执行机，按需修改项目名和 Lody 本地项目名。页面会显示仓库策略：有 `.cos/harness.yml` 时按文件，没有时按 `package.json`、Tuist、SwiftPM 等自动推断验证命令和项目类型。
+2. 选择执行机，按需修改项目名和 Lody 本地项目名。页面会显示仓库策略：有仓库策略文件时按文件，没有时按 `package.json`、Tuist、SwiftPM 等自动推断验证命令和项目类型。
 3. 保存后立即生效：自动建项目话题并读取仓库策略，不需要 `/harness reload`。
 
 面板中可以调整验证命令、规模闸门、发版片段要求和优先使用的 skill；风险分级与安全字段仍只能写在 YAML 里。`harness.yaml` 中的项目在面板里只读，与面板项目同名或同仓库时以 YAML 为准。
@@ -88,11 +88,11 @@ GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读�
 配置中的仓库开 PR 后，对应项目话题会出现一张卡片：状态、风险等级、一句话摘要、CI 与缺失项。PR 更新时原地编辑同一张卡片。
 
 - 默认只为 harness 分支（`harness/` 前缀）、`trustedAuthors` 中作者的同仓库 PR，以及带 `harness:track` 标签的 PR 生成卡片；来自 fork 的陌生 PR 不会出卡片。
-- 风险等级按改动路径计算。`.cos/**`、`.github/workflows/**` 与 release-kit 配置的改动固定为 T3，只能在 GitHub 网页上合并。T2 点「合并」时卡片会就地展开改动文件和交付合同，再点「确认合并」；先点过「详情」的话一次就能合并。
+- 风险等级按改动路径计算。`.github/hanori-policy.yml`、`.cos/**`、`.github/workflows/**` 与 release-kit 配置的改动固定为 T3，只能在 GitHub 网页上合并。T2 点「合并」时卡片会就地展开改动文件和交付合同，再点「确认合并」；先点过「详情」的话一次就能合并。
 - 合并前服务端会复核 head SHA 与 CI，再用 GitHub App 合并。新的 push 会让旧按钮失效。
 - 按钮在重启后仍然有效，过期（默认 7 天）或已使用时会给出明确提示。每次按钮操作都会记入审计事件。
 
-仓库可以在默认分支放一份 `.cos/harness.yml` 声明项目类型、风险路径和交付要求；只读取默认分支上的版本，PR 中的修改不会生效。
+仓库可以在默认分支放一份 `.github/hanori-policy.yml`（缺少时兼容读取 `.cos/harness.yml`） 声明项目类型、风险路径和交付要求；只读取默认分支上的版本，PR 中的修改不会生效。
 
 没有配置 CI 的仓库也可以添加：卡片显示「CI：未发现检查」，合并不会因为缺少检查被拦住。
 
@@ -119,7 +119,7 @@ GitHub App 还需要对目标仓库的 Contents、Pull requests 与 Issues 读�
 - 回复结果消息或卡片，会把回复发给同一个会话继续做，下一轮结束后再发新结果。
 - 会话需要你决定时，最后一条回复以 `Question:` 开头，问题会发到话题，回复即作答；以 `Needs spec:` 开头时卡片转为「需要写 spec」，回复这条提示或原卡片都能继续。
 - 已报告失败、取消或等待超时的回合停下后会提示「需要你看一下」，不会把中间回复当作完成结果。回复提示或点「继续」可让会话重试；GitHub 暂时无法查询 PR 或 Telegram 拒绝发送结果时会等待下次轮询重试，结果发送成功后才标记完成。
-- 任务同样不能合并、推 tag、发版或部署，也不能改 `.cos/**` 与 `.github/workflows/**`。
+- 任务同样不能合并、推 tag、发版或部署，也不能改 `.github/hanori-policy.yml`、`.cos/**` 与 `.github/workflows/**`。
 
 ## 执行层
 

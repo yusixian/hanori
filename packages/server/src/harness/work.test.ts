@@ -56,7 +56,7 @@ describe("/bug", () => {
     expect(ctx.telegram.sent).toHaveLength(1);
     const card = cardOf(ctx, request.cardMessageId!)!;
     expect(card.html).toContain("🔵 进行中");
-    expect(card.html).toContain("机器 MBP-64G · 模型 sonnet · 已用 0 分钟");
+    expect(card.html).toContain("机器 Mac-Runner · 模型 sonnet · 已用 0 分钟");
     expect(ctx.telegram.sent[0]!.message.replyToMessageId).toBe(9);
   });
 
@@ -276,7 +276,7 @@ describe("guardrails", () => {
     await ctx.service.work.scheduler.tick();
     const request = onlyRequest(ctx);
     expect(request.state).toBe(S.queued);
-    expect(request.stateReason).toBe("MBP-64G 额度暂停（claude 本周 53% ≥ 50%）");
+    expect(request.stateReason).toBe("Mac-Runner 额度暂停（claude 本周 53% ≥ 50%）");
     expect(ctx.lody.created).toHaveLength(0);
   });
 
@@ -328,10 +328,10 @@ describe("guardrails", () => {
     await ctx.service.work.scheduler.tick();
     const warnings = ctx.telegram.sent.filter((s) => s.message.html.startsWith("⚠️"));
     expect(warnings.map((w) => [w.message.threadId, w.message.html])).toEqual([
-      [undefined, "⚠️ MBP-64G.local claude 本周额度已用 53%（提醒阈值 50%），09-27 03:59 重置"],
+      [undefined, "⚠️ Mac-Runner.local claude 本周额度已用 53%（提醒阈值 50%），09-27 03:59 重置"],
       [
         undefined,
-        "⚠️ MBP-64G.local claude · Fable 本周额度已用 51%（提醒阈值 50%），09-27 03:59 重置",
+        "⚠️ Mac-Runner.local claude · Fable 本周额度已用 51%（提醒阈值 50%），09-27 03:59 重置",
       ],
     ]);
   });

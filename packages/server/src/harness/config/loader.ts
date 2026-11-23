@@ -100,8 +100,8 @@ export type RepoPolicyParse =
   | { ok: true; raw: Record<string, unknown>; policy: RepoPolicy }
   | { ok: false; issues: ConfigIssue[] };
 
-export function parseRepoPolicy(text: string): RepoPolicyParse {
-  const parsed = parseYamlObject(text, ".cos/harness.yml");
+export function parseRepoPolicy(text: string, sourcePath = ".cos/harness.yml"): RepoPolicyParse {
+  const parsed = parseYamlObject(text, sourcePath);
   if (!parsed.ok) return parsed;
   const result = repoPolicySchema.safeParse(parsed.value);
   if (result.success) return { ok: true, raw: parsed.value, policy: result.data };
@@ -111,7 +111,7 @@ export function parseRepoPolicy(text: string): RepoPolicyParse {
       {
         name: "repo",
         data: parsed.value,
-        locate: (path) => `.cos/harness.yml: ${path.join(".") || "(根)"}`,
+        locate: (path) => `${sourcePath}: ${path.join(".") || "(根)"}`,
       },
     ]),
   };

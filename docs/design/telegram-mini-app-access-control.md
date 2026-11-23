@@ -351,7 +351,6 @@ Provider 管理正规化、完整模型管理、JSON 配置完全正规化、多
 
 ## 12. 参考
 
-- `tasks/research-telegram-mini-apps/README.md`
 - [Telegram Mini Apps](https://core.telegram.org/bots/webapps)
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Telegram Deep Links](https://core.telegram.org/api/links)

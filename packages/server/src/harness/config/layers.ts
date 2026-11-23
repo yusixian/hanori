@@ -17,7 +17,7 @@ export const LAYER_LABELS: Record<LayerName, string> = {
   kind: "按 kind 推断",
   yaml: "harness.yaml",
   "yaml:project": "harness.yaml 项目",
-  repo: ".cos/harness.yml",
+  repo: "仓库策略文件",
   inferred: "按仓库推断",
   "panel:global": "面板设置（全局）",
   panel: "面板设置",

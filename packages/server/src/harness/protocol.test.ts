@@ -61,7 +61,7 @@ async function runningRequest(extra: Record<string, unknown> = {}) {
   const lody = new FakeLody(() => now);
   const ctx = await createTestService({
     raw: testConfigRaw({
-      machines: { mbp: { lody: "MBP-64G" } },
+      machines: { mbp: { lody: "Mac-Runner" } },
       projects: { sandbox: { repo: TEST_REPO, machines: ["mbp"] } },
       ...extra,
     }),

@@ -13,7 +13,7 @@ import {
   testConfigRaw,
 } from "./test-fakes.js";
 
-const MACHINES = { mbp: { lody: "MBP-64G" }, mini: { lody: "Mac-mini" } };
+const MACHINES = { mbp: { lody: "Mac-Runner" }, mini: { lody: "Mac-mini" } };
 const actor: HarnessAdminActor = { via: "panel", actorId: null, panelUserId: "user-1" };
 const KOYORI = "example-owner/koyori";
 
@@ -481,7 +481,7 @@ describe("repos and preview", () => {
     const overview = await ctx.admin.overview();
     expect(overview).toMatchObject({ enabled: true, configError: null, chatId: TEST_CHAT_ID });
     expect(overview.machines).toEqual([
-      { key: "mbp", lodyName: "MBP-64G", online: null },
+      { key: "mbp", lodyName: "Mac-Runner", online: null },
       { key: "mini", lodyName: "Mac-mini", online: null },
     ]);
   });

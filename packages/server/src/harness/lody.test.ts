@@ -49,9 +49,9 @@ describe("Lody output parsing", () => {
   it("parses machines, providers, and windows from raceLimits", () => {
     const machines = parseMachineList(extractJson(fixture("lody-machine-list.txt")), NOW);
     expect(machines.map((m) => [m.name, m.online])).toEqual([
-      ["MBP-64G.local", true],
-      ["Desktop-5090", true],
-      ["Desktop-7700X", false],
+      ["Mac-Runner.local", true],
+      ["Windows-Runner", true],
+      ["Offline-Runner", false],
     ]);
     const claude = machines[0]!.limits.find((limit) => limit.key === "claude::claude")!;
     expect(claude).toMatchObject({ providerId: "claude", planName: "Team" });
@@ -104,8 +104,8 @@ describe("Lody output parsing", () => {
 
   it("matches machines by id or by name without .local", () => {
     const machines = parseMachineList(extractJson(fixture("lody-machine-list.txt")), NOW);
-    expect(findMachine(machines, "MBP-64G")?.id).toBe("mac-0001");
-    expect(findMachine(machines, "win-0002")?.name).toBe("Desktop-5090");
+    expect(findMachine(machines, "Mac-Runner")?.id).toBe("mac-0001");
+    expect(findMachine(machines, "win-0002")?.name).toBe("Windows-Runner");
     expect(findMachine(machines, "nope")).toBeNull();
   });
 
@@ -125,7 +125,7 @@ describe("Lody output parsing", () => {
       machines: machines.slice(0, 1),
       timeZone: "Asia/Shanghai",
     });
-    expect(text).toContain("<b>MBP-64G.local</b> 🟢 在线");
+    expect(text).toContain("<b>Mac-Runner.local</b> 🟢 在线");
     expect(text).toContain("claude · Team");
     expect(text).toContain("  5 小时 17% · 09-24 23:59 重置");
     expect(text).toContain("  本周 · Fable 51%");

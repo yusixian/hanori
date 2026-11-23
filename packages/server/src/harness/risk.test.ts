@@ -42,15 +42,17 @@ describe("assessRisk", () => {
     expect(assessRisk([file("docs/a.md"), file("README.md")], risk).tier).toBe("T0");
   });
 
-  it.each([".cos/harness.yml", ".github/workflows/ci.yml", "release-kit.yaml"])(
-    "fixes %s at T3 even when a lower rule matches",
-    (path) => {
-      const permissive = { ...risk, T0: ["**"] };
-      const result = assessRisk([file(path)], permissive);
-      expect(result.tier).toBe("T3");
-      expect(result.files[0]!.rule).toBe("fixed");
-    },
-  );
+  it.each([
+    ".github/hanori-policy.yml",
+    ".cos/harness.yml",
+    ".github/workflows/ci.yml",
+    "release-kit.yaml",
+  ])("fixes %s at T3 even when a lower rule matches", (path) => {
+    const permissive = { ...risk, T0: ["**"] };
+    const result = assessRisk([file(path)], permissive);
+    expect(result.tier).toBe("T3");
+    expect(result.files[0]!.rule).toBe("fixed");
+  });
 
   it("counts the old path of a rename", () => {
     const result = assessRisk(

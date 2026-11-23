@@ -35,7 +35,7 @@ Telegram 话题群 ──► cos-tool-bot server（控制面）◄── GitHub 
       │                        ▲
       │                        │ 各机器主动连接，无需入站端口
       │              ┌─────────┴─────────┐
-      │         MBP-64G              Desktop-5090（可选）
+      │         Mac-Runner              Windows-Runner（可选）
       │         Lody 会话 / 自建节点：claude / codex / orca
       │         本机验收：Playwright、Electron、单测
       └──────── 卡片、截图、证据、回报
@@ -86,9 +86,9 @@ projects:
     nodes: [mbp]
 nodes:
   mbp:
-    label: MBP-64G
-  desktop-5090:
-    label: Desktop-5090
+    label: Mac-Runner
+  windows-runner:
+    label: Windows-Runner
     enabled: false
 ```
 
@@ -260,7 +260,7 @@ projects:
 
 ### 7.1 Lody 执行器（首选）
 
-Lody 的 daemon 已经在各台机器上与 Lody 云端保持连接（当前在线：MBP-64G、Desktop-5090）。Lody CLI 0.100.0 提供的能力：
+Lody 的 daemon 已经在各台机器上与 Lody 云端保持连接（当前在线：Mac-Runner、Windows-Runner）。Lody CLI 0.100.0 提供的能力：
 
 | 命令                                                                                                                              | 用途                                                |
 | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
@@ -272,7 +272,7 @@ Lody 的 daemon 已经在各台机器上与 Lody 云端保持连接（当前在�
 | `lody machine list --online-only --json`                                                                                          | 显示节点在线状态                                    |
 
 - 会话会出现在 Lody 桌面端和手机端，owner 可以随时接手；会话内的 agent 还能用 Lody MCP 再派子会话，即由便宜模型处理子任务。
-- 同一套调用可以指定 Desktop-5090 等其他机器，无需额外开发。
+- 同一套调用可以指定 Windows-Runner 等其他机器，无需额外开发。
 - `session create` 需要调用方本机运行 Lody runtime。生产镜像（alpine）无法加载 Lody 的原生模块，因此 daemon 运行在 bookworm-slim 的 `lody-bridge` sidecar 中，server 经带密钥的内网 HTTP 调用白名单内的命令（见 `docs/DEV_HARNESS_LODY.md`）。owner 已实测跨机器创建会话可行。
 - 没有事件推送：server 轮询 `session status`，间隔按状态调整。结构化证据仍由 agent 写进 PR（截图、验收报告），bot 从 PR 读取。
 

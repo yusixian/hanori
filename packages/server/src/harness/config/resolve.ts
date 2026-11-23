@@ -133,7 +133,7 @@ function resolveKind(candidates: readonly unknown[]): ProjectKind {
 export interface ProjectLayerInput {
   raw: Record<string, unknown>;
   projectKey: string;
-  /** Parsed `.cos/harness.yml`; null when the repo has none. */
+  /** Parsed repository policy; null when the repo has none. */
   policy: Record<string, unknown> | null;
   /** Used in place of the repo layer only when `policy` is null. */
   inferred?: Record<string, unknown> | null;
@@ -181,7 +181,7 @@ export function projectLayers(input: ProjectLayerInput): ConfigLayer[] {
     : {
         name: "repo",
         data: { policy: basePolicy },
-        locate: (path) => `.cos/harness.yml: ${path.slice(1).join(".") || "(根)"}`,
+        locate: (path) => `仓库策略文件: ${path.slice(1).join(".") || "(根)"}`,
       };
   const overriddenKind = (projectOverride.data.policy as Record<string, unknown> | undefined)?.kind;
   const kind = resolveKind([overriddenKind, patch.kind, basePolicy.kind]);

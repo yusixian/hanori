@@ -205,9 +205,9 @@ async function projectStatus(service: HarnessService, key: string): Promise<stri
   else if (record?.policyError)
     lines.push(`⚠️ 策略读取失败，沿用上一版：${escapeHtml(record.policyError)}`);
   else if (record?.policy)
-    lines.push(`策略：.cos/harness.yml @${escapeHtml((record.policySha ?? "").slice(0, 7))}`);
-  else if (record?.inferredPolicy) lines.push("策略：默认分支没有 .cos/harness.yml，按仓库推断");
-  else lines.push("策略：默认分支没有 .cos/harness.yml，使用默认值");
+    lines.push(`策略：仓库策略文件 @${escapeHtml((record.policySha ?? "").slice(0, 7))}`);
+  else if (record?.inferredPolicy) lines.push("策略：默认分支没有仓库策略文件，按仓库推断");
+  else lines.push("策略：默认分支没有仓库策略文件，使用默认值");
   if (view.overrideIssues) lines.push("⚠️ 覆盖层与当前配置冲突，已暂时忽略");
   const { result, machines, missing } = await lodyMachines(service, key);
   lines.push(renderExecutionLine(result, machines));

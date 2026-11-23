@@ -25,7 +25,7 @@ function job(overrides: Partial<HarnessJobRecord> = {}): HarnessJobRecord {
     executor: "lody",
     state: "running",
     machineKey: "mbp",
-    lodyMachine: "MBP-64G.local",
+    lodyMachine: "Mac-Runner.local",
     provider: "claude",
     role: "worker",
     agent: "Claude Code",
@@ -70,7 +70,7 @@ describe("renderJobCard", () => {
     const card = renderJobCard({
       request,
       job: job(),
-      machineLabel: "MBP-64G",
+      machineLabel: "Mac-Runner",
       now: NOW,
       cards,
       approvalId: APPROVAL,
@@ -78,7 +78,7 @@ describe("renderJobCard", () => {
     });
     expect(card.html.split("\n")).toEqual([
       '<b>🔵 进行中</b> · <a href="https://github.com/example-owner/koyori/issues/12">#12</a> 保存 &lt;按钮&gt; 无反馈',
-      "机器 MBP-64G · 模型 Sonnet 5 · 已用 1 小时 15 分钟",
+      "机器 Mac-Runner · 模型 Sonnet 5 · 已用 1 小时 15 分钟",
       "上下文 43% · claude 本周 52% · 5 小时 6%",
     ]);
     expect(card.keyboard).toEqual([
@@ -143,9 +143,9 @@ describe("renderJobCard", () => {
     };
     const queued = renderJobCard({
       ...input,
-      request: { ...request, state: "queued", stateReason: "MBP-64G 不在线" },
+      request: { ...request, state: "queued", stateReason: "Mac-Runner 不在线" },
     });
-    expect(queued.html).toContain("MBP-64G 不在线\n已排队 20 分钟");
+    expect(queued.html).toContain("Mac-Runner 不在线\n已排队 20 分钟");
     expect(renderJobCard({ ...input, request }).html).not.toContain("已排队");
   });
 });
@@ -187,7 +187,7 @@ describe("quota", () => {
       raw: {
         version: 1,
         telegram: { bot: "b", chatId: -1001, owners: [1] },
-        machines: { pc: { lody: "Desktop-7700X" }, mbp: { lody: "MBP-64G" } },
+        machines: { pc: { lody: "Offline-Runner" }, mbp: { lody: "Mac-Runner" } },
         projects: { koyori: { repo: "a/koyori", machines: ["pc", "mbp"] } },
       },
       projectKey: "koyori",
@@ -205,7 +205,7 @@ describe("quota", () => {
       effort: "high",
     });
     expect(chooseMachine(resolved.value, machines, new Map([["mbp", 4]]))).toEqual({
-      reason: "Desktop-7700X 不在线",
+      reason: "Offline-Runner 不在线",
       offline: false,
     });
     const offlineOnly = {
@@ -213,7 +213,7 @@ describe("quota", () => {
       project: { ...resolved.value.project, machines: ["pc"] },
     };
     expect(chooseMachine(offlineOnly, machines, new Map())).toEqual({
-      reason: "Desktop-7700X 不在线",
+      reason: "Offline-Runner 不在线",
       offline: true,
     });
   });
@@ -223,7 +223,7 @@ describe("quota", () => {
       raw: {
         version: 1,
         telegram: { bot: "b", chatId: -1001, owners: [1] },
-        machines: { mbp: { lody: "MBP-64G" } },
+        machines: { mbp: { lody: "Mac-Runner" } },
         roles: { worker: { agent: "Codex", model: "gpt-6-sol", effort: "ultra" } },
         guardrails: { quota: { pauseAt: { week: "30%" }, fallback: { worker: "gpt-5.5" } } },
         projects: { koyori: { repo: "a/koyori", machines: ["mbp"] } },

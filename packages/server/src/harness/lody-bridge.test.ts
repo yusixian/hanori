@@ -241,7 +241,7 @@ describe("harness service transport selection", () => {
       body: { exitCode: 0, signal: null, timedOut: false, stdout: machines },
     }));
     const ctx = await createTestService({
-      raw: testConfigRaw({ machines: { mbp: { lody: "MBP-64G" } } }),
+      raw: testConfigRaw({ machines: { mbp: { lody: "Mac-Runner" } } }),
       realLody: true,
       env: {
         HARNESS_GITHUB_WEBHOOK_SECRET: "s3cret",
@@ -256,7 +256,7 @@ describe("harness service transport selection", () => {
       userId: TEST_OWNER,
       messageId: 1,
     });
-    expect(reply.html).toContain("执行机：MBP-64G.local 🟢 在线 · 经lody-bridge");
+    expect(reply.html).toContain("执行机：Mac-Runner.local 🟢 在线 · 经lody-bridge");
     expect(bridge.seen[0]!.body.args).toEqual(["machine", "list", "--json"]);
   });
 

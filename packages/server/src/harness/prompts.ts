@@ -128,8 +128,8 @@ function reminderLayer(input: PromptInput): string {
   return [
     "## 1. Harness contract",
     input.requestType === "task"
-      ? "The contract from your first message still applies: do not merge, push tags, publish releases, or deploy; never change `.cos/**` or `.github/workflows/**`; start your final message with `Question:` or `Needs spec:` when needed, otherwise end with a concise summary."
-      : "The contract from your first message still applies: do not merge, release, or deploy; never change `.cos/**` or `.github/workflows/**`; report with `Areas:`, `Question:`, and `Needs spec:` comments.",
+      ? "The contract from your first message still applies: do not merge, push tags, publish releases, or deploy; never change `.github/hanori-policy.yml`, `.cos/**` or `.github/workflows/**`; start your final message with `Question:` or `Needs spec:` when needed, otherwise end with a concise summary."
+      : "The contract from your first message still applies: do not merge, release, or deploy; never change `.github/hanori-policy.yml`, `.cos/**` or `.github/workflows/**`; report with `Areas:`, `Question:`, and `Needs spec:` comments.",
   ].join("\n");
 }
 

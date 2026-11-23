@@ -4,7 +4,8 @@ import type { HarnessGitHub } from "./github.js";
 import { inferRepoPolicy, readRepoFacts } from "./infer.js";
 import type { HarnessProjectPatch } from "./store.js";
 
-export const REPO_POLICY_PATH = ".cos/harness.yml";
+export const REPO_POLICY_PATH = ".github/hanori-policy.yml";
+const LEGACY_POLICY_PATH = ".cos/harness.yml";
 
 export interface PolicyFetchInput {
   github: HarnessGitHub;
@@ -18,14 +19,16 @@ export interface PolicyFetchInput {
 }
 
 /**
- * Repo policy is read from the default branch only. Without `.cos/harness.yml` the policy is
+ * Repo policy is read from the default branch only. Without a policy file the policy is
  * inferred from the repo instead; a failed read or invalid file keeps the last good policy.
  */
 export async function fetchRepoPolicy(input: PolicyFetchInput): Promise<HarnessProjectPatch> {
   const { github, repo } = input;
   try {
     const head = await github.getDefaultBranch(repo);
-    const text = await github.getFile(repo, REPO_POLICY_PATH, head.sha);
+    const current = await github.getFile(repo, REPO_POLICY_PATH, head.sha);
+    const path = current === null ? LEGACY_POLICY_PATH : REPO_POLICY_PATH;
+    const text = current ?? (await github.getFile(repo, LEGACY_POLICY_PATH, head.sha));
     const base = { defaultBranch: head.branch, policyFetchedAt: input.now };
     if (text === null) {
       let inferred: Record<string, unknown> | null = null;
@@ -50,7 +53,7 @@ export async function fetchRepoPolicy(input: PolicyFetchInput): Promise<HarnessP
         policyError,
       };
     }
-    const parsed = parseRepoPolicy(text);
+    const parsed = parseRepoPolicy(text, path);
     const issues = parsed.ok ? input.validate(parsed.raw, null) : parsed.issues;
     if (!parsed.ok || issues.length > 0) {
       return { ...base, policyError: formatIssues(issues, 5) };

@@ -104,10 +104,9 @@ release-kit v0.1 可以与 H1–H2 并行开发。
 
 ## 7. 相关文件
 
-| 文件             | 位置                                                                                                                                                         | 状态       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
-| 架构与流程       | 本仓库 `docs/design/dev-harness.md`                                                                                                                          | 已合并     |
-| 配置参考         | 本仓库 `docs/design/dev-harness-config.md`                                                                                                                   | 已合并     |
-| 讨论进度         | 本文                                                                                                                                                         | 已合并     |
-| release-kit 设计 | `example-owner/release-kit` 仓库 `docs/design.md`                                                                                                            | 已推送     |
-| 前期调研         | `~/Documents/Programming/agent-workbench/tasks/ai-autonomous-delivery-research/`（`report.md`、`release-and-tg-control.md`、`flows.md`、`topic-harness.md`） | 不纳入 git |
+| 文件             | 位置                                              | 状态   |
+| ---------------- | ------------------------------------------------- | ------ |
+| 架构与流程       | 本仓库 `docs/design/dev-harness.md`               | 已合并 |
+| 配置参考         | 本仓库 `docs/design/dev-harness-config.md`        | 已合并 |
+| 讨论进度         | 本文                                              | 已合并 |
+| release-kit 设计 | `example-owner/release-kit` 仓库 `docs/design.md` | 已推送 |

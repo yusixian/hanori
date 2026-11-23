@@ -34,6 +34,7 @@ pgdata/
 # Local agent configuration and exported conversations
 .claude/
 .lody/
+.superset/
 
 # Backups (local dev)
 backups/

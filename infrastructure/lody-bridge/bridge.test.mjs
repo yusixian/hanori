@@ -86,7 +86,7 @@ describe("checkArgs", () => {
       ],
     ],
     [["agent-config", "list", "--json"]],
-    [["agent-config", "list", "--machine", "MBP-64G", "--json"]],
+    [["agent-config", "list", "--machine", "Mac-Runner", "--json"]],
   ])("allows %j", (args) => {
     expect(checkArgs(args).ok).toBe(true);
   });

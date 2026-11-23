@@ -2,6 +2,7 @@ import { RISK_TIERS, type RepoPolicy, type RiskTier } from "./config/schema.js";
 
 /** Paths an agent could use to loosen its own limits; not configurable (dev-harness-config.md §2). */
 export const FIXED_T3_PATTERNS = [
+  ".github/hanori-policy.yml",
   ".cos/**",
   ".github/workflows/**",
   "release-kit.yaml",

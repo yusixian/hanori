@@ -64,13 +64,15 @@ describe("/status", () => {
     expect(reply.keyboard?.[0]?.[0]?.url).toBe("https://t.me/example_dev_bot?startapp=harness");
   });
 
-  it("describes the project bound to the topic", async () => {
+  it.each(["current", "legacy"])("describes a project with a %s policy", async (source) => {
     const github = new FakeGitHub();
-    github.policyText = "version: 1\nkind: electron\n";
+    github.policyText = "version: 1\nkind: library\n";
+    if (source === "current") github.repoFiles[".github/hanori-policy.yml"] = "kind: electron\n";
+    else github.policyText = "kind: electron\n";
     const now = new Date("2026-09-24T12:00:00Z");
     const ctx = await createTestService({
       github,
-      raw: testConfigRaw({ machines: { mbp: { lody: "MBP-64G" } } }),
+      raw: testConfigRaw({ machines: { mbp: { lody: "Mac-Runner" } } }),
       lody: {
         listMachines: async () => ({
           ok: true,
@@ -80,13 +82,13 @@ describe("/status", () => {
     });
     const reply = await run(ctx, "status", "", 501);
     expect(reply.html).toContain("默认分支：main · 类型：electron");
-    expect(reply.html).toContain(`策略：.cos/harness.yml @${"b".repeat(7)}`);
-    expect(reply.html).toContain("执行机：MBP-64G.local 🟢 在线");
+    expect(reply.html).toContain(`策略：仓库策略文件 @${"b".repeat(7)}`);
+    expect(reply.html).toContain("执行机：Mac-Runner.local 🟢 在线");
     expect(reply.html).toContain("排队：0 · 进行中：0 · 待合并 PR：0");
 
     const quota = await run(ctx, "quota", "", 501);
     expect(quota.html).toContain("claude · Team");
-    expect(quota.html).not.toContain("Desktop-5090");
+    expect(quota.html).not.toContain("Windows-Runner");
   });
 });
 
