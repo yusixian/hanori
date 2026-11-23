@@ -7,6 +7,22 @@ async function releaseResponse(response: Response): Promise<void> {
   await response.body?.cancel().catch(() => {});
 }
 
+export function webdavRecordUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return url.origin + url.pathname;
+  } catch {
+    return null;
+  }
+}
+
+function webdavRequest(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, init).catch(() => {
+    throw new Error("WebDAV request failed");
+  });
+}
+
 export class WebDAVProvider implements StorageProvider {
   private baseUrl: string;
   private authHeader: string;
@@ -30,7 +46,7 @@ export class WebDAVProvider implements StorageProvider {
     try {
       const webStream = Readable.toWeb(nodeStream) as ReadableStream;
       const remoteUrl = this.remoteUrl(remoteName);
-      const res = await fetch(remoteUrl, {
+      const res = await webdavRequest(remoteUrl, {
         method: "PUT",
         headers: {
           Authorization: this.authHeader,
@@ -42,10 +58,9 @@ export class WebDAVProvider implements StorageProvider {
       } as RequestInit);
       try {
         if (!res.ok) {
-          const text = await res.text().catch(() => res.statusText);
-          throw new Error(`WebDAV upload failed (${res.status}): ${text}`);
+          throw new Error(`WebDAV upload failed (${res.status})`);
         }
-        return remoteUrl;
+        return webdavRecordUrl(remoteUrl)!;
       } finally {
         await releaseResponse(res);
       }
@@ -56,15 +71,14 @@ export class WebDAVProvider implements StorageProvider {
 
   async delete(remoteName: string): Promise<void> {
     const remoteUrl = this.remoteUrl(remoteName);
-    const res = await fetch(remoteUrl, {
+    const res = await webdavRequest(remoteUrl, {
       method: "DELETE",
       headers: { Authorization: this.authHeader },
     });
     try {
       // 404 is fine — already deleted
       if (!res.ok && res.status !== 404) {
-        const text = await res.text().catch(() => res.statusText);
-        throw new Error(`WebDAV delete failed (${res.status}): ${text}`);
+        throw new Error(`WebDAV delete failed (${res.status})`);
       }
     } finally {
       await releaseResponse(res);
@@ -73,7 +87,7 @@ export class WebDAVProvider implements StorageProvider {
 
   async test(): Promise<{ ok: boolean; error?: string }> {
     try {
-      const res = await fetch(this.baseUrl, {
+      const res = await webdavRequest(this.baseUrl, {
         method: "PROPFIND",
         headers: {
           Authorization: this.authHeader,
@@ -84,7 +98,7 @@ export class WebDAVProvider implements StorageProvider {
         if (res.ok || res.status === 207) {
           return { ok: true };
         }
-        return { ok: false, error: `HTTP ${res.status}: ${res.statusText}` };
+        return { ok: false, error: `HTTP ${res.status}` };
       } finally {
         await releaseResponse(res);
       }

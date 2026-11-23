@@ -55,11 +55,9 @@ describe("WebDAV resource cleanup", () => {
     await expect(provider().delete("backup.gz")).resolves.toBeUndefined();
   });
 
-  it("preserves a failed DELETE response body", async () => {
+  it("omits the failed DELETE response body", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("denied", { status: 403 })));
-    await expect(provider().delete("backup.gz")).rejects.toThrow(
-      "WebDAV delete failed (403): denied",
-    );
+    await expect(provider().delete("backup.gz")).rejects.toThrow(/^WebDAV delete failed \(403\)$/);
   });
 
   it.each([200, 404])("releases an unused DELETE response with status %i", async (status) => {
@@ -89,17 +87,19 @@ describe("WebDAV resource cleanup", () => {
   it("closes the source when the request fails before reading it", async () => {
     const failure = new Error("connection refused");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(failure));
-    await expect(provider().upload(await backupFile(), "backup.gz")).rejects.toBe(failure);
+    await expect(provider().upload(await backupFile(), "backup.gz")).rejects.toThrow(
+      /^WebDAV request failed$/,
+    );
     expect(vi.mocked(createReadStream).mock.results[0]!.value.destroyed).toBe(true);
   });
 
-  it("preserves server error details and closes the failed upload source", async () => {
+  it("retains only the server status and closes the failed upload source", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(new Response("quota reached", { status: 507 })),
     );
     await expect(provider().upload(await backupFile(), "backup.gz")).rejects.toThrow(
-      "WebDAV upload failed (507): quota reached",
+      /^WebDAV upload failed \(507\)$/,
     );
     expect(vi.mocked(createReadStream).mock.results[0]!.value.destroyed).toBe(true);
   });
@@ -146,9 +146,8 @@ it.each(["fixture", "fixture/"])(
     );
     const remoteUrl = await storage.upload(await backupFile(), "backup#1.sql.gz");
     await storage.delete("backup#1.sql.gz");
-    expect(remoteUrl).toBe(
-      `https://storage.test/base%20folder/backup%231.sql.gz?scope=${queryValue}`,
-    );
-    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([remoteUrl, remoteUrl]);
+    expect(remoteUrl).toBe("https://storage.test/base%20folder/backup%231.sql.gz");
+    const requestUrl = remoteUrl + "?scope=" + queryValue;
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([requestUrl, requestUrl]);
   },
 );

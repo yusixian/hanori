@@ -219,13 +219,36 @@ it.each([false, true])(
     expect(gunzipSync(await readFile(join(backupDir, record.filename))).toString()).toBe(
       "valid backup",
     );
-    expect(record.error).toBe(remoteFailure ? "Remote upload failed: remote unavailable" : null);
+    expect(record.error).toBe(remoteFailure ? "Remote upload failed" : null);
+    expect(records[0]?.error).toBe(record.error);
     expect(logger.warn).toHaveBeenCalledWith(
       { err: cleanupError },
       "Failed to clean up old backups",
     );
   },
 );
+
+it("masks historical WebDAV locations and server error bodies when listing backups", async () => {
+  const row = {
+    id: 1,
+    status: "completed",
+    createdAt: new Date(),
+    remoteProvider: "webdav",
+    remoteUrl: "https://user:fixture@storage.test/backup.gz?token=fixture#fixture",
+    error: "Remote upload failed: WebDAV upload failed (403): fixture",
+  };
+  const db = { select: () => ({ from: () => ({ orderBy: async () => [row] }) }) };
+  const service = new BackupService({
+    db: db as never,
+    databaseUrl: "",
+    backupDir: "",
+    encryptionKey: "",
+    logger: {} as never,
+  });
+  const [record] = await service.listBackups();
+  expect(record?.remoteUrl).toBe("https://storage.test/backup.gz");
+  expect(record?.error).toBe("Remote upload failed: WebDAV upload failed (403)");
+});
 
 it("keeps successful remote upload metadata on the shared completion path", async () => {
   const { service, records } = await fixture();

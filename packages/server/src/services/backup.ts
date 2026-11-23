@@ -15,7 +15,17 @@ import { decrypt, encrypt } from "../utils/crypto.js";
 import { withBackupConnection } from "./backup-connection.js";
 import { createStorageProvider, type StorageProvider } from "./storage/index.js";
 
+import { webdavRecordUrl } from "./storage/webdav.js";
+
 const CONFIG_KEY = "backup_config";
+
+function safeBackupError(message: string | null): string | null {
+  if (!message?.startsWith("Remote upload failed:")) return message;
+  return (
+    message.match(/^Remote upload failed: WebDAV upload failed \(\d{3}\)/)?.[0] ??
+    "Remote upload failed"
+  );
+}
 
 interface BackupServiceOptions {
   db: Database;
@@ -85,7 +95,7 @@ export class BackupService {
         } catch (err) {
           // Remote upload failure doesn't fail the backup
           const msg = err instanceof Error ? err.message : String(err);
-          uploadError = `Remote upload failed: ${msg}`;
+          uploadError = safeBackupError(`Remote upload failed: ${msg}`);
         }
       }
 
@@ -282,10 +292,13 @@ export class BackupService {
       filename: row.filename,
       sizeBytes: row.sizeBytes,
       durationMs: row.durationMs,
-      remoteUrl: row.remoteUrl,
+      remoteUrl:
+        row.remoteProvider === "webdav" && row.remoteUrl
+          ? webdavRecordUrl(row.remoteUrl)
+          : row.remoteUrl,
       remoteProvider: row.remoteProvider,
       status: row.status === "completed" || row.status === "failed" ? row.status : "failed",
-      error: row.error,
+      error: safeBackupError(row.error),
       createdAt: row.createdAt.toISOString(),
     };
   }

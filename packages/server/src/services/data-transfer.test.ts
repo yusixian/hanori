@@ -71,6 +71,28 @@ function exportPayload(
 }
 
 describe("DataTransferService credential sanitization", () => {
+  it("omits provider and engagement keys on export and on import of older files", async () => {
+    const bot = {
+      id: "old",
+      name: "Fixture",
+      aiConfig: {
+        providers: [{ id: "model", encryptedApiKey: "fixture-ciphertext" }],
+        engagement: { enabled: true, encryptedApiKey: "fixture-ciphertext" },
+      },
+    };
+    const db = {
+      select: () => ({
+        from: (table: unknown) => ({ where: async () => (table === schema.bots ? [bot] : []) }),
+      }),
+    } as unknown as Database;
+    const result = await new DataTransferService(db, "a".repeat(64)).exportBot(bot.id);
+    const expected = { providers: [{ id: "model" }], engagement: { enabled: true } };
+    expect(result.bots[0]?.aiConfig).toEqual(expected);
+    const target = createImportDb();
+    await new DataTransferService(target.db, "a".repeat(64)).importData(exportPayload([bot], {}));
+    expect(target.inserts[0]?.rows[0]?.aiConfig).toEqual(expected);
+  });
+
   it("exports plugin settings without ciphertext and does not copy a secret into ordinary values", async () => {
     const db = {
       select: () => ({
