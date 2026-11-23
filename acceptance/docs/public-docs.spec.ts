@@ -159,6 +159,30 @@ for (const { version, theme, status = "" } of [
   });
 }
 
+test("the first search click opens the dialog when client scripts load late", async ({ page }) => {
+  let resumeScripts!: () => void;
+  const scriptsPaused = new Promise<void>((resolve) => {
+    resumeScripts = resolve;
+  });
+  await page.route("**/*.js", async (route) => {
+    await scriptsPaused;
+    await route.continue();
+  });
+  const search = page
+    .getByRole("button", { name: /搜索文档/ })
+    .filter({ visible: true })
+    .first();
+  try {
+    await page.goto("/docs/", { waitUntil: "commit" });
+    await expect(page.locator("h1").first()).toBeVisible();
+    await expect(search).toBeHidden();
+  } finally {
+    resumeScripts();
+  }
+  await search.click();
+  await expect(page.getByRole("dialog").locator("input")).toBeVisible();
+});
+
 test("JEV tuning guide is searchable and explains independent thresholds", async ({
   page,
 }, info) => {
