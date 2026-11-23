@@ -548,7 +548,7 @@ for (const failure of ["http", "application", "network"] as const) {
       }),
     );
     mountManagedProfiles();
-    await expect.element(page.getByRole("alert")).toHaveTextContent("Could not load records");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't load records");
     await expect
       .element(page.getByText("No profiles found.", { exact: true }))
       .not.toBeInTheDocument();
@@ -597,7 +597,7 @@ for (const action of ["create", "save", "delete"] as const) {
         exact: true,
       });
       await actionButton.click();
-      await expect.element(page.getByRole("alert")).toHaveTextContent("Could not confirm");
+      await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't confirm");
       expect(reads).toBe(1);
       expect(writes).toBe(1);
       if (action !== "delete") {

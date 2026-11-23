@@ -1,68 +1,60 @@
 ---
 title: Docker 部署
-description: 使用 Docker Compose 启动服务、执行健康检查并安全地更新实例。
+description: 用 Docker Compose 启动服务、执行健康检查并安全更新实例。
 ---
 
-取得维护者提供的仓库或发行源码，选择明确的版本后，在项目根目录执行下面的命令。
+获取对应版本的源码后，在仓库根目录执行以下步骤。
 
 ## 1. 准备环境
 
-确认 Docker Engine、Docker Compose 插件、OpenSSL 和 Git（如果使用 Git 来源）可用。准备一个持久化的数据库 volume、备份目录和 HTTPS 反向代理。
+确认本机已安装 Docker Engine、Docker Compose 插件、OpenSSL 和 Git（如用 Git 拉取），并准备好持久化数据库 volume、备份目录和 HTTPS 反向代理。
 
-生成密钥时使用随机值：
+用下面的命令为 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`PANEL_PASSWORD` 及 `MINI_APP_SESSION_SECRET` 分别生成独立随机密钥：
 
 ```bash
 openssl rand -hex 32
 ```
 
-为 `DB_PASSWORD`、`BETTER_AUTH_SECRET`、`ENCRYPTION_KEY`、`PANEL_PASSWORD` 和需要的 `MINI_APP_SESSION_SECRET` 分别生成不同的值。
-
 ## 2. 创建环境文件
 
-从模板复制配置并限制权限：
+二选一：
+
+**方式 A：手动复制模板**
 
 ```bash
 cp .env.example .env
 chmod 600 .env
 ```
 
-也可以使用 Node.js 22.19+ 自动生成 Docker 专用配置，无需先安装应用依赖：
+**方式 B：用 Node.js 22.19+ 自动生成 Docker 专用 `.env`**（无需先装依赖，拒绝覆盖已有 `.env`）：
 
 ```bash
 node scripts/init-env.mjs --email owner@example.com --url https://bot.example.com
 ```
 
-替换为自己的邮箱和 HTTPS origin；本机试用可以使用 `http://localhost:43100`。这两种方式二选一，脚本拒绝覆盖已有 `.env`。脚本分别生成数据库密码、认证密钥、加密密钥、bootstrap 密码和 Mini App 会话密钥，使用 `0600` 权限保存，不在终端输出密钥。生成的文件用于 Docker，`DATABASE_URL` 留空以避免意外连接开发数据库；源码开发仍使用 `.env.example` 模板。首次登录密码在本地文件的 `PANEL_PASSWORD` 中查看。
+替换为自己的邮箱和 HTTPS origin（本机试用可填 `http://localhost:43100`）。脚本会自动生成上述密钥并以 `0600` 权限写入（终端不回显，首次登录密码见 `.env` 中的 `PANEL_PASSWORD`），`DATABASE_URL` 留空以防误连开发库。
 
-至少填写 `DATABASE_URL`（或 Compose 使用的 `DB_PASSWORD`）、`BETTER_AUTH_SECRET`、`BETTER_AUTH_URL`、`AUTH_OWNER_EMAIL` 和首次启动用的 `PANEL_PASSWORD`。所有环境都必须显式填写非空 `ENCRYPTION_KEY`；升级和恢复已有数据时保留原值。不要把 `.env` 加入版本库、镜像或日志。
+无论哪种方式，所有环境都必须填非空 `ENCRYPTION_KEY`；升级或恢复已有数据时保留原值，切勿将 `.env` 提交进版本库或镜像。
 
 ## 3. 启动最小服务
-
-使用仓库提供的 Compose 文件启动 app 和数据库。部署平台如果需要固定项目名，可以选择一个不会与其他实例冲突的名字：
 
 ```bash
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml up -d --build
 ```
 
-不要使用 `docker compose down -v`，它会删除数据库存储卷。更新前先阅读[备份与升级](/docs/self-hosting/backup-upgrade)。
+切勿执行 `docker compose down -v`（会删库卷）。更新前先看[备份与升级](/docs/self-hosting/backup-upgrade)。
 
-app 镜像已内置 Python 和固定版本的 yt-dlp，供 Bilibili 字幕及视频流提取使用，不需要额外启用 profile。源码运行时，建议在独立 Python 虚拟环境执行 `pip install -r infrastructure/bilibili-ytdlp/requirements.txt`，并将该虚拟环境的 `bin` 放入启动服务器的 `PATH`；没有 yt-dlp 时会使用现有 B 站接口。提取器通过服务器的受限媒体传输访问 B 站，子进程不接收 Cookie、ASR API Key 或应用环境秘密。音视频合并仍需下文的 `media` 服务。
-
-如果通过 Dokploy 或其他 Traefik 平台把 `app` 接入公网，确认代理与 `app` 共享的 Docker 网络。升级前，把当前 app 容器的 `traefik.docker.network` 标签值填入部署环境，沿用原有代理网络。请显式设置 `TRAEFIK_DOCKER_NETWORK` 为自己的共享网络；默认值只是部署模板，不保证网络实际存在。当 `app` 同时加入多个网络时，应设为双方共享的网络，并从代理容器验证 `/api/health/ready` 可访问。使用 Dokploy 的 Domains 页面管理域名时，保留 Compose 中 `labels` 的列表形式，让平台追加域名路由标签。容器自身的健康检查通过不代表公网路由可用。
-
-Dokploy 的 **Advanced → Enable Isolated Deployment** 应关闭，保留仓库为各服务定义的网络边界。该选项会给所有服务追加网络，与 `media-worker` 的 `network_mode: none` 冲突，也会让编码 worker 多出一条网络连接。使用 Dokploy 的默认 Domains 配置时，设置 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只给 `app` 配置域名。部署前刷新仓库来源并检查 **Preview Compose**：`app` 保留 `default`、`harness-bridge` 并加入代理网络，`media-worker` 没有 `networks` 字段，编码 worker 仅加入 `coding-sandbox`。已有实例更改这个开关时，保持 Compose 项目名和存储卷配置不变，不要删除数据卷。
+- **内置 yt-dlp**：app 镜像已内置 Python 与固定版本 yt-dlp 供 Bilibili 字幕及视频流提取，无需额外 profile。源码运行时可在独立虚拟环境执行 `pip install -r infrastructure/bilibili-ytdlp/requirements.txt` 并将 `bin` 加入 `PATH`（缺 yt-dlp 时退回现有 B 站接口）；子进程不接触 Cookie、ASR API Key 或应用秘密，音视频合并仍需 `media` 服务。
+- **Traefik / Dokploy 反向代理**：显式设置 `TRAEFIK_DOCKER_NETWORK` 为代理与 `app` 共享的 Docker 网络（升级前沿用原容器的 `traefik.docker.network` 标签值），并从代理容器验证 `/api/health/ready` 可达。使用 Dokploy Domains 管理域名时，保留 Compose 中 `labels` 的列表写法。
+- **Dokploy 隔离设置**：务必关闭 **Advanced → Enable Isolated Deployment**，否则平台会给所有服务强加网络，与 `media-worker` 的 `network_mode: none` 冲突并破坏编码 worker 隔离。使用默认 Domains 时设 `TRAEFIK_DOCKER_NETWORK=dokploy-network`，只给 `app` 绑域名；部署前点 **Preview Compose** 确认 `app` 有 `default`、`harness-bridge` 及代理网络、`media-worker` 无 `networks`、编码 worker 仅连 `coding-sandbox`。
 
 ### 减少更新时的数据库中断
 
-Dokploy 的 Advanced Command 保留默认的 `up -d --build --remove-orphans`。如果此前添加了全栈 `--force-recreate`，请在平台中移除它；更新仓库文件不会自动修改平台保存的命令。普通应用更新会按镜像和配置差异重建服务，数据库没有变化时保持运行。
+Dokploy 的 Advanced Command 保持默认 `up -d --build --remove-orphans`，如曾加过 `--force-recreate` 请删掉。普通应用更新只会重建有变动的容器，数据库保持运行。
 
-完整 `up` 会重新启动已退出的 `db-backup`；`app` 仍需等待本次备份成功后才能启动。不要用 `--no-deps` 绕过这项依赖。首次调整后检查数据库容器 ID 和启动时间保持不变、备份的本次执行时间及退出码正常，再确认应用 ready 和版本 SHA。可先在有 Docker 的本机运行 `pnpm deployment:smoke`，在独立临时环境检查备份重跑、数据库连续运行及备份失败拦截。
-
-应用更新仍有重启窗口，备份失败时旧应用也可能已经停止。这项调整不保证零停机；数据库镜像或配置变化仍应安排维护窗口，基础镜像建议固定 digest。
+完整 `up` 会重跑 `db-backup`，`app` 仍等待本次备份成功后启动（勿用 `--no-deps` 绕过）。首次调整后核对数据库容器 ID 与启动时间未变、`db-backup` 退出码正常，再看 ready 状态。可先在本机跑 `pnpm deployment:smoke` 验证。注意应用更新仍有重启窗口，数据库镜像或配置变更仍应走维护窗口，基础镜像建议锁 digest。
 
 ## 4. 验证启动
-
-检查容器状态、日志和健康接口：
 
 ```bash
 docker compose -p cos-bot-prod -f docker-compose.yml -f docker-compose.direct.yml ps
@@ -71,88 +63,61 @@ curl -fsS http://127.0.0.1:43100/api/health
 curl -fsS http://127.0.0.1:43100/api/health/ready
 ```
 
-上面的 `43100` 来自 `.env.example` 的 `PORT`；如果没有设置 `PORT`，`docker-compose.direct.yml` 的宿主机默认端口仍是 `9600`。实际端口以 `.env` 为准，容器内部仍使用 `3000`。`/api/health` 表示进程可响应；`/api/health/ready` 还要求数据库迁移、认证、Bot 和必需集成达到 ready 状态。只有 ready 通过后，才继续面板和 Telegram 验收。
+`43100` 来自 `.env.example` 的 `PORT`（未设时 `docker-compose.direct.yml` 默认映射宿主机 `9600`，容器内始终为 `3000`）。`/api/health` 仅检查进程存活，`/api/health/ready` 会校验迁移、认证、Bot 和必需集成均已就绪。
 
 ## 5. 首次登录和启用选项
 
-打开 `BETTER_AUTH_URL`，用 owner 邮箱和 bootstrap 密码登录，进入 Settings 修改密码。确认登录成功后，从 `.env` 删除 `PANEL_PASSWORD`，再按需在面板中添加 Bot Token、Provider、备份和可选集成。
+访问 `BETTER_AUTH_URL`，用 owner 邮箱和 `PANEL_PASSWORD` 登录并在 Settings 修改密码，随后从 `.env` 删除 `PANEL_PASSWORD`，再在面板配置 Bot Token、Provider、备份和可选集成。
 
-启用编码 worker 时，把 `COMPOSE_PROFILES=coding` 和 `CODING_WORKER_SECRET` 一起设置，再重建服务。检查 worker 与出口代理的健康状态，确认它们未暴露到公网。
+启用编码 worker：同时配置 `COMPOSE_PROFILES=coding` 与 `CODING_WORKER_SECRET` 后重建，确认 worker 与出口代理健康且未暴露公网。
 
 ### 可选音频转换服务
 
-Bilibili 音频转录需要 `media` profile，默认不启用。为转换服务单独生成 `MEDIA_WORKER_SECRET`，不要复用数据库、认证、编码 worker 或 ASR 密钥。它接受 32 至 256 个 ASCII 字母、数字或 `/+_=-` 字符，不接受空格和换行；下面的命令会生成符合要求的值：
+Bilibili 音频转录需启用 `media` profile（默认关闭）。用 `openssl rand -hex 32` 生成独立的 `MEDIA_WORKER_SECRET`（32~256 个 ASCII 字母、数字或 `/+_=-`，不含空格换行，勿复用其他密钥），写入 `.env` 并设 `COMPOSE_PROFILES=media`（与编码 worker 共用时为 `coding,media`），重建后检查 `media-worker` 状态。
 
-```bash
-openssl rand -hex 32
-```
-
-把新值保存在受保护的 `.env` 或部署 Secret 中，并设置 `COMPOSE_PROFILES=media`；同时使用编码 worker 时设为 `coding,media`。使用前面的 Compose 命令重建服务，再检查 `media-worker` 状态与日志。不要把生成的密钥贴到终端记录、工单或网页插件配置中。
-
-Compose 已为 app 与转换服务设置 `MEDIA_WORKER_SOCKET=/media-control/worker.sock`、`MEDIA_JOB_DIR=/media-jobs` 和 `MEDIA_WORKER_GID=1000`，通过本机 Unix socket 与临时 volume 交换任务。自行以源码部署时也必须提供匹配的绝对 socket 路径、共享任务目录和权限；不能用公网服务地址替代 socket。`mediajobs`、`mediacontrol` 是临时存储，不作为媒体备份目录。
-
-转换容器完全没有网络，使用只读根文件系统并限制资源，只接收已下载的音频进行格式转换，不接收平台 Cookie、ASR API Key 或数据库凭据。音频下载和向外部 ASR 发送音频由 app 执行。这个隔离只保护音频转换流程，可信插件仍在 app 进程中运行，不能把它当作第三方插件的沙箱。
-
-Cookie、ASR 服务地址、模型、密钥、音频外传许可与每用户预算在网页按 Bot 配置，不放在这些基础设施变量里。还需要在 [插件管理](/docs/guides/plugins#可选-bilibili-音频转录)明确启用转录；仅启动容器不会自动下载音频或调用 ASR。
-
-容器健康检查只验证本地转换服务，不证明真实 Cookie、平台下载权限或外部 ASR 可用。当前这些外部链路尚未完成真实凭据验证。
+- Compose 已默认配置 `MEDIA_WORKER_SOCKET=/media-control/worker.sock`、`MEDIA_JOB_DIR=/media-jobs`、`MEDIA_WORKER_GID=1000`，通过本机 Unix socket 与临时卷通信（源码部署需自行对齐路径与权限，不能换成公网地址）；`mediajobs`、`mediacontrol` 仅为临时存储。
+- 转换容器完全断网、只读根文件系统并限额，只做音频格式转换，不接触 Cookie、ASR API Key 或数据库凭据（下载和上传 ASR 由 app 执行）。此隔离仅针对音频转换，不是第三方插件沙箱。
+- Cookie、ASR 地址、密钥和预算在面板按 Bot 配置，并需在[插件管理](/docs/guides/plugins#可选-bilibili-音频转录)显式启用转录。容器健康检查只覆盖本地转换服务，不代表外部链路已通。
 
 ## 6. 后续更新
 
-更新前先做数据库备份，确认工作区没有手工修改，拉取已核验版本后重新构建 app。启动完成后重新检查 `/api/health/ready`、面板登录、Bot `/status`、一次 AI 私聊和关键集成。部署检查通过不等于真实 Telegram 群组、外部 Provider 或生产流量已经完整验证。
+更新前备份数据库，确认工作区干净，拉取已核验版本并重建 app，随后复查 `/api/health/ready`、面板登录、Bot `/status`、一次 AI 私聊与关键集成。
 
 ## 隔离部署检查
 
-在真正部署前，可以用 Node.js 和本机 Docker 对当前源码进行一次抛弃式验收：
+正式部署前可用本机 Docker 跑一遍抛弃式验收：
 
 ```bash
 node scripts/smoke-deployment.mjs --check
 node scripts/smoke-deployment.mjs
 ```
 
-`--check` 只渲染并验证两套 Compose 隔离配置，无需启动 Docker daemon。完整检查需要启动本机 Docker：构建当前目录的 app，在独立数据库中验证迁移、无真实 Bot Token 启动、owner 登录和匿名文档；创建停用的合成 Bot 验证凭据加密；重建后检查持久化；然后在第二套独立 app、数据库、网络和 volume 中恢复并重新登录、验证凭据解密与文件。
-
-脚本还会用错误密钥确认凭据无法解密，用缺失密钥确认应用拒绝启动，再恢复原密钥。恢复时关闭 bootstrap 密码补建，避免把不完整的认证备份当作成功。
-
-需要测试跨版本升级时，指定本地仓库中已存在的上一支持版本完整提交 SHA：
-
-```bash
-node scripts/smoke-deployment.mjs --previous-sha <上一支持版本的完整 Git SHA>
-```
-
-脚本从该提交导出临时源码构建旧镜像，先在旧应用建立合成账号、配置与文件，备份后升级到当前候选，核对原迁移记录未被改写、登录和解密仍可用。它不切换工作区，也不执行数据库降级。未提供 `--previous-sha` 时，不代表完成了跨版本升级验证。
-
-源码归档没有 `.git`，运行基本安装与恢复检查需加 `--sha <该版本的完整 Git SHA>`；跨版本升级目前需要包含旧提交的本地 Git 仓库。候选镜像来自当前目录，未提交修改只能作为本地验证；发行验收应使用干净、已审核的确切版本源码，并保存两端 SHA 和执行结果。
-
-脚本不读取已有 `.env`，拒绝远程 Docker、外部 volume、宿主机目录挂载和端口发布。只使用随机项目和合成凭据，不启用真实 Bot 或 Provider。检查结束后删除本次两套项目的容器、volume、网络与 app 镜像；中断或失败也会逐项目尝试清理。若清理失败，保留权限受限的临时配置并输出对应项目的清理命令，不影响另一项目的清理。
-
-此检查不覆盖真实 Telegram、第三方集成或生产流量。不要将生产 `.env`、数据库或备份文件交给该脚本。
+- `--check` 仅校验两套隔离 Compose 配置，不依赖 Docker daemon。
+- 完整检查会构建当前源码，在两套随机项目名的隔离环境中依次验证迁移、无 Bot Token 启动、owner 登录、匿名文档、合成 Bot 凭据加密、重建持久化、跨环境备份恢复，以及错密钥解密失败与缺密钥拒启（恢复时关闭 bootstrap 密码补建）。
+- 加 `--previous-sha <上一支持版本的完整 Git SHA>` 可导出旧提交并验证跨版本升级及迁移不可变性（源码归档无 `.git`，跑基础检查需加 `--sha <完整 Git SHA>`）。
+- 脚本不读已有 `.env`，拒绝远程 Docker、外部 volume、宿主机挂载和端口发布；结束后自动清理容器、卷、网络和镜像（失败也会尽量清理并打印残留清理命令）。切勿把生产 `.env` 或备份交给它。
 
 ## 正常关停
 
-退出期间先后收到 `SIGINT` 和 `SIGTERM` 时，服务会共用同一次关停流程，避免重复停止服务或关闭数据库。单个清理步骤失败时，服务会继续按依赖顺序完成其余清理，记录脱敏错误，并以非零状态退出；并行收尾会等待所有已启动步骤结束。后续信号不会自动重新执行部分完成的清理，请根据错误日志排查。已有任务收尾可能延长关停时间，强制终止进程不具备正常等待保证。
+退出期间先后收到 `SIGINT` 和 `SIGTERM` 时共用同一次关停流程。单步清理失败会记录脱敏错误并以非零码退出，其余依赖步骤仍会继续收尾；强制强杀不具备等待保证。
 
-以下后台任务会停止接纳新工作，并在数据库关闭前等待已启动的工作收尾：
+数据库关闭前，以下后台任务会停止接新并等待在途工作完成：
 
-| 后台任务                                      | 正常关停时等待的工作                                                                        |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 日志、Bot Run、非活跃记忆、互动样本上下文清理 | 已开始的清理查询及诊断收尾                                                                  |
-| 记忆整合                                      | 当前 Bot 的模型调用后续处理，包括用量结算、记忆写入、向量更新和租约释放；跳过尚未开始的 Bot |
-| 图片保留清理                                  | 已开始的文件删除、清理标记写入及并行查询；单项查询失败也会等待其他已启动查询                |
-| 用量维护                                      | 已启动的明细清理和过期预留回收事务                                                          |
+| 后台任务                                      | 正常关停时等待的工作                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 日志、Bot Run、非活跃记忆、互动样本上下文清理 | 已开始的清理查询及诊断收尾                                                            |
+| 记忆整合                                      | 当前 Bot 的模型调用后处理（用量结算、记忆写入、向量更新、租约释放）；跳过未开始的 Bot |
+| 图片保留清理                                  | 已开始的文件删除、标记写入及并行查询                                                  |
+| 用量维护                                      | 已启动的明细清理和过期预留回收事务                                                    |
 
-保留天数、删除条件、额度结算规则和图片删除失败的重试方式不变，历史生成记录仍按原规则保留。记忆整合不会撤销已经发出的模型请求，实际失败沿用原有退款和错误记录流程。模型、文件系统或数据库响应缓慢时，关停等待也可能延长。
-
-Harness 调度器的等待范围见[调度器关停](/docs/integrations/dev-harness#调度器关停)，其中不包含独立的回合结束回调及 HTTP/Webhook 请求。
-
-关停后不再调度新提醒或失败重试。尚未开始投递的提醒保留可恢复记录；恢复时已取得投递资格但尚未发出的提醒会退回可恢复状态。已开始的提醒继续完成投递结果记录，不因正常关停自动重发。
+记忆整合不会撤销已发出的模型请求。提醒调度在关停后停止新投递和重试：未发出的提醒退回可恢复状态，已开始投递的只记录结果、不自动重发。Harness 调度器的等待范围见[调度器关停](/docs/integrations/dev-harness#调度器关停)。
 
 ## 用量维护
 
-正常运行时，用量明细每日清理，过期预留每分钟回收。单条预留回收失败不会阻止同批其他记录，失败会在批次结束后汇总报告；仍存在的未完成记录留待下一周期重试。启动检查发生回收失败时仍会报错，不会将部分成功当作全部成功。
+运行时每日清理用量明细、每分钟回收过期预留。单条预留回收失败不阻断同批其他记录，批次结束汇总报错并留待下一周期重试；启动检查遇回收失败会直接报错。
 
 ## 语录渲染服务
 
-默认 Compose 的 `quote-worker` 为 `/q` 与 AI 语录工具提供离线渲染。它有 512 MiB 内存上限，不连接网络，通过与应用共享的 Unix socket 接收已校验的文字和图片；下载 Telegram 素材仍由应用负责。镜像包含中文与 Emoji 字体，不需要额外配置模型 API。
+默认 Compose 的 `quote-worker` 为 `/q` 和 AI 语录工具提供离线渲染：512 MiB 内存上限、无网络、内置中文与 Emoji 字体，通过 `QUOTE_WORKER_SOCKET` 接收 app 已校验的文字和图片（素材下载仍由 app 完成）。
 
-升级此功能需同步 Compose 配置并重建应用及 `quote-worker`，不能只更新应用镜像。应用以 `QUOTE_WORKER_SOCKET` 连接渲染服务；启动后检查 `/api/health/ready` 的完整 Git SHA 与 `quoteRenderer: true`。这个字段报告实际渲染能力，可选服务离线不会把整个应用标为未就绪；`false` 时语录命令会说明服务不可用，AI 不提供语录工具。本地未配置 socket 时也不会注册语录工具。
+升级时须同步 Compose 配置并同时重建 app 与 `quote-worker`。启动后检查 `/api/health/ready` 中的完整 Git SHA 及 `quoteRenderer: true`；该服务离线不影响整体 ready 状态，但为 `false` 或本地未配 socket 时语录命令会提示不可用且 AI 不注册语录工具。

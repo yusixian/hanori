@@ -331,7 +331,9 @@ test("retries settings and each list without presenting failed reads as an empty
   renderPage();
   await expect
     .element(
-      page.getByRole("tabpanel").getByText("Could not load records. Try again.", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Couldn't load records. Please try again.", { exact: true }),
     )
     .toBeVisible();
   await expect
@@ -347,7 +349,9 @@ test("retries settings and each list without presenting failed reads as an empty
   await page.getByRole("tab", { name: "Prompt assets", exact: true }).click();
   await expect
     .element(
-      page.getByRole("tabpanel").getByText("Could not load records. Try again.", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Couldn't load records. Please try again.", { exact: true }),
     )
     .toBeVisible();
   await expect
@@ -361,7 +365,9 @@ test("retries settings and each list without presenting failed reads as an empty
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect
     .element(
-      page.getByRole("tabpanel").getByText("Could not load records. Try again.", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Couldn't load records. Please try again.", { exact: true }),
     )
     .toBeVisible();
   await expect.element(page.getByText("Mira", { exact: true })).toBeVisible();
@@ -369,7 +375,9 @@ test("retries settings and each list without presenting failed reads as an empty
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect
     .element(
-      page.getByRole("tabpanel").getByText("Could not load records. Try again.", { exact: true }),
+      page
+        .getByRole("tabpanel")
+        .getByText("Couldn't load records. Please try again.", { exact: true }),
     )
     .not.toBeInTheDocument();
 });

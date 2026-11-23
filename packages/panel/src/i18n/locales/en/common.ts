@@ -104,7 +104,7 @@ export const common = {
   pagination: {
     previous: "Previous page",
     next: "Next page",
-    jumpToPage: "Click to jump to a page",
+    jumpToPage: "Jump to page",
   },
   numberInput: {
     decrease: "Decrease",

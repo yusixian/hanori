@@ -232,7 +232,7 @@ for (const failure of ["http", "application", "network"] as const) {
 
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent("Could not load records. Try again.");
+      .toHaveTextContent("Couldn't load records. Please try again.");
     await expect
       .element(page.getByText("No memories found.", { exact: true }))
       .not.toBeInTheDocument();
@@ -365,7 +365,7 @@ test("keeps and freezes a create draft until failure, then succeeds on retry", a
     .toBeDisabled();
   mutationRequests[0]!.resolve(mutationResponse(false, 503));
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Your draft is kept");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Your draft is saved");
   await expect.element(content).toHaveValue("Draft memory");
   await page.getByRole("button", { name: "Refresh list", exact: true }).click();
   await vi.waitFor(() => expect(listRequests).toHaveLength(3));
@@ -418,7 +418,7 @@ test("keeps an edit draft on an application failure and only closes after succes
   await expect.element(content).toBeDisabled();
   mutationRequests[0]!.resolve(mutationResponse(false));
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Your changes are kept");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Your edits are kept");
   await expect.element(content).toHaveValue("Edited memory");
   await expect.element(page.getByLabelText("Chat ID (optional)")).toHaveValue("-42");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -558,7 +558,7 @@ test("keeps exact duplicate cleanup opt-in, preserves edit drafts, and confirms 
   duplicatePreviewRequests[0]!.resolve(
     duplicatePreviewResponse([duplicateCandidate(3, 2)], { hasMore: true }),
   );
-  await expect.element(page.getByText("Similar wording is excluded.")).toBeVisible();
+  await expect.element(page.getByText("Similar wording isn't included.")).toBeVisible();
   await expect.element(page.getByText("Retire #3 · keep #2", { exact: true })).toBeVisible();
   await expect.element(editContent).toHaveValue("Unsaved edit draft");
   await expect
@@ -631,7 +631,7 @@ test("limits duplicate cleanup to 50 and refreshes the batch after a stale 409",
   expect(body.candidates).toHaveLength(50);
   expect((body.candidates as Array<Record<string, unknown>>).length).toBeLessThanOrEqual(50);
   expect(window.confirm).toHaveBeenCalledWith(
-    "Retire 50 exact duplicate memories? Each copy will be marked inactive and linked to its survivor.",
+    "Retire 50 exact duplicates? They'll be marked inactive and linked to the kept copy.",
   );
   mutationRequests[0]!.resolve(mutationResponse(false, 409));
 
@@ -643,7 +643,9 @@ test("limits duplicate cleanup to 50 and refreshes the batch after a stale 409",
   listRequests[1]!.resolve(listResponse([memory(1, "Tea preference")]));
   await expect
     .element(
-      page.getByText("Memories changed after this preview. We refreshed it; review the new batch."),
+      page.getByText(
+        "Memories changed since this preview. Refreshed—please review the updated batch.",
+      ),
     )
     .toBeVisible();
   await expect.element(page.getByText("Changed after preview", { exact: true })).toBeVisible();
@@ -676,7 +678,7 @@ test("reads back an uncertain duplicate cleanup result and fits the Chinese prev
   duplicatePreviewRequests[1]!.resolve(duplicatePreviewResponse([duplicateCandidate(3, 1)]));
   listRequests[1]!.resolve(listResponse([memory(1, "保留当前筛选和列表状态")]));
   await expect
-    .element(page.getByText("无法确认操作结果。已加载最新预览，请检查当前批次后再操作。"))
+    .element(page.getByText("操作结果未确认，已加载最新预览，请先核对再继续。"))
     .toBeVisible();
   await expect.element(page.getByText("停用 #3 · 保留 #1", { exact: true })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
@@ -779,7 +781,7 @@ test("does not apply pending browser history until a failed write is confirmed o
   await vi.waitFor(() => expect(mutationRequests).toHaveLength(1));
   await page.getByRole("button", { name: "Back", exact: true }).click();
   mutationRequests[0]!.reject(new Error("offline"));
-  await expect.element(page.getByText(/The address change will apply afterwards/)).toBeVisible();
+  await expect.element(page.getByText(/URL filters will apply once you're done/)).toBeVisible();
   await expect.element(draft).toHaveValue("Kept draft");
   expect(listRequests).toHaveLength(2);
   await page.getByRole("button", { name: "Refresh list", exact: true }).click();
@@ -824,7 +826,7 @@ test("keeps an edit accessible across browser history and a recovery that no lon
   await vi.waitFor(() => expect(listRequests).toHaveLength(3));
   listRequests[2]!.resolve(listResponse([]));
   await expect.element(draft).toHaveValue("Kept edit");
-  await expect.element(page.getByText(/Your edit is kept here/)).toBeVisible();
+  await expect.element(page.getByText(/your draft is kept here/)).toBeVisible();
   expect(listRequests).toHaveLength(3);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await vi.waitFor(() => expect(listRequests).toHaveLength(4));

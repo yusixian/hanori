@@ -662,7 +662,7 @@ describe("conversation search", () => {
     await page.getByRole("button", { name: "Delete", exact: true }).click();
     await expect
       .element(page.getByRole("alertdialog"))
-      .toHaveTextContent("Could not confirm deletion.");
+      .toHaveTextContent("Couldn't confirm deletion.");
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
     await search.fill("beta");
@@ -709,9 +709,7 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByText("Keep this message", { exact: true })).toBeVisible();
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent(
-        "Could not confirm deletion. Refresh to check the result before deleting again.",
-      );
+      .toHaveTextContent("Couldn't confirm deletion. Refresh and check before deleting again.");
     expect(
       countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101/messages/8"),
     ).toBe(1);
@@ -751,9 +749,7 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByText("Keep this summary", { exact: true })).toBeVisible();
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent(
-        "Could not confirm deletion. Refresh to check the result before deleting again.",
-      );
+      .toHaveTextContent("Couldn't confirm deletion. Refresh and check before deleting again.");
     expect(
       countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101/summaries/9"),
     ).toBe(1);
@@ -835,9 +831,7 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByRole("button", { name: "Delete this message" })).toBeDisabled();
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent(
-        "Could not confirm deletion. Refresh to check the result before deleting again.",
-      );
+      .toHaveTextContent("Couldn't confirm deletion. Refresh and check before deleting again.");
     expect(
       countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101/messages/8"),
     ).toBe(1);
@@ -870,12 +864,12 @@ describe("conversation deletion recovery", () => {
     await confirmSummaryDelete();
     await expect
       .element(page.getByRole("alert"))
-      .toHaveTextContent("The active summary cannot be deleted.");
+      .toHaveTextContent("Can't delete the active summary.");
     await page.getByRole("button", { name: "Refresh and check" }).click();
 
     await expect.element(page.getByText("Active", { exact: true })).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: /active summary cannot be deleted/i }))
+      .element(page.getByRole("button", { name: /can't delete the active summary/i }))
       .toBeDisabled();
     expect(
       countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101/summaries/9"),
@@ -1031,9 +1025,7 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByRole("button", { name: /Chat one/ })).toBeVisible();
     await expect
       .element(page.getByRole("alertdialog"))
-      .toHaveTextContent(
-        "Could not confirm deletion. Refresh to check the result before deleting again.",
-      );
+      .toHaveTextContent("Couldn't confirm deletion. Refresh and check before deleting again.");
     expect(countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations/101")).toBe(1);
   });
 
@@ -1059,9 +1051,7 @@ describe("conversation deletion recovery", () => {
     await expect.element(page.getByRole("button", { name: /Chat one/ })).toBeVisible();
     await expect
       .element(page.getByRole("alertdialog"))
-      .toHaveTextContent(
-        "Could not confirm deletion. Refresh to check the result before deleting again.",
-      );
+      .toHaveTextContent("Couldn't confirm deletion. Refresh and check before deleting again.");
     expect(countRequests(fetchMock, "DELETE", "/api/bots/test-id/conversations")).toBe(1);
     const deleteRequest = matchingRequests(
       fetchMock,
@@ -1136,7 +1126,7 @@ describe("summary version management", () => {
       await page.getByRole("button", { name: "Review cleanup" }).click();
       await expect
         .element(page.getByRole("group", { name: "Remove older versions?" }))
-        .toHaveTextContent("raw messages stay intact");
+        .toHaveTextContent("raw messages stay untouched");
       await page.getByRole("button", { name: "Cancel" }).click();
       expect(
         countRequests(
@@ -1327,7 +1317,7 @@ describe("summary version management", () => {
     await page.getByRole("textbox", { name: "Active summary text" }).fill("My unsaved correction");
     await page.getByRole("button", { name: "Save new version" }).click();
     await expect.element(page.getByText("New active summary", { exact: true })).toBeVisible();
-    await expect.element(page.getByText(/The active summary changed/)).toBeVisible();
+    await expect.element(page.getByText(/Active summary was updated/)).toBeVisible();
     await page.getByText("Show your unsaved draft").click();
     await expect.element(page.getByText("My unsaved correction", { exact: true })).toBeVisible();
     expect(
@@ -1430,7 +1420,7 @@ describe("summary version management", () => {
     await page.getByRole("button", { name: "Review cleanup" }).click();
     await page.getByRole("button", { name: "Remove up to 4" }).click();
     await expect.element(page.getByText("Active #4", { exact: true })).toBeVisible();
-    await expect.element(page.getByText(/The active summary changed/)).toBeVisible();
+    await expect.element(page.getByText(/Active summary was updated/)).toBeVisible();
     expect(
       countRequests(
         fetchMock,
@@ -1477,7 +1467,7 @@ describe("summary version management", () => {
     await page.getByRole("button", { name: "Preview cleanup" }).click();
     await page.getByRole("button", { name: "Review cleanup" }).click();
     await page.getByRole("button", { name: "Remove up to 4" }).click();
-    await expect.element(page.getByText(/The result could not be confirmed/)).toBeVisible();
+    await expect.element(page.getByText(/Couldn't confirm the result/)).toBeVisible();
     expect(failed).toBe(true);
     await expect.element(page.getByRole("button", { name: "Review cleanup" })).toBeDisabled();
     await page.getByRole("button", { name: "Refresh and check" }).click();

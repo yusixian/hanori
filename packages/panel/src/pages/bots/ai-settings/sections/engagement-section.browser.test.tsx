@@ -38,7 +38,7 @@ test("defaults off and natural; exposes routed thresholds and explicit preferenc
     .toHaveValue("");
   await expect.element(page.getByRole("combobox", { name: "Preference example" })).toHaveValue("");
   await page.getByRole("combobox", { name: "Run mode" }).selectOptions("active");
-  await expect.element(page.getByText(/Private messages, explicit mentions/)).toBeVisible();
+  await expect.element(page.getByText(/Private chats, mentions, and replies/)).toBeVisible();
   await page.getByRole("combobox", { name: "Preference example" }).selectOptions("active");
   await expect.element(page.getByText("Preview: Active group member")).toBeVisible();
   await expect

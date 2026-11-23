@@ -101,7 +101,7 @@ test("serializes polling even when a response takes longer than the interval", a
   await new Promise((resolve) => setTimeout(resolve, 2_200));
   expect(input.pollLogin).toHaveBeenCalledTimes(1);
   finish(session({ status: "expired" }));
-  await expect.element(page.getByText(/QR code has expired/)).toBeVisible();
+  await expect.element(page.getByText(/QR code expired/)).toBeVisible();
   await view.unmount();
 }, 10_000);
 
@@ -135,11 +135,11 @@ test("an uncertain save requires refreshing configuration instead of another log
   const view = await render(<PluginQrLoginDialog {...config} onConflict={onConflict} />);
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("save result could not be confirmed");
+    .toHaveTextContent("Couldn't confirm whether the save succeeded");
   expect(onConflict).toHaveBeenCalledOnce();
   expect(config.onConnected).not.toHaveBeenCalled();
   await expect
-    .element(page.getByRole("button", { name: "Get a new QR code" }))
+    .element(page.getByRole("button", { name: "Get new QR code" }))
     .not.toBeInTheDocument();
   await view.unmount();
 });
@@ -188,7 +188,7 @@ test("scope change cancels the old session and ignores its late connected respon
   await vi.waitFor(() => expect(input.startLogin).toHaveBeenCalledTimes(2));
   expect(input.cancelLogin).toHaveBeenCalledWith("synthetic.plugin", "bot-1", "synthetic-session");
   finish(session({ status: "connected", botState }));
-  await expect.element(page.getByText("Waiting for you to scan and confirm…")).toBeVisible();
+  await expect.element(page.getByText("Waiting for scan and confirmation…")).toBeVisible();
   expect(config.onConnected).not.toHaveBeenCalled();
   await view.unmount();
 }, 8_000);
@@ -201,13 +201,13 @@ test("server expiry stops waiting and retry creates a fresh QR session", async (
       .mockResolvedValueOnce(session({ id: "fresh-session" })),
   });
   const view = await render(<PluginQrLoginDialog {...props(input)} />);
-  await expect.element(page.getByText(/QR code has expired/)).toBeVisible();
+  await expect.element(page.getByText(/QR code expired/)).toBeVisible();
   expect(input.cancelLogin).not.toHaveBeenCalled();
   expect(input.pollLogin).not.toHaveBeenCalled();
-  await page.getByRole("button", { name: "Get a new QR code" }).click();
+  await page.getByRole("button", { name: "Get new QR code" }).click();
   await expect.element(page.getByRole("img")).toBeVisible();
   expect(input.startLogin).toHaveBeenCalledTimes(2);
-  await expect.element(page.getByText("Waiting for you to scan and confirm…")).toBeVisible();
+  await expect.element(page.getByText("Waiting for scan and confirmation…")).toBeVisible();
   await view.unmount();
   expect(input.cancelLogin).toHaveBeenLastCalledWith("synthetic.plugin", "bot-1", "fresh-session");
 });
@@ -220,9 +220,9 @@ test("failed start keeps error text generic and retry succeeds without exposing 
       .mockResolvedValueOnce(session()),
   });
   const view = await render(<PluginQrLoginDialog {...props(input)} />);
-  await expect.element(page.getByRole("alert")).toHaveTextContent("Sign-in could not be completed");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Sign-in failed");
   expect(document.body.textContent).not.toContain("synthetic-private-cookie");
-  await page.getByRole("button", { name: "Get a new QR code" }).click();
+  await page.getByRole("button", { name: "Get new QR code" }).click();
   await expect.element(page.getByRole("img")).toBeVisible();
   await view.unmount();
 });
@@ -236,7 +236,9 @@ test("conflict asks for explicit reload and a connected response without saved s
   const onConflict = vi.fn();
   const config = props(input);
   const view = await render(<PluginQrLoginDialog {...config} onConflict={onConflict} />);
-  await expect.element(page.getByRole("alert")).toHaveTextContent("reload the saved configuration");
+  await expect
+    .element(page.getByRole("alert"))
+    .toHaveTextContent("Close this dialog, reload, and try again.");
   expect(onConflict).toHaveBeenCalledTimes(1);
   expect(config.onConnected).not.toHaveBeenCalled();
   await view.unmount();
@@ -244,7 +246,7 @@ test("conflict asks for explicit reload and a connected response without saved s
   render(<PluginQrLoginDialog {...malformed} />);
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("save result could not be confirmed");
+    .toHaveTextContent("Couldn't confirm whether the save succeeded");
   expect(malformed.onConnected).not.toHaveBeenCalled();
 });
 

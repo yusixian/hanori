@@ -97,14 +97,14 @@ export const common = {
     logout: "退出登录",
   },
   errors: {
-    unexpectedTitle: "出现了一些问题",
+    unexpectedTitle: "出了点问题",
     reloadPage: "重新加载页面",
     imageFailed: "加载失败",
   },
   pagination: {
     previous: "上一页",
     next: "下一页",
-    jumpToPage: "点击跳转页码",
+    jumpToPage: "跳转页码",
   },
   numberInput: {
     decrease: "减小",

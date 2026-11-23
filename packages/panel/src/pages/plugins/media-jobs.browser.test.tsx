@@ -84,11 +84,11 @@ test("shows pending consent and cloud cancellation honestly on mobile", async ()
   });
   render(<MediaJobsPanel botId="bot-1" api={input} />);
   await expect
-    .element(page.getByText("Awaiting administrator confirmation", { exact: false }))
+    .element(page.getByText("Awaiting admin confirmation", { exact: false }))
     .toBeVisible();
   await expect
     .element(
-      page.getByText("Local waiting stopped; the cloud task may continue and incur charges."),
+      page.getByText("Stopped waiting locally; the cloud job may still run and incur charges."),
     )
     .toBeVisible();
   await page.getByRole("button", { name: "Cancel job", exact: true }).click();
@@ -221,7 +221,7 @@ test("bounds transcript preview on a narrow viewport and renders safe errors wit
   const input = api({ transcript: vi.fn(async () => transcript("X".repeat(6000))) });
   render(<MediaJobsPanel botId="bot-1" api={input} />);
   await page.getByRole("button", { name: "View transcript" }).click();
-  await expect.element(page.getByText(/preview is limited to 40 cues/)).toBeVisible();
+  await expect.element(page.getByText(/Preview shows up to 40 cues/)).toBeVisible();
   expect(document.body.textContent).toContain("X".repeat(4000));
   expect(document.body.textContent).not.toContain("X".repeat(4001));
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
@@ -230,6 +230,6 @@ test("bounds transcript preview on a narrow viewport and renders safe errors wit
   await page.getByRole("button", { name: "Search transcript" }).click();
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("The transcript could not be loaded or exported");
+    .toHaveTextContent("Couldn't load or export the transcript");
   expect(document.body.textContent).not.toContain("private-provider-key");
 });

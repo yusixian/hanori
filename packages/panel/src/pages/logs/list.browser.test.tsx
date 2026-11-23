@@ -253,7 +253,7 @@ test("keeps the selected Bot through a second-page failure and retry", async () 
   await expect.element(botFilter).toHaveAttribute("aria-label", "Bot filter: bot-125");
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Bot filter options could not be loaded.");
+    .toHaveTextContent("Couldn't load Bot filter options.");
   await expect.element(botFilter).toHaveTextContent("bot-125");
 
   await botFilter.click();
@@ -265,9 +265,7 @@ test("keeps the selected Bot through a second-page failure and retry", async () 
 
   const retryButton = page.getByRole("button", { name: "Retry" });
   await retryButton.click();
-  await expect
-    .element(page.getByRole("status"))
-    .toHaveTextContent("Loading all Bot filter options…");
+  await expect.element(page.getByRole("status")).toHaveTextContent("Loading Bots…");
   await expect.element(page.getByRole("button", { name: "Loading…" })).toHaveFocus();
   resolveRetryFirstPage(botPageResponse(firstPage, 125));
   await vi.waitFor(() => expect(mocks.getBots).toHaveBeenCalledTimes(4));
@@ -315,14 +313,12 @@ test("retries a failed Bot list inside the open picker without losing selection"
   expect(retryBounds.right).toBeLessThanOrEqual(390);
   await expect
     .element(listbox.getByRole("alert"))
-    .toHaveTextContent("Bot filter options could not be loaded.");
+    .toHaveTextContent("Couldn't load Bot filter options.");
   await userEvent.keyboard("{Tab}");
   await expect.element(retry).toHaveFocus();
   await retry.click();
   await expect.element(botSearch).toHaveFocus();
-  await expect
-    .element(listbox.getByRole("status"))
-    .toHaveTextContent("Loading all Bot filter options…");
+  await expect.element(listbox.getByRole("status")).toHaveTextContent("Loading Bots…");
   await expect
     .element(listbox.getByRole("option", { name: "Bot 1", exact: true }))
     .not.toBeInTheDocument();
@@ -668,7 +664,7 @@ test("keeps global logs intact and shows an error when clear is rejected", async
 
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Logs could not be cleared. Try again.");
+    .toHaveTextContent("Couldn't clear logs. Please try again.");
   await expect.element(page.getByText("matching live log", { exact: true })).toBeVisible();
   expect(mocks.clearLiveLogs).not.toHaveBeenCalled();
   expect(mocks.invalidate).not.toHaveBeenCalled();
@@ -683,7 +679,7 @@ test("keeps Bot logs intact when clear returns an unsuccessful body", async () =
 
   await expect
     .element(page.getByRole("alert"))
-    .toHaveTextContent("Logs could not be cleared. Try again.");
+    .toHaveTextContent("Couldn't clear logs. Please try again.");
   await expect.element(page.getByText("matching live log", { exact: true })).toBeVisible();
   expect(mocks.clearLiveLogs).not.toHaveBeenCalled();
   expect(mocks.invalidate).not.toHaveBeenCalled();

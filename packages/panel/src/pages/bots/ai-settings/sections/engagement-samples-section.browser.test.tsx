@@ -208,11 +208,9 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
   await expect
     .element(current.getByText("Should the bot join this conversation?", { exact: true }).nth(0))
     .toBeVisible();
+  await expect.element(current.getByText("Entered reply pipeline", { exact: true })).toBeVisible();
   await expect
-    .element(current.getByText("Admitted to the reply pipeline", { exact: true }))
-    .toBeVisible();
-  await expect
-    .element(current.getByText("Reason: Below policy threshold", { exact: false }))
+    .element(current.getByText("Reason: Below reply threshold", { exact: false }))
     .toBeVisible();
   await expect
     .element(current.getByText("Policy participation route: Join", { exact: true }))
@@ -241,7 +239,7 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
     .element(page.getByText("Legacy three-class decisions", { exact: true }))
     .toBeVisible();
   await expect
-    .element(page.getByText("1 evaluable labels · 1 labeled · 1 unreviewed · 2 samples"))
+    .element(page.getByText("1 evaluable · 1 labeled · 1 unreviewed · 2 total"))
     .toBeVisible();
 
   await current.getByText("Details, context, probabilities, and cost", { exact: true }).click();
@@ -253,7 +251,7 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
     .element(current.getByText("Raw participation recommendation: Join · confidence 72%"))
     .toBeVisible();
   await expect
-    .element(current.getByText("Its probability is not the model's willingness", { exact: false }))
+    .element(current.getByText("it doesn't decide whether to reply", { exact: false }))
     .toBeVisible();
   await expect.element(current.getByText("Direct address 20%", { exact: true })).toBeVisible();
   await expect.element(current.getByText("Continue 30%", { exact: true })).toBeVisible();
@@ -269,9 +267,7 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
     .click();
   await expect
     .element(
-      historicalCurrent.getByText(
-        "Raw participation recommendation was not retained for this historical sample.",
-      ),
+      historicalCurrent.getByText("No raw participation suggestion was saved for this sample."),
     )
     .toBeVisible();
   await expect
@@ -279,7 +275,7 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
     .toBeVisible();
   await expect
     .element(
-      historicalCurrent.getByText("Historical snapshot: omitted routing settings", {
+      historicalCurrent.getByText("Historical snapshot: missing routing fields", {
         exact: false,
       }),
     )
@@ -288,9 +284,7 @@ test("shows the exact sampled message, compact decisions, full metrics, and loca
   const legacy = rows.nth(3);
   await legacy.getByText("Details, context, probabilities, and cost", { exact: true }).click();
   await expect.element(legacy.getByText("Legacy model probabilities")).toBeVisible();
-  expect(legacy.element().textContent).not.toContain(
-    "Historical snapshot: omitted routing settings",
-  );
+  expect(legacy.element().textContent).not.toContain("Historical snapshot: missing routing fields");
   expect(legacy.element().textContent).not.toContain("Reply-decision probabilities");
   expect(legacy.element().textContent).not.toContain("Participation probabilities");
 });
@@ -332,7 +326,7 @@ test("clamps long summaries at 390px, wraps URLs, and hides expired context", as
   await expect.element(longRow.getByText(longText, { exact: true }).nth(1)).toBeVisible();
 
   await expect
-    .element(page.getByText("The current message context has expired", { exact: false }))
+    .element(page.getByText("Message context has expired.", { exact: false }))
     .toBeVisible();
   expect(document.body.textContent).not.toContain(expiredText);
 
@@ -399,9 +393,7 @@ test("selects only the current page, applies batch labels and clear, and retains
     .getByRole("button", { name: "Should stay silent" });
   await expect.element(silentBatchButton).toBeEnabled();
   await silentBatchButton.click();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("The review label could not be saved.");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("Couldn't save review label.");
   await expect.element(page.getByText("2 selected", { exact: true })).toBeVisible();
 
   await page.getByRole("combobox", { name: "Decision mode" }).click();
@@ -482,7 +474,7 @@ test("validates text and time filters without starting request loops", async () 
   const initialRequests = requests.length;
 
   await page.getByRole("textbox", { name: "Chat ID" }).fill("not-a-chat");
-  await expect.element(page.getByRole("alert")).toHaveTextContent("safe whole number");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("valid integer");
   await new Promise((resolve) => setTimeout(resolve, 400));
   expect(requests).toHaveLength(initialRequests);
 
@@ -498,7 +490,7 @@ test("validates text and time filters without starting request loops", async () 
   await page.getByText("More filters", { exact: true }).click();
   await page.getByLabelText("From").fill("2026-09-22T00:00");
   await page.getByLabelText("To").fill("2026-09-21T00:00");
-  await expect.element(page.getByRole("alert")).toHaveTextContent("end time");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("End time");
 });
 
 test("filters both rows and metrics by decision format and exact config version", async () => {
@@ -571,9 +563,7 @@ test("blocks review writes until the current filter collection is presented", as
 
   const chatFilter = page.getByRole("textbox", { name: "Chat ID" });
   await chatFilter.fill("-100123");
-  await expect
-    .element(page.getByRole("status"))
-    .toHaveTextContent("Review actions are temporarily unavailable");
+  await expect.element(page.getByRole("status")).toHaveTextContent("review actions are paused");
   const oldRowAnswer = page.getByRole("article").getByRole("button", { name: "Should answer" });
   await expect.element(oldRowAnswer).toBeDisabled();
   (oldRowAnswer.element() as HTMLElement).click();
@@ -602,7 +592,7 @@ test("blocks review writes until the current filter collection is presented", as
   expect(document.body.textContent).not.toContain("Message 999");
 
   await chatFilter.fill("not-a-chat");
-  await expect.element(page.getByRole("alert")).toHaveTextContent("safe whole number");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("valid integer");
   const invalidRowAnswer = page.getByRole("article").getByRole("button", { name: "Should answer" });
   await expect.element(invalidRowAnswer).toBeDisabled();
   (invalidRowAnswer.element() as HTMLElement).click();

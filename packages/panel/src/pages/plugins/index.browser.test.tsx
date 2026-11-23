@@ -96,7 +96,7 @@ test("QR login is capability-gated and blocks unsaved normal, secret, and clear-
   await expect.element(login).toBeEnabled();
   await page.getByLabelText("Region").fill("unsaved-region");
   await expect.element(login).toBeDisabled();
-  await expect.element(page.getByText(/Save or undo your configuration/)).toBeVisible();
+  await expect.element(page.getByText(/Save or discard your configuration/)).toBeVisible();
   await page.getByLabelText("Region").fill("China");
   await expect.element(login).toBeEnabled();
   await page.getByLabelText("Cookie").fill("synthetic-unsaved-cookie");
@@ -139,7 +139,7 @@ test("QR login locks editing, uses confirmed revision, refreshes saved state, an
       .disabled,
   ).toBe(true);
   await vi.waitFor(
-    () => expect(document.body.textContent).toContain("Credentials have been saved"),
+    () => expect(document.body.textContent).toContain("Credentials saved for this Bot"),
     { timeout: 4_000 },
   );
   expect(input.startLogin).toHaveBeenCalledTimes(1);
@@ -169,7 +169,7 @@ test("plugins without login capability have no QR button and changed manifests r
   render(<PluginMarketplace api={input} />);
   await configure();
   await expect.element(page.getByRole("button", { name: "Sign in with QR code" })).toBeDisabled();
-  await expect.element(page.getByText(/Review the plugin and save/)).toBeVisible();
+  await expect.element(page.getByText(/Review and save the configuration/)).toBeVisible();
   expect(input.startLogin).not.toHaveBeenCalled();
 });
 
@@ -178,7 +178,7 @@ test("installs a builtin only after explicit server access confirmation then ope
   render(<PluginMarketplace api={input} />);
   await page.getByRole("button", { name: "Install", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await expect.element(dialog.getByText(/server process permissions/)).toBeVisible();
+  await expect.element(dialog.getByText(/server permissions/)).toBeVisible();
   await expect.element(dialog.getByRole("button", { name: "Install", exact: true })).toBeDisabled();
   expect(input.install).not.toHaveBeenCalled();
   await dialog.getByRole("checkbox").click();
@@ -207,9 +207,7 @@ test("validates canonical GitHub URL and full SHA before third-party installatio
   await page.getByLabelText("Full commit SHA").fill("main");
   await page.getByRole("checkbox").click();
   await page.getByRole("button", { name: "Install", exact: true }).click();
-  await expect
-    .element(page.getByRole("alert"))
-    .toHaveTextContent("canonical GitHub repository URL");
+  await expect.element(page.getByRole("alert")).toHaveTextContent("valid GitHub repository URL");
   expect(input.install).not.toHaveBeenCalled();
   await page.getByLabelText("GitHub repository URL").fill("https://github.com/owner/search");
   await page.getByLabelText("Full commit SHA").fill(sha.toUpperCase());
@@ -265,7 +263,7 @@ test("a save conflict retains the secret draft and requires explicit reload befo
   await configure();
   await page.getByLabelText("Cookie").fill("synthetic-unsaved-cookie");
   await page.getByRole("button", { name: "Save configuration" }).click();
-  await expect.element(page.getByText(/This plugin changed elsewhere/)).toBeVisible();
+  await expect.element(page.getByText(/This plugin was modified elsewhere/)).toBeVisible();
   await expect.element(page.getByLabelText("Cookie")).toHaveValue("synthetic-unsaved-cookie");
   await expect.element(page.getByRole("button", { name: "Enable", exact: true })).toBeDisabled();
   expect(document.body.innerText).not.toContain("synthetic-unsaved-cookie");
@@ -359,7 +357,7 @@ test("ignores a stale Bot load after switching and keeps runtime errors private"
   finish(state());
   await expect.element(page.getByLabelText("Region")).toHaveValue("Second region");
   await expect
-    .element(page.getByText("The plugin could not start. Check its configuration and retry."))
+    .element(page.getByText("Plugin couldn't start. Check its configuration and try again."))
     .toBeVisible();
   expect(document.body.textContent).not.toContain("synthetic-server-secret");
 });
@@ -393,7 +391,7 @@ test("updates a pinned version, blocks enable before config review, rolls back a
   expect(input.rollback).toHaveBeenCalledWith("test.search", 2);
   await page.getByRole("button", { name: "Uninstall", exact: true }).click();
   await expect
-    .element(page.getByRole("dialog").getByText(/Saved Bot configurations are retained/))
+    .element(page.getByRole("dialog").getByText(/Saved Bot configs are kept/))
     .toBeVisible();
   expect(input.remove).not.toHaveBeenCalled();
   await page.getByRole("button", { name: "Confirm uninstall" }).click();
@@ -426,7 +424,7 @@ test("long third-party metadata and secrets fit a narrow screen and Chinese guid
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(320);
   expect(document.querySelector("section script")).toBeNull();
   await page.getByRole("button", { name: "从 GitHub 安装" }).click();
-  await expect.element(page.getByText(/插件以服务器进程权限运行/)).toBeVisible();
+  await expect.element(page.getByText(/插件以服务端权限运行/)).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(320);
 });
 
@@ -437,9 +435,7 @@ test("viewer role cannot open the marketplace", async () => {
   );
   try {
     render(<PluginsPage />);
-    await expect
-      .element(page.getByRole("alert"))
-      .toHaveTextContent("Only owners and administrators");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Only owners and admins");
     expect(document.body.textContent).not.toContain("Install from GitHub");
   } finally {
     vi.unstubAllGlobals();

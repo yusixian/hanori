@@ -146,9 +146,7 @@ test("renders Viewer details without any edit controls", async () => {
 
   await expect.element(page.getByRole("heading", { name: "Build Room" })).toBeVisible();
   await expect
-    .element(
-      page.getByText("Your Viewer role can inspect this configuration but cannot change it."),
-    )
+    .element(page.getByText("You have read-only access and can't edit these settings."))
     .toBeVisible();
   await expect.element(page.getByText("Asia/Shanghai")).toBeVisible();
   expect(page.getByRole("textbox").query()).toBeNull();
@@ -187,7 +185,7 @@ test("sends only changed fields with revision and CSRF when an Operator saves", 
   await page.getByRole("checkbox", { name: "AI allowlist" }).click();
   await expect.element(page.getByText("AI allowlist", { exact: true }).last()).toBeVisible();
   await page.getByRole("button", { name: "Save changes" }).click();
-  await expect.element(page.getByText("Changes were persisted and applied.")).toBeVisible();
+  await expect.element(page.getByText("Saved and applied.")).toBeVisible();
 
   expect(mutationInit).toMatchObject({
     method: "PATCH",
@@ -225,11 +223,11 @@ test("preserves the local draft on a stale revision until latest is explicitly a
   await allowlist.click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect
-    .element(page.getByRole("heading", { name: "A newer revision exists" }))
+    .element(page.getByRole("heading", { name: "Newer version available" }))
     .toBeVisible();
   await expect.element(allowlist).toBeChecked();
 
-  await page.getByRole("button", { name: "Use latest revision" }).click();
+  await page.getByRole("button", { name: "Load latest" }).click();
   await expect.element(allowlist).not.toBeChecked();
   await expect.element(page.getByText("No unsaved changes.")).toBeVisible();
 });
@@ -243,7 +241,7 @@ test("shows pending state to Operators without an apply action", async () => {
 
   renderGroups("operator");
   await expect.element(page.getByRole("heading", { name: "Build Room" })).toBeVisible();
-  await expect.element(page.getByText("Runtime apply pending", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("Waiting to apply", { exact: true })).toBeVisible();
   expect(page.getByRole("button", { name: "Retry apply" }).query()).toBeNull();
 });
 
@@ -260,9 +258,7 @@ test("allows an Admin to retry pending runtime apply", async () => {
   renderGroups("admin");
   await expect.element(page.getByRole("button", { name: "Retry apply" })).toBeVisible();
   await page.getByRole("button", { name: "Retry apply" }).click();
-  await expect
-    .element(page.getByText("The latest persisted configuration is now applied."))
-    .toBeVisible();
+  await expect.element(page.getByText("Latest settings are now active.")).toBeVisible();
 });
 
 test("rejects malformed and sensitive group projections before rendering", () => {
@@ -317,7 +313,7 @@ test("edits a group with a fractional random reply percentage within the shared 
   await expect.element(save).toBeDisabled();
   await cooldown.fill("86400");
   await save.click();
-  await expect.element(page.getByText("Changes were persisted and applied.")).toBeVisible();
+  await expect.element(page.getByText("Saved and applied.")).toBeVisible();
   expect(mutationBody).toEqual({
     expectedRevision: "revision-1",
     patch: { group: { trigger: { randomReplyCooldown: 86_400 } } },

@@ -118,7 +118,7 @@ test("confirms disable and sends the Admin CSRF token", async () => {
 
   render(<BotSettingsPage botId={BOT_ID} session={SESSION} />);
   await page.getByRole("button", { name: "Disable Bot" }).click();
-  await expect.element(page.getByText("The Bot is disabled and stopped.")).toBeVisible();
+  await expect.element(page.getByText("Bot disabled and stopped.")).toBeVisible();
   expect(confirm).toHaveBeenCalledOnce();
   expect(calls).toContainEqual({
     url: `/api/mini-app/${BOT_ID}/lifecycle/disable`,
@@ -129,7 +129,7 @@ test("confirms disable and sends the Admin CSRF token", async () => {
     },
   });
   await page.getByRole("button", { name: "Enable Bot" }).click();
-  await expect.element(page.getByText("The Bot is enabled and running.")).toBeVisible();
+  await expect.element(page.getByText("Bot enabled and running.")).toBeVisible();
   expect(confirm).toHaveBeenCalledOnce();
 });
 
@@ -161,7 +161,7 @@ test("saves AI enabled and System Prompt as one revision-checked mutation", asyn
   await page.getByLabelText("AI replies enabled").click();
   await page.getByLabelText("System prompt").fill("Be concise.");
   await page.getByRole("button", { name: "Save settings" }).click();
-  await expect.element(page.getByText("The settings were persisted and applied.")).toBeVisible();
+  await expect.element(page.getByText("Saved and applied.")).toBeVisible();
 
   expect(mutation).not.toBeNull();
   expect(mutation!.url).toBe(`/api/mini-app/${BOT_ID}/settings`);
