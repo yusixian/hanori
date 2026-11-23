@@ -22,8 +22,8 @@ const inspectOptions = { botId: "bot-1", repository: "owner/repo" };
 const taskOptions = {
   ...inspectOptions,
   token: "github-secret",
-  authorName: "Ai-chan",
-  authorEmail: "ai-chan@example.com",
+  authorName: "Hanori",
+  authorEmail: "hanori@example.com",
   task: "Update README",
   branch: "feat/run-order",
   model,
@@ -31,8 +31,8 @@ const taskOptions = {
 const resumeOptions = {
   ...inspectOptions,
   task: "Finish recovery",
-  authorName: "Ai-chan",
-  authorEmail: "ai-chan@example.com",
+  authorName: "Hanori",
+  authorEmail: "hanori@example.com",
   model,
 };
 

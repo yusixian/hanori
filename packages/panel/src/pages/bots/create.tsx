@@ -27,9 +27,6 @@ export function BotCreatePage() {
               adminChatIds: data.adminChatIds,
               isActive: data.isActive,
               miniAppEnabled: data.miniAppEnabled,
-              webhookUrl: data.webhookUrl,
-              signSecret: data.signSecret,
-              emailForwardConfig: data.emailForwardConfig,
             },
           });
           navigate("/");

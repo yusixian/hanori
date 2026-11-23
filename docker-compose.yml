@@ -10,7 +10,7 @@ services:
     # Dokploy attaches app to its public network alongside Compose's private networks.
     # Pin Traefik to that network so it cannot select an unreachable backend IP.
     labels:
-      - traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-example-compose}
+      - traefik.docker.network=${TRAEFIK_DOCKER_NETWORK:-dokploy-network}
     environment:
       - DATABASE_URL=postgresql://bot:${DB_PASSWORD}@db:5432/cos_tool_bot
       - BOT_TOKEN=${BOT_TOKEN}

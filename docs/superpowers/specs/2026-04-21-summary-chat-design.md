@@ -2,7 +2,7 @@
 
 **分支**: `feat/summary-chat`
 **日期**: 2026-04-21
-**参考**: `/Users/example/Documents/Programming/worktree/pixai/app/ref2v/telegram-summary-bot-analysis.md`（`asukaminato0721/telegram-summary-bot` 扒皮）
+**参考**: `asukaminato0721/telegram-summary-bot`
 
 ## 目标
 

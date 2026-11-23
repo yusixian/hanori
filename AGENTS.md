@@ -20,7 +20,7 @@ Working Agreement below.
 ## Repository Map
 
 pnpm monorepo (Node >= 22.19.0, pnpm 10.5.2, ESM everywhere): multiple Telegram bots, a Hono API,
-a React admin panel + Telegram Mini App, plus optional Lark webhooks, GitHub App, MCP, AI
+a React admin panel + Telegram Mini App, plus optional GitHub App, MCP, AI
 generation, and an isolated Pi coding worker.
 
 ```text

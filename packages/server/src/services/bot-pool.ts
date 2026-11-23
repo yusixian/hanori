@@ -22,7 +22,6 @@ import {
   pixaiGenerations,
 } from "@cos-tool-bot/database";
 import type {
-  BotPlatform,
   IBotManager,
   ImageGenerationPort,
   ImageGenerationRequestSnapshot,
@@ -53,15 +52,12 @@ import {
 import { ConversationStore } from "./conversation-store.js";
 import { DbLogger } from "./db-logger.js";
 import type { EmbeddingService } from "./embedding-service.js";
-import { ImapEmailMonitor } from "./imap-email-monitor.js";
 import {
   AsyncTaskLimiter,
   isTerminalGenerationRecoveryError,
   PendingGenerationInsertFallbackTracker,
   tryPersistTerminalGenerationFailure,
 } from "./generation-recovery.js";
-import { LarkBotManager } from "./lark-bot-manager.js";
-import { LarkWebhookClient } from "./lark-webhook-client.js";
 import { ConversationRetention } from "./conversation-retention.js";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 import { PeopleProfileStore } from "./people-profile-store.js";
@@ -188,7 +184,7 @@ export class BotPool {
         const rows = await db
           .select({ id: bots.id, aiConfig: bots.aiConfig })
           .from(bots)
-          .where(eq(bots.isActive, true));
+          .where(and(eq(bots.isActive, true), eq(bots.platform, "telegram")));
         return rows.map((bot) => ({
           id: bot.id,
           retentionDays:
@@ -628,7 +624,10 @@ export class BotPool {
   async startAll() {
     let activeBots;
     try {
-      activeBots = await this.db.select().from(bots).where(eq(bots.isActive, true));
+      activeBots = await this.db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.isActive, true), eq(bots.platform, "telegram")));
     } catch (err) {
       this.logger.warn(err, "Failed to query active bots (table may not exist — run migrations)");
       return;
@@ -687,6 +686,7 @@ export class BotPool {
   private async startBotImpl(botId: string) {
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
     if (!bot) throw new Error(`Bot ${botId} not found`);
+    if (bot.platform && bot.platform !== "telegram") throw new Error("Unsupported bot platform");
     if (!bot.isActive) throw new Error(`Bot ${botId} is disabled`);
 
     const existing = this.managers.get(botId);
@@ -702,13 +702,6 @@ export class BotPool {
       await this.stopBotImpl(botId);
     }
 
-    const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
-    if (platform === "lark-webhook") {
-      await this.startLarkWebhookBot(botId, bot);
-      return;
-    }
-
-    // Telegram bot flow
     const token = tryDecrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
     if (!token) {
       throw new Error(
@@ -802,56 +795,6 @@ export class BotPool {
         `Initial conversation history governance failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     });
-  }
-
-  private async startLarkWebhookBot(botId: string, bot: typeof bots.$inferSelect) {
-    const dbLogger = new DbLogger(this.db, this.logger, botId);
-
-    const larkConfig = bot.larkWebhookConfig;
-    if (!larkConfig?.webhookUrl) {
-      throw new Error("Lark webhook URL is not configured");
-    }
-
-    const signSecret = larkConfig.encryptedSignSecret
-      ? tryDecrypt(larkConfig.encryptedSignSecret, env.ENCRYPTION_KEY)
-      : undefined;
-    const larkClient = new LarkWebhookClient(larkConfig.webhookUrl, signSecret ?? undefined);
-
-    // Build email monitor if configured
-    let emailMonitor: ImapEmailMonitor | undefined;
-    const emailConfig = bot.emailForwardConfig;
-
-    if (emailConfig) {
-      const password = tryDecrypt(emailConfig.encryptedPassword, env.ENCRYPTION_KEY);
-      if (password) {
-        emailMonitor = new ImapEmailMonitor(
-          {
-            host: emailConfig.imapHost,
-            port: emailConfig.imapPort,
-            secure: emailConfig.imapTls,
-            auth: { user: emailConfig.email, pass: password },
-            pollIntervalSec: emailConfig.pollIntervalSec,
-            filters: emailConfig.filters,
-            disabledEventTypes: emailConfig.disabledEventTypes,
-          },
-          larkClient,
-          this.logger,
-          emailConfig.larkMentionMap,
-        );
-      } else {
-        dbLogger.warn("Cannot decrypt email password, email forwarding disabled").catch(() => {});
-      }
-    }
-
-    const manager = new LarkBotManager({
-      botId,
-      dbLogger,
-      larkClient,
-      emailMonitor,
-    });
-
-    this.managers.set(botId, manager);
-    await manager.start();
   }
 
   async stopBot(botId: string) {

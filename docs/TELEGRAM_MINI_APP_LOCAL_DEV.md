@@ -1,31 +1,21 @@
 # Telegram Mini App 本地 HTTPS 开发与测试 Bot
 
-本文记录 2026-07-28 在本机实际跑通的开发链路。目标是在不部署生产环境、不修改其他 Bot 的前提下，用真实 Telegram `initData` 验证 Mini App。
+用自己的测试 Bot 和 HTTPS 域名，在 Telegram WebView 中验证签名 `initData`。以下示例使用 `mini.example.com`；配置时替换为你的域名。
 
-## 当前测试拓扑
+## 本地测试拓扑
 
 ```text
 Telegram 用户
   ├─ Bot API 长轮询 ───────────────> server :43100 ──> PostgreSQL :43105
   └─ Telegram WebView
-       └─ https://tg-test.example.invalid
+       └─ https://mini.example.com
             ├─ /api/* ────────────> server :43100
             └─ 其他路径/静态资源 ──> Vite :43103
 ```
 
 Cloudflare Tunnel 只负责 HTTPS 网页和 API。Telegram Bot 收消息使用 Bot API 长轮询，不经过 Tunnel；因此“网页打不开”和“Bot 完全不回复”要分开排查。
 
-以下是配置示例。请使用自己实例的 Bot、应用内 ID 和 Tunnel 信息。
-
-| 项目                    | 值                                                        |
-| ----------------------- | --------------------------------------------------------- |
-| HTTPS origin            | `https://tg-test.example.invalid`                         |
-| 测试 Bot                | `@example_channel_bot`（示例测试 Bot）                    |
-| 应用内 Bot ID           | `00000000-0000-4000-8000-000000000017`                    |
-| API                     | `http://127.0.0.1:43100`                                  |
-| Vite                    | `http://127.0.0.1:43103`                                  |
-| PostgreSQL              | `localhost:43105/cos_tool_bot`                            |
-| Cloudflare named tunnel | `example-tunnel` / `00000000-0000-4000-8000-000000000029` |
+从管理面板打开自己的测试 Bot，复制编辑页 URL 中的 Bot ID。下文用 `BOT_ID` 表示该值。PostgreSQL 使用开发端口 `43105`。
 
 不要把 Bot Token、Cloudflare credential JSON、`MINI_APP_SESSION_SECRET` 或后台密码写入本文或提交到 Git。
 
@@ -42,49 +32,41 @@ cp .env.example .env # 仅首次；已有本地配置时不要覆盖
 
 ### 2. 建立 Tunnel DNS route
 
-`tg-test.example.invalid` 已经指向现有 named tunnel，正常开发时不用重复执行。只有 DNS route 被删除后才运行：
+在 Cloudflare 为自己的 named tunnel 添加 DNS 记录。已有记录可复用。将下面的 TUNNEL_ID 换为自己的 tunnel ID。
 
 ```bash
-cloudflared tunnel route dns 00000000-0000-4000-8000-000000000029 tg-test.example.invalid
+cloudflared tunnel route dns TUNNEL_ID mini.example.com
 ```
 
 ### 3. 准备 Cloudflare ingress 配置
 
-本次临时配置位于：
-
-```text
-/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml
-```
-
-`/private/tmp` 可能在重启后被清理。长期使用建议复制为 `~/.cloudflared/cos-tool-bot-tg-test.yml`，并使用下面的组合配置；它同时保留原有 `example-tunnel.example.invalid`，避免同一个 named tunnel 启动多个互不一致的 ingress 配置。
+在 `~/.cloudflared/cos-tool-bot-tg-test.yml` 中配置同一域名的 API 和网页入口，并将示例凭据路径替换为本机实际绝对路径。复用 tunnel 时，把这两条规则加在现有的兜底规则之前。
 
 ```yaml
-tunnel: 00000000-0000-4000-8000-000000000029
-credentials-file: /Users/example/.cloudflared/00000000-0000-4000-8000-000000000029.json
+tunnel: TUNNEL_ID
+credentials-file: /absolute/path/to/.cloudflared/TUNNEL_ID.json
 
 ingress:
-  - hostname: example-tunnel.example.invalid
-    service: http://localhost:3000
-  - hostname: tg-test.example.invalid
+  - hostname: mini.example.com
     path: ^/api/.*
     service: http://localhost:43100
-  - hostname: tg-test.example.invalid
+  - hostname: mini.example.com
     service: http://localhost:43103
   - service: http_status:404
 ```
 
 credential 文件必须只留在 `~/.cloudflared`，不要复制进仓库。
-更改本地端口后，也要同步现有 tunnel 配置中 `tg-test.example.invalid` 的两条 `service`；保留 `example-tunnel.example.invalid` 自己的端口。
+更改本地端口后，也要同步现有 tunnel 配置中 `mini.example.com` 的两条 `service`。
 
 ## 推荐：一键启停
 
-确认 tunnel 配置已按上文准备后，在仓库根目录运行：
+在仓库根目录的 `.env` 设置 `COS_TOOL_BOT_MINI_APP_ORIGIN=https://mini.example.com`，将示例域名换为 tunnel 的实际域名，然后运行：
 
 ```bash
 pnpm dev:mini-app
 ```
 
-该命令会依次启动 dev Compose、等待 PostgreSQL、运行 migration，再统一启动 Server、Vite `:43103` 与指定 Cloudflare Tunnel。脚本优先读取 `~/.cloudflared/cos-tool-bot-tg-test.yml`，当前者不存在时兼容本次已跑通的 `/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml`；默认使用 `https://tg-test.example.invalid`，并为本次进程自动生成临时 `MINI_APP_SESSION_SECRET`。日志保留在当前终端；按 `Ctrl-C` 会停止全部进程和 dev Compose，但保留数据库 volume。
+该命令会依次启动 dev Compose、等待 PostgreSQL、运行 migration，再统一启动 Server、Vite `:43103` 与指定 Cloudflare Tunnel。脚本优先读取 `~/.cloudflared/cos-tool-bot-tg-test.yml`，当前者不存在时兼容旧版使用的 `/private/tmp/cos-tool-bot-telegram-mini-app-cloudflared.yml`；使用环境变量或仓库 `.env` 指定的 HTTPS origin，并为本次进程自动生成临时 `MINI_APP_SESSION_SECRET`。日志保留在当前终端；按 `Ctrl-C` 会停止全部进程和 dev Compose，但保留数据库 volume。
 
 也可以从另一个终端查看或停止：
 
@@ -95,11 +77,11 @@ pnpm dev:mini-app:stop
 
 脚本只会向自己记录的 supervisor PID 发送停止信号，不会全局 `pkill cloudflared`。启动前若发现当前 named tunnel 已有 connector，会拒绝继续并只显示 PID，避免同一个 tunnel 被不同 ingress 配置随机分流，也不会输出可能包含 token 的完整命令行。
 
-需要覆盖默认值时：
+需要临时覆盖本地配置时：
 
 ```bash
 COS_TOOL_BOT_TUNNEL_CONFIG=~/.cloudflared/cos-tool-bot-tg-test.yml \
-COS_TOOL_BOT_MINI_APP_ORIGIN=https://tg-test.example.invalid \
+COS_TOOL_BOT_MINI_APP_ORIGIN=https://mini.example.com \
 COS_TOOL_BOT_MINI_APP_SERVER_PORT=43100 \
 COS_TOOL_BOT_MINI_APP_PANEL_PORT=43103 \
 pnpm dev:mini-app
@@ -125,7 +107,7 @@ docker ps --filter name=cos-bot-dev-db-1
 
 ```bash
 export COS_TOOL_BOT_MINI_APP_SESSION_SECRET="$(openssl rand -hex 32)"
-BETTER_AUTH_URL=https://tg-test.example.invalid \
+BETTER_AUTH_URL=https://mini.example.com \
 MINI_APP_SESSION_SECRET="$COS_TOOL_BOT_MINI_APP_SESSION_SECRET" \
 pnpm --filter @cos-tool-bot/server dev
 ```
@@ -146,7 +128,7 @@ Bot started
 ### 终端 C：Vite Panel
 
 ```bash
-__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=tg-test.example.invalid \
+__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS=mini.example.com \
 pnpm --filter @cos-tool-bot/panel exec vite --port 43103 --strictPort --host 127.0.0.1
 ```
 
@@ -172,7 +154,7 @@ cloudflared \
 
 ## 只给测试 Bot 开启 Mini App
 
-1. 打开 [测试 Bot 编辑页](https://tg-test.example.invalid/bots/00000000-0000-4000-8000-000000000017/edit)。
+1. 从管理面板的 Bot 列表打开自己的测试 Bot 编辑页。
 2. 登录 Better Auth 后滚动到表单底部。
 3. 开启“启用 Telegram Mini App（需先完成 HTTPS 配置）”。
 4. 保存并确认该 Bot 恢复 `running`。
@@ -184,10 +166,10 @@ cloudflared \
 
 代码中的 `/panel` 不依赖 BotFather Main Mini App。BotFather 的设置只用于 Bot 资料页上的全局 `Open App` 按钮。
 
-如需启用，在 `@BotFather` 为 `@example_channel_bot` 配置：
+如需启用，在 `@BotFather` 为 你的测试 Bot 配置：
 
 ```text
-https://tg-test.example.invalid/mini-app/00000000-0000-4000-8000-000000000017/help
+https://mini.example.com/mini-app/BOT_ID/help
 ```
 
 需要撤销时在 BotFather 使用 `/empty`。不要把普通后台路由 `/bots/...` 配成 Mini App URL。
@@ -197,18 +179,18 @@ https://tg-test.example.invalid/mini-app/00000000-0000-4000-8000-000000000017/he
 ### 1. HTTPS 与路由
 
 ```bash
-curl -fsS https://tg-test.example.invalid/api/health
+curl -fsS https://mini.example.com/api/health
 curl -fsS -o /dev/null -w '%{http_code}\n' \
-  https://tg-test.example.invalid/mini-app/00000000-0000-4000-8000-000000000017/help
+  https://mini.example.com/mini-app/BOT_ID/help
 curl -sS -o /dev/null -w '%{http_code}\n' \
-  https://tg-test.example.invalid/api/definitely-not-a-route
+  https://mini.example.com/api/definitely-not-a-route
 ```
 
 预期依次为健康 JSON、`200`、`404`。
 
 ### 2. Bot 长轮询
 
-私聊 `@example_channel_bot`，依次发送：
+私聊 你的测试 Bot，依次发送：
 
 ```text
 /help
@@ -237,7 +219,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' \
 
 Mini App M1 的可授权对象是 `group` / `supergroup`，不是广播 Channel。要测试 Viewer 与群配置，推荐创建一个私有测试群或 supergroup：
 
-1. 添加 `@example_channel_bot`；
+1. 添加 你的测试 Bot；
 2. 将 Bot 提升为管理员；
 3. 在群里发送一条消息，让本地服务观察到该群；
 4. Admin 从 Mini App 的 Access 页面实时验证并授权该群；

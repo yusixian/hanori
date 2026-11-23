@@ -573,7 +573,7 @@ export function GitHubToolsSection({
             disabled={!config.enabled}
             value={config.authorName}
             onChange={(event) => onUpdate({ authorName: event.target.value })}
-            placeholder="Ai-chan"
+            placeholder="Hanori"
           />
         </div>
         <div className="space-y-1.5">
@@ -583,7 +583,7 @@ export function GitHubToolsSection({
             disabled={!config.enabled}
             value={config.authorEmail}
             onChange={(event) => onUpdate({ authorEmail: event.target.value })}
-            placeholder="ai-chan@users.noreply.github.com"
+            placeholder="hanori@example.invalid"
           />
         </div>
       </div>

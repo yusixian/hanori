@@ -49,6 +49,8 @@ push、丢弃 workspace、创建 PR、更新 Issue 等其它操作仍沿用原�
 
 ## 隔离 Pi coding worker
 
+面板预填的 Git 提交署名是 `Hanori <hanori@example.invalid>`。你可以在 Bot 的 GitHub 工具设置里填写自己的作者名称和邮箱。
+
 编码 worker 是可选的 Compose profile。它接收服务端授权的有限工作任务，在单独网络和工作区中运行 Pi coding agent；worker 不应直接持有数据库凭据、GitHub App 私钥或推送权限。
 
 启用时，`COMPOSE_PROFILES` 与 `CODING_WORKER_SECRET` 必须同时配置。worker 与服务端通过内部 secret 建立认证，工作目录、Git 目录和出口代理由部署配置提供。任务应有单次启动、超时、取消、干净工作区和精确状态确认等边界。

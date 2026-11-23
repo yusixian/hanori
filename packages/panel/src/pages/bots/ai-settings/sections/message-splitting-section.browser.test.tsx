@@ -26,14 +26,11 @@ test("defaults Rich Messages on and exposes the global setting", async () => {
   await expect.element(page.getByText(/\/richtext on\|off/)).toBeVisible();
 });
 
-test.each([
-  ["Lark", "lark-webhook" as const],
-  ["an unavailable platform", undefined],
-])("hides Telegram Rich Messages for %s", async (_label, platform) => {
+test("hides Telegram Rich Messages while the platform is unavailable", async () => {
   render(
     <MessageSplittingSection
       config={{ replyMode: "stream", autoSplitThreshold: 0, splitDelayMs: 800 }}
-      platform={platform}
+      platform={undefined}
       onUpdate={vi.fn()}
     />,
   );

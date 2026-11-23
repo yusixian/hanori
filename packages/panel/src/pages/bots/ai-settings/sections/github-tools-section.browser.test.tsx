@@ -309,7 +309,7 @@ test("shows the installation account, repositories, and permissions to administr
               connectionError: "The installation was revoked on GitHub",
               installation: {
                 installationId: 42,
-                accountLogin: "ai-chan",
+                accountLogin: "hanori",
                 accountType: "Organization",
                 repositorySelection: "selected",
                 repositories: ["cos/example", "cos/private"],
@@ -333,7 +333,7 @@ test("shows the installation account, repositories, and permissions to administr
     />,
   );
 
-  await expect.element(page.getByText("ai-chan", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("hanori", { exact: true })).toBeVisible();
   await expect.element(page.getByText("cos/example", { exact: true })).toBeVisible();
   await expect.element(page.getByText("contents: write", { exact: true })).toBeVisible();
   await expect

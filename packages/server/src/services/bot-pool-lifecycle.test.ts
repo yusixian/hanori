@@ -145,6 +145,11 @@ beforeEach(() => {
 });
 
 describe("BotPool failed runtime cleanup", () => {
+  it("does not start a retired webhook record as a Telegram bot", async () => {
+    const { pool } = createPool(undefined, { ...botRow(), platform: "lark-webhook" });
+    await expect(pool.startBot(BOT_ID)).rejects.toThrow("Unsupported bot platform");
+    expect(pool.getManager(BOT_ID)).toBeUndefined();
+  });
   it("wires effective target history policy and the durable relay projection", async () => {
     let cosInside: CosInsideCommandConfig | undefined;
     let conversation: FakeManagerOptions["conversation"];

@@ -36,10 +36,12 @@ openssl version
 
 ### 2. 下载项目
 
+从仓库的 Code 菜单复制克隆地址，替换下方的占位符。
+
 ```bash
 mkdir -p ~/code
 cd ~/code
-git clone https://github.com/example-owner/cos-tool-bot.git
+git clone "<仓库克隆地址>" cos-tool-bot
 cd cos-tool-bot
 ```
 

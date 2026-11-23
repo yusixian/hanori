@@ -93,13 +93,29 @@ describe("DataTransferService credential sanitization", () => {
     expect(target.inserts[0]?.rows[0]?.aiConfig).toEqual(expected);
   });
 
+  it("rejects retired bot backups before opening a transaction", async () => {
+    const transaction = vi.fn();
+    const service = new DataTransferService({ transaction } as unknown as Database, "a".repeat(64));
+    await expect(
+      service.importData(exportPayload([{ id: "retired", platform: "lark-webhook" }], {})),
+    ).rejects.toThrow("unsupported bot platform");
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it("exports plugin settings without ciphertext and does not copy a secret into ordinary values", async () => {
     const db = {
       select: () => ({
         from: (table: Parameters<typeof getTableName>[0]) => ({
           where: async () =>
             table === schema.bots
-              ? [{ id: "old-bot", name: "Synthetic Bot" }]
+              ? [
+                  {
+                    id: "old-bot",
+                    name: "Synthetic Bot",
+                    larkWebhookConfig: { webhookUrl: "retired-webhook" },
+                    emailForwardConfig: { email: "fixture@example.test" },
+                  },
+                ]
               : table === schema.botPluginConfigs
                 ? [
                     {
@@ -121,6 +137,8 @@ describe("DataTransferService credential sanitization", () => {
     expect(service.getDiscoveredTables()).toContain("bot_plugin_configs");
     expect(service.getDiscoveredTables()).not.toContain("media_transcription_jobs");
     const payload = await service.exportBot("old-bot");
+    expect(payload.bots[0]).not.toHaveProperty("larkWebhookConfig");
+    expect(payload.bots[0]).not.toHaveProperty("emailForwardConfig");
     expect(payload.botPluginConfigs).toEqual([
       expect.objectContaining({
         botId: "old-bot",
@@ -214,7 +232,7 @@ describe("DataTransferService credential sanitization", () => {
                 connectedAt: new Date().toISOString(),
               },
               login: "forged-owner",
-              authorName: "Ai-chan",
+              authorName: "Hanori",
               authorEmail: "ai@example.com",
               repositories: ["private/secret"],
             },

@@ -14,7 +14,12 @@ const SENSITIVE_FIELDS: Record<string, (row: Record<string, unknown>) => Record<
   {
     bot_plugin_configs: sanitizePluginConfigTransfer,
     bots: (row) => {
-      const { encryptedToken: _encryptedToken, ...rest } = row;
+      const {
+        encryptedToken: _encryptedToken,
+        larkWebhookConfig: _retiredWebhook,
+        emailForwardConfig: _retiredMailbox,
+        ...rest
+      } = row;
       if (rest.aiConfig && typeof rest.aiConfig === "object") {
         rest.aiConfig = sanitizeAiConfig(rest.aiConfig as Record<string, unknown>);
       }
@@ -298,7 +303,8 @@ export class DataTransferService {
   async exportBot(botId: string, excludeTables?: Set<string>): Promise<ExportPayload> {
     // Get bot record
     const [bot] = await this.db.select().from(schema.bots).where(eq(schema.bots.id, botId));
-    if (!bot) throw new Error(`Bot not found: ${botId}`);
+    if (!bot || (bot.platform && bot.platform !== "telegram"))
+      throw new Error(`Bot not found: ${botId}`);
 
     const botRow = this.sanitizeRow("bots", bot as unknown as Record<string, unknown>);
 
@@ -351,6 +357,8 @@ export class DataTransferService {
 
     const sourceBotIds = new Set<string>();
     for (const botData of payload.bots) {
+      if (botData.platform !== undefined && botData.platform !== "telegram")
+        throw new Error("Invalid export format: unsupported bot platform");
       const sourceBotId = botData.id;
       if (typeof sourceBotId !== "string" || sourceBotId.length === 0) {
         throw new Error("Invalid export format: bot id is missing");

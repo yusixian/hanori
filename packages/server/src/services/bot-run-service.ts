@@ -62,15 +62,6 @@ function isProviderOutputPart(type: unknown): boolean {
 function textFromChannelEvent(event: Record<string, unknown>): string {
   const message = event["message"] as Record<string, unknown> | undefined;
   if (typeof message?.["text"] === "string") return message["text"];
-  const eventBody = event["event"] as Record<string, unknown> | undefined;
-  const larkMessage = eventBody?.["message"] as Record<string, unknown> | undefined;
-  const content = larkMessage?.["content"];
-  if (typeof content === "string") {
-    try {
-      const parsed = JSON.parse(content) as { text?: unknown };
-      if (typeof parsed.text === "string") return parsed.text;
-    } catch {}
-  }
   throw new Error("Channel event does not contain a supported text message");
 }
 
@@ -162,7 +153,9 @@ export class BotRunService {
   async start(botId: string, input: StartBotRunInput) {
     await this.initialization;
     const [bot] = await this.db.select().from(bots).where(eq(bots.id, botId));
-    if (!bot) throw new Error("Bot not found");
+    if (!bot || (bot.platform && bot.platform !== "telegram")) throw new Error("Bot not found");
+    if (input.channel && !["telegram", "fake"].includes(input.channel))
+      throw new Error("Unsupported channel");
     const text =
       input.text?.trim() || (input.channelEvent ? textFromChannelEvent(input.channelEvent) : "");
     if (!text) throw new Error("A message or supported Channel event is required");

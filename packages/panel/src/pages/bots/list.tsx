@@ -309,11 +309,6 @@ export function BotListPage() {
                         <h3 className="text-foreground group-hover:text-primary line-clamp-2 text-base leading-6 font-semibold tracking-tight transition-colors duration-150">
                           {bot.name}
                         </h3>
-                        {bot.platform === "lark-webhook" && (
-                          <Badge variant="muted" className="mt-2 text-[10px]">
-                            Lark webhook
-                          </Badge>
-                        )}
                       </div>
                     </div>
                     <Badge variant={statusBadgeVariant[bot.status]}>

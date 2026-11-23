@@ -45,9 +45,6 @@ export function BotEditPage() {
           adminChatIds: bot.adminChatIds,
           isActive: bot.isActive,
           miniAppEnabled: bot.miniAppEnabled,
-          webhookUrl: bot.larkWebhookConfig?.webhookUrl,
-          hasSignSecret: bot.larkWebhookConfig?.hasSignSecret,
-          emailForwardConfig: bot.emailForwardConfig,
           cosInsideConfig: bot.cosInsideConfig,
         }}
         submitLabel={t("edit.submit")}
@@ -62,11 +59,6 @@ export function BotEditPage() {
               isActive: formData.isActive,
               miniAppEnabled: formData.miniAppEnabled,
               ...(formData.token ? { token: formData.token } : {}),
-              ...(formData.webhookUrl !== undefined ? { webhookUrl: formData.webhookUrl } : {}),
-              ...(formData.signSecret !== undefined ? { signSecret: formData.signSecret } : {}),
-              ...(formData.emailForwardConfig
-                ? { emailForwardConfig: formData.emailForwardConfig }
-                : {}),
               ...(formData.cosInsideConfig ? { cosInsideConfig: formData.cosInsideConfig } : {}),
             },
           });

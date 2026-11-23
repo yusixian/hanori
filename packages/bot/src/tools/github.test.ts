@@ -77,7 +77,7 @@ function adminConfig(token = "token") {
     publicReadEnabled: true,
     codingAgentEnabled: false,
     token,
-    authorName: "Ai-chan",
+    authorName: "Hanori",
     authorEmail: "ai@example.com",
     repositories: ["owner/repo"],
   };
@@ -160,7 +160,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: true,
         token: "super-secret-token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/repo"],
       },
@@ -222,7 +222,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: false,
         token: "super-secret-token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["Owner/Repo"],
       },
@@ -251,7 +251,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: false,
         token: "token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/repo"],
       },
@@ -303,7 +303,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: false,
         token: "token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/allowed"],
       },
@@ -336,7 +336,7 @@ describe("GitHub tools permissions", () => {
         enabled: true,
         publicReadEnabled: true,
         codingAgentEnabled: false,
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: [],
       },
@@ -378,7 +378,7 @@ describe("GitHub tools permissions", () => {
         title: "Add feature",
         draft: false,
       }),
-    ).resolves.toEqual({ error: "Ai-chan's GitHub token is not configured" });
+    ).resolves.toEqual({ error: "The bot's GitHub token is not configured" });
 
     const outsideAllowlist = createGitHubTools({
       config: adminConfig(),
@@ -668,7 +668,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: true,
         token: "token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/repo"],
       },
@@ -948,7 +948,7 @@ describe("GitHub tools permissions", () => {
       task: "Resume with the default commit message",
     })) as { action_id: string; description: string };
     expect(defaultCommitProposal.description).toContain(
-      "提交信息：chore: recover Ai-chan coding workspace",
+      "提交信息：chore: recover coding workspace",
     );
     registry.remove(defaultCommitProposal.action_id);
 
@@ -979,7 +979,7 @@ describe("GitHub tools permissions", () => {
         publicReadEnabled: true,
         codingAgentEnabled: true,
         token: "token",
-        authorName: "Ai-chan",
+        authorName: "Hanori",
         authorEmail: "ai@example.com",
         repositories: ["owner/repo"],
       },

@@ -36,14 +36,6 @@ const TELEGRAM_BOT: BotWithStatus = {
   updatedAt: null,
 };
 
-const LARK_BOT: BotWithStatus = {
-  ...TELEGRAM_BOT,
-  id: "lark-bot",
-  name: "Lark Bot",
-  platform: "lark-webhook",
-  aiEnabled: false,
-};
-
 async function renderDashboard(botId = "telegram-bot") {
   return render(
     <MemoryRouter initialEntries={[`/bots/${botId}`]}>
@@ -124,24 +116,4 @@ test("provides keyboard-ordered Telegram destinations", async () => {
   await expect.element(conversations).toHaveFocus();
   await userEvent.tab();
   await expect.element(logs).toHaveFocus();
-});
-
-test("shows only applicable edit and logs destinations for a Lark webhook", async () => {
-  mocks.useOne.mockReturnValue({
-    data: { data: LARK_BOT },
-    isLoading: false,
-    isFetching: false,
-    isError: false,
-    refetch: mocks.refetch,
-  });
-  await renderDashboard("lark-bot");
-
-  await expect
-    .element(page.getByRole("link", { name: "Edit bot" }))
-    .toHaveAttribute("href", "/bots/lark-bot/edit");
-  await expect
-    .element(page.getByRole("link", { name: "Logs" }))
-    .toHaveAttribute("href", "/bots/lark-bot/logs");
-  await expect.element(page.getByRole("link", { name: "AI settings" })).not.toBeInTheDocument();
-  await expect.element(page.getByRole("link", { name: "Conversations" })).not.toBeInTheDocument();
 });

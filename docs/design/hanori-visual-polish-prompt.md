@@ -3,10 +3,7 @@
 把以下内容复制给下一个 Agent：
 
 ```text
-请在这个实际开发源仓库继续打磨 Hanori · 花织的视觉，并实现、验证改动：
-/Users/example/Documents/Programming/me/cos-tool-bot
-
-先读取 AGENTS.md、HANDOFF.md，以及 docs/design/open-source-readiness.md 的最新 Hanori 记录，检查 git status。仓库已有开源准备、改名和首版视觉成果；先核实哪些已经提交、哪些仍在工作树中，并完整保留。公开 hanori 仓库尚未创建；.open-source 下的目录是导出快照和验证副本，所有产品修改都落到当前源仓库。
+在仓库根目录继续打磨 Hanori · 花织的视觉。先读取 AGENTS.md 和现有品牌设计记录，再用 git status 核对当前修改。
 
 产品是自托管 AI 伴侣，以 Telegram 为主要入口，工作台管理 Bot、模型、记忆、创作和工具。名字 Hanori · 花织 / 仓库名 hanori 已确认。希望活泼、亲切、有角色感，参考 astro-koharu 的樱花粉、粉蓝和柔和渐变；保留工作台的信息清晰度、操作效率和可读性。当前 SVG 樱花笑脸标识只是首版，可继续打磨。
 

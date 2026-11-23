@@ -1,7 +1,7 @@
 import { bots, type Database } from "@cos-tool-bot/database";
 import type { ExportPayload } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -15,7 +15,10 @@ export function dataTransferRoutes(db: Database, encryptionKey: string) {
   return new Hono()
     .get("/:botId/export/stats", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       try {
@@ -39,7 +42,10 @@ export function dataTransferRoutes(db: Database, encryptionKey: string) {
       ),
       async (c) => {
         const botId = c.req.param("botId");
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        const [bot] = await db
+          .select()
+          .from(bots)
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
         const { excludeTables, format } = c.req.valid("query");

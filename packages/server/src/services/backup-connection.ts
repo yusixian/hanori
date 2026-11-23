@@ -31,7 +31,7 @@ export async function withBackupConnection(
   const uri = (options: string[]) =>
     scheme + host + path + (options.length ? "?" + options.join("&") : "");
   if (!password) return dump(uri(options), env);
-  if (/[\r\n\0]/.test(password))
+  if (/[\r\n]/.test(password) || password.includes("\0"))
     throw new Error(
       "Backup password contains a character unsupported by PostgreSQL password files",
     );

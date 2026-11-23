@@ -86,9 +86,6 @@ const PluginsPage = lazy(() => import("@/pages/plugins").then((m) => ({ default:
 const McpServersPage = lazy(() =>
   import("@/pages/mcp-servers").then((m) => ({ default: m.McpServersPage })),
 );
-const LarkSetupGuidePage = lazy(() =>
-  import("@/pages/guides/lark-setup").then((m) => ({ default: m.LarkSetupGuidePage })),
-);
 const HarnessPage = lazy(() => import("@/pages/harness").then((m) => ({ default: m.HarnessPage })));
 const SettingsPage = lazy(() =>
   import("@/pages/settings").then((m) => ({ default: m.SettingsPage })),
@@ -178,7 +175,6 @@ export function AdminPanelApp() {
               <Route path="/plugins" element={<PluginsPage />} />
               <Route path="/mcp-servers" element={<McpServersPage />} />
               <Route path="/harness/*" element={<HarnessPage />} />
-              <Route path="/guides/lark-setup" element={<LarkSetupGuidePage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route

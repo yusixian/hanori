@@ -354,7 +354,8 @@ export const aiSettings = {
     },
     githubTools: {
       title: "GitHub identity and code access",
-      description: "Configure Ai-chan's identity, repository allowlist, and confirmations.",
+      description:
+        "Configure the bot's Git commit author, repository allowlist, and confirmations.",
     },
     agentTools: {
       title: "Agent tools",
@@ -744,10 +745,10 @@ export const aiSettings = {
     createIssueConfirmationMinutes: "Confirmation validity (minutes)",
     publicRead: "Allow members to read public repositories",
     publicReadDescription:
-      "Member requests never include Ai-chan's token and cannot create branches, commit, push, or change issues.",
+      "Member requests never include the bot's token and cannot create branches, commit, push, or change issues.",
     codingAgent: "Enable Pi coding agent (administrators only)",
     codingAgentDescription:
-      "Pi modifies and tests code in a separate constrained service. The trusted server creates Ai-chan's local commit; Pi never receives the GitHub token, and pushing still requires Telegram confirmation.",
+      "Pi modifies and tests code in a separate constrained service. The trusted server creates the bot's local commit; Pi never receives the GitHub token, and pushing still requires Telegram confirmation.",
     codingProvider: "Coding provider",
     codingModel: "Coding model",
     followChatProvider: "Follow the current chat provider",

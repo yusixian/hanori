@@ -66,6 +66,18 @@ function createApp(
 }
 
 describe("Mini App Bot management", () => {
+  it("rejects retired webhook bots before creating a record", async () => {
+    const insert = vi.fn();
+    const app = createApp({ insert } as unknown as Database, {} as BotPool);
+    const response = await app.request("/bots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Retired", platform: "lark-webhook", token: "fixture" }),
+    });
+    expect(response.status).toBe(400);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
   it("does not let an editor create a Bot trust root", async () => {
     const insert = vi.fn();
     const app = createApp({ insert } as unknown as Database, {} as BotPool, { role: "editor" });

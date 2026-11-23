@@ -30,13 +30,17 @@ it("uses a deterministic creation order and ID tie-breaker across Bot pages", as
     expect(await response.json()).toMatchObject({ ok: true, total: 125 });
   }
 
+  for (const { sql, params } of queries) {
+    expect(sql).toContain('"bots"."platform" = $1');
+    expect(params[0]).toBe("telegram");
+  }
   const pageQueries = queries.filter(({ sql }) => !sql.includes("count(*)"));
   expect(pageQueries).toHaveLength(2);
   for (const { sql } of pageQueries) {
     expect(sql).toContain('order by "bots"."created_at" asc, "bots"."id" asc');
   }
-  expect(pageQueries[0]!.params).toEqual([12]);
-  expect(pageQueries[1]!.params).toEqual([12, 120]);
+  expect(pageQueries[0]!.params).toEqual(["telegram", 12]);
+  expect(pageQueries[1]!.params).toEqual(["telegram", 12, 120]);
 });
 
 it("filters Bot names case-insensitively with literal LIKE characters before pagination and count", async () => {
@@ -59,10 +63,10 @@ it("filters Bot names case-insensitively with literal LIKE characters before pag
   const countQuery = queries.find(({ sql }) => sql.includes("count(*)"))!;
   const escapedPattern = "%MiXeD\\_\\%%";
   expect(listQuery.sql).toContain('"bots"."name" ilike');
-  expect(listQuery.sql).toContain("limit $2 offset $3");
-  expect(listQuery.params).toEqual([escapedPattern, 12, 12]);
+  expect(listQuery.sql).toContain("limit $3 offset $4");
+  expect(listQuery.params).toEqual(["telegram", escapedPattern, 12, 12]);
   expect(countQuery.sql).toContain('"bots"."name" ilike');
-  expect(countQuery.params).toEqual([escapedPattern]);
+  expect(countQuery.params).toEqual(["telegram", escapedPattern]);
 });
 
 it("treats an empty or whitespace Bot search as unfiltered and bounds non-empty searches", async () => {
@@ -82,7 +86,7 @@ it("treats an empty or whitespace Bot search as unfiltered and bounds non-empty 
   await expect(response.json()).resolves.toMatchObject({ ok: true, total: 1 });
   expect(queries).toHaveLength(2);
   expect(queries.every(({ sql }) => !sql.includes('"bots"."name" ilike'))).toBe(true);
-  expect(queries.find(({ sql }) => !sql.includes("count(*)"))?.params).toEqual([20]);
+  expect(queries.find(({ sql }) => !sql.includes("count(*)"))?.params).toEqual(["telegram", 20]);
 
   expect((await app.request(`/bots?search=${"a".repeat(101)}`)).status).toBe(400);
   expect((await app.request(`/bots?search=${encodeURIComponent(" ".repeat(101))}`)).status).toBe(

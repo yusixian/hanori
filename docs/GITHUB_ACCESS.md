@@ -20,7 +20,7 @@ The bot can use a dedicated GitHub identity without exposing its credential to t
 
 ## Dedicated account setup
 
-1. Create a separate GitHub account for Ai-chan and add it only to repositories it should access.
+1. Create a separate GitHub account for the bot and add it only to repositories it should access.
 2. Create a fine-grained personal access token restricted to those repositories.
 3. Grant `Metadata: Read`, `Contents: Read and write`, `Issues: Read and write`, and
    `Pull requests: Read and write`.

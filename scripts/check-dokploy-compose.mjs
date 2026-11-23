@@ -20,6 +20,7 @@ const requiredEnvironment = {
   GOOGLE_CLIENT_SECRET: "",
   MINI_APP_SESSION_SECRET: "",
   MEDIA_WORKER_SECRET: "validation-media-worker-secret-at-least-32-characters",
+  TRAEFIK_DOCKER_NETWORK: process.env.TRAEFIK_DOCKER_NETWORK || "validation-proxy",
   PANEL_PASSWORD: "validation-owner-password",
 };
 
@@ -57,8 +58,7 @@ assert(services["db-backup"], "Dokploy config is missing the database backup gat
 assert(services["nsfw-api"], "Dokploy config is missing nsfw-api");
 assert(!services.app.ports, "Dokploy app must not publish a host port");
 assert(
-  services.app.labels?.["traefik.docker.network"] ===
-    (process.env.TRAEFIK_DOCKER_NETWORK || "example-compose"),
+  services.app.labels?.["traefik.docker.network"] === requiredEnvironment.TRAEFIK_DOCKER_NETWORK,
   "Dokploy app must pin Traefik to its shared network",
 );
 assert(!services.db.ports, "Dokploy database must not publish a host port");

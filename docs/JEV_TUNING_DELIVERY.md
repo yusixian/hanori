@@ -25,7 +25,7 @@
 - PR #99 已核实 MERGED，合入提交 `1e9373576f5b6054244b10beee586772eae68b92`；与审查和 CI 候选的文件树完全一致。
 - 远端 `v0.12.0` tag 和 Release target 均核实为上述合入 SHA。Release 已公开、非 draft/预发布，正文与 `docs/releases/v0.12.0.md` 完全一致。
 - 合入后 CI 35694686043 已核实 completed/success，精确 head 为上述合入/tag/Release SHA，全部仓库门禁通过。两轮 CI 的缓存恢复均有较长等待；没有取消或重复触发，复用各自 watcher 等待完成。
-- 文档站 JEV 调参指南、版本导航和 v0.12.0 页面源文件已合入并通过构建/浏览器检查。2026-09-22 14:30 左右，匿名 HTTP 读取 [版本页](https://bot.example.invalid/docs/changelog/v0.12.0) 和 [群聊指南](https://bot.example.invalid/docs/guides/group-behavior) 均为 200，标题及新配置/偏好/筛选正文匹配；`/api/health/ready` 返回 `ready`，version 为发布 SHA `1e9373576f5b6054244b10beee586772eae68b92`。
+- 文档站 JEV 调参指南、版本导航和 v0.12.0 页面源文件已合入并通过构建/浏览器检查。2026-09-22 14:30 左右，匿名 HTTP 读取 版本页（`/docs/changelog/v0.12.0`） 和 群聊指南（`/docs/guides/group-behavior`） 均为 200，标题及新配置/偏好/筛选正文匹配；`/api/health/ready` 返回 `ready`，version 为发布 SHA `1e9373576f5b6054244b10beee586772eae68b92`。
 - 使用现有登录浏览器进行线上只读核验：新偏好示例及三个字段可见，当前值仍为回复门槛 0.5、参与门槛 0.8/0.8、冷却 30 秒、续聊窗口 120 秒。未编辑或保存配置；临时核验标签页已关闭，原调试器页保留。
 
 ## 本地验证

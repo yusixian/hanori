@@ -74,7 +74,7 @@ const failedRun = {
   ],
 };
 
-function botDetailResponse(platform: "telegram" | "lark-webhook" = "telegram") {
+function botDetailResponse(platform: "telegram" = "telegram") {
   return new Response(JSON.stringify({ ok: true, data: { platform } }), { status: 200 });
 }
 
@@ -386,30 +386,6 @@ test("preserves a Rich Message draft when the language changes", async () => {
   await expect
     .element(page.getByPlaceholder("例如 123456789 或 -1001234567890"))
     .toHaveValue("123456789");
-});
-
-test("never renders Telegram delivery tools for a Lark bot", async () => {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (input: RequestInfo | URL) =>
-      isBotDetailRequest(input)
-        ? botDetailResponse("lark-webhook")
-        : new Response(JSON.stringify({ ok: true, data: [] }), { status: 200 }),
-    ),
-  );
-
-  render(
-    <MemoryRouter initialEntries={["/bots/test-id/debugger"]}>
-      <Routes>
-        <Route path="/bots/:botId/debugger" element={<BotDebuggerPage />} />
-      </Routes>
-    </MemoryRouter>,
-  );
-
-  expect(document.body.textContent).not.toContain("Telegram Rich Message Test");
-  await expect.element(page.getByRole("heading", { name: "AI Debugger" })).toBeVisible();
-  await expect.element(page.getByText("No Bot Runs yet.")).toBeVisible();
-  expect(document.body.textContent).not.toContain("Telegram Rich Message Test");
 });
 
 test("keeps a running stream open across transient errors and closes it on completion", async () => {

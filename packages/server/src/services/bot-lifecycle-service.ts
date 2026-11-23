@@ -1,7 +1,7 @@
 import type { Database } from "@cos-tool-bot/database";
 import { bots, miniAppAuditEvents } from "@cos-tool-bot/database";
 import type { BotStatus } from "@cos-tool-bot/shared";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { KeyedAsyncLock } from "./keyed-async-lock.js";
 
 export interface BotLifecycleRuntime {
@@ -81,7 +81,10 @@ export class BotLifecycleService {
 
   async read(botId: string): Promise<BotLifecycleState> {
     const [bot] = await this.persist(() =>
-      this.db.select({ isActive: bots.isActive }).from(bots).where(eq(bots.id, botId)),
+      this.db
+        .select({ isActive: bots.isActive })
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram"))),
     );
     if (!bot) throw new BotLifecycleError("not_found");
     return state(bot.isActive, this.runtime.getStatus(botId));
@@ -107,7 +110,7 @@ export class BotLifecycleService {
           const [bot] = await tx
             .select({ isActive: bots.isActive })
             .from(bots)
-            .where(eq(bots.id, input.botId))
+            .where(and(eq(bots.id, input.botId), eq(bots.platform, "telegram")))
             .for("update");
           if (!bot) throw new BotLifecycleError("not_found");
           const allowed = bot.isActive;
@@ -153,11 +156,14 @@ export class BotLifecycleService {
           const [bot] = await tx
             .select({ isActive: bots.isActive })
             .from(bots)
-            .where(eq(bots.id, input.botId))
+            .where(and(eq(bots.id, input.botId), eq(bots.platform, "telegram")))
             .for("update");
           if (!bot) throw new BotLifecycleError("not_found");
           if (bot.isActive !== desiredActive) {
-            await tx.update(bots).set({ isActive: desiredActive }).where(eq(bots.id, input.botId));
+            await tx
+              .update(bots)
+              .set({ isActive: desiredActive })
+              .where(and(eq(bots.id, input.botId), eq(bots.platform, "telegram")));
           }
           await tx.insert(miniAppAuditEvents).values({
             botId: input.botId,

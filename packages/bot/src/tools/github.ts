@@ -29,7 +29,7 @@ const MAX_FILE_CHARS = 100_000;
 const MAX_TREE_ENTRIES = 2_000;
 const CONFIRMATION_BODY_PREVIEW_CHARS = 600;
 const RECOVERY_PATHS_PREVIEW_CHARS = 1_000;
-const RECOVERY_COMMIT_MESSAGE = "chore: recover Ai-chan coding workspace";
+const RECOVERY_COMMIT_MESSAGE = "chore: recover coding workspace";
 
 export interface GitHubToolsOptions {
   config: GitHubToolsRuntimeConfig;
@@ -173,7 +173,7 @@ export function createGitHubTools(options: GitHubToolsOptions): Record<string, T
     if (!allowedRepositories.has(repository.toLowerCase())) {
       throw new Error("Repository is not in the administrator-managed GitHub allowlist");
     }
-    if (!authenticatedClient) throw new Error("Ai-chan's GitHub token is not configured");
+    if (!authenticatedClient) throw new Error("The bot's GitHub token is not configured");
     return authenticatedClient;
   }
 

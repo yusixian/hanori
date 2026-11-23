@@ -410,7 +410,7 @@ export class MemoryConsolidator {
       .select({ id: bots.id })
       .from(bots)
       .leftJoin(memoryConsolidationState, eq(memoryConsolidationState.botId, bots.id))
-      .where(eq(bots.isActive, true))
+      .where(and(eq(bots.isActive, true), eq(bots.platform, "telegram")))
       .orderBy(sql`coalesce(${memoryConsolidationState.updatedAt}, timestamp 'epoch')`)
       .limit(MAX_BOTS_PER_TICK);
     for (const bot of active) {

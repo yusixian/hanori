@@ -35,7 +35,7 @@ and repository builds can require substantially more.
   job envelope and validated before the worker signals acceptance. After any accepted job, including
   an interrupted one, another job is blocked until a different signed boot is healthy. A detached
   process that replaces the socket can see the challenge but cannot forge or replay the proof.
-- The trusted server configures Ai-chan's Git author identity, creates the local branch, and creates a
+- The trusted server configures the bot's Git author identity, creates the local branch, and creates a
   local commit after Pi finishes. Before branch selection it checkpoints the original branch, HEAD,
   and target-ref state; a failed or cancelled task restores those refs plus the clean index and
   worktree even when Git completed a checkout or commit immediately before cancellation. Push is a

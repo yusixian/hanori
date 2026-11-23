@@ -225,7 +225,7 @@ export class GitWorkspaceService {
             task: options.task,
             model: options.model,
             commitMessage: options.commitMessage,
-            defaultCommitMessage: "chore: apply Ai-chan coding task",
+            defaultCommitMessage: "chore: apply coding task",
             failureMessage:
               "Coding task failed; rollback and/or staging cleanup could not be completed",
             branchChangedMessage: (current) =>
@@ -307,7 +307,7 @@ export class GitWorkspaceService {
             task: options.task,
             model: options.model,
             commitMessage: options.commitMessage,
-            defaultCommitMessage: "chore: recover Ai-chan coding workspace",
+            defaultCommitMessage: "chore: recover coding workspace",
             failureMessage:
               "Workspace recovery failed; rollback and/or staging cleanup could not be completed",
             branchChangedMessage: () =>

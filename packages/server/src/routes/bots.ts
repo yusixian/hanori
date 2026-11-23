@@ -8,14 +8,9 @@ import {
 } from "@cos-tool-bot/bot";
 import type { Database } from "@cos-tool-bot/database";
 import { bots } from "@cos-tool-bot/database";
-import type {
-  AiConfigStored,
-  BotPlatform,
-  BotWithStatus,
-  EmailEventType,
-} from "@cos-tool-bot/shared";
+import type { AiConfigStored, BotWithStatus } from "@cos-tool-bot/shared";
 import { zValidator } from "@hono/zod-validator";
-import { asc, count, eq, ilike } from "drizzle-orm";
+import { and, asc, count, eq, ilike } from "drizzle-orm";
 import { Hono, type Context } from "hono";
 import * as fs from "node:fs/promises";
 import { HTTPException } from "hono/http-exception";
@@ -28,7 +23,6 @@ import {
   ChatAiSelectionError,
   type ChatAiSelectionService,
 } from "../services/chat-ai-selection-service.js";
-import { LarkBotManager } from "../services/lark-bot-manager.js";
 import type { HistoricalBatchPage } from "../services/memory-consolidator.js";
 import {
   MemoryLegacyCleanup,
@@ -56,23 +50,6 @@ import {
 } from "../utils/ai-config-migrate.js";
 import { getDataDir, resolveAndValidate } from "../utils/file-validation.js";
 import { escapeLike } from "../utils/search.js";
-
-const emailForwardFilterSchema = z.object({
-  senderPattern: z.string().optional(),
-  subjectPattern: z.string().optional(),
-});
-
-const emailForwardConfigSchema = z.object({
-  imapHost: z.string().min(1),
-  imapPort: z.number().int().min(1).max(65535),
-  imapTls: z.boolean().default(true),
-  email: z.string().min(1),
-  password: z.string().default(""),
-  pollIntervalSec: z.number().int().min(10).max(3600).default(60),
-  filters: z.array(emailForwardFilterSchema).default([]),
-  larkMentionMap: z.record(z.string(), z.string()).optional(),
-  disabledEventTypes: z.array(z.string()).optional(),
-});
 
 const cosInsideConfigSchema = z
   .object({
@@ -115,39 +92,15 @@ export interface MemoryConsolidationPreviewPort {
   ): Promise<HistoricalBatchPage>;
 }
 
-const createBotSchema = z
-  .object({
-    name: z.string().min(1).max(100),
-    platform: z.enum(["telegram", "lark-webhook"]).default("telegram"),
-    token: z.string().optional().default(""),
-    adminChatIds: z.array(z.number()).default([]),
-    isActive: z.boolean().default(true),
-    miniAppEnabled: z.boolean().default(false),
-    // Lark-specific fields
-    webhookUrl: z.string().optional(),
-    signSecret: z.string().optional(),
-    emailForwardConfig: emailForwardConfigSchema.optional(),
-    cosInsideConfig: cosInsideConfigSchema.optional(),
-  })
-  .refine(
-    (data) => {
-      if (data.platform === "telegram") return data.token.length > 0;
-      if (data.platform === "lark-webhook") return !!data.webhookUrl;
-      return true;
-    },
-    { message: "Telegram requires a token; Lark Webhook requires a webhook URL" },
-  )
-  .refine(
-    (data) => {
-      if (data.emailForwardConfig) return data.emailForwardConfig.password.length > 0;
-      return true;
-    },
-    { message: "Email password is required when creating email forward config" },
-  )
-  .refine((data) => data.platform === "telegram" || !data.miniAppEnabled, {
-    message: "Telegram Mini App is only available for Telegram bots",
-    path: ["miniAppEnabled"],
-  });
+const createBotSchema = z.object({
+  name: z.string().min(1).max(100),
+  platform: z.literal("telegram").default("telegram"),
+  token: z.string().min(1),
+  adminChatIds: z.array(z.number()).default([]),
+  isActive: z.boolean().default(true),
+  miniAppEnabled: z.boolean().default(false),
+  cosInsideConfig: cosInsideConfigSchema.optional(),
+});
 
 const updateBotSchema = z.object({
   name: z.string().min(1).max(100).optional(),
@@ -155,11 +108,6 @@ const updateBotSchema = z.object({
   adminChatIds: z.array(z.number()).optional(),
   isActive: z.boolean().optional(),
   miniAppEnabled: z.boolean().optional(),
-  // Lark-specific fields
-  webhookUrl: z.string().optional(),
-  signSecret: z.string().optional(),
-  emailForwardConfig: emailForwardConfigSchema.optional(),
-  clearEmailForwardConfig: z.boolean().optional(),
   cosInsideConfig: cosInsideConfigSchema.optional(),
 });
 
@@ -284,24 +232,17 @@ function aiSelectionErrorResponse(c: Context, error: unknown) {
 
 function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWithStatus {
   const manager = botPool.getManager(bot.id);
-  const platform: BotPlatform = bot.platform === "lark-webhook" ? "lark-webhook" : "telegram";
   let tokenMasked: string;
-  if (platform === "lark-webhook") {
-    tokenMasked = "(Lark Webhook)";
-  } else {
-    try {
-      const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
-      tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
-    } catch {
-      tokenMasked = "(密钥不匹配)";
-    }
+  try {
+    const token = decrypt(bot.encryptedToken, env.ENCRYPTION_KEY);
+    tokenMasked = token === "__IMPORT_PLACEHOLDER__" ? "(未配置)" : maskToken(token);
+  } catch {
+    tokenMasked = "(密钥不匹配)";
   }
-  const larkCfg = bot.larkWebhookConfig;
-  const emailCfg = bot.emailForwardConfig;
   return {
     id: bot.id,
     name: bot.name,
-    platform,
+    platform: "telegram",
     tokenMasked,
     adminChatIds: bot.adminChatIds,
     isActive: bot.isActive,
@@ -312,22 +253,7 @@ function toBotWithStatus(bot: typeof bots.$inferSelect, botPool: BotPool): BotWi
     updatedAt: bot.updatedAt?.toISOString() ?? null,
     status: manager?.status ?? "stopped",
     uptime: manager?.uptime ?? null,
-    larkWebhookConfig: larkCfg
-      ? { webhookUrl: larkCfg.webhookUrl, hasSignSecret: !!larkCfg.encryptedSignSecret }
-      : undefined,
     cosInsideConfig: bot.cosInsideConfig ?? undefined,
-    emailForwardConfig: emailCfg
-      ? {
-          imapHost: emailCfg.imapHost,
-          imapPort: emailCfg.imapPort,
-          email: emailCfg.email,
-          pollIntervalSec: emailCfg.pollIntervalSec,
-          filters: emailCfg.filters,
-          larkMentionMap: emailCfg.larkMentionMap,
-          disabledEventTypes: emailCfg.disabledEventTypes,
-          hasPassword: !!emailCfg.encryptedPassword,
-        }
-      : undefined,
   };
 }
 
@@ -441,15 +367,16 @@ export function botsRoutes(
         const offset = (page - 1) * limit;
         const nameFilter = search ? ilike(bots.name, `%${escapeLike(search)}%`) : undefined;
 
+        const botFilter = and(eq(bots.platform, "telegram"), nameFilter);
         const [allBots, [countResult]] = await Promise.all([
           db
             .select()
             .from(bots)
-            .where(nameFilter)
+            .where(botFilter)
             .orderBy(asc(bots.createdAt), asc(bots.id))
             .limit(limit)
             .offset(offset),
-          db.select({ total: count() }).from(bots).where(nameFilter),
+          db.select({ total: count() }).from(bots).where(botFilter),
         ]);
 
         const data = allBots.map((b) => toBotWithStatus(b, botPool));
@@ -458,7 +385,10 @@ export function botsRoutes(
     )
     .get("/:botId", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       return c.json({ ok: true as const, data: toBotWithStatus(bot, botPool) });
     })
@@ -467,62 +397,16 @@ export function botsRoutes(
       if (!ownerOrAdmin.has(c.get("authMember").role)) {
         return c.json({ ok: false as const, error: "当前角色没有权限创建 Bot" }, 403);
       }
-      const platform = body.platform ?? "telegram";
-
-      let encryptedToken: string;
-      let larkWebhookConfig: { webhookUrl: string; encryptedSignSecret?: string } | undefined;
-      let emailForwardConfig:
-        | {
-            imapHost: string;
-            imapPort: number;
-            imapTls: boolean;
-            email: string;
-            encryptedPassword: string;
-            pollIntervalSec: number;
-            filters: Array<{ senderPattern?: string; subjectPattern?: string }>;
-            larkMentionMap?: Record<string, string>;
-            disabledEventTypes?: EmailEventType[];
-          }
-        | undefined;
-
-      if (platform === "lark-webhook") {
-        encryptedToken = encrypt("__LARK_WEBHOOK__", env.ENCRYPTION_KEY);
-        larkWebhookConfig = {
-          webhookUrl: body.webhookUrl!,
-          encryptedSignSecret: body.signSecret
-            ? encrypt(body.signSecret, env.ENCRYPTION_KEY)
-            : undefined,
-        };
-        if (body.emailForwardConfig) {
-          emailForwardConfig = {
-            imapHost: body.emailForwardConfig.imapHost,
-            imapPort: body.emailForwardConfig.imapPort,
-            imapTls: body.emailForwardConfig.imapTls,
-            email: body.emailForwardConfig.email,
-            encryptedPassword: encrypt(body.emailForwardConfig.password, env.ENCRYPTION_KEY),
-            pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
-            filters: body.emailForwardConfig.filters,
-            larkMentionMap: body.emailForwardConfig.larkMentionMap,
-            disabledEventTypes: body.emailForwardConfig.disabledEventTypes as
-              | EmailEventType[]
-              | undefined,
-          };
-        }
-      } else {
-        encryptedToken = encrypt(body.token, env.ENCRYPTION_KEY);
-      }
 
       const rows = await db
         .insert(bots)
         .values({
           name: body.name,
-          platform,
-          encryptedToken,
+          platform: "telegram",
+          encryptedToken: encrypt(body.token, env.ENCRYPTION_KEY),
           adminChatIds: body.adminChatIds,
           isActive: body.isActive,
           miniAppEnabled: body.miniAppEnabled,
-          larkWebhookConfig: larkWebhookConfig ?? null,
-          emailForwardConfig: emailForwardConfig ?? null,
           cosInsideConfig: body.cosInsideConfig ?? null,
         })
         .returning();
@@ -546,7 +430,10 @@ export function botsRoutes(
     .put("/:botId", zValidator("json", updateBotSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
-      const [existing] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [existing] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!existing) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       const normalizedAdminIds = (ids: readonly number[]) =>
@@ -581,42 +468,13 @@ export function botsRoutes(
       if (body.adminChatIds !== undefined) updates.adminChatIds = body.adminChatIds;
       if (body.miniAppEnabled !== undefined) updates.miniAppEnabled = body.miniAppEnabled;
 
-      // Lark-specific updates
-      if (body.webhookUrl !== undefined || body.signSecret !== undefined) {
-        const encryptedSignSecret = body.signSecret
-          ? encrypt(body.signSecret, env.ENCRYPTION_KEY)
-          : (existing.larkWebhookConfig?.encryptedSignSecret ?? undefined);
-        updates.larkWebhookConfig = {
-          webhookUrl: body.webhookUrl ?? existing.larkWebhookConfig?.webhookUrl ?? "",
-          encryptedSignSecret,
-        };
-      }
-      if (body.emailForwardConfig) {
-        const existingEmail = existing.emailForwardConfig;
-        // If password is empty, keep the existing encrypted password
-        const encryptedPassword =
-          body.emailForwardConfig.password.length > 0
-            ? encrypt(body.emailForwardConfig.password, env.ENCRYPTION_KEY)
-            : (existingEmail?.encryptedPassword ?? "");
-        updates.emailForwardConfig = {
-          imapHost: body.emailForwardConfig.imapHost,
-          imapPort: body.emailForwardConfig.imapPort,
-          imapTls: body.emailForwardConfig.imapTls,
-          email: body.emailForwardConfig.email,
-          encryptedPassword,
-          pollIntervalSec: body.emailForwardConfig.pollIntervalSec,
-          filters: body.emailForwardConfig.filters,
-          larkMentionMap: body.emailForwardConfig.larkMentionMap,
-          disabledEventTypes: body.emailForwardConfig.disabledEventTypes as
-            | EmailEventType[]
-            | undefined,
-        };
-      } else if (body.clearEmailForwardConfig) {
-        updates.emailForwardConfig = null;
-      }
       if (body.cosInsideConfig !== undefined) updates.cosInsideConfig = body.cosInsideConfig;
 
-      const rows = await db.update(bots).set(updates).where(eq(bots.id, botId)).returning();
+      const rows = await db
+        .update(bots)
+        .set(updates)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")))
+        .returning();
       let updated = rows[0]!;
 
       const manager = botPool.getManager(botId);
@@ -672,11 +530,7 @@ export function botsRoutes(
         const needsRestart =
           body.token !== undefined ||
           body.adminChatIds !== undefined ||
-          body.webhookUrl !== undefined ||
-          body.signSecret !== undefined ||
           body.miniAppEnabled !== undefined ||
-          body.emailForwardConfig !== undefined ||
-          body.clearEmailForwardConfig ||
           body.cosInsideConfig !== undefined;
         if (manager && needsRestart && !miniAppRestartHandled) {
           try {
@@ -691,7 +545,10 @@ export function botsRoutes(
     })
     .delete("/:botId", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       const dataDir = getDataDir(botId);
       if (!bot) {
         await cleanupBotAvatarFiles(dataDir);
@@ -699,14 +556,17 @@ export function botsRoutes(
       }
       await botPool.stopBot(botId);
       await cleanupBotAvatarFiles(dataDir);
-      await db.delete(bots).where(eq(bots.id, botId));
+      await db.delete(bots).where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       botPool.clearDeletedBotGenerationState(botId);
       await cleanupBotAvatarFiles(dataDir);
       return c.json({ ok: true as const });
     })
     .post("/:botId/start", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       try {
         const data = botLifecycleService
@@ -738,7 +598,10 @@ export function botsRoutes(
     })
     .post("/:botId/restart", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       try {
         const data = botLifecycleService
@@ -777,7 +640,10 @@ export function botsRoutes(
         const body = c.req.valid("json");
 
         // Data files are loaded from disk (not part of form state)
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        const [bot] = await db
+          .select()
+          .from(bots)
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         const dataFilesConfig = bot?.aiConfig?.dataFilesConfig;
         const dataFiles = await createDataFilesLoader(botId, {
           injectableFiles: dataFilesConfig?.injectableFiles,
@@ -904,7 +770,10 @@ export function botsRoutes(
     })
     .get("/:botId/ai-config", async (c) => {
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       return c.json({
         ok: true as const,
@@ -917,7 +786,10 @@ export function botsRoutes(
         return c.json({ ok: false as const, error: "当前角色没有权限管理 Skill" }, 403);
       }
       const botId = c.req.param("botId");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
       return c.json({
         ok: true as const,
@@ -932,7 +804,10 @@ export function botsRoutes(
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
       const saveResult = await botPool.withAiConfigLock(botId, async () => {
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        const [bot] = await db
+          .select()
+          .from(bots)
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         if (!bot) return { kind: "not_found" as const };
         if (!bot.aiConfig) return { kind: "ai_not_configured" as const };
         const currentRevision = aiConfigRevision(bot.updatedAt);
@@ -954,7 +829,7 @@ export function botsRoutes(
         await db
           .update(bots)
           .set({ aiConfig: { ...bot.aiConfig, skillConfig }, updatedAt: changedAt })
-          .where(eq(bots.id, botId));
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         return { kind: "saved" as const, skillConfig, revision: aiConfigRevision(changedAt) };
       });
 
@@ -1004,7 +879,10 @@ export function botsRoutes(
       const body = c.req.valid("json");
 
       const saveResult = await botPool.withAiConfigLock(botId, async () => {
-        const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+        const [bot] = await db
+          .select()
+          .from(bots)
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         if (!bot) return { kind: "not_found" as const };
         const currentRevision = aiConfigRevision(bot.updatedAt);
         if (body.revision !== currentRevision) {
@@ -1034,7 +912,7 @@ export function botsRoutes(
         await db
           .update(bots)
           .set({ aiConfig: updatedAiConfig, updatedAt: changedAt })
-          .where(eq(bots.id, botId));
+          .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
         return {
           kind: "saved" as const,
           aiConfig: updatedAiConfig,
@@ -1359,7 +1237,10 @@ export function botsRoutes(
     .post("/:botId/ai-models", zValidator("json", aiModelsSchema), async (c) => {
       const botId = c.req.param("botId");
       const body = c.req.valid("json");
-      const [bot] = await db.select().from(bots).where(eq(bots.id, botId));
+      const [bot] = await db
+        .select()
+        .from(bots)
+        .where(and(eq(bots.id, botId), eq(bots.platform, "telegram")));
       if (!bot) return c.json({ ok: false as const, error: "Bot not found" }, 404);
 
       const migrated = bot.aiConfig ? migrateAiConfig(bot.aiConfig) : null;
@@ -1697,33 +1578,5 @@ export function botsRoutes(
       const deleted = await store.deleteMemory(botId, memoryId);
       if (!deleted) return c.json({ ok: false as const, error: "Memory not found" }, 404);
       return c.json({ ok: true as const });
-    })
-    .post(
-      "/:botId/lark/test",
-      zValidator(
-        "json",
-        z.object({
-          message: z.string().min(1).max(500).default("Test message from Hanori workspace"),
-        }),
-      ),
-      async (c) => {
-        const botId = c.req.param("botId");
-        const { message } = c.req.valid("json");
-        const manager = botPool.getManager(botId);
-        if (!manager || !(manager instanceof LarkBotManager)) {
-          return c.json(
-            { ok: false as const, error: "Bot is not a running Lark webhook bot" },
-            400,
-          );
-        }
-        if (manager.status !== "running") {
-          return c.json({ ok: false as const, error: "Bot is not running" }, 400);
-        }
-        const result = await manager.getLarkClient().sendText(message);
-        if (!result.ok) {
-          return c.json({ ok: false as const, error: result.error ?? "Failed to send" }, 502);
-        }
-        return c.json({ ok: true as const });
-      },
-    );
+    });
 }

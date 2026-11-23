@@ -446,7 +446,6 @@ export const botData = {
     rawMode: "Raw Channel Event",
     channel: "Channel",
     telegram: "Telegram",
-    lark: "Lark",
     messageAria: "Debug message",
     messagePlaceholder: "Enter a simulated user message…",
     rawEventAria: "Raw channel event",

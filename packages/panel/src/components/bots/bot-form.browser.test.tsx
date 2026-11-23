@@ -41,7 +41,7 @@ async function renderForm({
 }: {
   onSubmit?: (data: BotFormData) => Promise<void>;
   canManageCosInside?: boolean;
-  platform?: "telegram" | "lark-webhook";
+  platform?: "telegram";
   targets?: Array<{ alias: string; chatId: number }>;
 } = {}) {
   const data = initialData(targets);
@@ -194,31 +194,12 @@ test("requires a valid group for a new target", async () => {
   );
 });
 
-test("fails closed for non-managers and never shows relay targets for Lark", async () => {
+test("fails closed for non-managers", async () => {
   const editorSubmit = vi.fn(async (_data: BotFormData) => undefined);
-  const { view } = await renderForm({ onSubmit: editorSubmit, canManageCosInside: false });
+  await renderForm({ onSubmit: editorSubmit, canManageCosInside: false });
   expect(document.body.textContent).not.toContain("Private relay targets");
   await page.getByRole("button", { name: "Save Changes" }).click();
   expect(editorSubmit.mock.calls[0]![0]).not.toHaveProperty("cosInsideConfig");
-
-  await view.rerender(
-    <MemoryRouter>
-      <BotForm
-        key="lark-form"
-        isEdit
-        botId="bot-2"
-        canManageCosInside
-        initialData={{
-          ...initialData(),
-          platform: "lark-webhook",
-          webhookUrl: "https://open.feishu.cn/hook/test",
-        }}
-        submitLabel="Save Changes"
-        onSubmit={vi.fn(async () => undefined)}
-      />
-    </MemoryRouter>,
-  );
-  expect(document.body.textContent).not.toContain("Private relay targets");
 });
 
 test("retains the relay draft and shows an error after a failed save", async () => {

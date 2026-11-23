@@ -4,7 +4,6 @@ import type {
   ScheduledTaskPlan,
   AgentExecutionConfig,
   CosInsideConfig,
-  EmailForwardConfig,
   EngagementContextMessage,
   EngagementLabel,
   EngagementParticipationDecision,
@@ -24,7 +23,6 @@ import type {
   VideoDownloadStatus,
   TranscriptDocument,
   AssetSafety,
-  LarkWebhookConfig,
   UsageBucketCharge,
   UsageLimits,
 } from "@cos-tool-bot/shared";
@@ -95,8 +93,9 @@ export const bots = pgTable("bots", {
   encryptedToken: text("encrypted_token").notNull(),
   adminChatIds: json("admin_chat_ids").$type<number[]>().notNull().default([]),
   aiConfig: json("ai_config").$type<AiConfigStored>(),
-  larkWebhookConfig: json("lark_webhook_config").$type<LarkWebhookConfig>(),
-  emailForwardConfig: json("email_forward_config").$type<EmailForwardConfig>(),
+  // Retained for existing installations. Retired integration data is excluded from Bot exports.
+  larkWebhookConfig: json("lark_webhook_config"),
+  emailForwardConfig: json("email_forward_config"),
   cosInsideConfig: json("cos_inside_config").$type<CosInsideConfig>(),
   isActive: boolean("is_active").notNull().default(true),
   miniAppEnabled: boolean("mini_app_enabled").notNull().default(false),

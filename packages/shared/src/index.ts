@@ -13,7 +13,6 @@ export { isTimeoutError } from "./errors.js";
 export * from "./github.js";
 export * from "./image-ocr.js";
 export * from "./image-receipt.js";
-export * from "./lark.js";
 export * from "./logs.js";
 export * from "./mcp.js";
 export * from "./memory.js";
