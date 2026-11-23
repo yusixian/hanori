@@ -4,6 +4,7 @@ import type { BackupConfig, BackupRecord, BackupStorageConfig } from "@cos-tool-
 import { isValidBackupFilePrefix } from "@cos-tool-bot/shared";
 import { desc, eq } from "drizzle-orm";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { mkdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import type { Logger } from "pino";
 import { decrypt, encrypt } from "../utils/crypto.js";
+import { withBackupConnection } from "./backup-connection.js";
 import { createStorageProvider, type StorageProvider } from "./storage/index.js";
 
 const CONFIG_KEY = "backup_config";
@@ -40,7 +42,7 @@ export class BackupService {
   }
 
   async init(): Promise<void> {
-    await mkdir(this.backupDir, { recursive: true });
+    await mkdir(this.backupDir, { recursive: true, mode: 0o700 });
     this.logger.info({ backupDir: this.backupDir }, "Backup directory ready");
   }
 
@@ -52,7 +54,7 @@ export class BackupService {
     const startTime = Date.now();
 
     try {
-      await mkdir(this.backupDir, { recursive: true });
+      await mkdir(this.backupDir, { recursive: true, mode: 0o700 });
 
       const config = await this.getConfig();
       const prefix = config?.filePrefix || "cos-tool-bot";
@@ -61,7 +63,9 @@ export class BackupService {
       const filePath = this.getBackupFilePath(filename);
 
       // Run pg_dump and pipe through gzip
-      await this.runPgDump(filePath);
+      await withBackupConnection(this.databaseUrl, (url, env) =>
+        this.runPgDump(filePath, url, env),
+      );
 
       const fileStats = await stat(filePath);
       const durationMs = Date.now() - startTime;
@@ -225,18 +229,36 @@ export class BackupService {
     return createStorageProvider(config, (encrypted) => decrypt(encrypted, this.encryptionKey));
   }
 
-  private async runPgDump(filePath: string): Promise<void> {
+  private async runPgDump(filePath: string, url: string, env: NodeJS.ProcessEnv): Promise<void> {
+    const destination = createWriteStream(filePath, { flags: "wx", mode: 0o600 });
+    await once(destination, "open");
+    try {
+      await this.streamPgDump(url, env, destination);
+    } catch (error) {
+      destination.destroy();
+      await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") this.logger.warn({ err }, "Failed to remove incomplete backup");
+      });
+      throw error;
+    }
+  }
+
+  private async streamPgDump(
+    url: string,
+    env: NodeJS.ProcessEnv,
+    destination: ReturnType<typeof createWriteStream>,
+  ): Promise<void> {
     const child = spawn(
       "pg_dump",
-      [this.databaseUrl, "--no-owner", "--no-privileges", "--clean", "--if-exists"],
-      { stdio: ["ignore", "pipe", "ignore"] },
+      [url, "--no-password", "--no-owner", "--no-privileges", "--clean", "--if-exists"],
+      { env, stdio: ["ignore", "pipe", "ignore"] },
     );
     let spawnError: Error | undefined;
     child.on("error", (error) => {
       spawnError = error;
     });
     const closed = new Promise<number | null>((resolve) => child.once("close", resolve));
-    const output = pipeline(child.stdout!, createGzip(), createWriteStream(filePath));
+    const output = pipeline(child.stdout!, createGzip(), destination);
 
     try {
       const [, code] = await Promise.all([output, closed]);
@@ -247,9 +269,6 @@ export class BackupService {
       if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await closed;
       await output.catch(() => {});
-      await unlink(filePath).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== "ENOENT") this.logger.warn({ err }, "Failed to remove incomplete backup");
-      });
       if ((spawnError as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
         throw new Error("pg_dump not found. Install postgresql-client to enable backups.");
       }
