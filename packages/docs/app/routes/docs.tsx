@@ -2,7 +2,6 @@ import browserCollections from "collections/browser";
 import { useFumadocsLoader } from "fumadocs-core/source/client";
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/page";
-import { useEffect, useState } from "react";
 import { data } from "react-router";
 import { getMDXComponents } from "@/components/mdx";
 import { layoutOptions } from "@/lib/layout";
@@ -92,15 +91,9 @@ const clientLoader = browserCollections.docs.createClientLoader({
 
 export default function DocsRoute({ loaderData }: Route.ComponentProps) {
   const { tree } = useFumadocsLoader(loaderData);
-  const [searchReady, setSearchReady] = useState(false);
-  useEffect(() => setSearchReady(true), []);
 
   return (
-    <DocsLayout
-      {...layoutOptions}
-      searchToggle={{ ...layoutOptions.searchToggle, enabled: searchReady }}
-      tree={tree}
-    >
+    <DocsLayout {...layoutOptions} tree={tree}>
       {clientLoader.useContent(loaderData.path)}
     </DocsLayout>
   );

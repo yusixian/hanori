@@ -7,6 +7,7 @@ import {
   ScrollRestoration,
 } from "react-router";
 import { RootProvider } from "fumadocs-ui/provider/react-router";
+import { useEffect, useState } from "react";
 import type { Route } from "./+types/root";
 import "./styles.css";
 
@@ -30,6 +31,9 @@ const translations = {
 };
 
 export function Layout({ children }: { children: React.ReactNode }) {
+  const [interactive, setInteractive] = useState(false);
+  useEffect(() => setInteractive(true), []);
+
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <head>
@@ -42,7 +46,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body>
+      <body data-interactive={interactive}>
         <RootProvider
           i18n={{ locale: "zh-CN", translations }}
           search={{

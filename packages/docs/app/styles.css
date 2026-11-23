@@ -2,6 +2,13 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
+/* Search has no native action before hydration. The inactive sidebar panel also
+   keeps a duplicate search button mounted during its opacity transition. */
+body[data-interactive="false"] :is([data-search], [data-search-full]),
+[data-sidebar-panel].pointer-events-none {
+  visibility: hidden;
+}
+
 :root {
   --docs-sans:
     "Avenir Next", Avenir, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
